@@ -34,6 +34,10 @@ Then delegate normally:
 
 The coordinator creates a task brief, prepares a separate Herdr worktree, launches the selected worker, submits its brief, and returns control to you. A worker is explicitly given its own role; it does not become another coordinator.
 
+### Session roles
+
+Every harness session starts with `./bin/sumctl init` and follows the role it returns. The first pane in the installation (the checkout where setup ran) claims `coordinator` atomically; exactly one pane wins a simultaneous start. A pane dispatched by the coordinator is registered as that task's `worker` and stays a worker even when its task is editing sum itself. Any other pane, including a second harness you open in the same directory to work on sum, becomes a `developer`: it sees who owns coordination, cannot dispatch or rebind tasks, and can only observe through the Herdr bridge. Identity is the verified machine, Herdr session, and pane, never the working directory. `sumctl doctor` only observes; it never binds. Role bookkeeping prevents accidental takeover; it is not a security sandbox against code running as your user.
+
 ### No installed harness?
 
 ```sh
@@ -64,7 +68,7 @@ The helper is called `sumctl` to avoid shadowing the Unix `sum` command. Normall
 
 ## State and communication
 
-Private state lives in `.sum/` and is ignored by Git. Optional `.sum/preferences.md` and `.sum/projects.md` hold local preferences and project notes. Each task stores its brief, base SHA, branch/worktree, pane bindings, questions, answers, and report. File updates are locked and atomically replaced on one local machine.
+Private state lives in `.sum/` and is ignored by Git. `.sum/context.json` records the coordinator owner and `.sum/sessions/` the registered panes and roles. Optional `.sum/preferences.md` and `.sum/projects.md` hold local preferences and project notes. Each task stores its brief, base SHA, branch/worktree, pane bindings, questions, answers, and report. File updates are locked and atomically replaced on one local machine.
 
 Workers use the exact commands in their generated brief. The core interaction is:
 
@@ -115,7 +119,7 @@ Setup also runs an MCP initialization/tool-discovery smoke test after installing
 
 ## Recovery and backup
 
-After reopening the coordinator, run doctor and a rundown. To route an existing task back to the new coordinator:
+After reopening the coordinator, run `./bin/sumctl init`. If the previous coordinator pane is verifiably gone, run `./bin/sumctl init --role coordinator --reclaim`; it refuses while that pane still runs an agent or while Herdr cannot observe it, and it never rebinds tasks by itself. Then run a rundown. To route an existing task back to the new coordinator:
 
 ```sh
 ./bin/sumctl bind TASK_ID --parent-only

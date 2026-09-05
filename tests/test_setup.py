@@ -25,6 +25,16 @@ class SetupTest(unittest.TestCase):
         opencode = json.loads((self.root / 'opencode.json').read_text())
         self.assertEqual(opencode['mcp']['sum-herdr']['type'], 'local')
 
+    def test_setup_designates_installation_without_claiming_a_coordinator(self):
+        setup.configure(self.root)
+        state = json.loads((self.root / '.sum/state.json').read_text())
+        self.assertEqual(state['schema'], 1)
+        self.assertTrue(state['instance'])
+        self.assertFalse((self.root / '.sum/context.json').exists())
+        (self.root / '.sum/state.json').write_text('{"schema": 1, "sum_version": "0.1.0", "created_at": "x"}')
+        setup.configure(self.root)
+        self.assertNotIn('instance', json.loads((self.root / '.sum/state.json').read_text()))  # Never rewrites existing state.
+
     def test_setup_is_idempotent(self):
         setup.configure(self.root)
         before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}

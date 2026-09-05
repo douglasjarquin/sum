@@ -6,7 +6,7 @@ The offline demo is not a substitute for this check.
 ## 1. Bootstrap
 
 Run setup twice. Both runs should succeed without replacing unrelated MCP entries or touching global harness/account settings. The setup MCP handshake should discover ten tools.
-Run `sumctl doctor` inside the intended Herdr pane. Confirm the expected session, pinned version, and selected harness executable. Authenticate that harness and GitHub yourself.
+Run `sumctl init` inside the intended Herdr pane and confirm it reports `coordinator`; `sumctl doctor` is observation only. Confirm the expected session, pinned version, and selected harness executable. Authenticate that harness and GitHub yourself.
 
 ## 2. First task
 
@@ -21,7 +21,7 @@ Record whether MCP or CLI was used, harness version, Herdr version, and any trus
 ## 3. Busy or closed coordinator
 
 Repeat while the coordinator is occupied, then while it is closed. The question must remain in `sumctl inbox`; prompt delivery may remain pending.
-Reopen the coordinator, run doctor, bind the task's parent to the new pane, and perform a rundown. There must be no duplicate worker and no invented answer.
+Reopen the coordinator, run `sumctl init --role coordinator --reclaim` once the old pane is verifiably gone, bind the task's parent to the new pane, and perform a rundown. There must be no duplicate worker and no invented answer.
 
 ## 4. Non-cooperative worker
 

@@ -5,6 +5,8 @@ description: Execute one approved task, verify the result, and persist questions
 # Worker
 
 You own exactly the task in your supplied brief. You are not the consigliere.
+Your pane was registered as this task's worker at dispatch. If you run `./bin/sumctl init` in a sum checkout, it reports `worker`; never pass `--role coordinator` or `--reclaim`.
+A sum checkout you are editing is not an installation: do not create `.sum` state there or run setup for it.
 
 Read relevant repository instructions and code. Establish the current behavior before changing it. Keep changes inside the approved scope and your checkout.
 Do not edit other tasks, the primary clone, sum's operating files, credentials, or unrelated panes.

@@ -27,6 +27,10 @@ HERDR_VERSION = "0.8.2"
 MAX_TEXT = 256 * 1024
 TASK_ID = re.compile(r"t-[a-f0-9]{12}\Z")
 ACTIVE = {"preparing", "prepared", "starting", "running", "waiting", "needs-attention"}
+ROLES = ("coordinator", "worker", "developer")
+# Herdr subcommands a developer registration may run through the bridge: observation only.
+READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
+             ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
 HARNESSES = {"codex": "codex", "claude": "claude", "grok": "grok",
              "cursor": "cursor-agent", "pi": "pi", "opencode": "opencode",
              "gemini": "gemini", "omp": "omp", "copilot": "copilot"}
@@ -124,6 +128,15 @@ def context():
             "machine": machine(), "cwd": str(ROOT), "at": now()}
 
 
+def identity(endpoint):
+    """The verified endpoint identity: machine, Herdr session, pane. Cwd and labels are not identity."""
+    return (endpoint["machine"], endpoint["session"], endpoint["pane"])
+
+
+def registration_key(endpoint):
+    return hashlib.sha256("\n".join(identity(endpoint)).encode()).hexdigest()[:16]
+
+
 def herdr(args, *, session, timeout=10, raw=False):
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
         raise SumError("Invalid session name.")
@@ -162,6 +175,7 @@ class Store:
     def __init__(self, home):
         self.home = Path(home).expanduser().resolve()
         self.tasks = self.home / "tasks"
+        self.sessions = self.home / "sessions"
         if (self.home / "state.json").exists():
             state = read_json(self.home / "state.json")
             if state.get("schema") != SCHEMA:
@@ -207,6 +221,36 @@ class Store:
     def check_machine(self, task):
         if task["machine"] != machine():
             raise SumError("Task belongs to another machine. Inspect saved work and use bind explicitly; stale pane IDs are not portable.")
+
+    def designated(self):
+        """Only a state home created by setup or an earlier sum release may host a coordinator."""
+        return (self.home / "state.json").is_file()
+
+    def owner(self):
+        path = self.home / "context.json"
+        return read_json(path) if path.is_file() else None
+
+    def registration(self, endpoint):
+        path = self.sessions / (registration_key(endpoint) + ".json")
+        if not path.is_file():
+            return None
+        value = read_json(path)
+        if identity(value) != identity(endpoint):
+            raise SumError("Session registration identity mismatch; inspect the sessions directory.")
+        return value
+
+    def register(self, endpoint, role, task=None):
+        state = read_json(self.home / "state.json")
+        previous = self.registration(endpoint)
+        value = {"schema": SCHEMA, "key": registration_key(endpoint), "role": role, "task": task,
+                 "machine": endpoint["machine"], "session": endpoint["session"], "pane": endpoint["pane"],
+                 "cwd": endpoint.get("cwd"), "instance": state.get("instance"), "sum_version": VERSION,
+                 "registered_at": previous["registered_at"] if previous else now(), "updated_at": now()}
+        atomic_json(self.sessions / (value["key"] + ".json"), value)
+        return value
+
+    def registrations(self):
+        return [read_json(p) for p in sorted(self.sessions.glob("*.json"))] if self.sessions.is_dir() else []
 
 
 def command_for(store, *args):
@@ -276,8 +320,18 @@ A report is a claim for the coordinator to verify, NOT proof of successful compl
     return path
 
 
+def require_coordinator(store, ctx):
+    """Fleet-changing commands need the caller to be this instance's registered coordinator."""
+    registration = store.registration(ctx)
+    owner = store.owner()
+    if not registration or registration["role"] != "coordinator" or not owner or identity(owner) != identity(ctx):
+        raise SumError("This pane is not the registered coordinator of this sum instance. Run ./bin/sumctl init in the coordinator pane; a developer session must not dispatch or rebind.")
+    return registration
+
+
 def prepare(store, args):
     ctx = context()
+    require_coordinator(store, ctx)
     ensure_version()
     repo = Path(run(["git", "-C", args.repo, "rev-parse", "--show-toplevel"]).stdout.strip()).resolve()
     base_sha = run(["git", "-C", repo, "rev-parse", "--verify", f"{args.base}^{{commit}}", "--"]).stdout.strip()
@@ -351,6 +405,9 @@ def start(store, task_id, extra_args=()):
                 current["status"] = "running"
             current["started_at"] = now()
             store.save(current)
+            # The dispatched pane keeps its task role even if it later runs `sumctl init` itself.
+            store.register({"machine": current["machine"], "session": current["session"], "pane": current["pane"],
+                            "cwd": current["worktree"]}, "worker", task=task_id)
         return current
     except SumError as exc:
         with store.lock():
@@ -470,7 +527,110 @@ def status(store, live=False, inbox=False):
     return {"tasks": rows, "live": live, "guarantee": "Saved records only; prose-only questions require a rundown. No background monitoring."}
 
 
+def installation_hint(root):
+    """A task checkout of sum is a linked Git worktree; the installation's records live beside the common Git directory."""
+    try:
+        common = Path(run(["git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip())
+    except SumError:
+        return None
+    home = common.parent / ".sum"
+    return home if common.name == ".git" and common.parent.resolve() != Path(root).resolve() and (home / "state.json").is_file() else None
+
+
+def matching_task(store, endpoint):
+    for task in store.all():
+        if task.get("pane") and task["status"] != "archived" and identity(task) == identity(endpoint):
+            return task
+    return None
+
+
+def observe_owner(owner):
+    """Observe the recorded coordinator endpoint. 'absent' means Herdr says the pane is gone; any other failure is uncertain."""
+    if owner["machine"] != machine():
+        return "other-machine", None
+    try:
+        pane = herdr(["pane", "get", owner["pane"]], session=owner["session"], timeout=5)
+    except SumError as exc:
+        text = str(exc).lower()
+        if "not_found" in text or "not found" in text or "unknown pane" in text:
+            return "absent", str(exc)
+        return "uncertain", str(exc)
+    pane = pane.get("pane", pane) if isinstance(pane, dict) else {}
+    # Herdr 0.8.2 reports agent_status "unknown" for a plain shell pane (verified in a lab session).
+    live = pane.get("agent") or pane.get("agent_status") not in (None, "unknown")
+    return ("agent" if live else "shell"), pane
+
+
+def init(store, args):
+    """Explicit session initialization: register this pane's role in this instance. Never rebinds tasks."""
+    ctx = context()
+    requested = args.role
+    if requested == "worker" and not args.task:
+        raise SumError("--role worker needs --task TASK_ID.")
+    if not store.designated():
+        hint = installation_hint(ROOT)
+        task = matching_task(Store(hint), ctx) if hint else None
+        role = "worker" if task else "developer"
+        if requested == "coordinator":
+            raise SumError(f"{store.home} is not a sum installation (no state.json from setup). A checkout alone grants no coordinator authority; run mise run setup in the designated installation.")
+        return {"role": role, "home": str(store.home), "installation": False, "task": task["id"] if task else None,
+                "installation_home": str(hint) if hint else None, "registered": False, "endpoint": ctx,
+                "note": ("Dispatched worker checkout: follow your brief; do not initialize a coordinator." if task else
+                         "Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates.")}
+    ensure_version()
+    herdr(["pane", "get", ctx["pane"]], session=ctx["session"], timeout=5)  # Verify the caller's own endpoint exists.
+    with store.lock():
+        state = read_json(store.home / "state.json")
+        if not state.get("instance"):
+            state["instance"] = uuid.uuid4().hex  # Additive upgrade of the 0.1.0 state format.
+            atomic_json(store.home / "state.json", state)
+        owner = store.owner()
+        previous = store.registration(ctx)
+        task = matching_task(store, ctx)
+        if args.task:
+            recorded = store.read(args.task)
+            if not task or task["id"] != args.task:
+                raise SumError(f"This pane is not the recorded worker pane of {args.task} ({recorded.get('pane')}). Worker identity comes from dispatch records, not from the brief text.")
+        result = {"home": str(store.home), "installation": True, "instance": state["instance"], "endpoint": ctx, "upgraded": False}
+        if task or (previous and previous["role"] == "worker"):
+            if requested == "coordinator":
+                raise SumError("This pane is a dispatched worker; it cannot become the coordinator.")
+            role, task_id = "worker", task["id"] if task else previous["task"]
+        elif owner and identity(owner) == identity(ctx):
+            if requested == "developer":
+                raise SumError("This pane owns the coordinator role. Initialize a developer session from another pane; ownership is not released implicitly.")
+            role, task_id = "coordinator", None
+            if "role" not in owner:
+                owner.update(role="coordinator", instance=state["instance"], sum_version=VERSION, upgraded_at=now())
+                atomic_json(store.home / "context.json", owner)
+                result["upgraded"] = True
+        elif owner is None and requested in (None, "coordinator"):
+            owner = {**ctx, "role": "coordinator", "instance": state["instance"], "sum_version": VERSION, "claimed_at": now()}
+            atomic_json(store.home / "context.json", owner)
+            role, task_id = "coordinator", None
+        elif requested == "coordinator":
+            if not args.reclaim:
+                raise SumError(f"Coordinator is owned by pane {owner['pane']} in session {owner['session']} on {owner['machine']}. Inspect it; use --reclaim only for a deliberate, verified takeover. Task parent routes stay unchanged either way.")
+            observed, detail = observe_owner(owner)
+            if observed not in ("absent", "shell"):
+                raise SumError(f"Refusing reclaim: recorded coordinator pane is {observed} ({detail if isinstance(detail, str) else 'live pane'}). An unreachable or uncertain root is not permission to take over.")
+            owner = {**ctx, "role": "coordinator", "instance": state["instance"], "sum_version": VERSION, "claimed_at": now(),
+                     "reclaimed_from": {k: owner.get(k) for k in ("machine", "session", "pane", "at", "claimed_at")}, "previous_observed": observed}
+            atomic_json(store.home / "context.json", owner)
+            result["reclaimed"] = True
+            role, task_id = "coordinator", None
+        else:
+            role, task_id = "developer", None
+        registration = store.register(ctx, role, task=task_id)
+    result.update(role=role, task=task_id, registration=registration, coordinator=store.owner(),
+                  note={"coordinator": "You are the coordinator for this instance. Continue the coordinator startup steps.",
+                        "worker": "You are a dispatched worker. Follow your brief; do not run coordinator startup.",
+                        "developer": "Another session owns coordination. Do not run coordinator startup, dispatch, or setup here; develop sum only in a development checkout. Role bookkeeping is not an OS-level sandbox."}[role])
+    return result
+
+
 def doctor(store):
+    """Observational only: no state, context, or registration is written."""
     checks = []
     for name in ("python3", "node", "git", "gh", "herdr", "quota-axi"):
         try:
@@ -482,21 +642,25 @@ def doctor(store):
         checks.append({"tool": "herdr-version", "ok": True, "detail": ensure_version()})
     except SumError as exc:
         checks.append({"tool": "herdr-version", "ok": False, "detail": str(exc)})
+    role = {"tool": "role", "ok": True, "installation": store.designated(), "coordinator": store.owner() if store.designated() else None}
     try:
         ctx = context()
         herdr(["pane", "get", ctx["pane"]], session=ctx["session"])
-        with store.lock():
-            atomic_json(store.home / "context.json", ctx)
         checks.append({"tool": "herdr-context", "ok": True, "detail": ctx})
+        registration = store.registration(ctx) if store.designated() else None
+        role["registered"] = registration["role"] if registration else None
+        role["detail"] = ("Registered as " + registration["role"] + "." if registration else
+                          "This pane is not registered. Run ./bin/sumctl init to register explicitly; doctor never binds.")
     except SumError as exc:
         checks.append({"tool": "herdr-context", "ok": False, "detail": str(exc)})
+    checks.append(role)
     installed = {kind: shutil.which(exe) or (str(ROOT / '.local/bin' / exe) if (ROOT / '.local/bin' / exe).is_file() else None)
                  for kind, exe in HARNESSES.items()}
     checks.append({"tool": "harness", "ok": any(installed.values()), "installed": {k:v for k,v in installed.items() if v}})
     checks.append({"tool": "mesh", "ok": (ROOT / ".deps/herdr-mesh/.sum-patched").is_file()})
     return {"version": VERSION, "home": str(store.home), "checks": checks,
             "ok": all(c["ok"] for c in checks),
-            "note": "No auth changes or permission bypasses. Authenticate the chosen harness and gh separately."}
+            "note": "Observation only: nothing was bound or written. No auth changes or permission bypasses. Authenticate the chosen harness and gh separately."}
 
 
 def backup(store, destination):
@@ -544,7 +708,11 @@ def parser():
     p.add_argument("--home", default=os.environ.get("SUM_HOME", str(ROOT / ".sum")))
     p.add_argument("--version", action="version", version=f"sum {VERSION}")
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser("doctor", help="Check setup and bind this coordinator pane; no background process")
+    sub.add_parser("doctor", help="Observe setup, Herdr context, and this pane's registered role; writes nothing")
+    s = sub.add_parser("init", help="Explicitly register this pane's role in this instance; the first eligible pane claims coordinator")
+    s.add_argument("--role", choices=ROLES, help="Requested role; omitted means coordinator if unowned, worker if dispatched, else developer")
+    s.add_argument("--task", help="Task ID when explicitly registering as its dispatched worker")
+    s.add_argument("--reclaim", action="store_true", help="Deliberate, identity-checked takeover of an absent coordinator pane; never rebinds tasks")
     for name in ("status", "inbox"):
         s = sub.add_parser(name)
         s.add_argument("--live", action="store_true", help="One bounded native-status lookup per task")
@@ -599,7 +767,9 @@ def main(argv=None):
             value = doctor(store)
             emit(value)
             return 0 if value["ok"] else 1
-        if args.command in {"status", "inbox"}:
+        if args.command == "init":
+            value = init(store, args)
+        elif args.command in {"status", "inbox"}:
             value = status(store, args.live, args.command == "inbox")
         elif args.command in {"prepare", "dispatch"}:
             task = prepare(store, args)
@@ -630,6 +800,7 @@ def main(argv=None):
             value = {"archived": args.task, "worktree_preserved": task["worktree"], "processes_untouched": True}
         elif args.command == "bind":
             ctx = context()
+            require_coordinator(store, ctx)
             if not args.parent_only and not args.worker_pane:
                 raise SumError("Specify --parent-only or --worker-pane. Binding never creates a replacement.")
             with store.lock():
@@ -649,14 +820,17 @@ def main(argv=None):
             value = backup(store, args.destination)
         elif args.command == "herdr":
             native_args = args.args[1:] if args.args and args.args[0] == "--" else args.args
+            # Scope: the caller's own verified pane, registered in this instance. No saved-context borrowing.
             try:
-                session = context()["session"]
-            except SumError:
-                saved = read_json(store.home / "context.json")
-                if saved.get("machine") != machine():
-                    raise SumError("Saved Mesh context belongs to another machine. Run sumctl doctor inside the current Herdr pane.")
-                session = saved["session"]
-            print(herdr(native_args, session=session, raw=True, timeout=70), end="")
+                ctx = context()
+            except SumError as exc:
+                raise SumError(f"{exc} The bridge never borrows a saved coordinator context.") from exc
+            registration = store.registration(ctx) if store.designated() else None
+            if not registration:
+                raise SumError(f"Pane {ctx['pane']} in session {ctx['session']} is not registered with {store.home}. Run ./bin/sumctl init there first; a development checkout gets no access to another instance's panes.")
+            if registration["role"] == "developer" and tuple(native_args[:2]) not in READ_ONLY:
+                raise SumError("Developer sessions may only observe through the bridge. Coordination commands need the registered coordinator pane.")
+            print(herdr(native_args, session=ctx["session"], raw=True, timeout=70), end="")
             return 0
         else:
             raise SumError("Unknown command")

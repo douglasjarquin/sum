@@ -2,6 +2,7 @@
 """Install a pinned Mesh checkout and create only repository-local integration files."""
 from __future__ import annotations
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import tomllib
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 MESH_REV = "54adef519aa6af4dcd0bbd72586d414abab90046"
@@ -78,7 +80,17 @@ env_vars = ["HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", 
     path.write_text(text)
 
 
+def designate(root):
+    """Mark this checkout as the sum installation: only a home with state.json may host a coordinator."""
+    home = root / ".sum"
+    home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if not (home / "state.json").exists():
+        write_json(home / "state.json", {"schema": 1, "sum_version": "0.1.0", "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                         "instance": uuid.uuid4().hex})
+
+
 def configure(root=ROOT):
+    designate(root)
     command = str(root / "bin/herdr-mesh")
     entry = {"command": command, "args": []}
     merge_mcp(root / ".mcp.json", "mcpServers", entry)
@@ -140,7 +152,8 @@ def main():
     if not args.configure_only:
         execute([str(ROOT / ".local/bin/node"), str(ROOT / "scripts/mcp_smoke.mjs")])
     print("\n" + ("Local configuration generated; dependencies were not installed." if args.configure_only else "Setup complete.") + " No global harness configs, credentials, or Herdr settings were changed.")
-    print("Inside Herdr: cd into sum, run ./bin/sumctl doctor, then launch codex, claude, grok, cursor-agent, pi, or another configured harness.")
+    print("Inside Herdr: cd into sum, optionally run ./bin/sumctl doctor (observation only), then launch codex, claude, grok, cursor-agent, pi, or another configured harness.")
+    print("The harness runs ./bin/sumctl init itself: the first pane claims coordinator; later panes here are developers unless dispatched.")
     print("Accept the harness's project/MCP trust prompt. For a harness without native project instructions, paste: Read AGENTS.md and initialize sum.")
     print("No installed harness? Re-run mise run setup -- --install-codex, then authenticate Codex normally.")
 

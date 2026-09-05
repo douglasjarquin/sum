@@ -33,7 +33,7 @@ The exposed ten-tool surface uses:
 
 `bin/herdr-scoped` supplies an explicit session derived from the current pane environment or the coordinator's local context record. It does not create its own socket protocol.
 
-MCP clients have different environment policies. The Codex config explicitly forwards Herdr context variables; the saved local context is a fallback for clients that omit them. Run doctor before using tools and never reuse a copied context from another machine.
+MCP clients have different environment policies. The Codex config explicitly forwards Herdr context variables; the bridge acts only as the calling pane, which must be registered by `sumctl init` in this instance. There is no saved-context fallback, so a client that omits those variables fails locally instead of borrowing another pane's session.
 
 The overlay is versioned sum code and has its own command-contract tests. It is not an upstream release or a claim that upstream has accepted these changes. Prefer upstreaming it if the experiment proves useful.
 

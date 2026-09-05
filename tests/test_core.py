@@ -42,6 +42,20 @@ class CoreTest(unittest.TestCase):
         self.patch.start()
         self.addCleanup(self.patch.stop)
         self.store = sumctl.Store(self.root / "state")
+        self.store.init()  # A designated installation, as setup creates it.
+        self.init()
+
+    def init(self, role=None, task=None, reclaim=False, store=None):
+        return sumctl.init(store or self.store, argparse.Namespace(role=role, task=task, reclaim=reclaim))
+
+    def pane(self, pane, session="sum-test"):
+        return mock.patch.dict(os.environ, {"HERDR_PANE_ID": pane, "HERDR_SESSION": session})
+
+    def cli(self, *args, home=None, env=None):
+        merged = os.environ.copy()
+        merged.update(env or {})
+        return subprocess.run([sys.executable, str(ROOT / "lib/sumctl.py"), "--home", str(home or self.store.home), *args],
+                              env=merged, capture_output=True, text=True)
 
     def git(self, *args, cwd=None):
         result = subprocess.run(["git", "-C", str(cwd or self.repo), *args], text=True, capture_output=True, check=True)
@@ -76,6 +90,190 @@ class CoreTest(unittest.TestCase):
         with self.assertRaisesRegex(sumctl.SumError, "approved"):
             self.prepare(approved=False)
         self.assertFalse(any(c[:2] == ["worktree", "create"] for c in self.calls()))
+
+    # --- session roles -------------------------------------------------------
+
+    def test_first_eligible_pane_claims_coordinator_once(self):
+        value = self.init()
+        self.assertEqual(value["role"], "coordinator")
+        owner = json.loads((self.store.home / "context.json").read_text())
+        self.assertEqual((owner["role"], owner["pane"], owner["session"]), ("coordinator", "w-parent:p1", "sum-test"))
+        self.assertTrue(owner["instance"])
+        again = self.init()
+        self.assertEqual(again["role"], "coordinator")
+        self.assertEqual(json.loads((self.store.home / "context.json").read_text()), owner)
+        self.assertEqual(len(self.store.registrations()), 1)
+
+    def test_second_unbriefed_pane_is_developer_and_changes_nothing(self):
+        task = self.prepare()
+        before = (self.store.home / "context.json").read_bytes()
+        with self.pane("w-other:p1"):
+            value = self.init()
+            self.assertEqual(value["role"], "developer")
+            self.assertEqual(value["coordinator"]["pane"], "w-parent:p1")
+            with self.assertRaisesRegex(sumctl.SumError, "owned by pane w-parent:p1"):
+                self.init(role="coordinator")
+            with self.assertRaisesRegex(sumctl.SumError, "not the registered coordinator"):
+                self.prepare(repo=str(self.repo))
+        self.assertEqual((self.store.home / "context.json").read_bytes(), before)
+        self.assertEqual(self.store.read(task["id"])["parent"]["pane"], "w-parent:p1")
+        roles = sorted(r["role"] for r in self.store.registrations())
+        self.assertEqual(roles, ["coordinator", "developer"])
+
+    def test_dispatched_worker_keeps_task_role_even_editing_sum(self):
+        task = self.prepare()
+        sumctl.start(self.store, task["id"])
+        with self.pane(task["pane"]):
+            value = self.init()
+            self.assertEqual((value["role"], value["task"]), ("worker", task["id"]))
+            with self.assertRaisesRegex(sumctl.SumError, "dispatched worker"):
+                self.init(role="coordinator")
+            self.assertEqual(self.init(role="worker", task=task["id"])["role"], "worker")
+        with self.pane("w-random:p9"):
+            with self.assertRaisesRegex(sumctl.SumError, "not the recorded worker pane"):
+                self.init(role="worker", task=task["id"])
+        self.assertEqual(self.store.owner()["pane"], "w-parent:p1")
+
+    def test_task_checkout_of_sum_reports_worker_without_writing(self):
+        # A worker editing sum runs sumctl from its worktree: that home is not an installation.
+        task = self.prepare()
+        sumctl.start(self.store, task["id"])
+        other = sumctl.Store(Path(task["worktree"]) / ".sum")
+        with self.pane(task["pane"]):
+            with mock.patch.object(sumctl, "ROOT", Path(task["worktree"])):
+                with mock.patch.object(sumctl, "installation_hint", lambda root: self.store.home):
+                    value = self.init(store=other)
+                    self.assertEqual((value["role"], value["task"], value["installation"]), ("worker", task["id"], False))
+                    with self.assertRaisesRegex(sumctl.SumError, "not a sum installation"):
+                        self.init(role="coordinator", store=other)
+        self.assertFalse((Path(task["worktree"]) / ".sum").exists())
+
+    def test_installation_hint_finds_records_beside_common_git_dir(self):
+        task = self.prepare()
+        (self.repo / ".sum").mkdir()
+        (self.repo / ".sum/state.json").write_text("{}")
+        self.assertEqual(sumctl.installation_hint(task["worktree"]).resolve(), (self.repo / ".sum").resolve())
+        self.assertIsNone(sumctl.installation_hint(self.repo))
+
+    def test_development_checkout_without_installation_is_developer(self):
+        dev = sumctl.Store(self.root / "dev-checkout/.sum")
+        value = self.init(store=dev)
+        self.assertEqual((value["role"], value["installation"]), ("developer", False))
+        self.assertFalse(dev.home.exists())
+
+    def test_concurrent_initial_registration_has_one_winner(self):
+        home = self.root / "fresh"
+        sumctl.Store(home).init()
+        def claim(i):
+            return self.cli("init", home=home, env={"HERDR_PANE_ID": f"w-race:p{i}"})
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(claim, range(6)))
+        self.assertTrue(all(r.returncode == 0 for r in results), [r.stderr for r in results])
+        roles = [json.loads(r.stdout)["role"] for r in results]
+        self.assertEqual(roles.count("coordinator"), 1, roles)
+        self.assertEqual(roles.count("developer"), 5)
+
+    def test_legacy_context_is_upgraded_additively_only_for_its_owner(self):
+        legacy = {"session": "sum-test", "pane": "w-parent:p1", "machine": socket.gethostname(),
+                  "cwd": str(ROOT), "at": "2026-09-05T18:33:12+00:00"}
+        home = self.root / "legacy"
+        sumctl.Store(home).init()
+        sumctl.atomic_json(home / "state.json", {"schema": 1, "sum_version": "0.1.0", "created_at": "2026-09-05T18:00:00+00:00"})
+        sumctl.atomic_json(home / "context.json", legacy)
+        stranger = sumctl.Store(home)
+        with self.pane("w-newcomer:p1"):
+            self.assertEqual(self.init(store=stranger)["role"], "developer")
+        self.assertEqual(json.loads((home / "context.json").read_text()), legacy)
+        value = self.init(store=stranger)
+        self.assertEqual((value["role"], value["upgraded"]), ("coordinator", True))
+        upgraded = json.loads((home / "context.json").read_text())
+        self.assertEqual({k: upgraded[k] for k in legacy}, legacy)
+        self.assertEqual(upgraded["role"], "coordinator")
+        self.assertTrue(json.loads((home / "state.json").read_text())["instance"])
+
+    def test_reclaim_is_explicit_identity_checked_and_preserves_task_routes(self):
+        task = self.prepare()
+        with self.pane("w-second:p1"):
+            with self.assertRaisesRegex(sumctl.SumError, "Refusing reclaim.*agent"):
+                self.init(role="coordinator", reclaim=True)  # The old pane still runs an agent.
+        state_path = self.root / "fake/state.json"
+        state = json.loads(state_path.read_text())
+        del state["panes"]["w-parent:p1"]
+        state_path.write_text(json.dumps(state))
+        with self.pane("w-second:p1"), mock.patch.dict(os.environ, {"SUM_HERDR_BIN": "/nonexistent/herdr"}):
+            with self.assertRaises(sumctl.SumError):
+                self.init(role="coordinator", reclaim=True)  # Unavailable Herdr is not permission.
+        self.assertEqual(self.store.owner()["pane"], "w-parent:p1")
+        with self.pane("w-second:p1"):
+            self.assertEqual(self.init()["role"], "developer")  # Absent owner still does not imply takeover.
+            value = self.init(role="coordinator", reclaim=True)
+        self.assertEqual((value["role"], value["reclaimed"]), ("coordinator", True))
+        self.assertEqual(self.store.owner()["reclaimed_from"]["pane"], "w-parent:p1")
+        self.assertEqual(self.store.read(task["id"])["parent"]["pane"], "w-parent:p1")
+        with self.pane("w-second:p1"), mock.patch.object(sumctl, "emit"):
+            bound = sumctl.main(["--home", str(self.store.home), "bind", task["id"], "--parent-only"])
+        self.assertEqual(bound, 0)
+        self.assertEqual(self.store.read(task["id"])["parent"]["pane"], "w-second:p1")
+
+    def test_developer_cannot_rebind_task_routes(self):
+        task = self.prepare()
+        with self.pane("w-dev:p1"), mock.patch("sys.stderr"):
+            self.init()
+            self.assertEqual(sumctl.main(["--home", str(self.store.home), "bind", task["id"], "--parent-only"]), 1)
+        self.assertEqual(self.store.read(task["id"])["parent"]["pane"], "w-parent:p1")
+
+    def test_doctor_is_observational(self):
+        home = self.root / "observed"
+        with self.pane("w-inspector:p1"):
+            value = sumctl.doctor(sumctl.Store(home))
+        self.assertFalse(home.exists())
+        role = next(c for c in value["checks"] if c["tool"] == "role")
+        self.assertFalse(role["installation"])
+        before = {p.name: p.read_bytes() for p in self.store.home.rglob("*") if p.is_file()}
+        with self.pane("w-inspector:p1"):
+            value = sumctl.doctor(self.store)
+        role = next(c for c in value["checks"] if c["tool"] == "role")
+        self.assertEqual(role["coordinator"]["pane"], "w-parent:p1")
+        self.assertIsNone(role["registered"])
+        after = {p.name: p.read_bytes() for p in self.store.home.rglob("*") if p.is_file()}
+        self.assertEqual(before, after)
+
+    def test_bridge_is_scoped_to_the_registered_caller(self):
+        ok = self.cli("herdr", "--", "agent", "list")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        with self.pane("w-dev:p1"):
+            unregistered = self.cli("herdr", "--", "agent", "list")
+            self.assertEqual(unregistered.returncode, 1)
+            self.assertIn("not registered", unregistered.stderr)
+            self.init()
+            self.assertEqual(self.cli("herdr", "--", "agent", "list").returncode, 0)
+            refused = self.cli("herdr", "--", "agent", "prompt", "w-parent:p1", "hello")
+            self.assertEqual(refused.returncode, 1)
+            self.assertIn("only observe", refused.stderr)
+        self.assertFalse(any(c[:2] == ["agent", "prompt"] for c in self.calls()))
+        outside = self.cli("herdr", "--", "agent", "list", env={"HERDR_ENV": "0"})
+        self.assertEqual(outside.returncode, 1)
+        self.assertIn("never borrows", outside.stderr)
+
+    def test_separate_instances_on_one_machine_do_not_share_registrations(self):
+        other = sumctl.Store(self.root / "second-instance")
+        other.init()
+        with self.pane("w-b:p1"):
+            self.assertEqual(self.init(store=other)["role"], "coordinator")
+            self.assertEqual(self.cli("herdr", "--", "agent", "list").returncode, 1)  # Registered only in the other instance.
+            self.assertEqual(self.cli("herdr", "--", "agent", "list", home=other.home).returncode, 0)
+        self.assertNotEqual(self.store.owner()["instance"], other.owner()["instance"])
+
+    def test_task_callbacks_work_from_unregistered_panes(self):
+        task = self.prepare()
+        with self.pane("w-legacy-worker:p1"):
+            q = self.question(task)["question"]
+            self.assertEqual(self.cli("inbox").returncode, 0)
+            answer = argparse.Namespace(task=task["id"], question=q["id"], text="Yes.", file=None)
+            sumctl.answer(self.store, answer)
+            sumctl.resolve(self.store, argparse.Namespace(task=task["id"], question=q["id"]))
+            sumctl.report(self.store, argparse.Namespace(task=task["id"], text="done", file=None))
+        self.assertEqual(self.store.read(task["id"])["status"], "reported")
 
     def test_no_default_session_fallback(self):
         with mock.patch.dict(os.environ, {"HERDR_ENV": "0"}):
