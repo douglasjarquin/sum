@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Run offline behavior tests and Mesh command-contract tests (no credentials or LLM calls)"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+python -m unittest discover -s tests -p 'test_*.py' -v
+node --test tests/mesh.test.mjs

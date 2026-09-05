@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+[[ -f "$ROOT/.deps/herdr-mesh/.sum-patched" ]] || { echo 'Run mise run setup before starting Mesh.' >&2; exit 1; }
+export HERDR_BIN="$ROOT/bin/herdr-scoped"
+exec "$ROOT/.local/bin/node" "$ROOT/.deps/herdr-mesh/dist/index.js" "$@"

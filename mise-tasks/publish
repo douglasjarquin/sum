@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+#MISE description="Create douglasjarquin/sum and push this tested MVP (private by default; --public opts in)"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+visibility=--private
+if [[ "${1:-}" == --public ]]; then visibility=--public; shift; fi
+if [[ $# -ne 0 ]]; then echo 'usage: mise run publish [-- --public]' >&2; exit 2; fi
+gh auth status >/dev/null
+login=$(gh api user --jq .login)
+[[ "$login" == douglasjarquin ]] || { echo "Authenticated as $login, not douglasjarquin; no repository was created." >&2; exit 1; }
+python -m unittest discover -s tests -p 'test_*.py'
+node --test tests/mesh.test.mjs
+if [[ ! -d .git ]]; then
+  git init -b main
+  git add .
+  git commit -m 'feat: bootstrap sum Herdr-native agent distro MVP'
+fi
+[[ "$(git rev-parse --show-toplevel)" == "$PWD" ]] || { echo 'Refusing to publish a parent repository.' >&2; exit 1; }
+[[ -z "$(git status --porcelain)" ]] || { echo 'Commit your changes before publishing.' >&2; exit 1; }
+if git remote get-url origin >/dev/null 2>&1; then
+  echo 'origin already exists. Inspect it and push explicitly; this task only publishes a new repository.' >&2
+  exit 1
+fi
+# gh refuses an existing repository. Never fall back to overwriting one or force-pushing.
+gh repo create douglasjarquin/sum "$visibility" --source . --remote origin --push \
+  --description 'Many agents. One finished job. A Herdr-native agent distro.'

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Install pinned dependencies and generate repository-local MCP/skill configuration"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+mise install
+python scripts/setup.py "$@"

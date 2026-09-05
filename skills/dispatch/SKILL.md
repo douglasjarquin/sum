@@ -1,0 +1,44 @@
+---
+name: sum-dispatch
+description: Delegate explicitly approved work into an isolated Herdr task checkout with a durable worker brief.
+---
+# Dispatch
+
+Use this only for the coordinating session. Workers do not dispatch other workers.
+
+## Intake
+
+Identify the repository, outcome, scope/non-goals, acceptance criteria, and verification commands. A direct user request can be the approval; an unapproved issue cannot.
+Use `templates/task.md` as a checklist, not an excuse to make the user rewrite a clear request.
+For a missing local clone, clone the exact user-named repository under `.sum/projects/<owner>/<repo>` with `gh repo clone`; never guess a similarly named project.
+If the main checkout has uncommitted changes, explain that dispatch starts from a committed base and does not copy those edits.
+
+## Select execution
+
+Honor the user's chosen harness and authorized account. Coordinator and worker may differ.
+Otherwise inspect available harnesses, project preferences, and ask once when authority/account choice is genuinely ambiguous.
+Run `quota-axi --provider <provider>` for the selected provider when available. This is an advisory read, not a guaranteed budget or a scheduler.
+Known exhaustion: do not start on that route. Unknown/stale evidence: disclose it; do not silently switch to paid API use, a work account, or a new provider.
+Do not run repeated quota checks while waiting.
+
+## Submit
+
+Write the approved brief to a temporary file. Then run:
+
+```sh
+./bin/sumctl dispatch --repo /absolute/path/to/repo \
+  --brief /absolute/path/to/brief.md --harness codex --approved
+```
+
+Replace `codex` with the actual selected Herdr integration kind. Extra approved harness arguments are separate `--arg` values, e.g. `--arg=-m --arg=MODEL`.
+No permission-bypass flags are added by sum. The helper calls native `herdr worktree create`, verifies the returned checkout, launches with `agent start`, and submits the worker brief through `agent prompt`.
+Use `prepare` instead of `dispatch` to create the worktree/record without starting an agent; later `start TASK_ID` starts it once.
+
+Use returned IDs and paths. Do not infer IDs from labels. Do not copy the coordinator's instructions into the target repository.
+A trust/auth prompt can make startup uncertain while leaving a real agent alive. Inspect the saved pane. Never blindly call dispatch/start again.
+
+## Return control
+
+Tell the boss what started and what it will deliver. End the turn rather than entering a repeated handoff/wait loop.
+The normal worker return path is `sumctl ask` or `sumctl report` from its brief. Those commands save data first and attempt a short notice only to a provably idle/done recipient.
+If a notice remains pending, saved work still exists, but automatic delivery is NOT guaranteed. Use a rundown on the next interaction.

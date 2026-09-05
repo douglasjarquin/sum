@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Check dependencies, current Herdr session, and available harnesses"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec ./bin/sumctl doctor

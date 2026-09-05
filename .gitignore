@@ -1,0 +1,17 @@
+.sum/
+.deps/
+.local/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+.DS_Store
+.mcp.json
+.codex/config.toml
+.cursor/mcp.json
+opencode.json
+*.tar.gz
+*.zip
+.agents/skills/herdr
+.claude/skills/herdr

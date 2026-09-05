@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Exercise delegation, a question, an answer, a result, and records backup using a fake Herdr and real Git"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec python scripts/demo.py
