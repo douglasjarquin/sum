@@ -64,7 +64,7 @@ After `update apply` (or `rollback`), tell the crew to reread their operating in
 
 1. Stage the target's next immutable revision from that runtime: for a task, `brief regenerate` (`briefs/rN.md`, machine-generated change summary, decisions as recorded); for the coordinator, a contract snapshot `.sum/coordinator/contracts/rN.md` rendered from the runtime's `AGENTS.md` and skills. Unchanged content stages nothing.
 2. Mark that revision `requested` and persist it in the target's version sidecar, superseding any earlier request. Repeating the request records nothing new.
-3. Attempt one delivery through the native agent boundary: the recorded pane must exist, run in the recorded checkout, and be reported `idle` or `done` by Herdr; then one `agent prompt` carries a fixed message with the task ID, revision, runtime, change summary, file path, and the exact `adopt` command. No question, answer, or report prose is ever placed in that message.
+3. Attempt one delivery through the native agent boundary: the recorded pane must exist, run in the recorded checkout, and be reported `idle` or `done` by Herdr; then one `agent prompt` carries a fixed message with the task ID, revision, runtime, change summary, file path, and the exact `adopt` command. No question, answer, or report prose is ever placed in that message. Observation comes from one `agent list` snapshot per session taken at the start of the pass, so a fleet of twelve costs one observation call plus one prompt per settled recipient; each prompt has its own timeout (`fanout.per_recipient_timeout_s`), and an unobservable or refusing worker never delays the others. The result's `fanout` field reports the Herdr calls and local elapsed time of the pass; these are measurements of that run, not a latency guarantee.
 4. Record the attempt (`submitted-unconfirmed`, `pending-busy`, or `pending-unreachable` with the exact reason) in the sidecar, beside the notice slot, never in it.
 
 Then read your own contract revision at `refresh status` → `path` (also shown by `init` after a restart) and run `refresh adopt --coordinator rN`. Continue coordination from `inbox --live`; nothing about your role, registration, or task routes changed.
@@ -78,6 +78,8 @@ Then read your own contract revision at `refresh status` → `path` (also shown 
 - `capability-deferred`: a surface the client cannot reload by rereading text, today the MCP tool set of an already-connected client (`deferred: mcp` with the recorded start contract). The compatible old surface stays; the new capability waits for the client's own restart. New sessions and new dispatches get the newest surface.
 
 A pending target is rechecked only at ordinary interactions: a later `refresh request` (idempotent), `inbox`/`status` rows (`refresh` field), or `refresh status`. There is no polling loop, fleet barrier, fixed sleep, or automatic relaunch, and no claim that a whole client updated.
+An interrupted `refresh request` leaves every target it reached with its request and delivery recorded and the interrupted target with a persisted request and no delivery event (`refresh status` shows `requested; no delivery attempt recorded yet`); running `refresh request` again is the recovery and coalesces everything on the latest revision.
+Neither an update nor a refresh changes capacity: `settings.json` and the held slots are records the update never rewrites, and a task that reported during the update keeps its slot until archived.
 Developer sessions are excluded from the fan-out and listed under `excluded`; a developer rereads its own checkout.
 Two updates before a receipt coalesce to the newest revision (`r2` superseded by `r3`); a receipt for `r2` is then refused. A rollback stages the next revision from the rolled-back runtime; earlier receipts never count for it. Questions, answers, reports, and repair accounting are never touched by a refresh.
 
@@ -110,5 +112,17 @@ Afterwards `./bin/sumctl update ...` runs from the new default.
 
 6. `./bin/sumctl refresh request`, then `./bin/sumctl refresh status`; adopt your own contract revision.
 
-Report the old and new SHA, the default and active runtime, the compatibility results, the refresh counts per state, and the deferred work.
+Report the old and new SHA, the default and active runtime, the compatibility results, the refresh counts per state, the `fanout` numbers, and the deferred work.
+
+### Fleet canary with authenticated harnesses
+
+The deterministic twelve-worker regression (`tests/test_fleet.py`) proves the helper's bookkeeping and bounds with scripted workers; it proves nothing about a model reading a refresh instruction.
+When the boss wants that evidence, run this once in a named lab Herdr session with a lab `--home`, never the live `default` session or the production `.sum`:
+
+1. `settings set --global 12 --per-repository 1` in the lab home, then dispatch ten or more tiny approved tasks across throwaway repositories with the harnesses actually in use (`--harness claude`, `--harness codex`, ...). Accept each trust dialog by hand; an `agent_not_ready` launch stays `needs-attention` and is never relaunched.
+2. Put the fleet into the recorded situations: one worker inside a long tool call, one with a dirty checkout, one open question, one answered question the worker has not applied, one submitted report, one pane closed by hand, and one worker told in its brief to ignore refresh messages.
+3. `update apply`, `refresh request`, then answer and report through the briefs' absolute callbacks; `update rollback`; `refresh request` again.
+4. Record per worker: observed state, `fanout` counts and wall time of each pass, whether a receipt (`brief adopt`) appeared and after how long, and whether the worker kept its process, checkout, and partial work.
+
+Report the table as observations of those harness versions on that host. A `submitted-unconfirmed` row that never turns `confirmed` is the honest result for a harness that did not act; do not mark it updated.
 Do not claim that connected clients or running agents picked up the new version; only a recorded receipt says a session read the new revision.

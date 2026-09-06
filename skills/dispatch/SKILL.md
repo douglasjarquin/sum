@@ -6,6 +6,13 @@ description: Delegate explicitly approved work into an isolated Herdr task check
 
 Use this only from the pane registered as coordinator by `sumctl init`; the helper refuses dispatch from any other pane. Workers do not dispatch other workers.
 
+## Capacity
+
+`./bin/sumctl settings show` gives the limits (default two slots globally, one per repository), their source, and who holds them.
+Every non-archived task holds a slot; a report or an idle pane frees nothing, only `archive --acknowledge` after you inspected and preserved the work.
+A refused dispatch names the held slots. Do not archive to make room unless the work was actually inspected, and do not raise capacity yourself: `settings set --global N` is the boss's decision, and per-repository isolation stays at one writer per checkout unless the boss also raises `--per-repository`.
+A free slot is never a reason to dispatch; work starts only from an explicit approved instruction.
+
 ## Intake
 
 Identify the repository, outcome, scope/non-goals, acceptance criteria, and verification commands. A direct user request can be the approval; an unapproved issue cannot.

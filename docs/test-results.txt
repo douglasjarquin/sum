@@ -140,3 +140,17 @@ PASS: question remained visible while the coordinator was busy.
 PASS: answer applied, real code committed on task branch, primary checkout unchanged.
 PASS: worker report and records-only backup created; no merge, deletion, or external publication.
 This demo uses NO actual model, Herdr binary, GitHub account, or provider credentials. Temporary fixture cleaned up.
+
+=== fleet-capacity-slice (2026-09-05, macOS, issue #8) ===
+test_legacy_defaults_invalid_settings_and_lowered_limits_never_touch_running_work (test_fleet.FleetTest.test_legacy_defaults_invalid_settings_and_lowered_limits_never_touch_running_work) ... ok
+test_twelve_concurrent_admissions_respect_the_limits_without_lock_held_herdr_calls (test_fleet.FleetTest.test_twelve_concurrent_admissions_respect_the_limits_without_lock_held_herdr_calls) ... ok
+test_twelve_workers_keep_working_through_updates_an_interrupted_refresh_and_a_rollback (test_fleet.FleetTest.test_twelve_workers_keep_working_through_updates_an_interrupted_refresh_and_a_rollback) ... FLEET-MEASURE {"pass": "status --live (12 workers)", "wall_ms": 93, "herdr_calls": 1, "agent_get_calls": 0, "agent_list_calls": 1, "prompts": 0, "reported_fanout": {"sessions": 1, "herdr_calls": 1, "elapsed_ms": 28, "per_recipient_timeout_s": 5, "snapshot_timeout_s": 10}}
+FLEET-MEASURE {"pass": "refresh request after update one (12 workers)", "wall_ms": 415, "herdr_calls": 11, "agent_get_calls": 0, "agent_list_calls": 1, "prompts": 10, "reported_fanout": {"sessions": 1, "herdr_calls": 11, "elapsed_ms": 325, "per_recipient_timeout_s": 5, "snapshot_timeout_s": 10}}
+FLEET-MEASURE {"pass": "refresh request recovery after interruption (12 workers)", "wall_ms": 311, "herdr_calls": 7, "agent_get_calls": 0, "agent_list_calls": 1, "prompts": 6, "reported_fanout": {"sessions": 1, "herdr_calls": 7, "elapsed_ms": 217, "per_recipient_timeout_s": 5, "snapshot_timeout_s": 10}}
+FLEET-MEASURE {"pass": "refresh request after rollback (12 workers)", "wall_ms": 426, "herdr_calls": 11, "agent_get_calls": 0, "agent_list_calls": 1, "prompts": 10, "reported_fanout": {"sessions": 1, "herdr_calls": 11, "elapsed_ms": 335, "per_recipient_timeout_s": 5, "snapshot_timeout_s": 10}}
+FLEET-MEASURE {"pass": "inbox --live after failed update (12 workers)", "wall_ms": 91, "herdr_calls": 1, "agent_get_calls": 0, "agent_list_calls": 1, "prompts": 0, "reported_fanout": {"sessions": 1, "herdr_calls": 1, "elapsed_ms": 27, "per_recipient_timeout_s": 5, "snapshot_timeout_s": 10}}
+Ran 95 tests in 86.009s
+OK
+
+=== live_smoke fleet pass ===
+PASS: 13 prepared tasks in one real Herdr session; status --live took 73 ms and refresh request 292 ms on this host, each with exactly one Herdr observation call; no agent was started, so every worker row is honestly unreachable/pending.

@@ -46,8 +46,13 @@ def main():
         assert second["role"] == "developer" and second["coordinator"]["pane"] == "w-parent:p1"
         assert ctl("init", "--role", "coordinator", pane="w-second:p1", check=False)["error"].startswith("Coordinator is owned by pane w-parent:p1")
         print("PASS: doctor observed without binding; first pane claimed coordinator once; a second unbriefed pane became a developer.")
+        capacity = ctl("settings", "show")
+        assert capacity["limits"] == {"global": 2, "per_repository": 1} and capacity["source"] == "defaults"
         task = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved")
-        print("PASS: delegated through sum to a strict fake Herdr; real isolated Git worktree created.")
+        assert task["admission"]["occupied_before"] == {"global": 0, "repository": 0}
+        refused = ctl("prepare", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", check=False)
+        assert "1 of 1 slots for" in refused["error"] and len(ctl("status")["tasks"]) == 1
+        print("PASS: delegated through sum to a strict fake Herdr; real isolated Git worktree created; a second writer for the same checkout was refused at admission.")
         worker = ctl("init", pane=task["pane"])
         assert worker["role"] == "worker" and worker["task"] == task["id"]
         refused = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", pane="w-second:p1", check=False)
