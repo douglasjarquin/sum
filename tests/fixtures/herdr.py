@@ -17,9 +17,11 @@ with (root / "calls.jsonl").open("a") as out:
     out.write(json.dumps({"session": session, "args": args}) + "\n")
 state_path = root / "state.json"
 state = json.loads(state_path.read_text()) if state_path.exists() else {"panes": {}}
+state.setdefault("workspaces", {})
 parent = os.environ.get("HERDR_PANE_ID", "w-parent:p1")
-state["panes"][parent] = {"pane_id": parent, "cwd": os.environ.get("FAKE_PARENT_CWD", "/tmp"),
+state["panes"][parent] = {"pane_id": parent, "cwd": os.environ.get("FAKE_PARENT_CWD", "/tmp"), "workspace_id": parent.split(":")[0],
   "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": "test-coordinator"}
+state["workspaces"].setdefault(parent.split(":")[0], {"workspace_id": parent.split(":")[0], "label": "coordinator", "worktree": None})
 
 def save():
     tmp = state_path.with_name("state.%d.tmp" % os.getpid())  # Atomic like Herdr's own store; concurrent CLI calls must not see partial JSON.
@@ -41,16 +43,21 @@ if args[:2] == ["worktree", "create"]:
     path.parent.mkdir(exist_ok=True)
     result = subprocess.run(["git", "-C", arg("--cwd"), "worktree", "add", "-b", arg("--branch"), str(path), arg("--base")], capture_output=True, text=True)
     if result.returncode: fail(result.stderr)
-    pane, workspace = "w-" + uuid.uuid4().hex[:6] + ":p1", "workspace-" + uuid.uuid4().hex[:6]
-    state["panes"][pane] = {"pane_id": pane, "cwd": str(path), "agent_status": "unknown", "agent": None}
+    workspace = "w-" + uuid.uuid4().hex[:6]
+    pane = workspace + ":p1"
+    state["panes"][pane] = {"pane_id": pane, "cwd": str(path), "workspace_id": workspace, "agent_status": "unknown", "agent": None}
+    state["workspaces"][workspace] = {"workspace_id": workspace, "label": arg("--label") if "--label" in args else "",
+                                      "worktree": {"checkout_path": str(path), "repo_root": arg("--cwd"), "is_linked_worktree": True}}
     response = {"root_pane": {"pane_id": pane}, "workspace": {"workspace_id": workspace},
                 "worktree": {"path": str(path), "branch": arg("--branch")}}
     if os.environ.get("FAKE_BAD_WORKTREE"): response["worktree"]["path"] = arg("--cwd")
     emit(response)
 if args[:2] == ["workspace", "create"]:
     if "--no-focus" not in args or "--cwd" not in args: fail("wrong workspace contract")
-    pane, workspace = "w-" + uuid.uuid4().hex[:6] + ":p1", "workspace-" + uuid.uuid4().hex[:6]
-    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "agent_status": "unknown", "agent": None}
+    workspace = "w-" + uuid.uuid4().hex[:6]
+    pane = workspace + ":p1"
+    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None}
+    state["workspaces"][workspace] = {"workspace_id": workspace, "label": arg("--label") if "--label" in args else "", "worktree": None}
     emit({"workspace": {"workspace_id": workspace}, "tab": {"tab_id": workspace + ":t1"}, "root_pane": {"pane_id": pane}})
 if args[:2] == ["agent", "start"]:
     if "--pane" not in args or "--kind" not in args or "--cwd" in args: fail("obsolete agent-start syntax")
@@ -80,4 +87,53 @@ if args[:2] == ["agent", "wait"]:
     if not pane or pane["agent_status"] != arg("--until"): fail("timeout")
     emit({"agent": pane})
 if args[:2] == ["integration", "status"]: emit({"integrations": []})
+# --- issue #10 cleanup surface: observation and native removal without force ---------------------------------
+if args[:2] == ["workspace", "get"]:
+    workspace = state["workspaces"].get(args[2])
+    if not workspace: fail("workspace_not_found", f"workspace {args[2]} not found")
+    panes = [p for p in state["panes"].values() if p.get("workspace_id") == args[2]]
+    emit({"workspace": {**workspace, "pane_count": len(panes), "agent_status": "unknown"}})
+if args[:2] == ["pane", "list"]:
+    if "--workspace" not in args: fail("explicit workspace required")
+    if arg("--workspace") not in state["workspaces"]: fail("workspace_not_found", "workspace not found")
+    emit({"panes": [p for p in state["panes"].values() if p.get("workspace_id") == arg("--workspace")]})
+if args[:2] == ["pane", "process-info"]:
+    if "--pane" not in args: fail("explicit pane required")
+    pane = state["panes"].get(arg("--pane"))
+    if not pane: fail("pane_not_found", "pane not found")
+    shell = pane.get("shell_pid", 4242)
+    # A pane's process list is scenario data written by the test; the default is an idle shell in the pane cwd.
+    foreground = pane.get("processes", [{"pid": shell, "name": "bash", "argv0": "bash", "argv": ["-bash"], "cwd": pane["cwd"]}])
+    if pane.get("agent") and "processes" not in pane:  # A live agent occupies the foreground until the scenario clears it.
+        foreground = [{"pid": shell + 1, "name": pane["agent"], "argv0": pane["agent"], "argv": [pane["agent"]], "cwd": pane["cwd"]}]
+    emit({"process_info": {"pane_id": pane["pane_id"], "shell_pid": shell, "foreground_process_group_id": foreground[0]["pid"] if foreground else shell,
+                           "foreground_processes": foreground}})
+if args[:2] == ["pane", "close"]:
+    if args[2] not in state["panes"]: fail("pane_not_found", f"pane {args[2]} not found")
+    del state["panes"][args[2]]
+    emit({"closed": args[2]})
+if args[:2] == ["worktree", "list"]:
+    rows = []
+    for workspace in state["workspaces"].values():
+        if workspace.get("worktree"):
+            rows.append({"path": workspace["worktree"]["checkout_path"], "open_workspace_id": workspace["workspace_id"], "is_linked_worktree": True})
+    emit({"worktrees": rows})
+if args[:2] == ["worktree", "remove"]:
+    if "--workspace" not in args: fail("explicit workspace required")
+    if "--force" in args: fail("forbidden_force", "the fake never accepts --force")
+    workspace = state["workspaces"].get(arg("--workspace"))
+    if not workspace: fail("workspace_not_found", f"workspace {arg('--workspace')} not found")
+    if not workspace.get("worktree"): fail("worktree_not_found", "workspace has no worktree")
+    path = workspace["worktree"]["checkout_path"]
+    if os.environ.get("FAKE_REMOVE_CRASH"):  # Real Herdr 0.8.2 removed the checkout and closed the workspace; the caller crashed before recording it.
+        subprocess.run(["git", "-C", workspace["worktree"]["repo_root"], "worktree", "remove", path], capture_output=True, text=True)
+        for pane_id in [p for p, v in state["panes"].items() if v.get("workspace_id") == workspace["workspace_id"]]: del state["panes"][pane_id]
+        del state["workspaces"][workspace["workspace_id"]]
+        save(); sys.exit(137)
+    result = subprocess.run(["git", "-C", workspace["worktree"]["repo_root"], "worktree", "remove", path], capture_output=True, text=True)
+    if result.returncode:  # Herdr 0.8.2: plain `git worktree remove` failure surfaces as this code; nothing was removed.
+        fail("dirty_worktree_requires_force", result.stderr.strip())
+    for pane_id in [p for p, v in state["panes"].items() if v.get("workspace_id") == workspace["workspace_id"]]: del state["panes"][pane_id]
+    del state["workspaces"][workspace["workspace_id"]]
+    emit({"forced": False, "path": path, "workspace_id": workspace["workspace_id"]})
 fail("unsupported fake operation: " + repr(args))

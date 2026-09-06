@@ -28,6 +28,7 @@ def main():
         brief.write_text("Add greeting.py with greet(name) returning 'Hello, <name>!' and verify it. Ask whether to preserve punctuation. Do not publish.")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SUM_", "HERDR_"))}  # Inherited installation context never steers the lab.
         env.update(SUM_HERDR_BIN=str(ROOT / "tests/fixtures/herdr.py"), SUM_GH_BIN=str(ROOT / "tests/fixtures/gh.py"), FAKE_GH_ROOT=str(base / "fake-gh"),
+                   SUM_LSOF_BIN=str(ROOT / "tests/fixtures/lsof.py"), FAKE_LSOF_ROOT=str(base / "fake-lsof"),
                    FAKE_HERDR_ROOT=str(base / "fake"), FAKE_PARENT_CWD=str(ROOT),
                    HERDR_ENV="1", HERDR_PANE_ID="w-parent:p1", HERDR_SESSION="sum-test",
                    FAKE_PARENT_STATUS="working")
@@ -200,6 +201,34 @@ def main():
         assert ctl("refresh", "adopt", "--coordinator", "r1")["active"] == "r1"
         assert ctl("refresh", "status")["counts"]["confirmed"] == 2
         print("PASS: rolling refresh staged r3 and a coordinator contract snapshot, left the busy worker on its brief, delivered one fixed instruction once it was idle, and confirmed both only through explicit receipts.")
+        # Guarded cleanup: the PR is merged on record, but an idle agent and an open question keep the task visibly cleanup-pending.
+        assert ctl("status")["tasks"][0]["cleanup"]["state"] == "pending"
+        plan = ctl("cleanup", task["id"])
+        codes = sorted({b["code"] for b in plan["blockers"]})
+        assert plan["state"] == "blocked" and codes == ["artifacts", "obligations", "occupant"], plan["blockers"]  # The untracked __pycache__ from the assertion run is named, not cleaned.
+        assert Path(task["worktree"]).is_dir() and ctl("show", task["id"])["status"] != "archived"
+        shutil.rmtree(worktree / "__pycache__")  # The boss decides what an untracked artifact is worth; sum never runs git clean.
+        refused = ctl("cleanup", task["id"], "--apply", check=False)
+        assert "stays cleanup-pending" in refused["error"] and Path(task["worktree"]).is_dir()
+        pending = [q for q in ctl("show", task["id"])["questions"] if q["status"] == "open"]
+        for q in pending:
+            ctl("answer", task["id"], q["id"], "--text", "Yes.")
+            ctl("resolve", task["id"], q["id"], pane=task["pane"])
+        panes = json.loads(fake_state.read_text())
+        panes["panes"][task["pane"]].update(agent=None, agent_status="unknown")  # The worker agent process exited; only the pane shell remains.
+        fake_state.write_text(json.dumps(panes))
+        before = {p: p.read_bytes() for p in (base / "state/tasks").rglob("*") if p.is_file() and p.name != "task.json"}
+        done = ctl("cleanup", task["id"], "--apply")
+        assert done["state"] == "complete" and done["archived"] and done["removed"]["performed"] and not done["removed"]["forced"]
+        assert not Path(task["worktree"]).exists() and task["workspace"] not in json.loads(fake_state.read_text())["workspaces"]
+        assert git("rev-parse", task["branch"]) == candidate and git("rev-parse", "HEAD") == main_sha  # Branch and history survive; main untouched.
+        assert {p: p.read_bytes() for p in (base / "state/tasks").rglob("*") if p.is_file() and p.name != "task.json"} == before
+        shown = ctl("show", task["id"])
+        assert shown["status"] == "archived" and shown["cleanup"]["state"] == "complete" and shown["report"]["text"] and shown["pr"]["merged_for_task"]
+        assert ctl("cleanup", task["id"], "--apply")["already"]
+        calls = [json.loads(l)["args"] for l in (base / "fake/calls.jsonl").read_text().splitlines()]
+        assert [c for c in calls if c[:2] == ["worktree", "remove"]] == [["worktree", "remove", "--workspace", task["workspace"]]] and not any("--force" in c for c in calls)
+        print("PASS: cleanup refused while an idle agent and an open decision remained, then removed only the verified task workspace through one native non-forced Herdr operation, archived the record, and kept the branch, brief revisions, reports, and PR evidence; a repeat was a no-op.")
         print("This demo uses NO actual model, Herdr binary, GitHub account, or provider credentials. Temporary fixture cleaned up.")
 
 if __name__ == "__main__": main()
