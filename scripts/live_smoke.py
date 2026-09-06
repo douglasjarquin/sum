@@ -104,6 +104,74 @@ def main():
             assert refresh["fanout"]["herdr_calls"] == 1, refresh["fanout"]
             print(f"PASS: 13 prepared tasks in one real Herdr session; status --live took {wall} ms and refresh request {refresh_wall} ms on this host, "
                   f"each with exactly one Herdr observation call; no agent was started, so every worker row is honestly unreachable/pending.")
+            # Native events lab (#14): link this lab state's plugin into the isolated Herdr registry, drive real status edges with
+            # `pane report-agent`, and check that the real server ran the handler with the documented environment.
+            hook = sumctl("--home", str(state), "hook", "enable")
+            listed = cli("plugin", "list", "--plugin", hook["plugin_id"], "--json")["plugins"]
+            assert len(listed) == 1 and listed[0]["enabled"] and listed[0]["manifest_path"] == hook["manifest"], listed
+            assert listed[0].get("warnings", []) == [], listed[0]  # Every declared event name is known to the pinned build; 0.8.2 omits the field when empty.
+            assert hook["fanout"]["herdr_calls"] == 1, hook["fanout"]
+            marker = "SUM_EXCERPT_" + uuid.uuid4().hex[:8]
+            cli("pane", "run", task["pane"], "printf '%s\\n' " + shlex.quote(marker))
+            cli("pane", "wait-output", task["pane"], "--match", marker, "--timeout", "5000")
+            record = json.loads((state / "tasks" / task["id"] / "task.json").read_text())
+            record["status"] = "running"  # Lab only: a scripted occupant stands in for a launched harness so idle is a finished turn, not the launch handshake.
+            (state / "tasks" / task["id"] / "task.json").write_text(json.dumps(record))
+            health_path = state / "hook" / "health.json"
+            def edge(status, expect_kind):
+                before = json.loads(health_path.read_text()).get("events", 0)
+                started = time.monotonic()
+                cli("pane", "report-agent", task["pane"], "--source", "lab", "--agent", "claude", "--state", status)
+                while time.monotonic() - started < 10:
+                    health = json.loads(health_path.read_text())
+                    if health.get("events", 0) > before and health["last_event"].get("pane") == task["pane"] and health["last_event"].get("status") == status:
+                        break
+                    time.sleep(0.02)
+                else:
+                    raise RuntimeError(f"handler did not record the {status} edge: {json.loads(health_path.read_text())}")
+                wall = round((time.monotonic() - started) * 1000)
+                last = health["last_event"]
+                assert last["outcome"] == "handled" and last["event"] == "pane.agent_status_changed", last
+                worker = [o for o in last["outcomes"] if o.get("task") == task["id"]][0]
+                assert worker.get("kind") == expect_kind, worker
+                return wall, last["handler_ms"], worker
+            swept = [r for r in hook["reconciliation"]["attention"] if r["outcome"] == "recorded"]
+            assert len(swept) == 13 and {r["kind"] for r in swept} == {"exited"}, swept  # Every waiting task's pane has no agent: recorded once each, from one snapshot, no prompt.
+            wall_idle, handler_idle, worker = edge("idle", None)  # This task holds an open saved question: idle is expected and the question is preserved.
+            saved = json.loads((state / "tasks" / task["id"] / "task.json").read_text())
+            assert saved["questions"][0]["status"] == "open" and [a["kind"] for a in saved["attention"] if a["status"] == "open"] == ["exited"], saved["attention"]
+            assert worker["action"] == "pump" and worker["prompts"] == 0, worker  # Nothing was typed into the scripted occupant.
+            wall_blocked, handler_blocked, worker = edge("blocked", "blocked")
+            saved = json.loads((state / "tasks" / task["id"] / "task.json").read_text())
+            [attention] = [a for a in saved["attention"] if a["status"] == "open" and a["kind"] == "blocked"]
+            assert marker in attention["excerpt"], attention
+            assert "agent read" in attention["source"]["pointer"] and attention["source"]["session"] == name
+            returns = sumctl("--home", str(state), "show", task["id"])["returns"]["open"]
+            assert sorted(r["kind"] for r in returns) == ["attention", "attention", "question", "refresh"], [(r["kind"], r["notification"]["state"]) for r in returns]
+            assert all(r["notification"]["state"] in ("not-delivered", "stalled") or r["notification"].get("via") == "inline" for r in returns), returns  # Inline presentation to the enabling coordinator only; the root is a shell pane and the worker an unregistered scripted occupant, so nothing was typed anywhere.
+            assert not any(r["notification"].get("via") == "prompt" and r["notification"]["state"] == "submitted" for r in returns), returns
+            wall_working, handler_working, worker = edge("working", None)
+            assert worker["action"] == "resumed" and worker["closed"] == [attention["id"]], worker  # Resuming closes the blocked record; the exit record waits for the coordinator.
+            health = json.loads(health_path.read_text())
+            assert health["errors"] == [] and health["handled"] >= 3, health
+            ignored_before = health["ignored"]
+            stranger = cli("workspace", "create", "--cwd", str(base), "--label", "stranger", "--no-focus")["root_pane"]["pane_id"]
+            cli("pane", "report-agent", stranger, "--source", "lab", "--agent", "claude", "--state", "idle")
+            deadline = time.monotonic() + 10
+            while json.loads(health_path.read_text())["ignored"] == ignored_before and time.monotonic() < deadline:
+                time.sleep(0.02)
+            health = json.loads(health_path.read_text())
+            assert health["ignored"] >= ignored_before + 1 and health["last_event"]["outcome"] == "ignored", health["last_event"]  # Detection plus status edge: both ignored, neither touched a record.
+            logs = cli("plugin", "log", "list", "--plugin", hook["plugin_id"], "--limit", "10")["logs"]
+            assert logs and all(l["status"] == "succeeded" for l in logs), [(l["event"], l["status"], l["stderr"]) for l in logs]
+            status = sumctl("--home", str(state), "hook", "status")
+            assert status["enabled"] and status["registry"]["enabled"] and not status["degraded"], status
+            disabled = sumctl("--home", str(state), "hook", "disable", "--unlink")
+            assert disabled["action"] == "unlinked" and cli("plugin", "list", "--plugin", hook["plugin_id"], "--json")["plugins"] == []
+            print(f"PASS: real Herdr 0.8.2 linked the lab plugin live, ran the handler for idle/blocked/working edges with the documented environment, "
+                  f"recorded bounded attention with a real output excerpt, ignored an unrelated pane, and unlinked cleanly. "
+                  f"Event-to-attention wall time on this host: idle {wall_idle} ms (handler {handler_idle} ms), blocked {wall_blocked} ms (handler {handler_blocked} ms), "
+                  f"working {wall_working} ms (handler {handler_working} ms). No model was involved; a shell reported as an agent is not semantic question detection.")
             installation = base / "installation"
             installation.mkdir()
             subprocess.run(["git", "-C", str(installation), "init", "-b", "main"], check=True, capture_output=True, env=env)

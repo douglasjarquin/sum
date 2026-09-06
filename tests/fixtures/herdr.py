@@ -89,6 +89,42 @@ if args[:2] == ["agent", "wait"]:
     if not pane or pane["agent_status"] != arg("--until"): fail("timeout")
     emit({"agent": pane})
 if args[:2] == ["integration", "status"]: emit({"integrations": []})
+if args[:2] == ["agent", "read"]:
+    pane = state["panes"].get(args[2])
+    if not pane or not pane.get("agent"): fail("agent_not_found")
+    if "--source" not in args or "--lines" not in args: fail("explicit read source and line count required")
+    print(pane.get("screen", "")); save(); sys.exit(0)  # Real 0.8.2 prints the text itself, not a JSON envelope.
+# --- issue #14 plugin registry: user-global like Herdr's, so every session sees the same rows -------------------------------
+import tomllib
+registry_path = root / "plugins.json"
+registry = json.loads(registry_path.read_text()) if registry_path.exists() else {}
+def save_registry():
+    tmp = registry_path.with_name("plugins.%d.tmp" % os.getpid()); tmp.write_text(json.dumps(registry)); os.replace(tmp, registry_path)
+def plugin_row(plugin_id):
+    row = registry.get(plugin_id)
+    if not row: fail("plugin_not_found", f"plugin {plugin_id} not found")
+    return row
+if args[:2] == ["plugin", "link"]:
+    path = pathlib.Path(args[2])
+    manifest = path / "herdr-plugin.toml"
+    if not manifest.is_file(): fail("manifest_missing", str(manifest))
+    doc = tomllib.loads(manifest.read_text())
+    known = {"pane.agent_status_changed", "pane.agent_detected", "pane.exited", "pane.closed", "workspace.closed", "worktree.created"}
+    events = [{"on": e["on"], "command": e["command"]} for e in doc.get("events", [])]
+    previous = registry.get(doc["id"], {})
+    registry[doc["id"]] = {"plugin_id": doc["id"], "name": doc["name"], "version": doc["version"], "min_herdr_version": doc["min_herdr_version"],
+                           "manifest_path": str(manifest), "plugin_root": str(path), "enabled": "--disabled" not in args and previous.get("enabled", True),
+                           "events": events, "startup": [{"command": s["command"]} for s in doc.get("startup", [])], "source": {"kind": "local"},
+                           "warnings": [f"unknown event '{e['on']}'" for e in events if e["on"] not in known]}
+    save_registry(); emit({"plugin": registry[doc["id"]], "type": "plugin_linked"})
+if args[:2] == ["plugin", "list"]:
+    if "--json" not in args: fail("text_output", "the fake only speaks --json; sum must never parse the human listing")
+    rows = list(registry.values()) if "--plugin" not in args else [r for r in registry.values() if r["plugin_id"] == arg("--plugin")]
+    emit({"plugins": rows, "type": "plugin_list"})
+if args[:2] in (["plugin", "enable"], ["plugin", "disable"]):
+    row = plugin_row(args[2]); row["enabled"] = args[1] == "enable"; save_registry(); emit({"plugin": row, "type": f"plugin_{args[1]}d"})
+if args[:2] == ["plugin", "unlink"]:
+    plugin_row(args[2]); del registry[args[2]]; save_registry(); emit({"plugin_id": args[2], "removed": True, "type": "plugin_unlinked"})
 # --- issue #10 cleanup surface: observation and native removal without force ---------------------------------
 if args[:2] == ["workspace", "get"]:
     workspace = state["workspaces"].get(args[2])
