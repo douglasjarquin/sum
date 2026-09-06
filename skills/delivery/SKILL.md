@@ -12,6 +12,7 @@ Confirm the checkout, branch, candidate SHA, and actual diff. Confirm the report
 Use the repo's configured MADE/No Mistakes route when available. Otherwise arrange a fresh-context review through a separately launched reviewer or the harness's supported independent-review facility.
 The reviewer receives the task contract and candidate, not an instruction to rubber-stamp the worker's summary. Do not have simultaneous writers in the checkout.
 If a separate reviewer is unavailable, say independent review was not performed; do not label the result fully reviewed.
+Check `sumctl brief list TASK_ID`: the report is bound to a brief revision, and `verification_policy_changed_since` means a later revision changed the worker procedure or brief schema. Review under the current policy before accepting that evidence.
 Tie the review to the exact candidate SHA. Re-run required checks for later candidates; review the intervening changes rather than treating the previous SHA's approval as current.
 A nit is not automatically a blocker. Limit repair cycles; escalate repeated failure rather than opening an endless review/fix loop.
 

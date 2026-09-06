@@ -17,7 +17,7 @@ Record the boss's actual answer with:
 ./bin/sumctl answer TASK_ID QUESTION_ID --text 'The authorized answer'
 ```
 
-An answer stays visible until the worker marks it applied. A pending notice can be tried once with `sumctl notice TASK_ID --to worker` after checking the recipient is available. Do not loop.
+An answer stays visible until the worker marks it applied. `sumctl brief list TASK_ID` shows whether a report was produced under an older brief revision whose verification policy has since changed; treat that as evidence needing refresh review, not as a failure or an approval. A pending notice can be tried once with `sumctl notice TASK_ID --to worker` after checking the recipient is available. Do not loop.
 
 ## Restart
 
@@ -31,7 +31,7 @@ Do not alter Herdr's global auto-resume policy. Herdr is the sole process/restor
 
 ## Backup
 
-`sumctl backup /path/outside/state/sum-records.tar.gz` saves versioned task records, briefs, reports, and decisions with a manifest.
+`sumctl backup /path/outside/state/sum-records.tar.gz` saves versioned task records, every brief revision and version sidecar, reports, and decisions with a manifest.
 It is explicitly **records-only**. Worktree code, unpushed commits, dirty files, credentials, and live processes are not captured.
 Back up code separately through the repo/host's existing process. A backup of this directory is not a full machine-crash recovery guarantee.
 Restore into a new directory, retain the original, and inspect the manifest. Schema mismatches fail rather than attempting an in-place migration.

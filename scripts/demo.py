@@ -68,10 +68,23 @@ def main():
         ctl("report", task["id"], "--text", f"Scripted worker added greeting.py. Candidate {candidate}. Python assertion passed. No independent LLM review or PR performed.")
         assert git("rev-parse", "HEAD") == main_sha
         assert not (repo / "greeting.py").exists()
+        # Versioned briefs: regenerate from the record (no model call), stage beside the brief the worker read, never overwrite it.
+        original_brief = Path(task["brief_path"]).read_bytes()
+        staged = ctl("brief", "regenerate", task["id"])
+        assert not staged["duplicate"] and staged["revision"]["id"] == "r2" and staged["active"] == "r1"
+        assert staged["revision"]["summary"] == [f"decision {q['question']['id']} recorded (applied)"]
+        assert ctl("brief", "regenerate", task["id"])["duplicate"]
+        assert Path(task["brief_path"]).read_bytes() == original_brief and ctl("show", task["id"])["brief"] == brief.read_text()
+        assert "Yes, keep it." in Path(staged["revision"]["path"]).read_text()
+        assert ctl("brief", "request", task["id"], "r2")["requested"] == "r2"
+        assert ctl("show", task["id"])["notice"]["reason"] == "a worker report is available"  # Refresh bookkeeping left the notice slot alone.
+        assert ctl("brief", "adopt", task["id"], "r2", pane=task["pane"])["active"] == "r2"
+        assert ctl("show", task["id"])["report"]["brief_revision"] == "r1"
         backup = ctl("backup", str(base / "records.tar.gz"))
-        assert backup["manifest"]["scope"] == "records-only"
+        assert backup["manifest"]["scope"] == "records-only" and backup["manifest"]["brief_revisions_included"]
         print("PASS: answer applied, real code committed on task branch, primary checkout unchanged.")
-        print("PASS: worker report and records-only backup created; no merge, deletion, or external publication.")
+        print("PASS: brief revision r2 staged from the record with a machine-generated summary; the worker's original brief and the approved task stayed byte-identical; refresh was explicit.")
+        print("PASS: worker report and records-only backup (with every brief revision) created; no merge, deletion, or external publication.")
         # Self-development: an isolated checkout of a (fixture) installation while the task records above stay in service.
         installation = base / "installation"
         installation.mkdir()

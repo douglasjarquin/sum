@@ -523,6 +523,292 @@ class CoreTest(unittest.TestCase):
         self.assertTrue(all(r.returncode == 0 for r in results), [r.stderr for r in results])
         self.assertEqual(len(self.store.read(task["id"])["questions"]), 8)
 
+    # --- versioned briefs ----------------------------------------------------
+
+    def legacy_helper(self):
+        """The helper as shipped before version sidecars (main at b1239a4), run as a frozen external writer."""
+        show = subprocess.run(["git", "-C", str(ROOT), "show", "b1239a444067d100fd9bd0ec550d0acdaea95819:lib/sumctl.py"], capture_output=True, text=True)
+        if show.returncode:
+            self.skipTest("legacy helper source is not available in this checkout")
+        root = self.root / "legacy-runtime"
+        (root / "lib").mkdir(parents=True)
+        (root / "lib/sumctl.py").write_text(show.stdout)
+        shutil.copytree(ROOT / "skills", root / "skills")
+        return root / "lib/sumctl.py"
+
+    def legacy_cli(self, helper, *args, env=None):
+        merged = os.environ.copy()
+        merged.update(env or {})
+        return subprocess.run([sys.executable, str(helper), "--home", str(self.store.home), *args], env=merged, capture_output=True, text=True)
+
+    def altered_runtime(self, marker="## Changed procedure\n"):
+        runtime = self.root / "altered-runtime" / sumctl.sha256_text(marker)[:8]
+        if not runtime.exists():
+            shutil.copytree(ROOT / "skills", runtime / "skills")
+            skill = runtime / "skills/worker/SKILL.md"
+            skill.write_text(skill.read_text() + "\n" + marker)
+        return mock.patch.object(sumctl, "RUNTIME", runtime)
+
+    def versions(self, task):
+        return json.loads((self.store.path(task["id"]) / "versions.json").read_text())
+
+    def test_dispatch_records_versions_and_first_revision(self):
+        task = self.prepare()
+        versions = self.versions(task)
+        self.assertEqual((versions["schema"], versions["legacy"], versions["active"], versions["requested"]), (1, False, "r1", None))
+        self.assertEqual(versions["runtime"]["sum_version"], sumctl.VERSION)
+        self.assertEqual(versions["approved"]["sha256"], sumctl.sha256_text(task["brief"]))
+        [r1] = versions["revisions"]
+        text = Path(task["brief_path"]).read_text()
+        self.assertEqual((r1["id"], r1["path"], r1["status"], r1["sha256"]), ("r1", "brief.md", "active", sumctl.sha256_text(text)))
+        self.assertIn("Revision: `r1`", text)
+        self.assertIn("No decisions recorded yet.", text)
+        self.assertIn(str(self.store.home), r1["commands"]["ask"])
+        with mock.patch.object(sumctl, "emit") as emitted:
+            self.assertEqual(sumctl.main(["--home", str(self.store.home), "show", task["id"]]), 0)
+        shown = emitted.call_args[0][0]
+        self.assertEqual(shown["brief"], task["brief"])
+        self.assertEqual(shown["versions"]["active"], "r1")
+        self.assertTrue(shown["versions"]["revisions"][0]["ok"])
+
+    def test_regenerate_stages_a_revision_without_touching_the_brief_being_read(self):
+        task = self.prepare()
+        q = self.question(task)["question"]
+        sumctl.answer(self.store, argparse.Namespace(task=task["id"], question=q["id"], text="Yes, keep it.", file=None))
+        original = Path(task["brief_path"])
+        handle = original.open("rb")  # A worker mid-read.
+        self.addCleanup(handle.close)
+        first_bytes = original.read_bytes()
+        record = self.store.read(task["id"])
+        with self.altered_runtime():
+            value = sumctl.regenerate_brief(self.store, task["id"])
+            self.assertTrue(sumctl.regenerate_brief(self.store, task["id"])["duplicate"])
+        self.assertFalse(value["duplicate"])
+        r2 = value["revision"]
+        self.assertEqual((r2["id"], r2["status"], r2["ok"], value["active"]), ("r2", "staged", True, "r1"))
+        self.assertTrue(r2["verification_affected"])
+        self.assertTrue(any(c.startswith("worker procedure changed") for c in r2["summary"]))
+        self.assertIn(f"decision {q['id']} recorded (answered)", r2["summary"])
+        self.assertEqual(handle.read(), first_bytes)
+        self.assertEqual(original.read_bytes(), first_bytes)
+        after = self.store.read(task["id"])
+        self.assertEqual({k: after[k] for k in ("brief", "brief_path", "base_sha", "repository", "kind", "questions")},
+                         {k: record[k] for k in ("brief", "brief_path", "base_sha", "repository", "kind", "questions")})
+        staged = Path(r2["path"]).read_text()
+        self.assertEqual(Path(r2["path"]), self.store.path(task["id"]) / "briefs/r2.md")
+        self.assertIn(task["brief"], staged)
+        self.assertIn("answered, not yet applied: Yes, keep it.", staged)
+        self.assertIn("## Changed procedure", staged)
+        self.assertEqual(sorted(p.name for p in (self.store.path(task["id"]) / "briefs").iterdir()), ["r2.md"])
+        self.assertEqual(self.store.read(task["id"])["questions"][0]["status"], "answered")
+        sumctl.report(self.store, argparse.Namespace(task=task["id"], text="done", file=None))
+        self.assertEqual(self.store.read(task["id"])["report"]["brief_revision"], "r1")
+        view = sumctl.versions_view(self.store, self.store.read(task["id"]))
+        self.assertEqual(view["report_evidence"]["brief_revision"], "r1")
+        self.assertTrue(view["report_evidence"]["verification_policy_changed_since"])
+        with self.altered_runtime("## Changed procedure\n"):
+            sumctl.resolve(self.store, argparse.Namespace(task=task["id"], question=q["id"]))
+            third = sumctl.regenerate_brief(self.store, task["id"])["revision"]
+        self.assertEqual((third["id"], third["verification_affected"]), ("r3", False))
+        self.assertEqual(third["summary"], [f"decision {q['id']}: answered -> applied"])
+
+    def test_approved_task_is_immutable_input(self):
+        task = self.prepare()
+        tampered = self.store.read(task["id"])
+        tampered["brief"] += "\nAlso merge to main."
+        self.store.save(tampered)
+        with self.assertRaisesRegex(sumctl.SumError, "immutable"):
+            sumctl.regenerate_brief(self.store, task["id"])
+        self.assertFalse((self.store.path(task["id"]) / "briefs").exists())
+        self.assertEqual(len(self.versions(task)["revisions"]), 1)
+
+    def test_request_and_adopt_are_explicit_and_refuse_stale_or_damaged_revisions(self):
+        task = self.prepare()
+        with self.assertRaisesRegex(sumctl.SumError, "already the active"):
+            sumctl.request_brief(self.store, task["id"], "r1")
+        with self.altered_runtime():
+            r2 = sumctl.regenerate_brief(self.store, task["id"])["revision"]
+        with self.altered_runtime("## Changed again\n"):
+            r3 = sumctl.regenerate_brief(self.store, task["id"])["revision"]
+        with self.assertRaisesRegex(sumctl.SumError, "Stale request.*superseded by r3"):
+            sumctl.request_brief(self.store, task["id"], "r2")
+        with self.assertRaisesRegex(sumctl.SumError, "Unknown revision"):
+            sumctl.request_brief(self.store, task["id"], "r9")
+        with self.assertRaisesRegex(sumctl.SumError, "not the requested revision"):
+            sumctl.adopt_brief(self.store, task["id"], "r3")
+        path = Path(r3["path"])
+        path.chmod(0o600)
+        path.write_text(path.read_text() + "tampered\n")
+        with self.assertRaisesRegex(sumctl.SumError, "not usable.*does not match"):
+            sumctl.request_brief(self.store, task["id"], "r3")
+        listed = sumctl.versions_view(self.store, self.store.read(task["id"]))
+        self.assertEqual([(r["id"], r["ok"]) for r in listed["revisions"]], [("r1", True), ("r2", True), ("r3", False)])
+        self.assertIsNone(listed["requested"])
+        path.unlink()
+        self.assertIn("missing", sumctl.versions_view(self.store, self.store.read(task["id"]))["revisions"][2]["error"])
+        with self.altered_runtime("## Changed again\n"):
+            r4 = sumctl.regenerate_brief(self.store, task["id"])["revision"]  # Same content as the lost r3: a fresh number, never a rewrite.
+        self.assertEqual(r4["id"], "r4")
+        (self.store.path(task["id"]) / "briefs/r5.md").write_text("orphan from an interrupted regeneration\n")
+        with self.altered_runtime("## Third\n"):
+            self.assertEqual(sumctl.regenerate_brief(self.store, task["id"])["revision"]["id"], "r6")
+        self.assertEqual((self.store.path(task["id"]) / "briefs/r5.md").read_text(), "orphan from an interrupted regeneration\n")
+        requested = sumctl.request_brief(self.store, task["id"], "r6")
+        self.assertEqual((requested["requested"], requested["active"]), ("r6", "r1"))
+        self.assertIsNone(self.store.read(task["id"])["notice"])  # Refresh bookkeeping never uses the notice slot.
+        self.assertEqual(sumctl.status(self.store)["tasks"][0]["brief"], {"active": "r1", "requested": "r6"})
+        with self.pane("w-worker:p1"):
+            adopted = sumctl.adopt_brief(self.store, task["id"], "r6")
+        self.assertEqual(adopted["active"], "r6")
+        versions = self.versions(task)
+        self.assertEqual((versions["active"], versions["requested"]), ("r6", None))
+        self.assertEqual({r["id"]: r["status"] for r in versions["revisions"]}["r1"], "superseded")
+        self.assertEqual([e["event"] for e in versions["refresh"]], ["requested", "adopted"])
+        self.assertEqual(self.store.read(task["id"])["brief_path"], task["brief_path"])
+        self.assertEqual(Path(task["brief_path"]).read_text(), Path(self.store.path(task["id"]) / "brief.md").read_text())
+
+    def test_unsupported_version_sidecar_is_inspected_not_migrated(self):
+        task = self.prepare()
+        sidecar = self.store.path(task["id"]) / "versions.json"
+        sidecar.write_text('{"schema": 99, "task": "%s"}\n' % task["id"])
+        with self.assertRaisesRegex(sumctl.SumError, "Unsupported"):
+            sumctl.regenerate_brief(self.store, task["id"])
+        self.assertIn("Unsupported", sumctl.status(self.store)["tasks"][0]["brief"]["error"])
+        with mock.patch.object(sumctl, "emit") as emitted:
+            self.assertEqual(sumctl.main(["--home", str(self.store.home), "show", task["id"]]), 0)
+        self.assertIn("Unsupported", emitted.call_args[0][0]["versions_error"])
+        self.question(task)
+        sumctl.report(self.store, argparse.Namespace(task=task["id"], text="done", file=None))  # Callbacks still work.
+        self.assertEqual(json.loads(sidecar.read_text())["schema"], 99)
+
+    def test_legacy_helper_records_interoperate_with_versioned_briefs(self):
+        helper = self.legacy_helper()
+        env = {"FAKE_PARENT_STATUS": "working"}
+        prepared = self.legacy_cli(helper, "prepare", "--repo", str(self.repo), "--brief", str(self.brief), "--harness", "codex", "--approved", env=env)
+        self.assertEqual(prepared.returncode, 0, prepared.stderr)
+        task = json.loads(prepared.stdout)
+        self.assertFalse((self.store.path(task["id"]) / "versions.json").exists())
+        legacy_bytes = Path(task["brief_path"]).read_bytes()
+        view = sumctl.versions_view(self.store, self.store.read(task["id"]))
+        self.assertEqual((view["legacy"], view["active"], view["revisions"][0]["id"], view["revisions"][0]["ok"]), (True, "legacy", "legacy", True))
+        q = json.loads(self.legacy_cli(helper, "ask", task["id"], "--key", "old", "--text", "Old worker asks?", env=env).stdout)["question"]
+        regenerated = sumctl.regenerate_brief(self.store, task["id"])
+        self.assertEqual(regenerated["revision"]["id"], "r2")
+        versions = self.versions(task)
+        self.assertEqual((versions["revisions"][0]["id"], versions["revisions"][0]["legacy"], versions["revisions"][0]["sha256"]), ("r1", True, sumctl.sha256_text(legacy_bytes.decode())))
+        self.assertEqual(versions["runtime"], {**versions["runtime"], "sum_version": "0.1.0", "assumed": True})
+        self.assertEqual(Path(task["brief_path"]).read_bytes(), legacy_bytes)
+        sumctl.request_brief(self.store, task["id"], "r2")
+        # The frozen old helper keeps working on the same record after new metadata exists, and preserves what it does not know.
+        answered = self.legacy_cli(helper, "answer", task["id"], q["id"], "--text", "Yes.", env=env)
+        self.assertEqual(answered.returncode, 0, answered.stderr)
+        self.assertEqual(self.legacy_cli(helper, "report", task["id"], "--text", "old report", env=env).returncode, 0)
+        self.assertEqual(self.legacy_cli(helper, "show", task["id"]).returncode, 0)
+        record = self.store.read(task["id"])
+        self.assertEqual((record["status"], record["questions"][0]["status"], record["report"]["text"]), ("reported", "answered", "old report"))
+        self.assertEqual(self.versions(task)["requested"], "r2")
+        view = sumctl.versions_view(self.store, record)
+        self.assertEqual(view["report_evidence"]["brief_revision"], "r1")  # An old writer's report is bound to the brief it followed.
+        self.assertEqual(self.legacy_cli(helper, "resolve", task["id"], q["id"]).returncode, 0)
+        self.assertEqual(self.store.read(task["id"])["questions"][0]["status"], "applied")
+        new_task = json.loads(self.legacy_cli(helper, "show", task["id"]).stdout)
+        self.assertNotIn("versions", new_task)  # The old reader shows its own record shape unchanged.
+        second = self.root / "second-repo"
+        subprocess.run(["git", "clone", "--quiet", str(self.repo), str(second)], check=True)
+        modern = self.prepare(repo=str(second))
+        self.assertEqual(self.legacy_cli(helper, "ask", modern["id"], "--key", "k", "--text", "From an old helper?", env=env).returncode, 0)
+        self.assertEqual(self.legacy_cli(helper, "report", modern["id"], "--text", "old helper report", env=env).returncode, 0)
+        self.assertEqual(self.versions(modern)["active"], "r1")
+        self.assertEqual(self.store.read(modern["id"])["report"]["text"], "old helper report")
+
+    def test_concurrent_old_and_new_writers_keep_every_record(self):
+        helper = self.legacy_helper()
+        task = self.prepare()
+        env = os.environ.copy()
+        env["FAKE_PARENT_STATUS"] = "working"
+        first = self.question(task, key="early", text="Early?")["question"]
+        sumctl.answer(self.store, argparse.Namespace(task=task["id"], question=first["id"], text="Keep it.", file=None))
+        altered = self.root / "altered-runtime"
+        shutil.copytree(ROOT / "skills", altered / "skills")
+        (altered / "skills/worker/SKILL.md").write_text((altered / "skills/worker/SKILL.md").read_text() + "\nchanged\n")
+        def new_cli(*args):
+            return subprocess.run([sys.executable, str(ROOT / "lib/sumctl.py"), "--home", str(self.store.home), *args], env=env, capture_output=True, text=True)
+        def regenerate(i):
+            with mock.patch.object(sumctl, "RUNTIME", altered if i % 2 else ROOT):
+                return sumctl.regenerate_brief(self.store, task["id"])
+        jobs = []
+        for i in range(6):
+            jobs.append(lambda i=i: subprocess.run([sys.executable, str(helper), "--home", str(self.store.home), "ask", task["id"], "--key", f"old{i}", "--text", f"Old {i}"], env=env, capture_output=True, text=True))
+            jobs.append(lambda i=i: new_cli("ask", task["id"], "--key", f"new{i}", "--text", f"New {i}"))
+            jobs.append(lambda i=i: regenerate(i))
+        jobs.append(lambda: new_cli("report", task["id"], "--text", "candidate abc123"))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+            results = list(pool.map(lambda job: job(), jobs))
+        for result in results:
+            if isinstance(result, subprocess.CompletedProcess):
+                self.assertEqual(result.returncode, 0, result.stderr)
+        record = self.store.read(task["id"])
+        self.assertEqual(len(record["questions"]), 13)
+        self.assertEqual(next(q for q in record["questions"] if q["id"] == first["id"])["status"], "answered")
+        self.assertTrue(all(q["status"] == "open" for q in record["questions"] if q["id"] != first["id"]))
+        self.assertEqual(record["report"]["text"], "candidate abc123")
+        versions = self.versions(task)
+        files = sorted(p.name for p in (self.store.path(task["id"]) / "briefs").iterdir())
+        self.assertEqual(files, sorted(Path(r["path"]).name for r in versions["revisions"][1:]))
+        self.assertTrue(all(r["ok"] for r in sumctl.versions_view(self.store, record)["revisions"]))
+        self.assertEqual(versions["active"], "r1")
+        self.assertEqual(Path(task["brief_path"]).read_text(), Path(task["brief_path"]).read_text())
+
+    def test_backup_carries_every_brief_revision_and_version_sidecar(self):
+        task = self.prepare()
+        with self.altered_runtime():
+            r2 = sumctl.regenerate_brief(self.store, task["id"])["revision"]
+        (Path(task["worktree"]) / "secret.py").write_text("TOKEN = 'never'\n")
+        (self.store.home / ".env").write_text("SECRET=never-copy\n")
+        target = self.root / "records.tar.gz"
+        value = sumctl.backup(self.store, target)
+        self.assertTrue(value["manifest"]["brief_revisions_included"])
+        with tarfile.open(target) as archive:
+            names = archive.getnames()
+            prefix = f"state/tasks/{task['id']}/"
+            self.assertIn(prefix + "versions.json", names)
+            self.assertIn(prefix + "brief.md", names)
+            self.assertIn(prefix + "briefs/r2.md", names)
+            self.assertFalse(any("secret" in n or ".env" in n or "worktrees" in n for n in names))
+            self.assertEqual(archive.extractfile(prefix + "briefs/r2.md").read(), Path(r2["path"]).read_bytes())
+        restored = self.root / "restored"
+        with tarfile.open(target) as archive:
+            archive.extractall(restored, filter="data")
+        restored_store = sumctl.Store(restored / "state")
+        view = sumctl.versions_view(restored_store, restored_store.read(task["id"]))
+        self.assertEqual([(r["id"], r["ok"]) for r in view["revisions"]], [("r1", True), ("r2", True)])
+        self.assertTrue(view["revisions"][1]["path"].startswith(str(restored)))
+        sidecar = restored / "state/tasks" / task["id"] / "versions.json"
+        sidecar.write_text(sidecar.read_text().replace('"schema": 1', '"schema": 7', 1))
+        older = sumctl.backup(restored_store, self.root / "older.tar.gz")
+        self.assertEqual(older["manifest"]["unreadable_version_metadata"][0]["task"], task["id"])
+        self.assertEqual(json.loads(sidecar.read_text())["schema"], 7)
+
+    def test_brief_cli_is_gated_like_other_commands(self):
+        task = self.prepare()
+        with mock.patch.object(sumctl, "emit") as emitted:
+            self.assertEqual(sumctl.main(["--home", str(self.store.home), "brief", "list", task["id"]]), 0)
+        self.assertEqual(emitted.call_args[0][0]["active"], "r1")
+        with self.pane("w-dev:p1"), mock.patch("sys.stderr"):
+            self.init()
+            self.assertEqual(sumctl.main(["--home", str(self.store.home), "brief", "regenerate", task["id"]]), 1)
+        self.assertEqual(len(self.versions(task)["revisions"]), 1)
+        with mock.patch.object(sumctl, "emit"):
+            self.assertEqual(sumctl.main(["--home", str(self.store.home), "brief", "regenerate", task["id"]]), 0)  # Duplicate: no change, still fine.
+        root, store = self.installation()
+        self.init(store=store)
+        other = sumctl.prepare(store, argparse.Namespace(repo=str(self.repo), brief=str(self.brief), harness="codex", base="HEAD", kind="ship", approved=True, arg=[]))
+        candidate = Path(self.dev(store, "candidate")["path"])
+        with mock.patch.object(sumctl, "ROOT", candidate), mock.patch("sys.stderr"), mock.patch.object(sumctl, "emit"):
+            self.assertEqual(sumctl.main(["--home", str(store.home), "brief", "list", other["id"]]), 0)
+            self.assertEqual(sumctl.main(["--home", str(store.home), "brief", "regenerate", other["id"]]), 1)
+            self.assertEqual(sumctl.main(["--home", str(store.home), "brief", "adopt", other["id"], "r1"]), 1)
+
     # --- self-development checkouts ------------------------------------------
 
     def test_dev_prepare_creates_isolated_checkout_and_reopens_dirty_work(self):

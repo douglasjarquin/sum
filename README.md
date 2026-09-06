@@ -68,7 +68,7 @@ The helper is called `sumctl` to avoid shadowing the Unix `sum` command. Normall
 
 ## State and communication
 
-Private state lives in `.sum/` and is ignored by Git. `.sum/context.json` records the coordinator owner and `.sum/sessions/` the registered panes and roles. Optional `.sum/preferences.md` and `.sum/projects.md` hold local preferences and project notes. Each task stores its brief, base SHA, branch/worktree, pane bindings, questions, answers, and report. File updates are locked and atomically replaced on one local machine.
+Private state lives in `.sum/` and is ignored by Git. `.sum/context.json` records the coordinator owner and `.sum/sessions/` the registered panes and roles. Optional `.sum/preferences.md` and `.sum/projects.md` hold local preferences and project notes. Each task stores its brief, base SHA, branch/worktree, pane bindings, questions, answers, report, and a `versions.json` sidecar with brief revisions. File updates are locked and atomically replaced on one local machine.
 
 Workers use the exact commands in their generated brief. The core interaction is:
 
@@ -94,6 +94,19 @@ cp templates/task.md /tmp/my-task.md
 `--approved` records the caller's assertion of approval; it is not a security boundary. `prepare` creates the record/worktree without launching; `start TASK_ID` starts that prepared task once. An uncertain launch is retained for inspection and cannot simply be started again.
 
 By default there are at most two recorded active tasks and one per repository. Repair limits in worker instructions are **soft**, not enforced spending or wall-clock limits.
+
+### Brief revisions
+
+A worker brief is generated from the record: the approved task text, base, repository, and kind (immutable input), the decisions recorded so far, the current worker procedure, and the return-channel commands. Each task keeps a `versions.json` sidecar with the sum version and brief schema it was dispatched under and a numbered list of brief revisions. Tasks recorded before this sidecar existed are read as legacy `0.1.0`/schema 1 records; nothing is migrated in place.
+
+```sh
+./bin/sumctl brief list TASK_ID          # revisions, integrity, active/requested state, report evidence binding
+./bin/sumctl brief regenerate TASK_ID    # stage briefs/rN.md from the record; no model call; duplicates write nothing
+./bin/sumctl brief request TASK_ID rN    # mark the latest intact revision as requested; sends nothing
+./bin/sumctl brief adopt TASK_ID rN      # the worker records that it now follows the requested revision
+```
+
+The file at `brief_path` and every earlier revision are never rewritten, so a worker mid-read keeps a valid brief. Each revision records a machine-generated summary of what changed (policy versions, procedure hash, decisions, commands) and whether verification is affected. A report is bound to the brief revision active when it was submitted; a later verification-affecting revision marks that evidence as needing refresh review rather than approving or rejecting it. Refresh bookkeeping is separate from the single notice slot, and old helpers keep working on the same records because the sidecar is additive.
 
 ## Test it
 
