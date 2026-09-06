@@ -23,7 +23,7 @@ class CoreTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="sum-test-")
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()  # macOS: /var is a symlink to /private/var.
         self.repo = self.root / "repo with spaces"
         self.repo.mkdir()
         self.git("init", "-b", "main")
@@ -35,7 +35,9 @@ class CoreTest(unittest.TestCase):
         self.base = self.git("rev-parse", "HEAD")
         self.brief = self.root / "brief.md"
         self.brief.write_text("Add a greeting and test it. Do not publish or merge.")
-        self.env = {"SUM_HERDR_BIN": str(ROOT / "tests/fixtures/herdr.py"),
+        # Inherited installation context must never steer a lab run: blank it, then set explicit lab values.
+        self.env = {"SUM_HOME": "", "SUM_SESSION": "", "HERDR_SOCKET_PATH": "",
+                    "SUM_HERDR_BIN": str(ROOT / "tests/fixtures/herdr.py"),
                     "FAKE_HERDR_ROOT": str(self.root / "fake"), "FAKE_PARENT_CWD": str(ROOT),
                     "HERDR_ENV": "1", "HERDR_PANE_ID": "w-parent:p1", "HERDR_SESSION": "sum-test"}
         self.patch = mock.patch.dict(os.environ, self.env)
@@ -74,6 +76,27 @@ class CoreTest(unittest.TestCase):
     def calls(self):
         path = self.root / "fake/calls.jsonl"
         return [json.loads(line)["args"] for line in path.read_text().splitlines()] if path.exists() else []
+
+    def installation(self, name="installation"):
+        """A designated sum installation: a Git checkout whose .sum holds state.json, as setup leaves it."""
+        root = self.root / name
+        root.mkdir()
+        self.git("init", "-b", "main", cwd=root)
+        self.git("config", "user.name", "sum test", cwd=root)
+        self.git("config", "user.email", "test@example.invalid", cwd=root)
+        (root / "AGENTS.md").write_text("installation\n")
+        (root / ".gitignore").write_text(".sum/\n")
+        self.git("add", ".", cwd=root)
+        self.git("commit", "-m", "installation", cwd=root)
+        store = sumctl.Store(root / ".sum")
+        store.init()
+        return root, store
+
+    def dev(self, store, name, base="HEAD", pane=False):
+        return sumctl.dev_prepare(store, argparse.Namespace(name=name, base=base, pane=pane))
+
+    def snapshot(self, home, skip="dev"):
+        return {str(p.relative_to(home)): p.read_bytes() for p in home.rglob("*") if p.is_file() and skip not in p.relative_to(home).parts}
 
     def test_prepare_uses_real_isolated_worktree(self):
         task = self.prepare()
@@ -496,6 +519,171 @@ class CoreTest(unittest.TestCase):
             results = list(pool.map(add, range(8)))
         self.assertTrue(all(r.returncode == 0 for r in results), [r.stderr for r in results])
         self.assertEqual(len(self.store.read(task["id"])["questions"]), 8)
+
+    # --- self-development checkouts ------------------------------------------
+
+    def test_dev_prepare_creates_isolated_checkout_and_reopens_dirty_work(self):
+        root, store = self.installation()
+        self.init(store=store)
+        base = self.git("rev-parse", "HEAD", cwd=root)
+        before = self.snapshot(store.home)
+        value = self.dev(store, "alpha")
+        path = Path(value["path"])
+        self.assertEqual((path, value["branch"], value["head"], value["reopened"], value["role"]),
+                         (root / ".sum/dev/alpha", "sum-dev/alpha", base, False, "developer"))
+        self.assertEqual(self.git("branch", "--show-current", cwd=path), "sum-dev/alpha")
+        self.assertEqual(self.git("branch", "--show-current", cwd=root), "main")
+        marker = json.loads((path / ".sum/dev.json").read_text())
+        self.assertEqual((marker["kind"], marker["installation"], marker["installation_home"]), ("development", str(root), str(store.home)))
+        self.assertIn(str(root / "bin/sumctl"), value["note"])
+        self.assertEqual(self.snapshot(store.home), before)  # Records, owner, and registrations untouched.
+        (path / "wip.py").write_text("unfinished\n")
+        again = self.dev(store, "alpha")
+        self.assertEqual((again["path"], again["reopened"], again["dirty"]), (str(path), True, True))
+        self.assertEqual((path / "wip.py").read_text(), "unfinished\n")
+        other = self.dev(store, "beta")
+        self.assertNotEqual(other["path"], value["path"])
+        self.assertNotEqual(Path(other["path"]) / ".sum", path / ".sum")  # Distinct state and dependency destinations.
+        self.assertEqual([c["name"] for c in sumctl.dev_list(store)["checkouts"]], ["alpha", "beta"])
+        with self.assertRaisesRegex(sumctl.SumError, "uncommitted or untracked"):
+            sumctl.dev_remove(store, argparse.Namespace(name="alpha"))
+        self.assertTrue((path / "wip.py").exists())
+        removed = sumctl.dev_remove(store, argparse.Namespace(name="beta"))
+        self.assertTrue(removed["branch_removed"])
+        self.assertFalse(Path(other["path"]).exists())
+        self.assertTrue(path.exists())
+
+    def test_dev_remove_keeps_unmerged_branch(self):
+        root, store = self.installation()
+        path = Path(self.dev(store, "keep")["path"])
+        (path / "feature.txt").write_text("candidate\n")
+        self.git("add", ".", cwd=path)
+        self.git("commit", "-m", "candidate", cwd=path)
+        removed = sumctl.dev_remove(store, argparse.Namespace(name="keep"))
+        self.assertFalse(removed["branch_removed"])
+        self.assertEqual(self.git("rev-parse", "--verify", "sum-dev/keep", cwd=root)[:7], self.git("log", "-1", "--format=%h", "sum-dev/keep", cwd=root))
+        reopened = self.dev(store, "keep")  # The preserved branch is checked out again, not recreated.
+        self.assertEqual(reopened["head"], self.git("rev-parse", "sum-dev/keep", cwd=root))
+        self.assertTrue((Path(reopened["path"]) / "feature.txt").exists())
+
+    def test_dev_checkout_is_never_designated_and_never_nests(self):
+        root, store = self.installation()
+        self.init(store=store)
+        path = Path(self.dev(store, "alpha")["path"])
+        dev_store = sumctl.Store(path / ".sum")
+        self.assertFalse(dev_store.designated())
+        sumctl.atomic_json(path / ".sum/state.json", {"schema": 1, "sum_version": "0.1.0", "created_at": "x"})  # An older setup designated it anyway.
+        self.assertFalse(sumctl.Store(path / ".sum").designated())
+        with self.pane("w-dev:p1"), mock.patch.object(sumctl, "ROOT", path):
+            value = self.init(store=dev_store)
+            self.assertEqual((value["role"], value["installation"], value["development"]["name"]), ("developer", False, "alpha"))
+            self.assertIn(str(root / "bin/sumctl"), value["note"])
+            with self.assertRaisesRegex(sumctl.SumError, "not a sum installation"):
+                self.init(role="coordinator", store=dev_store)
+            with self.assertRaisesRegex(sumctl.SumError, "not a sum installation's state home"):
+                self.dev(dev_store, "nested")
+        self.assertFalse((path / ".sum/context.json").exists())
+        self.assertFalse((path / ".sum/sessions").exists())
+        self.assertEqual(store.owner()["pane"], "w-parent:p1")
+
+    def test_dev_prepare_refuses_overlap_and_foreign_directories(self):
+        root, store = self.installation()
+        with self.assertRaisesRegex(sumctl.SumError, "Development name"):
+            self.dev(store, "../escape")
+        (root / ".sum/dev").mkdir()
+        (root / ".sum/dev/taken").mkdir()
+        with self.assertRaisesRegex(sumctl.SumError, "not a sum development checkout"):
+            self.dev(store, "taken")
+        self.assertTrue((root / ".sum/dev/taken").exists())
+        (root / ".sum/dev/taken").rmdir()
+        (root / ".sum/dev").rmdir()
+        (root / ".sum/dev").symlink_to(self.root)  # An aliased dev directory could point at the installation or another worktree.
+        with self.assertRaisesRegex(sumctl.SumError, "symlink"):
+            self.dev(store, "aliased")
+        (root / ".sum/dev").unlink()
+        self.assertEqual(self.git("worktree", "list", cwd=root).count("\n"), 0)
+        with self.assertRaisesRegex(sumctl.SumError, "not a sum installation"):
+            self.dev(self.store, "lab")  # A state home outside a checkout cannot host development.
+
+    def test_dev_pane_is_an_ordinary_workspace_without_an_agent(self):
+        root, store = self.installation()
+        value = self.dev(store, "paned", pane=True)
+        created = [c for c in self.calls() if c[:2] == ["workspace", "create"]]
+        self.assertEqual(len(created), 1)
+        self.assertIn("--no-focus", created[0])
+        self.assertEqual(created[0][created[0].index("--cwd") + 1], value["path"])
+        self.assertFalse(any(c[:2] == ["agent", "start"] for c in self.calls()))
+        marker = json.loads((Path(value["path"]) / ".sum/dev.json").read_text())
+        self.assertEqual(marker["panes"][0]["pane"], value["pane"]["pane"])
+        self.assertEqual(marker["panes"][0]["session"], "sum-test")
+
+    def test_workers_keep_callbacks_while_a_developer_works(self):
+        root, store = self.installation()
+        self.init(store=store)
+        first = sumctl.prepare(store, argparse.Namespace(repo=str(self.repo), brief=str(self.brief), harness="codex", base="HEAD", kind="ship", approved=True, arg=[]))
+        other_repo = self.root / "other-repo"
+        subprocess.run(["git", "clone", "--quiet", str(self.repo), str(other_repo)], check=True)
+        second = sumctl.prepare(store, argparse.Namespace(repo=str(other_repo), brief=str(self.brief), harness="claude", base="HEAD", kind="ship", approved=True, arg=[]))
+        records = self.snapshot(store.home)
+        dev = self.dev(store, "feature")
+        (Path(dev["path"]) / "lib").mkdir()
+        (Path(dev["path"]) / "lib/change.py").write_text("candidate = True\n")
+        self.assertEqual(self.snapshot(store.home), records)
+        for task, pane in ((first, "w-worker-a:p1"), (second, "w-worker-b:p1")):
+            with self.pane(pane):
+                q = sumctl.ask(store, argparse.Namespace(task=task["id"], key="k", text="Proceed?", file=None))["question"]
+                sumctl.answer(store, argparse.Namespace(task=task["id"], question=q["id"], text="Yes.", file=None))
+                sumctl.resolve(store, argparse.Namespace(task=task["id"], question=q["id"]))
+                sumctl.report(store, argparse.Namespace(task=task["id"], text="done", file=None))
+            self.assertEqual(store.read(task["id"])["status"], "reported")
+        self.assertEqual(self.git("status", "--porcelain", cwd=root), "")
+        self.assertEqual(self.git("branch", "--show-current", cwd=root), "main")
+
+    def test_candidate_helper_cannot_write_the_installation_home(self):
+        root, store = self.installation()
+        self.init(store=store)
+        task = sumctl.prepare(store, argparse.Namespace(repo=str(self.repo), brief=str(self.brief), harness="codex", base="HEAD", kind="ship", approved=True, arg=[]))
+        candidate = Path(self.dev(store, "candidate")["path"])
+        records = self.snapshot(store.home)
+        lab = self.root / "lab-state"
+        with mock.patch.object(sumctl, "ROOT", candidate), mock.patch("sys.stderr"), mock.patch.object(sumctl, "emit"):
+            for argv in (["ask", task["id"], "--text", "hi"], ["report", task["id"], "--text", "done"], ["init"],
+                         ["dispatch", "--repo", str(self.repo), "--brief", str(self.brief), "--harness", "codex", "--approved"],
+                         ["dev", "prepare", "--name", "nested"], ["backup", str(self.root / "b.tar.gz")]):
+                with self.subTest(argv=argv):
+                    self.assertEqual(sumctl.main(["--home", str(store.home), *argv]), 1)
+            with mock.patch.dict(os.environ, {"SUM_HOME": str(store.home)}):
+                self.assertEqual(sumctl.main(["init"]), 1)  # An inherited production SUM_HOME is refused, not followed.
+                self.assertEqual(sumctl.main(["show", task["id"]]), 0)
+            self.assertEqual(sumctl.main(["--home", str(store.home), "inbox"]), 0)
+            sumctl.Store(lab).init()
+            self.assertEqual(sumctl.main(["--home", str(lab), "init"]), 0)  # Lab state is fully usable.
+            self.assertEqual(sumctl.main(["--home", str(lab), "backup", str(self.root / "lab.tar.gz")]), 0)
+        self.assertEqual(self.snapshot(store.home), records)
+        self.assertEqual(len(store.all()), 1)
+        self.assertEqual(sumctl.Store(lab).owner()["pane"], "w-parent:p1")
+        with mock.patch.object(sumctl, "ROOT", candidate), mock.patch("sys.stderr") as err:
+            sumctl.main(["--home", str(store.home), "ask", task["id"], "--text", "hi"])
+        self.assertIn(str(root / "bin/sumctl"), "".join(str(c) for c in err.write.call_args_list))
+
+    def test_task_checkout_helper_is_also_a_candidate(self):
+        # A self-dispatched worker's checkout is a linked worktree; its bin/sumctl must not write the installation records either.
+        root, store = self.installation()
+        worktree = self.root / "task-checkout"
+        self.git("worktree", "add", "-b", "sum/t-000000000001", str(worktree), "HEAD", cwd=root)
+        records = self.snapshot(store.home)
+        with mock.patch.object(sumctl, "ROOT", worktree), mock.patch("sys.stderr"), mock.patch.object(sumctl, "emit"):
+            self.assertEqual(sumctl.main(["--home", str(store.home), "init"]), 1)
+            self.assertEqual(sumctl.main(["--home", str(store.home), "status"]), 0)
+            self.assertEqual(sumctl.main(["init"]), 0)  # Its own (undesignated) home: reports a role, writes nothing.
+        self.assertEqual(self.snapshot(store.home), records)
+        self.assertFalse((worktree / ".sum").exists())
+
+    def test_lab_home_default_ignores_blank_inherited_variables(self):
+        with mock.patch.dict(os.environ, {"SUM_HOME": ""}):
+            self.assertEqual(sumctl.parser().parse_args(["status"]).home, str(sumctl.ROOT / ".sum"))
+        with mock.patch.dict(os.environ, {"SUM_SESSION": "", "HERDR_SESSION": "lab"}):
+            self.assertEqual(sumctl.session_from_env(), "lab")
 
 
 if __name__ == "__main__": unittest.main()

@@ -45,6 +45,11 @@ if args[:2] == ["worktree", "create"]:
                 "worktree": {"path": str(path), "branch": arg("--branch")}}
     if os.environ.get("FAKE_BAD_WORKTREE"): response["worktree"]["path"] = arg("--cwd")
     emit(response)
+if args[:2] == ["workspace", "create"]:
+    if "--no-focus" not in args or "--cwd" not in args: fail("wrong workspace contract")
+    pane, workspace = "w-" + uuid.uuid4().hex[:6] + ":p1", "workspace-" + uuid.uuid4().hex[:6]
+    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "agent_status": "unknown", "agent": None}
+    emit({"workspace": {"workspace_id": workspace}, "tab": {"tab_id": workspace + ":t1"}, "root_pane": {"pane_id": pane}})
 if args[:2] == ["agent", "start"]:
     if "--pane" not in args or "--kind" not in args or "--cwd" in args: fail("obsolete agent-start syntax")
     pane = arg("--pane")

@@ -28,6 +28,9 @@ MAX_TEXT = 256 * 1024
 TASK_ID = re.compile(r"t-[a-f0-9]{12}\Z")
 ACTIVE = {"preparing", "prepared", "starting", "running", "waiting", "needs-attention"}
 ROLES = ("coordinator", "worker", "developer")
+DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
+# Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -223,8 +226,8 @@ class Store:
             raise SumError("Task belongs to another machine. Inspect saved work and use bind explicitly; stale pane IDs are not portable.")
 
     def designated(self):
-        """Only a state home created by setup or an earlier sum release may host a coordinator."""
-        return (self.home / "state.json").is_file()
+        """Only a state home created by setup or an earlier sum release may host a coordinator; a development checkout never does."""
+        return (self.home / "state.json").is_file() and not (self.home / "dev.json").is_file()
 
     def owner(self):
         path = self.home / "context.json"
@@ -581,10 +584,14 @@ def init(store, args):
         role = "worker" if task else "developer"
         if requested == "coordinator":
             raise SumError(f"{store.home} is not a sum installation (no state.json from setup). A checkout alone grants no coordinator authority; run mise run setup in the designated installation.")
+        marker = development_marker(ROOT)
         return {"role": role, "home": str(store.home), "installation": False, "task": task["id"] if task else None,
                 "installation_home": str(hint) if hint else None, "registered": False, "endpoint": ctx,
+                "development": marker,
                 "note": ("Dispatched worker checkout: follow your brief; do not initialize a coordinator." if task else
-                         "Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates.")}
+                         "Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates."
+                         + (" Tests use temporary --home state and a named lab Herdr session; the installed helper at "
+                            f"{Path(marker['installation']) / 'bin' / 'sumctl'} owns any parent-task callbacks." if marker else ""))}
     ensure_version()
     herdr(["pane", "get", ctx["pane"]], session=ctx["session"], timeout=5)  # Verify the caller's own endpoint exists.
     with store.lock():
@@ -712,9 +719,173 @@ def backup(store, destination):
             "sha256": hashlib.sha256(destination.read_bytes()).hexdigest()}
 
 
+# --- self-development checkouts ---------------------------------------------------------------
+
+def development_marker(root):
+    """A checkout prepared by `sumctl dev` carries .sum/dev.json; it is never an installation."""
+    path = Path(root) / ".sum" / "dev.json"
+    if not path.is_file():
+        return None
+    value = read_json(path)
+    if value.get("schema") != SCHEMA or value.get("kind") != "development":
+        raise SumError(f"Unrecognized development marker {path}; inspect it before continuing.")
+    return value
+
+
+def guard_candidate(store, command):
+    """Candidate code in a development or task checkout may only read the installation's records.
+
+    Writes (ask/report/init/dispatch/...) against the installation must come from its installed helper,
+    so an inherited SUM_HOME or a copied command line cannot make lab code touch production state.
+    """
+    if (ROOT / ".sum" / "state.json").is_file() and not (ROOT / ".sum" / "dev.json").is_file():
+        return None  # This helper is the installation's own.
+    protected = set()
+    hint = installation_hint(ROOT)
+    if hint:
+        protected.add(hint.resolve())
+    marker = development_marker(ROOT)
+    if marker and marker.get("installation_home"):
+        protected.add(Path(marker["installation_home"]).resolve())
+    if store.home in protected and command not in READ_ONLY_COMMANDS:
+        installed = Path(next(iter(protected))).parent / "bin" / "sumctl"
+        raise SumError(f"Refusing `{command}`: this helper runs from a development or task checkout ({ROOT}) but targets the installation's state {store.home}. "
+                       f"Candidate code operates only on lab state (--home under a temporary directory). "
+                       f"Parent-task callbacks and installation changes use the installed trusted helper {installed}.")
+    return None
+
+
+def installation_root(store):
+    """`sumctl dev` acts on the installation that owns the given state home, never on a development checkout."""
+    if store.home.name != ".sum" or not store.designated():
+        raise SumError(f"{store.home} is not a sum installation's state home; run dev commands with the installation's ./bin/sumctl.")
+    root = store.home.parent
+    toplevel = Path(run(["git", "-C", root, "rev-parse", "--show-toplevel"]).stdout.strip()).resolve()
+    if toplevel != root.resolve():
+        raise SumError(f"{root} is not the top level of a Git checkout.")
+    return root.resolve()
+
+
+def worktree_paths(root):
+    paths = []
+    for line in run(["git", "-C", root, "worktree", "list", "--porcelain"]).stdout.splitlines():
+        if line.startswith("worktree "):
+            paths.append(Path(line[len("worktree "):]).resolve())
+    return paths
+
+
+def ensure_disjoint(path, root, allow_self=False):
+    """A development checkout must not be, contain, alias, or sit inside the installation or another worktree."""
+    if any(p.is_symlink() for p in (path, *path.parents)):
+        raise SumError(f"Refusing {path}: symlink components could alias the installation or another checkout.")
+    resolved = path.resolve()
+    allowed = (root / ".sum" / "dev").resolve()
+    if resolved.parent != allowed:
+        raise SumError(f"Development checkouts live directly under {allowed}.")
+    if resolved == root or resolved in root.parents:
+        raise SumError("Refusing a development checkout that is or contains the installation.")
+    for other in worktree_paths(root):
+        if other == root or (allow_self and other == resolved):
+            continue
+        if other == resolved or other in resolved.parents or resolved in other.parents:
+            raise SumError(f"Refusing {resolved}: it overlaps the existing checkout {other}. Choose another name.")
+    return resolved
+
+
+def dev_status(path):
+    dirty = run(["git", "-C", path, "status", "--porcelain", "--untracked-files=all"]).stdout.strip()
+    return {"dirty": bool(dirty), "head": run(["git", "-C", path, "rev-parse", "HEAD"]).stdout.strip(),
+            "branch": run(["git", "-C", path, "branch", "--show-current"]).stdout.strip()}
+
+
+def dev_note(root, path):
+    return (f"Develop only in {path}; run ./bin/sumctl init there (it reports developer). Do not edit, build, or test in {root}. "
+            f"Setup, .deps, .local, and .sum inside the checkout are separate from the installation; the checkout's .sum/dev.json prevents coordinator claims. "
+            f"Tests need temporary --home state and a named lab Herdr session, never the installation's state or the default session. "
+            f"Parent-task callbacks use the installed trusted helper {root / 'bin' / 'sumctl'}. Ship through the normal task/PR procedure; nothing here is published or installed automatically.")
+
+
+def dev_prepare(store, args):
+    root = installation_root(store)
+    if not DEV_NAME.fullmatch(args.name):
+        raise SumError("Development name: lowercase letters, digits, dot, underscore, or dash; at most 40 characters.")
+    path = root / ".sum" / "dev" / args.name
+    branch = f"sum-dev/{args.name}"
+    existing = development_marker(path) if path.exists() else None
+    if path.exists() and not existing:
+        raise SumError(f"{path} exists but is not a sum development checkout. Inspect it; nothing was removed.")
+    if not existing:
+        base_sha = run(["git", "-C", root, "rev-parse", "--verify", f"{args.base}^{{commit}}", "--"]).stdout.strip()
+        ensure_disjoint(path, root)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        has_branch = run(["git", "-C", root, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"], check=False).returncode == 0
+        if has_branch:  # A preserved branch is checked out again, never recreated from the base.
+            run(["git", "-C", root, "worktree", "add", str(path), branch], timeout=60)
+            base_sha = run(["git", "-C", root, "rev-parse", branch]).stdout.strip()
+        else:
+            run(["git", "-C", root, "worktree", "add", "-b", branch, str(path), base_sha], timeout=60)
+        actual = Path(run(["git", "-C", path, "rev-parse", "--show-toplevel"]).stdout.strip()).resolve()
+        if actual != path.resolve() or actual == root:
+            raise SumError("Git returned a checkout that does not match the requested path. Inspect it manually.")
+        existing = {"schema": SCHEMA, "kind": "development", "name": args.name, "installation": str(root),
+                    "installation_home": str(store.home), "branch": branch, "base_sha": base_sha,
+                    "created_at": now(), "panes": []}
+        (path / ".sum").mkdir(mode=0o700, exist_ok=True)
+        atomic_json(path / ".sum" / "dev.json", existing)
+        reopened = False
+    else:
+        ensure_disjoint(path, root, allow_self=True)
+        reopened = True
+    pane = None
+    if args.pane:
+        ctx = context()
+        ensure_version()
+        created = herdr(["workspace", "create", "--cwd", str(path), "--label", f"sum-dev-{args.name}", "--no-focus"],
+                        session=ctx["session"], timeout=30)
+        pane = {"pane": created["root_pane"]["pane_id"], "workspace": created["workspace"]["workspace_id"],
+                "session": ctx["session"], "machine": machine(), "at": now()}
+        existing.setdefault("panes", []).append(pane)
+        atomic_json(path / ".sum" / "dev.json", existing)
+    return {"name": args.name, "path": str(path), "branch": existing["branch"], "base_sha": existing["base_sha"],
+            "installation": str(root), "reopened": reopened, "role": "developer", "pane": pane,
+            **dev_status(path), "note": dev_note(root, path)}
+
+
+def dev_list(store):
+    root = installation_root(store)
+    rows = []
+    for marker in sorted((root / ".sum" / "dev").glob("*/.sum/dev.json")):
+        path = marker.parents[1]
+        try:
+            value = development_marker(path)
+            rows.append({"name": value["name"], "path": str(path), "branch": value["branch"], "panes": value.get("panes", []), **dev_status(path)})
+        except SumError as exc:
+            rows.append({"path": str(path), "error": str(exc)})
+    return {"installation": str(root), "checkouts": rows}
+
+
+def dev_remove(store, args):
+    """Removes only a clean, fully merged development checkout through plain Git; anything else is preserved."""
+    root = installation_root(store)
+    if not DEV_NAME.fullmatch(args.name):
+        raise SumError("Invalid development name.")
+    path = root / ".sum" / "dev" / args.name
+    marker = development_marker(path) if path.exists() else None
+    if not marker:
+        raise SumError(f"{path} is not a sum development checkout; nothing was removed.")
+    ensure_disjoint(path, root, allow_self=True)
+    state = dev_status(path)
+    if state["dirty"]:
+        raise SumError(f"{path} has uncommitted or untracked work; commit, stash, or move it yourself. Nothing was removed.")
+    run(["git", "-C", root, "worktree", "remove", str(path)], timeout=60)  # No --force: Git refuses dirty or locked trees.
+    branch_removed = run(["git", "-C", root, "branch", "-d", marker["branch"]], check=False).returncode == 0  # -d never drops unmerged commits.
+    return {"removed": str(path), "branch": marker["branch"], "branch_removed": branch_removed,
+            "note": "Branch kept because it has unmerged commits; delete it yourself after merging." if not branch_removed else "Clean checkout and merged branch removed."}
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--home", default=os.environ.get("SUM_HOME", str(ROOT / ".sum")))
+    p.add_argument("--home", default=os.environ.get("SUM_HOME") or str(ROOT / ".sum"))
     p.add_argument("--version", action="version", version=f"sum {VERSION}")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="Observe setup, Herdr context, and this pane's registered role; writes nothing")
@@ -765,6 +936,15 @@ def parser():
     s.add_argument("destination")
     s = sub.add_parser("herdr", help="Session-scoped native CLI bridge for Mesh; no protocol reimplementation")
     s.add_argument("args", nargs=argparse.REMAINDER)
+    s = sub.add_parser("dev", help="Prepare, list, or remove isolated self-development checkouts of this installation")
+    d = s.add_subparsers(dest="dev_command", required=True)
+    x = d.add_parser("prepare", help="Create or reopen .sum/dev/NAME on branch sum-dev/NAME; optionally open an ordinary Herdr pane there")
+    x.add_argument("--name", required=True)
+    x.add_argument("--base", default="HEAD")
+    x.add_argument("--pane", action="store_true", help="Also create a Herdr workspace whose root pane starts in the checkout")
+    d.add_parser("list")
+    x = d.add_parser("remove", help="Remove a clean development checkout with plain git worktree remove; dirty work is preserved")
+    x.add_argument("--name", required=True)
     return p
 
 
@@ -772,6 +952,7 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         store = Store(args.home)
+        guard_candidate(store, args.command)
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -828,6 +1009,9 @@ def main(argv=None):
             value = task
         elif args.command == "backup":
             value = backup(store, args.destination)
+        elif args.command == "dev":
+            value = {"prepare": lambda: dev_prepare(store, args), "list": lambda: dev_list(store),
+                     "remove": lambda: dev_remove(store, args)}[args.dev_command]()
         elif args.command == "herdr":
             native_args = args.args[1:] if args.args and args.args[0] == "--" else args.args
             # Scope: the caller's own verified pane, registered in this instance. No saved-context borrowing.
