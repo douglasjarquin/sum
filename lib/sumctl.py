@@ -3462,13 +3462,35 @@ def environment_stamp(store, task_id):
     return sha256_text(json.dumps({k: record.get(k) for k in ("updated_at", "discovery", "endpoints", "logs", "resources")}, sort_keys=True, default=str))[:8] if record else "none"
 
 
+def symlinked_component(worktree, relative):
+    """The first path component under the checkout that is a symlink, walking with lstat only; None when every component is a real entry."""
+    current = Path(worktree)
+    for part in PurePosixPath(relative).parts:
+        current = current / part
+        try:
+            if stat.S_ISLNK(os.lstat(current).st_mode):
+                return str(current.relative_to(worktree))
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return None
+    return None
+
+
+def require_worktree(task):
+    if not task.get("worktree"):
+        raise SumError(f"Task {task['id']} has no recorded worktree; environment facts are recorded against a checkout.")
+    return task["worktree"]
+
+
 def checkout_file(worktree, relative):
-    """One declared configuration file inside the checkout: never a symlink, never larger than the bound; (text, info) or (None, info)."""
+    """One declared configuration file inside the checkout: no component may be a symlink, never larger than the bound; (text, info) or (None, info)."""
     path = Path(worktree) / relative
     info = {"path": relative}
     try:
-        if path.is_symlink():
-            return None, {**info, "skipped": "symlink not followed"}
+        link = symlinked_component(worktree, relative)
+        if link:
+            return None, {**info, "skipped": f"symlink not followed ({link})"}
         if not path.is_file():
             return None, None
         size = path.stat().st_size
@@ -3490,11 +3512,35 @@ def classify_command(name, kind=None):
     return "task"
 
 
+URL_USERINFO = re.compile(r"(://)[^/\s@:]+:[^/\s@]*@")
+
+
+def redact_reference(value):
+    """Redact a discovered string: credential patterns plus `user:password@` inside URLs; lists and dicts are redacted element-wise."""
+    if isinstance(value, str):
+        text, count = redact(value)
+        text, n = URL_USERINFO.subn(r"\1[redacted]@", text)
+        return text, count + n
+    if isinstance(value, list):
+        rows = [redact_reference(v) for v in value]
+        return [r[0] for r in rows], sum(r[1] for r in rows)
+    if isinstance(value, dict):
+        rows = {k: redact_reference(v) for k, v in value.items()}
+        return {k: r[0] for k, r in rows.items()}, sum(r[1] for r in rows.values())
+    return value, 0
+
+
 def command_row(source, name, command, kind=None, **extra):
-    """A command reference: redacted at write, classified by name, never executed."""
-    text, redactions = redact(command if isinstance(command, str) else json.dumps(command))
-    row = {"source": source, "name": str(name)[:80], "command": text[:400], "kind": classify_command(name, kind), "redactions": redactions}
-    row.update({k: v for k, v in extra.items() if v not in (None, [], "")})
+    """A command reference: every string field redacted at write, classified by name, never executed."""
+    text, redactions = redact_reference(command if isinstance(command, str) else json.dumps(command))
+    row = {"source": source, "name": str(name)[:80], "command": text[:400], "kind": classify_command(name, kind)}
+    for key, value in extra.items():
+        if value in (None, [], ""):
+            continue
+        value, count = redact_reference(value)
+        redactions += count
+        row[key] = value
+    row["redactions"] = redactions
     return row
 
 
@@ -3818,16 +3864,28 @@ def validate_log_path(task, text):
     text = text.strip()
     if text.startswith("~"):
         raise SumError("Give the log path without `~`; it is recorded literally for other panes.")
+    worktree = require_worktree(task)
     if text.startswith("/"):
-        return {"path": os.path.normpath(text), "scope": "checkout" if inside(os.path.normpath(text), task["worktree"]) else "outside-checkout"}
-    normal = os.path.normpath(text)
-    if normal.startswith("..") or normal == ".":
-        raise SumError(f"Relative log path {text!r} leaves the checkout; give the absolute path of a log outside it.")
-    return {"path": str(Path(task["worktree"]) / normal), "relative": normal, "scope": "checkout"}
+        normal = os.path.normpath(text)
+        if not inside(normal, worktree):
+            return {"path": normal, "scope": "outside-checkout"}
+        relative = os.path.relpath(normal, worktree)
+    else:
+        relative = os.path.normpath(text)
+        if relative.startswith("..") or relative == ".":
+            raise SumError(f"Relative log path {text!r} leaves the checkout; give the absolute path of a log outside it.")
+    return {"path": str(Path(worktree) / relative), "relative": relative, "scope": log_scope(worktree, relative)}
 
 
-def observe_log(path):
-    """lstat only: existence, kind, and size. Content is never read, a symlink is never followed."""
+def log_scope(worktree, relative):
+    """`checkout` only when no component under the checkout is a symlink; a symlinked component may point anywhere and is never resolved."""
+    return "symlink-not-followed" if symlinked_component(worktree, relative) else "checkout"
+
+
+def observe_log(path, worktree=None, relative=None):
+    """lstat only: existence, kind, and size. Content is never read, a symlink is never followed, and a symlinked component under the checkout is not stat'ed through."""
+    if worktree and relative is not None and symlinked_component(worktree, relative):
+        return {"state": "symlink-not-followed", "bytes": None, "scope": "symlink-not-followed"}
     try:
         info = os.lstat(path)
     except FileNotFoundError:
@@ -3871,13 +3929,12 @@ def ensure_environment(store, task):
 def env_discover(store, args):
     """Refresh the declared-configuration part of the record from the checkout; observation state of endpoints and logs is untouched."""
     endpoint = optional_context()
+    task = store.read(args.task)
+    discovery = discover_configuration(require_worktree(task))  # Checkout reads happen before the store lock; nothing else waits on them.
     with store.lock():
         task = store.read(args.task)
-        if not task.get("worktree"):
-            raise SumError("The task has no recorded worktree; nothing to discover.")
         record = ensure_environment(store, task)
         previous = record.get("discovery") or {}
-        discovery = discover_configuration(task["worktree"])
         changed = previous.get("config_revision") != discovery["config_revision"]
         record["discovery"] = discovery
         own = {"kind": "pane", "id": task.get("pane"), "session": task.get("session"), "ownership": "owned", "state": "observed",
@@ -3903,16 +3960,27 @@ def env_record(store, args):
     if redact(label)[1]:
         raise SumError("The label contains credential-shaped text.")
     endpoint = optional_context()
+    task = store.read(args.task)
+    worktree = require_worktree(task)
+    # Observation (lsof, lstat, pane get) runs before the store lock so a slow pass never stalls the coordinator's inbox or dispatch.
+    if args.url:
+        parsed = parse_endpoint_url(args.url)
+        observation = observe_port(store, task, parsed["port"]) if parsed["local"] else {"state": "unverified", "ownership": "unknown", "listeners": [],
+                                                                                          "note": "remote host: sum observes only local listeners"}
+    elif args.log:
+        validated = validate_log_path(task, args.log)
+        if claimed == "owned" and validated["scope"] != "checkout":
+            raise SumError(f"Log path {validated['path']} is {validated['scope']}; only a regular path inside the checkout can be recorded as owned.")
+        observed = observe_log(validated["path"], worktree, validated.get("relative"))
+    elif args.pane:
+        observed_pane = observe_pane(task, args.pane)
     with store.lock():
         task = store.read(args.task)
         record = ensure_environment(store, task)
         role = endpoint_role(task, endpoint) or "unattributed"
         stamp = now()
         if args.url:
-            parsed = parse_endpoint_url(args.url)
             conflicts = endpoint_conflicts(store, task, parsed)
-            observation = observe_port(store, task, parsed["port"]) if parsed["local"] else {"state": "unverified", "ownership": "unknown", "listeners": [],
-                                                                                              "note": "remote host: sum observes only local listeners"}
             if conflicts and claimed != "shared":
                 names = ", ".join(f"{c['task']} ({c['url']})" for c in conflicts)
                 raise SumError(f"{parsed['url']} is recorded as owned by another active task: {names}. Parallel tasks never reuse a URL by accident; "
@@ -3936,9 +4004,8 @@ def env_record(store, args):
             event = {"event": "record", "kind": "url", "id": row["id"], "state": row["state"], "ownership": ownership}
             result = {"endpoint": row}
         elif args.log:
-            validated = validate_log_path(task, args.log)
             row = {"id": "l-" + sha256_text(validated["path"])[:10], **validated, "label": label or None, "ownership": claimed or ("owned" if validated["scope"] == "checkout" else "unknown"),
-                   **observe_log(validated["path"]), "observed_at": stamp, "recorded_by": role}
+                   **observed, "observed_at": stamp, "recorded_by": role}
             if not any(l["id"] == row["id"] for l in record["logs"]) and len(record["logs"]) >= ENVIRONMENT_LIMITS["logs"]:
                 raise SumError(f"At most {ENVIRONMENT_LIMITS['logs']} log references per task.")
             record["logs"] = [row if l["id"] == row["id"] else l for l in record["logs"]] if any(l["id"] == row["id"] for l in record["logs"]) else record["logs"] + [row]
@@ -3946,7 +4013,7 @@ def env_record(store, args):
             result = {"log": row}
         else:
             if args.pane:
-                row = observe_pane(task, args.pane)
+                row = observed_pane
                 if claimed == "owned" and row["ownership"] != "owned":
                     raise SumError(f"Pane {args.pane} is not the task's pane and its cwd is not inside the checkout; it cannot be recorded as owned.")
                 if claimed == "shared" and row["ownership"] == "unknown":
@@ -3971,6 +4038,16 @@ def env_record(store, args):
 def env_inspect(store, args):
     """Re-observe every recorded fact once: configuration drift, listeners behind each local URL, log presence. Marks stale; starts and stops nothing."""
     endpoint = optional_context()
+    task = store.read(args.task)
+    worktree = require_worktree(task)
+    snapshot_record = read_environment(store, task["id"])
+    if snapshot_record is None:
+        raise SumError(f"Task {task['id']} has no environment record yet; run `env discover` or `env record` first.")
+    # Every observation runs against a snapshot of the record before the lock; results are applied by id once the lock is held.
+    current = discover_configuration(worktree) if snapshot_record.get("discovery") and Path(worktree).is_dir() else None
+    snapshot = {}
+    port_observations = {row["id"]: observe_port(store, task, row["port"], snapshot) for row in snapshot_record["endpoints"] if row.get("local")}
+    log_observations = {row["id"]: observe_log(row["path"], worktree, row.get("relative")) for row in snapshot_record["logs"]}
     with store.lock():
         task = store.read(args.task)
         record = read_environment(store, task["id"])
@@ -3980,8 +4057,7 @@ def env_inspect(store, args):
         stamp = now()
         changes = {"config_drift": False, "endpoints": [], "logs": []}
         discovery = record.get("discovery")
-        if discovery and Path(task["worktree"]).is_dir():
-            current = discover_configuration(task["worktree"])
+        if discovery and current:
             discovery["current_revision"] = current["config_revision"]
             discovery["stale"] = current["config_revision"] != discovery["config_revision"]
             discovery["checked_at"] = stamp
@@ -3993,10 +4069,12 @@ def env_inspect(store, args):
             changes["config_drift"] = True
         snapshot = {}
         for row in record["endpoints"]:
+            if row.get("local") and row["id"] not in port_observations:
+                continue  # Recorded after the snapshot; its own record call observed it.
             before = (row["state"], row["ownership"])
             history_item = {"at": row["observed_at"], "state": row["state"], "ownership": row["ownership"]}
             if row.get("local"):
-                observation = observe_port(store, task, row["port"], snapshot)
+                observation = port_observations[row["id"]]
                 previous_pids = {l["pid"] for l in (row.get("observation") or {}).get("listeners", [])}
                 current_pids = {l["pid"] for l in observation["listeners"]}
                 if observation["state"] == "not-listening" and before[0] in ("observed", "stale"):
@@ -4022,8 +4100,10 @@ def env_inspect(store, args):
             if (row["state"], row["ownership"]) != before or row.get("config_stale"):
                 changes["endpoints"].append({"id": row["id"], "url": row["url"], "from": before, "to": (row["state"], row["ownership"]), "config_stale": row.get("config_stale", False)})
         for row in record["logs"]:
+            if row["id"] not in log_observations:
+                continue  # Recorded after the snapshot; its own record call observed it.
             before = row["state"]
-            row.update(observe_log(row["path"]), observed_at=stamp)
+            row.update(log_observations[row["id"]], observed_at=stamp)
             if row["state"] != before:
                 changes["logs"].append({"id": row["id"], "path": row["path"], "from": before, "to": row["state"]})
         write_environment(store, record, {"event": "inspect", "by": role, **{k: (v if isinstance(v, bool) else len(v)) for k, v in changes.items()}})

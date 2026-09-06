@@ -316,9 +316,105 @@ class EnvironmentTest(core.CoreTest):
         self.assertFalse(self.context(task, "--since", cursor)["changes"]["unchanged"])
 
 
+
+class EnvironmentRepairTest(EnvironmentTest):
+    """Repair 1: missing worktree refuses, directory symlinks are never followed, owned claims cannot cover outside logs, references are fully redacted, observation runs before the lock."""
+
+    def test_task_without_worktree_refuses_every_env_write_without_a_traceback(self):
+        task = self.prepare()
+        with self.store.lock():
+            record = self.store.read(task["id"])
+            record["worktree"] = None
+            self.store.save(record)
+        for args in (("record", task["id"], "--url", "http://127.0.0.1:8000"), ("record", task["id"], "--log", "dev.log"),
+                     ("record", task["id"], "--pane", "w9:p9"), ("inspect", task["id"]), ("discover", task["id"])):
+            error = self.envctl(*args, ok=False)
+            self.assertIn("no recorded worktree", error["error"], args)
+        self.assertIsNone(sumctl.read_environment(self.store, task["id"]))
+        self.assertFalse(self.context(task, "--role", "worker")["environment"]["dev"]["present"])
+
+    def test_directory_symlinks_under_the_checkout_are_never_followed_by_discovery_or_logs(self):
+        task = self.prepare()
+        host = self.root / "host"
+        (host / "secrets").mkdir(parents=True)
+        (host / "config.toml").write_text('[tasks]\nleak = "cat /etc/passwd"\n')
+        (host / "devcontainer.json").write_text('{"image": "host/image", "forwardPorts": [1]}')
+        (host / "secrets/shadow").write_text("root:hash\n")
+        os.symlink(host, Path(task["worktree"]) / ".mise")
+        os.symlink(host, Path(task["worktree"]) / ".devcontainer")
+        os.symlink(host / "secrets", Path(task["worktree"]) / "logs")
+        found = self.envctl("discover", task["id"])
+        self.assertEqual(found["commands"], {"verification": 0, "service": 0, "container": 0, "task": 0})
+        self.assertEqual(sorted(s["path"] for s in found["sources"]), [".devcontainer/devcontainer.json", ".mise/config.toml"])
+        self.assertTrue(all(s["skipped"].startswith("symlink not followed") for s in found["sources"]))
+        self.assertNotIn("leak", json.dumps(self.record(task)))
+        with mock.patch.object(os, "lstat", wraps=os.lstat) as lstat:
+            log = self.envctl("record", task["id"], "--log", "logs/shadow")["log"]
+            self.assertFalse(any(str(host / "secrets/shadow") in str(c.args[0]) for c in lstat.call_args_list))
+        self.assertEqual((log["scope"], log["state"], log["bytes"]), ("symlink-not-followed", "symlink-not-followed", None))
+        self.assertIn("only a regular path inside the checkout", self.envctl("record", task["id"], "--log", "logs/shadow", "--ownership", "owned", ok=False)["error"])
+        inspected = self.envctl("inspect", task["id"])["logs"][0]
+        self.assertEqual((inspected["state"], inspected["bytes"]), ("symlink-not-followed", None))
+        absolute = self.envctl("record", task["id"], "--log", str(Path(task["worktree"]) / "logs/shadow"))["log"]
+        self.assertEqual(absolute["scope"], "symlink-not-followed")
+
+    def test_owned_claim_cannot_cover_a_log_outside_the_checkout(self):
+        task = self.prepare()
+        outside = str(self.root / "service.log")
+        self.assertIn("only a regular path inside the checkout", self.envctl("record", task["id"], "--log", outside, "--ownership", "owned", ok=False)["error"])
+        self.assertIsNone(sumctl.read_environment(self.store, task["id"]))
+        self.assertEqual(self.envctl("record", task["id"], "--log", outside)["log"]["ownership"], "unknown")
+
+    def test_every_string_field_of_a_command_reference_is_redacted_including_url_user_information(self):
+        task = self.prepare()
+        self.write(task, "mise.toml", '[tasks.db]\nrun = "psql postgres://app:hunter22@localhost:5432/app"\ndescription = "uses password=supersecret1 for now"\ndepends = ["token=ghp_' + "c" * 30 + '"]\n')
+        self.write(task, "Procfile", "web: curl https://user:pw@example.test/health\n")
+        self.write(task, "package.json", json.dumps({"scripts": {"deploy": "curl https://deploy:s3cret@host/hook"}}))
+        self.envctl("discover", task["id"])
+        text = json.dumps(self.record(task))
+        for secret in ("hunter22", "supersecret1", "ghp_", ":pw@", "s3cret"):
+            self.assertNotIn(secret, text, secret)
+        rows = {c["name"]: c for c in self.record(task)["discovery"]["commands"]}
+        self.assertEqual(rows["db"]["command"], "psql postgres://[redacted]@localhost:5432/app")
+        self.assertEqual(rows["db"]["redactions"], 3)
+        self.assertEqual(rows["web"]["command"], "curl https://[redacted]@example.test/health")
+
+    def test_observation_runs_before_the_store_lock(self):
+        task = self.prepare()
+        self.write(task, "mise.toml", '[tasks]\ndev = "python3 -m http.server 8000"\n')
+        self.lsof(processes=[{"pid": 700, "cwd": task["worktree"]}], listeners=[{"pid": 700, "address": "127.0.0.1:8000"}])
+        self.envctl("discover", task["id"])
+        self.envctl("record", task["id"], "--url", "http://127.0.0.1:8000")
+        self.envctl("record", task["id"], "--log", "dev.log")
+        held = []
+        real_lock = sumctl.Store.lock
+        def locked(store):
+            held.append(True)
+            return real_lock(store)
+        def spy(name):
+            original = getattr(sumctl, name)
+            def wrapper(*a, **k):
+                self.assertFalse(held, f"{name} ran while the store lock was held")
+                return original(*a, **k)
+            return mock.patch.object(sumctl, name, wrapper)
+        from contextlib import ExitStack
+        for command, spies in (("discover", ("discover_configuration",)), ("record", ("observe_port",)), ("inspect", ("discover_configuration", "observe_port", "observe_log"))):
+            held.clear()
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.object(sumctl.Store, "lock", locked))
+                for name in spies:
+                    stack.enter_context(spy(name))
+                args = argparse.Namespace(task=task["id"], url="http://127.0.0.1:8000" if command == "record" else None, log=None, pane=None, container=None, ownership=None, label=None)
+                getattr(sumctl, f"env_{command}")(self.store, args)
+            self.assertTrue(held, command)
+
+
 for _name in dir(core.CoreTest):
     if _name.startswith("test_"):
         setattr(EnvironmentTest, _name, None)
+for _name in dir(EnvironmentTest):
+    if _name.startswith("test_") and _name not in EnvironmentRepairTest.__dict__:
+        setattr(EnvironmentRepairTest, _name, None)
 
 
 if __name__ == "__main__":
