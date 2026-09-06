@@ -1,0 +1,22 @@
+# Code graph per checkout
+
+The pinned codegraph (`npm:@colbymchenry/codegraph` 1.5.0) initialized once in every checkout sum creates, one `.codegraph/` index local to that checkout, explicit degradation when the tool is missing or fails, and graph guidance delivered through the brief.
+The graph assists exploration; it never replaces `mise run verify`, a feature-map row, or the coordinator's independent run and review.
+
+| ID | Scenario | Driver | Evidence |
+| --- | --- | --- | --- |
+| `graph.dispatch-init` | `prepare`/`dispatch` initializes the index inside the new task checkout after identity validation, records state, attempts, duration, and index identity, keeps `git status` clean through the repository-local exclude, and the brief carries the exact CLI commands and the fallback | automated: `tests/test_graph.py`, `scripts/demo.py` | offline suite against the strict fake `tests/fixtures/codegraph.py` (scripted from the real 1.5.0 in a lab), demo |
+| `graph.two-worktrees` | Two worktrees of one repository with different implementations of one symbol answer from their own indexes; the primary clone has none | automated: `tests/test_graph.py` | offline suite (fake) and the opt-in real-binary case |
+| `graph.repeat-init` | A second initialization checks identity, version, and schema and reconciles incrementally; nothing is rebuilt | automated: `tests/test_graph.py`, `scripts/demo.py` | offline suite, demo |
+| `graph.stale-honest` | Uncommitted edits and a moved HEAD are reported stale until `sync`; a stale query returns nothing rather than an invented symbol | automated: `tests/test_graph.py` | offline suite (fake) and the opt-in real-binary case |
+| `graph.excluded-trees` | Ignored trees (`projects/`, `.sum/`, `.local/`) stay out of the index; a repository that already ignores `.codegraph/` gets no exclude write | automated: `tests/test_graph.py` | offline suite |
+| `graph.failed-init` | A failing or timed-out initialization keeps the task and checkout, records the attempt, is retried within a bound of three failures, then records `exhausted` with the source fallback; no second worker is launched | automated: `tests/test_graph.py` | offline suite |
+| `graph.deferred-slot` | With both build slots held, initialization is recorded `deferred` (not a failure) and succeeds on the next `graph init` | automated: `tests/test_graph.py` | offline suite |
+| `graph.unavailable` | No pinned binary in the runtime, or a version other than the pin, is recorded `unavailable` with the reason; the checkout stays clean and the task proceeds | automated: `tests/test_graph.py` | offline suite |
+| `graph.no-global-writes` | Nothing under `HOME` changes, `codegraph install`/`serve`/`upgrade` are never run, and `graph config` prints a snippet with the pinned path without writing a file | automated: `tests/test_graph.py`, `scripts/demo.py` | offline suite, demo |
+| `graph.root-verification` | `verify --execute` initializes a separate index in the detached verification checkout and removes it with that checkout; the worker's index is untouched | automated: `tests/test_graph.py` | offline suite |
+| `graph.dev-prepare` | `dev prepare` initializes the development checkout and a reopen reconciles instead of re-indexing | automated: `tests/test_graph.py` | offline suite |
+| `graph.cleanup-backup-release` | `.codegraph/` is a disposable cache for cleanup, a records backup carries the task's graph record and rebuild metadata but no index, a release bundle with an index is refused, and an older bundle without the codegraph pin stays selectable | automated: `tests/test_graph.py` | offline suite |
+| `graph.twelve-workers` | Twelve dispatched workers each get their own index through the installed entrypoint within the concurrency bound; a staged update and a rollback leave every index in place | automated: `tests/test_graph.py` | offline suite |
+| `graph.real-binary` | The real pinned binary keeps one index per worktree, skips ignored trees, reports uncommitted edits stale, and leaves no watcher | manual: `SUM_REAL_CODEGRAPH_BIN=<path to codegraph 1.5.0> python3 -m unittest tests.test_graph.RealCodegraphTest` | operator report; run on 2026-09-06, see `docs/VALIDATION.md` |
+| `graph.harness-mcp` | A real harness session in a task checkout reaches the graph through the CLI commands in the brief, or through a hand-merged MCP snippet from `graph config`, without any global configuration change | manual: `docs/ACCEPTANCE.md` section 12 | operator report |

@@ -16,6 +16,9 @@ opencode.json
 .agents/skills/herdr
 .claude/skills/herdr
 
+# codegraph index of a checkout (issue #36): a regenerable per-checkout cache, never committed.
+.codegraph/
+
 # Managed project clones (sumctl project enroll); project code is neither sum source nor runtime state.
 /projects/
 

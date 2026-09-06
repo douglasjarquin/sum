@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shlex
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -53,7 +54,8 @@ HERDR_VERSION = "0.8.2"
 MESH_REV = "54adef519aa6af4dcd0bbd72586d414abab90046"
 MESH_REMOTE = "https://github.com/runchr-works/herdr-mesh.git"
 MCP_CONTRACT = {"server": "herdr-mesh-sum", "version": "0.1.0", "tools": 10}
-TOOLS = ("python3", "node", "herdr", "gh", "quota-axi")
+TOOLS = ("python3", "node", "herdr", "gh", "quota-axi", "codegraph")
+CORE_TOOLS = ("python3", "node", "herdr", "gh")  # A release bundle must carry at least these; older bundles without later pins stay selectable.
 RELEASE_SCHEMA = 1
 MAX_TEXT = 256 * 1024
 TASK_ID = re.compile(r"t-[a-f0-9]{12}\Z")
@@ -70,7 +72,7 @@ ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
 READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show",
-                      "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet", "project-list", "project-show"}
+                      "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet", "project-list", "project-show", "graph-status", "graph-config"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -868,6 +870,10 @@ Read this entire file. Do not load the coordinator's AGENTS.md as your role.
 ## Verification contract
 
 {verification_contract_text(task)}
+
+## Code graph
+
+{graph_text(store, task)}
 
 ## Delivered runtime
 
@@ -1678,6 +1684,7 @@ def prepare(store, args):
         if actual_root == repo or actual_root != Path(task["worktree"]) or actual_head != base_sha or actual_branch != task["branch"]:
             raise SumError("Herdr returned a checkout that does not match the task. Work is preserved; inspect it manually.")
         task["verification_policy"] = verification_policy_at_dispatch(task["worktree"], base_sha)
+        write_graph(store, task, graph_init(store, task["worktree"], "task"))  # After identity validation, before the brief advertises anything.
         task["brief_path"] = str(write_brief(store, task))
         task["status"] = "prepared"
     except (SumError, KeyError, TypeError) as exc:
@@ -3558,6 +3565,7 @@ def verify(store, args):
     if execute:
         run_record, copied = execute_root_verification(store, task, args.candidate, getattr(args, "base", None))
         body.update(run_evidence(run_record, args.candidate, task, record_path=str(copied), isolation="separate-checkout"))
+        body["graph"] = run_record.get("graph")
     elif run_path:
         run_record = read_run_record(run_path)
         isolation = "task-checkout" if task.get("worktree") and run_record.get("root") and Path(run_record["root"]).resolve() == Path(task["worktree"]).resolve() else "other-checkout"
@@ -3638,6 +3646,7 @@ def execute_root_verification(store, task, candidate, base):
     checkout.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     run(["git", "-C", worktree, "worktree", "add", "--detach", str(checkout), candidate], timeout=120)
     try:
+        graph = graph_summary(graph_init(store, checkout, "verification"))  # This checkout's own index; removed with it below, never shared with the worker's.
         runner = checkout / VERIFICATION_RUNNER
         if not runner.is_file():
             raise SumError(f"Candidate {candidate} carries no {VERIFICATION_RUNNER}; the project is not standardized at this SHA. Run its documented commands and record them with --result.")
@@ -3662,6 +3671,7 @@ def execute_root_verification(store, task, candidate, base):
         if artifacts_dir and (checkout / artifacts_dir).is_dir():
             shutil.rmtree(checkout / artifacts_dir)  # sum's own throwaway checkout; its record was copied out above.
         record["root"] = str(checkout)
+        record["graph"] = graph
         return record, kept
     finally:
         removed = run(["git", "-C", worktree, "worktree", "remove", str(checkout)], check=False, timeout=60)
@@ -4226,11 +4236,11 @@ def section_evidence(task, args, view):
             "note": "Only `verification` (coordinator) and `publication` (github) records are verification evidence; worker and reviewer records are claims and findings."}
 
 
-def section_execution(task):
+def section_execution(store, task):
     launch = task.get("launch") or {}
     return {**{k: task.get(k) for k in ("repository", "worktree", "branch", "base_sha", "kind", "harness", "status", "created_at", "started_at")},
             "launch": {k: launch.get(k) for k in ("harness", "model", "reasoning", "preset", "argv", "observed")},
-            "admission": task.get("admission"),
+            "admission": task.get("admission"), "graph": graph_view(store, task),
             "endpoints": {"worker": {k: task.get(k) for k in ("machine", "session", "pane")},
                           "parent": {k: (task.get("parent") or {}).get(k) for k in ("machine", "session", "pane")} if task.get("parent") else None,
                           "reviewer": {k: task["reviewer"].get(k) for k in ("machine", "session", "pane")} if task.get("reviewer") else None}}
@@ -4322,7 +4332,7 @@ def context_view(store, task_id, args):
                 "returns_open": returns if isinstance(returns, dict) else len(returns),
                 "attention_open": len(open_attention(task)), "cleanup": cleanup_pending(task),
                 "notes": {"present": notes["present"], "ok": notes["ok"], "entries": len(notes.get("entries", []))},
-                "environment": environment_outline(store, task),
+                "environment": environment_outline(store, task), "graph": (task.get("graph") or {}).get("state"),
                 "read": {"sections": list(CONTEXT_SECTIONS), "example": command_for(store, "context", task_id, "--section", "decisions", "--section", "handoff")}}
         elif section == "brief":
             value["brief"] = section_brief(store, task, versions, args)
@@ -4333,7 +4343,7 @@ def context_view(store, task_id, args):
         elif section == "evidence":
             value["evidence"] = section_evidence(task, args, view)
         elif section == "execution":
-            value["execution"] = section_execution(task)
+            value["execution"] = section_execution(store, task)
         elif section == "environment":
             value["environment"] = section_environment(store, task, versions, roles)
             if args.role in {"reviewer", "coordinator"}:
@@ -5734,7 +5744,7 @@ def writing_logs(record, worktree, window=WRITING_WINDOW):
 
 CLEANUP_SCHEMA = 1
 STOP_FIRST_BLOCKERS = {"service", "service-unknown", "occupant", "writing", "panes"}
-DISPOSABLE_IGNORED = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".DS_Store", ".artifacts")  # .artifacts/: VERIFY.md run records, per checkout (issue #31).
+DISPOSABLE_IGNORED = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".DS_Store", ".artifacts", ".codegraph")  # .artifacts/: VERIFY.md run records; .codegraph/: the regenerable graph index (issues #31, #36).
 LSOF_TIMEOUT = 30
 SHELLS = {"bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "pwsh", "-bash", "-zsh", "-sh", "-fish"}
 
@@ -6316,7 +6326,8 @@ def cleanup(store, args):
     reviewer = close_reviewer_pane(store, task, ctx, plan) if task.get("reviewer") else None
     task = save_cleanup(store, task["id"], state="complete", step="archived", removed={**detail, **removed}, blockers=[], reviewer_pane=reviewer)
     return {"task": task["id"], "state": "complete", "archived": True, "removed": {**detail, **removed}, "kept": {"branch": task["branch"], "records": str(store.path(task["id"]))},
-            "reviewer": reviewer, "note": "Only the verified task workspace and its clean checkout were removed, through native Herdr without force. The branch, brief revisions, decisions, reports, and PR evidence stay."}
+            "reviewer": reviewer, "graph": {"index_cache": "regenerable; removed with the checkout" if task.get("graph") else None, "watchers_stopped": 0, "record_kept": str(graph_path(store, task["id"])) if task.get("graph") else None},
+            "note": "Only the verified task workspace and its clean checkout were removed, through native Herdr without force. The branch, brief revisions, decisions, reports, and PR evidence stay."}
 
 
 def status(store, live=False, inbox=False):
@@ -6328,6 +6339,7 @@ def status(store, live=False, inbox=False):
     for task in tasks:
         row = {k: task.get(k) for k in ("id", "status", "repository", "harness", "pane", "session", "worktree", "error")}
         row["model"] = (task.get("launch") or {}).get("model")
+        row["graph"] = (task.get("graph") or {}).get("state")
         row["questions"] = [q for q in task["questions"] if q["status"] != "applied"]
         row["report_available"] = task["report"] is not None
         row["evidence"] = {"records": len(task.get("evidence", [])), "pr": (task.get("pr") or {}).get("identity", {}).get("number") if task.get("pr") else None,
@@ -6538,6 +6550,9 @@ def doctor(store):
                  for kind, exe in HARNESSES.items()}
     checks.append({"tool": "harness", "ok": any(installed.values()), "installed": {k:v for k,v in installed.items() if v}})
     checks.append({"tool": "mesh", "ok": (RUNTIME / ".deps/herdr-mesh/.sum-patched").is_file()})
+    graph = graph_tool()
+    checks.append({"tool": "codegraph", "ok": True, "available": graph["available"], "pinned": graph["pinned"], "version": graph["version"], "path": graph["path"],
+                   "detail": "pinned codegraph available; new checkouts get a local index" if graph["available"] else f"graph optional and unavailable: {graph['reason']}"})
     return {"version": VERSION, "home": str(store.home), "runtime": str(RUNTIME), "installation": str(ROOT), "checks": checks,
             "ok": all(c["ok"] for c in checks),
             "note": "Observation only: nothing was bound or written. No auth changes or permission bypasses. Authenticate the chosen harness and gh separately."}
@@ -6559,6 +6574,8 @@ def backup(store, destination):
                     "brief_revisions_included": True, "environment_records_included": True,
                     "environment_exclusions": "command references and URLs redacted at write; no process environments, credentials, log content, or checkout code",
                     "settings_included": (store.home / SETTINGS_FILE).is_file(),
+                    "graph": {"indexes_included": False, "rebuild": graph_backup_rows(store, tasks),
+                              "note": "graph.json records travel; a .codegraph/ index is a regenerable cache inside the checkout, never a source backup"},
                     "managed_projects": {"registry_included": (store.home / PROJECTS_FILE).is_file(), "clone_code_included": False,
                                          "note": "projects.json registrations travel; clone and worktree contents are the user's code-backup responsibility"},
                     "restore": "Extract into a new directory. Start sumctl with --home <extracted>/state. Do not reuse pane bindings on another machine; inspect and bind explicitly."}
@@ -6586,6 +6603,9 @@ def backup(store, destination):
                     environment = store.path(task["id"]) / ENVIRONMENT_FILE
                     if environment.is_file() and not environment.is_symlink():
                         paths.append(environment)
+                    graph = store.path(task["id"]) / GRAPH_FILE
+                    if graph.is_file() and not graph.is_symlink():
+                        paths.append(graph)
                     sidecar = store.path(task["id"]) / VERSIONS_FILE
                     if sidecar.is_file() or sidecar.is_symlink():
                         paths.append(sidecar)
@@ -6604,6 +6624,457 @@ def backup(store, destination):
     os.chmod(destination, 0o600)
     return {"backup": str(destination), "manifest": manifest,
             "sha256": hashlib.sha256(destination.read_bytes()).hexdigest()}
+
+
+# --- code graph: the pinned codegraph, one local index per newly created checkout (issue #36) -------------------
+#
+# The graph is an exploration aid, never verification. sum runs exactly the codegraph release pinned by the bundled
+# mise.toml and linked into the runtime it executes from (`.local/bin/codegraph`); a global installation, a floating
+# `npx`, or an upgrade is never used or triggered. Every checkout sum creates (task worktree, root verification
+# checkout, self-development checkout) is initialized once after its Git identity is validated, in CLI mode with the
+# background server disabled, so no watcher outlives the command and no daemon is added to sum. The writable index is
+# `.codegraph/` inside that checkout and nothing else: two worktrees of one repository never share an index, and
+# neither does the primary clone. A missing, mismatched, or failing tool degrades explicitly in the records and the
+# brief; the task, its checkout, and the source-reading route continue unchanged.
+
+CODEGRAPH_VERSION = "1.5.0"
+CODEGRAPH_PACKAGE = "@colbymchenry/codegraph"
+CODEGRAPH_PROVENANCE = {"package": CODEGRAPH_PACKAGE, "version": CODEGRAPH_VERSION, "license": "MIT",
+                        "source": "https://github.com/colbymchenry/codegraph", "release": "https://github.com/colbymchenry/codegraph/releases/tag/v1.5.0",
+                        "registry": "https://registry.npmjs.org/@colbymchenry/codegraph/-/codegraph-1.5.0.tgz",
+                        "tarball_integrity": "sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw==",
+                        "git_head": "ea72e1b190921232aa7bd02e96bef5bbe4fe0ab6",
+                        "note": "Installed through the mise pin `npm:@colbymchenry/codegraph` at setup or release staging; the per-platform bundle is npm's optional dependency of that exact version."}
+GRAPH_SCHEMA = 1
+GRAPH_FILE = "graph.json"        # Task-local sidecar: the full initialization record; task.json carries only its summary.
+GRAPH_DIR = ".codegraph"         # codegraph's own storage name; `CODEGRAPH_DIR` accepts only a plain name, so the index always sits inside the checkout.
+GRAPH_SLOTS = 2                  # Concurrent index builds per installation; a full house is reported as `deferred`, never queued unbounded.
+GRAPH_MAX_FAILURES = 3           # An initial attempt and two instructed retries, like repair iterations; then the source-search fallback is the record.
+GRAPH_TIMEOUT_DEFAULT = 300      # Seconds for one init/index/sync; the child is killed at the bound and the attempt recorded as timed out.
+GRAPH_FALLBACK = "Read and search the source with your normal tools; a graph that is not `ready` or a result that contradicts a file is never a structural conclusion."
+GRAPH_HARNESS_CONFIG = ("claude", "codex", "cursor", "opencode")
+GRAPH_BIN = RUNTIME / ".local" / "bin" / "codegraph"   # The only binary sum runs: linked by setup or release staging from the mise pin of this runtime.
+
+
+def graph_timeout():
+    value = os.environ.get("SUM_GRAPH_TIMEOUT")  # Lab knob for the offline suite; the default is the operating bound.
+    try:
+        seconds = int(value) if value else GRAPH_TIMEOUT_DEFAULT
+    except ValueError:
+        seconds = GRAPH_TIMEOUT_DEFAULT
+    return min(max(seconds, 1), 3600)
+
+
+def graph_env():
+    """CLI mode only: no shared background server, no self-healing download, no ANSI. The user's own codegraph settings are otherwise untouched."""
+    return {**os.environ, "CODEGRAPH_NO_DAEMON": "1", "CODEGRAPH_NO_DOWNLOAD": "1", "NO_COLOR": "1"}
+
+
+def graph_tool():
+    """The pinned codegraph of this runtime, or the exact reason the graph is unavailable. Never a PATH lookup or a download."""
+    override = os.environ.get("SUM_CODEGRAPH_BIN")
+    path = Path(override) if override else GRAPH_BIN
+    row = {"pinned": CODEGRAPH_VERSION, "path": str(path), "available": False, "version": None, "reason": None}
+    if not path.is_file():
+        row["reason"] = (f"codegraph is not installed in this runtime ({path}). `mise run setup` or a staged release links the pinned "
+                         f"{CODEGRAPH_PACKAGE}@{CODEGRAPH_VERSION}; a global or floating installation is never used.")
+        return row
+    try:
+        result = run([path, "--version"], timeout=60, check=False, env=graph_env())
+    except SumError as exc:
+        row["reason"] = f"codegraph did not answer `--version`: {exc}"
+        return row
+    lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    version = lines[-1] if lines else None
+    row["version"] = version
+    if result.returncode or not version:
+        row["reason"] = f"codegraph at {path} exited {result.returncode} without a version: {(result.stderr or result.stdout).strip()[-300:]}"
+    elif version != CODEGRAPH_VERSION:
+        row["reason"] = f"codegraph {version} at {path} is not the tested pin {CODEGRAPH_VERSION}; only the pinned release is used, nothing is upgraded or downgraded"
+    else:
+        row["available"] = True
+    return row
+
+
+def graph_identity(worktree):
+    """The checkout the index belongs to: its own top level, HEAD, branch, and common Git directory. A common repository is not identity."""
+    worktree = Path(worktree)
+    toplevel = Path(run(["git", "-C", worktree, "rev-parse", "--show-toplevel"]).stdout.strip()).resolve()
+    if toplevel != worktree.resolve():
+        raise SumError(f"{worktree} is not the top level of its checkout ({toplevel}); the index is built only at a checkout root")
+    return {"worktree": str(toplevel), "head": run(["git", "-C", worktree, "rev-parse", "HEAD"]).stdout.strip(),
+            "branch": run(["git", "-C", worktree, "branch", "--show-current"]).stdout.strip() or None,
+            "git_common_dir": run(["git", "-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip()}
+
+
+def graph_exclude(worktree):
+    """Keep `.codegraph/` out of `git status` through the repository-local `info/exclude`, written once with a marker.
+
+    That file is never committed and is not a user configuration file; it is skipped entirely when the repository already ignores the
+    directory (sum's own `.gitignore` does). The write is recorded so it is explicit; nothing else about ignore or config files changes."""
+    probe = f"{GRAPH_DIR}/codegraph.db"
+    if run(["git", "-C", worktree, "check-ignore", "-q", "--", probe], check=False).returncode == 0:
+        return {"state": "already-ignored", "path": None}
+    path = Path(run(["git", "-C", worktree, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"]).stdout.strip())
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(("" if not text or text.endswith("\n") else "\n") + f"# sum: codegraph index, a regenerable per-checkout cache (sumctl graph)\n{GRAPH_DIR}/\n")
+    if run(["git", "-C", worktree, "check-ignore", "-q", "--", probe], check=False).returncode:
+        raise SumError(f"{path} was written but git still does not ignore {GRAPH_DIR}/; the index would dirty the checkout, so it was not built")
+    return {"state": "written", "path": str(path), "scope": "repository-local: shared by every worktree of this repository, never committed, never a user config file"}
+
+
+def graph_slot_dir(store):
+    return Path(tempfile.gettempdir()) / f"sum-graph-slots-{sha256_text(str(store.home))[:12]}"
+
+
+@contextmanager
+def graph_slot(store, timeout):
+    """At most GRAPH_SLOTS index builds at a time per installation, through non-blocking file locks. Waiting is bounded; `None` means no slot.
+
+    The lock files live in the temporary directory, not in `.sum`: coordination state, never a record, so a records snapshot stays untouched."""
+    directory = graph_slot_dir(store)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    handles = [(directory / f"{i}.lock").open("a") for i in range(GRAPH_SLOTS)]
+    acquired = None
+    deadline = time.monotonic() + timeout
+    try:
+        while acquired is None:
+            for index, handle in enumerate(handles):
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except (BlockingIOError, OSError):
+                    continue
+                acquired = index
+                break
+            if acquired is None:
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
+        yield acquired
+    finally:
+        for handle in handles:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+            except OSError:
+                pass
+            handle.close()
+
+
+def graph_status(tool, worktree):
+    """`codegraph status --json` for one checkout: an observation of the index, or None with the reason. Reads the index, writes nothing."""
+    try:
+        result = run([tool["path"], "status", "--json", str(worktree)], timeout=120, check=False, env=graph_env())
+    except SumError as exc:
+        return None, str(exc)
+    if result.returncode:
+        return None, f"status exited {result.returncode}: {(result.stderr or result.stdout).strip()[-300:]}"
+    try:
+        value = json.loads(result.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError) as exc:
+        return None, f"status printed no JSON: {exc}"
+    return (value if isinstance(value, dict) else None), (None if isinstance(value, dict) else "status JSON is not an object")
+
+
+def graph_plan(status, worktree, tool, indexed_head=None, head=None):
+    """What an existing checkout needs: a first `init`, a full `index` for a foreign or outdated index, an incremental `sync`, or nothing.
+
+    codegraph 1.5.0 reports only uncommitted edits under `pendingChanges` (lab-verified: a committed change leaves it at zero and the query stale),
+    so a HEAD that moved since the last build or sync is a reason to sync on its own."""
+    if not status or not status.get("initialized"):
+        return "init", "no index in this checkout"
+    expected = (Path(worktree) / GRAPH_DIR).resolve()
+    recorded = Path(status.get("indexPath") or "")
+    if not status.get("indexPath") or recorded.resolve() != expected or status.get("worktreeMismatch"):
+        return "index", f"index at {status.get('indexPath')!r} does not belong to this checkout (worktreeMismatch {status.get('worktreeMismatch')!r})"
+    index = status.get("index") or {}
+    if index.get("builtWithVersion") != tool["version"]:
+        return "index", f"index was built by codegraph {index.get('builtWithVersion')!r}, this runtime pins {tool['version']}"
+    if index.get("reindexRecommended") or index.get("builtWithExtractionVersion") != index.get("currentExtractionVersion"):
+        return "index", f"index schema {index.get('builtWithExtractionVersion')!r} differs from the current {index.get('currentExtractionVersion')!r}"
+    if index.get("state") not in (None, "complete"):
+        return "index", f"index state is {index.get('state')!r}"
+    pending = status.get("pendingChanges") or {}
+    if any(pending.values()):
+        return "sync", f"pending changes {pending}"
+    if head and indexed_head != head:
+        return "sync", f"HEAD moved from {indexed_head} to {head} since the last build; committed changes are not reported as pending"
+    return "verified", "index identity, version, and schema match; nothing pending; HEAD unchanged since the last build"
+
+
+def graph_index_view(status):
+    index = (status or {}).get("index") or {}
+    return {**{k: (status or {}).get(k) for k in ("fileCount", "nodeCount", "edgeCount", "dbSizeBytes", "lastIndexed", "languages", "journalMode")},
+            "built_with": index.get("builtWithVersion"), "extraction_version": index.get("builtWithExtractionVersion"), "state": index.get("state")}
+
+
+def graph_freshness(status, worktree, indexed_head=None):
+    """Honest freshness: what the index says is pending, what Git says changed, and whether HEAD moved since the last build. A point in time; nothing watches."""
+    pending = (status or {}).get("pendingChanges") or {}
+    dirty = run(["git", "-C", worktree, "status", "--porcelain", "--untracked-files=normal"], check=False).stdout.strip().splitlines()
+    head = run(["git", "-C", worktree, "rev-parse", "HEAD"], check=False).stdout.strip() or None
+    moved = bool(indexed_head and head and head != indexed_head)
+    return {"checked_at": now(), "pending": pending, "dirty_files": len(dirty), "head": head, "indexed_head": indexed_head, "head_moved": moved,
+            "state": "stale" if (any(pending.values()) or moved) else "fresh",
+            "note": "A point-in-time check; uncommitted edits show as pending, committed ones only as a moved HEAD. Neither reaches the index until `sync`."}
+
+
+def graph_commands(tool, worktree):
+    """Exact CLI lines for a reader of the brief. Every command names the checkout explicitly and runs without a background server."""
+    quoted = shlex.quote(str(worktree))
+    prefix = f"CODEGRAPH_NO_DAEMON=1 {shlex.quote(tool['path'])}"
+    return {"status": f"{prefix} status --json {quoted}", "sync": f"{prefix} sync {quoted}",
+            "explore": f"{prefix} explore 'what you are looking for' -p {quoted}", "query": f"{prefix} query NAME -p {quoted} --json",
+            "node": f"{prefix} node NAME -p {quoted}", "affected": f"{prefix} affected -p {quoted} path/to/changed.py"}
+
+
+def graph_run(tool, action, worktree, timeout):
+    """One bounded codegraph invocation. On the timeout the child is killed and the attempt says so; nothing is retried here."""
+    argv = [tool["path"], action, str(worktree)] + (["--quiet"] if action == "index" else [])
+    started = time.monotonic()
+    row = {"at": now(), "action": action, "argv": [Path(argv[0]).name, *argv[1:]], "timeout": timeout}
+    try:
+        # Its own session: the npm launcher spawns the bundled runtime as a child, and a timeout must stop that whole group, not orphan an indexer.
+        process = subprocess.Popen([str(a) for a in argv], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=graph_env(), start_new_session=True)
+    except OSError as exc:
+        row.update(exit=None, timed_out=False, ok=False, seconds=round(time.monotonic() - started, 3), error=f"codegraph {action}: {exc}")
+        return row
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            process.kill()
+        process.communicate()
+        row.update(exit=None, timed_out=True, ok=False, seconds=round(time.monotonic() - started, 3),
+                   error=f"codegraph {action} did not finish within {timeout}s and was stopped; the index may be partial and is rebuilt on retry")
+        return row
+    row.update(exit=process.returncode, timed_out=False, ok=process.returncode == 0, seconds=round(time.monotonic() - started, 3),
+               error=None if process.returncode == 0 else (stderr or stdout).strip()[-500:])
+    return row
+
+
+def graph_failures(record):
+    return [a for a in record.get("attempts", []) if not a.get("ok") and a.get("action") != "deferred"]
+
+
+def graph_init(store, worktree, purpose, record=None, indexed_head=None):
+    """Idempotent initialization of one checkout's graph, after that checkout's identity is validated.
+
+    A missing index is built; an existing one is checked (path identity, tool version, extraction schema) and reconciled incrementally;
+    a full index runs only for a foreign, outdated, or damaged one. Bounded by the timeout and the slot count. Never raises: every
+    outcome is a recorded state, and a checkout without a usable graph stays exactly as usable as before."""
+    worktree = Path(worktree)
+    record = record or {"schema": GRAPH_SCHEMA, "purpose": purpose, "attempts": [], "indexed_head": indexed_head}
+    record.update(worktree=str(worktree), index_path=str(worktree / GRAPH_DIR), updated_at=now(), fallback=GRAPH_FALLBACK, error=None)
+    try:
+        record["identity"] = graph_identity(worktree)
+    except SumError as exc:
+        record["attempts"].append({"at": now(), "action": "identity", "ok": False, "error": str(exc)})
+        record.update(state="failed", error=str(exc))
+        return record
+    tool = graph_tool()
+    record["tool"] = tool
+    if not tool["available"]:
+        record.update(state="unavailable", error=tool["reason"])
+        return record
+    if len(graph_failures(record)) >= GRAPH_MAX_FAILURES:
+        record.update(state="exhausted", error=f"{GRAPH_MAX_FAILURES} failed attempts; the recorded fallback is source inspection. No further retry.")
+        return record
+    timeout = graph_timeout()
+    try:
+        record["exclude"] = graph_exclude(worktree)
+    except SumError as exc:
+        record["attempts"].append({"at": now(), "action": "exclude", "ok": False, "error": str(exc)})
+        record.update(state="failed", error=str(exc))
+        return record
+    with graph_slot(store, timeout) as slot:
+        if slot is None:
+            record["attempts"].append({"at": now(), "action": "deferred", "ok": False, "error": f"no index slot free within {timeout}s ({GRAPH_SLOTS} concurrent builds per installation)"})
+            record.update(state="deferred", error=record["attempts"][-1]["error"])
+            return record
+        status, error = graph_status(tool, worktree)
+        action, reason = graph_plan(status, worktree, tool, record.get("indexed_head"), record["identity"]["head"]) if error is None else ("init", f"status unreadable: {error}")
+        if action == "verified":
+            attempt = {"at": now(), "action": action, "ok": True, "reason": reason, "seconds": 0.0, "slot": slot}
+        else:
+            attempt = {**graph_run(tool, action, worktree, timeout), "reason": reason, "slot": slot}
+        record["attempts"].append(attempt)
+        if not attempt["ok"]:
+            record.update(state="failed", error=attempt["error"])
+            return record
+        status, error = graph_status(tool, worktree)
+    if error is not None or not (status or {}).get("initialized"):
+        attempt.update(ok=False, error=f"index not readable after {action}: {error or 'not initialized'}")
+        record.update(state="failed", error=attempt["error"])
+        return record
+    record["indexed_head"] = record["identity"]["head"]
+    record["index"] = graph_index_view(status)
+    record["freshness"] = graph_freshness(status, worktree, record["indexed_head"])
+    record["commands"] = graph_commands(tool, worktree)
+    record.update(state="ready", error=None)
+    return record
+
+
+def graph_summary(record):
+    """The bounded view kept in task.json, dev.json, and run records; the sidecar keeps every attempt."""
+    if not record:
+        return None
+    last = record["attempts"][-1] if record.get("attempts") else None
+    return {"state": record.get("state"), "index_path": record.get("index_path"), "tool_version": (record.get("tool") or {}).get("version"), "indexed_head": record.get("indexed_head"),
+            "pinned": CODEGRAPH_VERSION, "attempts": len(record.get("attempts", [])), "failures": len(graph_failures(record)),
+            "last_action": last.get("action") if last else None, "seconds": last.get("seconds") if last else None,
+            "files": (record.get("index") or {}).get("fileCount"), "nodes": (record.get("index") or {}).get("nodeCount"),
+            "error": (record.get("error") or None) and str(record["error"])[:300], "updated_at": record.get("updated_at")}
+
+
+def graph_path(store, task_id):
+    return store.path(task_id) / GRAPH_FILE
+
+
+def read_graph(store, task_id):
+    path = graph_path(store, task_id)
+    if path.is_symlink():
+        raise SumError(f"{path} must not be a symlink")
+    if not path.is_file():
+        return None
+    value = read_json(path)
+    if value.get("schema") != GRAPH_SCHEMA:
+        raise SumError(f"{path} has graph schema {value.get('schema')!r}; this release reads schema {GRAPH_SCHEMA}")
+    return value
+
+
+def write_graph(store, task, record):
+    atomic_json(graph_path(store, task["id"]), record)
+    task["graph"] = graph_summary(record)
+    return record
+
+
+def graph_text(store, task):
+    """The `## Code graph` section of a worker brief: the recorded state, exact commands, and the rules that keep the graph an aid."""
+    try:
+        record = read_graph(store, task["id"])
+    except SumError as exc:
+        record = {"state": "failed", "error": str(exc)}
+    if not record:
+        return "- Not recorded for this task (dispatched before sum initialized graphs). Use your normal source tools; do not run `codegraph init` yourself."
+    state = record.get("state")
+    lines = []
+    if state == "ready":
+        index = record.get("index") or {}
+        lines.append(f"- State: `ready`. codegraph {record['tool']['version']} indexed this checkout at `{record['index_path']}` "
+                     f"({index.get('fileCount')} files, {index.get('nodeCount')} symbols, {index.get('edgeCount')} edges); the index is local to this checkout only. "
+                     "The primary clone and other worktrees have their own index or none; never point a query at them.")
+        commands = record.get("commands") or {}
+        lines.append(f"- Explore read-only: `{commands.get('explore')}`, `{commands.get('query')}`, `{commands.get('node')}`; `{commands.get('affected')}` lists tests the index links to a changed file.")
+        lines.append(f"- CLI mode has no watcher: run `{commands.get('sync')}` after you edit files and before you query; `{commands.get('status')}` shows `pendingChanges`. "
+                     "`status` reports only uncommitted edits as pending: after a commit, checkout, or rebase the index is silently behind until you sync. "
+                     "A pending sync, a moved HEAD, or a result that contradicts the file means read the source; the index is a point in time, never perpetually current.")
+    else:
+        lines.append(f"- State: `{state}`: {record.get('error') or 'no detail recorded'}. The graph is not usable here; {GRAPH_FALLBACK}")
+        lines.append(f"- The coordinator may retry with `{command_for(store, 'graph', 'init', task['id'])}`; read `{command_for(store, 'context', task['id'], '--section', 'execution')}` (`graph`) for a later state. "
+                     "Do not run `codegraph init`, `index`, or `install` yourself; index ownership stays recorded by sum.")
+    lines.append("- Graph results assist exploration only. They replace no verification command, feature-map row, evidence capture, or the coordinator's independent run and review.")
+    lines.append(f"- Do not run `codegraph install`, `upgrade`, `serve`, or `uninstall`, and do not edit any MCP or harness configuration. Native MCP is optional per harness: "
+                 f"`{command_for(store, 'graph', 'config', '--harness', 'NAME')}` prints a snippet with the pinned binary for a person to merge by hand; nothing is auto-allowed.")
+    return "\n".join(lines)
+
+
+def graph_view(store, task):
+    """The `graph` field of `context --section execution`: summary, exact commands, and where the full record lives. Reads no checkout."""
+    try:
+        record = read_graph(store, task["id"])
+    except SumError as exc:
+        return {"present": False, "ok": False, "error": str(exc)}
+    if not record:
+        return {"present": False, "ok": True, "note": "No graph record; the task was dispatched before sum initialized graphs, or the checkout was never created."}
+    return {"present": True, "ok": True, "path": str(graph_path(store, task["id"])), **graph_summary(record), "commands": record.get("commands"),
+            "freshness": record.get("freshness"), "fallback": GRAPH_FALLBACK, "authority": "Tool observation recorded by sum; a graph result is never verification evidence."}
+
+
+def graph_init_task(store, args):
+    """Coordinator only: resume or retry one task's graph initialization in the recorded checkout. Bounded, idempotent, never a second worker."""
+    ctx = context()
+    require_coordinator(store, ctx)
+    task = store.read(args.task)
+    store.check_machine(task)
+    worktree = require_worktree(task)
+    record = read_graph(store, task["id"])
+    if record and record.get("state") == "exhausted":
+        raise SumError(f"Graph initialization for {task['id']} is exhausted after {len(graph_failures(record))} failed attempts; the recorded fallback is source inspection. "
+                       "Inspect the attempts in the graph record; sum does not retry beyond the bound.")
+    record = graph_init(store, worktree, "task", record)  # A third failure is recorded as `exhausted` by the same call.
+    with store.lock():
+        task = store.read(args.task)
+        write_graph(store, task, record)
+        store.save(task)
+    return {"task": task["id"], "graph": record,
+            "note": "The task, its checkout, and its worker are unchanged; nothing was launched or restarted. A running worker sees the new state through `context --section execution` "
+                    "or a requested brief revision, never through a forced restart."}
+
+
+def graph_status_task(store, args):
+    """Read-only: the recorded graph state plus one live freshness observation of the index. Writes nothing to the index or the record."""
+    task = store.read(args.task)
+    record = read_graph(store, task["id"])
+    value = {"task": task["id"], "recorded": graph_summary(record) if record else None, "commands": (record or {}).get("commands"), "live": None}
+    worktree = task.get("worktree")
+    if record and record.get("state") == "ready" and worktree and Path(worktree).is_dir():
+        tool = graph_tool()
+        if tool["available"]:
+            status, error = graph_status(tool, worktree)
+            if error is None:
+                head = run(["git", "-C", worktree, "rev-parse", "HEAD"], check=False).stdout.strip() or None
+                action, reason = graph_plan(status, worktree, tool, record.get("indexed_head"), head)
+                value["live"] = {"index": graph_index_view(status), "freshness": graph_freshness(status, worktree, record.get("indexed_head")),
+                                 "reconcile_needed": action if action != "verified" else None, "reason": reason}
+            else:
+                value["live"] = {"error": error}
+        else:
+            value["live"] = {"error": tool["reason"]}
+    value["note"] = "Observation only. `stale` means edits are not in the index until `sync`; a `reconcile_needed` action runs only through `graph init`."
+    return value
+
+
+def graph_config(store, args):
+    """Print, never write: an MCP snippet for one supported harness with the pinned binary, for a person to merge into a local project file.
+
+    The shapes mirror the ones `codegraph install --print-config` prints for these harnesses (verified for the pinned release); sum's version names
+    the pinned path instead of a PATH lookup and adds nothing to any permission or auto-allow list."""
+    harness = args.harness
+    if harness not in GRAPH_HARNESS_CONFIG:
+        raise SumError(f"--harness must be one of {list(GRAPH_HARNESS_CONFIG)}; other harnesses use the CLI commands in the brief")
+    tool = graph_tool()
+    if not tool["available"]:
+        raise SumError(f"No snippet: {tool['reason']}")
+    command = tool["path"]
+    if harness == "claude":
+        target, fmt, snippet = ".mcp.json in the checkout (project scope)", "json", json.dumps({"mcpServers": {"codegraph": {"type": "stdio", "command": command, "args": ["serve", "--mcp"]}}}, indent=2)
+    elif harness == "codex":
+        target, fmt, snippet = ".codex/config.toml in the checkout", "toml", f'[mcp_servers.codegraph]\ncommand = {json.dumps(command)}\nargs = ["serve", "--mcp"]\n'
+    elif harness == "cursor":
+        target, fmt, snippet = ".cursor/mcp.json in the checkout", "json", json.dumps({"mcpServers": {"codegraph": {"type": "stdio", "command": command, "args": ["serve", "--mcp", "--path", "${workspaceFolder}"]}}}, indent=2)
+    else:
+        target, fmt, snippet = "opencode.json in the checkout", "json", json.dumps({"mcp": {"codegraph": {"type": "local", "command": [command, "serve", "--mcp"], "enabled": True}}}, indent=2)
+    return {"harness": harness, "format": fmt, "target": target, "snippet": snippet, "tool": tool,
+            "note": "Printed only; sum wrote no file, changed no permission list, and did not run `codegraph install`. The server this starts watches only the project it is started in; "
+                    "it is that harness session's process, and cleanup reports it as an occupant of the checkout until the session exits."}
+
+
+def graph_backup_rows(store, tasks):
+    rows = []
+    for task in tasks:
+        try:
+            record = read_graph(store, task["id"])
+        except SumError as exc:
+            rows.append({"task": task["id"], "error": str(exc)})
+            continue
+        if record:
+            rows.append({"task": task["id"], "worktree": record.get("worktree"), "index_path": record.get("index_path"), "state": record.get("state"),
+                         "tool_version": (record.get("tool") or {}).get("version"), "rebuild": f"codegraph init {record.get('worktree')} with {CODEGRAPH_PACKAGE}@{CODEGRAPH_VERSION}"})
+    return rows
 
 
 # --- managed projects: exact enrolled clones under <installation>/projects/, one registry, no shared writer ---------
@@ -7270,6 +7741,9 @@ def dev_prepare(store, args):
     else:
         ensure_disjoint(path, root, allow_self=True)
         reopened = True
+    graph = graph_init(store, path, "development", indexed_head=(existing.get("graph") or {}).get("indexed_head"))  # Idempotent: a reopened checkout is reconciled, not re-indexed.
+    existing["graph"] = graph_summary(graph)
+    atomic_json(path / ".sum" / "dev.json", existing)
     pane = None
     if args.pane:
         ctx = context()
@@ -7281,7 +7755,7 @@ def dev_prepare(store, args):
         existing.setdefault("panes", []).append(pane)
         atomic_json(path / ".sum" / "dev.json", existing)
     return {"name": args.name, "path": str(path), "branch": existing["branch"], "base_sha": existing["base_sha"],
-            "installation": str(root), "reopened": reopened, "role": "developer", "pane": pane,
+            "installation": str(root), "reopened": reopened, "role": "developer", "pane": pane, "graph": graph,
             **dev_status(path), "note": dev_note(root, path)}
 
 
@@ -7479,7 +7953,8 @@ def build_manifest(store, root, sha, target):
             "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
             "files": files,
             "dependencies": {"herdr_mesh": {"remote": MESH_REMOTE, "rev": MESH_REV, "path": ".deps/herdr-mesh", "overlay": patched},
-                             "tools": {"pins": tool_pins(target), "paths": tools}},
+                             "tools": {"pins": tool_pins(target), "paths": tools},
+                             "codegraph": {**CODEGRAPH_PROVENANCE, "pin": tool_pins(target).get(f"npm:{CODEGRAPH_PACKAGE}"), "path": ".local/bin/codegraph"}},
             "contracts": {"herdr_cli": HERDR_VERSION, "mcp": MCP_CONTRACT},
             "supports": {"state_schema": [SCHEMA], "brief_schema": [BRIEF_SCHEMA]},
             "staged_at": now(), "staged_by": {"machine": machine(), "installation": str(root), "instance": state.get("instance")}}
@@ -7513,6 +7988,8 @@ def verify_release(path, expected_sha=None):
         raise SumError(f"{path}: bin/sumctl is not executable")
     if (path / ".sum").exists():
         raise SumError(f"{path}: a release tree must not contain .sum state")
+    if (path / GRAPH_DIR).exists():
+        raise SumError(f"{path}: a release tree must not contain a {GRAPH_DIR} index; graph state never rides an immutable bundle")
     mesh = path / ".deps" / "herdr-mesh"
     overlay = manifest.get("dependencies", {}).get("herdr_mesh", {}).get("overlay", {})
     marker = mesh / ".sum-patched"
@@ -7524,7 +8001,10 @@ def verify_release(path, expected_sha=None):
     if not (mesh / "dist" / "index.js").is_file() or not (mesh / "node_modules" / "@modelcontextprotocol" / "sdk" / "package.json").is_file():
         raise SumError(f"{path}: Mesh dependencies are incomplete")
     paths = manifest.get("dependencies", {}).get("tools", {}).get("paths", {})
-    for name in TOOLS:
+    for name in CORE_TOOLS:
+        if name not in paths:
+            raise SumError(f"{path}: manifest lacks the pinned tool {name}")
+    for name in paths:  # The bundle's own tool set: an older release without a later pin (codegraph) stays selectable for rollback.
         link = path / ".local" / "bin" / name
         if not link.is_symlink() or os.readlink(link) != paths.get(name) or not link.resolve().is_file():
             raise SumError(f"{path}: pinned tool {name} is missing or does not resolve")
@@ -7754,7 +8234,7 @@ def compatibility(store, root, candidate_path, current):
     if installed and offered["herdr_cli"] not in installed:
         blocking.append(f"candidate requires Herdr CLI {offered['herdr_cli']}; installed {installed!r}. A Herdr upgrade is a separate, global decision that this update never performs.")
     pins = manifest["dependencies"]["tools"]["pins"]
-    for name in TOOLS:
+    for name in manifest["dependencies"]["tools"]["paths"]:
         link = candidate_path / ".local" / "bin" / name
         if not link.resolve().is_file():
             blocking.append(f"pinned tool {name} does not resolve in the candidate")
@@ -8167,6 +8647,15 @@ def parser():
     x.add_argument("--apply", action="store_true", help="Perform the rename after a clean inspection; refused while any task, linked worktree, or process references the clone")
     s = sub.add_parser("herdr", help="Session-scoped native CLI bridge for Mesh; no protocol reimplementation")
     s.add_argument("args", nargs=argparse.REMAINDER)
+    s = sub.add_parser("graph", help="Per-checkout code graph (pinned codegraph): retry/resume one task's initialization, observe its freshness, or print an MCP snippet; never installs or configures globally")
+    graph_sub = s.add_subparsers(dest="graph_command", required=True)
+    g = graph_sub.add_parser("init", help="Coordinator only: initialize or reconcile the task checkout's index (bounded retries; exhausted stays recorded)")
+    g.add_argument("task")
+    g = graph_sub.add_parser("status", help="Recorded graph state plus one live freshness observation; writes nothing")
+    g.add_argument("task")
+    g = graph_sub.add_parser("config", help="Print an MCP snippet naming the pinned binary for one harness; no file is written")
+    g.add_argument("--harness", required=True, choices=list(GRAPH_HARNESS_CONFIG))
+    g.add_argument("--raw", action="store_true", help="Print only the snippet text")
     s = sub.add_parser("dev", help="Prepare, list, or remove isolated self-development checkouts of this installation")
     d = s.add_subparsers(dest="dev_command", required=True)
     x = d.add_parser("prepare", help="Create or reopen .sum/dev/NAME on branch sum-dev/NAME; optionally open an ordinary Herdr pane there")
@@ -8227,7 +8716,8 @@ def main(argv=None):
         guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}", "preset": lambda: f"preset-{args.preset_command}",
                                 "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}", "hook": lambda: f"hook-{args.hook_command}",
                                 "pr": lambda: f"pr-{args.pr_command}", "env": lambda: f"env-{args.env_command}",
-                                "metadata": lambda: f"metadata-{args.metadata_command}", "project": lambda: f"project-{args.project_command}"}.get(args.command, lambda: args.command)())
+                                "metadata": lambda: f"metadata-{args.metadata_command}", "project": lambda: f"project-{args.project_command}",
+                                "graph": lambda: f"graph-{args.graph_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -8388,6 +8878,14 @@ def main(argv=None):
         elif args.command == "project":
             value = {"enroll": lambda: project_enroll(store, args), "list": lambda: project_list(store),
                      "show": lambda: project_show(store, args.name), "migrate": lambda: project_migrate(store, args)}[args.project_command]()
+        elif args.command == "graph":
+            if args.graph_command == "config":
+                value = graph_config(store, args)
+                if args.raw:
+                    print(value["snippet"], end="" if value["snippet"].endswith("\n") else "\n")
+                    return 0
+            else:
+                value = {"init": lambda: graph_init_task(store, args), "status": lambda: graph_status_task(store, args)}[args.graph_command]()
         elif args.command == "dev":
             value = {"prepare": lambda: dev_prepare(store, args), "list": lambda: dev_list(store),
                      "remove": lambda: dev_remove(store, args)}[args.dev_command]()

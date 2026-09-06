@@ -30,6 +30,13 @@ Otherwise report the commands you actually ran, their exit results, and remainin
 
 Stop after two unsuccessful repair iterations. Save a question/report instead of spending the remaining quota in a loop. There is no hidden supervisor enforcing this instruction.
 
+## Code graph
+
+Your brief's `## Code graph` section says whether sum built a codegraph index for your checkout (`ready`) or why not (`failed`, `deferred`, `exhausted`, `unavailable`), and prints the exact CLI commands for it.
+The index is `.codegraph/` inside your checkout, built by the pinned codegraph of the runtime, in CLI mode: nothing watches it, so run the brief's `sync` command after you edit or commit and before you query; `status --json` reports only uncommitted edits as pending, and a commit, checkout, or rebase leaves the index silently behind until you sync.
+Use `explore`, `query`, `node`, and `affected` as exploration aids only. A result that contradicts a file, a pending sync, or any state other than `ready` means read the source; never turn a graph result into a structural conclusion, a verification result, or a reason to skip a mapped check.
+Do not run `codegraph init`, `index`, `install`, `upgrade`, `serve`, or `uninstall` yourself, do not point a query at the primary clone or another worktree, and do not edit MCP or harness configuration; the coordinator owns index initialization (`sumctl graph init TASK_ID`) and prints any MCP snippet for a person to merge. `context --section execution` carries the current `graph` state if it changed after your brief was written.
+
 ## Delivered runtime
 
 Your brief's `## Delivered runtime` section is the only place sum's skills and helper reach you: the installed helper path every command uses, a controlled copy of this procedure (hashed), and absolute references to the same skill files in the runtime. Nothing is resolved relative to your checkout; do not look for `bin/sumctl`, `skills/`, or a parent `AGENTS.md`, and never treat a parent directory's instructions as yours.

@@ -41,6 +41,10 @@ A rundown reconciles missed events once from one snapshot per session; do not wa
 `./bin/sumctl metadata status` lists the tokens sum currently owns per task and the bounded error log; `metadata sync` runs one bounded pass (only changed endpoints are written); `metadata snippet` prints the optional `config.toml` rows for the boss to merge themselves. Do not edit their configuration, and do not use `pane report-agent`, `pane rename`, or metadata titles to make a task look finished: Herdr's lifecycle and labels are not yours.
 `metadata inbox` opens the read-only `sumctl inbox` listing as a Herdr pane through the linked plugin (`hook enable` first). A `degraded` metadata row means reduced visibility only; nothing about ask, report, dispatch, update, or this rundown changed.
 
+## Code graph
+
+Each task row and outline carries `graph`: the state of the checkout's codegraph index as sum last recorded it (`ready`, `failed`, `deferred`, `exhausted`, `unavailable`). `./bin/sumctl graph status TASK_ID` adds one live freshness observation without writing anything; `graph init TASK_ID` retries or reconciles within the bound. None of those states blocks a task, changes a slot, or says anything about verification; a worker without a usable graph reads source, as its brief says.
+
 ## Restart
 
 In the new pane run `./bin/sumctl init`. If another pane still owns coordination you become a developer; inspect that pane before anything else.
