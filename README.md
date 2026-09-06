@@ -79,6 +79,20 @@ Workers use the exact commands in their generated brief. The core interaction is
 ./bin/sumctl answer TASK_ID QUESTION_ID --text 'Keep both endpoints for one release.'
 ```
 
+`show` returns the whole record and keeps its shape. `context` is the bounded read beside it:
+
+```sh
+./bin/sumctl context TASK_ID                              # outline: counts, outstanding decisions, latest handoff, cursor
+./bin/sumctl context TASK_ID --role worker|reviewer|coordinator   # the sections and short contract that role needs
+./bin/sumctl context TASK_ID --section decisions --after 20 --limit 20   # stable pages with total/omitted/next_after
+./bin/sumctl context TASK_ID --section brief --revision r1 # a recorded brief revision, hash-verified, never rewritten
+./bin/sumctl context TASK_ID --since CURSOR               # what changed since the `cursor` of an earlier read
+./bin/sumctl notes TASK_ID --text 'finding'               # the one optional task-local notes.md (a claim; secrets refused)
+./bin/sumctl help [TOPIC]                                  # command discovery without the full manual
+```
+
+Sections: `outline`, `brief`, `decisions`, `handoff`, `evidence`, `execution`, `environment`, `update`, `returns`, `notes`. Prose fields are bounded (`--max-chars`, 0 for all) and credential-shaped text is redacted in the view, never in the record. Outstanding decisions are listed in full on every read regardless of paging. Worker prose, handoffs, and notes are labelled claims; only `verify` and `pr reconcile` records are verification evidence. Skills reach agents as explicit file references (path, size, hash) to read when needed, not as an assumed skill standard. Nothing here calls a model or reads a worker's checkout.
+
 A question is saved **before** notification. A notification is attempted only after an idle/done preflight; a busy, absent, blocked, or unverifiable recipient leaves it pending. A successful send means *submitted, not acknowledged*. Saved answers stay visible until the worker marks them applied.
 
 Every pending return is derived from the records themselves: an open question and an unverified report are owed to the parent, an unapplied answer and a requested brief revision to the worker. Nothing has to be acknowledged for it to stay listed, and nothing but a later record (an answer, `resolve`, `verify`, a PR observation, `brief adopt`) closes it. The per-task `returns.json` sidecar keeps only notification state, so a legacy helper rewriting `task.json` cannot erase it.

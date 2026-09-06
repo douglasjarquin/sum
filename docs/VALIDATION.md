@@ -106,6 +106,28 @@ Repair 1 (coordinator review of `f33661b`): a coalesced delivery now stamps and 
 Repair 2: `sumctl pump` with `reason=None` no longer indexes the legacy reason table with `attention` (KeyError before stamping); the generic reason is used. Regression covers the inline and prompt paths with a pending attention beside an uncertain question. Suite now 257 tests.
 Not measured: human-labeled question capture on real harness tasks. A shell reported as an agent is not a model; native idle alone does not detect a question asked in prose, and no such claim is made. Unsupported observation (plugin disabled, unlinked, or a Herdr build without these events) is reported as `degraded` with the rundown path intact.
 
+## Selective context slice (2026-09-06, macOS)
+
+Executed on the development host for issue #15 from a task checkout: the Python suites (267 tests, of which 10 in the new `tests/test_context.py`), the Node Mesh tests (10), and the offline demo with its new context section.
+The new tests cover: a 45 KB report beside an unresolved early question (outline and coordinator view name the question, prose bounded with exact character counts, `--max-chars 0` returns it whole); 45 questions paged three times with `total`/`omitted`/`next_after` and every unapplied decision listed on each page; a question asked and another answered between two pages, counted on the next page and named by `--since CURSOR`, with an unchanged cursor rendering no section; `r1` read back byte-identical and hash-verified after `r2` was adopted, a tampered file reported without content, an unknown revision refused; a missing notes artifact and handoff artifact strings classified as `checkout` (present or not) or `outside-checkout` without being opened; notes appended by worker and coordinator panes, a credential-shaped note refused, a symlinked `notes.md` neither read nor written through nor backed up, `--section` taking only fixed names; credential-shaped question text redacted in the view but intact in the record; the full `show` shape unchanged and the frozen helper from `b1239a4` showing and asking on a task that carries notes; worker, reviewer, and coordinator views of one candidate sharing a cursor while differing in sections, decision filters, skill references, and contract; `context` and `help` read-only from a candidate checkout while `notes` is refused; and `help`/`help TOPIC`/`help brief-adopt` generated from the parser.
+
+Measured on one representative lab fixture (six questions in three states, two reports of 5 KB and 4 KB, a handoff, a reviewer finding, a staged `r2`): bytes of stdout, one run, no token conversion.
+
+| Read | Bytes |
+| --- | --- |
+| `show` | 53330 |
+| `context` (outline) | 2598 |
+| `context --role worker` | 9389 |
+| `context --role reviewer` | 25314 |
+| `context --role coordinator` | 15294 |
+| `context --since CURSOR` (unchanged) | 1442 |
+| `help` | 4512 |
+| `help context` | 1698 |
+| `--help` text | 6027 |
+
+Token savings were not measured; the byte counts above are the evidence. Adding the `context` command to the return channel changes the brief fingerprint, so existing tasks receive it through `brief regenerate`/`refresh request` (#7), never by rewriting a brief being read.
+No model, GitHub write, live installation state, or user `default` session was involved; `mise run test-live` was not re-run for this slice (no Herdr call was added).
+
 ## Not executed here
 
 - A full `mise run setup` dependency download/install. The container could not reach the required network endpoints.

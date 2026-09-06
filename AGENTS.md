@@ -57,3 +57,4 @@ If the boss wants a change deployed, tell them; they decide when the coordinator
 Load procedures only when needed: `dispatch`, `delivery`, `rundown`, `worker`, `develop`, and `update` under `skills/`.
 MCP tool descriptions document the patched interface. Herdr CLI facts come from `herdr --skill`, not remembered flags.
 Do not read all skills or every task transcript at every turn.
+`./bin/sumctl help [TOPIC]` lists commands without the whole manual; `./bin/sumctl context TASK_ID --role coordinator` (or `--section ...`, `--since CURSOR`) reads only the parts of a task you need. Full `show` stays for the complete record.

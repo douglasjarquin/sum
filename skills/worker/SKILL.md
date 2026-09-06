@@ -21,6 +21,12 @@ Otherwise report the commands you actually ran, their exit results, and remainin
 
 Stop after two unsuccessful repair iterations. Save a question/report instead of spending the remaining quota in a loop. There is no hidden supervisor enforcing this instruction.
 
+## Selective reads
+
+Your brief carries a `context` command. `sumctl context TASK_ID --role worker` returns the outline, decisions answered for you to apply, execution facts, and bounded file references (the worker skill path with its size and hash) instead of the whole record; `--since CURSOR` with the `cursor` of your last read reports only what changed, and `--section decisions|brief|notes ...` selects parts. Every list carries `total`, `omitted`, and `next_after`; `outstanding` decisions are never dropped by paging.
+`sumctl notes TASK_ID --text '...'` appends to one optional task-local `notes.md` for investigation findings that must outlive your context. Notes are claims backed up with the records; credential-shaped text is refused. Reference logs and artifacts by path.
+`sumctl help TOPIC` gives one command's arguments without the full manual.
+
 ## Brief revisions
 
 Your brief is one numbered revision generated from the task record. The coordinator may stage a newer revision (updated procedure or newly recorded decisions) without touching the file you read.

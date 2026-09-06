@@ -130,6 +130,16 @@ def main():
         assert shown["report"]["text"] == "Second report: nothing new." and shown["reviewer"]["pane"] == "w-review:p1"
         assert shown["evidence_view"]["closure"]["prerequisites_met"] and shown["status"] == "reported"  # Merged evidence archives or closes nothing by itself.
         print("PASS: two reports, reviewer findings, coordinator verification, and two GitHub observations kept as scoped evidence; a stale PR head was flagged and the exact merged head recorded.")
+        # Selective context: the coordinator's compact view, one bounded evidence page, an unchanged cursor, and command discovery; `show` is untouched.
+        compact = ctl("context", task["id"], "--role", "coordinator")
+        assert compact["sections"] == ["outline", "decisions", "handoff", "returns", "update"] and compact["outline"]["decisions"]["outstanding"] == []
+        assert compact["handoff"]["handoff"]["candidate"] == candidate and compact["handoff"]["authority"].startswith("Agent-written")
+        assert len(json.dumps(compact)) < len(json.dumps(shown))
+        page = ctl("context", task["id"], "--section", "evidence", "--limit", "3")["evidence"]
+        assert (page["total"], page["returned"], page["omitted"], page["next_after"]) == (7, 3, 4, 3)
+        assert ctl("context", task["id"], "--since", compact["cursor"])["changes"]["unchanged"]
+        assert "context" in ctl("help")["commands"] and "--section" in [a["name"] for a in ctl("help", "context")["arguments"]]
+        print("PASS: a role-specific context view, a counted evidence page, and an unchanged cursor read came from the records without a model call; the full show record kept its shape.")
         assert git("rev-parse", "HEAD") == main_sha
         assert not (repo / "greeting.py").exists()
         # Versioned briefs: regenerate from the record (no model call), stage beside the brief the worker read, never overwrite it.
