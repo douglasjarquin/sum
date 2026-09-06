@@ -2,13 +2,14 @@
 
 This file is the single repository-local verification convention for sum.
 It works in an ordinary clone with Git, mise, and Python 3.11 or newer; no sum installation, Herdr session, or absolute path outside this checkout is required.
-The portable procedure and the runner that records evidence live in `.agents/skills/verify/` (alias `.claude/skills/verify`); `.agents/skills/create-verification/` scaffolds this convention in another repository and `.agents/skills/maintain-verification/` audits it after a change.
+The portable procedure and the runner that records evidence live in `.agents/skills/verify/` (alias `.claude/skills/verify`); `.agents/skills/evidence/` captures before/after proof of one scenario from the base and candidate builds; `.agents/skills/create-verification/` scaffolds this convention in another repository and `.agents/skills/maintain-verification/` audits it after a change.
 A harness without skill discovery follows this file directly.
 
 ```verify
 entrypoint = "mise run verify"
 feature_maps = "docs/features/README.md"
 artifacts = ".artifacts/verification"
+evidence = ".artifacts/evidence"
 task_owner = "."
 timeout_seconds = 3600
 
@@ -57,16 +58,19 @@ No credentials, model calls, or GitHub writes are involved; `SUM_*` and `HERDR_*
 
 Each run writes `.artifacts/verification/<run-id>/run.json` (run id, candidate SHA, dirty state, contract and map hashes, commands, times, outcomes, skips with reasons) and `verify.log` (the full entrypoint output, retained on failure).
 `.artifacts/verification/latest.json` mirrors the newest record.
-The directory is Git-ignored; reference records by path in reports.
+Before/after evidence from `.agents/skills/evidence/` lands under `.artifacts/evidence/<run-id>/<scenario>/` as before-SHA and after-SHA directories of originals with a capture manifest, plus a comparison manifest and a derived two-up HTML view; `VERIFY_EVIDENCE_ROOT` moves that root outside a disposable checkout and the skill's `promote` command copies a run out with every hash re-verified.
+A feature-map row whose Evidence cell names a screenshot, screencast, or red/green pair is reported by the runner as missing required evidence until such a comparison exists for the candidate SHA.
+The browser recipe needs the pinned Node (`mise install`) and a Chromium-family browser already on the machine; `python3 .agents/skills/evidence/scripts/evidence_capture.py capabilities` reports what is available and nothing is downloaded per capture.
+Both directories are Git-ignored; reference records by path in reports.
 
 ## Teardown
 
 The checks leave nothing running.
-Remove `.artifacts/verification/` when you no longer need the records.
+Remove `.artifacts/verification/` and `.artifacts/evidence/` when you no longer need the records; promote an evidence run first when it must outlive the checkout.
 
 ## Policy
 
-Edits to this file, `mise.toml`, `mise-tasks/`, `docs/features/`, or the skills under `.agents/skills/verify/`, `.agents/skills/create-verification/`, and `.agents/skills/maintain-verification/` are policy changes.
+Edits to this file, `mise.toml`, `mise-tasks/`, `docs/features/`, or the skills under `.agents/skills/verify/`, `.agents/skills/evidence/`, `.agents/skills/create-verification/`, and `.agents/skills/maintain-verification/` are policy changes.
 Run the runner with `--base <merge-base>` so such a candidate is flagged `requires_root_review`; it cannot certify its own new standard.
 Without `--base` a run never certifies a SHA, and the contract's optional `policy_files` list can only add paths to that default set.
 The coordinator's separate verification and review (`skills/delivery/SKILL.md`) remain in place and are not replaced by this contract.

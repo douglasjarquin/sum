@@ -34,7 +34,7 @@ from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = SKILL_DIR.parent  # .agents/skills of the checkout that ships this skill; siblings `verify` and `maintain-verification` are vendored.
-VENDORED = ("verify", "maintain-verification")
+VENDORED = ("verify", "evidence", "maintain-verification")
 HARNESS_ALIAS_DIR = ".claude/skills"
 DEFAULT_MAPS = "docs/features/README.md"
 ARTIFACTS = ".artifacts/verification"
@@ -276,7 +276,7 @@ def verify_task_command(info):
 
 
 def fence(feature_maps, requires, freshness):
-    lines = ['entrypoint = "mise run verify"', f'feature_maps = "{feature_maps}"', f'artifacts = "{ARTIFACTS}"', "", "[requires]",
+    lines = ['entrypoint = "mise run verify"', f'feature_maps = "{feature_maps}"', f'artifacts = "{ARTIFACTS}"', 'evidence = ".artifacts/evidence"', "", "[requires]",
              "commands = [" + ", ".join(f'"{c}"' for c in requires) + "]"]
     if freshness:
         lines += ["", "[freshness]", f'inputs = ["{freshness[0]}"]', f'outputs = ["{freshness[1]}"]']
@@ -345,6 +345,7 @@ Never point a check at production data, a personal browser profile, or an applic
 
 Each run writes `{ARTIFACTS}/<run-id>/run.json` and `verify.log`; `{ARTIFACTS}/latest.json` mirrors the newest record.
 Evidence captured with `python3 .agents/skills/verify/scripts/verify_capture.py` lands under the same run directory and survives cleanup.
+Before/after proof of one scenario (`python3 .agents/skills/evidence/scripts/evidence_capture.py`) lands under `.artifacts/evidence/<run-id>/<scenario>/` with a comparison manifest; its `capabilities` command says whether this machine can drive a browser.
 The directory is Git-ignored; reference records by path in reports.
 
 ## Teardown
@@ -353,7 +354,7 @@ The directory is Git-ignored; reference records by path in reports.
 
 ## Policy
 
-Edits to this file, {policy_names}, the feature maps, or `.agents/skills/verify/` are policy changes.
+Edits to this file, {policy_names}, the feature maps, or the skills under `.agents/skills/verify/` and `.agents/skills/evidence/` are policy changes.
 Run the runner with `--base <merge-base>` so such a candidate is flagged `requires_root_review`; it cannot certify its own new standard.
 """
 
