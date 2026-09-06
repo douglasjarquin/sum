@@ -140,6 +140,28 @@ def main():
         assert ctl("context", task["id"], "--since", compact["cursor"])["changes"]["unchanged"]
         assert "context" in ctl("help")["commands"] and "--section" in [a["name"] for a in ctl("help", "context")["arguments"]]
         print("PASS: a role-specific context view, a counted evidence page, and an unchanged cursor read came from the records without a model call; the full show record kept its shape.")
+        # Task-local environment: declared commands discovered as references, a URL recorded with what lsof observed, drift and staleness marked only on inspect.
+        (worktree / "mise.toml").write_text('[tasks]\ntest = "python3 -c \'from greeting import greet\'"\ndev = "python3 -m http.server 8000"\n')
+        discovered = ctl("env", "discover", task["id"])
+        assert discovered["commands"] == {"verification": 1, "service": 1, "container": 0, "task": 0} and not (worktree / "sum.yml").exists()
+        (base / "fake-lsof").mkdir(exist_ok=True)
+        (base / "fake-lsof/cwds.json").write_text(json.dumps({"processes": [{"pid": 7000, "cwd": str(worktree)}, {"pid": 7001, "cwd": "/opt/db"}],
+                                                              "listeners": [{"pid": 7000, "address": "127.0.0.1:8000"}, {"pid": 7001, "address": "127.0.0.1:5432"}]}))
+        app = ctl("env", "record", task["id"], "--url", "http://127.0.0.1:8000", pane=task["pane"])["endpoint"]
+        db = ctl("env", "record", task["id"], "--url", "postgres://localhost:5432/demo", "--ownership", "shared", pane=task["pane"])["endpoint"]
+        idle = ctl("env", "record", task["id"], "--url", "http://localhost:3000", pane=task["pane"])["endpoint"]
+        log = ctl("env", "record", task["id"], "--log", "logs/dev.log", pane=task["pane"])["log"]
+        assert (app["state"], app["ownership"], db["ownership"], idle["state"], log["state"]) == ("observed", "owned", "shared", "not-listening", "missing")
+        assert ctl("env", "record", task["id"], "--url", "postgres://app:pw@localhost:5432/demo", check=False)["error"].startswith("The URL carries user information")
+        worker_view = ctl("context", task["id"], "--role", "worker")["environment"]["dev"]
+        assert [e["ownership"] for e in worker_view["endpoints"]] == ["owned", "shared", "unknown"] and worker_view["discovery"]["commands"][1]["kind"] == "service"
+        (base / "fake-lsof/cwds.json").write_text(json.dumps({"processes": [], "listeners": []}))
+        (worktree / "mise.toml").write_text('[tasks]\ndev = "python3 -m http.server 8080"\n')
+        assert ctl("context", task["id"], "--role", "reviewer")["environment"]["dev"]["endpoints"][0]["state"] == "observed"  # Reading observes nothing.
+        inspected = ctl("env", "inspect", task["id"])
+        assert inspected["changes"]["config_drift"] and inspected["endpoints"][0]["state"] == "stale" and inspected["touched"].startswith("nothing was started")
+        (worktree / "mise.toml").unlink()
+        print("PASS: declared mise tasks recorded as references without running them; an owned app URL, a shared database, an unbound default port, and a missing log were recorded as observed; drift and a vanished listener were marked stale only on an explicit inspect.")
         assert git("rev-parse", "HEAD") == main_sha
         assert not (repo / "greeting.py").exists()
         # Versioned briefs: regenerate from the record (no model call), stage beside the brief the worker read, never overwrite it.
