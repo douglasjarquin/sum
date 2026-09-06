@@ -4,16 +4,51 @@
 
 `mise.toml` pins Python 3.13.5, Node 22.19.0, GitHub CLI 2.78.0, Herdr 0.8.2, and quota-axi 0.1.37. Git and mise are host prerequisites. No global Node package installation is required.
 
-`mise-tasks/setup` installs those versions, then `scripts/setup.py`:
+`mise-tasks/setup` installs those versions, then `scripts/setup.py` performs the first install:
 
-1. Creates local runtime symlinks under `.local/bin`.
-2. Clones Herdr Mesh at **54adef519aa6af4dcd0bbd72586d414abab90046**.
-3. Runs `npm ci --omit=dev --ignore-scripts` against the upstream committed lockfile.
-4. Applies the documented runtime overlay below.
-5. Copies the release-matched Herdr skill from `herdr --skill`.
-6. Generates repository-local MCP settings and tests MCP initialization/discovery.
+1. Creates local runtime symlinks under `.local/bin`, once. An existing link is never retargeted, because a running process may depend on it; setup reports a differing pin instead.
+2. Clones Herdr Mesh at **54adef519aa6af4dcd0bbd72586d414abab90046** into a private staging directory, runs `npm ci --omit=dev --ignore-scripts` against the upstream committed lockfile there, applies the documented runtime overlay below, and renames the finished tree to `.deps/herdr-mesh`. An existing `.deps/herdr-mesh` is never rewritten, reinstalled, or re-patched; drift between its overlay and the current `patches/` is only reported.
+3. Copies the release-matched Herdr skill from `herdr --skill`.
+4. Generates repository-local MCP settings and tests MCP initialization/discovery.
+
+Re-running setup is therefore safe while a coordinator, workers, or an MCP server are using the checkout; it changes nothing they hold open.
+Newer code or dependencies go into a staged release instead (below).
 
 The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
+
+## Installation identity versus runtime tree
+
+The checkout where setup ran is the **installation**: it owns `.sum/` (records, roles, preferences), the generated MCP configuration, and every absolute path written into worker briefs (`<installation>/bin/sumctl ...`).
+A **runtime** is a code-plus-dependency tree that a process executes from: the installation checkout itself today, or an immutable release staged beside it.
+
+`bin/sumctl` and `bin/herdr-mesh` are small stable entrypoints.
+Each resolves its runtime exactly once per invocation (the checkout, or the tree behind `.local/current` when a later activation slice creates that pointer), exports `SUM_INSTALL_ROOT=<installation>`, and executes that runtime's Python or Node.
+A started Mesh process and the `bin/herdr-scoped` bridge it spawns keep using the tree they started from; nothing re-reads a pointer mid-call.
+The helper honors `SUM_INSTALL_ROOT` only when it runs from that installation or from one of its releases, so an inherited variable cannot make a development or task checkout adopt another installation's state, and a release run directly refuses to own state.
+
+## Staged releases
+
+```sh
+./bin/sumctl release stage            # HEAD of the installation repository; --ref REF for another commit
+./bin/sumctl release list
+./bin/sumctl release show SHA
+```
+
+`release stage` builds `<installation>/.local/releases/<commit sha>/`:
+
+- the committed tree from `git archive` (no working-tree edits, `.sum`, `.deps`, `.local`, or credentials);
+- `.local/bin/*` links to the mise tool versions pinned by the bundled `mise.toml` (`mise install` may add a version; nothing is pruned);
+- `.deps/herdr-mesh` cloned (from the installation's local Mesh clone when it has the pinned revision, otherwise upstream), installed with `npm ci`, and overlaid;
+- `.local/skills/herdr/SKILL.md` from the pinned `herdr --skill`;
+- `release.json`: source SHA and tree, a content hash for every bundled file, the Mesh revision and overlay hashes, tool pins and resolved paths, the Herdr CLI and MCP tool contract versions, the supported state and brief schema versions, and who staged it.
+
+Everything happens in a private `.staging-*` directory.
+The bundle is validated against its manifest and the MCP smoke test, made read-only, and then renamed to its final name in one step, so a listed release is always complete.
+A failed download, build, or validation removes only that staging directory and reports the reason; existing releases, the checkout's runtime, and `.sum` are untouched.
+Two concurrent requests for one SHA end with a single bundle; each installation has its own `releases` directory.
+Staging never activates anything: no pointer, MCP configuration, or live process changes.
+Old releases are kept until you remove one deliberately; there is no automatic garbage collection.
+A release tree contains no `.sum`, and running its `bin/sumctl` directly is refused; only the installation's entrypoint selects a runtime.
 
 An optional `--install-codex` installs `@openai/codex@0.153.4` into `.deps/harnesses`. It does not authenticate or switch accounts. Other existing harnesses remain usable.
 

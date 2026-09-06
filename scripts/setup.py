@@ -1,23 +1,26 @@
 #!/usr/bin/env python3
-"""Install a pinned Mesh checkout and create only repository-local integration files."""
+"""First-install setup: link pinned tools, install the pinned Mesh once, and create only repository-local integration files.
+
+Re-running is safe while sum is in service: an existing .deps/herdr-mesh, tool link, or configuration is never rewritten.
+Newer code and dependencies are staged as an immutable release with `./bin/sumctl release stage` instead.
+"""
 from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
-import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-MESH_REV = "54adef519aa6af4dcd0bbd72586d414abab90046"
-MESH_REMOTE = "https://github.com/runchr-works/herdr-mesh.git"
 CODEX_PACKAGE = "@openai/codex@0.153.4"
+_spec = importlib.util.spec_from_file_location("sumctl_lib", ROOT / "lib" / "sumctl.py")
+sumctl = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(sumctl)
 
 
 def execute(args, cwd=None, capture=False):
@@ -25,15 +28,6 @@ def execute(args, cwd=None, capture=False):
     result = subprocess.run([str(a) for a in args], cwd=cwd, check=True, text=True,
                             stdout=subprocess.PIPE if capture else None)
     return result.stdout.strip() if capture else None
-
-
-def symlink(target, link):
-    link.parent.mkdir(parents=True, exist_ok=True)
-    if link.is_symlink():
-        link.unlink()
-    elif link.exists():
-        raise RuntimeError(f"Refusing to replace non-symlink {link}")
-    link.symlink_to(target)
 
 
 def write_json(path, value):
@@ -109,51 +103,34 @@ def main():
     ap.add_argument("--configure-only", action="store_true", help="Regenerate local configs without installing dependencies")
     ap.add_argument("--install-codex", action="store_true", help="Also install the pinned Codex CLI locally; never authenticate automatically")
     args = ap.parse_args()
+    notes = []
     if not args.configure_only:
-        local = ROOT / ".local/bin"
-        local.mkdir(parents=True, exist_ok=True)
-        # Resolve through mise so a stale generated symlink cannot select the wrong version.
-        for name in ("python3", "node", "herdr", "gh", "quota-axi"):
-            resolved = execute(["mise", "which", name], capture=True)
-            symlink(str(Path(resolved).resolve()), local / name)
-        deps = ROOT / ".deps"
-        deps.mkdir(exist_ok=True)
-        mesh = deps / "herdr-mesh"
-        if not mesh.exists():
-            staging = Path(tempfile.mkdtemp(prefix="mesh-", dir=deps))
-            try:
-                execute(["git", "clone", "--filter=blob:none", "--no-checkout", MESH_REMOTE, str(staging / "source")])
-                execute(["git", "checkout", "--detach", MESH_REV], cwd=staging / "source")
-                os.replace(staging / "source", mesh)
-            finally:
-                shutil.rmtree(staging)
-        actual = execute(["git", "rev-parse", "HEAD"], cwd=mesh, capture=True)
-        if actual != MESH_REV:
-            raise RuntimeError(f"Unexpected Mesh checkout {actual}; preserve/remove .deps/herdr-mesh explicitly before re-running setup")
-        if not (mesh / "package-lock.json").is_file() or not (mesh / "LICENSE").is_file():
-            raise RuntimeError("Pinned Mesh checkout is incomplete")
-        execute(["npm", "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=mesh)
-        shutil.copyfile(ROOT / "patches/herdr-mesh/server.js", mesh / "dist/server.js")
-        shutil.copyfile(ROOT / "patches/herdr-mesh/commands.mjs", mesh / "dist/sum-commands.mjs")
-        write_json(mesh / ".sum-patched", {"upstream": MESH_REV,
-                   "server_sha256": hashlib.sha256((mesh / "dist/server.js").read_bytes()).hexdigest(),
-                   "commands_sha256": hashlib.sha256((mesh / "dist/sum-commands.mjs").read_bytes()).hexdigest()})
-        skill = execute([str(local / "herdr"), "--skill"], capture=True)
-        skill_path = ROOT / ".local/skills/herdr/SKILL.md"
-        skill_path.parent.mkdir(parents=True, exist_ok=True)
-        skill_path.write_text(skill + "\n")
-        for parent in (ROOT / ".agents/skills", ROOT / ".claude/skills"):
-            symlink("../../.local/skills/herdr", parent / "herdr")
+        links = sumctl.resolve_tools(ROOT)  # mise install plus create-once links; an existing link is never retargeted.
+        for name, link in links.items():
+            if link["differs"]:
+                notes.append(f"{link['link']} still points at {link['target']}; a running process may use it. Stage a release to pick up the new pin.")
+        mesh = ROOT / ".deps" / "herdr-mesh"
+        state = sumctl.mesh_state(ROOT, mesh)
+        if not state["installed"]:
+            sumctl.install_mesh(mesh, ROOT, local_mesh=None)  # Built in a private staging directory, then renamed into place.
+        elif not state["patched"]:
+            raise RuntimeError(f"{mesh} exists without sum's overlay marker; inspect or move it yourself. Setup never rewrites an installed Mesh.")
+        elif not state["matches_source"]:
+            notes.append(f"{mesh} carries an earlier overlay (upstream {state['upstream']}); it was left untouched because a running MCP server may use it. "
+                         "Run ./bin/sumctl release stage to build the current code and dependencies as a separate immutable release.")
+        sumctl.write_herdr_skill(ROOT)
         if args.install_codex:
             harness = ROOT / ".deps/harnesses"
-            harness.mkdir(exist_ok=True)
+            harness.mkdir(parents=True, exist_ok=True)
             if not (harness / "package.json").exists():
                 write_json(harness / "package.json", {"private": True, "name": "sum-local-harnesses"})
             execute(["npm", "install", "--prefix", str(harness), "--save-exact", "--ignore-scripts", CODEX_PACKAGE])
-            symlink(str(harness / "node_modules/.bin/codex"), local / "codex")
+            sumctl.link_tool(ROOT / ".local/bin/codex", harness / "node_modules/.bin/codex")
     configure()
     if not args.configure_only:
         execute([str(ROOT / ".local/bin/node"), str(ROOT / "scripts/mcp_smoke.mjs")])
+    for note in notes:
+        print("note: " + note, file=sys.stderr)
     print("\n" + ("Local configuration generated; dependencies were not installed." if args.configure_only else "Setup complete.") + " No global harness configs, credentials, or Herdr settings were changed.")
     print("Inside Herdr: cd into sum, optionally run ./bin/sumctl doctor (observation only), then launch codex, claude, grok, cursor-agent, pi, or another configured harness.")
     print("The harness runs ./bin/sumctl init itself: the first pane claims coordinator; later panes here are developers unless dispatched.")
@@ -164,6 +141,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError) as exc:
+    except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError, sumctl.SumError) as exc:
         print(f"setup failed: {exc}", file=sys.stderr)
         sys.exit(1)

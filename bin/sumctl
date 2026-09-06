@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
+# Stable entrypoint. This checkout is the installation identity; the runtime tree is resolved exactly once here.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-PYTHON="$ROOT/.local/bin/python3"
+RUNTIME="$ROOT"
+if [[ -L "$ROOT/.local/current" ]]; then
+  RUNTIME=$(cd -- "$ROOT/.local/current" 2>/dev/null && pwd -P) || { echo "sumctl: $ROOT/.local/current points to a missing runtime" >&2; exit 1; }
+fi
+export SUM_INSTALL_ROOT="$ROOT"
+PYTHON="$RUNTIME/.local/bin/python3"
 [[ -x "$PYTHON" ]] || PYTHON=python3
-exec "$PYTHON" "$ROOT/lib/sumctl.py" "$@"
+exec "$PYTHON" "$RUNTIME/lib/sumctl.py" "$@"
