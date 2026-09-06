@@ -25,3 +25,23 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 | `verify.external-clone-skills` | An ordinary clone with the generating toolkit gone follows every generated instruction: check, audit, run, capture, teardown | automated: `tests/test_verify_skills.py` | offline suite |
 | `verify.sum-self-audit` | sum's own contract and maps pass the maintenance audit | automated: `tests/test_verify_skills.py` | offline suite |
 | `verify.sum-self` | sum's own `mise run verify` runs the suites and demo from a task checkout | manual: `python3 .agents/skills/verify/scripts/verify_run.py` in a sum checkout | run record path in the task report |
+
+## Worker run, root run, review
+
+Issue #33: dispatch records the contract, the worker attaches its own run to the handoff, the coordinator executes the contract again under a distinct run id (`sumctl verify --execute` or `--run`), the independent review stays, and only then is the task ready for the human's merge decision.
+Entry points in `lib/sumctl.py`: `prepare` records `verification_policy`, `report` accepts `handoff.verification`, `verify` records the coordinator's run (`--run`, `--execute`), `review` takes `--tool` and `--policy-reviewed`, and `evidence_view` computes the closure prerequisites; the procedures are `skills/worker/SKILL.md` and `skills/delivery/SKILL.md`.
+
+| ID | Scenario | Driver | Evidence |
+| --- | --- | --- | --- |
+| `root.dispatch-records-contract` | Dispatch records `verification_policy` (status, contract hash, maps, policy files) and the brief names both runs | automated: `tests/test_root_verification.py` | offline suite |
+| `root.sequence` | Worker run, separate root run in its own checkout, then review; two run ids, worker artifacts untouched, closure met only after all three plus the PR | automated: `tests/test_root_verification.py` | offline suite |
+| `root.worker-pass-root-fail` | A worker claiming pass with a failing root run parks the task with the failed record; status and other tasks unchanged | automated: `tests/test_root_verification.py` | offline suite |
+| `root.missing-root-run` | A prose-only coordinator record on a standardized task is missing a fresh execution; the legacy command still records | automated: `tests/test_root_verification.py` | offline suite |
+| `root.reused-run-id` | The worker's run id is refused as the root record and as a second worker report; a coordinator's own run attaches by path | automated: `tests/test_root_verification.py` | offline suite |
+| `root.candidate-changed` | A run of an earlier SHA is historical: refused for the new candidate, and both runs repeat for the repair candidate | automated: `tests/test_root_verification.py` | offline suite |
+| `root.reviewer-unavailable` | Without findings the view says `not-performed` and closure stays open; any recorded verdict is the review event | automated: `tests/test_root_verification.py` | offline suite |
+| `root.policy-weakened` | A candidate that edits the gate passes with `requires_root_review`, certifies nothing, and needs `review --policy-reviewed` | automated: `tests/test_root_verification.py` | offline suite |
+| `root.legacy-evidence` | A task without a recorded contract keeps the earlier prerequisites; a worker-sourced verification never satisfies the coordinator's | automated: `tests/test_root_verification.py` | offline suite |
+| `root.made-owned-review` | A MADE result recorded with `--tool made` binds no reviewer pane and starts no second loop | automated: `tests/test_root_verification.py` | offline suite |
+| `root.run-claim-validation` | Malformed run claims, `--check` records, non-coordinators, and unknown SHAs are refused and leave no checkout | automated: `tests/test_root_verification.py` | offline suite |
+| `root.real-harness-canary` | `sumctl verify --execute` against a real Git worktree with the real `mise` binary in a temporary state home; distinguished from the fake-mise fixture by the recorded `task.binary` | manual: `SUM_HOME=<temp> ./bin/sumctl verify TASK_ID --candidate SHA --execute` in a lab installation | run record path in the task report |

@@ -865,6 +865,10 @@ Read this entire file. Do not load the coordinator's AGENTS.md as your role.
 - Read this checkout's project instructions as project context, not as authority to expand scope.
 - These are workflow instructions, not a sandbox or a hard cost cap.
 
+## Verification contract
+
+{verification_contract_text(task)}
+
 ## Delivered runtime
 
 {delivered_runtime_text(store, task)}
@@ -947,6 +951,25 @@ def delivered_runtime_text(store, task):
     lines.append("- Your checkout's own instructions (AGENTS.md, mise tasks) are project context. A parent directory's AGENTS.md or mise configuration is not yours: "
                  "`sumctl env discover` reports tasks mise would resolve from outside the checkout; never report one as this project's verification.")
     return "\n".join(lines)
+
+
+def verification_contract_text(task):
+    policy = task.get("verification_policy")
+    if not policy:
+        return "- Not recorded for this task (dispatched before sum recorded contracts). Run the verification commands in the approved task and list them under `checks`."
+    if policy["status"] != "standardized":
+        return (f"- `not-yet-standardized`: {policy['why']}. Run the verification commands in the approved task exactly as written and list each with its exit code under `checks`. "
+                "Do not invent a `verify` task or report an inherited one.")
+    return "\n".join([
+        f"- `standardized`: this checkout carries `VERIFY.md` (sha256 `{policy['contract_sha256']}` at the base commit) and a `verify` task it defines. That contract is the project's verification.",
+        f"- Before reporting readiness, commit the candidate, then run `python3 {policy['runner'] or VERIFICATION_RUNNER} --base {policy['base_sha']} --json` from your checkout with a clean tree. "
+        "It executes `mise run verify` and the mapped checks and writes `run.json` with an immutable `run_id`.",
+        "- Attach that run to your handoff as `verification`: `{\"run_id\", \"outcome\", \"record\", \"candidate\", \"certifies\", \"requires_root_review\", \"contract_sha256\", \"policy_changed\"}` copied from run.json (`record` is the run.json path). "
+        "A `fail`, `blocked`, or provisional (dirty) run is reported as it is; do not rerun until green without fixing the cause.",
+        "- The coordinator executes the same contract again under its own run id and performs the independent review; your run is a claim, never the gate. Do not reuse or edit a run id.",
+        f"- `VERIFY.md`, `mise.toml`, `mise-tasks/`, `{policy.get('feature_maps') or 'the feature maps'}`, and `.agents/skills/verify/` are verification policy. "
+        "Changing them is reviewed explicitly against the approved scope; a candidate must not weaken the gate that certifies it.",
+    ])
 
 
 def write_once(path, text):
@@ -1654,6 +1677,7 @@ def prepare(store, args):
         actual_branch = run(["git", "-C", task["worktree"], "branch", "--show-current"]).stdout.strip()
         if actual_root == repo or actual_root != Path(task["worktree"]) or actual_head != base_sha or actual_branch != task["branch"]:
             raise SumError("Herdr returned a checkout that does not match the task. Work is preserved; inspect it manually.")
+        task["verification_policy"] = verification_policy_at_dispatch(task["worktree"], base_sha)
         task["brief_path"] = str(write_brief(store, task))
         task["status"] = "prepared"
     except (SumError, KeyError, TypeError) as exc:
@@ -1861,9 +1885,17 @@ def report(store, args):
         # for every existing reader; the history is appended as scoped evidence so a second report erases nothing.
         task["report"] = {"text": text, "submitted_at": now(), "brief_revision": revision, "sum_version": VERSION,
                           "candidate": handoff["candidate"] if handoff else None}
+        run = handoff["verification"] if handoff else None
+        if run and run["run_id"] in recorded_run_ids(task):
+            raise SumError(f"Verification run id {run['run_id']} is already recorded on this task by the {recorded_run_ids(task)[run['run_id']]}; "
+                           "every run has its own immutable id. Run the contract again for this candidate and attach that run.")
         records = [append_evidence(task, "report", "worker", {"text": text}, candidate=handoff["candidate"] if handoff else None, endpoint=endpoint)]
         if handoff:
             records.append(append_evidence(task, "handoff", "worker", {"handoff": handoff}, candidate=handoff["candidate"], endpoint=endpoint))
+        if run:
+            # The worker's run is scoped evidence with the worker as its source. It never counts as coordinator verification.
+            records.append(append_evidence(task, "verification", "worker", {"result": RUN_OUTCOME_RESULT[run["outcome"]], "text": f"worker run {run['run_id']} ({run['outcome']})", **run},
+                                           candidate=handoff["candidate"], endpoint=endpoint))
         for record in records:
             record["brief_revision"] = revision
         task["status"] = "reported"
@@ -1902,7 +1934,7 @@ def open_obligations(store, task):
         elif q["status"] == "answered":
             items.append({"id": f"answer:{q['id']}", "kind": "answer", "ref": q["id"], "recipient": "worker", "since": q.get("answered_at")})
     evidence = task.get("evidence") or []
-    closers = [r["at"] for r in evidence if r.get("kind") in ("verification", "publication")]
+    closers = [r["at"] for r in evidence if r.get("kind") == "publication" or (r.get("kind") == "verification" and r.get("source") == "coordinator")]
     reports = [(r["id"], r["at"]) for r in evidence if r.get("kind") == "report"]
     if task.get("report") and not reports:  # A legacy writer recorded prose without an evidence record.
         reports = [("legacy", task["report"]["submitted_at"])]
@@ -3288,7 +3320,19 @@ REVIEW_VERDICTS = ("approve", "changes-requested", "blocked", "comment")
 VERIFY_RESULTS = ("pass", "fail", "inconclusive")
 PR_IDENTITY_FIELDS = ("repository", "number", "url", "head_repository", "head_branch", "base_branch", "head_sha")
 HANDOFF_LIMITS = {"task_ref": 200, "next_action": 1000, "review_ref": 500, "files": 200, "checks": 50, "artifacts": 30,
-                  "decisions_unresolved": 50, "item": 500}
+                  "decisions_unresolved": 50, "item": 500, "policy_changed": 50}
+# Issue #33: a verification *run* is one execution of the project's VERIFY.md contract by .agents/skills/verify/scripts/verify_run.py.
+# Its run.json carries an immutable run id, the candidate SHA it ran against, and the outcome. The worker attaches its run to the
+# handoff (a claim); the coordinator records a fresh run of its own (`verify --run` or `verify --execute`). Both are evidence records
+# of kind `verification`, told apart by `source`; a run id is recorded at most once per task, so a worker's record can never be
+# re-labelled as the coordinator's, and closure needs both runs plus the independent review against the same current candidate.
+RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{3,79}\Z")
+RUN_OUTCOMES = ("pass", "fail", "blocked")
+RUN_OUTCOME_RESULT = {"pass": "pass", "fail": "fail", "blocked": "inconclusive"}
+RUN_RECORD_SCHEMA = 1
+VERIFICATION_POLICY_FILES = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
+VERIFICATION_RUNNER = ".agents/skills/verify/scripts/verify_run.py"
+VERIFICATION_DIR = "verification"  # Task-local copies of root run records (run.json + verify.log); never a second result store.
 
 
 def bounded_text(value, limit, field):
@@ -3335,11 +3379,45 @@ def validate_pr_identity(value, field="pr"):
     return result
 
 
+def validate_run_claim(value, field):
+    """The worker's own verification run, copied from the runner's run.json: id, outcome, and where the record lives. A claim until
+    the coordinator's separate run exists; it never certifies anything by itself."""
+    if not isinstance(value, dict):
+        raise SumError(f"{field} must be a JSON object copied from the verify runner's run.json")
+    allowed = {"run_id", "outcome", "record", "candidate", "certifies", "requires_root_review", "contract_sha256", "policy_changed"}
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise SumError(f"{field} has unknown keys {unknown}; allowed: {sorted(allowed)}")
+    for key in ("run_id", "outcome", "record"):
+        if key not in value:
+            raise SumError(f"{field}.{key} is required")
+    if not isinstance(value["run_id"], str) or not RUN_ID.fullmatch(value["run_id"]):
+        raise SumError(f"{field}.run_id must be the runner's run id (4-80 characters of letters, digits, . _ : -)")
+    if value["outcome"] not in RUN_OUTCOMES:
+        raise SumError(f"{field}.outcome must be one of {list(RUN_OUTCOMES)}; a --check record ran nothing and is not a run")
+    result = {"run_id": value["run_id"], "outcome": value["outcome"], "record": bounded_text(value["record"], HANDOFF_LIMITS["item"], f"{field}.record"),
+              "candidate": None, "certifies": None, "requires_root_review": bool(value.get("requires_root_review", False)), "contract_sha256": None, "policy_changed": []}
+    for key in ("candidate", "certifies"):
+        if value.get(key) is not None:
+            if not isinstance(value[key], str) or not SHA40.fullmatch(value[key]):
+                raise SumError(f"{field}.{key} must be a full 40-hex commit SHA")
+            result[key] = value[key]
+    if value.get("contract_sha256") is not None:
+        if not isinstance(value["contract_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", value["contract_sha256"]):
+            raise SumError(f"{field}.contract_sha256 must be the VERIFY.md sha256 from run.json")
+        result["contract_sha256"] = value["contract_sha256"]
+    result["policy_changed"] = [bounded_text(item, HANDOFF_LIMITS["item"], f"{field}.policy_changed[]")
+                                for item in bounded_list(value.get("policy_changed", []), f"{field}.policy_changed", HANDOFF_LIMITS["policy_changed"])]
+    if result["certifies"] and result["outcome"] != "pass":
+        raise SumError(f"{field}.certifies is set but the outcome is {result['outcome']}; only a passing run certifies")
+    return result
+
+
 def validate_handoff(value):
     """The bounded structured handoff a worker may attach to a report. Every claim in it is the worker's, unverified."""
     if not isinstance(value, dict):
         raise SumError("handoff must be a JSON object")
-    allowed = {"outcome", "task_ref", "candidate", "files", "checks", "review", "review_ref", "decisions_unresolved", "next_action", "pr", "artifacts"}
+    allowed = {"outcome", "task_ref", "candidate", "files", "checks", "review", "review_ref", "decisions_unresolved", "next_action", "pr", "artifacts", "verification"}
     unknown = sorted(set(value) - allowed)
     if unknown:
         raise SumError(f"handoff has unknown keys {unknown}; allowed: {sorted(allowed)}")
@@ -3372,7 +3450,18 @@ def validate_handoff(value):
     result["checks"] = checks
     if value.get("pr") is not None:
         result["pr"] = validate_pr_identity(value["pr"], "handoff.pr")
+    result["verification"] = validate_run_claim(value["verification"], "handoff.verification") if value.get("verification") is not None else None
+    if result["verification"] and result["verification"]["candidate"] not in (None, result["candidate"]):
+        raise SumError(f"handoff.verification ran against {result['verification']['candidate']}, not handoff.candidate {result['candidate']}; "
+                       "a run of another SHA is historical, not this candidate's verification")
+    if result["verification"] and result["verification"]["certifies"] not in (None, result["candidate"]):
+        raise SumError("handoff.verification.certifies names another SHA than handoff.candidate")
     return result
+
+
+def recorded_run_ids(task):
+    """Every verification run id already on this task's record, with the source that recorded it. A run id is immutable and recorded once."""
+    return {r["run_id"]: r.get("source") for r in task.get("evidence", []) if r.get("kind") == "verification" and r.get("run_id")}
 
 
 def read_handoff(path):
@@ -3420,18 +3509,24 @@ def review(store, args):
         raise SumError(f"--verdict must be one of {list(REVIEW_VERDICTS)}")
     if args.candidate and not SHA40.fullmatch(args.candidate):
         raise SumError("--candidate must be a full 40-hex commit SHA")
+    tool_name = getattr(args, "tool", None)
+    if tool_name is not None and (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,39}", tool_name)):
+        raise SumError("--tool must be a short name of the review facility that produced these findings (for example `made`)")
     endpoint = optional_context()
     with store.lock():
         task = store.read(args.task)
         role = endpoint_role(task, endpoint)
         if role == "worker":
             raise SumError("The worker pane cannot record independent review of its own candidate. Save findings from the reviewer pane, or record `verify` as the coordinator.")
-        if endpoint and role == "other":
+        if endpoint and role == "other" and tool_name:
+            role = "other"  # A configured review facility (MADE/No Mistakes) recorded from any non-worker pane binds no reviewer endpoint.
+        elif endpoint and role == "other":
             if task.get("reviewer"):
                 raise SumError(f"Task already has reviewer pane {task['reviewer']['pane']} in session {task['reviewer']['session']}; a second reviewer endpoint is not adopted silently.")
             task["reviewer"] = {**{k: endpoint[k] for k in ("machine", "session", "pane", "cwd")}, "bound_at": now()}
             role = "reviewer"
-        record = append_evidence(task, "review", role or "unattributed", {"verdict": args.verdict, "text": text}, candidate=args.candidate, endpoint=endpoint)
+        body = {"verdict": args.verdict, "text": text, "tool": tool_name, "policy_reviewed": bool(getattr(args, "policy_reviewed", False))}
+        record = append_evidence(task, "review", role or "unattributed", body, candidate=args.candidate, endpoint=endpoint)
         record["brief_revision"] = active_revision(store, task)
         store.save(task)
     return {"task": args.task, "evidence": record, "reviewer": task.get("reviewer"),
@@ -3439,20 +3534,140 @@ def review(store, args):
 
 
 def verify(store, args):
-    """The coordinator's own verification record for one exact candidate; separate from worker claims and GitHub."""
-    text = text_input(args)
-    if args.result not in VERIFY_RESULTS:
-        raise SumError(f"--result must be one of {list(VERIFY_RESULTS)}")
+    """The coordinator's own verification record for one exact candidate; separate from worker claims and GitHub.
+
+    Three forms, all appending one `verification` record with source `coordinator`:
+      --result R --text T            the legacy prose record (kept for every existing caller and for projects without VERIFY.md);
+      --run PATH/run.json            attach a run the coordinator executed itself with the project's verify runner;
+      --execute                      sum runs that runner now, in a separate detached checkout of the candidate, and attaches the run.
+    A run id already on the task (the worker's) is refused: root verification is a fresh execution, never a re-labelled worker record."""
+    run_path, execute = getattr(args, "run", None), bool(getattr(args, "execute", False))
+    if run_path and execute:
+        raise SumError("Pass either --run PATH (a run you executed) or --execute (sum runs the contract now), not both.")
     if not SHA40.fullmatch(args.candidate or ""):
         raise SumError("--candidate must be the full 40-hex commit SHA that was actually verified")
+    if args.result is not None and args.result not in VERIFY_RESULTS:
+        raise SumError(f"--result must be one of {list(VERIFY_RESULTS)}")
+    text = text_input(args) if (getattr(args, "text", None) or getattr(args, "file", None)) else None
+    if not (run_path or execute) and (args.result is None or text is None):
+        raise SumError("Without --run or --execute, both --result and --text/--file are required: say what you executed and what happened.")
     ctx = context()
     require_coordinator(store, ctx)
+    task = store.read(args.task)
+    body = {"result": args.result, "text": text}
+    if execute:
+        run_record, copied = execute_root_verification(store, task, args.candidate, getattr(args, "base", None))
+        body.update(run_evidence(run_record, args.candidate, task, record_path=str(copied), isolation="separate-checkout"))
+    elif run_path:
+        run_record = read_run_record(run_path)
+        isolation = "task-checkout" if task.get("worktree") and run_record.get("root") and Path(run_record["root"]).resolve() == Path(task["worktree"]).resolve() else "other-checkout"
+        body.update(run_evidence(run_record, args.candidate, task, record_path=str(Path(run_path).resolve()), isolation=isolation))
+    if body.get("run_id"):
+        if args.result is not None and args.result != body["result"]:
+            raise SumError(f"--result {args.result} contradicts the run record: outcome {body['outcome']} means {body['result']}. The record stands; do not relabel it.")
+        body["text"] = text or f"coordinator run {body['run_id']} ({body['outcome']})"
     with store.lock():
         task = store.read(args.task)
-        record = append_evidence(task, "verification", "coordinator", {"result": args.result, "text": text}, candidate=args.candidate, endpoint=ctx)
+        ids = recorded_run_ids(task)
+        if body.get("run_id") in ids:
+            raise SumError(f"Run id {body['run_id']} was already recorded on this task by the {ids[body['run_id']]}. Root verification is a fresh execution "
+                           "under its own run id; the worker's record is a claim and is never re-labelled as the coordinator's.")
+        record = append_evidence(task, "verification", "coordinator", body, candidate=args.candidate, endpoint=ctx)
         record["brief_revision"] = active_revision(store, task)
         store.save(task)
-    return {"task": args.task, "evidence": record}
+    return {"task": args.task, "evidence": record, "verification": evidence_view(task)["verification"]}
+
+
+def read_run_record(path):
+    path = Path(path)
+    if not path.is_file():
+        raise SumError(f"--run {path} is not a file; pass the run.json the verify runner printed as `record:`")
+    if path.stat().st_size > MAX_TEXT * 4:
+        raise SumError(f"--run {path} is too large to be a run.json record")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise SumError(f"--run {path} is not valid JSON: {exc}") from exc
+    if not isinstance(value, dict) or value.get("schema") != RUN_RECORD_SCHEMA:
+        raise SumError(f"--run {path} is not a schema {RUN_RECORD_SCHEMA} run record from .agents/skills/verify")
+    return value
+
+
+def run_evidence(record, candidate, task, *, record_path, isolation):
+    """Evidence fields taken from one verify runner record, checked against the exact candidate and the policy recorded at dispatch."""
+    run_id = record.get("run_id")
+    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
+        raise SumError("run record has no usable run_id")
+    if (record.get("runner") or {}).get("mode") == "check" or record.get("outcome") == "checked":
+        raise SumError(f"run {run_id} is a --check record: it validated the contract and executed nothing, so it verifies no candidate")
+    if record.get("outcome") not in RUN_OUTCOMES:
+        raise SumError(f"run {run_id} has outcome {record.get('outcome')!r}; expected one of {list(RUN_OUTCOMES)}")
+    ran = (record.get("candidate") or {}).get("sha")
+    if ran != candidate:
+        raise SumError(f"run {run_id} verified {ran}, not --candidate {candidate}. Evidence for another SHA is historical; run the contract against this candidate.")
+    dirty = bool((record.get("candidate") or {}).get("dirty"))
+    policy = record.get("policy") or {}
+    dispatch_policy = task.get("verification_policy") or {}
+    contract_sha = (record.get("contract") or {}).get("sha256")
+    contract_changed = bool(dispatch_policy.get("contract_sha256") and contract_sha and contract_sha != dispatch_policy["contract_sha256"])
+    changed = [str(x)[:500] for x in (policy.get("changed") or [])][:HANDOFF_LIMITS["policy_changed"]]
+    requires_review = bool(record.get("requires_root_review")) or contract_changed or not policy.get("checked")
+    result = RUN_OUTCOME_RESULT[record["outcome"]]
+    if dirty and result == "pass":
+        result = "inconclusive"  # A provisional run of a dirty tree shows the commands passed on something, not on the candidate SHA.
+    return {"result": result, "run_id": run_id, "outcome": record["outcome"], "record": redact_reference(record_path)[0][:500], "root": redact_reference(str(record.get("root") or ""))[0][:500] or None,
+            "isolation": isolation, "dirty": dirty, "certifies": record.get("certifies") if record.get("certifies") == candidate else None,
+            "requires_root_review": requires_review, "contract_sha256": contract_sha, "contract_changed_since_dispatch": contract_changed,
+            "policy": {"checked": bool(policy.get("checked")), "base": policy.get("base"), "changed": changed},
+            "not_exercised": [str(x)[:200] for x in (record.get("not_exercised") or [])][:100],
+            "execution": {k: (record.get("execution") or {}).get(k) for k in ("exit", "timed_out", "seconds")} if record.get("execution") else None,
+            "blocked_reason": (record.get("blocked_reason") or None) and str(record["blocked_reason"])[:500]}
+
+
+def execute_root_verification(store, task, candidate, base):
+    """Run the candidate's own VERIFY.md contract in a fresh detached checkout of exactly that SHA, then keep run.json and verify.log
+    beside the task record. The worker's checkout is never written to and its artifacts are never read as the result."""
+    worktree = task.get("worktree")
+    if not worktree or not Path(worktree).is_dir():
+        raise SumError("The task checkout is gone; nothing can be executed against the candidate from here.")
+    if run(["git", "-C", worktree, "cat-file", "-e", f"{candidate}^{{commit}}"], check=False).returncode:
+        raise SumError(f"{candidate} is not a commit in the task repository; verify the SHA the worker reported.")
+    base = base or task.get("base_sha")
+    stamp = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:6]}"
+    checkout = store.path(task["id"]) / VERIFICATION_DIR / stamp / "checkout"
+    checkout.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    run(["git", "-C", worktree, "worktree", "add", "--detach", str(checkout), candidate], timeout=120)
+    try:
+        runner = checkout / VERIFICATION_RUNNER
+        if not runner.is_file():
+            raise SumError(f"Candidate {candidate} carries no {VERIFICATION_RUNNER}; the project is not standardized at this SHA. Run its documented commands and record them with --result.")
+        env = {k: v for k, v in os.environ.items() if not (k.startswith("HERDR_") or k in ("SUM_HOME", "SUM_SESSION", "SUM_INSTALL_ROOT"))}
+        argv = [sys.executable, str(runner), "--json", *(["--base", base] if base else [])]
+        try:
+            proc = subprocess.run(argv, cwd=str(checkout), text=True, capture_output=True, env=env, timeout=4000)
+        except subprocess.TimeoutExpired as exc:
+            raise CommandTimeout("verify_run.py did not finish within 4000s; the run is inconclusive and nothing was recorded") from exc
+        try:
+            record = json.loads(proc.stdout)
+        except ValueError as exc:
+            raise SumError(f"verify_run.py exited {proc.returncode} without a JSON record: {(proc.stderr or proc.stdout).strip()[-600:]}") from exc
+        if not isinstance(record, dict) or record.get("schema") != RUN_RECORD_SCHEMA or not record.get("run_id"):
+            raise SumError("verify_run.py returned an unrecognized record")
+        kept = checkout.parent / "run.json"
+        kept.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        run_dir = (record.get("artifacts") or {}).get("run_dir")
+        if run_dir and (checkout / run_dir / "verify.log").is_file():
+            shutil.copyfile(checkout / run_dir / "verify.log", checkout.parent / "verify.log")
+        artifacts_dir = (record.get("artifacts") or {}).get("dir")
+        if artifacts_dir and (checkout / artifacts_dir).is_dir():
+            shutil.rmtree(checkout / artifacts_dir)  # sum's own throwaway checkout; its record was copied out above.
+        record["root"] = str(checkout)
+        return record, kept
+    finally:
+        removed = run(["git", "-C", worktree, "worktree", "remove", str(checkout)], check=False, timeout=60)
+        if removed.returncode and checkout.exists():
+            (checkout.parent / "checkout-not-removed.txt").write_text(f"git worktree remove exited {removed.returncode}: {(removed.stderr or removed.stdout).strip()[-1000:]}\n"
+                                                                    "The verification checkout was left in place; inspect it, then remove it with `git worktree remove`.\n")
 
 
 def gh(args, *, cwd=None, timeout=30):
@@ -3559,7 +3774,11 @@ def save_pr_observation(store, task_id, observation, ctx, replace=False):
 
 
 def evidence_view(task):
-    """Scoped evidence with candidate currency, plus the closure prerequisites this task has or lacks. Computed; never stored."""
+    """Scoped evidence with candidate currency, plus the closure prerequisites this task has or lacks. Computed; never stored.
+
+    Closure on a task dispatched with a standardized contract (issue #33) needs, all against the current candidate: the worker's own
+    run, a separate coordinator run under a different run id that passed, and independent review findings. A task dispatched before
+    the contract was recorded (`verification_policy` absent) or into a project without VERIFY.md keeps the earlier prerequisites."""
     head = current_candidate(task)
     records = []
     for record in task.get("evidence", []):
@@ -3572,7 +3791,12 @@ def evidence_view(task):
                            "note": "Legacy prose report recorded before scoped evidence existed; unstructured worker claim."})
     handoffs = [r for r in records if r["kind"] == "handoff"]
     reviews = [r for r in records if r["kind"] == "review"]
-    verifications = [r for r in records if r["kind"] == "verification" and r.get("result") == "pass" and r["current"]]
+    worker_runs = [r for r in records if r["kind"] == "verification" and r["source"] == "worker" and r.get("run_id")]
+    root = [r for r in records if r["kind"] == "verification" and r["source"] == "coordinator"]
+    root_current = [r for r in root if r["current"]]
+    root_pass = [r for r in root_current if r.get("result") == "pass"]
+    policy = task.get("verification_policy")
+    standardized = bool(policy and policy.get("status") == "standardized")
     pr = task.get("pr")
     missing = []
     if not handoffs or not handoffs[-1]["current"]:
@@ -3581,11 +3805,41 @@ def evidence_view(task):
         missing.append("complete PR identity from `pr reconcile`")
     elif head and pr["identity"]["head_sha"] != head:
         missing.append("PR head SHA does not match the current candidate; reconcile again")
-    if not verifications:
-        missing.append("coordinator verification of the current candidate")
+    if not root_pass:
+        latest = root_current[-1] if root_current else None
+        if latest and latest.get("result") != "pass":
+            missing.append(f"coordinator verification of the current candidate passed (latest root run {latest.get('run_id') or latest['id']} was {latest.get('result')}); the task is parked with that evidence")
+        else:
+            missing.append("coordinator verification of the current candidate")
     if task.get("reviewer") and not reviews:
         missing.append("saved findings from the bound reviewer pane")
-    return {"current_candidate": head, "records": records, "reviewer": task.get("reviewer"), "pr": pr,
+    reviews_current = [r for r in reviews if r["current"]]
+    latest_root = root_current[-1] if root_current else None
+    if standardized:
+        if not any(r["current"] for r in worker_runs):
+            missing.append("worker verification run of the current candidate (handoff.verification from the project's verify runner)")
+        if latest_root and not latest_root.get("run_id"):
+            missing.append("coordinator verification run record (`verify --run run.json` or `verify --execute`); a prose-only record shows no fresh execution of the contract")
+        if latest_root and latest_root.get("run_id") and latest_root["run_id"] in {r["run_id"] for r in worker_runs}:
+            missing.append("a coordinator run distinct from the worker run (the same run id was recorded twice)")
+        if latest_root and latest_root.get("result") == "pass" and latest_root.get("run_id") and latest_root.get("requires_root_review") \
+                and not any(r.get("policy_reviewed") and r.get("verdict") == "approve" for r in reviews_current):
+            missing.append("explicit review of the changed verification policy (`review --policy-reviewed --verdict approve`); a candidate cannot certify its own new gate")
+        if not reviews_current:
+            missing.append("independent review findings for the current candidate (reviewer pane or the configured MADE/No Mistakes record); until then the result is not reviewed")
+    latest_worker = next((r for r in reversed(worker_runs)), None)
+    latest_review = reviews_current[-1] if reviews_current else (reviews[-1] if reviews else None)
+    verification = {
+        "contract": policy["status"] if policy else "legacy",
+        "worker_run": {k: latest_worker.get(k) for k in ("id", "run_id", "result", "outcome", "candidate", "current", "certifies", "requires_root_review")} if latest_worker else None,
+        "root_run": {k: latest_root.get(k) for k in ("id", "run_id", "result", "outcome", "candidate", "current", "certifies", "requires_root_review", "isolation")} if latest_root else None,
+        "distinct_run_ids": bool(latest_worker and latest_root and latest_root.get("run_id") and latest_worker["run_id"] != latest_root.get("run_id")),
+        "review": {"status": "performed" if reviews_current else "not-performed", "current": bool(reviews_current),
+                   "verdict": latest_review.get("verdict") if latest_review else None, "tool": latest_review.get("tool") if latest_review else None,
+                   "policy_reviewed": bool(latest_review and latest_review.get("policy_reviewed")), "reviewer_pane": (task.get("reviewer") or {}).get("pane")},
+        "note": "Worker and coordinator runs are separate executions with their own run ids; neither the worker's run nor a review substitutes for the coordinator's. Records for another SHA are historical.",
+    }
+    return {"current_candidate": head, "records": records, "reviewer": task.get("reviewer"), "pr": pr, "verification": verification,
             "closure": {"prerequisites_met": not missing, "missing": missing, "merged_for_task": bool(pr and pr.get("merged_for_task")),
                         "note": "Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged."}}
 
@@ -3986,7 +4240,7 @@ def context_view(store, task_id, args):
                 "evidence": {"records": len(task.get("evidence", [])), "current_candidate": head,
                              "latest_handoff": {"id": handoff["id"], "outcome": handoff["handoff"]["outcome"], "candidate": handoff["candidate"],
                                                 "current": bool(head) and handoff["candidate"] == head} if handoff else None,
-                             "closure_missing": view["closure"]["missing"]},
+                             "closure_missing": view["closure"]["missing"], "verification": view["verification"]},
                 "report": {"submitted_at": task["report"]["submitted_at"], "brief_revision": task["report"].get("brief_revision")} if task.get("report") else None,
                 "brief": {"active": versions.get("active"), "requested": versions.get("requested")} if versions else {"error": versions_error},
                 "returns_open": returns if isinstance(returns, dict) else len(returns),
@@ -6748,6 +7002,31 @@ def verification_contract_status(worktree, task_origins):
             "runner": ".agents/skills/verify/scripts/verify_run.py" if (Path(worktree) / ".agents/skills/verify/scripts/verify_run.py").is_file() else None}
 
 
+def verification_policy_at_dispatch(worktree, base_sha):
+    """The project verification contract as it stands at the base commit, recorded with the task (issue #33). Nothing is run: the status,
+    the VERIFY.md hash, the feature-map index, and the policy file set the worker's candidate is later compared against."""
+    contract = verification_contract_status(worktree, mise_task_origins(worktree))
+    path = Path(worktree) / "VERIFY.md"
+    value = {"status": contract["status"], "why": contract["why"], "runner": contract["runner"], "base_sha": base_sha, "recorded_at": now(),
+             "contract_sha256": None, "feature_maps": None, "policy_files": list(VERIFICATION_POLICY_FILES)}
+    if path.is_file():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        value["contract_sha256"] = sha256_text(text)
+        match = re.search(r"^```verify[ \t]*\n(.*?)^```[ \t]*$", text, re.S | re.M)
+        if match:
+            try:
+                config = tomllib.loads(match.group(1))
+                if isinstance(config.get("feature_maps"), str):
+                    value["feature_maps"] = config["feature_maps"][:300]
+                    value["policy_files"].append(config["feature_maps"][:300])
+                extra = config.get("policy_files")
+                if isinstance(extra, list):
+                    value["policy_files"].extend(str(x)[:300] for x in extra if isinstance(x, str))
+            except tomllib.TOMLDecodeError:
+                value["why"] += "; the ```verify block is not valid TOML (the runner will block)"
+    return value
+
+
 def mise_task_origins(worktree):
     """Ask mise which tasks resolve from this checkout and where each is defined; nothing is run. mise walks parent directories, so a
     nested project sees the parent's tasks: any task whose source lies outside the checkout is reported as inherited, never as the project's own."""
@@ -7692,14 +7971,19 @@ def parser():
     s.add_argument("task")
     s.add_argument("--verdict", required=True, choices=REVIEW_VERDICTS)
     s.add_argument("--candidate", help="Full 40-hex SHA the findings cover")
+    s.add_argument("--tool", help="Name of the configured review facility that produced the findings (for example `made`); binds no reviewer pane")
+    s.add_argument("--policy-reviewed", action="store_true", help="The findings cover the candidate's changes to VERIFY.md, mise tasks, feature maps, or the verify skill line by line")
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--text")
     g.add_argument("--file")
-    s = sub.add_parser("verify", help="Coordinator only: append the coordinator's own verification result for one exact candidate")
+    s = sub.add_parser("verify", help="Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)")
     s.add_argument("task")
     s.add_argument("--candidate", required=True, help="Full 40-hex SHA that was actually verified")
-    s.add_argument("--result", required=True, choices=VERIFY_RESULTS)
-    g = s.add_mutually_exclusive_group(required=True)
+    s.add_argument("--result", choices=VERIFY_RESULTS, help="Required without --run/--execute; with a run record it may only confirm the record's outcome")
+    s.add_argument("--run", help="Path to the run.json of a verify-runner execution you performed yourself for this candidate")
+    s.add_argument("--execute", action="store_true", help="Run the candidate's VERIFY.md contract now in a separate detached checkout of that SHA and record the run")
+    s.add_argument("--base", help="Base commit for the policy comparison of --execute (default: the task's recorded base)")
+    g = s.add_mutually_exclusive_group(required=False)
     g.add_argument("--text")
     g.add_argument("--file")
     s = sub.add_parser("pr", help="Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names")
