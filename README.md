@@ -56,10 +56,10 @@ Herdr's optional native integrations can be installed separately, for example `h
 | Component | Purpose |
 | --- | --- |
 | `AGENTS.md` and harness instruction aliases | A short coordinator contract, with a separate worker role |
-| Six bundled skills | Dispatch, worker execution, verification/PR delivery, rundown/recovery, isolated self-development, and atomic updates with code-only rollback |
+| Six bundled skills | Dispatch, worker execution, verification/PR delivery, rundown/recovery, isolated self-development, and atomic updates with rolling session refresh and code-only rollback |
 | Release-matched Herdr skill | Copied from the installed `herdr --skill` during setup |
 | Pinned Herdr Mesh plus a small runtime overlay | Ten relevant MCP tools, current Herdr commands, bounded reads/waits, no swallowed handoff errors |
-| `bin/sumctl` | Durable task/decision/report files, native worktree creation and launch, bounded notices, records backup, staged releases, and atomic update/rollback |
+| `bin/sumctl` | Durable task/decision/report files, native worktree creation and launch, bounded notices, records backup, staged releases, atomic update/rollback, and per-session refresh bookkeeping |
 | `quota-axi` | Advisory quota evidence; no automatic billing/account switching |
 | Offline tests and a demo | Test behavior without model credentials, a real Herdr installation, or GitHub writes |
 | Explicit live smoke test | Validate the real Herdr API in an isolated named session |
@@ -68,7 +68,7 @@ The helper is called `sumctl` to avoid shadowing the Unix `sum` command. Normall
 
 ## State and communication
 
-Private state lives in `.sum/` and is ignored by Git. `.sum/context.json` records the coordinator owner and `.sum/sessions/` the registered panes and roles. Optional `.sum/preferences.md` and `.sum/projects.md` hold local preferences and project notes. Each task stores its brief, base SHA, branch/worktree, pane bindings, questions, answers, report, and a `versions.json` sidecar with brief revisions. File updates are locked and atomically replaced on one local machine.
+Private state lives in `.sum/` and is ignored by Git. `.sum/context.json` records the coordinator owner and `.sum/sessions/` the registered panes and roles. Optional `.sum/preferences.md` and `.sum/projects.md` hold local preferences and project notes. `.sum/coordinator/` holds the coordinator's contract revisions and refresh receipts. Each task stores its brief, base SHA, branch/worktree, pane bindings, questions, answers, report, and a `versions.json` sidecar with brief revisions. File updates are locked and atomically replaced on one local machine.
 
 Workers use the exact commands in their generated brief. The core interaction is:
 
@@ -124,6 +124,24 @@ The switch is one symlink rename, so an interrupted update leaves either the com
 Commands already running finish on the runtime they resolved; worker briefs carry stable `<installation>/bin/sumctl` commands, so their callbacks keep working across the switch; new dispatches use the new default; connected MCP clients keep their tool set until the client itself restarts.
 A refusal names the exact incompatibility and leaves the old installation serving.
 See `skills/update/SKILL.md` for bootstrap, canary, and rollback steps.
+
+### Refresh running sessions
+
+```sh
+./bin/sumctl refresh request               # coordinator contract plus every non-archived task; --task TASK_ID or --coordinator narrows it
+./bin/sumctl refresh status                # confirmed / submitted-unconfirmed / pending-busy / pending-unreachable / capability-deferred
+./bin/sumctl refresh adopt --coordinator rN
+```
+
+An update changes which code new commands run; a refresh asks the sessions that are already running to reread their operating instructions, one at a time, without restarting anyone.
+For each target the coordinator stages the next immutable revision from the current runtime (a worker brief `briefs/rN.md`, or a coordinator contract snapshot under `.sum/coordinator/`), records it as requested, and then makes one delivery attempt through Herdr's agent boundary: only a pane that exists, runs in the recorded checkout, and is reported idle or done receives a short fixed message naming the revision, the machine-generated change summary, the file, and the exact adopt command.
+No question, answer, or report text is ever placed in that message.
+A busy, blocked, unknown, missing, or refusing session keeps working on its current brief and shows as pending with the exact reason; nothing polls, sleeps, or relaunches it, and a later `refresh request` or `inbox` rechecks it.
+A worker adopts at its next safe point with `brief adopt`, keeping its process, checkout, partial edits, commits, report, and repair count; the coordinator adopts its own contract with `refresh adopt --coordinator`.
+Four things stay separate: the installation default, the runtime a process actually resolved, the revision requested of a session, and the revision that session reports it has read.
+A submitted prompt is not a receipt and a receipt is not proof of compliance.
+Two requests before a receipt coalesce to the newest revision, a stale receipt is refused, a rollback stages the next revision from the rolled-back runtime, and already-connected MCP clients keep their tool set (`capability-deferred`) until they restart.
+Developer sessions are excluded from the fan-out.
 
 ## Test it
 

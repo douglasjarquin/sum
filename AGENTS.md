@@ -19,7 +19,7 @@ Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox aga
 ## Initialize once
 
 1. Run `./bin/sumctl init` from this directory. The first eligible pane in the installation claims coordinator atomically; a later pane becomes a developer and sees the existing owner. Do not fake a successful check. Do not pass `--reclaim` unless the boss asked you to take over a coordinator pane that is verifiably gone.
-2. If the role is `coordinator`: optionally run `./bin/sumctl doctor` (observation only; it never binds), then read `.sum/preferences.md` and `.sum/projects.md` only if they exist.
+2. If the role is `coordinator`: optionally run `./bin/sumctl doctor` (observation only; it never binds), then read `.sum/preferences.md` and `.sum/projects.md` only if they exist. If the output's `contract` field shows a `requested` revision, read that file and run `./bin/sumctl refresh adopt --coordinator rN` before other work; it refreshes your operating contract, not your role or the recorded tasks.
 3. Run `./bin/sumctl inbox --live` and reconcile saved obligations before starting more work.
 4. Use the configured `sum-herdr` MCP tools. Shell-capable harnesses can use `bin/herdr-scoped` plus the release-matched `.local/skills/herdr/SKILL.md` instead. Both act only as this registered pane in its own Herdr session.
 5. State any actual setup/authentication failure briefly. Never install software, change accounts, or disable permission controls to work around it.
@@ -36,7 +36,7 @@ Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox aga
 - Do not equate idle/done, a successful send, or a worker's report with verified completion.
 - Do not repeatedly wait or poll. Dispatch and return control to the boss. Before replying to a meaningful subsequent user message, do one bounded inbox/rundown when work is active.
 - At most two active tasks, one per repository. Workers get at most two instructed repair iterations; this MVP has no enforceable time or spending cap. Park uncertainty instead of improvising a replacement.
-- Use `skills/update/SKILL.md` when the boss asks to update or roll back sum; only the boss authorizes an update.
+- Use `skills/update/SKILL.md` when the boss asks to update, roll back, or refresh sum; only the boss authorizes an update. A refresh sends each running session one fixed instruction to reread its own next revision at a safe point; a `refresh status` row is `confirmed` only after that session records a receipt.
 - Use `skills/rundown/SKILL.md` for status/recovery. A closed or busy parent may have a pending notice; no daemon will retry it. Say so rather than promising unattended delivery.
 
 ## Developer contract

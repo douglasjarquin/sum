@@ -43,6 +43,27 @@ Executed on the development host for issue #6 from a task checkout: the Python s
 The new tests use a bare Git repository as `origin` and cover: resolving only revisions merged on `origin/main` (a local unmerged commit and a dirty checkout are refused or reported, never reset); an atomic apply while a helper call from the old runtime is paused and while a task's absolute callbacks run before and after the switch; injected failures before the rename, at the rename, and after it (the entrypoint post-check), each leaving a complete selection; a failing installer, a mismatched manifest, a candidate needing another Herdr version, a candidate not supporting a task's brief schema, a candidate helper that cannot read the records, and a concurrent update holding the lock, each leaving the current default and records intact; rollback after a new question and report were saved, with both helper generations reading the same records, rollback to the checkout, an explicit target, and an unknown target; a simulated MCP server keeping its start tree across an apply while a new entrypoint call uses the new default; and gating of `apply`/`rollback` to the coordinator pane and of every update write to the installation's own helper.
 No model, GitHub write, live installation state, or user `default` session was involved; `mise run setup` and `mise run test-live` were not re-run for this slice.
 
+## Rolling refresh slice (2026-09-05, macOS)
+
+Executed on the development host for issue #7 from a task checkout: the Python suites, the Node Mesh tests, and the offline demo including its new refresh section.
+The new offline tests cover: a request persisted before the delivery attempt with the fixed instruction carrying only IDs, hashes, paths, and the machine-generated summary (question and answer prose never travel); the notice slot left untouched; busy, blocked, unknown, missing-pane, stale-cwd, and refused-prompt workers left on their brief with the exact reason recorded; repeated requests coalescing to one `requested` event while every delivery attempt is recorded; `r2` superseded by `r3` and a stale receipt refused; four concurrent `ask` calls racing four `refresh request` calls plus a report without losing a record; developer sessions excluded; an MCP contract change and a legacy record without start metadata reported as `capability-deferred`; CLI gating to the coordinator pane and the installation helper; and, through the installation entrypoint, two upstream updates and a rollback that stage `r2`, `r3`, `r4` for the worker and `r1`..`r3` for the coordinator, refuse every earlier receipt, and leave the open question, the report binding, the worktree, and the branch unchanged.
+
+### Two real harnesses in an isolated lab
+
+One run in a named Herdr 0.8.2 session `sum-lab-t288-*` with a lab state home under `/tmp`, this checkout's helper, and two throwaway repositories; the user's `default` session and the production `.sum` were never touched, and the lab session was deleted afterwards.
+Both harnesses were dispatched with the same tiny brief (list the brief, answer READY, stop), given one recorded decision each, and then refreshed once with `refresh request`.
+
+| Observation | Claude Code (`claude`, Fable 5.1, auto mode) | Codex CLI (`codex`, gpt-5.6) |
+| --- | --- | --- |
+| Startup in a fresh worktree | Blocked on the folder-trust dialog; Herdr returned `agent_not_ready`, sum recorded `needs-attention` and did not relaunch | Same: directory-trust dialog, `agent_not_ready`, `needs-attention` |
+| After the lab accepted the dialog | `idle`; the brief prompt ran, `sumctl brief list` was executed, READY, `done` in 26 s | `done`, but the account had hit its usage limit: the brief prompt sat in the composer and no turn ran |
+| Refresh delivery | Pane observed `done`; instruction submitted; state `submitted-unconfirmed` | Pane observed `done`; instruction submitted; state `submitted-unconfirmed` |
+| Receipt | Read `briefs/r2.md`, ran `brief adopt`, applied the recorded decision with `resolve`, kept its checkout and finished work, stopped; `confirmed` after 39 s | None: the composer showed the answer notice and the refresh text concatenated, unprocessed; status honestly stayed `submitted-unconfirmed` with one attempt recorded |
+| Native safe boundary | Herdr `agent get`/`agent prompt` lifecycle; `agent prompt` refuses `blocked` agents | Same Herdr surface; no harness-specific hook was available or used |
+
+What this establishes: the same fixed instruction reaches both harnesses only through Herdr's settled-state gate, the receipt is the only thing that turns a row `confirmed`, and a settled (`done`) client that cannot act, here for a billing reason, is reported as unconfirmed rather than updated.
+What it does not establish: parity between harnesses, behavior under a blocked permission dialog mid-task, or any harness-native refresh hook; none exists in this slice, so pending state is rechecked only at ordinary interactions.
+
 ## Not executed here
 
 - A full `mise run setup` dependency download/install. The container could not reach the required network endpoints.

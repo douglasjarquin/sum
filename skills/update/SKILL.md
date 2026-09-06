@@ -1,6 +1,6 @@
 ---
 name: sum-update
-description: Update the installation to a merged sum revision atomically, inspect what is active versus default, and roll the code back without touching task records.
+description: Update the installation to a merged sum revision atomically, refresh running coordinators and workers one at a time at safe boundaries, inspect what is active versus default versus read, and roll the code back without touching task records.
 ---
 # Update sum
 
@@ -46,7 +46,40 @@ There is no client hot reload and no false claim of one.
 - Every worker brief carries `<installation>/bin/sumctl ...`; those absolute commands are stable, so `ask`, `show`, `resolve`, `report`, and `brief` keep working before, during, and after activation on the same records.
 - New dispatches, new panes, and new MCP server starts use the new default.
 - Running MCP servers and `bin/herdr-scoped` stay pinned to their start tree.
-- `AGENTS.md` and `skills/` read by a plain harness come from the checkout, which the update leaves alone; `deferred` reports `checkout-instructions` when the checkout HEAD differs from the default. Refreshing instructions inside running sessions is separate work, not part of this update.
+- `AGENTS.md` and `skills/` read by a plain harness come from the checkout, which the update leaves alone; `deferred` reports `checkout-instructions` when the checkout HEAD differs from the default. Running sessions pick up the new instructions through the rolling refresh below, one target at a time, or by starting fresh.
+
+## Rolling refresh of running sessions
+
+After `update apply` (or `rollback`), tell the crew to reread their operating instructions without restarting anyone:
+
+```sh
+./bin/sumctl refresh request                      # coordinator contract plus every non-archived task on this machine
+./bin/sumctl refresh request --task TASK_ID       # one task (repeatable)
+./bin/sumctl refresh request --coordinator        # only the coordinator contract
+./bin/sumctl refresh status                       # bounded summary from saved records; writes nothing
+./bin/sumctl refresh adopt --coordinator rN       # your own receipt after reading the requested contract revision
+```
+
+`refresh request` runs from the coordinator pane on the current default runtime and, per target, in this order:
+
+1. Stage the target's next immutable revision from that runtime: for a task, `brief regenerate` (`briefs/rN.md`, machine-generated change summary, decisions as recorded); for the coordinator, a contract snapshot `.sum/coordinator/contracts/rN.md` rendered from the runtime's `AGENTS.md` and skills. Unchanged content stages nothing.
+2. Mark that revision `requested` and persist it in the target's version sidecar, superseding any earlier request. Repeating the request records nothing new.
+3. Attempt one delivery through the native agent boundary: the recorded pane must exist, run in the recorded checkout, and be reported `idle` or `done` by Herdr; then one `agent prompt` carries a fixed message with the task ID, revision, runtime, change summary, file path, and the exact `adopt` command. No question, answer, or report prose is ever placed in that message.
+4. Record the attempt (`submitted-unconfirmed`, `pending-busy`, or `pending-unreachable` with the exact reason) in the sidecar, beside the notice slot, never in it.
+
+Then read your own contract revision at `refresh status` → `path` (also shown by `init` after a restart) and run `refresh adopt --coordinator rN`. Continue coordination from `inbox --live`; nothing about your role, registration, or task routes changed.
+
+### What the states mean
+
+- `confirmed`: the target recorded a receipt (`brief adopt` / `refresh adopt`) for the latest revision. A receipt shows the revision was read; it does not prove the model follows it.
+- `submitted-unconfirmed`: the prompt was accepted while the agent was settled. A submitted prompt is not acknowledgement; a `working`/`idle` edge is not acknowledgement either.
+- `pending-busy`: Herdr reported `working`, `blocked`, or `unknown`; the target keeps working on its current brief. Herdr idle would not have proven that a foreground tool stopped, so nothing is inferred from it.
+- `pending-unreachable`: pane missing, cwd not the recorded checkout, another machine, or Herdr refused the prompt (`agent_blocked`, `agent_prompt_stalled`). Same outcome: the old contract keeps serving.
+- `capability-deferred`: a surface the client cannot reload by rereading text, today the MCP tool set of an already-connected client (`deferred: mcp` with the recorded start contract). The compatible old surface stays; the new capability waits for the client's own restart. New sessions and new dispatches get the newest surface.
+
+A pending target is rechecked only at ordinary interactions: a later `refresh request` (idempotent), `inbox`/`status` rows (`refresh` field), or `refresh status`. There is no polling loop, fleet barrier, fixed sleep, or automatic relaunch, and no claim that a whole client updated.
+Developer sessions are excluded from the fan-out and listed under `excluded`; a developer rereads its own checkout.
+Two updates before a receipt coalesce to the newest revision (`r2` superseded by `r3`); a receipt for `r2` is then refused. A rollback stages the next revision from the rolled-back runtime; earlier receipts never count for it. Questions, answers, reports, and repair accounting are never touched by a refresh.
 
 ## Rollback
 
@@ -75,5 +108,7 @@ Afterwards `./bin/sumctl update ...` runs from the new default.
 4. Dispatch one small approved task and confirm its brief and callbacks work.
 5. Anything wrong: `./bin/sumctl update rollback`, then report the exact `blocking`/`post_check` text to the boss.
 
-Report the old and new SHA, the default and active runtime, the compatibility results, and the deferred work.
-Do not claim that connected clients or running agents picked up the new version.
+6. `./bin/sumctl refresh request`, then `./bin/sumctl refresh status`; adopt your own contract revision.
+
+Report the old and new SHA, the default and active runtime, the compatibility results, the refresh counts per state, and the deferred work.
+Do not claim that connected clients or running agents picked up the new version; only a recorded receipt says a session read the new revision.
