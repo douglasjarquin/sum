@@ -156,6 +156,17 @@ cd .sum/dev/my-topic && ./bin/sumctl init       # reports developer
 
 `dev prepare` is plain `git worktree add` into `.sum/dev/<name>` on branch `sum-dev/<name>`, plus a `.sum/dev.json` marker in the new checkout. Rerunning it reopens the checkout with uncommitted work intact. The checkout keeps its own `.sum`, `.local`, `.deps`, and generated configs; setup there never designates it, so no coordinator can be claimed in it. Its `bin/sumctl` refuses every write aimed at the installation's state, including through an inherited `SUM_HOME`, so lab tests cannot touch production records; a dispatched task whose target is sum gets the same isolation and keeps using the installed helper for its callbacks. `dev list` shows checkouts, and `dev remove --name my-topic` uses `git worktree remove` and `git branch -d` only, so dirty trees and unmerged branches are preserved. Ship through the normal task, verification, and PR procedure; nothing is installed until a human merges. Details and a bootstrap recipe for the preceding release are in `skills/develop/SKILL.md`.
 
+## Runtime releases
+
+The checkout where setup ran is the installation: it owns `.sum/`, the generated MCP settings, and the absolute `bin/sumctl` path in every worker brief. Code and dependencies can be staged separately as an immutable, commit-addressed release without touching anything a running coordinator, worker, or MCP server uses:
+
+```sh
+./bin/sumctl release stage            # builds .local/releases/<sha> for HEAD; nothing is activated
+./bin/sumctl release list
+```
+
+A release holds the committed sum tree, its own pinned tool links, its own installed Mesh, and a `release.json` manifest with source SHA, content hashes, dependency pins, and contract versions. It is validated before it appears, kept read-only, and never contains state. Re-running `mise run setup` never rewrites an installed `.deps/herdr-mesh` or retargets a tool link either. Switching a live installation onto a staged release is a separate, explicit step that this version does not perform. See [dependencies](docs/DEPENDENCIES.md).
+
 ## Development and publication
 
 See [dependencies](docs/DEPENDENCIES.md) for pins and the Mesh overlay. No secrets or runtime state belong in commits. `mise.lock`, if generated on a networked machine, should be committed with dependency changes; none is fabricated here.

@@ -5,7 +5,10 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
+import stat
+import time
 import subprocess
 import sys
 import tarfile
@@ -649,13 +652,14 @@ class CoreTest(unittest.TestCase):
         with mock.patch.object(sumctl, "ROOT", candidate), mock.patch("sys.stderr"), mock.patch.object(sumctl, "emit"):
             for argv in (["ask", task["id"], "--text", "hi"], ["report", task["id"], "--text", "done"], ["init"],
                          ["dispatch", "--repo", str(self.repo), "--brief", str(self.brief), "--harness", "codex", "--approved"],
-                         ["dev", "prepare", "--name", "nested"], ["backup", str(self.root / "b.tar.gz")]):
+                         ["dev", "prepare", "--name", "nested"], ["backup", str(self.root / "b.tar.gz")], ["release", "stage"]):
                 with self.subTest(argv=argv):
                     self.assertEqual(sumctl.main(["--home", str(store.home), *argv]), 1)
             with mock.patch.dict(os.environ, {"SUM_HOME": str(store.home)}):
                 self.assertEqual(sumctl.main(["init"]), 1)  # An inherited production SUM_HOME is refused, not followed.
                 self.assertEqual(sumctl.main(["show", task["id"]]), 0)
             self.assertEqual(sumctl.main(["--home", str(store.home), "inbox"]), 0)
+            self.assertEqual(sumctl.main(["--home", str(store.home), "release", "list"]), 0)  # Observing releases is read-only.
             sumctl.Store(lab).init()
             self.assertEqual(sumctl.main(["--home", str(lab), "init"]), 0)  # Lab state is fully usable.
             self.assertEqual(sumctl.main(["--home", str(lab), "backup", str(self.root / "lab.tar.gz")]), 0)
@@ -684,6 +688,238 @@ class CoreTest(unittest.TestCase):
             self.assertEqual(sumctl.parser().parse_args(["status"]).home, str(sumctl.ROOT / ".sum"))
         with mock.patch.dict(os.environ, {"SUM_SESSION": "", "HERDR_SESSION": "lab"}):
             self.assertEqual(sumctl.session_from_env(), "lab")
+
+
+def fake_installer(target, local_mesh=None):
+    """Offline stand-in for install_runtime: the same tree shape, no network, npm, or mise."""
+    target = Path(target)
+    mesh = target / ".deps" / "herdr-mesh"
+    (mesh / "dist").mkdir(parents=True)
+    (mesh / "dist" / "index.js").write_text("// fake mesh\n")
+    (mesh / "node_modules" / "@modelcontextprotocol" / "sdk").mkdir(parents=True)
+    (mesh / "node_modules" / "@modelcontextprotocol" / "sdk" / "package.json").write_text('{"name": "@modelcontextprotocol/sdk"}\n')
+    sumctl.apply_overlay(target, mesh)
+    for name in sumctl.TOOLS:
+        real = {"python3": sys.executable, "node": shutil.which("node") or sys.executable}.get(name, str(ROOT / "tests/fixtures/herdr.py"))
+        sumctl.link_tool(target / ".local" / "bin" / name, real)
+    (target / ".local" / "skills" / "herdr").mkdir(parents=True)
+    (target / ".local" / "skills" / "herdr" / "SKILL.md").write_text("fake herdr skill\n")
+
+
+def slow_installer(delay):
+    def installer(target, local_mesh=None):
+        time.sleep(delay)
+        fake_installer(target, local_mesh)
+    return installer
+
+
+class ReleaseTest(unittest.TestCase):
+    """Staging immutable runtime releases beside a live installation, entirely offline."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="sum-release-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name).resolve()
+        self.env = {"SUM_HOME": "", "SUM_SESSION": "", "SUM_INSTALL_ROOT": "", "HERDR_SOCKET_PATH": "",
+                    "SUM_HERDR_BIN": str(ROOT / "tests/fixtures/herdr.py"), "FAKE_HERDR_ROOT": str(self.root / "fake"),
+                    "HERDR_ENV": "1", "HERDR_PANE_ID": "w-parent:p1", "HERDR_SESSION": "sum-test"}
+        patch = mock.patch.dict(os.environ, self.env)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def git(self, *args, cwd):
+        return subprocess.run(["git", "-C", str(cwd), *args], text=True, capture_output=True, check=True).stdout.strip()
+
+    def installation(self, name="sum install dir", via_symlink=False):
+        """A designated installation whose repository holds this checkout's tracked sum sources, including symlinks."""
+        real = self.root / name
+        real.mkdir()
+        listing = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True).stdout
+        for relative in filter(None, listing.decode().split("\0")):
+            source, target = ROOT / relative, real / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target, follow_symlinks=False)
+        self.git("init", "-b", "main", cwd=real)
+        self.git("config", "user.name", "sum test", cwd=real)
+        self.git("config", "user.email", "test@example.invalid", cwd=real)
+        self.git("add", ".", cwd=real)
+        self.git("commit", "-q", "-m", "installation", cwd=real)
+        root = real
+        if via_symlink:
+            root = self.root / "link to install"
+            root.symlink_to(real)
+        store = sumctl.Store(root / ".sum")
+        store.init()
+        (store.home / "preferences.md").write_text("private preferences\n")
+        return root, store
+
+    def snapshot(self, path):
+        rows = {}
+        for member in sorted(Path(path).rglob("*")):
+            relative = str(member.relative_to(path))
+            rows[relative] = os.readlink(member) if member.is_symlink() else (hashlib_sha(member) if member.is_file() else "dir")
+        return rows
+
+    def stage(self, store, ref="HEAD", installer=fake_installer):
+        return sumctl.stage(store, ref, installer=installer)
+
+    def cli(self, argv, env=None, cwd=None):
+        merged = os.environ.copy()
+        merged.update(env or {})
+        return subprocess.run([str(a) for a in argv], env=merged, cwd=cwd, capture_output=True, text=True)
+
+    def test_stage_builds_a_validated_immutable_bundle_outside_state(self):
+        root, store = self.installation(via_symlink=True)
+        head = self.git("rev-parse", "HEAD", cwd=root)
+        records = self.snapshot(store.home)
+        value = self.stage(store)
+        release = Path(value["release"])
+        self.assertEqual((value["staged"], value["activated"], value["sha"]), (True, False, head))
+        self.assertEqual(release, root.resolve() / ".local" / "releases" / head)
+        manifest = value["manifest"]
+        self.assertEqual(manifest["files"]["lib/sumctl.py"], "sha256:" + hashlib_sha(release / "lib/sumctl.py"))
+        self.assertEqual(manifest["files"]["CLAUDE.md"], "link:AGENTS.md")
+        self.assertEqual(manifest["dependencies"]["herdr_mesh"]["rev"], sumctl.MESH_REV)
+        self.assertEqual(manifest["dependencies"]["tools"]["pins"]["node"], "22.19.0")
+        self.assertEqual(manifest["contracts"], {"herdr_cli": "0.8.2", "mcp": {"server": "herdr-mesh-sum", "version": "0.1.0", "tools": 10}})
+        self.assertEqual(manifest["supports"], {"state_schema": [1], "brief_schema": [1]})
+        self.assertEqual(manifest["staged_by"]["instance"], json.loads((store.home / "state.json").read_text()).get("instance"))
+        self.assertFalse((release / ".sum").exists())
+        self.assertFalse(any(".sum" in n.split("/") or n.startswith(".deps/harnesses") for n in manifest["files"]))
+        self.assertNotIn(".sum/preferences.md", manifest["files"])
+        self.assertFalse(os.access(release / "lib" / "sumctl.py", os.W_OK))
+        self.assertFalse(os.access(release / "release.json", os.W_OK))
+        self.assertEqual([p.name for p in release.parent.iterdir()], [head])  # No staging leftovers.
+        self.assertFalse((root / ".deps").exists())  # The installation's own runtime was not created or touched.
+        self.assertEqual(self.snapshot(store.home), records)
+        again = self.stage(store)
+        self.assertEqual((again["staged"], again["release"]), (False, str(release)))
+        listing = sumctl.release_list(store)
+        self.assertEqual([(r["sha"], r["ok"]) for r in listing["releases"]], [(head, True)])
+        self.assertEqual(sumctl.release_show(store, head[:8])["sha"], head)
+
+    def test_release_tree_never_owns_state_and_runs_only_for_its_installation(self):
+        root, store = self.installation()
+        release = Path(self.stage(store)["release"])
+        lab = self.root / "lab"
+        sumctl.Store(lab).init()
+        direct = self.cli([release / "bin" / "sumctl", "--home", lab, "status"])
+        self.assertEqual(direct.returncode, 1)
+        self.assertIn("immutable release tree", direct.stderr)
+        self.assertFalse((release / ".sum").exists())
+        pinned = self.cli([sys.executable, release / "lib" / "sumctl.py", "--home", lab, "doctor"], env={"SUM_INSTALL_ROOT": str(root)})
+        value = json.loads(pinned.stdout)
+        self.assertEqual((value["runtime"], value["installation"]), (str(release), str(root)))
+        foreign = self.cli([sys.executable, release / "lib" / "sumctl.py", "--home", lab, "status"], env={"SUM_INSTALL_ROOT": str(self.root)})
+        self.assertEqual(foreign.returncode, 1)  # A foreign or inherited SUM_INSTALL_ROOT is ignored, so the release still refuses.
+        candidate = self.cli([sys.executable, ROOT / "lib" / "sumctl.py", "--home", lab, "doctor"], env={"SUM_INSTALL_ROOT": str(root)})
+        self.assertEqual(json.loads(candidate.stdout)["installation"], str(ROOT))  # This checkout is not one of that installation's releases.
+
+    def test_stable_entrypoint_resolves_runtime_once_and_old_callbacks_keep_working(self):
+        root, store = self.installation(via_symlink=True)
+        lab = self.root / "lab state"
+        sumctl.Store(lab).init()
+        callback = [root / "bin" / "sumctl", "--home", lab, "status"]  # The absolute command an old brief would carry.
+        before = self.cli(callback)
+        self.assertEqual(before.returncode, 0, before.stderr)
+        release = Path(self.stage(store)["release"])
+        after = self.cli(callback)
+        self.assertEqual((after.returncode, after.stdout), (0, before.stdout))
+        current = root / ".local" / "current"
+        current.symlink_to(release)  # The activation mechanism a later slice will drive; here it only proves the entrypoint contract.
+        value = json.loads(self.cli([root / "bin" / "sumctl", "--home", lab, "doctor"]).stdout)
+        self.assertEqual((value["runtime"], value["installation"]), (str(release), str(root.resolve())))
+        self.assertEqual(json.loads(self.cli([root / "bin" / "sumctl", "--home", lab, "status"]).stdout)["tasks"], [])
+        self.assertFalse((release / ".sum").exists())
+        self.assertTrue((lab / "state.json").is_file())
+        current.unlink()
+        current.symlink_to(self.root / "missing runtime")
+        broken = self.cli(callback)
+        self.assertEqual(broken.returncode, 1)
+        self.assertIn("missing runtime", broken.stderr)
+
+    def test_failed_staging_is_self_contained(self):
+        root, store = self.installation()
+        first = Path(self.stage(store)["release"])
+        (root / "NOTE.md").write_text("second\n")
+        self.git("add", "NOTE.md", cwd=root)
+        self.git("commit", "-q", "-m", "second", cwd=root)
+        records, kept = self.snapshot(store.home), self.snapshot(first)
+        def broken(target, local_mesh=None):
+            fake_installer(target, local_mesh)
+            raise sumctl.SumError("npm: simulated download failure")
+        with self.assertRaisesRegex(sumctl.SumError, "partial bundle was removed.*simulated download failure"):
+            self.stage(store, installer=broken)
+        tools_without_mise = self.root / "path without mise"
+        tools_without_mise.mkdir()
+        (tools_without_mise / "git").symlink_to(shutil.which("git"))
+        with mock.patch.dict(os.environ, {"PATH": str(tools_without_mise)}):
+            with self.assertRaisesRegex(sumctl.SumError, "Missing mise"):
+                self.stage(store, installer=sumctl.install_runtime)
+        self.assertEqual(sorted(p.name for p in first.parent.iterdir()), [first.name])
+        self.assertEqual(self.snapshot(first), kept)
+        self.assertEqual(self.snapshot(store.home), records)
+        self.assertEqual(sumctl.release_list(store)["in_progress"], [])
+
+    def test_bad_manifest_or_tampered_file_is_not_usable(self):
+        root, store = self.installation()
+        release = Path(self.stage(store)["release"])
+        sumctl.set_read_only(release, read_only=False)
+        (release / "skills" / "worker" / "SKILL.md").write_text("tampered\n")
+        with self.assertRaisesRegex(sumctl.SumError, "does not match its manifest hash"):
+            sumctl.release_show(store, release.name)
+        self.assertFalse(sumctl.release_list(store)["releases"][0]["ok"])
+        with self.assertRaisesRegex(sumctl.SumError, "manifest hash"):
+            self.stage(store)  # An existing broken directory is reported, never silently rebuilt over.
+        (release / "release.json").write_text("{not json")
+        self.assertIn("Cannot read", sumctl.release_list(store)["releases"][0]["error"])
+        (release / "release.json").write_text(json.dumps({"schema": 1, "kind": "sum-release", "source": {"sha": "0" * 40}, "files": {"lib/sumctl.py": "sha256:0"}}))
+        with self.assertRaisesRegex(sumctl.SumError, "mismatched"):
+            sumctl.verify_release(release, release.name)
+        (release / "release.json").unlink()
+        self.assertIn("no release.json", sumctl.release_list(store)["releases"][0]["error"])
+
+    def test_concurrent_staging_of_one_sha_and_separate_instances(self):
+        root, store = self.installation()
+        other_root, other_store = self.installation(name="second instance")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda _: self.stage(store, installer=slow_installer(0.3)), range(4)))
+        paths = {r["release"] for r in results}
+        self.assertEqual(len(paths), 1)
+        self.assertEqual(sum(1 for r in results if r["staged"]), 1)
+        release = Path(paths.pop())
+        self.assertEqual([p.name for p in release.parent.iterdir()], [release.name])
+        sumctl.verify_release(release, release.name)
+        other = Path(self.stage(other_store)["release"])
+        self.assertEqual(other.parent, other_root / ".local" / "releases")
+        self.assertNotEqual(other.parent, release.parent)
+
+    def test_running_helper_and_paused_call_keep_release_n_while_n_plus_one_stages(self):
+        root, store = self.installation()
+        lab = self.root / "lab"
+        sumctl.Store(lab).init()
+        first = Path(self.stage(store)["release"])
+        kept = self.snapshot(first)
+        script = ("import subprocess, sys, time\n"
+                  "time.sleep(0.5)\n"  # A tool call paused in the middle of release N while N+1 is staged.
+                  "sys.exit(subprocess.call([sys.executable, sys.argv[1], '--home', sys.argv[2], 'doctor']))")
+        paused = subprocess.Popen([sys.executable, "-c", script, str(first / "lib" / "sumctl.py"), str(lab)],
+                                  env={**os.environ, "SUM_INSTALL_ROOT": str(root)}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        (root / "lib" / "next.py").write_text("next = True\n")
+        self.git("add", "lib/next.py", cwd=root)
+        self.git("commit", "-q", "-m", "next", cwd=root)
+        second = Path(self.stage(store)["release"])
+        stdout, _ = paused.communicate(timeout=30)
+        self.assertNotEqual(first, second)
+        self.assertEqual(json.loads(stdout)["runtime"], str(first))
+        self.assertEqual(self.snapshot(first), kept)
+        self.assertTrue((second / "lib" / "next.py").is_file())
+        self.assertFalse((first / "lib" / "next.py").exists())
+        self.assertEqual([r["ok"] for r in sumctl.release_list(store)["releases"]], [True, True])
+
+
+def hashlib_sha(path):
+    return sumctl.sha256_file(path)
 
 
 if __name__ == "__main__": unittest.main()

@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -18,19 +19,46 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 import uuid
 
-ROOT = Path(__file__).resolve().parents[1]
+RUNTIME = Path(__file__).resolve().parents[1]  # The code/dependency tree this process runs from: a checkout or an immutable release.
+RELEASE_MANIFEST = "release.json"
+RELEASES = Path(".local") / "releases"
+
+
+def resolve_installation():
+    """The stable installation identity that owns `.sum` state and every generated absolute path.
+
+    A stable entrypoint (`<installation>/bin/sumctl`) exports SUM_INSTALL_ROOT before executing a runtime.
+    The value is honored only when this runtime is that installation itself or one of its staged releases,
+    so an inherited variable can never make a development or task checkout adopt another installation's state.
+    """
+    value = os.environ.get("SUM_INSTALL_ROOT")
+    if value:
+        candidate = Path(value).resolve()
+        if candidate == RUNTIME or (candidate / RELEASES).resolve() in RUNTIME.parents:
+            return candidate
+    return RUNTIME
+
+
+ROOT = resolve_installation()
 VERSION = "0.1.0"
 SCHEMA = 1
+BRIEF_SCHEMA = 1  # The worker brief format written by write_brief; recorded in release manifests.
 HERDR_VERSION = "0.8.2"
+MESH_REV = "54adef519aa6af4dcd0bbd72586d414abab90046"
+MESH_REMOTE = "https://github.com/runchr-works/herdr-mesh.git"
+MCP_CONTRACT = {"server": "herdr-mesh-sum", "version": "0.1.0", "tools": 10}
+TOOLS = ("python3", "node", "herdr", "gh", "quota-axi")
+RELEASE_SCHEMA = 1
 MAX_TEXT = 256 * 1024
 TASK_ID = re.compile(r"t-[a-f0-9]{12}\Z")
 ACTIVE = {"preparing", "prepared", "starting", "running", "waiting", "needs-attention"}
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show"}
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "release-list", "release-show"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -55,10 +83,10 @@ def emit(value):
     print(json.dumps(value, indent=2, ensure_ascii=True))
 
 
-def run(argv, *, cwd=None, timeout=20, check=True):
+def run(argv, *, cwd=None, timeout=20, check=True, env=None):
     """Never interpret command arguments through a shell."""
     try:
-        result = subprocess.run([str(a) for a in argv], cwd=cwd, text=True,
+        result = subprocess.run([str(a) for a in argv], cwd=cwd, text=True, env=env,
                                 capture_output=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SumError(f"{Path(str(argv[0])).name}: {exc}") from exc
@@ -107,7 +135,7 @@ def text_input(args):
 
 def tool(name):
     override = os.environ.get("SUM_" + name.upper().replace("-", "_") + "_BIN")
-    local = ROOT / ".local" / "bin" / name
+    local = RUNTIME / ".local" / "bin" / name  # Pinned to the tree this process started from, never a moving pointer.
     found = override or (str(local) if local.is_file() else shutil.which(name))
     if not found:
         raise SumError(f"Missing {name}. Run mise run setup.")
@@ -261,7 +289,7 @@ def command_for(store, *args):
 
 
 def write_brief(store, task):
-    worker_skill = (ROOT / "skills" / "worker" / "SKILL.md").read_text()
+    worker_skill = (RUNTIME / "skills" / "worker" / "SKILL.md").read_text()
     text = f"""# sum worker brief — {task['id']}
 
 You are the worker for this ONE task, not the coordinating consigliere.
@@ -672,8 +700,8 @@ def doctor(store):
     installed = {kind: shutil.which(exe) or (str(ROOT / '.local/bin' / exe) if (ROOT / '.local/bin' / exe).is_file() else None)
                  for kind, exe in HARNESSES.items()}
     checks.append({"tool": "harness", "ok": any(installed.values()), "installed": {k:v for k,v in installed.items() if v}})
-    checks.append({"tool": "mesh", "ok": (ROOT / ".deps/herdr-mesh/.sum-patched").is_file()})
-    return {"version": VERSION, "home": str(store.home), "checks": checks,
+    checks.append({"tool": "mesh", "ok": (RUNTIME / ".deps/herdr-mesh/.sum-patched").is_file()})
+    return {"version": VERSION, "home": str(store.home), "runtime": str(RUNTIME), "installation": str(ROOT), "checks": checks,
             "ok": all(c["ok"] for c in checks),
             "note": "Observation only: nothing was bound or written. No auth changes or permission bypasses. Authenticate the chosen harness and gh separately."}
 
@@ -756,9 +784,9 @@ def guard_candidate(store, command):
 
 
 def installation_root(store):
-    """`sumctl dev` acts on the installation that owns the given state home, never on a development checkout."""
+    """`sumctl dev` and `sumctl release` act on the installation that owns the given state home, never on a development checkout."""
     if store.home.name != ".sum" or not store.designated():
-        raise SumError(f"{store.home} is not a sum installation's state home; run dev commands with the installation's ./bin/sumctl.")
+        raise SumError(f"{store.home} is not a sum installation's state home; run dev and release commands with the installation's ./bin/sumctl.")
     root = store.home.parent
     toplevel = Path(run(["git", "-C", root, "rev-parse", "--show-toplevel"]).stdout.strip()).resolve()
     if toplevel != root.resolve():
@@ -883,6 +911,308 @@ def dev_remove(store, args):
             "note": "Branch kept because it has unmerged commits; delete it yourself after merging." if not branch_removed else "Clean checkout and merged branch removed."}
 
 
+# --- immutable runtime releases ---------------------------------------------------------------
+
+def sha256_file(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def content_id(path):
+    """A symlink is identified by its target text, a regular file by its content hash."""
+    path = Path(path)
+    return "link:" + os.readlink(path) if path.is_symlink() else "sha256:" + sha256_file(path)
+
+
+def overlay_hashes(source_root):
+    """Expected hashes of sum's Mesh overlay as shipped in the given source tree."""
+    patches = Path(source_root) / "patches" / "herdr-mesh"
+    return {"server_sha256": sha256_file(patches / "server.js"), "commands_sha256": sha256_file(patches / "commands.mjs")}
+
+
+def link_tool(link, target):
+    """Create a runtime symlink once. An existing link is never retargeted: a live process may depend on it."""
+    link = Path(link)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if link.is_symlink():
+        current = os.readlink(link)
+        return {"link": str(link), "target": current, "created": False, "differs": current != str(target)}
+    if link.exists():
+        raise SumError(f"Refusing to replace non-symlink {link}")
+    link.symlink_to(str(target))
+    return {"link": str(link), "target": str(target), "created": True, "differs": False}
+
+
+def mise_env(target):
+    """Trust only the bundled mise.toml for this invocation; the content comes from a commit of the installation repository."""
+    return {**os.environ, "MISE_TRUSTED_CONFIG_PATHS": str(Path(target) / "mise.toml")}
+
+
+def resolve_tools(target):
+    """Install the pinned tool versions (mise never prunes here) and link them into <target>/.local/bin."""
+    target = Path(target)
+    mise = shutil.which("mise")
+    if not mise or not (target / "mise.toml").is_file():
+        raise SumError("Missing mise or mise.toml; install mise, then run mise run setup.")
+    env = mise_env(target)
+    run([mise, "install"], cwd=target, env=env, timeout=900)
+    links = {}
+    for name in TOOLS:
+        resolved = Path(run([mise, "which", name], cwd=target, env=env, timeout=60).stdout.strip()).resolve()
+        if not resolved.is_file():
+            raise SumError(f"mise resolved {name} to a missing file {resolved}")
+        links[name] = link_tool(target / ".local" / "bin" / name, resolved)
+    return links
+
+
+def install_mesh(destination, source_root, local_mesh=None):
+    """Clone, install, and overlay the pinned Mesh into a fresh directory; never into one that already exists."""
+    destination, source_root = Path(destination), Path(source_root)
+    if destination.exists():
+        raise SumError(f"{destination} already exists; an installed Mesh is never rewritten in place.")
+    node = source_root / ".local" / "bin" / "node"
+    npm = node.resolve().parent / "npm"
+    if not node.is_file() or not npm.is_file():
+        raise SumError("Pinned node/npm are not linked; resolve tools first.")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".mesh-", dir=destination.parent))
+    mesh = staging / "herdr-mesh"
+    try:
+        origin = str(local_mesh) if local_mesh and Path(local_mesh, ".git").exists() and \
+            run(["git", "-C", local_mesh, "cat-file", "-e", f"{MESH_REV}^{{commit}}"], check=False).returncode == 0 else MESH_REMOTE
+        run(["git", "clone", "--no-checkout", *([] if origin != MESH_REMOTE else ["--filter=blob:none"]), origin, str(mesh)], timeout=600)
+        run(["git", "-C", mesh, "checkout", "--detach", MESH_REV], timeout=120)
+        if run(["git", "-C", mesh, "rev-parse", "HEAD"]).stdout.strip() != MESH_REV:
+            raise SumError("Unexpected Mesh checkout")
+        if not (mesh / "package-lock.json").is_file() or not (mesh / "LICENSE").is_file():
+            raise SumError("Pinned Mesh checkout is incomplete")
+        run([npm, "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=mesh, timeout=900)
+        apply_overlay(source_root, mesh)
+        os.rename(mesh, destination)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return destination
+
+
+def apply_overlay(source_root, mesh):
+    """sum's documented runtime overlay for a freshly installed Mesh (see docs/DEPENDENCIES.md)."""
+    source_root, mesh = Path(source_root), Path(mesh)
+    shutil.copyfile(source_root / "patches/herdr-mesh/server.js", mesh / "dist/server.js")
+    shutil.copyfile(source_root / "patches/herdr-mesh/commands.mjs", mesh / "dist/sum-commands.mjs")
+    atomic_json(mesh / ".sum-patched", {"upstream": MESH_REV, **overlay_hashes(source_root)})
+
+
+def mesh_state(source_root, mesh):
+    """Compare an installed Mesh with the overlay in a source tree without touching either."""
+    marker = Path(mesh) / ".sum-patched"
+    if not marker.is_file():
+        return {"installed": Path(mesh).exists(), "patched": False, "matches_source": False}
+    value = read_json(marker)
+    return {"installed": True, "patched": True, "upstream": value.get("upstream"),
+            "matches_source": value.get("upstream") == MESH_REV and {k: value.get(k) for k in ("server_sha256", "commands_sha256")} == overlay_hashes(source_root)}
+
+
+def write_herdr_skill(target):
+    """Copy the release-matched Herdr skill beside the pinned binary."""
+    target = Path(target)
+    skill = run([target / ".local" / "bin" / "herdr", "--skill"], timeout=30).stdout
+    path = target / ".local" / "skills" / "herdr" / "SKILL.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.is_file() or path.read_text() != skill + "\n":
+        path.write_text(skill + "\n")
+    for parent in (target / ".agents" / "skills", target / ".claude" / "skills"):
+        link_tool(parent / "herdr", "../../.local/skills/herdr")
+    return path
+
+
+def install_runtime(target, local_mesh=None):
+    """Install every runtime dependency into one tree and prove the MCP server starts from it. Used for staging."""
+    target = Path(target)
+    resolve_tools(target)
+    install_mesh(target / ".deps" / "herdr-mesh", target, local_mesh=local_mesh)
+    write_herdr_skill(target)
+    run([target / ".local" / "bin" / "node", target / "scripts" / "mcp_smoke.mjs"], timeout=60)
+
+
+def source_files(root, sha):
+    out = run(["git", "-C", root, "ls-tree", "-r", "-z", "--name-only", sha]).stdout
+    return [name for name in out.split("\0") if name]
+
+
+def archive_source(root, sha, destination):
+    """Extract exactly the committed tree: no working-tree edits, no .sum, .deps, .local, or credentials."""
+    try:
+        result = subprocess.run(["git", "-C", str(root), "archive", "--format=tar", sha], capture_output=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SumError(f"git archive: {exc}") from exc
+    if result.returncode:
+        raise SumError(f"git archive exited {result.returncode}: {result.stderr.decode(errors='replace')[-2000:]}")
+    with tarfile.open(fileobj=io.BytesIO(result.stdout)) as archive:
+        archive.extractall(destination, filter="data")
+
+
+def tool_pins(target):
+    try:
+        return {k: v for k, v in tomllib.loads((Path(target) / "mise.toml").read_text()).get("tools", {}).items()}
+    except (OSError, ValueError) as exc:
+        raise SumError(f"Cannot read bundled mise.toml: {exc}") from exc
+
+
+def build_manifest(store, root, sha, target):
+    target = Path(target)
+    files = {name: content_id(target / name) for name in source_files(root, sha)}
+    tools = {}
+    for name in TOOLS:
+        link = target / ".local" / "bin" / name
+        if not link.is_symlink():
+            raise SumError(f"Release is missing the pinned tool link {link}")
+        tools[name] = os.readlink(link)
+    mesh = target / ".deps" / "herdr-mesh"
+    patched = read_json(mesh / ".sum-patched")
+    state = read_json(store.home / "state.json") if (store.home / "state.json").is_file() else {}
+    return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": VERSION,
+            "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
+            "files": files,
+            "dependencies": {"herdr_mesh": {"remote": MESH_REMOTE, "rev": MESH_REV, "path": ".deps/herdr-mesh", "overlay": patched},
+                             "tools": {"pins": tool_pins(target), "paths": tools}},
+            "contracts": {"herdr_cli": HERDR_VERSION, "mcp": MCP_CONTRACT},
+            "supports": {"state_schema": [SCHEMA], "brief_schema": [BRIEF_SCHEMA]},
+            "staged_at": now(), "staged_by": {"machine": machine(), "installation": str(root), "instance": state.get("instance")}}
+
+
+def verify_release(path, expected_sha=None):
+    """A bundle is usable only when its manifest and every referenced file agree. Raises SumError otherwise."""
+    path = Path(path)
+    manifest_path = path / RELEASE_MANIFEST
+    if not manifest_path.is_file():
+        raise SumError(f"{path}: no {RELEASE_MANIFEST}")
+    manifest = read_json(manifest_path)
+    if manifest.get("schema") != RELEASE_SCHEMA or manifest.get("kind") != "sum-release":
+        raise SumError(f"{path}: unsupported release manifest")
+    sha = manifest.get("source", {}).get("sha")
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha) or (expected_sha and sha != expected_sha):
+        raise SumError(f"{path}: manifest source SHA is missing or mismatched")
+    files = manifest.get("files")
+    if not isinstance(files, dict) or not files:
+        raise SumError(f"{path}: manifest lists no files")
+    for name, expected in files.items():
+        member = path / name
+        if not member.is_symlink() and not member.is_file():
+            raise SumError(f"{path}: missing {name}")
+        if content_id(member) != expected:
+            raise SumError(f"{path}: {name} does not match its manifest hash")
+    for required in ("bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "lib/sumctl.py", "skills/worker/SKILL.md"):
+        if required not in files:
+            raise SumError(f"{path}: release lacks {required}")
+    if not os.access(path / "bin" / "sumctl", os.X_OK):
+        raise SumError(f"{path}: bin/sumctl is not executable")
+    if (path / ".sum").exists():
+        raise SumError(f"{path}: a release tree must not contain .sum state")
+    mesh = path / ".deps" / "herdr-mesh"
+    overlay = manifest.get("dependencies", {}).get("herdr_mesh", {}).get("overlay", {})
+    marker = mesh / ".sum-patched"
+    if not marker.is_file() or read_json(marker) != overlay or overlay.get("upstream") != MESH_REV:
+        raise SumError(f"{path}: Mesh overlay marker does not match the manifest")
+    for name, key in (("dist/server.js", "server_sha256"), ("dist/sum-commands.mjs", "commands_sha256")):
+        if not (mesh / name).is_file() or sha256_file(mesh / name) != overlay.get(key):
+            raise SumError(f"{path}: {name} does not match the recorded overlay hash")
+    if not (mesh / "dist" / "index.js").is_file() or not (mesh / "node_modules" / "@modelcontextprotocol" / "sdk" / "package.json").is_file():
+        raise SumError(f"{path}: Mesh dependencies are incomplete")
+    paths = manifest.get("dependencies", {}).get("tools", {}).get("paths", {})
+    for name in TOOLS:
+        link = path / ".local" / "bin" / name
+        if not link.is_symlink() or os.readlink(link) != paths.get(name) or not link.resolve().is_file():
+            raise SumError(f"{path}: pinned tool {name} is missing or does not resolve")
+    return manifest
+
+
+def set_read_only(path, read_only=True):
+    for current, dirs, names in os.walk(path):
+        for name in dirs + names:
+            member = Path(current) / name
+            if member.is_symlink():
+                continue
+            mode = member.stat().st_mode
+            member.chmod((mode & ~0o222) if read_only else (mode | 0o200))
+    Path(path).chmod((Path(path).stat().st_mode & ~0o222) if read_only else (Path(path).stat().st_mode | 0o200))
+
+
+def remove_tree(path):
+    path = Path(path)
+    if path.exists():
+        set_read_only(path, read_only=False)
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def release_summary(path, manifest, staged):
+    return {"release": str(path), "sha": manifest["source"]["sha"], "staged": staged, "activated": False,
+            "manifest": manifest,
+            "note": "Staged only. No pointer, MCP configuration, live process, or installed dependency was changed; activation is a separate, explicit step."}
+
+
+def stage(store, ref, installer=install_runtime):
+    """Stage an immutable, commit-addressed runtime bundle under <installation>/.local/releases/<sha>.
+
+    Everything happens in a private staging directory; the final name appears only after validation,
+    with one atomic rename. Existing releases, the checkout's .deps/.local, and .sum are never modified.
+    """
+    root = installation_root(store)
+    sha = run(["git", "-C", root, "rev-parse", "--verify", f"{ref}^{{commit}}", "--"]).stdout.strip()
+    releases = root / RELEASES
+    releases.mkdir(parents=True, exist_ok=True)
+    final = releases / sha
+    if final.exists():
+        return release_summary(final, verify_release(final, sha), staged=False)
+    staging = Path(tempfile.mkdtemp(prefix=f".staging-{sha[:12]}-", dir=releases))
+    try:
+        archive_source(root, sha, staging)
+        if (staging / ".sum").exists() or (staging / RELEASE_MANIFEST).exists():
+            raise SumError("The committed tree must not contain .sum or a release manifest.")
+        installer(staging, local_mesh=root / ".deps" / "herdr-mesh")
+        atomic_json(staging / RELEASE_MANIFEST, build_manifest(store, root, sha, staging))
+        manifest = verify_release(staging, sha)
+        set_read_only(staging)
+        try:
+            os.rename(staging, final)
+        except OSError:
+            if not final.exists():
+                raise
+            remove_tree(staging)  # Another staging of the same SHA won; the published bundle is complete by construction.
+            return release_summary(final, verify_release(final, sha), staged=False)
+    except BaseException as exc:
+        remove_tree(staging)
+        if isinstance(exc, (SumError, OSError, ValueError, KeyError, tarfile.TarError)):
+            raise SumError(f"Staging {sha} failed and its partial bundle was removed; existing releases and the current setup are unchanged. {exc}") from exc
+        raise
+    return release_summary(final, manifest, staged=True)
+
+
+def release_list(store):
+    root = installation_root(store)
+    releases = root / RELEASES
+    rows, in_progress = [], []
+    for entry in sorted(releases.iterdir()) if releases.is_dir() else []:
+        if entry.name.startswith("."):
+            in_progress.append(entry.name)
+            continue
+        try:
+            manifest = verify_release(entry, entry.name)
+            rows.append({"sha": entry.name, "path": str(entry), "ok": True, "sum_version": manifest["sum_version"], "staged_at": manifest["staged_at"]})
+        except SumError as exc:
+            rows.append({"sha": entry.name, "path": str(entry), "ok": False, "error": str(exc)})
+    return {"installation": str(root), "releases": rows, "in_progress": in_progress, "activated": None,
+            "note": "Nothing here is active; staged bundles are kept until you remove one deliberately. Automatic garbage collection is out of scope."}
+
+
+def release_show(store, sha):
+    root = installation_root(store)
+    if not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+        raise SumError("Give a release by its commit SHA.")
+    matches = [p for p in (root / RELEASES).glob(sha + "*") if not p.name.startswith(".")] if (root / RELEASES).is_dir() else []
+    if len(matches) != 1:
+        raise SumError(f"{len(matches)} staged releases match {sha}.")
+    return release_summary(matches[0], verify_release(matches[0], matches[0].name), staged=False)
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--home", default=os.environ.get("SUM_HOME") or str(ROOT / ".sum"))
@@ -945,14 +1275,24 @@ def parser():
     d.add_parser("list")
     x = d.add_parser("remove", help="Remove a clean development checkout with plain git worktree remove; dirty work is preserved")
     x.add_argument("--name", required=True)
+    s = sub.add_parser("release", help="Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates")
+    r = s.add_subparsers(dest="release_command", required=True)
+    x = r.add_parser("stage", help="Stage the runtime bundle for a commit (default HEAD) with its own dependencies; nothing live changes")
+    x.add_argument("--ref", default="HEAD")
+    r.add_parser("list")
+    x = r.add_parser("show")
+    x.add_argument("sha")
     return p
 
 
 def main(argv=None):
+    if ROOT == RUNTIME and (RUNTIME / RELEASE_MANIFEST).is_file():
+        print(json.dumps({"error": f"{RUNTIME} is an immutable release tree. Run the installation's bin/sumctl, which selects a runtime and keeps state in its own .sum; a release never owns state."}), file=sys.stderr)
+        return 1
     args = parser().parse_args(argv)
     try:
         store = Store(args.home)
-        guard_candidate(store, args.command)
+        guard_candidate(store, args.command if args.command != "release" else f"release-{args.release_command}")
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -1012,6 +1352,9 @@ def main(argv=None):
         elif args.command == "dev":
             value = {"prepare": lambda: dev_prepare(store, args), "list": lambda: dev_list(store),
                      "remove": lambda: dev_remove(store, args)}[args.dev_command]()
+        elif args.command == "release":
+            value = {"stage": lambda: stage(store, args.ref), "list": lambda: release_list(store),
+                     "show": lambda: release_show(store, args.sha)}[args.release_command]()
         elif args.command == "herdr":
             native_args = args.args[1:] if args.args and args.args[0] == "--" else args.args
             # Scope: the caller's own verified pane, registered in this instance. No saved-context borrowing.

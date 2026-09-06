@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -77,8 +78,10 @@ def main():
         git("init", "-b", "main", cwd=installation)
         git("config", "user.name", "sum demo", cwd=installation)
         git("config", "user.email", "demo@example.invalid", cwd=installation)
-        (installation / "AGENTS.md").write_text("fixture installation\n")
-        (installation / ".gitignore").write_text(".sum/\n")
+        listing = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True).stdout
+        for relative in filter(None, listing.decode().split("\0")):  # The fixture installation holds this checkout's committed sum sources.
+            (installation / relative).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / relative, installation / relative, follow_symlinks=False)
         git("add", ".", cwd=installation)
         git("commit", "-m", "Installation fixture", cwd=installation)
         (installation / ".sum").mkdir(mode=0o700)
@@ -95,6 +98,24 @@ def main():
         assert {p: p.read_bytes() for p in (base / "state").rglob("*") if p.is_file()} == records  # Task records and roles above are untouched.
         assert ctl("init", pane="w-late:p1")["role"] == "developer" and ctl("init")["role"] == "coordinator"
         print("PASS: development checkout prepared on its own branch with an ordinary pane, reopened with dirty work intact, never force-removed; installation branch and task records unchanged.")
+        # Immutable runtime release: staged beside the live installation with an offline stand-in for dependency installation.
+        head = git("rev-parse", "HEAD", cwd=installation)
+        records = {p: p.read_bytes() for p in (base / "state").rglob("*") if p.is_file()}
+        stage_script = ("import importlib.util, sys\n"
+                        f"spec = importlib.util.spec_from_file_location('sumctl', {str(ROOT / 'lib/sumctl.py')!r}); sumctl = importlib.util.module_from_spec(spec); spec.loader.exec_module(sumctl)\n"
+                        f"tspec = importlib.util.spec_from_file_location('test_core', {str(ROOT / 'tests/test_core.py')!r}); tests = importlib.util.module_from_spec(tspec); tspec.loader.exec_module(tests)\n"
+                        f"print(json.dumps(sumctl.stage(sumctl.Store({str(installation / '.sum')!r}), 'HEAD', installer=tests.fake_installer)))".replace("json.dumps", "__import__('json').dumps"))
+        staged = json.loads(subprocess.run([sys.executable, "-c", stage_script], env=env, check=True, text=True, capture_output=True).stdout)
+        release = Path(staged["release"])
+        assert staged["staged"] and not staged["activated"] and release == installation / ".local/releases" / head
+        assert not (release / ".sum").exists() and staged["manifest"]["source"]["sha"] == head
+        assert not (installation / ".deps").exists()  # The installation's own runtime and state stayed as they were.
+        assert ctl("--home", str(installation / ".sum"), "release", "list")["releases"] == [{"sha": head, "path": str(release), "ok": True, "sum_version": "0.1.0", "staged_at": staged["manifest"]["staged_at"]}]
+        direct = subprocess.run([str(release / "bin/sumctl"), "--home", str(base / "state"), "status"], env=env, text=True, capture_output=True)
+        assert direct.returncode == 1 and "immutable release tree" in direct.stderr  # A release never owns state.
+        assert subprocess.run([str(installation / "bin/sumctl"), "--home", str(base / "state"), "status"], env=env, text=True, capture_output=True).returncode == 0
+        assert {p: p.read_bytes() for p in (base / "state").rglob("*") if p.is_file()} == records
+        print("PASS: immutable release staged under .local/releases/<sha> with a validated manifest; nothing activated, the release owns no state, the installation entrypoint still serves old callbacks.")
         print("This demo uses NO actual model, Herdr binary, GitHub account, or provider credentials. Temporary fixture cleaned up.")
 
 if __name__ == "__main__": main()

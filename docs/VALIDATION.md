@@ -24,6 +24,13 @@ Executed on the development host for the isolated self-development checkout work
 The live smoke test now registers its lab coordinator with `init` before `prepare`, uses `pane wait-output --match`, and opens a real workspace whose root pane starts in a development checkout.
 No model, GitHub write, or user `default` session was involved.
 
+## Release staging slice (2026-09-05, macOS)
+
+Executed on the development host for issue #4 from a task checkout: the Python suites (69 tests), the Node Mesh tests (10), and the offline demo including its new release-staging section.
+The new tests cover staging into an installation reached through a symlink and a path with spaces, manifest validation and tampering, a failing installer and a missing `mise`, four concurrent stagings of one SHA, two installations with separate release directories, a helper call paused inside release N while N+1 is staged, a release tree refusing to own state, and the stable entrypoint serving an old absolute callback before and after staging.
+A real staging probe ran in a temporary lab installation with the real installer: `mise install`/`mise which` against the bundled `mise.toml`, a Mesh clone from the installation's local clone, `npm ci`, the overlay, `herdr --skill`, and the MCP smoke test from the staged tree, followed by `doctor` and the MCP smoke test through the installation entrypoint with `.local/current` pointed at that release.
+No model, GitHub write, live installation state, or user `default` session was involved; `mise run setup` and `mise run test-live` were not re-run for this slice.
+
 ## Not executed here
 
 - A full `mise run setup` dependency download/install. The container could not reach the required network endpoints.

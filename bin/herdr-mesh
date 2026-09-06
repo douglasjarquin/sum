@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
+# Stable MCP entrypoint. The runtime is resolved once at start; the server then stays pinned to that tree.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-[[ -f "$ROOT/.deps/herdr-mesh/.sum-patched" ]] || { echo 'Run mise run setup before starting Mesh.' >&2; exit 1; }
-export HERDR_BIN="$ROOT/bin/herdr-scoped"
-exec "$ROOT/.local/bin/node" "$ROOT/.deps/herdr-mesh/dist/index.js" "$@"
+RUNTIME="$ROOT"
+if [[ -L "$ROOT/.local/current" ]]; then
+  RUNTIME=$(cd -- "$ROOT/.local/current" 2>/dev/null && pwd -P) || { echo "herdr-mesh: $ROOT/.local/current points to a missing runtime" >&2; exit 1; }
+fi
+[[ -f "$RUNTIME/.deps/herdr-mesh/.sum-patched" ]] || { echo 'Run mise run setup before starting Mesh.' >&2; exit 1; }
+export SUM_INSTALL_ROOT="$ROOT"
+export HERDR_BIN="$RUNTIME/bin/herdr-scoped"
+exec "$RUNTIME/.local/bin/node" "$RUNTIME/.deps/herdr-mesh/dist/index.js" "$@"

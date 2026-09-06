@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import tomllib
@@ -85,6 +86,31 @@ class SetupTest(unittest.TestCase):
             for name in ('dispatch', 'worker', 'rundown', 'delivery', 'develop'):
                 self.assertTrue((parent / ('sum-' + name) / 'SKILL.md').is_file())
         self.assertEqual((ROOT / 'CLAUDE.md').resolve(), ROOT / 'AGENTS.md')
+
+    def test_tool_links_are_created_once_and_never_retargeted(self):
+        link = self.root / '.local/bin/node'
+        first = setup.sumctl.link_tool(link, '/opt/node-22.19.0/bin/node')
+        self.assertEqual((first['created'], os.readlink(link)), (True, '/opt/node-22.19.0/bin/node'))
+        second = setup.sumctl.link_tool(link, '/opt/node-22.20.0/bin/node')  # A new pin never moves a link a live process may use.
+        self.assertEqual((second['created'], second['differs'], os.readlink(link)), (False, True, '/opt/node-22.19.0/bin/node'))
+        (self.root / 'regular').write_text('x')
+        with self.assertRaises(setup.sumctl.SumError): setup.sumctl.link_tool(self.root / 'regular', '/elsewhere')
+
+    def test_installed_mesh_is_never_rewritten_and_drift_is_only_reported(self):
+        mesh = self.root / '.deps/herdr-mesh'
+        self.assertEqual(setup.sumctl.mesh_state(ROOT, mesh)['installed'], False)
+        (mesh / 'dist').mkdir(parents=True)
+        self.assertEqual(setup.sumctl.mesh_state(ROOT, mesh), {'installed': True, 'patched': False, 'matches_source': False})
+        setup.sumctl.apply_overlay(ROOT, mesh)
+        self.assertTrue(setup.sumctl.mesh_state(ROOT, mesh)['matches_source'])
+        (mesh / 'dist/server.js').write_text('// older overlay\n')
+        json.dump({'upstream': setup.sumctl.MESH_REV, 'server_sha256': 'old', 'commands_sha256': 'old'}, (mesh / '.sum-patched').open('w'))
+        state = setup.sumctl.mesh_state(ROOT, mesh)
+        self.assertEqual((state['patched'], state['matches_source']), (True, False))
+        self.assertEqual((mesh / 'dist/server.js').read_text(), '// older overlay\n')
+        with self.assertRaisesRegex(setup.sumctl.SumError, 'never rewritten in place'):
+            setup.sumctl.install_mesh(mesh, ROOT)
+        self.assertEqual((mesh / 'dist/server.js').read_text(), '// older overlay\n')
 
     def test_mise_and_all_python_sources_parse(self):
         tomllib.loads((ROOT / 'mise.toml').read_text())
