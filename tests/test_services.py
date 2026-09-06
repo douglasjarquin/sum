@@ -228,6 +228,60 @@ class ServiceTest(ServiceLab, core.CoreTest):
         self.assertEqual(self.stop(task)["stopped"], [failed["service"]["id"]])
         self.assertNotIn(failed["service"]["pane"], self.fake_state()["panes"])
 
+    def test_readiness_never_adopts_a_listener_that_is_not_the_pane_process(self):
+        task = self.discovered(self.prepare())
+        # After the launch, something else inside the checkout takes the port while the pane's process does not: not ours, not ready.
+        result = self.start(task, timeout=1, FAKE_RUN_LISTEN_PID="4100")
+        service = result["service"]
+        self.assertEqual((service["state"], service["readiness"]["ready"]), ("conflict", False))
+        self.assertIn("not in the service pane", service["readiness"]["reason"])
+        self.assertIsNone(result.get("endpoint"))
+        self.assertNotEqual(service["process"]["pid"], 4100)
+        self.assertEqual([e for e in self.record(task)["endpoints"] if e["port"] == 8001], [])
+        self.assertEqual(self.calls_of("pane", "send-keys"), [])
+        self.assertIn({"pid": 4100, "address": "127.0.0.1:8001"}, self.lsof_now()["listeners"])
+
+    def test_replaced_pane_process_during_readiness_is_unknown_and_stop_refuses(self):
+        task = self.discovered(self.prepare())
+        result = self.start(task, FAKE_RUN_REPLACE="1")
+        service = result["service"]
+        self.assertEqual((service["state"], service["readiness"]["ready"], service["readiness"]["changed"]), ("unknown", False, True))
+        self.assertIn("foreground changed during startup", service["readiness"]["reason"])
+        self.assertIsNone(result.get("endpoint"))
+        observed_pid = self.processes(service["pane"])[0]["pid"]
+        self.assertEqual(observed_pid, service["process"]["pid"] + 1)  # The recorded instance is the one launched, never the replacement.
+        stop = self.stop(task)
+        self.assertEqual((stop["refused"], stop["stopped"]), ([service["id"]], []))
+        self.assertEqual(self.calls_of("pane", "send-keys"), [])
+        self.assertIn("differ from the recorded instance", stop["services"][0]["reasons"][0])
+
+    def test_retry_after_failed_readiness_never_splits_a_second_pane_while_the_first_process_runs(self):
+        task = self.discovered(self.prepare())
+        failed = self.start(task, listen="none", timeout=1)["service"]
+        self.assertEqual(failed["state"], "failed")
+        error = self.start(task, ok=False)["error"]
+        self.assertIn(f"launch {failed['id']}", error)
+        self.assertIn("still runs", error)
+        self.assertEqual(len(self.calls_of("pane", "split")), 1)
+        self.assertEqual(len(self.calls_of("pane", "run")), 1)
+        self.assertEqual(len(self.processes(failed["pane"])), 1)
+        self.assertEqual(self.stop(task, "--service", failed["id"])["stopped"], [failed["id"]])
+        # With the failed instance gone, a new launch proceeds (and reuses no pane: the stop closed it).
+        ready = self.start(task)["service"]
+        self.assertEqual((ready["state"], len(self.calls_of("pane", "split"))), ("ready", 2))
+
+    def test_writing_check_never_follows_a_replaced_directory_symlink(self):
+        task = self.discovered(self.prepare())
+        self.write(task, "logs/dev.log", "x\n")
+        self.envctl("record", task["id"], "--log", "logs/dev.log")
+        host = self.root / "host-logs"
+        host.mkdir()
+        (host / "dev.log").write_text("fresh\n")
+        logs = Path(task["worktree"]) / "logs"
+        (logs / "dev.log").unlink(); logs.rmdir()
+        logs.symlink_to(host)
+        self.assertEqual(sumctl.writing_logs(self.record(task), task["worktree"]), [])
+
     def test_crash_between_pane_creation_and_registration_reconciles_without_a_duplicate(self):
         task = self.discovered(self.prepare())
         error = self.start(task, FAKE_SPLIT_CRASH="1", ok=False)["error"]
@@ -360,6 +414,8 @@ class ServiceCleanupTest(ServiceLab, core.CoreTest):
     def test_cleanup_stops_the_proven_service_then_removes_and_repeats_idempotently(self):
         task = self.merged_task()
         service = self.start(task)["service"]
+        # The service pane's shell sits in the checkout like any real shell; it is the proven service, not an anonymous occupant.
+        self.assertIn({"pid": service["process"]["shell_pid"], "cwd": task["worktree"]}, self.lsof_now()["processes"])
         plan = self.cleanup(task)
         self.assertEqual(([b["code"] for b in plan["blockers"]], plan["stoppable"]), (["service"], [service["id"]]))
         self.assertIn("cleanup --apply stops it gracefully first", plan["blockers"][0]["detail"])
@@ -371,7 +427,7 @@ class ServiceCleanupTest(ServiceLab, core.CoreTest):
         self.assertFalse(Path(task["worktree"]).exists())
         steps = [h["step"] for h in self.store.read(task["id"])["cleanup"]["history"]]
         self.assertLess(steps.index("services-stopped"), steps.index("intent"))
-        self.assertEqual(self.lsof_now()["listeners"], [])
+        self.assertEqual((self.lsof_now()["listeners"], self.lsof_now()["processes"]), ([], []))  # Server and pane shell both gone.
         again = self.cleanup(task, apply=True)
         self.assertTrue(again["already"])
         self.assertEqual(len(self.calls_of("pane", "send-keys")), 1)
@@ -404,23 +460,61 @@ class ServiceCleanupTest(ServiceLab, core.CoreTest):
         self.scenario(repository="douglasjarquin/project", number=7, head_branch=task["branch"], head_sha=sha, state="MERGED", merged_at="2026-09-06T00:00:00Z", merge_commit="f" * 40)
         sumctl.pr_reconcile(self.store, argparse.Namespace(task=task["id"], number=7, repo=None, replace=True))
         os.utime(log, None)
-        with self.assertRaisesRegex(sumctl.SumError, r"\[writing\] log .*dev.log was modified"):
+        plan = self.cleanup(task)
+        self.assertEqual(sorted(b["code"] for b in plan["blockers"]), ["service", "writing"])
+        self.assertEqual(self.calls_of("pane", "send-keys"), [])  # Inspection interrupts nothing.
+        # Apply stops the proven service first (one interrupt), then the still-fresh log keeps the removal pending.
+        with self.assertRaisesRegex(sumctl.SumError, r"\[writing\] log .*dev.log was modified") as caught:
             self.cleanup(task, apply=True)
-        self.assertEqual(self.calls_of("pane", "send-keys"), [])  # A writing log is not a stoppable service; nothing was interrupted.
+        self.assertNotIn("[service]", str(caught.exception))
+        self.assertEqual(self.calls_of("pane", "send-keys"), [["pane", "send-keys", service["pane"], "ctrl+c"]])
+        self.assertEqual(self.record(task)["services"][0]["state"], "stopped")
+        self.assertNotIn(service["pane"], self.fake_state()["panes"])
+        self.assertTrue(Path(task["worktree"]).is_dir())
+        self.assertEqual(self.store.read(task["id"])["cleanup"]["state"], "blocked")
+        # A fresh log with no stoppable service is a plain wait: nothing is interrupted.
+        os.utime(log, None)
+        with self.assertRaisesRegex(sumctl.SumError, r"\[writing\]"):
+            self.cleanup(task, apply=True)
+        self.assertEqual(len(self.calls_of("pane", "send-keys")), 1)
         old = time.time() - 600
         os.utime(log, (old, old))
-        state = self.fake_state()
-        state["panes"][service["pane"]]["stubborn"] = True
-        self.write_fake_state(state)
+        self.assertEqual(self.cleanup(task, apply=True)["state"], "complete")
+
+    def test_stubborn_service_keeps_cleanup_pending_after_its_one_interrupt(self):
+        task = self.merged_task()
+        service = self.start(task, FAKE_RUN_BEHAVIOR="stubborn")["service"]
         with mock.patch.object(sumctl, "STOP_TIMEOUT", 1):
-            with self.assertRaisesRegex(sumctl.SumError, r"\[service\].*still runs") as caught:
+            with self.assertRaisesRegex(sumctl.SumError, r"\[service\].*still runs"):
                 self.cleanup(task, apply=True)
-        self.assertNotIn("[writing]", str(caught.exception))
         self.assertEqual(self.calls_of("pane", "send-keys"), [["pane", "send-keys", service["pane"], "ctrl+c"]])
         self.assertEqual(self.record(task)["services"][0]["state"], "stopping")
         self.assertTrue(Path(task["worktree"]).is_dir())
         self.assertIn(service["pane"], self.fake_state()["panes"])
         self.assertEqual(self.store.read(task["id"])["cleanup"]["state"], "blocked")
+
+    def test_unowned_occupant_and_extra_pane_still_block_after_the_proven_service_stops(self):
+        task = self.merged_task()
+        service = self.start(task)["service"]
+        scenario = self.lsof_now()
+        scenario["processes"].append({"pid": 7777, "cwd": task["worktree"] + "/sub"})
+        (self.lsof_root / "cwds.json").write_text(json.dumps(scenario))
+        self.set_pane(task["workspace"] + ":p2", cwd=task["worktree"])
+        with self.assertRaisesRegex(sumctl.SumError, r"\[panes\] unknown pane .*:p2.*\[occupant\].*pid 7777") as caught:
+            self.cleanup(task, apply=True)
+        self.assertNotIn("[service]", str(caught.exception))
+        self.assertEqual(self.calls_of("pane", "send-keys"), [["pane", "send-keys", service["pane"], "ctrl+c"]])
+        self.assertEqual(self.calls_of("pane", "close"), [["pane", "close", service["pane"]]])  # Only the sum-created pane; the extra pane stays.
+        self.assertIn(task["workspace"] + ":p2", self.fake_state()["panes"])
+        self.assertTrue(Path(task["worktree"]).is_dir())
+
+    def test_evidence_blockers_keep_services_running(self):
+        task = self.discovered(self.prepare())  # No handoff, no PR: obligations are open.
+        service = self.start(task)["service"]
+        with self.assertRaisesRegex(sumctl.SumError, r"\[handoff\]"):
+            self.cleanup(task, apply=True)
+        self.assertEqual(self.calls_of("pane", "send-keys"), [])
+        self.assertEqual(len(self.processes(service["pane"])), 1)
 
     def test_never_uses_broad_termination(self):
         task = self.merged_task()

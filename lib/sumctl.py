@@ -4274,9 +4274,16 @@ def process_identity(process, pane_id, shell_pid):
     return {"pane": pane_id, "shell_pid": shell_pid, "pid": process.get("pid"), "name": process.get("name"), "argv": process.get("argv"), "cwd": process.get("cwd"), "observed_at": now()}
 
 
+def normalized_argv(argv):
+    """Herdr may report argv[0] as typed at first and resolved to its full path later; the executable name and arguments are the identity."""
+    if not argv:
+        return None
+    return [os.path.basename(str(argv[0])), *[str(a) for a in argv[1:]]]
+
+
 def same_instance(recorded, process):
     """The recorded instance and an observed process are the same only when pid and argv both match; a pid alone can be reused."""
-    return bool(recorded) and process.get("pid") == recorded.get("pid") and (process.get("argv") or None) == (recorded.get("argv") or None)
+    return bool(recorded) and process.get("pid") == recorded.get("pid") and normalized_argv(process.get("argv")) == normalized_argv(recorded.get("argv"))
 
 
 def observe_service(task, service):
@@ -4360,18 +4367,31 @@ def unrecorded_panes(task, record):
     return [{k: p.get(k) for k in ("pane_id", "cwd", "agent")} for p in listed if p.get("pane_id") not in known], None
 
 
-def wait_for_listener(store, task, parsed, pane_pids, timeout):
-    """Bounded readiness: the recorded endpoint's port must be taken by a process of the service pane (or one inside the checkout) before the deadline."""
+def wait_for_listener(store, task, parsed, session, pane_id, process, timeout):
+    """Bounded readiness: the port must be taken by a process of the service pane while the recorded instance is still its foreground.
+
+    A listener inside the checkout with another pid, or a foreground that changed during the wait, is never adopted: pid, cwd, or port alone is not ownership."""
     deadline = time.monotonic() + timeout
-    waited = 0.0
+    waited, misses = 0.0, 0
     while True:
+        info, code = pane_processes(session, pane_id)
+        if info is None:
+            return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "changed": True, "reason": f"the service pane cannot be observed during startup ({code}); the launch is unknown"}
+        misses = 0 if any(same_instance(process, p) for p in info["processes"]) else misses + 1
+        if process and misses >= 2:  # One poll may catch a pid mid-exec with no argv yet; two in a row is a real change.
+            return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "changed": True, "processes": info["processes"],
+                    "reason": f"the pane foreground changed during startup from pid {process.get('pid')} {process.get('name')!r} to {[(p.get('pid'), p.get('name')) for p in info['processes']]}; the launch is unknown and the new process is not adopted"}
+        if misses:
+            time.sleep(SERVICE_POLL); waited += SERVICE_POLL
+            continue
+        pane_pids = {p["pid"] for p in info["processes"] if p.get("pid") is not None}
         observation = observe_port(store, task, parsed["port"])
         if observation["state"] == "observed":
-            mine = [l for l in observation["listeners"] if l["pid"] in set(pane_pids) or l.get("owner") == "this-task"]
+            mine = [l for l in observation["listeners"] if l["pid"] in pane_pids]
             if mine:
                 return {"ready": True, "checked": "listener", "waited_s": round(waited, 2), "observation": observation, "listener": mine[0]}
             return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "observation": observation,
-                    "reason": f"port {parsed['port']} is taken by a process sum did not start ({[(l['pid'], l.get('owner')) for l in observation['listeners']]}); reported, not terminated"}
+                    "reason": f"port {parsed['port']} is taken by a process that is not in the service pane ({[(l['pid'], l.get('owner')) for l in observation['listeners']]}); a checkout cwd alone is not ownership, reported and not terminated"}
         if observation["state"] == "unverified":
             return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "observation": observation, "reason": f"listeners cannot be observed: {observation.get('error')}"}
         if time.monotonic() >= deadline:
@@ -4380,18 +4400,28 @@ def wait_for_listener(store, task, parsed, pane_pids, timeout):
         waited += SERVICE_POLL
 
 
-def capture_process(session, pane_id, timeout=PROCESS_TIMEOUT):
-    """Bounded wait for the launched command to appear as the pane's foreground process; (info, None) or (last info, reason)."""
+def launched_process(info, command):
+    """The pane process whose argv is the launched line (argv[0] by executable name); children, shims, and a pid still mid-exec never stand in for it."""
+    wanted = normalized_argv(shlex.split(command))
+    return next((p for p in (info or {}).get("processes", []) if normalized_argv(p.get("argv")) == wanted), None)
+
+
+def capture_process(session, pane_id, command, timeout=PROCESS_TIMEOUT):
+    """Bounded wait for the launched command itself to appear among the pane's foreground processes; (info, process|None, reason|None)."""
     deadline = time.monotonic() + timeout
-    info, code = pane_processes(session, pane_id)
-    while (info is None or not info["processes"]) and time.monotonic() < deadline:
-        time.sleep(SERVICE_POLL)
+    while True:
         info, code = pane_processes(session, pane_id)
+        found = launched_process(info, command)
+        if found or time.monotonic() >= deadline:
+            break
+        time.sleep(SERVICE_POLL)
     if info is None:
-        return None, f"process observation uncertain ({code})"
+        return None, None, f"process observation uncertain ({code})"
+    if found:
+        return info, found, None
     if not info["processes"]:
-        return info, "no foreground process appeared; the command exited at once or has not started"
-    return info, None
+        return info, None, "no foreground process appeared; the command exited at once or has not started"
+    return info, None, f"the pane runs {[(p.get('pid'), p.get('name')) for p in info['processes']]} but none is the launched line {command!r}; identity unproven"
 
 
 def env_start(store, args):
@@ -4422,7 +4452,7 @@ def env_start(store, args):
     session = task["session"]
     # Reconcile earlier intents for the same command before anything new starts: never a blind duplicate.
     reuse_pane, reuse_created = None, False
-    for previous in [s for s in record["services"] if s["name"] == row["name"] and s.get("source") == row["source"] and s["state"] in SERVICE_ACTIVE]:
+    for previous in [s for s in record["services"] if s["name"] == row["name"] and s.get("source") == row["source"] and s["state"] in SERVICE_ACTIVE + ("failed",)]:
         view = observe_service(task, previous)
         if view["pane_state"] == "none":
             update_service(store, task["id"], previous["id"], "reconciled-no-pane", state="lost", reconciled=view)
@@ -4430,6 +4460,10 @@ def env_start(store, args):
             update_service(store, task["id"], previous["id"], "reconciled-pane-absent", state="lost", reconciled=view)
         elif view["pane_state"] == "uncertain":
             raise SumError(f"Service {previous['id']} ({previous['name']}) cannot be observed right now ({'; '.join(view['reasons'])}); not launching a possible duplicate.")
+        elif view["running"] and view["ownership"] == "owned" and previous["state"] == "failed":
+            update_service(store, task["id"], previous["id"], "reconciled-failed-still-running", reconciled=view)
+            raise SumError(f"The earlier launch {previous['id']} of {previous['name']!r} failed readiness but its process (pid {view['processes'][0].get('pid')}) still runs in pane {previous['pane']}; "
+                           f"read that pane, then `env stop {task['id']} --service {previous['id']}` before starting again. Nothing was launched twice.")
         elif view["running"] and view["ownership"] == "owned":
             updated = update_service(store, task["id"], previous["id"], "reconciled-running", state=previous["state"] if previous["state"] in ("running", "ready") else "running", reconciled=view)
             return {"task": task["id"], "service": updated, "already_running": True, "path": str(environment_path(store, task["id"])),
@@ -4497,18 +4531,17 @@ def env_start(store, args):
         current["resources"] = [resource if (r["kind"], r["id"]) == ("pane", pane_id) else r for r in current["resources"]] if any((r["kind"], r["id"]) == ("pane", pane_id) for r in current["resources"]) else current["resources"] + [resource]
         write_environment(store, current, {"event": "record", "kind": "pane", "id": pane_id, "ownership": "owned", "by": role})
     herdr(["pane", "run", pane_id, command], session=session, timeout=15, raw=True)  # Real 0.8.2 prints nothing on success.
-    info, problem = capture_process(session, pane_id)
+    info, found, problem = capture_process(session, pane_id, command)
     process = None
-    if info and info["processes"]:
-        process = process_identity(info["processes"][0], pane_id, info["shell_pid"])
-        process["siblings"] = [p.get("pid") for p in info["processes"][1:]]
+    if found:
+        process = process_identity(found, pane_id, info["shell_pid"])
+        process["siblings"] = [p.get("pid") for p in info["processes"] if p.get("pid") not in (None, found.get("pid"))]
     state = "running" if process else "unknown"
     update_service(store, task["id"], service["id"], "process-observed", state=state, process=process or {"pane": pane_id, "shell_pid": shell_pid, "pid": None, "name": None, "argv": None, "cwd": None, "observed_at": now()},
                    launched_at=now(), problem=problem)
     readiness = None
     if parsed and parsed["local"]:
-        pids = [p["pid"] for p in (info or {}).get("processes", []) if p.get("pid") is not None]
-        readiness = wait_for_listener(store, task, parsed, pids, timeout)
+        readiness = wait_for_listener(store, task, parsed, session, pane_id, process, timeout)
     elif match:
         try:
             herdr(["pane", "wait-output", pane_id, "--match", match, "--timeout", str(int(timeout * 1000))], session=session, timeout=timeout + 10, raw=True)
@@ -4518,13 +4551,19 @@ def env_start(store, args):
     else:
         readiness = {"ready": None, "checked": "process-only", "note": "no --url or --match given; the process is observed, readiness is not asserted"}
     if readiness.get("ready"):
-        info2, _ = pane_processes(session, pane_id)  # The instance that is ready is the one recorded; a restart during startup is caught here.
-        if info2 and process and not any(same_instance(process, p) for p in info2["processes"]):
-            process = process_identity(info2["processes"][0], pane_id, info2["shell_pid"]) if info2["processes"] else process
-        state = "ready"
-    elif readiness.get("ready") is False:
-        taken_by_other = readiness.get("checked") == "listener" and (readiness.get("observation") or {}).get("state") == "observed"
-        state = "conflict" if taken_by_other else "failed"
+        info2, _ = pane_processes(session, pane_id)  # The instance that is ready must be the recorded one; anything else is unknown, never adopted.
+        if info2 is None or (process and not any(same_instance(process, p) for p in info2["processes"])) or not process:
+            readiness = {**readiness, "ready": False, "changed": True, "reason": "the pane foreground is not the recorded instance after readiness; the launch is unknown"}
+            state = "unknown"
+        else:
+            state = "ready"
+            process["siblings"] = [p.get("pid") for p in info2["processes"] if p.get("pid") not in (None, process.get("pid"))]  # Children the instance spawned in its pane.
+    if readiness.get("ready") is False:
+        if readiness.get("changed"):
+            state = "unknown"
+        else:
+            taken_by_other = readiness.get("checked") == "listener" and (readiness.get("observation") or {}).get("state") == "observed"
+            state = "conflict" if taken_by_other else "failed"
     row_after = update_service(store, task["id"], service["id"], "readiness", state=state, readiness=readiness, **({"process": process} if process else {}))
     result = {"task": task["id"], "service": row_after, "path": str(environment_path(store, task["id"])), "already_running": False, "by": role, "note": SERVICE_NOTE}
     if state == "ready" and parsed:
@@ -4653,13 +4692,13 @@ def services_view(record):
             for s in record.get("services", [])]
 
 
-def writing_logs(record, window=WRITING_WINDOW):
-    """Owned logs whose lstat shows a write inside the window: a process may still write, so disposal waits."""
+def writing_logs(record, worktree, window=WRITING_WINDOW):
+    """Owned logs whose lstat shows a write inside the window: a process may still write, so disposal waits. A symlinked component is never followed."""
     rows = []
     for log in record.get("logs", []):
-        if log.get("ownership") != "owned":
+        if log.get("ownership") != "owned" or log.get("scope") != "checkout":
             continue
-        observed = observe_log(log["path"], None, None) if log.get("scope") == "checkout" else {"state": "skipped"}
+        observed = observe_log(log["path"], worktree, log.get("relative"))
         modified = observed.get("modified_at")
         if observed.get("state") == "present" and modified:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(modified)).total_seconds()
@@ -4677,6 +4716,7 @@ def writing_logs(record, window=WRITING_WINDOW):
 # observation, never by recreating or guessing.
 
 CLEANUP_SCHEMA = 1
+STOP_FIRST_BLOCKERS = {"service", "service-unknown", "occupant", "writing", "panes"}
 DISPOSABLE_IGNORED = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".DS_Store")
 LSOF_TIMEOUT = 30
 SHELLS = {"bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "pwsh", "-bash", "-zsh", "-sh", "-fish"}
@@ -5033,15 +5073,16 @@ class Inspection:
             else:
                 self.block("service-unknown", f"service {service['id']} ({service['name']}) in pane {service['pane']} is not the recorded instance ({'; '.join(view['reasons']) or 'unproven'}); sum stops nothing it cannot prove, inspect the pane")
         self.view["services"] = rows
-        for row in writing_logs(self.environment):
+        for row in writing_logs(self.environment, task["worktree"]):
             self.block("writing", f"log {row['path']} was modified {row['age_s']}s ago; something may still write, cleanup waits")
 
     def service_pids(self):
+        """Pids that belong to re-proven service panes: the pane shell, the recorded instance, and its siblings. They are reported once, as a service."""
         pids = set()
         for service in self.environment.get("services", []):
             if service["id"] in self.stoppable:
-                pids.add((service.get("process") or {}).get("pid"))
-                pids.update((service.get("process") or {}).get("siblings") or [])
+                process = service.get("process") or {}
+                pids.update({process.get("pid"), process.get("shell_pid"), *(process.get("siblings") or [])})
         return pids - {None}
 
     def occupancy(self):
@@ -5207,8 +5248,9 @@ def cleanup(store, args):
     if not args.apply:
         save_cleanup(store, task["id"], step="inspected", state=plan["state"], blockers=plan["blockers"], resources=plan["resources"])
         return {**plan, "apply": False, "note": "Inspection only; nothing was removed. `cleanup TASK --apply` removes the verified workspace with native Herdr operations and archives the record only when no blocker remains."}
-    if plan["blockers"] and plan.get("stoppable") and all(b["code"] == "service" for b in plan["blockers"]):
-        # Every remaining blocker is a re-proven, sum-launched service: evidence and obligations are complete, so stop those and only those.
+    if plan["blockers"] and plan.get("stoppable") and all(b["code"] in STOP_FIRST_BLOCKERS for b in plan["blockers"]):
+        # Evidence, obligations, identity, and the checkout are settled; what remains is resource state. Stop the re-proven services and only
+        # those, then look again: an unknown service, an extra pane, or a log still being written keeps the task pending after the stop.
         save_cleanup(store, task["id"], step="stopping-services", state="pending", services=plan["stoppable"])
         stopped = stop_services(store, task, plan["stoppable"])
         save_cleanup(store, task["id"], step="services-stopped", state="pending", services_stopped=[{k: r.get(k) for k in ("id", "name", "state", "action", "closed_pane", "reason")} for r in stopped])

@@ -94,7 +94,9 @@ def main():
             assert service["process"]["pid"] and service["process"]["shell_pid"] and service["process"]["argv"], service["process"]
             info = cli("pane", "process-info", "--pane", service["pane"]).get("process_info")
             assert info["shell_pid"] == service["process"]["shell_pid"] and any(p["pid"] == service["process"]["pid"] for p in info["foreground_processes"]), (info, service["process"])
-            assert launched["endpoint"]["ownership"] == "owned" and launched["endpoint"]["observation"]["listeners"][0]["pid"] == service["process"]["pid"], launched["endpoint"]
+            owned_pids = {service["process"]["pid"], *service["process"]["siblings"]}  # `make dev` forks the server; the child is a recorded sibling.
+            assert launched["endpoint"]["ownership"] == "owned" and launched["endpoint"]["observation"]["listeners"][0]["pid"] in owned_pids, (launched["endpoint"], service["process"])
+            assert service["process"]["argv"][-1] == "dev" and service["process"]["name"] == "make", service["process"]
             assert sumctl("--home", str(state), "env", "start", task["id"], "--command", "dev", "--source", "Makefile", "--url", f"http://127.0.0.1:{port}")["already_running"]
             started = time.monotonic()
             stopped = sumctl("--home", str(state), "env", "stop", task["id"])

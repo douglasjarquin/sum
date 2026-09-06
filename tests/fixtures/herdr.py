@@ -139,6 +139,11 @@ if args[:2] == ["pane", "process-info"]:
     if "--pane" not in args: fail("explicit pane required")
     pane = state["panes"].get(arg("--pane"))
     if not pane: fail("pane_not_found", "pane not found")
+    if pane.get("replace_after") is not None:
+        pane["replace_after"] -= 1
+        if pane["replace_after"] <= 0:
+            for p in pane.get("processes", []): p["pid"] += 1
+            pane.pop("replace_after")
     shell = pane.get("shell_pid", 4242)
     # A pane's process list is scenario data written by the test; the default is an idle shell in the pane cwd.
     foreground = pane.get("processes", [{"pid": shell, "name": "bash", "argv0": "bash", "argv": ["-bash"], "cwd": pane["cwd"]}])
@@ -152,8 +157,8 @@ def lsof_scenario():
     root_ = os.environ.get("FAKE_LSOF_ROOT")
     if not root_: return None, None
     path_ = pathlib.Path(root_) / "cwds.json"
-    data_ = json.loads(path_.read_text()) if path_.exists() else {"processes": [], "listeners": []}
-    return path_, data_
+    if not path_.exists(): return None, None  # No scenario was planted: the fake lsof answers from defaults, nothing to update.
+    return path_, json.loads(path_.read_text())
 if args[:2] == ["pane", "split"]:
     if "--direction" not in args or "--cwd" not in args or "--no-focus" not in args: fail("wrong split contract")
     target = state["panes"].get(args[2])
@@ -164,7 +169,11 @@ if args[:2] == ["pane", "split"]:
         save(); sys.exit(137)
     workspace = target["workspace_id"]
     pane = f"{workspace}:p{len(state['panes']) + 10}"
-    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "shell_pid": 5000 + len(state["panes"]), "processes": []}
+    shell_pid = 5000 + len(state["panes"])
+    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "shell_pid": shell_pid, "processes": []}
+    path_, data_ = lsof_scenario()
+    if path_ is not None:  # A real shell sits in the checkout too; the cwd scan sees it whether or not a command runs.
+        data_.setdefault("processes", []).append({"pid": shell_pid, "cwd": arg("--cwd")}); path_.write_text(json.dumps(data_))
     emit({"pane": state["panes"][pane]})
 if args[:2] == ["pane", "run"]:
     pane = state["panes"].get(args[2])
@@ -180,11 +189,15 @@ if args[:2] == ["pane", "run"]:
         pid = 6000 + (abs(hash(pane["pane_id"] + command)) % 900)
         pane["processes"] = [{"pid": pid, "name": argv[0], "argv0": argv[0], "argv": argv, "cwd": pane["cwd"]}]
         if behavior == "stubborn": pane["stubborn"] = True
+        listener_pid = pid
+        if os.environ.get("FAKE_RUN_REPLACE"):  # The command re-executes itself: after two process-info reads another pid holds the pane and the port.
+            pane["replace_after"] = 2; listener_pid = pid + 1
+        listener_pid = int(os.environ.get("FAKE_RUN_LISTEN_PID") or listener_pid)  # A listener in the checkout that is not the pane's process.
         path_, data_ = lsof_scenario()
         if path_ is not None and os.environ.get("FAKE_RUN_LISTEN"):
-            data_.setdefault("processes", []).append({"pid": pid, "cwd": pane["cwd"]})
+            data_.setdefault("processes", []).append({"pid": listener_pid, "cwd": pane["cwd"]})
             if os.environ.get("FAKE_RUN_LISTEN") != "none":
-                data_.setdefault("listeners", []).append({"pid": pid, "address": os.environ["FAKE_RUN_LISTEN"]})
+                data_.setdefault("listeners", []).append({"pid": listener_pid, "address": os.environ["FAKE_RUN_LISTEN"]})
             path_.write_text(json.dumps(data_))
     emit({"sent": command})
 if args[:2] == ["pane", "send-keys"]:
@@ -209,7 +222,7 @@ if args[:2] == ["pane", "wait-output"]:
     fail("timeout", "wait-output timed out")
 if args[:2] == ["pane", "close"]:
     if args[2] not in state["panes"]: fail("pane_not_found", f"pane {args[2]} not found")
-    gone = [p["pid"] for p in state["panes"][args[2]].get("processes", [])]
+    gone = [p["pid"] for p in state["panes"][args[2]].get("processes", [])] + [state["panes"][args[2]].get("shell_pid")]
     path_, data_ = lsof_scenario()
     if path_ is not None and gone:  # Closing a pane ends its process tree, as the real server does.
         data_["processes"] = [p for p in data_.get("processes", []) if p["pid"] not in gone]
