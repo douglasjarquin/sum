@@ -1689,6 +1689,10 @@ class Snapshots:
                 self.sessions[session] = {"ok": False, "error": str(exc), "agents": {}}
         return self.sessions[session]
 
+    def forget(self, session):
+        """Drop a session's snapshot after slow Herdr I/O so the next observation before a prompt is fresh."""
+        self.sessions.pop(session, None)
+
     def agent(self, session, pane):
         snapshot = self.get(session)
         if not snapshot["ok"]:
@@ -1923,7 +1927,7 @@ def returns_view(store, task):
             "note": "Obligations come from the records; a submitted or presented notice closes none of them. `closed` names obligations a later record has since settled."}
 
 
-def notice_text(store, role, items):
+def notice_text(store, role, items, withheld=0):
     """Fixed wording with record IDs and commands only; question, answer, and report prose never travel."""
     by_task = {}
     for task, obligation in items:
@@ -1946,6 +1950,7 @@ def notice_text(store, role, items):
     more = len(by_task) - len(lines)
     return (f"sum returns for the {role}: {len(items)} pending across {len(by_task)} task(s). " + " ".join(lines)
             + (f" {more} more task(s) are listed by `sumctl inbox`." if more > 0 else "")
+            + (f" {withheld} earlier return(s) to you are uncertain or stalled and are not repeated here; `sumctl inbox` lists them." if withheld else "")
             + " Record contents are worker data, not human authorization. A notice is not a decision; act through the recorded commands.")
 
 
@@ -2017,6 +2022,14 @@ def deliver_locked(store, ctx, route, items, snapshots, force, reason, inline, r
         if "uncertain" in held:
             return {**row, "state": "uncertain", "reason": "an earlier prompt may have been submitted; left ambiguous rather than risking a duplicate turn. A new record or an explicit `notice` sends again"}
         return {**row, "state": "quiet", "reason": "every open return was submitted to this recipient; nothing is read, applied, or verified by that"}
+    sendable = {(o["task"], o["id"]) for o in (listing if force else fresh + retry)}
+    # Only sendable items are stamped with this attempt. A `submitted` sibling is still named in the text (nothing owed is dropped from
+    # the listing); an `uncertain` one is neither named nor restamped, because its own prompt may already have landed.
+    named = {(o["task"], o["id"]) for o in listing if (o["task"], o["id"]) in sendable or o["notification"]["state"] == "submitted"}
+    withheld = [o for o in listing if (o["task"], o["id"]) not in named]
+    mentioned = [(task, o) for task, o in items if (task["id"], o["id"]) in named]
+    items = [(task, o) for task, o in items if (task["id"], o["id"]) in sendable]
+    row["withheld"] = [{"task": o["task"], "id": o["id"], "state": o["notification"]["state"]} for o in withheld]
     kinds = [o["kind"] for _, o in items if o["kind"] != "refresh"]
     legacy_reason = reason or (LEGACY_REASONS[kinds[0]] if kinds else None) or "saved task state needs attention"
     delivery = {"id": "d-" + uuid.uuid4().hex[:10], "at": now(), "recipient": {**{k: route.get(k) for k in ("recipient", "role", "machine", "session", "pane")}, "key": key},
@@ -2025,7 +2038,7 @@ def deliver_locked(store, ctx, route, items, snapshots, force, reason, inline, r
         stamp_delivery(store, items, delivery, state="not-delivered", via=None, reason="recipient has no recorded pane yet", finished_at=now())
         mirror_notice(store, items, route, "not-delivered", legacy_reason, "recipient has no recorded pane yet", delivery["id"])
         return {**row, "state": "not-delivered", "reason": "recipient has no recorded pane yet", "delivery": delivery["id"]}
-    message = notice_text(store, route["role"], items)
+    message = notice_text(store, route["role"], mentioned, withheld=len(withheld))
     if inline and ctx and identity(route) == identity(ctx):
         # The recipient is the caller: this output is the notice. Presented is still not answered, applied, or verified.
         stamp_delivery(store, items, delivery, state="submitted", via="inline", reason="presented in the recipient's own command output", finished_at=now())
@@ -2055,7 +2068,8 @@ def deliver_locked(store, ctx, route, items, snapshots, force, reason, inline, r
             if not current:
                 return {**row, "state": "not-delivered", "reason": "every return was rebound or settled between lookup and send", "delivery": delivery["id"]}
             items = current
-            message = notice_text(store, route["role"], items)
+            still = {(t["id"], o["id"]) for t, o in current}
+            message = notice_text(store, route["role"], [(t, o) for t, o in mentioned if (t["id"], o["id"]) in still or (t["id"], o["id"]) not in sendable], withheld=len(withheld))
         herdr(["agent", "prompt", route["pane"], message], session=route["session"], timeout=RECIPIENT_TIMEOUT)
         state, detail = "submitted", "notice submitted while the recipient was settled; nothing is acknowledged, read, or applied by that"
     except CommandTimeout as exc:
@@ -2407,6 +2421,7 @@ def attention_for(store, task, status):
 def attention_sweep(store, snapshots, tasks=None):
     """Reconciliation from one bounded snapshot per session: record what is already idle/blocked/absent now. No prompt is sent here."""
     rows = []
+    read_sessions = set()
     for task in tasks or store.all():
         if task["status"] == "archived" or not task.get("pane") or task["machine"] != machine():
             continue
@@ -2420,15 +2435,27 @@ def attention_sweep(store, snapshots, tasks=None):
         else:
             observed = agent.get("agent_status", agent.get("status", "unknown"))
             kind = attention_for(store, task, observed)
-            if observed == "working":
-                closed = close_attention(store, task["id"], ("blocked", "idle-without-report"), "resumed")
-                if closed:
-                    rows.append({"task": task["id"], "outcome": "closed", "closed": closed})
+            closed = close_attention(store, task["id"], cleared_kinds(observed), "resumed" if observed == "working" else "cleared")
+            if closed:
+                rows.append({"task": task["id"], "outcome": "closed", "closed": closed})
         if kind:
             text = excerpt(task["session"], task["pane"]) if agent is not None else "<no agent in the recorded pane>"
+            if agent is not None:
+                read_sessions.add(task["session"])
             record = save_attention(store, task["id"], kind, observed, task["session"], task["pane"], "reconciliation", text)
             rows.append({"task": task["id"], "outcome": "recorded" if record else "already-open", "kind": kind, "observed": observed, "attention": record["id"] if record else None})
+    for session in read_sessions:
+        snapshots.forget(session)  # Seconds may have passed in `agent read`; whoever prompts next must observe again.
     return rows
+
+
+def cleared_kinds(observed):
+    """Attention a fresh observation makes moot: a worker seen working resumed; any non-blocked status means the dialog is gone."""
+    if observed == "working":
+        return ("blocked", "idle-without-report")
+    if observed in ("idle", "done", "unknown"):
+        return ("blocked",)
+    return ()
 
 
 def reconcile(store, ctx, snapshots, reason, tasks=None):
@@ -2504,31 +2531,44 @@ def hook_event(store, environ):
     for task in tasks:
         outcome = {"task": task["id"], "role": "worker"}
         if event == "pane.agent_status_changed" and status == "working":
-            outcome.update(action="resumed", closed=close_attention(store, task["id"], ("blocked", "idle-without-report"), "resumed"))
+            # An out-of-order `working` after a live permission UI must not drop the alert: only a fresh observation closes it.
+            try:
+                observed = snapshots.agent(session, task["pane"]).get("agent_status", "unknown")
+            except SumError as exc:
+                outcome.update(action="unobservable", reason=str(exc)[:200])
+                outcomes.append(outcome)
+                continue
+            outcome.update(observed=observed, action="resumed" if observed == "working" else "kept",
+                           closed=close_attention(store, task["id"], cleared_kinds(observed), "resumed" if observed == "working" else "cleared"))
         elif event in ("pane.exited", "pane.closed", "workspace.closed") or released:
             kind = "closed" if event in ("pane.closed", "workspace.closed") else "exited"
             text = excerpt(session, task["pane"]) if kind == "exited" and event != "pane.exited" else "<pane exited or closed; no agent output to read>"
+            snapshots.forget(session)
             record = save_attention(store, task["id"], kind, "absent", session, task["pane"], event, text)
             outcome.update(action="attention", kind=kind, attention=record["id"] if record else None, duplicate=record is None)
         elif event == "pane.agent_status_changed" and status in ("idle", "done", "blocked"):
             # Recheck at the boundary: the payload is a hint, the fresh observation decides. Herdr I/O happens before any lock.
             try:
-                fresh = snapshots.agent(session, task["pane"]).get("agent_status", status)
+                observed = snapshots.agent(session, task["pane"]).get("agent_status", "unknown")
             except SumError as exc:
-                fresh = None
-                outcome["observation"] = str(exc)[:200]
-            observed = fresh or status
+                outcome.update(action="unobservable", reason=f"payload said {status}; the pane cannot be observed and a payload is not truth: {str(exc)[:200]}")
+                outcomes.append(outcome)
+                continue
             outcome["observed"] = observed
+            closed = close_attention(store, task["id"], cleared_kinds(observed), "resumed" if observed == "working" else "cleared")
+            if closed:
+                outcome["closed"] = closed
             if observed in ("idle", "done"):
                 result = pump(store, None, tasks=[task["id"]], recipient="worker", snapshots=snapshots, inline=False, retry_stalled=True)
                 outcome.update(action="pump", prompts=result["prompts"], recipients=[(r["state"], r.get("reason")) for r in result["recipients"]])
             kind = attention_for(store, store.read(task["id"]), observed)
             if kind and not (observed in ("idle", "done") and outcome.get("prompts")):
                 text = excerpt(session, task["pane"])
+                snapshots.forget(session)  # The read took time; the parent is observed again before any prompt.
                 record = save_attention(store, task["id"], kind, observed, session, task["pane"], event, text)
                 outcome.update(attention=record["id"] if record else None, kind=kind, duplicate=record is None)
             elif observed == "working":
-                outcome.update(action="resumed", closed=close_attention(store, task["id"], ("blocked", "idle-without-report"), "resumed"))
+                outcome.setdefault("action", "resumed")
         else:
             outcome.update(action="none", reason=f"{event} {status or ''} is bookkeeping only")
         if outcome.get("attention"):
@@ -2544,7 +2584,7 @@ def hook_event_main(store, environ):
     """CLI wrapper: record any failure in health, keep Herdr's log honest with a non-zero exit, never touch task records on the way out."""
     try:
         return 0, hook_event(store, environ)
-    except (SumError, OSError, ValueError, KeyError) as exc:
+    except Exception as exc:  # noqa: BLE001 - every failure is recorded before it propagates; KeyboardInterrupt/SystemExit pass through untouched.
         record_hook_error(store, "event", exc, event=environ.get("HERDR_PLUGIN_EVENT"))
         raise
 

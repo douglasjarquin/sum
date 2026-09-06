@@ -148,7 +148,8 @@ def main():
             assert "agent read" in attention["source"]["pointer"] and attention["source"]["session"] == name
             returns = sumctl("--home", str(state), "show", task["id"])["returns"]["open"]
             assert sorted(r["kind"] for r in returns) == ["attention", "attention", "question", "refresh"], [(r["kind"], r["notification"]["state"]) for r in returns]
-            assert {r["notification"]["state"] for r in returns} <= {"not-delivered", "stalled"}, returns  # The root is a shell pane, the worker pane an unregistered scripted occupant: nothing was typed anywhere.
+            assert all(r["notification"]["state"] in ("not-delivered", "stalled") or r["notification"].get("via") == "inline" for r in returns), returns  # Inline presentation to the enabling coordinator only; the root is a shell pane and the worker an unregistered scripted occupant, so nothing was typed anywhere.
+            assert not any(r["notification"].get("via") == "prompt" and r["notification"]["state"] == "submitted" for r in returns), returns
             wall_working, handler_working, worker = edge("working", None)
             assert worker["action"] == "resumed" and worker["closed"] == [attention["id"]], worker  # Resuming closes the blocked record; the exit record waits for the coordinator.
             health = json.loads(health_path.read_text())

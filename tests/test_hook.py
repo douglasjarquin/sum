@@ -416,6 +416,75 @@ class HookTest(unittest.TestCase):
             row = self.event("pane.agent_status_changed", "w-newroot:p1", "idle")
         self.assertEqual(row["outcomes"][0]["prompts"], 1)  # The rebound root is now the recorded parent; the old pane id is nobody.
 
+    # --- repair 1: sibling isolation, fresh boundary, out-of-order working ------------------------------------------------
+
+    def test_new_attention_never_restamps_or_reprompts_an_uncertain_sibling(self):
+        task = self.started_task()
+        self.enable()
+        with mock.patch.dict(os.environ, {"FAKE_PROMPT_HANG": "0.2"}), mock.patch.object(sumctl, "RECIPIENT_TIMEOUT", 0.05):
+            q = self.question(task, text="Ambiguous? SECRET-Q")["question"]
+        self.assertEqual(self.open_returns(task), {f"question:{q['id']}": "uncertain"})
+        prompts_before = len(self.prompts())
+        self.pane_state(task["pane"], agent_status="blocked", screen="Allow write?")
+        row = self.event("pane.agent_status_changed", task["pane"], "blocked")
+        worker = [o for o in row["outcomes"] if o.get("task") == task["id"]][0]
+        self.assertEqual((worker["kind"], worker["parent_prompts"]), ("blocked", 1))
+        [record] = self.attention(task)
+        self.assertEqual(len(self.prompts()), prompts_before + 1)
+        prompt = self.prompts()[-1]
+        self.assertIn(f"attention {record['id']}", prompt)
+        self.assertNotIn(q["id"], prompt)  # The possibly-landed question is not re-injected.
+        self.assertIn("1 earlier return(s) to you are uncertain or stalled and are not repeated here", prompt)
+        self.assertEqual(self.open_returns(task), {f"question:{q['id']}": "uncertain", f"attention:{record['id']}": "submitted"})
+        deliveries = sumctl.read_returns(self.store, task["id"])["deliveries"]
+        self.assertEqual([d["obligations"] for d in deliveries if d["state"] == "submitted"], [[f"attention:{record['id']}"]])  # The sibling was not restamped.
+        again = self.event("pane.agent_status_changed", "w-parent:p1", "idle")
+        self.assertEqual(again["outcomes"][0]["prompts"], 0)
+        self.assertEqual(len(self.prompts()), prompts_before + 1)
+
+    def test_recipient_that_turns_busy_during_the_excerpt_read_is_not_prompted(self):
+        task = self.started_task()
+        self.enable()
+        real_excerpt = sumctl.excerpt
+        def slow_excerpt(session, pane):
+            text = real_excerpt(session, pane)
+            self.pane_state("w-parent:p1", agent_status="working")  # The root started a turn while `agent read` was running.
+            return text
+        with mock.patch.dict(os.environ, {"FAKE_PARENT_STATUS": "working"}), mock.patch.object(sumctl, "excerpt", slow_excerpt):
+            self.pane_state(task["pane"], agent_status="blocked", screen="Approve?")
+            row = self.event("pane.agent_status_changed", task["pane"], "blocked")
+        worker = [o for o in row["outcomes"] if o.get("task") == task["id"]][0]
+        self.assertEqual((worker["kind"], worker["parent_prompts"]), ("blocked", 0))
+        self.assertEqual(len(self.parent_prompts()), 0)
+        [record] = self.attention(task)
+        self.assertEqual(self.open_returns(task)[f"attention:{record['id']}"], "not-delivered")
+        self.assertGreaterEqual(row["herdr_calls"], 2)  # The pre-read snapshot was dropped; the pump observed again and saw `working`.
+        with mock.patch.object(sumctl, "excerpt", slow_excerpt):
+            live = sumctl.status(self.store, live=True)
+        self.assertEqual(live["returns"]["prompts"], 0)
+        self.assertEqual(len(self.parent_prompts()), 0)
+
+    def test_out_of_order_working_does_not_close_a_live_blocked_attention(self):
+        task = self.started_task()
+        self.enable()
+        self.pane_state(task["pane"], agent_status="blocked", screen="Approve?")
+        self.event("pane.agent_status_changed", task["pane"], "blocked")
+        [record] = self.attention(task)
+        row = self.event("pane.agent_status_changed", task["pane"], "working")  # Stale payload: the pane is still at the dialog.
+        worker = [o for o in row["outcomes"] if o.get("task") == task["id"]][0]
+        self.assertEqual((worker["action"], worker["observed"], worker["closed"]), ("kept", "blocked", []))
+        self.assertEqual([a["id"] for a in self.attention(task)], [record["id"]])
+        self.pane_state(task["pane"], agent_status="idle")
+        row = self.event("pane.agent_status_changed", task["pane"], "idle")  # The dialog cleared: any non-blocked fresh status closes it.
+        worker = [o for o in row["outcomes"] if o.get("task") == task["id"]][0]
+        self.assertEqual(worker["closed"], [record["id"]])
+        self.assertEqual([a["kind"] for a in self.attention(task)], ["idle-without-report"])
+        self.pane_state(task["pane"], remove=True)
+        row = self.event("pane.agent_status_changed", task["pane"], "idle")
+        worker = [o for o in row["outcomes"] if o.get("task") == task["id"]][0]
+        self.assertEqual(worker["action"], "unobservable")  # No snapshot row: the payload is not used as truth and nothing new is recorded.
+        self.assertEqual(len(self.attention(task)), 1)
+
     # --- robustness -------------------------------------------------------------------------------------------------------
 
     def test_reordered_concurrent_and_duplicate_events_send_at_most_one_notice(self):
@@ -440,7 +509,9 @@ class HookTest(unittest.TestCase):
         with mock.patch.object(sumctl, "excerpt", side_effect=RuntimeError("boom")):
             self.pane_state(task["pane"], agent_status="blocked")
             with self.assertRaises(RuntimeError):
-                self.event("pane.agent_status_changed", task["pane"], "blocked")
+                sumctl.hook_event_main(self.store, {**os.environ, "HERDR_PLUGIN_ID": self.plugin_id(), "HERDR_PLUGIN_EVENT": "pane.agent_status_changed", "HERDR_SESSION": "sum-test",
+                                                    "HERDR_PLUGIN_EVENT_JSON": json.dumps({"event": "pane_agent_status_changed", "data": {"type": "pane_agent_status_changed", "pane_id": task["pane"], "workspace_id": "w", "agent_status": "blocked"}})})
+        self.assertEqual(self.health()["last_error"]["error"], "boom")  # Any exception is recorded, not only sum's own.
         self.assertEqual(self.attention(task), [])
         q = self.question(task, text="Still saved?")["question"]  # Task writes are independent of the handler.
         self.assertEqual(self.store.read(task["id"])["questions"][0]["id"], q["id"])
@@ -474,7 +545,7 @@ class HookTest(unittest.TestCase):
         self.assertEqual([r["outcome"] for r in live["attention_sweep"] if r["task"] == task["id"]], ["recorded"])
         self.assertEqual([a["kind"] for a in self.attention(task)], ["blocked"])
         self.assertEqual(live["tasks"][0]["attention_records"][0]["kind"], "blocked")
-        self.assertEqual(live["fanout"]["herdr_calls"], 1)  # One agent list for the sweep, reused by the pump.
+        self.assertEqual(live["fanout"]["herdr_calls"], 2)  # One agent list for the sweep; the excerpt read invalidated it, so the pump observed again before prompting.
         self.assertEqual(len([c for c in self.calls() if c[:2] == ["agent", "read"]]), 2)  # One bounded excerpt per attention record.
 
     def test_fleet_of_twelve_workers_survives_update_disable_and_re_enable(self):
@@ -510,7 +581,7 @@ class HookTest(unittest.TestCase):
         result = self.enable()
         recorded = [r for r in result["reconciliation"]["attention"] if r["outcome"] == "recorded"]
         self.assertEqual(sorted(r["task"] for r in recorded), sorted(t["id"] for t in tasks[:3]))  # Already-blocked workers were caught up on re-enable.
-        self.assertEqual(result["fanout"]["herdr_calls"], 1)  # One agent list served twelve workers; excerpt reads are per attention record, three here.
+        self.assertEqual(result["fanout"]["herdr_calls"], 1)  # One agent list served twelve workers; the pump presented inline to the caller, so no second observation was needed.
         self.assertEqual(len([c for c in self.calls() if c[:2] == ["agent", "read"]]), 3)
         [recipient] = result["reconciliation"]["returns"]["recipients"]
         self.assertEqual((recipient["state"], recipient["via"]), ("submitted", "inline"))
