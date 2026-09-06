@@ -18,3 +18,6 @@ opencode.json
 
 # Managed project clones (sumctl project enroll); project code is neither sum source nor runtime state.
 /projects/
+
+# Verification run records written by .agents/skills/verify (see VERIFY.md).
+.artifacts/

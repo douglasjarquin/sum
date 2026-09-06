@@ -57,6 +57,7 @@ Herdr's optional native integrations can be installed separately, for example `h
 | --- | --- |
 | `AGENTS.md` and harness instruction aliases | A short coordinator contract, with a separate worker role |
 | Six bundled skills | Dispatch, worker execution, verification/PR delivery, rundown/recovery, isolated self-development, and atomic updates with rolling session refresh and code-only rollback |
+| Portable verification contract | A project-root `VERIFY.md`, the canonical `mise run verify` aggregate, feature maps under `docs/features/`, and the distributable `.agents/skills/verify` runner that records candidate-bound run evidence under Git-ignored `.artifacts/verification/`; works in any clone without sum or Herdr |
 | Release-matched Herdr skill | Copied from the installed `herdr --skill` during setup |
 | Pinned Herdr Mesh plus a small runtime overlay | Ten relevant MCP tools, current Herdr commands, bounded reads/waits, no swallowed handoff errors |
 | `bin/sumctl` | Durable task/decision/report files, native worktree creation and launch, bounded notices, guarded cleanup of merged task workspaces, records backup, staged releases, atomic update/rollback, and per-session refresh bookkeeping |
