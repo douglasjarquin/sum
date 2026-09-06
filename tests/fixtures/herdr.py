@@ -19,8 +19,10 @@ state_path = root / "state.json"
 state = json.loads(state_path.read_text()) if state_path.exists() else {"panes": {}}
 state.setdefault("workspaces", {})
 parent = os.environ.get("HERDR_PANE_ID", "w-parent:p1")
-state["panes"][parent] = {"pane_id": parent, "cwd": os.environ.get("FAKE_PARENT_CWD", "/tmp"), "workspace_id": parent.split(":")[0],
-  "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": os.environ.get("FAKE_PARENT_KIND", "claude")}
+if not state["panes"].get(parent, {}).get("created"):  # A pane this fake created (worktree/workspace/split) keeps its own cwd and agent, like Herdr's store; only the scripted root pane follows the FAKE_PARENT_* scenario.
+    _kept = {k: v for k, v in state["panes"].get(parent, {}).items() if k in ("tokens", "token_sources", "label")}  # Metadata and labels survive like Herdr's own store.
+    state["panes"][parent] = {**_kept, "pane_id": parent, "cwd": os.environ.get("FAKE_PARENT_CWD", "/tmp"), "workspace_id": parent.split(":")[0],
+      "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": os.environ.get("FAKE_PARENT_KIND", "claude")}
 state["workspaces"].setdefault(parent.split(":")[0], {"workspace_id": parent.split(":")[0], "label": "coordinator", "worktree": None})
 
 def save():
@@ -45,7 +47,7 @@ if args[:2] == ["worktree", "create"]:
     if result.returncode: fail(result.stderr)
     workspace = "w-" + uuid.uuid4().hex[:6]
     pane = workspace + ":p1"
-    state["panes"][pane] = {"pane_id": pane, "cwd": str(path), "workspace_id": workspace, "agent_status": "unknown", "agent": None}
+    state["panes"][pane] = {"pane_id": pane, "cwd": str(path), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "created": True}
     state["workspaces"][workspace] = {"workspace_id": workspace, "label": arg("--label") if "--label" in args else "",
                                       "worktree": {"checkout_path": str(path), "repo_root": arg("--cwd"), "is_linked_worktree": True}}
     response = {"root_pane": {"pane_id": pane}, "workspace": {"workspace_id": workspace},
@@ -56,7 +58,7 @@ if args[:2] == ["workspace", "create"]:
     if "--no-focus" not in args or "--cwd" not in args: fail("wrong workspace contract")
     workspace = "w-" + uuid.uuid4().hex[:6]
     pane = workspace + ":p1"
-    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None}
+    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "created": True}
     state["workspaces"][workspace] = {"workspace_id": workspace, "label": arg("--label") if "--label" in args else "", "worktree": None}
     emit({"workspace": {"workspace_id": workspace}, "tab": {"tab_id": workspace + ":t1"}, "root_pane": {"pane_id": pane}})
 if args[:2] == ["agent", "start"]:
@@ -89,6 +91,64 @@ if args[:2] == ["agent", "wait"]:
     if not pane or pane["agent_status"] != arg("--until"): fail("timeout")
     emit({"agent": pane})
 if args[:2] == ["integration", "status"]: emit({"integrations": []})
+# --- issue #18 metadata surface, as the real 0.8.2 CLI behaves: token patches print nothing, tokens ride get/list responses -----
+if args[:2] == ["api", "schema"]:
+    if "--json" not in args: fail("text_output", "the fake only speaks --json")
+    defs = {"PaneReportMetadataParams": {"properties": {"pane_id": {}, "source": {}, "tokens": {}, "title": {}, "state_labels": {}}},
+            "WorkspaceReportMetadataParams": {"properties": {"workspace_id": {}, "source": {}, "tokens": {}}},
+            "NotificationShowParams": {"properties": {"title": {}, "body": {}, "sound": {}}}}
+    if os.environ.get("FAKE_NO_METADATA"): defs = {"NotificationShowParams": defs["NotificationShowParams"]}
+    save(); print(json.dumps({"protocol": 20, "schema_version": 1, "schemas": {"request": {"$defs": defs}}})); sys.exit(0)
+if args[1:2] == ["report-metadata"] and args[0] in ("pane", "workspace"):
+    if os.environ.get("FAKE_NO_METADATA"): print(f"herdr {args[0]} commands:\n  ...", file=sys.stderr); sys.exit(2)  # An older build: usage text, exit 2, no JSON.
+    if "--source" not in args: fail("invalid_params", "source required")
+    table = state["panes"] if args[0] == "pane" else state["workspaces"]
+    row = table.get(args[2])
+    if not row: fail("pane_not_found" if args[0] == "pane" else "workspace_not_found", f"{args[0]} {args[2]} not found")
+    tokens = row.setdefault("tokens", {})
+    sources = row.setdefault("token_sources", {})
+    import re as _re
+    for i, a in enumerate(args):
+        if a == "--token":
+            name, _, value = args[i + 1].partition("=")
+            if not _re.fullmatch(r"[A-Za-z0-9_-]{1,32}", name): fail("invalid_metadata_token", f"invalid metadata token key: {name}")
+            value = " ".join(value.split())[:80]
+            if value: tokens[name] = value; sources[name] = arg("--source")
+            else: tokens.pop(name, None); sources.pop(name, None)
+        if a == "--clear-token":
+            tokens.pop(args[i + 1], None); sources.pop(args[i + 1], None)  # Any source may clear a key: the latest accepted update wins.
+    if len(tokens) > 32: fail("too_many_tokens", "a pane or workspace keeps at most 32 keys")
+    save(); sys.exit(0)  # Real 0.8.2 prints nothing on success.
+if args[:2] == ["notification", "show"]:
+    if "--body" in args and len(args[args.index("--body") + 1]) > 240: fail("invalid_params", "body too long")
+    if "--sound" in args and arg("--sound") not in ("none", "done", "request"): fail("invalid_params", "bad sound")
+    state.setdefault("notifications", []).append({"title": args[2][:80], "body": arg("--body") if "--body" in args else None, "sound": arg("--sound") if "--sound" in args else "none"})
+    delivery = os.environ.get("FAKE_TOAST", "off")
+    emit({"type": "notification_show", "shown": delivery != "off", "reason": "shown" if delivery != "off" else "disabled"})
+if args[:2] == ["pane", "rename"]:
+    pane = state["panes"].get(args[2])
+    if not pane: fail("pane_not_found", "pane not found")
+    if "--clear" in args: pane.pop("label", None)
+    else: pane["label"] = args[3]
+    emit({"pane": pane})
+if args[:2] == ["workspace", "list"]: emit({"workspaces": list(state["workspaces"].values()), "type": "workspace_list"})
+if args[:3] == ["plugin", "pane", "open"]:
+    if "--plugin" not in args or "--entrypoint" not in args: fail("invalid_params", "plugin and entrypoint required")
+    registry_path_ = root / "plugins.json"
+    registry_ = json.loads(registry_path_.read_text()) if registry_path_.exists() else {}
+    row = registry_.get(arg("--plugin"))
+    if not row: fail("plugin_not_found", "plugin not found")
+    if not row.get("enabled"): fail("plugin_disabled", "plugin disabled")
+    import tomllib as _toml
+    doc = _toml.loads(pathlib.Path(row["manifest_path"]).read_text())
+    entry = next((p for p in doc.get("panes", []) if p["id"] == arg("--entrypoint")), None)
+    if not entry: fail("entrypoint_not_found", "no such pane entrypoint")
+    placement = arg("--placement") if "--placement" in args else entry.get("placement", "overlay")
+    if placement == "popup": emit({"type": "plugin_pane_opened", "plugin_pane": {"entrypoint": entry["id"], "plugin_id": row["plugin_id"], "ok": True, "command": entry["command"]}})
+    workspace = arg("--target-pane").split(":")[0] if "--target-pane" in args else parent.split(":")[0]
+    pane = f"{workspace}:p{len(state['panes']) + 20}"
+    state["panes"][pane] = {"pane_id": pane, "cwd": row["plugin_root"], "workspace_id": workspace, "agent_status": "unknown", "agent": None, "label": entry.get("title"), "created": True, "plugin_command": entry["command"]}
+    emit({"type": "plugin_pane_opened", "plugin_pane": {"entrypoint": entry["id"], "plugin_id": row["plugin_id"], "pane": state["panes"][pane], "command": entry["command"]}})
 if args[:2] == ["agent", "read"]:
     pane = state["panes"].get(args[2])
     if not pane or not pane.get("agent"): fail("agent_not_found")
