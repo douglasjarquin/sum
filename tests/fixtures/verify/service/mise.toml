@@ -1,0 +1,3 @@
+[tasks]
+test = "python3 -m unittest discover -s tests -p 'test_*.py'"
+serve = "python3 app.py"

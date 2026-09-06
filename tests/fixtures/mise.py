@@ -41,6 +41,8 @@ if run_name is not None:
     if task.get("file"):
         result = __import__("subprocess").run([task["file"]], cwd=task["dir"])
     else:
-        result = __import__("subprocess").run(["sh", "-c", task["run"] or "exit 1"], cwd=task["dir"])
+        run = task["run"]
+        script = " && ".join(run) if isinstance(run, list) else (run or "exit 1")  # A `run = [...]` list executes in order and stops at the first failure, as mise does.
+        result = __import__("subprocess").run(["sh", "-c", script], cwd=task["dir"])
     sys.exit(result.returncode)
 print(json.dumps([{k: v for k, v in r.items() if k != "run"} for r in sorted(found.values(), key=lambda r: r["name"])]))
