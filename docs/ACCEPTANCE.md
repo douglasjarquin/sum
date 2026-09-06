@@ -66,6 +66,14 @@ Enable `--notify` with `[ui.toast] delivery = "herdr"` and confirm one toast per
 Run `metadata inbox` and confirm the popup shows the ordinary `sumctl inbox` JSON and closes on Enter.
 Record how often you asked the coordinator for a status explanation before and after; the intended result is fewer such turns, not a prettier sidebar.
 
+## 11. Managed project clones and explicit skill delivery
+
+From the coordinator pane, run `./bin/sumctl project enroll <owner>/<repo>` for one repository you own and confirm exactly that repository appears under `projects/<owner>/<repo>`, that `git status --ignored` in the installation lists it as ignored and `git ls-files` does not, and that a second enroll returns `already-enrolled` without a fetch. Enroll a same-named repository of another owner and one on a non-default host with `--host`; confirm three distinct paths.
+Enroll one repository you already cloned elsewhere with `--path`, and one left under `.sum/projects/<owner>/<repo>` by the earlier procedure with a worker still running in it; confirm both are registered where they are (`external`, `legacy`), that `project migrate` names the running task as a blocker, and that `--apply` is refused while it runs.
+Dispatch a real task with `--project`, open its brief, and confirm the `## Delivered runtime` section names `<installation>/bin/sumctl` and the absolute skill path with the hash of the installed file; confirm the worker's `context --role worker` shows the same and that the worktree is outside the installation.
+Start a harness by hand inside the managed clone and run the installation's `bin/sumctl init` from there; it must refuse with "A project session is not a sum session" and leave `.sum/context.json` unchanged. Then, in that clone, run `mise tasks ls` and confirm sum's `test`/`demo` tasks resolve from the parent; run `sumctl env discover` for a task and confirm `task_origins` flags them as inherited rather than as project verification.
+Enroll `douglasjarquin/sum` itself and confirm the registration points at the installation with nothing cloned. Stage a release and confirm the bundle contains no `projects/` entry; take a records backup and confirm `state/projects.json` is present and no clone file is.
+
 ## Record results
 
 For each real task, record all human-labeled questions, which were saved by workers, which were found during rundown, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.

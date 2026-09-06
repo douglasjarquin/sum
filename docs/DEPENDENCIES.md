@@ -69,6 +69,25 @@ Coexistence is the design: several releases stay staged, each process keeps the 
 
 An optional `--install-codex` installs `@openai/codex@0.153.4` into `.deps/harnesses`. It does not authenticate or switch accounts. Other existing harnesses remain usable.
 
+## Managed projects
+
+`sumctl project enroll owner/repo` clones exactly one repository into `<installation>/projects/<owner>/<repo>`; a non-default host gets an explicit level (`projects/<host>/<owner>/<repo>`), so two owners' same-named repositories and two hosts never collide.
+The default host clones through `gh repo clone` (the user's existing authentication); a full URL or `--remote` clones through `git clone` and records that URL as the verified remote.
+The clone lands in a private `.staging-*` directory first and is renamed into place in one step under the store lock; a failed clone removes only its staging directory and any empty parent it created.
+`/projects/` is in sum's `.gitignore`: project code is neither sum source nor runtime state, so `git ls-files`, `git archive`, `release stage` bundles, the source manifest, and the test discovery never contain it. A records backup carries `.sum/projects.json` and explicitly excludes clone and worktree contents.
+
+`.sum/projects.json` is the one registry: `host`, `owner`, `repo`, `name`, `kind` (`managed`, `legacy`, `external`, `installation`), `path`, the verified `remote`, `canonical_path`, and who enrolled when.
+Enrollment is idempotent and never overwrites: an enrolled name returns its record; a checkout already at the canonical path, under the earlier `.sum/projects/<owner>/<repo>` location, or named with `--path` is adopted only when it is a Git top level whose origin is the same repository; a different remote, a non-Git directory, or a symlinked component is a refusal that changes nothing.
+Enrolling the installation's own repository registers the installation itself (`kind: installation`); sum is never cloned under its own `projects/`, and self-development stays in `dev prepare` checkouts.
+`project migrate NAME` is inspect-only by default: it lists non-archived tasks, linked Git worktrees, and processes that reference a legacy or external clone and prints guidance; `--apply` renames the directory to the canonical path only when that list is empty and the process table was readable, keeping `.git`, uncommitted files, and the registration.
+No task is ever pointed at a moved directory: existing tasks keep their recorded worktrees and absolute callbacks.
+
+The clone is a reference checkout for `prepare --project NAME` (or a matching `--repo` path): each task still gets its own Herdr worktree, the per-repository capacity applies to the clone like any repository, and the task record carries the project identity.
+The worker learns nothing from directory nesting. Its brief's `## Delivered runtime` section names the installed helper (`<installation>/bin/sumctl`), a controlled copy of the worker procedure with its hash, and the absolute runtime skill file with size and hash; `context --role worker` reports the same `helper` and `files`. A Herdr worktree lives outside the installation, some harnesses stop instruction discovery at a Git root, and a project's own `AGENTS.md` and mise tasks remain the project's.
+Conversely a pane whose working directory lies inside a managed clone is a project session: `sumctl init` there refuses to register any role, so a parent directory's instructions never make a project pane the coordinator.
+
+mise resolves configuration up the directory tree, so a clone nested under the installation sees sum's `mise.toml` and `mise-tasks` (`test`, `demo`, ...). `env discover` records `task_origins` from `mise tasks ls --json` (a listing, never a run): each task's source file and whether the checkout owns it, the inherited ones as a named problem, and whether `verify`/`test` are the project's own. An absent or refusing mise is reported as such, never as "no tasks".
+
 ## Mesh overlay
 
 The upstream snapshot uses older Herdr command shapes (`agent wait --status`, `agent send`, and agent start creating layout). The overlay is deliberately explicit, not a string replacement hidden in an installer.

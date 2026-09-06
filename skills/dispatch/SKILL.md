@@ -17,7 +17,10 @@ A free slot is never a reason to dispatch; work starts only from an explicit app
 
 Identify the repository, outcome, scope/non-goals, acceptance criteria, and verification commands. A direct user request can be the approval; an unapproved issue cannot.
 Use `templates/task.md` as a checklist, not an excuse to make the user rewrite a clear request.
-For a missing local clone, clone the exact user-named repository under `.sum/projects/<owner>/<repo>` with `gh repo clone`; never guess a similarly named project.
+For a missing local clone, enroll the exact user-named repository: `./bin/sumctl project enroll owner/repo` clones exactly it under the Git-ignored `<installation>/projects/<owner>/<repo>` (a non-default host gets its own level: `--host gitlab.example.com` gives `projects/gitlab.example.com/owner/repo`), records host/owner/repo, the verified remote, and the path in `.sum/projects.json`, and is idempotent; never guess a similarly named project, and never clone everything an account can reach.
+A clone the earlier procedure made under `.sum/projects/<owner>/<repo>` or a checkout the boss names with `--path` is adopted where it is (`kind: legacy` or `external`) after its origin is verified; nothing is moved, re-cloned, or overwritten, and a dirty tree or different remote at the target is a refusal, not a replacement. Enrolling sum itself registers the installation (`kind: installation`), never a nested copy.
+`project list` and `project show NAME` observe the registrations; `project migrate NAME` prints inspect-only guidance and refuses `--apply` while any task, linked worktree, or process still references the clone.
+The managed clone is a reference checkout, not a shared writer: every task still gets its own Herdr worktree, and the per-repository slot applies to the clone as to any repository.
 If the main checkout has uncommitted changes, explain that dispatch starts from a committed base and does not copy those edits.
 
 ## Select execution
@@ -55,6 +58,7 @@ Write the approved brief to a temporary file. Then run:
   --brief /absolute/path/to/brief.md --harness codex --approved
 ```
 
+`--project owner/repo` (an enrolled name) replaces `--repo` for a managed clone; the task records the project identity and its brief names it. A `--repo` path that matches a registration is attached the same way; an unregistered path stays usable.
 `--harness codex` is the explicit form; omit it to use the saved worker default or your own harness. Add `--preset NAME` to expand a saved preset, and `--model`/`--reasoning` for this task only. Extra approved native arguments stay separate `--arg` values, e.g. `--arg=-m --arg=MODEL`; an `--arg` that sets the same flag as `--model` is refused as a conflict before anything is created.
 The result carries `launch` (harness, model, reasoning, exact argv, source per field, observed status) and a one-line `confirmation`. Repeat that line to the boss: which harness and model, from which source, and that a CLI-requested model is requested rather than runtime-verified.
 The brief does not describe the repository's environment; the worker discovers it into the task record (`env discover`) and readers take it from `context --section environment`, so no prompt repeats ports or start commands.
@@ -64,6 +68,7 @@ Use `prepare` instead of `dispatch` to create the worktree/record without starti
 The brief written at dispatch is revision `r1`; the task's `versions.json` records the sum version and brief schema it started under. After answers are applied or sum's worker procedure changes, `./bin/sumctl brief regenerate TASK_ID` stages `briefs/rN.md` from the record with a machine-generated change summary; the worker's current brief is never overwritten. Ask the worker to refresh only explicitly: `./bin/sumctl brief request TASK_ID rN`, then tell it in your own words to read that revision and continue. Requesting is bookkeeping separate from the notice slot; it sends nothing by itself.
 
 Use returned IDs and paths. Do not infer IDs from labels. Do not copy the coordinator's instructions into the target repository.
+Skills reach the worker explicitly: its brief carries a controlled copy of the worker procedure and absolute installed references (`<installation>/bin/sumctl`, `<runtime>/skills/worker/SKILL.md` with size and hash) in a `## Delivered runtime` section, and `context --role worker` names the same paths. Directory nesting under `projects/` delivers nothing to a harness; a Herdr worktree lives elsewhere and some harnesses stop instruction discovery at a Git root.
 A trust/auth prompt can make startup uncertain while leaving a real agent alive. Inspect the saved pane. Never blindly call dispatch/start again.
 
 ## Return control
