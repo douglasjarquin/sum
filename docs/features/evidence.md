@@ -2,6 +2,7 @@
 
 The `.agents/skills/evidence/` skill: capture the same mapped scenario from a checkout of the base SHA and from the candidate, as real screenshots, screencasts, CLI transcripts, or HTTP responses, and compare the two into one manifest.
 Browser scenarios are driven through the DevTools Protocol from `.agents/skills/evidence/scripts/evidence_browser.mjs` (Node 22+, Chromium-family binary); the suite skips them with a visible reason when no browser is installed and proves the blocked path instead.
+Seeded fixtures: `tests/fixtures/evidence/counter/index.html` (a counter whose display lags the click by one) and `tests/fixtures/evidence/greet/greet.py` (a CLI that exits 1 on success and prints a credential-shaped token); each test commits the fixture as the base and its fix as the candidate.
 
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
