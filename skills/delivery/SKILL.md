@@ -5,6 +5,8 @@ description: Independently inspect worker results, use existing verification too
 # Delivery
 
 A worker report is a claim. Read the saved task, its report, relevant changes, and outstanding decisions.
+`sumctl show TASK_ID` carries `evidence_view`: every report, handoff, reviewer finding, verification, and PR observation, each bound to a candidate SHA and marked `current` against the checkout HEAD, plus `closure.missing`, the prerequisites still absent.
+Worker claims (`source: worker`), reviewer findings (`reviewer`), your own verification (`coordinator`), and GitHub observations (`github`) stay separate records. A legacy prose report appears as unstructured evidence.
 
 ## Verify
 
@@ -15,6 +17,8 @@ If a separate reviewer is unavailable, say independent review was not performed;
 Check `sumctl brief list TASK_ID`: the report is bound to a brief revision, and `verification_policy_changed_since` means a later revision changed the worker procedure or brief schema. Review under the current policy before accepting that evidence.
 Tie the review to the exact candidate SHA. Re-run required checks for later candidates; review the intervening changes rather than treating the previous SHA's approval as current.
 A nit is not automatically a blocker. Limit repair cycles; escalate repeated failure rather than opening an endless review/fix loop.
+A reviewer pane saves its findings with `sumctl review TASK_ID --verdict approve|changes-requested|blocked|comment --candidate SHA --file findings.md`; the first such pane becomes the task's recorded reviewer endpoint, and saved findings are the prerequisite for closing that pane later. The worker pane cannot review its own candidate.
+Record what you verified yourself with `sumctl verify TASK_ID --candidate SHA --result pass|fail|inconclusive --text '...'`. A newer candidate marks earlier records as not current; it deletes nothing and restarts nothing.
 
 Repository test scripts execute candidate-controlled code. Keep normal sandbox/credential protections. This MVP does not provide a credential-isolated verification runner; use trusted projects and their existing CI/dev container.
 
@@ -26,6 +30,8 @@ Push the recorded task branch without force. Check for an existing PR for that e
 If creation times out, inspect GitHub before retrying; a timeout does not prove the PR was not created. No exactly-once publication claim is made by this MVP.
 A closed/merged PR is not permission to create another automatically. Ask when the intended next action is unclear.
 Describe the approved intent, changes, test evidence, review status, and limitations. Show the boss the full PR URL and the remaining merge decision.
-Record the PR URL in a fresh task report with `sumctl report` so it survives a conversation reset.
+Then run `sumctl pr reconcile TASK_ID --number N` (optionally `--repo owner/name`). It resolves the task repository's GitHub identity through `gh`, inspects that exact PR, and records repository, number, URL, head repository/branch, base branch, head SHA, state, and the observation time. Findings name every mismatch: a fork head, another branch, a head SHA that is not a recorded candidate, a missing base. `merged_for_task` is true only for a merged PR with a merge commit and no finding; a closed, unmerged, or mismatched PR is never the task's result.
+An uncertain lookup (timeout, unknown number) is recorded as uncertain evidence and leaves the last exact observation in place. Reconcile again after every new push. Switching to a different PR number needs `--replace` after inspecting both. A PR from an older task or a legacy prose report is attached the same way, by inspecting the actual PR, never by parsing a URL or matching branch names.
+A task whose identity stays incomplete keeps working; it is simply not ready for the cleanup that a later slice adds.
 
 Never merge, waive a failing required check, or tear down unfinished work. `sumctl archive --acknowledge` only archives the record after inspection; it deliberately does not stop agents or remove checkouts.
