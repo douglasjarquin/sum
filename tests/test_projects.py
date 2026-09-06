@@ -380,7 +380,7 @@ class TaskOwnershipTest(ProjectLab):
         self.assertIn("test", inherited)
         self.assertEqual(inherited["test"]["source"], str(self.root_install / "mise-tasks/test"))
         self.assertFalse(inherited["test"]["owned"])
-        self.assertEqual(origins["verification"], {"verify": False, "test": False, "inherited_verification": ["test"]})
+        self.assertEqual(origins["verification"], {"verify": False, "test": False, "inherited_verification": ["test", "verify"]})  # The installation now ships mise-tasks/verify (issue #31); a nested clone inherits it.
         self.assertIn("would execute another repository's task", origins["problem"])
         discovery = sumctl.discover_configuration(path)
         self.assertEqual(discovery["commands"], [])  # Nothing declared by the project itself becomes a command reference.
