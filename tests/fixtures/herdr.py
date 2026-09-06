@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """A strict fake for documented Herdr 0.8.2 calls. Uses real Git worktrees."""
-import json, os, pathlib, subprocess, sys, uuid
+import fcntl, json, os, pathlib, subprocess, sys, uuid
 root = pathlib.Path(os.environ["FAKE_HERDR_ROOT"])
 root.mkdir(exist_ok=True, parents=True)
+_lock = (root / ".lock").open("a")  # Like Herdr's server, one invocation at a time mutates the store; concurrent callers never lose each other's writes.
+fcntl.flock(_lock, fcntl.LOCK_EX)
 args = sys.argv[1:]
 if args == ["--version"]:
     print(os.environ.get("FAKE_HERDR_VERSION", "herdr 0.8.2")); sys.exit(0)
@@ -68,7 +70,7 @@ if args[:2] == ["agent", "prompt"]:
     pane = state["panes"].get(args[2])
     if not pane or not pane.get("agent"): fail("agent_not_running")
     if pane["agent_status"] == "blocked": fail("agent_blocked")
-    if os.environ.get("FAKE_FAIL_PROMPT"): fail("simulated uncertain prompt")
+    if os.environ.get("FAKE_FAIL_PROMPT") or args[2] in os.environ.get("FAKE_FAIL_PROMPT_PANES", "").split(","): fail("simulated uncertain prompt")
     pane["last_prompt"] = args[3]
     pane["agent_status"] = "working"
     emit({"agent": pane})

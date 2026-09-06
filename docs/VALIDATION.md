@@ -64,6 +64,31 @@ Both harnesses were dispatched with the same tiny brief (list the brief, answer 
 What this establishes: the same fixed instruction reaches both harnesses only through Herdr's settled-state gate, the receipt is the only thing that turns a row `confirmed`, and a settled (`done`) client that cannot act, here for a billing reason, is reported as unconfirmed rather than updated.
 What it does not establish: parity between harnesses, behavior under a blocked permission dialog mid-task, or any harness-native refresh hook; none exists in this slice, so pending state is rechecked only at ordinary interactions.
 
+## Fleet capacity slice (2026-09-05, macOS)
+
+Executed on the development host for issue #8 from a task checkout: the Python suites (95 tests, of which 3 in the new `tests/test_fleet.py`), the Node Mesh tests (10), the offline demo including its capacity check, and `scripts/live_smoke.py` against real Herdr 0.8.2 in a named `sum-test-*` lab session.
+The refactor of `tests/test_core.py` into shared `ReleaseLab`/`UpdateLab` fixtures also removed seven tests that the previous class inheritance ran twice; no test case was dropped.
+
+The deterministic regression dispatches twelve scripted workers across twelve isolated Git repositories through the installation entrypoint with capacity raised to twelve, then records a long in-flight tool call, a dirty checkout, an open question, an answered-unapplied question, a pending report, a client connected under an older MCP tool contract, a closed parent, an unknown (removed) worker pane, a worker whose prompt Herdr refuses, a worker that ignores its refresh, and two cooperative workers.
+It stages and activates N+1, requests a rolling refresh, answers and reports through the old absolute callbacks, activates N+2 and interrupts the refresh mid-pass with `KeyboardInterrupt`, inspects and recovers with an ordinary repeated request, rolls the default back, refreshes again, refuses an unmerged update while `ask`, `report`, and `inbox --live` continue, and finally admits a new task only after a reported task is archived.
+Asserted: no `agent start`, `worktree create`, `agent read`, or any stop/kill call after the initial twelve launches; every worktree keeps its HEAD, branch, and uncommitted file; every question, answer, and report is present with its status; reports stay bound to the revision they were made under; the new task's sidecar records the rolled-back default; the thirteenth dispatch was refused at admission.
+Two further tests cover twelve concurrent `prepare` calls against a global limit of six (exactly six admitted, six refused, six `worktree create` calls, admission order serialized) and six concurrent writers into one repository (one admitted), legacy defaults without a settings file, ten invalid settings variants refused before any side effect with the file left as found, a symlinked settings file refused, developer panes and candidate checkouts refused for `settings set`, a lowered limit that evicts nothing, a reported task holding its slot until archived, and the settings file in the records backup.
+
+Measured on this host (Apple Silicon macOS, Python 3.13.5, strict fake Herdr subprocess per call). These are the numbers of one run, not a hardware-independent guarantee:
+
+| Pass over 12 workers | Wall time (ms) | Herdr calls | `agent list` | `agent get` | `agent prompt` |
+| --- | --- | --- | --- | --- | --- |
+| `status --live` | 87 | 1 | 1 | 0 | 0 |
+| `refresh request` after update one | 430 | 11 | 1 | 0 | 10 |
+| `refresh request` recovery after interruption | 310 | 7 | 1 | 0 | 6 |
+| `refresh request` after rollback | 459 | 11 | 1 | 0 | 10 |
+| `inbox --live` after a refused update | 92 | 1 | 1 | 0 | 0 |
+
+Before this slice the same passes made one `agent get` per task (twelve observation calls, each with its own five-second ceiling) before any delivery; now one snapshot per session bounds observation, each prompt keeps its own five-second ceiling, and no transcript is read.
+
+The real-Herdr lab (`scripts/live_smoke.py`) prepared thirteen tasks as shell panes without agents in one named session: `status --live` took 73 ms and `refresh request` 289 ms with exactly one real `herdr agent list` each, every row honestly `pending-unreachable`.
+No model was launched; the authenticated-harness fleet canary in `skills/update/SKILL.md` and `docs/ACCEPTANCE.md` section 8 remains a documented manual step and was not executed for this slice.
+
 ## Not executed here
 
 - A full `mise run setup` dependency download/install. The container could not reach the required network endpoints.

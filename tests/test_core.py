@@ -378,7 +378,7 @@ class CoreTest(unittest.TestCase):
 
     def test_one_active_task_per_repo(self):
         self.prepare()
-        with self.assertRaisesRegex(sumctl.SumError, "one active task per"):
+        with self.assertRaisesRegex(sumctl.SumError, "1 of 1 slots for .*One checkout gets one writer"):
             self.prepare()
 
     def test_session_override_inside_native_arguments_is_refused(self):
@@ -394,7 +394,7 @@ class CoreTest(unittest.TestCase):
         self.prepare(repo=str(other))
         third = self.root / "third-repo"
         subprocess.run(["git", "clone", "--quiet", str(self.repo), str(third)], check=True)
-        with self.assertRaisesRegex(sumctl.SumError, "two active tasks"):
+        with self.assertRaisesRegex(sumctl.SumError, "2 of 2 global execution slots"):
             self.prepare(repo=str(third))
 
     def test_question_survives_failed_delivery(self):
@@ -1227,8 +1227,8 @@ def slow_installer(delay):
     return installer
 
 
-class ReleaseTest(unittest.TestCase):
-    """Staging immutable runtime releases beside a live installation, entirely offline."""
+class ReleaseLab(unittest.TestCase):
+    """Shared fixture: a designated installation copied from this checkout, a strict fake Herdr, an offline installer."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix="sum-release-")
@@ -1281,6 +1281,10 @@ class ReleaseTest(unittest.TestCase):
         merged = os.environ.copy()
         merged.update(env or {})
         return subprocess.run([str(a) for a in argv], env=merged, cwd=cwd, capture_output=True, text=True)
+
+
+class ReleaseTest(ReleaseLab):
+    """Staging immutable runtime releases beside a live installation, entirely offline."""
 
     def test_stage_builds_a_validated_immutable_bundle_outside_state(self):
         root, store = self.installation(via_symlink=True)
@@ -1432,8 +1436,8 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual([r["ok"] for r in sumctl.release_list(store)["releases"]], [True, True])
 
 
-class UpdateTest(ReleaseTest):
-    """Atomic local updates and code-only rollback beside running work, entirely offline (a bare Git remote stands in for origin)."""
+class UpdateLab(ReleaseLab):
+    """Shared fixture: the installation gains a bare Git `origin` and a registered coordinator pane."""
 
     def installation(self, name="sum install dir", via_symlink=False):
         root, store = super().installation(name, via_symlink)
@@ -1481,6 +1485,10 @@ class UpdateTest(ReleaseTest):
         brief.write_text("Do the approved thing.")
         with mock.patch.dict(os.environ, {"FAKE_PARENT_CWD": str(ROOT)}):
             return sumctl.prepare(store, argparse.Namespace(repo=str(repo), brief=str(brief), harness="codex", base="HEAD", kind="ship", approved=True, arg=[]))
+
+
+class UpdateTest(UpdateLab):
+    """Atomic local updates and code-only rollback beside running work, entirely offline (a bare Git remote stands in for origin)."""
 
     def test_check_resolves_only_merged_origin_revisions_and_never_touches_the_checkout(self):
         root, store = self.installation(via_symlink=True)

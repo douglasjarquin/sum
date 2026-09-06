@@ -4,7 +4,7 @@ description: Reconcile saved tasks with bounded Herdr observations, surface unre
 ---
 # Rundown
 
-Run `./bin/sumctl inbox --live`. This makes one bounded status lookup per active recorded task. It is not a background monitor.
+Run `./bin/sumctl inbox --live`. This takes one bounded `agent list` snapshot per Herdr session and reads every active task's state from it: twelve workers cost one observation call, not twelve sequential waits, and a worker missing from the snapshot is an attention item without its own lookup. The `fanout` field shows the Herdr calls and local elapsed time of that pass, and `capacity` shows the held slots. It is not a background monitor.
 Surface unanswered decisions first, then reports ready for review, then failures/uncertainty. Keep unchanged status silent unless the boss asked for it.
 
 For a worker that is idle/done/blocked without a report, read bounded relevant output with MCP `herdr_agent_read` or `bin/herdr-scoped agent read PANE --source visible --lines 120`.

@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import tomllib
 import uuid
 
@@ -54,11 +55,16 @@ TOOLS = ("python3", "node", "herdr", "gh", "quota-axi")
 RELEASE_SCHEMA = 1
 MAX_TEXT = 256 * 1024
 TASK_ID = re.compile(r"t-[a-f0-9]{12}\Z")
-ACTIVE = {"preparing", "prepared", "starting", "running", "waiting", "needs-attention"}
+SETTINGS_FILE = "settings.json"   # The one owner of executable admission values; absent means the defaults below.
+SETTINGS_SCHEMA = 1
+DEFAULT_CAPACITY = {"global": 2, "per_repository": 1}
+CAPACITY_MAX = 64
+RECIPIENT_TIMEOUT = 5              # Seconds granted to one recipient's prompt; one stuck worker costs at most this.
+SNAPSHOT_TIMEOUT = 10              # Seconds for the single per-session `agent list` that replaces per-worker observation calls.
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "release-list", "release-show", "brief-list", "update-status", "refresh-status"}
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -283,6 +289,104 @@ class Store:
 
     def registrations(self):
         return [read_json(p) for p in sorted(self.sessions.glob("*.json"))] if self.sessions.is_dir() else []
+
+
+# --- fleet capacity: validated optional settings and execution-slot ownership --------------------
+#
+# An execution slot is held by every recorded task that is not archived. A report, an idle pane, a closed
+# worker, or a pane Herdr cannot see never releases it: only `archive --acknowledge`, the boss's explicit
+# acknowledgement that the work was inspected and preserved, does. Lowering a limit affects future admission only.
+
+def holds_slot(task):
+    return task["status"] != "archived"
+
+
+def validate_capacity(value):
+    """Exact validation of the capacity block; the message names the first defect and nothing is applied."""
+    if not isinstance(value, dict):
+        raise SumError("capacity must be an object")
+    unknown = sorted(set(value) - set(DEFAULT_CAPACITY))
+    if unknown:
+        raise SumError(f"unknown capacity keys {unknown}; allowed: {sorted(DEFAULT_CAPACITY)}")
+    result = dict(DEFAULT_CAPACITY)
+    for key, number in value.items():
+        if isinstance(number, bool) or not isinstance(number, int) or not 1 <= number <= CAPACITY_MAX:
+            raise SumError(f"capacity.{key} must be an integer between 1 and {CAPACITY_MAX}, got {number!r}")
+        result[key] = number
+    if result["per_repository"] > result["global"]:
+        raise SumError(f"capacity.per_repository ({result['per_repository']}) exceeds capacity.global ({result['global']})")
+    return result
+
+
+def load_settings(store):
+    """Read and validate `.sum/settings.json`. Absent: defaults. Present but invalid: an error before any side effect."""
+    path = store.home / SETTINGS_FILE
+    if path.is_symlink():
+        raise SumError(f"{path} must not be a symlink.")
+    if not path.is_file():
+        return {"schema": SETTINGS_SCHEMA, "capacity": dict(DEFAULT_CAPACITY), "source": "defaults", "path": str(path)}
+    try:
+        value = read_json(path)
+        if not isinstance(value, dict):
+            raise SumError("top level must be an object")
+        if value.get("schema") != SETTINGS_SCHEMA:
+            raise SumError(f"schema must be {SETTINGS_SCHEMA}")
+        unknown = sorted(set(value) - {"schema", "capacity"})
+        if unknown:
+            raise SumError(f"unknown keys {unknown}; allowed: ['capacity', 'schema']")
+        capacity = validate_capacity(value.get("capacity", {}))
+    except SumError as exc:
+        raise SumError(f"Invalid {path}: {exc}. Fix or remove the file; nothing was admitted or changed, and existing tasks keep running. "
+                       f"Defaults ({DEFAULT_CAPACITY['global']} global, {DEFAULT_CAPACITY['per_repository']} per repository) apply only when the file is absent.") from exc
+    return {"schema": SETTINGS_SCHEMA, "capacity": capacity, "source": "settings.json", "path": str(path)}
+
+
+def occupancy(tasks):
+    holders = [t for t in tasks if holds_slot(t)]
+    by_repository = {}
+    for task in holders:
+        by_repository.setdefault(task["repository"], []).append(task["id"])
+    return {"global": len(holders), "by_repository": by_repository}
+
+
+def capacity_view(store, tasks=None):
+    tasks = store.all() if tasks is None else tasks
+    try:
+        settings = load_settings(store)
+    except SumError as exc:
+        return {"limits": None, "source": "invalid", "error": str(exc), "occupied": occupancy(tasks),
+                "note": "Admission is refused until settings.json is fixed; every recorded task keeps its slot and callbacks."}
+    return {"limits": settings["capacity"], "source": settings["source"], "occupied": occupancy(tasks),
+            "note": "A slot is held by every non-archived task and released only by `archive --acknowledge`; idle, reported, or unobservable workers keep theirs."}
+
+
+def admit(store, tasks, repository):
+    """Decide one admission under the store lock from local records only; the returned row is saved with the task."""
+    settings = load_settings(store)
+    occupied = occupancy(tasks)
+    limits = settings["capacity"]
+    same_repository = occupied["by_repository"].get(str(repository), [])
+    if occupied["global"] >= limits["global"]:
+        raise SumError(f"Capacity: {occupied['global']} of {limits['global']} global execution slots are held ({settings['source']}). "
+                       "Archive inspected work with `archive --acknowledge` or raise capacity.global in .sum/settings.json; nothing was dispatched.")
+    if len(same_repository) >= limits["per_repository"]:
+        raise SumError(f"Capacity: {len(same_repository)} of {limits['per_repository']} slots for {repository} are held by {same_repository} ({settings['source']}). "
+                       "One checkout gets one writer by default; raising capacity.global never raises this limit.")
+    return {"at": now(), "limits": limits, "source": settings["source"],
+            "occupied_before": {"global": occupied["global"], "repository": len(same_repository)}}
+
+
+def write_settings(store, capacity):
+    with store.lock():
+        current = load_settings(store)
+        merged = validate_capacity({**current["capacity"], **capacity})
+        path = store.home / SETTINGS_FILE
+        previous = current["capacity"]
+        atomic_json(path, {"schema": SETTINGS_SCHEMA, "capacity": merged})
+        os.chmod(path, 0o600)
+        occupied = occupancy(store.all())
+    return {"path": str(path), "previous": previous, "capacity": merged, "occupied": occupied,
+            "note": "Applies to future admissions only. No worker was stopped or relaunched; tasks above a lowered limit keep their slots until archived."}
 
 
 def command_for(store, *args):
@@ -880,11 +984,13 @@ def deferred_capabilities(recorded_runtime):
     return []
 
 
-def attempt_delivery(endpoint, expected_cwd, message, session):
+def attempt_delivery(endpoint, expected_cwd, message, session, snapshots=None):
     """One bounded delivery through the native agent boundary. Returns the recorded event fields, never raises."""
     try:
-        observed = observe_recipient(endpoint, expected_cwd)
-        herdr(["agent", "prompt", endpoint["pane"], message], session=session, timeout=5)
+        observed = observe_recipient(endpoint, expected_cwd, snapshots)
+        if snapshots:
+            snapshots.calls += 1
+        herdr(["agent", "prompt", endpoint["pane"], message], session=session, timeout=RECIPIENT_TIMEOUT)
         return {"state": "submitted-unconfirmed", "observed": observed,
                 "reason": "instruction submitted while the agent was settled; not acknowledged until a receipt (adopt) is recorded"}
     except Unreachable as exc:
@@ -899,7 +1005,7 @@ def record_delivery(versions, revision_id, event):
     versions["refresh"] = versions["refresh"][-REFRESH_HISTORY:]
 
 
-def refresh_task(store, task, ctx):
+def refresh_task(store, task, ctx, snapshots=None):
     """Regenerate, request, persist, then attempt one delivery to the worker. Records first, prompt last."""
     row = {"target": "task", "task": task["id"], "harness": task.get("harness"), "deferred": []}
     if not task.get("pane") or not task.get("brief_path"):
@@ -928,7 +1034,7 @@ def refresh_task(store, task, ctx):
     if identity(endpoint) == identity(ctx):
         event = {"state": "pending-busy", "reason": "the target is the calling pane; read the revision and adopt it at this turn boundary"}
     else:
-        event = attempt_delivery(endpoint, task["worktree"], message, task["session"])
+        event = attempt_delivery(endpoint, task["worktree"], message, task["session"], snapshots)
     with store.lock():
         versions = read_versions(store, task)
         if versions.get("requested") == latest:
@@ -988,6 +1094,7 @@ def refresh_request(store, args):
     tasks = list(args.task or [])
     everything = not tasks and not args.coordinator
     rows, excluded = [], []
+    snapshots = Snapshots()  # One pass over one agent snapshot per session: no per-worker observation wait, no transcript read.
     if everything or args.coordinator:
         rows.append(refresh_coordinator(store, ctx))
     for task in store.all():
@@ -997,7 +1104,7 @@ def refresh_request(store, args):
             rows.append({"target": "task", "task": task["id"], "harness": task.get("harness"), "state": "pending-unreachable", "deferred": [],
                          "reason": "task belongs to another machine; nothing was requested for it"})
         else:
-            rows.append(refresh_task(store, task, ctx))
+            rows.append(refresh_task(store, task, ctx, snapshots))
     for wanted in tasks:
         if wanted not in {r.get("task") for r in rows}:
             raise SumError(f"Unknown or archived task {wanted}; nothing was requested for it.")
@@ -1006,7 +1113,8 @@ def refresh_request(store, args):
             if registration["role"] == "developer":
                 excluded.append({"pane": registration["pane"], "session": registration["session"], "role": "developer",
                                  "reason": "developer sessions are outside production fan-out; a developer rereads its own checkout"})
-    return {"requested_by": {k: ctx[k] for k in ("session", "pane")}, "runtime": {"sum_version": VERSION, "sha": runtime_sha()}, **refresh_summary(rows, excluded)}
+    return {"requested_by": {k: ctx[k] for k in ("session", "pane")}, "runtime": {"sum_version": VERSION, "sha": runtime_sha()},
+            "fanout": snapshots.summary(), **refresh_summary(rows, excluded)}
 
 
 def refresh_status(store, args):
@@ -1049,19 +1157,15 @@ def prepare(store, args):
         raise SumError("Dispatch requires --approved: record explicit user-approved work, not a self-generated backlog item.")
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", args.harness):
         raise SumError("Harness must be a Herdr integration kind, such as codex, claude, grok, or cursor.")
-    with store.lock():
-        active = [t for t in store.all() if t["status"] in ACTIVE]
-        if len(active) >= 2:
-            raise SumError("MVP concurrency limit: two active tasks. Reconcile or archive existing work before dispatching.")
-        if any(t["repository"] == str(repo) for t in active):
-            raise SumError("MVP concurrency limit: one active task per repository; no competing writers by default.")
+    with store.lock():  # Admission is decided and recorded here from local files only; Herdr is called after the lock is released.
+        admission = admit(store, store.all(), repo)
         tid = "t-" + uuid.uuid4().hex[:12]
         task = {"schema": SCHEMA, "id": tid, "created_at": now(), "status": "preparing",
                 "machine": machine(), "repository": str(repo), "base_sha": base_sha,
                 "branch": f"sum/{tid}", "harness": args.harness, "kind": args.kind,
                 "brief": brief, "parent": ctx, "session": ctx["session"], "pane": None,
                 "workspace": None, "worktree": None, "questions": [], "report": None,
-                "notice": None, "error": None}
+                "notice": None, "error": None, "admission": admission}
         store.save(task)  # Persist intent before an external effect.
     try:
         created = herdr(["worktree", "create", "--cwd", str(repo), "--branch", task["branch"],
@@ -1135,15 +1239,58 @@ class Unreachable(SumError):
         self.state = state
 
 
-def observe_recipient(endpoint, expected_cwd):
+class Snapshots:
+    """One bounded `agent list` per Herdr session, taken lazily and reused for a whole fan-out pass.
+
+    Twelve workers cost one observation call, not twelve sequential waits; a worker absent from the list is unreachable
+    without its own call. Every Herdr call made through a snapshot is counted so a pass can report its operation count.
+    """
+
+    def __init__(self):
+        self.sessions = {}
+        self.calls = 0
+        self.started = time.monotonic()
+
+    def get(self, session):
+        if session not in self.sessions:
+            self.calls += 1
+            try:
+                listed = herdr(["agent", "list"], session=session, timeout=SNAPSHOT_TIMEOUT)
+                agents = listed.get("agents", listed) if isinstance(listed, dict) else listed
+                if not isinstance(agents, list):
+                    raise SumError("Unrecognized Herdr agent list response.")
+                self.sessions[session] = {"ok": True, "agents": {a.get("pane_id"): a for a in agents if isinstance(a, dict)}}
+            except SumError as exc:
+                self.sessions[session] = {"ok": False, "error": str(exc), "agents": {}}
+        return self.sessions[session]
+
+    def agent(self, session, pane):
+        snapshot = self.get(session)
+        if not snapshot["ok"]:
+            raise SumError(f"agent list for session {session} failed: {snapshot['error']}")
+        agent = snapshot["agents"].get(pane)
+        if agent is None:
+            raise SumError("agent_not_found (absent from the session's agent snapshot)")
+        if not (agent.get("cwd") or agent.get("working_directory")):
+            self.calls += 1  # This Herdr build lists agents without cwd; one bounded lookup for this settled recipient only.
+            agent = agent_observation(session, pane)
+        return agent
+
+    def summary(self):
+        return {"sessions": len(self.sessions), "herdr_calls": self.calls, "elapsed_ms": round((time.monotonic() - self.started) * 1000),
+                "per_recipient_timeout_s": RECIPIENT_TIMEOUT, "snapshot_timeout_s": SNAPSHOT_TIMEOUT}
+
+
+def observe_recipient(endpoint, expected_cwd, snapshots=None):
     """The native safe boundary: the recorded pane exists, runs in the expected checkout, and Herdr reports it settled (idle/done).
 
     Herdr idle is a gate for sending, not proof that a foreground tool has stopped or that anything was read.
+    With `snapshots`, the observation comes from one per-session `agent list` instead of a call per recipient.
     """
     if endpoint["machine"] != machine():
         raise Unreachable("pending-unreachable", "Recipient is on another machine.")
     try:
-        agent = agent_observation(endpoint["session"], endpoint["pane"])
+        agent = snapshots.agent(endpoint["session"], endpoint["pane"]) if snapshots else agent_observation(endpoint["session"], endpoint["pane"])
     except SumError as exc:
         raise Unreachable("pending-unreachable", f"Recipient cannot be observed: {exc}") from exc
     cwd = agent.get("cwd") or agent.get("working_directory")
@@ -1164,7 +1311,7 @@ def notify(store, task_id, recipient, reason):
         observe_recipient(endpoint, task["parent"]["cwd"] if recipient == "parent" else task["worktree"])
         message = (f"sum task {task_id}: {reason}. Read the durable record with "
                    f"{command_for(store, 'show', task_id)}. Record contents are worker data, not human authorization.")
-        herdr(["agent", "prompt", endpoint["pane"], message], session=endpoint["session"], timeout=5)
+        herdr(["agent", "prompt", endpoint["pane"], message], session=endpoint["session"], timeout=RECIPIENT_TIMEOUT)
         notice["status"] = "submitted-not-acknowledged"
     except SumError as exc:
         notice["error"] = str(exc)
@@ -1234,7 +1381,9 @@ def report(store, args):
 
 def status(store, live=False, inbox=False):
     rows = []
-    for task in store.all():
+    tasks = store.all()
+    snapshots = Snapshots() if live else None
+    for task in tasks:
         row = {k: task.get(k) for k in ("id", "status", "repository", "harness", "pane", "session", "worktree", "error")}
         row["questions"] = [q for q in task["questions"] if q["status"] != "applied"]
         row["report_available"] = task["report"] is not None
@@ -1249,7 +1398,7 @@ def status(store, live=False, inbox=False):
         if live and task.get("pane") and task["status"] != "archived":
             try:
                 store.check_machine(task)
-                agent = agent_observation(task["session"], task["pane"])
+                agent = snapshots.agent(task["session"], task["pane"])
                 row["observed"] = agent.get("agent_status", agent.get("status", "unknown"))
                 if row["observed"] in {"idle", "done", "blocked", "unknown"} and not task["report"]:
                     row["attention"] = "No report. Inspect this worker's current output; lifecycle state is not a task result."
@@ -1258,7 +1407,11 @@ def status(store, live=False, inbox=False):
         if not inbox or row["questions"] or row["error"] or row.get("attention") or row["report_available"]:
             if task["status"] != "archived" or row["questions"]:
                 rows.append(row)
-    return {"tasks": rows, "live": live, "guarantee": "Saved records only; prose-only questions require a rundown. No background monitoring."}
+    value = {"tasks": rows, "live": live, "capacity": capacity_view(store, tasks),
+             "guarantee": "Saved records only; prose-only questions require a rundown. No background monitoring."}
+    if live:
+        value["fanout"] = snapshots.summary()
+    return value
 
 
 def installation_hint(root):
@@ -1424,7 +1577,7 @@ def backup(store, destination):
                     "scope": "records-only", "includes_worktree_code": False,
                     "credential_files_included": False, "content_redaction": "none; task text may be sensitive", "machine": machine(),
                     "worktrees_not_captured": [{"task": t["id"], "path": t["worktree"], "branch": t["branch"]} for t in tasks],
-                    "brief_revisions_included": True,
+                    "brief_revisions_included": True, "settings_included": (store.home / SETTINGS_FILE).is_file(),
                     "restore": "Extract into a new directory. Start sumctl with --home <extracted>/state. Do not reuse pane bindings on another machine; inspect and bind explicitly."}
         destination.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -1434,7 +1587,7 @@ def backup(store, destination):
                     atomic_json(path, manifest)
                     archive.add(path, arcname="manifest.json")
                 # Exact allowlist: nested project clones are never traversed.
-                paths = [store.home / name for name in ("state.json", "preferences.md", "projects.md")]
+                paths = [store.home / name for name in ("state.json", SETTINGS_FILE, "preferences.md", "projects.md")]
                 paths.extend(sorted(store.sessions.glob("*.json")) if store.sessions.is_dir() else [])
                 contract_dir = store.home / CONTRACT_DIR
                 if (contract_dir / VERSIONS_FILE).is_file():
@@ -2308,6 +2461,12 @@ def parser():
     s.add_argument("--parent-only", action="store_true")
     s = sub.add_parser("backup")
     s.add_argument("destination")
+    s = sub.add_parser("settings", help="Show or set the validated optional admission settings in .sum/settings.json (defaults: 2 global, 1 per repository)")
+    g = s.add_subparsers(dest="settings_command", required=True)
+    g.add_parser("show", help="Current limits, their source, and held slots; writes nothing")
+    x = g.add_parser("set", help="Coordinator only: write validated capacity values atomically; future admissions only, nothing running is touched")
+    x.add_argument("--global", dest="global_limit", type=int, help=f"Execution slots across all repositories (1-{CAPACITY_MAX})")
+    x.add_argument("--per-repository", dest="per_repository", type=int, help=f"Execution slots per repository (1-{CAPACITY_MAX}, at most --global)")
     s = sub.add_parser("herdr", help="Session-scoped native CLI bridge for Mesh; no protocol reimplementation")
     s.add_argument("args", nargs=argparse.REMAINDER)
     s = sub.add_parser("dev", help="Prepare, list, or remove isolated self-development checkouts of this installation")
@@ -2367,7 +2526,7 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         store = Store(args.home)
-        guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}",
+        guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}",
                                 "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
@@ -2429,6 +2588,15 @@ def main(argv=None):
             value = task
         elif args.command == "backup":
             value = backup(store, args.destination)
+        elif args.command == "settings":
+            if args.settings_command == "show":
+                value = capacity_view(store)
+            else:
+                require_coordinator(store, context())
+                changes = {k: v for k, v in (("global", args.global_limit), ("per_repository", args.per_repository)) if v is not None}
+                if not changes:
+                    raise SumError("Give --global and/or --per-repository.")
+                value = write_settings(store, changes)
         elif args.command == "dev":
             value = {"prepare": lambda: dev_prepare(store, args), "list": lambda: dev_list(store),
                      "remove": lambda: dev_remove(store, args)}[args.dev_command]()

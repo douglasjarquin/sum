@@ -93,7 +93,30 @@ cp templates/task.md /tmp/my-task.md
 
 `--approved` records the caller's assertion of approval; it is not a security boundary. `prepare` creates the record/worktree without launching; `start TASK_ID` starts that prepared task once. An uncertain launch is retained for inspection and cannot simply be started again.
 
-By default there are at most two recorded active tasks and one per repository. Repair limits in worker instructions are **soft**, not enforced spending or wall-clock limits.
+By default there are at most two execution slots globally and one per repository; see [capacity](#capacity) for the optional settings file. Repair limits in worker instructions are **soft**, not enforced spending or wall-clock limits.
+
+### Capacity
+
+An execution slot is held by every recorded task that is not archived.
+A worker's report, an idle or `done` pane, a closed parent, or a pane Herdr cannot see never releases a slot; only `sumctl archive TASK_ID --acknowledge`, the boss's explicit statement that the work was inspected and preserved, does.
+Admission is decided atomically under the local record lock from the records alone, and Herdr is called only after the record is saved, so twelve concurrent dispatches admit exactly what the limits allow and a refused one makes no Herdr call.
+
+```sh
+./bin/sumctl settings show                                   # limits, their source, and the held slots per repository
+./bin/sumctl settings set --global 12 --per-repository 1     # coordinator only; validated and written atomically
+```
+
+`.sum/settings.json` is the one owner of executable admission values (`{"schema": 1, "capacity": {"global": N, "per_repository": M}}`, integers from 1 to 64, `per_repository` at most `global`).
+Precedence is that file, then the built-in defaults; an installation without the file keeps the original two-and-one capacity.
+`.sum/preferences.md` and `.sum/projects.md` stay narrative and never set a limit.
+An invalid file is refused with the exact defect before any side effect: nothing is admitted, no task or worker is touched, `ask`/`report`/`show` keep working, and `settings set` refuses to overwrite it silently.
+Lowering a limit affects future admission only; tasks above the new limit keep their slots, processes, and checkouts.
+Raising `global` never raises `per_repository`: one checkout gets one writer unless you say otherwise.
+Nothing schedules or dispatches work because a slot is free; a dispatch is always an explicit approved instruction.
+The settings file travels with `sumctl backup`.
+
+Rundown and refresh over a fleet are one bounded pass: one `herdr agent list` snapshot per session replaces a per-worker observation call, each delivery gets its own timeout, no transcript is read, and one unobservable worker delays nobody else.
+`inbox --live`, `status --live`, and `refresh request` report `fanout` with the number of Herdr calls and the local elapsed time of that pass.
 
 ### Brief revisions
 

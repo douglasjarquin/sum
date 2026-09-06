@@ -79,6 +79,31 @@ def main():
             cli("pane", "wait-output", task["pane"], "--match", marker, "--timeout", "5000")
             assert Path(task["worktree"]).resolve() != repo.resolve()
             print("PASS: real Herdr 0.8.2 worktree response, pane IDs, command input, and bounded output wait.")
+            # Bounded fleet lab: twelve prepared tasks (shell panes, no agent) in this real session; one snapshot serves the whole pass.
+            fleet = sumctl("--home", str(state), "settings", "set", "--global", "13", "--per-repository", "1")
+            assert fleet["capacity"] == {"global": 13, "per_repository": 1}, fleet
+            for i in range(12):
+                project = base / f"fleet-{i:02d}"
+                project.mkdir()
+                subprocess.run(["git", "-C", str(project), "init", "-b", "main"], check=True, capture_output=True, env=env)
+                subprocess.run(["git", "-C", str(project), "-c", "user.name=sum smoke", "-c", "user.email=smoke@example.invalid", "commit", "--allow-empty", "-m", "fixture"], check=True, capture_output=True, env=env)
+                sumctl("--home", str(state), "prepare", "--repo", str(project), "--brief", str(brief), "--harness", "codex", "--approved")
+            started = time.monotonic()
+            live = sumctl("--home", str(state), "status", "--live")
+            wall = round((time.monotonic() - started) * 1000)
+            assert len(live["tasks"]) == 13 and live["capacity"]["occupied"]["global"] == 13, live["capacity"]
+            assert live["fanout"]["herdr_calls"] == 1, live["fanout"]  # One real `agent list`; no per-pane observation call.
+            assert all(row.get("attention", "").startswith("Cannot observe worker") for row in live["tasks"]), [r.get("attention") for r in live["tasks"]]
+            for row in live["tasks"]:  # A recorded decision per task gives the refresh a real revision to deliver.
+                sumctl("--home", str(state), "ask", row["id"], "--key", "lab", "--text", "Lab question?")
+            started = time.monotonic()
+            refresh = sumctl("--home", str(state), "refresh", "request")
+            refresh_wall = round((time.monotonic() - started) * 1000)
+            rows = [r for r in refresh["targets"] if r["target"] == "task"]
+            assert len(rows) == 13 and all(r["state"] == "pending-unreachable" for r in rows), refresh["counts"]
+            assert refresh["fanout"]["herdr_calls"] == 1, refresh["fanout"]
+            print(f"PASS: 13 prepared tasks in one real Herdr session; status --live took {wall} ms and refresh request {refresh_wall} ms on this host, "
+                  f"each with exactly one Herdr observation call; no agent was started, so every worker row is honestly unreachable/pending.")
             installation = base / "installation"
             installation.mkdir()
             subprocess.run(["git", "-C", str(installation), "init", "-b", "main"], check=True, capture_output=True, env=env)
