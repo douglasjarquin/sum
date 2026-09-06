@@ -110,8 +110,13 @@ try {
     if (m.sessionId !== sessionId || m.method !== "Page.screencastFrame" || !recording) return;
     const bytes = Buffer.from(m.params.data, "base64");
     await page("Page.screencastFrameAck", { sessionId: m.params.sessionId }).catch(() => {});
-    if (frameIndex >= job.max_frames || frameBytes + bytes.length > job.max_bytes) {
-      if (recording) { recording = false; out.observations.screencast_limit = frameIndex >= job.max_frames ? "max_frames" : "max_bytes"; await page("Page.stopScreencast").catch(() => {}); }
+    const elapsed = Date.now() - recordStart;
+    if (frameIndex >= job.max_frames || frameBytes + bytes.length > job.max_bytes || elapsed > job.max_ms) {
+      if (recording) {
+        recording = false;
+        out.observations.screencast_limit = elapsed > job.max_ms ? "max_seconds" : (frameIndex >= job.max_frames ? "max_frames" : "max_bytes");
+        await page("Page.stopScreencast").catch(() => {});
+      }
       return;
     }
     const name = `frame-${String(frameIndex).padStart(5, "0")}.jpg`;

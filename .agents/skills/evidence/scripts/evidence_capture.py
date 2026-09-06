@@ -366,7 +366,7 @@ def capture_browser(args, capture_dir: Path, record, redact: Redactor):
     frame_dir.mkdir()
     diagnostics = capture_dir / "browser-diagnostics.log"
     job = {"browser": caps["binary"], "viewport": {"width": width, "height": height}, "locale": args.locale, "theme": args.theme, "timezone": args.timezone, "steps": steps,
-           "screencast": not args.no_video, "jpeg_quality": 75, "max_frames": min(args.max_frames, seconds * 30), "max_bytes": DEFAULT_MAX_BYTES, "frame_dir": str(frame_dir),
+           "screencast": not args.no_video, "jpeg_quality": 75, "max_frames": args.max_frames, "max_ms": seconds * 1000, "max_bytes": DEFAULT_MAX_BYTES, "frame_dir": str(frame_dir),
            "screenshot": str(capture_dir / "screenshot.png"), "diagnostics": str(diagnostics), "step_timeout_ms": args.step_timeout * 1000, "settle_ms": 300,
            "text_limit": TEXT_LIMIT, "observe_selector": args.observe}
     record["steps"] = steps
