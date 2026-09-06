@@ -32,9 +32,13 @@ Precedence is fixed and the helper enforces it: an explicit instruction in the t
 | "use gpt-5-codex" / "fable at low effort" | `--model gpt-5-codex` / `--model fable --reasoning low`, on the saved or explicit harness |
 | "same as you" / "use what you're running" | `--same-as-you` (your harness, native model; overrides a saved default; never claims your exact model) |
 | "make codex with gpt-5 my default" | `./bin/sumctl settings set --worker-harness codex --worker-model gpt-5` first; future dispatches only |
+| "use my deep preset" / "use review for this" | `--preset deep` (see `./bin/sumctl preset list`); an unknown name is refused before anything is created |
+| "use deep but with o4-mini" | `--preset deep --model o4-mini`; explicit fields refine a compatible preset, a different `--harness` is refused |
+| "save this as my deep preset" | `./bin/sumctl preset set deep --harness codex --model gpt-5 [--reasoning L] [--arg=...]` first; `settings set --worker-preset deep` only if they also say "make it my default" |
 | native flags the boss spelled out | separate `--arg` values, e.g. `--arg=-m --arg=MODEL`; never a shell string |
 
 `.sum/preferences.md` can describe a preference; it never silently becomes a launch value. Only the boss's explicit "make this my default" is written with `settings set --worker-*`.
+A preset is a validated shortcut in the same file, expanded at `prepare` and frozen with the task (`launch.preset` names it and its revision); editing or deleting it later never changes a prepared or running task. Presets are not agents, roles, or defaults, and none ship built in: create only what the boss names, with the harness they authorized.
 Model and reasoning values are passed only through flags verified from the installed CLI's help (codex, claude, grok, copilot, cursor, pi, omp). A refusal names the harness without a verified flag; then pass the native argument with `--arg` or choose another harness. Do not guess a flag or invent a provider/model equivalence.
 Ask once only for genuine authority/account ambiguity or a requested combination the helper refuses as unusable; a saved default or same-as-root is never a reason to ask.
 Honor the user's chosen harness and authorized account. Coordinator and worker may differ; a worker default never switches your own harness, model, account, or billing route.
@@ -51,7 +55,7 @@ Write the approved brief to a temporary file. Then run:
   --brief /absolute/path/to/brief.md --harness codex --approved
 ```
 
-`--harness codex` is the explicit form; omit it to use the saved worker default or your own harness. Add `--model`/`--reasoning` for this task only. Extra approved native arguments stay separate `--arg` values, e.g. `--arg=-m --arg=MODEL`; an `--arg` that sets the same flag as `--model` is refused as a conflict before anything is created.
+`--harness codex` is the explicit form; omit it to use the saved worker default or your own harness. Add `--preset NAME` to expand a saved preset, and `--model`/`--reasoning` for this task only. Extra approved native arguments stay separate `--arg` values, e.g. `--arg=-m --arg=MODEL`; an `--arg` that sets the same flag as `--model` is refused as a conflict before anything is created.
 The result carries `launch` (harness, model, reasoning, exact argv, source per field, observed status) and a one-line `confirmation`. Repeat that line to the boss: which harness and model, from which source, and that a CLI-requested model is requested rather than runtime-verified.
 No permission-bypass flags are added by sum. The helper calls native `herdr worktree create`, verifies the returned checkout, launches with `agent start`, submits the worker brief through `agent prompt`, and registers the new pane as that task's worker so it can never claim coordination.
 Use `prepare` instead of `dispatch` to create the worktree/record without starting an agent; later `start TASK_ID` starts it once.

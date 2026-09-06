@@ -115,6 +115,28 @@ The resolved specification (harness, model, reasoning, exact argv, the source of
 `settings show` and every `prepare`/`dispatch`/`start` result carry the saved default and a one-line `confirmation`; Herdr confirms the harness kind after start, while a CLI-requested model stays "requested, not runtime-verified".
 Saving a default affects future dispatches only: no running worker, the coordinator's own harness or model, account, or billing route changes, and the existing advisory quota checks still apply.
 
+### Named launch presets
+
+A preset is a named, validated harness/model/argv shortcut in the same `.sum/settings.json`, so the boss can say "use deep for this task" instead of repeating launch arguments.
+It is not an agent, a role, a credential store, or a default until you save it as one; an installation without presets behaves exactly as before.
+
+```sh
+./bin/sumctl preset set deep --harness codex --model gpt-5-codex --reasoning high --arg=--search   # coordinator only; revision 1 (illustrative values, not a built-in)
+./bin/sumctl preset set review --harness claude --model fable --reasoning low                       # another placeholder; nothing is subscribed or enabled by it
+./bin/sumctl preset list                                                                             # names, harness, model, reasoning, args, revision
+./bin/sumctl preset show deep                                                                        # the exact argv it expands to and which defaults use it
+./bin/sumctl dispatch --repo R --brief B --approved --preset deep                                   # this task only; expanded at prepare
+./bin/sumctl dispatch --repo R --brief B --approved --preset deep --model o4-mini --arg=--full-auto # explicit fields refine a compatible preset
+./bin/sumctl settings set --worker-preset deep                                                      # the saved worker default becomes a reference to the preset
+./bin/sumctl settings set --reviewer-preset review                                                  # used only when you launch a reviewer yourself; see the delivery skill
+./bin/sumctl preset delete deep                                                                     # refused while a default still references it
+```
+
+Precedence stays fixed: an explicit `--harness`/`--model`/`--reasoning` refines the chosen preset when compatible; `--preset X --harness Y` with a different harness, an `--arg` that repeats the preset's model or reasoning flag, an unknown preset name, or `--same-as-you` together with `--preset` are refused before any record, slot, or Herdr call, naming the fix.
+`--same-as-you` also bypasses a saved default preset, and a harness-only override never carries another harness's preset along.
+The preset is expanded at `prepare` and the resolved specification is persisted with the task together with the preset's name and revision (`launch.preset`); `preset set` bumps the revision and, like `preset delete`, changes future dispatches only, so a prepared or running task keeps exactly what it was prepared with.
+A model in a preset is CLI-requested, never runtime-verified, and presets change nothing about authorization, accounts, or the advisory quota checks.
+
 By default there are at most two execution slots globally and one per repository; see [capacity](#capacity) for the optional settings file. Repair limits in worker instructions are **soft**, not enforced spending or wall-clock limits.
 
 ### Capacity
@@ -128,7 +150,7 @@ Admission is decided atomically under the local record lock from the records alo
 ./bin/sumctl settings set --global 12 --per-repository 1     # coordinator only; validated and written atomically
 ```
 
-`.sum/settings.json` is the one owner of executable admission values and worker launch defaults (`{"schema": 1, "capacity": {"global": N, "per_repository": M}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."}}`; capacity integers from 1 to 64, `per_repository` at most `global`; the `worker` block is optional and its model/reasoning need a verified adapter for that harness).
+`.sum/settings.json` is the one owner of executable admission values, worker launch defaults, and named presets (`{"schema": 1, "capacity": {"global": N, "per_repository": M}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."} | {"preset": "deep"}, "presets": {"deep": {"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1}}, "reviewer": {"preset": "review"}}`; capacity integers from 1 to 64, `per_repository` at most `global`; `worker`, `presets`, and `reviewer` are optional, a model/reasoning needs a verified adapter for its harness, and a referenced preset must exist).
 Precedence is that file, then the built-in defaults; an installation without the file keeps the original two-and-one capacity.
 `.sum/preferences.md` and `.sum/projects.md` stay narrative and never set a limit or a worker default; only the boss's explicit "make this my default" becomes a `settings set --worker-*` write.
 An invalid file is refused with the exact defect before any side effect: nothing is admitted, no task or worker is touched, `ask`/`report`/`show` keep working, and `settings set` refuses to overwrite it silently.

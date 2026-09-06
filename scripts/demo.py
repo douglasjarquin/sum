@@ -55,6 +55,15 @@ def main():
         assert task["launch"]["harness"] == "claude" and task["launch"]["source"]["harness"] == "root" and task["launch"]["argv"] == []
         assert "model native default" in task["confirmation"]
         print("PASS: with no saved worker default the worker launched on the coordinator's own harness with its native model, disclosed as such.")
+        # Named presets (#12): none configured means nothing changes; a chosen one expands at prepare and is refused before any side effect when unknown.
+        assert capacity["presets"] == {} and capacity["reviewer"] is None
+        assert "Unknown preset 'deep'" in ctl("prepare", "--repo", str(repo), "--brief", str(brief), "--approved", "--preset", "deep", check=False)["error"]
+        preset = ctl("preset", "set", "deep", "--harness", "codex", "--model", "gpt-5-codex", "--reasoning", "high")  # Illustrative values; nothing is enabled or subscribed by this.
+        assert preset["preset"]["revision"] == 1 and preset["launch"]["argv"] == ["-m", "gpt-5-codex", "-c", "model_reasoning_effort=high"]
+        assert ctl("preset", "show", "deep")["used_by"] == [] and list(ctl("preset", "list")["presets"]) == ["deep"]
+        assert "runs on codex but --harness claude" in ctl("prepare", "--repo", str(repo), "--brief", str(brief), "--approved", "--preset", "deep", "--harness", "claude", check=False)["error"]
+        assert len(ctl("status")["tasks"]) == 1  # The refusals created no record and hold no slot.
+        print("PASS: presets are optional shortcuts: none configured changed nothing; an unknown name and a cross-harness choice were refused before any worktree; one preset saved at revision 1.")
         refused = ctl("prepare", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", check=False)
         assert "1 of 1 slots for" in refused["error"] and len(ctl("status")["tasks"]) == 1
         print("PASS: delegated through sum to a strict fake Herdr; real isolated Git worktree created; a second writer for the same checkout was refused at admission.")
