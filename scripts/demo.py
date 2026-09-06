@@ -27,7 +27,7 @@ def main():
         brief = base / "brief.md"
         brief.write_text("Add greeting.py with greet(name) returning 'Hello, <name>!' and verify it. Ask whether to preserve punctuation. Do not publish.")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SUM_", "HERDR_"))}  # Inherited installation context never steers the lab.
-        env.update(SUM_HERDR_BIN=str(ROOT / "tests/fixtures/herdr.py"),
+        env.update(SUM_HERDR_BIN=str(ROOT / "tests/fixtures/herdr.py"), SUM_GH_BIN=str(ROOT / "tests/fixtures/gh.py"), FAKE_GH_ROOT=str(base / "fake-gh"),
                    FAKE_HERDR_ROOT=str(base / "fake"), FAKE_PARENT_CWD=str(ROOT),
                    HERDR_ENV="1", HERDR_PANE_ID="w-parent:p1", HERDR_SESSION="sum-test",
                    FAKE_PARENT_STATUS="working")
@@ -70,7 +70,26 @@ def main():
         git("add", "greeting.py", cwd=worktree)
         git("commit", "-m", "Add greeting", cwd=worktree)
         candidate = git("rev-parse", "HEAD", cwd=worktree)
-        ctl("report", task["id"], "--text", f"Scripted worker added greeting.py. Candidate {candidate}. Python assertion passed. No independent LLM review or PR performed.")
+        handoff = base / "handoff.json"
+        handoff.write_text(json.dumps({"outcome": "completed", "candidate": candidate, "files": ["greeting.py"], "checks": [{"command": "python3 -c 'from greeting import greet; ...'", "exit": 0}],
+                                       "review": "none", "next_action": "coordinator verification and PR"}))
+        ctl("report", task["id"], "--text", f"Scripted worker added greeting.py. Candidate {candidate}. Python assertion passed. No independent LLM review or PR performed.", "--handoff", str(handoff))
+        ctl("report", task["id"], "--text", "Second report: nothing new.")  # The first report and handoff survive as evidence.
+        ctl("review", task["id"], "--verdict", "comment", "--candidate", candidate, "--text", "Reviewer: greeting lacks a docstring; not blocking.", pane="w-review:p1")
+        ctl("verify", task["id"], "--candidate", candidate, "--result", "pass", "--text", "Coordinator re-ran the assertion in the task checkout.")
+        (base / "fake-gh").mkdir(exist_ok=True)
+        (base / "fake-gh/pr.json").write_text(json.dumps({"repository": "demo/project", "number": 7, "head_branch": task["branch"], "head_sha": "0" * 40}))
+        stale = ctl("pr", "reconcile", task["id"], "--number", "7")["pr"]  # A changed PR head is named, never mistaken for the candidate.
+        assert stale["findings"] and not stale["merged_for_task"] and stale["identity"]["head_sha"] == "0" * 40
+        (base / "fake-gh/pr.json").write_text(json.dumps({"repository": "demo/project", "number": 7, "head_branch": task["branch"], "head_sha": candidate,
+                                                          "state": "MERGED", "merged_at": "2026-09-06T00:00:00Z", "merge_commit": "f" * 40}))
+        exact = ctl("pr", "reconcile", task["id"], "--number", "7")["pr"]
+        assert exact["merged_for_task"] and exact["complete"] and exact["identity"]["number"] == 7
+        shown = ctl("show", task["id"])
+        assert [r["kind"] for r in shown["evidence"]] == ["report", "handoff", "report", "review", "verification", "publication", "publication"]
+        assert shown["report"]["text"] == "Second report: nothing new." and shown["reviewer"]["pane"] == "w-review:p1"
+        assert shown["evidence_view"]["closure"]["prerequisites_met"] and shown["status"] == "reported"  # Merged evidence archives or closes nothing by itself.
+        print("PASS: two reports, reviewer findings, coordinator verification, and two GitHub observations kept as scoped evidence; a stale PR head was flagged and the exact merged head recorded.")
         assert git("rev-parse", "HEAD") == main_sha
         assert not (repo / "greeting.py").exists()
         # Versioned briefs: regenerate from the record (no model call), stage beside the brief the worker read, never overwrite it.

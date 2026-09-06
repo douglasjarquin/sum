@@ -493,6 +493,7 @@ Write a concise report to a temporary file, then submit it (the command copies i
 ```
 
 Report outcome, commit SHA, tests actually run and their results, limitations, and any proposed PR.
+When you committed a candidate, add `--handoff /absolute/path/to/handoff.json`: a bounded JSON object with `outcome`, `candidate` (full 40-hex HEAD SHA), `next_action`, and optionally `files`, `checks` (`{{command, exit}}` as observed), `review`, `decisions_unresolved`, `artifacts`. Reference logs by path; never paste transcripts.
 A report is a claim for the coordinator to verify, NOT proof of successful completion.
 
 ## Worker procedure
@@ -1164,8 +1165,8 @@ def prepare(store, args):
                 "machine": machine(), "repository": str(repo), "base_sha": base_sha,
                 "branch": f"sum/{tid}", "harness": args.harness, "kind": args.kind,
                 "brief": brief, "parent": ctx, "session": ctx["session"], "pane": None,
-                "workspace": None, "worktree": None, "questions": [], "report": None,
-                "notice": None, "error": None, "admission": admission}
+                "workspace": None, "worktree": None, "questions": [], "report": None, "evidence": [],
+                "reviewer": None, "pr": None, "notice": None, "error": None, "admission": admission}
         store.save(task)  # Persist intent before an external effect.
     try:
         created = herdr(["worktree", "create", "--cwd", str(repo), "--branch", task["branch"],
@@ -1370,13 +1371,338 @@ def resolve(store, args):
 
 def report(store, args):
     text = text_input(args)
+    handoff = read_handoff(args.handoff) if getattr(args, "handoff", None) else None
+    endpoint = optional_context()
     with store.lock():
         task = store.read(args.task)
-        # A report never clears unanswered questions or asserts verified success.
-        task["report"] = {"text": text, "submitted_at": now(), "brief_revision": active_revision(store, task), "sum_version": VERSION}
+        revision = active_revision(store, task)
+        # A report never clears unanswered questions or asserts verified success. The latest prose stays in `report`
+        # for every existing reader; the history is appended as scoped evidence so a second report erases nothing.
+        task["report"] = {"text": text, "submitted_at": now(), "brief_revision": revision, "sum_version": VERSION,
+                          "candidate": handoff["candidate"] if handoff else None}
+        records = [append_evidence(task, "report", "worker", {"text": text}, candidate=handoff["candidate"] if handoff else None, endpoint=endpoint)]
+        if handoff:
+            records.append(append_evidence(task, "handoff", "worker", {"handoff": handoff}, candidate=handoff["candidate"], endpoint=endpoint))
+        for record in records:
+            record["brief_revision"] = revision
         task["status"] = "reported"
         store.save(task)
-    return {"task": args.task, "status": "reported-not-verified", "notice": notify(store, args.task, "parent", "a worker report is available")}
+    return {"task": args.task, "status": "reported-not-verified", "evidence": [r["id"] for r in records],
+            "notice": notify(store, args.task, "parent", "a worker report is available")}
+
+
+# --- durable evidence: handoffs, reviewer findings, coordinator verification, exact PR identity --------
+#
+# `task["report"]` stays the latest prose report for every existing reader. `task["evidence"]` is an append-only
+# list of scoped records: worker claims (report/handoff), reviewer findings, coordinator verification, and PR
+# observations made against GitHub. Nothing here is deleted or rewritten; a newer candidate marks older records
+# `current: false` in the computed view and leaves them in place. None of it means merged or verified by itself.
+
+EVIDENCE_SCHEMA = 1
+SHA40 = re.compile(r"[0-9a-f]{40}\Z")
+REPO_NAME = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
+HANDOFF_OUTCOMES = ("completed", "partial", "blocked", "failed")
+HANDOFF_REVIEW = ("none", "requested", "performed")
+REVIEW_VERDICTS = ("approve", "changes-requested", "blocked", "comment")
+VERIFY_RESULTS = ("pass", "fail", "inconclusive")
+PR_IDENTITY_FIELDS = ("repository", "number", "url", "head_repository", "head_branch", "base_branch", "head_sha")
+HANDOFF_LIMITS = {"task_ref": 200, "next_action": 1000, "review_ref": 500, "files": 200, "checks": 50, "artifacts": 30,
+                  "decisions_unresolved": 50, "item": 500}
+
+
+def bounded_text(value, limit, field):
+    if not isinstance(value, str) or not value.strip():
+        raise SumError(f"handoff.{field} must be a nonempty string")
+    if len(value) > limit:
+        raise SumError(f"handoff.{field} exceeds {limit} characters; reference an artifact instead of copying a transcript")
+    return value
+
+
+def bounded_list(value, field, limit):
+    if not isinstance(value, list):
+        raise SumError(f"handoff.{field} must be a list")
+    if len(value) > limit:
+        raise SumError(f"handoff.{field} holds more than {limit} entries; summarize and reference an artifact")
+    return value
+
+
+def validate_pr_identity(value, field="pr"):
+    """Exact identity only: no URL parsing, no branch-name similarity. Missing fields stay missing and are reported as such."""
+    if not isinstance(value, dict):
+        raise SumError(f"{field} must be an object")
+    unknown = sorted(set(value) - set(PR_IDENTITY_FIELDS))
+    if unknown:
+        raise SumError(f"{field} has unknown keys {unknown}; allowed: {list(PR_IDENTITY_FIELDS)}")
+    result = {}
+    for key in PR_IDENTITY_FIELDS:
+        item = value.get(key)
+        if item is None:
+            result[key] = None
+            continue
+        if key == "number":
+            if isinstance(item, bool) or not isinstance(item, int) or item < 1:
+                raise SumError(f"{field}.number must be a positive integer")
+        elif key in {"repository", "head_repository"}:
+            if not isinstance(item, str) or not REPO_NAME.fullmatch(item):
+                raise SumError(f"{field}.{key} must be owner/name")
+        elif key == "head_sha":
+            if not isinstance(item, str) or not SHA40.fullmatch(item):
+                raise SumError(f"{field}.head_sha must be a full 40-hex commit SHA")
+        elif not isinstance(item, str) or not item.strip() or len(item) > 500:
+            raise SumError(f"{field}.{key} must be a nonempty string")
+        result[key] = item
+    return result
+
+
+def validate_handoff(value):
+    """The bounded structured handoff a worker may attach to a report. Every claim in it is the worker's, unverified."""
+    if not isinstance(value, dict):
+        raise SumError("handoff must be a JSON object")
+    allowed = {"outcome", "task_ref", "candidate", "files", "checks", "review", "review_ref", "decisions_unresolved", "next_action", "pr", "artifacts"}
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise SumError(f"handoff has unknown keys {unknown}; allowed: {sorted(allowed)}")
+    for key in ("outcome", "candidate", "next_action"):
+        if key not in value:
+            raise SumError(f"handoff.{key} is required")
+    if value["outcome"] not in HANDOFF_OUTCOMES:
+        raise SumError(f"handoff.outcome must be one of {list(HANDOFF_OUTCOMES)}")
+    if not isinstance(value["candidate"], str) or not SHA40.fullmatch(value["candidate"]):
+        raise SumError("handoff.candidate must be the full 40-hex commit SHA of the committed candidate")
+    result = {"outcome": value["outcome"], "candidate": value["candidate"],
+              "next_action": bounded_text(value["next_action"], HANDOFF_LIMITS["next_action"], "next_action"),
+              "task_ref": bounded_text(value["task_ref"], HANDOFF_LIMITS["task_ref"], "task_ref") if value.get("task_ref") is not None else None,
+              "review": value.get("review", "none"), "review_ref": None, "pr": None}
+    if result["review"] not in HANDOFF_REVIEW:
+        raise SumError(f"handoff.review must be one of {list(HANDOFF_REVIEW)}")
+    if value.get("review_ref") is not None:
+        result["review_ref"] = bounded_text(value["review_ref"], HANDOFF_LIMITS["review_ref"], "review_ref")
+    for key in ("files", "artifacts", "decisions_unresolved"):
+        items = bounded_list(value.get(key, []), key, HANDOFF_LIMITS[key])
+        result[key] = [bounded_text(item, HANDOFF_LIMITS["item"], f"{key}[]") for item in items]
+    checks = []
+    for index, check in enumerate(bounded_list(value.get("checks", []), "checks", HANDOFF_LIMITS["checks"])):
+        if not isinstance(check, dict) or set(check) - {"command", "exit", "note"} or "command" not in check or "exit" not in check:
+            raise SumError(f"handoff.checks[{index}] must be {{command, exit, note?}}")
+        if isinstance(check["exit"], bool) or not isinstance(check["exit"], int):
+            raise SumError(f"handoff.checks[{index}].exit must be the integer exit code actually observed")
+        checks.append({"command": bounded_text(check["command"], HANDOFF_LIMITS["item"], f"checks[{index}].command"), "exit": check["exit"],
+                       "note": bounded_text(check["note"], HANDOFF_LIMITS["item"], f"checks[{index}].note") if check.get("note") is not None else None})
+    result["checks"] = checks
+    if value.get("pr") is not None:
+        result["pr"] = validate_pr_identity(value["pr"], "handoff.pr")
+    return result
+
+
+def read_handoff(path):
+    raw = Path(path).read_text(encoding="utf-8")
+    if len(raw.encode("utf-8")) > MAX_TEXT:
+        raise SumError(f"handoff exceeds {MAX_TEXT} bytes; reference logs and artifacts instead of copying them")
+    try:
+        return validate_handoff(json.loads(raw))
+    except ValueError as exc:
+        raise SumError(f"handoff is not valid JSON: {exc}") from exc
+
+
+def optional_context():
+    """The calling pane when the command runs inside Herdr; a legacy or scripted caller records no endpoint."""
+    try:
+        return context()
+    except SumError:
+        return None
+
+
+def append_evidence(task, kind, source, body, candidate=None, endpoint=None):
+    record = {"schema": EVIDENCE_SCHEMA, "id": "e-" + uuid.uuid4().hex[:10], "kind": kind, "source": source,
+              "at": now(), "candidate": candidate, "brief_revision": None, "sum_version": VERSION,
+              "endpoint": {k: endpoint[k] for k in ("machine", "session", "pane")} if endpoint else None, **body}
+    task.setdefault("evidence", []).append(record)
+    return record
+
+
+def endpoint_role(task, endpoint):
+    if not endpoint:
+        return None
+    if task.get("pane") and identity(task) == identity(endpoint):
+        return "worker"
+    if task.get("parent") and identity(task["parent"]) == identity(endpoint):
+        return "coordinator"
+    if task.get("reviewer") and identity(task["reviewer"]) == identity(endpoint):
+        return "reviewer"
+    return "other"
+
+
+def review(store, args):
+    """Reviewer findings are appended, never replace a report, and bind the reviewer endpoint to the task where one exists."""
+    text = text_input(args)
+    if args.verdict not in REVIEW_VERDICTS:
+        raise SumError(f"--verdict must be one of {list(REVIEW_VERDICTS)}")
+    if args.candidate and not SHA40.fullmatch(args.candidate):
+        raise SumError("--candidate must be a full 40-hex commit SHA")
+    endpoint = optional_context()
+    with store.lock():
+        task = store.read(args.task)
+        role = endpoint_role(task, endpoint)
+        if role == "worker":
+            raise SumError("The worker pane cannot record independent review of its own candidate. Save findings from the reviewer pane, or record `verify` as the coordinator.")
+        if endpoint and role == "other":
+            if task.get("reviewer"):
+                raise SumError(f"Task already has reviewer pane {task['reviewer']['pane']} in session {task['reviewer']['session']}; a second reviewer endpoint is not adopted silently.")
+            task["reviewer"] = {**{k: endpoint[k] for k in ("machine", "session", "pane", "cwd")}, "bound_at": now()}
+            role = "reviewer"
+        record = append_evidence(task, "review", role or "unattributed", {"verdict": args.verdict, "text": text}, candidate=args.candidate, endpoint=endpoint)
+        record["brief_revision"] = active_revision(store, task)
+        store.save(task)
+    return {"task": args.task, "evidence": record, "reviewer": task.get("reviewer"),
+            "note": "Findings saved. They do not verify the candidate or close anything; a reviewer pane with saved findings is closable later, one without is not."}
+
+
+def verify(store, args):
+    """The coordinator's own verification record for one exact candidate; separate from worker claims and GitHub."""
+    text = text_input(args)
+    if args.result not in VERIFY_RESULTS:
+        raise SumError(f"--result must be one of {list(VERIFY_RESULTS)}")
+    if not SHA40.fullmatch(args.candidate or ""):
+        raise SumError("--candidate must be the full 40-hex commit SHA that was actually verified")
+    ctx = context()
+    require_coordinator(store, ctx)
+    with store.lock():
+        task = store.read(args.task)
+        record = append_evidence(task, "verification", "coordinator", {"result": args.result, "text": text}, candidate=args.candidate, endpoint=ctx)
+        record["brief_revision"] = active_revision(store, task)
+        store.save(task)
+    return {"task": args.task, "evidence": record}
+
+
+def gh(args, *, cwd=None, timeout=30):
+    result = run([tool("gh"), *args], cwd=cwd, timeout=timeout)
+    try:
+        return json.loads(result.stdout)
+    except ValueError as exc:
+        raise SumError(f"gh did not return JSON: {result.stdout[:300]}") from exc
+
+
+PR_JSON_FIELDS = "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,closed"
+
+
+def observe_pr(task, repository, number):
+    """One authenticated GitHub observation of an exact PR; the task repository's remote identity is resolved by gh itself."""
+    expected = gh(["repo", "view", "--json", "nameWithOwner"], cwd=task["repository"])["nameWithOwner"]
+    if repository and repository != expected:
+        raise SumError(f"--repo {repository} is not the task repository's GitHub identity {expected}. A PR in another repository is never attached to this task.")
+    data = gh(["pr", "view", str(number), "--repo", expected, "--json", PR_JSON_FIELDS])
+    owner = (data.get("headRepositoryOwner") or {}).get("login")
+    name = (data.get("headRepository") or {}).get("name")
+    head_repository = f"{owner}/{name}" if owner and name else None
+    merge_commit = (data.get("mergeCommit") or {}).get("oid")
+    return {"identity": validate_pr_identity({"repository": expected, "number": data["number"], "url": data["url"], "head_repository": head_repository,
+                                              "head_branch": data.get("headRefName"), "base_branch": data.get("baseRefName"), "head_sha": data.get("headRefOid")}),
+            "state": str(data.get("state", "")).lower() or None, "merged_at": data.get("mergedAt") or None,
+            "merge_commit": merge_commit if merge_commit and SHA40.fullmatch(merge_commit) else None,
+            "cross_repository": bool(data.get("isCrossRepository"))}
+
+
+def candidate_shas(task):
+    """Every candidate SHA the worker committed to on record, plus the checkout's current HEAD when it still exists."""
+    shas = {r["candidate"] for r in task.get("evidence", []) if r.get("candidate") and r.get("source") == "worker"}
+    head = current_candidate(task)
+    if head:
+        shas.add(head)
+    return shas
+
+
+def current_candidate(task):
+    worktree = task.get("worktree")
+    if not worktree or not Path(worktree).is_dir():
+        return None
+    try:
+        return run(["git", "-C", worktree, "rev-parse", "HEAD"]).stdout.strip()
+    except SumError:
+        return None
+
+
+def pr_findings(task, observation):
+    """Compare one GitHub observation with the task record. Each mismatch is named; nothing is inferred from similarity."""
+    identity_ = observation["identity"]
+    findings = []
+    if identity_["head_repository"] != identity_["repository"] or observation["cross_repository"]:
+        findings.append("head is on a fork, not the task repository")
+    if identity_["head_branch"] != task["branch"]:
+        findings.append(f"head branch {identity_['head_branch']!r} is not the task branch {task['branch']!r}")
+    known = candidate_shas(task)
+    if not identity_["head_sha"]:
+        findings.append("GitHub returned no head SHA")
+    elif identity_["head_sha"] not in known:
+        findings.append("PR head SHA is not a recorded candidate of this task (reused branch name or changed head)")
+    if identity_["base_branch"] is None:
+        findings.append("no base branch observed")
+    return findings
+
+
+def pr_reconcile(store, args):
+    """Explicit coordinator reconciliation: inspect the actual PR, record its exact identity, never guess or migrate."""
+    ctx = context()
+    require_coordinator(store, ctx)
+    if args.repo and not REPO_NAME.fullmatch(args.repo):
+        raise SumError("--repo must be owner/name")
+    task = store.read(args.task)
+    try:
+        observation = observe_pr(task, args.repo, args.number)
+    except SumError as exc:
+        with store.lock():
+            task = store.read(args.task)
+            record = append_evidence(task, "publication", "github", {"outcome": "uncertain", "number": args.number, "repository": args.repo, "error": str(exc)}, endpoint=ctx)
+            store.save(task)
+        raise SumError(f"PR observation for #{args.number} is uncertain and was recorded as such ({record['id']}): {exc}. Inspect GitHub before creating or closing anything.") from exc
+    findings = pr_findings(task, observation)
+    merged_for_task = observation["state"] == "merged" and observation["merge_commit"] is not None and not findings
+    with store.lock():
+        task = store.read(args.task)
+        previous = task.get("pr")
+        if previous and previous.get("identity", {}).get("number") not in {None, observation["identity"]["number"]} and not args.replace:
+            raise SumError(f"Task already records PR #{previous['identity']['number']}; pass --replace after inspecting both PRs to switch the recorded identity.")
+        pr = {"identity": observation["identity"], "state": observation["state"], "merged_at": observation["merged_at"], "merge_commit": observation["merge_commit"],
+              "observed_at": now(), "observed_by": {k: ctx[k] for k in ("machine", "session", "pane")}, "findings": findings,
+              "merged_for_task": merged_for_task, "complete": all(observation["identity"][k] is not None for k in PR_IDENTITY_FIELDS)}
+        task["pr"] = pr
+        record = append_evidence(task, "publication", "github", {"outcome": "observed", "pr": pr}, candidate=observation["identity"]["head_sha"], endpoint=ctx)
+        store.save(task)
+    return {"task": args.task, "pr": pr, "evidence": record["id"], "previous": previous,
+            "note": "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains."}
+
+
+def evidence_view(task):
+    """Scoped evidence with candidate currency, plus the closure prerequisites this task has or lacks. Computed; never stored."""
+    head = current_candidate(task)
+    records = []
+    for record in task.get("evidence", []):
+        row = dict(record)
+        row["current"] = None if not record.get("candidate") or head is None else record["candidate"] == head
+        records.append(row)
+    if task.get("report") and not any(r["kind"] == "report" for r in records):
+        records.insert(0, {"schema": None, "id": None, "kind": "report", "source": "worker", "legacy": True, "at": task["report"]["submitted_at"],
+                           "candidate": None, "brief_revision": task["report"].get("brief_revision"), "current": None,
+                           "note": "Legacy prose report recorded before scoped evidence existed; unstructured worker claim."})
+    handoffs = [r for r in records if r["kind"] == "handoff"]
+    reviews = [r for r in records if r["kind"] == "review"]
+    verifications = [r for r in records if r["kind"] == "verification" and r.get("result") == "pass" and r["current"]]
+    pr = task.get("pr")
+    missing = []
+    if not handoffs or not handoffs[-1]["current"]:
+        missing.append("current structured handoff")
+    if not pr or not pr.get("complete"):
+        missing.append("complete PR identity from `pr reconcile`")
+    elif head and pr["identity"]["head_sha"] != head:
+        missing.append("PR head SHA does not match the current candidate; reconcile again")
+    if not verifications:
+        missing.append("coordinator verification of the current candidate")
+    if task.get("reviewer") and not reviews:
+        missing.append("saved findings from the bound reviewer pane")
+    return {"current_candidate": head, "records": records, "reviewer": task.get("reviewer"), "pr": pr,
+            "closure": {"prerequisites_met": not missing, "missing": missing, "merged_for_task": bool(pr and pr.get("merged_for_task")),
+                        "note": "Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged."}}
+
+
 
 
 def status(store, live=False, inbox=False):
@@ -1387,6 +1713,8 @@ def status(store, live=False, inbox=False):
         row = {k: task.get(k) for k in ("id", "status", "repository", "harness", "pane", "session", "worktree", "error")}
         row["questions"] = [q for q in task["questions"] if q["status"] != "applied"]
         row["report_available"] = task["report"] is not None
+        row["evidence"] = {"records": len(task.get("evidence", [])), "pr": (task.get("pr") or {}).get("identity", {}).get("number") if task.get("pr") else None,
+                           "merged_for_task": bool((task.get("pr") or {}).get("merged_for_task"))}
         row["notice"] = task["notice"]
         try:
             versions = read_versions(store, task)
@@ -2449,12 +2777,35 @@ def parser():
             s.add_argument("--key", help="Stable question key for idempotent re-submission")
         if name == "answer":
             s.add_argument("question")
+        if name == "report":
+            s.add_argument("--handoff", help="Optional bounded JSON handoff (outcome, candidate SHA, files, checks, review, unresolved decisions, next action, PR identity claim)")
         g = s.add_mutually_exclusive_group(required=True)
         g.add_argument("--text")
         g.add_argument("--file")
     s = sub.add_parser("resolve")
     s.add_argument("task")
     s.add_argument("question")
+    s = sub.add_parser("review", help="Reviewer pane: append independent findings for one candidate; never replaces the worker report")
+    s.add_argument("task")
+    s.add_argument("--verdict", required=True, choices=REVIEW_VERDICTS)
+    s.add_argument("--candidate", help="Full 40-hex SHA the findings cover")
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--text")
+    g.add_argument("--file")
+    s = sub.add_parser("verify", help="Coordinator only: append the coordinator's own verification result for one exact candidate")
+    s.add_argument("task")
+    s.add_argument("--candidate", required=True, help="Full 40-hex SHA that was actually verified")
+    s.add_argument("--result", required=True, choices=VERIFY_RESULTS)
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--text")
+    g.add_argument("--file")
+    s = sub.add_parser("pr", help="Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names")
+    g = s.add_subparsers(dest="pr_command", required=True)
+    x = g.add_parser("reconcile", help="Coordinator only: inspect PR --number in the task repository with gh and record its exact identity, state, and mismatches")
+    x.add_argument("task")
+    x.add_argument("--number", type=int, required=True)
+    x.add_argument("--repo", help="owner/name; must equal the task repository's GitHub identity")
+    x.add_argument("--replace", action="store_true", help="Switch a task from one recorded PR number to another after inspecting both")
     s = sub.add_parser("bind")
     s.add_argument("task")
     s.add_argument("--worker-pane", help="Explicitly adopt an existing worker; never launch a replacement")
@@ -2527,7 +2878,8 @@ def main(argv=None):
     try:
         store = Store(args.home)
         guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}",
-                                "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}"}.get(args.command, lambda: args.command)())
+                                "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}",
+                                "pr": lambda: f"pr-{args.pr_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -2547,6 +2899,13 @@ def main(argv=None):
                 value = {**task, "versions": versions_view(store, task)}
             except SumError as exc:
                 value = {**task, "versions": None, "versions_error": str(exc)}
+            value["evidence_view"] = evidence_view(task)
+        elif args.command == "review":
+            value = review(store, args)
+        elif args.command == "verify":
+            value = verify(store, args)
+        elif args.command == "pr":
+            value = pr_reconcile(store, args)
         elif args.command == "ask":
             value = ask(store, args)
         elif args.command == "answer":

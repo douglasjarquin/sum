@@ -68,7 +68,7 @@ The helper is called `sumctl` to avoid shadowing the Unix `sum` command. Normall
 
 ## State and communication
 
-Private state lives in `.sum/` and is ignored by Git. `.sum/context.json` records the coordinator owner and `.sum/sessions/` the registered panes and roles. Optional `.sum/preferences.md` and `.sum/projects.md` hold local preferences and project notes. `.sum/coordinator/` holds the coordinator's contract revisions and refresh receipts. Each task stores its brief, base SHA, branch/worktree, pane bindings, questions, answers, report, and a `versions.json` sidecar with brief revisions. File updates are locked and atomically replaced on one local machine.
+Private state lives in `.sum/` and is ignored by Git. `.sum/context.json` records the coordinator owner and `.sum/sessions/` the registered panes and roles. Optional `.sum/preferences.md` and `.sum/projects.md` hold local preferences and project notes. `.sum/coordinator/` holds the coordinator's contract revisions and refresh receipts. Each task stores its brief, base SHA, branch/worktree, pane bindings, questions, answers, report, an append-only `evidence` list (reports, structured handoffs, reviewer findings, coordinator verification, exact PR observations), the bound reviewer endpoint, the last reconciled PR identity, and a `versions.json` sidecar with brief revisions. File updates are locked and atomically replaced on one local machine.
 
 Workers use the exact commands in their generated brief. The core interaction is:
 
@@ -124,6 +124,10 @@ A worker brief is generated from the record: the approved task text, base, repos
 
 ```sh
 ./bin/sumctl brief list TASK_ID          # revisions, integrity, active/requested state, report evidence binding
+./bin/sumctl report TASK_ID --file r.md --handoff h.json   # worker: prose report plus a bounded structured handoff bound to the candidate SHA
+./bin/sumctl review TASK_ID --verdict changes-requested --candidate SHA --file f.md   # reviewer pane: appended findings; binds the reviewer endpoint
+./bin/sumctl verify TASK_ID --candidate SHA --result pass --text '...'               # coordinator: own verification record
+./bin/sumctl pr reconcile TASK_ID --number N   # coordinator: exact PR identity observed through gh; merged only for a matching head
 ./bin/sumctl brief regenerate TASK_ID    # stage briefs/rN.md from the record; no model call; duplicates write nothing
 ./bin/sumctl brief request TASK_ID rN    # mark the latest intact revision as requested; sends nothing
 ./bin/sumctl brief adopt TASK_ID rN      # the worker records that it now follows the requested revision
