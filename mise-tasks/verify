@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Canonical aggregate verification: offline Python and Node suites plus the scripted end-to-end demo (see VERIFY.md)"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+python -m unittest discover -s tests -p 'test_*.py'
+node --test tests/mesh.test.mjs
+python scripts/demo.py

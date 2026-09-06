@@ -4392,10 +4392,11 @@ def discover_configuration(worktree):
     task_origins = mise_task_origins(worktree)  # Lists what mise would resolve here; runs no task. Inherited parent tasks are a named problem, not project commands.
     if task_origins.get("problem"):
         problems.append(task_origins["problem"])
+    contract = verification_contract_status(worktree, task_origins)
     head = checkout_head(worktree)
     revision = sha256_text(json.dumps({"head": head, "sources": [(s["path"], s.get("sha256")) for s in sources]}, sort_keys=True))[:16]
     return {"observed_at": now(), "worktree": worktree, "head": head, "config_revision": revision, "sources": sources[:ENVIRONMENT_LIMITS["sources"]],
-            "commands": commands, "problems": problems, "task_origins": task_origins, "stale": False, "current_revision": revision,
+            "commands": commands, "problems": problems, "task_origins": task_origins, "verification_contract": contract, "stale": False, "current_revision": revision,
             "summary": {kind: sum(1 for c in commands if c["kind"] == kind) for kind in ("verification", "service", "container", "task")},
             "note": "Declared by the repository; classification by name. No command here was run, and absence of a `service` entry means none was declared, not that nothing runs."}
 
@@ -4627,7 +4628,7 @@ def env_discover(store, args):
                                           "previous_revision": previous.get("config_revision")})
     return {"task": task["id"], "path": str(environment_path(store, task["id"])), "config_revision": discovery["config_revision"], "changed": changed,
             "sources": discovery["sources"], "commands": discovery["summary"], "problems": discovery["problems"], "task_origins": discovery["task_origins"],
-            "by": role, "note": ENVIRONMENT_NOTE}
+            "verification_contract": discovery.get("verification_contract"), "by": role, "note": ENVIRONMENT_NOTE}
 
 
 def build_endpoint(record, parsed, observation, claimed, label, role, stamp, conflicts):
@@ -4837,7 +4838,7 @@ def environment_view(store, task, limit=CONTEXT_CHARS):
     stale = bool(discovery and discovery.get("stale")) or any(e["state"] in ("stale", "unverified") or e.get("config_stale") for e in record["endpoints"]) \
         or any(l["state"] != "present" for l in record["logs"]) or any(s["state"] in ("unknown", "stopping", "conflict", "failed") for s in record.get("services", []))
     return {"present": True, "ok": True, "path": str(environment_path(store, task["id"])), "updated_at": record.get("updated_at"), "stale": stale,
-            "discovery": {**{k: discovery.get(k) for k in ("observed_at", "head", "config_revision", "current_revision", "stale", "stale_reason", "checked_at", "summary", "problems", "task_origins")},
+            "discovery": {**{k: discovery.get(k) for k in ("observed_at", "head", "config_revision", "current_revision", "stale", "stale_reason", "checked_at", "summary", "problems", "task_origins", "verification_contract")},
                           "sources": [{k: s.get(k) for k in ("path", "bytes", "sha256", "skipped")} for s in discovery.get("sources", [])],
                           "commands": [command_view(c) for c in discovery.get("commands", [])]} if discovery else None,
             "endpoints": [{**{k: e.get(k) for k in ("id", "url", "port", "local", "label", "ownership", "claimed_ownership", "state", "stale_reason", "config_stale", "observed_at", "recorded_by")},
@@ -6730,6 +6731,21 @@ def pane_inside_project(store, root, cwd):
         if resolved == base or resolved.startswith(base + os.sep):
             return {"name": record["name"], "path": base, "why": f"inside the enrolled {record['kind']} clone"}
     return None
+
+
+def verification_contract_status(worktree, task_origins):
+    """Whether the checkout carries the portable VERIFY.md contract (issue #31). `standardized` needs the file at the root AND a `verify` task the
+    checkout itself defines; anything else is `not-yet-standardized` and keeps its existing verification path. Nothing is parsed or run here."""
+    present = (Path(worktree) / "VERIFY.md").is_file()
+    owned_verify = bool((task_origins.get("verification") or {}).get("verify"))
+    if present and owned_verify:
+        status, why = "standardized", "VERIFY.md at the root and a `verify` task this checkout defines"
+    elif present:
+        status, why = "not-yet-standardized", "VERIFY.md exists but mise resolves no `verify` task owned by this checkout"
+    else:
+        status, why = "not-yet-standardized", "no VERIFY.md at the checkout root; the project keeps its current verification path"
+    return {"status": status, "verify_md": present, "verify_task_owned": owned_verify, "why": why,
+            "runner": ".agents/skills/verify/scripts/verify_run.py" if (Path(worktree) / ".agents/skills/verify/scripts/verify_run.py").is_file() else None}
 
 
 def mise_task_origins(worktree):

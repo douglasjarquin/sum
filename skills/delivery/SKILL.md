@@ -13,6 +13,7 @@ Its `environment.dev` block is the task-local environment record: the repository
 ## Verify
 
 Confirm the checkout, branch, candidate SHA, and actual diff. Confirm the reported verification commands and evidence.
+When the checkout carries a root `VERIFY.md` (`env show`/`env discover` report `verification_contract.status: standardized`), run its runner yourself from that checkout: `python3 .agents/skills/verify/scripts/verify_run.py --base <base SHA>`; read the printed `run.json` for outcome, `certifies`, `not_exercised`, and `requires_root_review` (a candidate that changed `VERIFY.md`, tasks, or maps cannot certify itself). A `not-yet-standardized` project keeps its existing commands. The record is your evidence for `sumctl verify`, which stays the place the result is saved.
 Use the repo's configured MADE/No Mistakes route when available. Otherwise arrange a fresh-context review through a separately launched reviewer or the harness's supported independent-review facility.
 When you launch that reviewer yourself, `./bin/sumctl settings show` may name a saved reviewer preset (`reviewer.preset`); `./bin/sumctl preset show NAME` gives the exact harness and argv to start it with. It is a launch shortcut only: it applies solely to a reviewer sum is responsible for starting, never wraps or overrides MADE or the repository's own verification tool, and its absence changes nothing.
 The reviewer receives the task contract and candidate, not an instruction to rubber-stamp the worker's summary. Do not have simultaneous writers in the checkout.

@@ -1,0 +1,3 @@
+[tasks]
+build = "python3 build.py"
+verify = "python3 check.py"
