@@ -101,6 +101,12 @@ class VerifyLab(unittest.TestCase):
         index.write_text("# maps\n\n- [cli](cli.md)\n")
         code, record, _ = self.run_verify(repo, "--check")
         self.assertIn("defined twice", record["blocked_reason"])
+        (repo / "docs/features/cli.md").write_text("| ID | S | Driver |\n| --- | --- | --- |\n| `x` | a | sometimes |\n")
+        code, record, _ = self.run_verify(repo, "--check")
+        self.assertIn("must start with `automated` or `manual`", record["blocked_reason"])
+        (repo / "docs/features/cli.md").write_text("| ID | Scenario | Notes |\n| --- | --- | --- |\n| `x` | a | automated |\n")
+        code, record, _ = self.run_verify(repo, "--check")
+        self.assertEqual((record["outcome"], record["scenarios"]), ("checked", []))  # No Driver column: no scenarios are claimed.
 
     def test_missing_task_inherited_task_and_blocked_dependency_are_blocked_never_passed(self):
         repo = self.make_repo("cli", self.root / "cli")
@@ -316,6 +322,9 @@ class VerifyLab(unittest.TestCase):
         ids = [s["id"] for s in record["scenarios"]]
         self.assertIn("verify.three-checkouts", ids)
         self.assertEqual(len(ids), len(set(ids)))
+        drivers = {s["id"]: s["driver"] for s in record["scenarios"]}
+        self.assertEqual(drivers["verify.skipped-scenario"], "automated")  # Its description starts with "Manual"; only the Driver column decides.
+        self.assertEqual([i for i, d in drivers.items() if d == "manual"], ["live.herdr-smoke", "live.harness-canary", "verify.sum-self"])
         self.assertEqual(record["contract"]["entrypoint"], "mise run verify")
         self.assertTrue(record["artifacts"]["git_ignored"])
 

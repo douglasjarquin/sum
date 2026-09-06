@@ -133,14 +133,24 @@ def load_feature_maps(root: Path, index_relative: str):
         if not target.is_file():
             raise Blocked(f"Feature map {relative} linked from {index_relative} is missing.")
         maps.append({"path": str(relative), "sha256": sha256_file(target)})
+        driver_column = None
         for line in target.read_text(encoding="utf-8").splitlines():
+            if not line.lstrip().startswith("|"):
+                driver_column = None  # A table ended; the next one declares its own columns.
+                continue
+            header = [c.strip().lower() for c in line.strip().strip("|").split("|")]
+            if "driver" in header and driver_column is None:
+                driver_column = header.index("driver") - 1  # Cells after the id column.
+                continue
             row = ROW.match(line)
-            if not row:
+            if not row or driver_column is None:
                 continue
             cells = [c.strip() for c in row.group(2).split("|")]
-            driver = next((c for c in cells if re.match(r"^(automated|manual)\b", c, re.I)), None)
-            if driver is None:
-                continue  # A header or unrelated table row.
+            if driver_column >= len(cells) or set(cells[driver_column]) <= {"-", ":"}:
+                continue  # The `| --- |` separator or a short row.
+            driver = cells[driver_column]
+            if not re.match(r"^(automated|manual)\b", driver, re.I):
+                raise Blocked(f"Scenario {row.group(1)} in {relative} has driver {driver!r}; it must start with `automated` or `manual`.")
             scenario_id = row.group(1)
             if scenario_id in seen:
                 raise Blocked(f"Scenario id {scenario_id} is defined twice across the feature maps.")
