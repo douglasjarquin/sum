@@ -3773,6 +3773,82 @@ def save_pr_observation(store, task_id, observation, ctx, replace=False):
     return pr, record, previous
 
 
+EVIDENCE_PUBLISHER = ".agents/skills/evidence/scripts/evidence_publish.py"
+
+
+def pr_evidence(store, args):
+    """Coordinator only: publish one evidence run's comparison manifests into the recorded PR's marked block.
+
+    Identity comes from the record, never from arguments: the repository and number are the reconciled PR, the candidate is its observed
+    head SHA and must be a recorded worker candidate. The runtime's own publisher (never the candidate's copy) validates every file under
+    the worker's evidence root, stages approved publish copies and receipts under the task record (they outlive the checkout), and edits only
+    the marked block through `gh pr edit --attach`. An old gh defers; every refusal or failure leaves local evidence and the PR body intact.
+    Worker media stays labelled as the worker's claim; this record is `publication`, not verification."""
+    ctx = context()
+    require_coordinator(store, ctx)
+    task = store.read(args.task)
+    pr = task.get("pr") or {}
+    identity = pr.get("identity") or {}
+    if not pr.get("complete"):
+        raise SumError("The task records no complete PR identity. Run `sumctl pr reconcile TASK --number N` first; evidence is published only into the reconciled PR.")
+    candidate = identity["head_sha"]
+    if candidate not in candidate_shas(task):
+        raise SumError(f"PR head {candidate[:12]} is not a recorded worker candidate of this task; reconcile again after the worker reports, then publish.")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", args.run or ""):
+        raise SumError("--run must be an evidence run id")
+    evidence_root = Path(args.evidence_root).expanduser().resolve() if args.evidence_root else (Path(task["worktree"]) / ".artifacts" / "evidence" if task.get("worktree") else None)
+    if not evidence_root or not evidence_root.is_dir():
+        raise SumError(f"Evidence root {evidence_root} does not exist; pass --evidence-root PATH (the worker's .artifacts/evidence or a promoted copy).")
+    publisher = RUNTIME / EVIDENCE_PUBLISHER
+    if not publisher.is_file():
+        raise SumError(f"This runtime carries no {EVIDENCE_PUBLISHER}; stage a release that does.")
+    publish_root = store.path(args.task) / "publish"
+    publish_dir = publish_root / re.sub(r"[^A-Za-z0-9._-]+", "-", args.run)
+    receipts = publish_root / "receipts.json"
+    run_ids = args.verification_run or sorted({r["run_id"] for r in task.get("evidence", []) if r.get("kind") == "verification" and r.get("run_id") and r.get("candidate") == candidate})
+    env = {k: v for k, v in os.environ.items() if not (k.startswith("HERDR_") or k in ("SUM_HOME", "SUM_SESSION", "SUM_INSTALL_ROOT"))}
+    plan_argv = [sys.executable, str(publisher), "plan", "--run", args.run, "--repo", identity["repository"], "--pr", str(identity["number"]), "--candidate", candidate,
+                 "--evidence-root", str(evidence_root), "--publish-dir", str(publish_dir), "--captured-by", "the task worker", "--json"]
+    if task.get("base_sha"):
+        plan_argv += ["--base", task["base_sha"]]
+    for scenario in args.scenario or []:
+        plan_argv += ["--scenario", scenario]
+    for run_id in run_ids:
+        plan_argv += ["--verification-run", run_id]
+    planned = subprocess.run(plan_argv, text=True, capture_output=True, env=env, timeout=600)
+    try:
+        plan = json.loads(planned.stdout)
+    except ValueError as exc:
+        raise SumError(f"evidence_publish.py plan exited {planned.returncode} without a plan: {(planned.stderr or planned.stdout).strip()[-600:]}") from exc
+    publish_argv = [sys.executable, str(publisher), "publish", "--plan", str(publish_dir / "plan.json"), "--receipts", str(receipts), "--visibility", args.visibility,
+                    "--gh", tool("gh"), "--timeout", str(args.timeout), "--json"]
+    for flag_name, enabled in (("--dry-run", args.dry_run), ("--allow-head-mismatch", args.allow_head_mismatch), ("--replace-foreign-block", args.replace_foreign_block)):
+        if enabled:
+            publish_argv.append(flag_name)
+    if plan.get("publishable_scenarios"):
+        try:
+            published = subprocess.run(publish_argv, text=True, capture_output=True, env=env, timeout=args.timeout * 4 + 120)
+        except subprocess.TimeoutExpired as exc:
+            raise CommandTimeout(f"evidence_publish.py did not finish; inspect the PR and {receipts} before retrying") from exc
+        try:
+            result = json.loads(published.stdout)
+        except ValueError as exc:
+            raise SumError(f"evidence_publish.py publish exited {published.returncode} without a result: {(published.stderr or published.stdout).strip()[-600:]}") from exc
+    else:
+        result = {"outcome": "refused", "reason": "nothing publishable in this run", "unpublished": plan.get("refused_scenarios"), "uploaded": [], "reused": [], "record": None}
+    body = {"outcome": result["outcome"], "reason": result.get("reason"), "run": args.run, "repository": identity["repository"], "number": identity["number"], "pr_url": result.get("pr_url"),
+            "uploaded": len(result.get("uploaded") or []), "reused": len(result.get("reused") or []), "unpublished": result.get("unpublished") or {},
+            "video_table": result.get("video_table"), "gh": (result.get("gh") or {}).get("version"), "plan": str(publish_dir / "plan.json"), "result": result.get("record"),
+            "receipts": str(receipts), "dry_run": bool(args.dry_run), "text": f"evidence publication {result['outcome']}: {result.get('reason')}"}
+    with store.lock():
+        task = store.read(args.task)
+        record = append_evidence(task, "publication", "coordinator", body, candidate=candidate, endpoint=ctx)
+        record["brief_revision"] = active_revision(store, task)
+        store.save(task)
+    return {"task": args.task, "publication": body, "evidence": record["id"],
+            "note": "Worker media is the worker's claim about the candidate build, labelled so in the block; it is not root verification and changes no closure prerequisite."}
+
+
 def evidence_view(task):
     """Scoped evidence with candidate currency, plus the closure prerequisites this task has or lacks. Computed; never stored.
 
@@ -6440,6 +6516,12 @@ def doctor(store):
         checks.append({"tool": "herdr-version", "ok": True, "detail": ensure_version()})
     except SumError as exc:
         checks.append({"tool": "herdr-version", "ok": False, "detail": str(exc)})
+    try:
+        attach = "--attach" in run([tool("gh"), "pr", "edit", "--help"], check=False, timeout=20).stdout
+        checks.append({"tool": "gh-attach", "ok": True, "supported": attach,
+                       "detail": "gh pr edit --attach available; `pr evidence` can publish" if attach else "this runtime's gh has no --attach (GitHub CLI 2.99+); evidence publication defers until a release with the current pin is active"})
+    except SumError as exc:
+        checks.append({"tool": "gh-attach", "ok": True, "supported": False, "detail": str(exc)})
     role = {"tool": "role", "ok": True, "installation": store.designated(), "coordinator": store.owner() if store.designated() else None}
     try:
         ctx = context()
@@ -7993,6 +8075,17 @@ def parser():
     x.add_argument("--number", type=int, required=True)
     x.add_argument("--repo", help="owner/name; must equal the task repository's GitHub identity")
     x.add_argument("--replace", action="store_true", help="Switch a task from one recorded PR number to another after inspecting both")
+    x = g.add_parser("evidence", help="Coordinator only: publish one evidence run's before/after media into the reconciled PR's marked block via gh --attach; receipts and publish copies stay under the task record")
+    x.add_argument("task")
+    x.add_argument("--run", required=True, help="Evidence run id (the <evidence root>/<run> directory holding comparison.json files)")
+    x.add_argument("--scenario", action="append", help="Publish only these scenario ids (default: every comparison in the run)")
+    x.add_argument("--visibility", required=True, choices=("public", "private", "internal"), help="The destination visibility you intend; a mismatch refuses before any upload")
+    x.add_argument("--evidence-root", help="Evidence root (default: the worker checkout's .artifacts/evidence); use a promoted copy after cleanup")
+    x.add_argument("--verification-run", action="append", help="Verification run id(s) to cite (default: the runs recorded for this candidate)")
+    x.add_argument("--timeout", type=int, default=300, help="Seconds allowed for one gh call, uploads included")
+    x.add_argument("--dry-run", action="store_true", help="Plan and compute the body; upload and edit nothing")
+    x.add_argument("--allow-head-mismatch", action="store_true", help="Publish although the PR head moved past the captured candidate (labelled)")
+    x.add_argument("--replace-foreign-block", action="store_true", help="Take over a marked block this installation did not write, after inspecting it")
     s = sub.add_parser("cleanup", help="Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay")
     s.add_argument("task")
     s.add_argument("--apply", action="store_true", help="Remove the verified workspace/checkout without force and archive the record; without it, only inspect and persist the plan")
@@ -8174,7 +8267,7 @@ def main(argv=None):
         elif args.command == "verify":
             value = verify(store, args)
         elif args.command == "pr":
-            value = pr_reconcile(store, args)
+            value = pr_reconcile(store, args) if args.pr_command == "reconcile" else pr_evidence(store, args)
         elif args.command == "ask":
             value = ask(store, args)
         elif args.command == "answer":

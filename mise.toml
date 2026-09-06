@@ -1,7 +1,7 @@
 [tools]
 python = "3.13.5"
 node = "22.19.0"
-"github:cli/cli" = "2.78.0"
+"github:cli/cli" = "2.100.0"
 "github:herdrdev/herdr" = "0.8.2"
 "npm:quota-axi" = "0.1.37"
 
