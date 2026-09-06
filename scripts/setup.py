@@ -83,6 +83,9 @@ env_vars = ["HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", 
 def designate(root):
     """Mark this checkout as the sum installation: only a home with state.json may host a coordinator."""
     home = root / ".sum"
+    if (home / "dev.json").is_file():
+        print(f"{root} is a sum development checkout; it stays undesignated (no coordinator can claim it).", file=sys.stderr)
+        return
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     if not (home / "state.json").exists():
         write_json(home / "state.json", {"schema": 1, "sum_version": "0.1.0", "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

@@ -18,6 +18,12 @@ Environment: Linux x86_64 container; Python **3.13.5**, Node **22.16.0**, Git **
 
 Test output is retained in `docs/test-results.txt`.
 
+## Self-development slice (2026-09-05, macOS)
+
+Executed on the development host for the isolated self-development checkout work (issue #3): the Python suites (60 tests), the Node Mesh tests (10), the offline demo including its new development-checkout section, and `scripts/live_smoke.py` against real Herdr 0.8.2 in a named `sum-test-*` lab session with a short `/tmp` lab root.
+The live smoke test now registers its lab coordinator with `init` before `prepare`, uses `pane wait-output --match`, and opens a real workspace whose root pane starts in a development checkout.
+No model, GitHub write, or user `default` session was involved.
+
 ## Not executed here
 
 - A full `mise run setup` dependency download/install. The container could not reach the required network endpoints.

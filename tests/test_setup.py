@@ -35,6 +35,15 @@ class SetupTest(unittest.TestCase):
         setup.configure(self.root)
         self.assertNotIn('instance', json.loads((self.root / '.sum/state.json').read_text()))  # Never rewrites existing state.
 
+    def test_setup_in_a_development_checkout_never_designates_it(self):
+        (self.root / '.sum').mkdir()
+        marker = json.dumps({'schema': 1, 'kind': 'development', 'name': 'x', 'installation': '/elsewhere'})
+        (self.root / '.sum/dev.json').write_text(marker)
+        setup.configure(self.root)
+        self.assertFalse((self.root / '.sum/state.json').exists())
+        self.assertEqual((self.root / '.sum/dev.json').read_text(), marker)
+        self.assertEqual(json.loads((self.root / '.mcp.json').read_text())['mcpServers']['sum-herdr']['command'], str(self.root / 'bin/herdr-mesh'))
+
     def test_setup_is_idempotent(self):
         setup.configure(self.root)
         before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
@@ -73,7 +82,7 @@ class SetupTest(unittest.TestCase):
 
     def test_all_skill_links_resolve(self):
         for parent in (ROOT / '.agents/skills', ROOT / '.claude/skills'):
-            for name in ('dispatch', 'worker', 'rundown', 'delivery'):
+            for name in ('dispatch', 'worker', 'rundown', 'delivery', 'develop'):
                 self.assertTrue((parent / ('sum-' + name) / 'SKILL.md').is_file())
         self.assertEqual((ROOT / 'CLAUDE.md').resolve(), ROOT / 'AGENTS.md')
 

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     with tempfile.TemporaryDirectory(prefix="sum-demo-") as tmp:
-        base = Path(tmp)
+        base = Path(tmp).resolve()  # macOS: /var is a symlink to /private/var.
         repo = base / "project"
         repo.mkdir()
         def git(*args, cwd=repo):
@@ -25,7 +25,7 @@ def main():
         main_sha = git("rev-parse", "HEAD")
         brief = base / "brief.md"
         brief.write_text("Add greeting.py with greet(name) returning 'Hello, <name>!' and verify it. Ask whether to preserve punctuation. Do not publish.")
-        env = os.environ.copy()
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("SUM_", "HERDR_"))}  # Inherited installation context never steers the lab.
         env.update(SUM_HERDR_BIN=str(ROOT / "tests/fixtures/herdr.py"),
                    FAKE_HERDR_ROOT=str(base / "fake"), FAKE_PARENT_CWD=str(ROOT),
                    HERDR_ENV="1", HERDR_PANE_ID="w-parent:p1", HERDR_SESSION="sum-test",
@@ -71,6 +71,30 @@ def main():
         assert backup["manifest"]["scope"] == "records-only"
         print("PASS: answer applied, real code committed on task branch, primary checkout unchanged.")
         print("PASS: worker report and records-only backup created; no merge, deletion, or external publication.")
+        # Self-development: an isolated checkout of a (fixture) installation while the task records above stay in service.
+        installation = base / "installation"
+        installation.mkdir()
+        git("init", "-b", "main", cwd=installation)
+        git("config", "user.name", "sum demo", cwd=installation)
+        git("config", "user.email", "demo@example.invalid", cwd=installation)
+        (installation / "AGENTS.md").write_text("fixture installation\n")
+        (installation / ".gitignore").write_text(".sum/\n")
+        git("add", ".", cwd=installation)
+        git("commit", "-m", "Installation fixture", cwd=installation)
+        (installation / ".sum").mkdir(mode=0o700)
+        (installation / ".sum/state.json").write_text('{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-09-05T00:00:00+00:00", "instance": "demo"}\n')
+        records = {p: p.read_bytes() for p in (base / "state").rglob("*") if p.is_file()}
+        dev = ctl("--home", str(installation / ".sum"), "dev", "prepare", "--name", "demo", "--pane")
+        assert Path(dev["path"]) == installation / ".sum/dev/demo" and dev["branch"] == "sum-dev/demo" and dev["role"] == "developer"
+        assert git("branch", "--show-current", cwd=installation) == "main" and git("status", "--porcelain", cwd=installation) == ""
+        (Path(dev["path"]) / "candidate.py").write_text("candidate = True\n")
+        again = ctl("--home", str(installation / ".sum"), "dev", "prepare", "--name", "demo")
+        assert again["reopened"] and again["dirty"] and (Path(dev["path"]) / "candidate.py").exists()
+        refused = ctl("--home", str(installation / ".sum"), "dev", "remove", "--name", "demo", check=False)
+        assert "uncommitted or untracked" in refused["error"] and (Path(dev["path"]) / "candidate.py").exists()
+        assert {p: p.read_bytes() for p in (base / "state").rglob("*") if p.is_file()} == records  # Task records and roles above are untouched.
+        assert ctl("init", pane="w-late:p1")["role"] == "developer" and ctl("init")["role"] == "coordinator"
+        print("PASS: development checkout prepared on its own branch with an ordinary pane, reopened with dirty work intact, never force-removed; installation branch and task records unchanged.")
         print("This demo uses NO actual model, Herdr binary, GitHub account, or provider credentials. Temporary fixture cleaned up.")
 
 if __name__ == "__main__": main()

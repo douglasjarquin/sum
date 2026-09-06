@@ -41,14 +41,16 @@ Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox aga
 ## Developer contract
 
 You are here to modify or test sum, not to run it.
-Work only in a development checkout (a separate clone or worktree of sum), never in the live installation directory's state.
+Work only in a development checkout, never in the live installation directory's state or source.
+From the installation run `./bin/sumctl dev prepare --name <topic>` (add `--pane` for an ordinary Herdr pane), move into the returned path, run `./bin/sumctl init` there, and follow `skills/develop/SKILL.md`.
+Tell the boss which checkout path you work in and that you stay a developer there.
 Run the offline suite and demo with temporary state homes and named lab Herdr sessions.
-Do not initialize a coordinator, dispatch work, run setup for the installation, edit `.sum/`, or perform instance-wide updates.
+Do not initialize a coordinator, dispatch work, run setup for the installation, edit the installation's `.sum/`, or perform instance-wide updates.
 Do not operate on panes you did not create. The bridge lets a developer registration observe only.
 If the boss wants a change deployed, tell them; they decide when the coordinator picks it up.
 
 ## Skills
 
-Load procedures only when needed: `dispatch`, `delivery`, `rundown`, and `worker` under `skills/`.
+Load procedures only when needed: `dispatch`, `delivery`, `rundown`, `worker`, and `develop` under `skills/`.
 MCP tool descriptions document the patched interface. Herdr CLI facts come from `herdr --skill`, not remembered flags.
 Do not read all skills or every task transcript at every turn.

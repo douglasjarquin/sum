@@ -56,7 +56,7 @@ Herdr's optional native integrations can be installed separately, for example `h
 | Component | Purpose |
 | --- | --- |
 | `AGENTS.md` and harness instruction aliases | A short coordinator contract, with a separate worker role |
-| Four bundled skills | Dispatch, worker execution, verification/PR delivery, and rundown/recovery |
+| Five bundled skills | Dispatch, worker execution, verification/PR delivery, rundown/recovery, and isolated self-development |
 | Release-matched Herdr skill | Copied from the installed `herdr --skill` during setup |
 | Pinned Herdr Mesh plus a small runtime overlay | Ten relevant MCP tools, current Herdr commands, bounded reads/waits, no swallowed handoff errors |
 | `bin/sumctl` | Durable task/decision/report files, native worktree creation and launch, bounded notices, and records backup |
@@ -144,6 +144,17 @@ Restore into a new empty directory, inspect the manifest, and point `sumctl --ho
 - Shell-capable harnesses share the task contract. Native instruction, MCP, quota, and resume capabilities still vary. The source does not claim all harnesses have been live-certified.
 - Protocol/version mismatches fail visibly. No tmux fallback, terminal-banner classifier, or silent downgrade is installed.
 - macOS and Linux are the targets. Windows is not supported by the file-locking helper in this MVP.
+
+## Develop sum without disturbing it
+
+The installation checkout serves the live coordinator, so sum is changed from an isolated development checkout. From the installation directory:
+
+```sh
+./bin/sumctl dev prepare --name my-topic        # add --pane to open an ordinary Herdr pane there
+cd .sum/dev/my-topic && ./bin/sumctl init       # reports developer
+```
+
+`dev prepare` is plain `git worktree add` into `.sum/dev/<name>` on branch `sum-dev/<name>`, plus a `.sum/dev.json` marker in the new checkout. Rerunning it reopens the checkout with uncommitted work intact. The checkout keeps its own `.sum`, `.local`, `.deps`, and generated configs; setup there never designates it, so no coordinator can be claimed in it. Its `bin/sumctl` refuses every write aimed at the installation's state, including through an inherited `SUM_HOME`, so lab tests cannot touch production records; a dispatched task whose target is sum gets the same isolation and keeps using the installed helper for its callbacks. `dev list` shows checkouts, and `dev remove --name my-topic` uses `git worktree remove` and `git branch -d` only, so dirty trees and unmerged branches are preserved. Ship through the normal task, verification, and PR procedure; nothing is installed until a human merges. Details and a bootstrap recipe for the preceding release are in `skills/develop/SKILL.md`.
 
 ## Development and publication
 
