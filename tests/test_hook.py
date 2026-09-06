@@ -423,6 +423,7 @@ class HookTest(unittest.TestCase):
         self.enable()
         with mock.patch.dict(os.environ, {"FAKE_PROMPT_HANG": "0.2"}), mock.patch.object(sumctl, "RECIPIENT_TIMEOUT", 0.05):
             q = self.question(task, text="Ambiguous? SECRET-Q")["question"]
+        time.sleep(0.3)  # Let the hung fake prompt finish its late save before the pane states change.
         self.assertEqual(self.open_returns(task), {f"question:{q['id']}": "uncertain"})
         prompts_before = len(self.prompts())
         self.pane_state(task["pane"], agent_status="blocked", screen="Allow write?")
@@ -484,6 +485,44 @@ class HookTest(unittest.TestCase):
         worker = [o for o in row["outcomes"] if o.get("task") == task["id"]][0]
         self.assertEqual(worker["action"], "unobservable")  # No snapshot row: the payload is not used as truth and nothing new is recorded.
         self.assertEqual(len(self.attention(task)), 1)
+
+    def test_plain_pump_with_pending_attention_and_a_filtered_sibling_stamps_only_the_attention(self):
+        task = self.started_task()
+        self.enable()
+        with mock.patch.dict(os.environ, {"FAKE_PROMPT_HANG": "0.2"}), mock.patch.object(sumctl, "RECIPIENT_TIMEOUT", 0.05):
+            q = self.question(task, text="Ambiguous?")["question"]
+        time.sleep(0.3)  # The hung fake prompt still holds the store for FAKE_PROMPT_HANG seconds; its late save must not clobber the pane states below.
+        with mock.patch.dict(os.environ, {"FAKE_PARENT_STATUS": "working"}):
+            self.pane_state(task["pane"], agent_status="blocked", screen="Approve?")
+            self.event("pane.agent_status_changed", task["pane"], "blocked")  # Parent busy: the attention stays pending.
+        [record] = self.attention(task)
+        self.assertEqual(self.open_returns(task), {f"question:{q['id']}": "uncertain", f"attention:{record['id']}": "not-delivered"})
+        prompts_before = len(self.prompts())
+        with mock.patch.dict(os.environ, {"FAKE_PARENT_STATUS": "working"}):
+            result = self.cli("pump")  # reason=None from the coordinator's own pane: no KeyError, presented inline before any observation.
+        self.assertEqual(result.returncode, 0, result.stderr)
+        [recipient] = json.loads(result.stdout)["recipients"]
+        self.assertEqual((recipient["state"], recipient["via"]), ("submitted", "inline"))
+        self.assertIn(f"attention {record['id']}", recipient["message"])
+        self.assertNotIn(q["id"], recipient["message"])
+        self.assertEqual(self.open_returns(task), {f"question:{q['id']}": "uncertain", f"attention:{record['id']}": "submitted"})
+        self.assertEqual(len(self.prompts()), prompts_before)
+        self.assertEqual(self.store.read(task["id"])["notice"]["reason"], "saved task state needs attention")
+        # The same pass from outside the recipient pane takes the prompt path; a second pending attention exercises it with reason=None.
+        self.pane_state(task["pane"], remove=True)
+        with mock.patch.dict(os.environ, {"FAKE_PARENT_STATUS": "working"}):
+            self.event("pane.exited", task["pane"])  # Busy root: the exit attention stays pending.
+            [exited] = [a for a in self.attention(task) if a["kind"] == "exited"]
+            self.assertEqual(sumctl.pump(self.store, None, inline=False)["prompts"], 0)  # Busy root, honest not-delivered, still no KeyError.
+        result = sumctl.pump(self.store, None, inline=False)
+        [recipient] = result["recipients"]
+        self.assertEqual((recipient["state"], recipient["via"]), ("submitted", "prompt"), recipient)
+        self.assertEqual(recipient["sent_obligations"], [f"attention:{exited['id']}"])
+        self.assertEqual(len(self.prompts()), prompts_before + 1)
+        self.assertNotIn(q["id"], self.prompts()[-1])
+        deliveries = sumctl.read_returns(self.store, task["id"])["deliveries"]
+        self.assertEqual(deliveries[-1]["obligations"], [f"attention:{exited['id']}"])  # Each attempt stamped exactly one attention; the uncertain question was never restamped.
+        self.assertFalse(any(f"question:{q['id']}" in d["obligations"] for d in deliveries[1:]))
 
     # --- robustness -------------------------------------------------------------------------------------------------------
 

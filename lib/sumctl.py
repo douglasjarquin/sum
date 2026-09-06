@@ -2031,7 +2031,7 @@ def deliver_locked(store, ctx, route, items, snapshots, force, reason, inline, r
     items = [(task, o) for task, o in items if (task["id"], o["id"]) in sendable]
     row["withheld"] = [{"task": o["task"], "id": o["id"], "state": o["notification"]["state"]} for o in withheld]
     kinds = [o["kind"] for _, o in items if o["kind"] != "refresh"]
-    legacy_reason = reason or (LEGACY_REASONS[kinds[0]] if kinds else None) or "saved task state needs attention"
+    legacy_reason = reason or (LEGACY_REASONS.get(kinds[0]) if kinds else None) or "saved task state needs attention"  # `attention` has no legacy wording; the generic reason serves.
     delivery = {"id": "d-" + uuid.uuid4().hex[:10], "at": now(), "recipient": {**{k: route.get(k) for k in ("recipient", "role", "machine", "session", "pane")}, "key": key},
                 "state": "in-flight", "runtime": {"sum_version": VERSION, "sha": runtime_sha()}}
     if not key:
