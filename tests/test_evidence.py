@@ -259,6 +259,109 @@ class EvidenceTest(core.CoreTest):
         row = sumctl.status(self.store)["tasks"][0]
         self.assertEqual(row["evidence"], {"records": 1, "pr": 7, "merged_for_task": False})
 
+    # --- evidence publication into the reconciled PR (issue #35) ----------------------------------------------------------
+
+    def attach_fake(self, **state):
+        """Switch this test to the attach-capable fake gh (issue #35 fixture) with one PR on record."""
+        self.gh_root.mkdir(exist_ok=True)
+        value = {"version": "2.100.0", "repository": "douglasjarquin/project", "visibility": "PUBLIC", "viewer_permission": "WRITE",
+                 "pr": {"number": 7, "state": "OPEN", "body": "## Summary\n\nReviewer prose stays.\n"}}
+        value.update(state)
+        (self.gh_root / "github.json").write_text(json.dumps(value))
+        patch = mock.patch.dict(os.environ, {"SUM_GH_BIN": str(ROOT / "tests/fixtures/gh_attach.py")})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def evidence_run(self, task, sha, run="run-1", scenario="counter.click"):
+        """A worker's comparison for the candidate under its checkout's .artifacts/evidence, screenshots only."""
+        publish_tests = ROOT / "tests/test_evidence_publish.py"
+        spec = importlib.util.spec_from_file_location("test_evidence_publish", publish_tests)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        root = Path(task["worktree"]) / ".artifacts/evidence"
+        directory = root / run / scenario
+        entries = {}
+        for role, build, colour, outcome in (("before", self.base, (200, 0, 0), "fail"), ("after", sha, (0, 0, 200), "pass")):
+            capture_dir = directory / f"{role}-{build[:12]}"
+            capture_dir.mkdir(parents=True)
+            data = module.png(24, 16, colour)
+            (capture_dir / "screenshot.png").write_bytes(data)
+            digest = sumctl.sha256_file(capture_dir / "screenshot.png")
+            media = [{"file": "screenshot.png", "bytes": len(data), "sha256": digest, "type": "image/png", "width": 24, "height": 16, "role": "screenshot", "derived": False}]
+            record = {"schema": 1, "run": run, "scenario": scenario, "feature": "counter", "role": role, "kind": "bugfix", "recipe": "browser", "outcome": outcome, "checkout": {"sha": build},
+                      "assertions": [{"expectation": "Count: 1", "met": outcome == "pass"}], "limitations": [], "media": media, "redaction": {"patterns": 4, "count": 0, "labelled": False},
+                      "content_hashes": {"screenshot.png": digest}}
+            (capture_dir / "capture.json").write_text(json.dumps(record))
+            entries[role] = {"dir": capture_dir.name, "outcome": outcome, "sha": build, "recipe": "browser", "kind": "bugfix", "assertions": record["assertions"], "limitations": [], "blocked_reason": None, "media": media}
+        (directory / "comparison.json").write_text(json.dumps({"schema": 1, "run": run, "scenario": scenario, "base": {"sha": self.base}, "candidate": {"sha": sha}, "before": entries["before"],
+                                                              "after": entries["after"], "findings": [], "verdict": "red-green", "label": "the base fails the user path and the candidate passes it",
+                                                              "kind": "bugfix", "visual_proof": "captured", "proves_claim": True, "outcomes": {"before": "fail", "after": "pass"}}))
+        return run
+
+    def publish(self, task, run="run-1", **changes):
+        args = dict(task=task["id"], run=run, scenario=None, visibility="public", evidence_root=None, verification_run=None, timeout=5, dry_run=False, allow_head_mismatch=False, replace_foreign_block=False)
+        args.update(changes)
+        return sumctl.pr_evidence(self.store, argparse.Namespace(**args))
+
+    def github_body(self):
+        return json.loads((self.gh_root / "github.json").read_text())["pr"]["body"]
+
+    def test_pr_evidence_publishes_from_the_record_and_keeps_receipts_under_the_task(self):
+        task = self.prepare()
+        sha = self.commit(task, "a.py")
+        self.report(task, handoff=self.handoff(sha))
+        self.attach_fake(pr={"number": 7, "state": "OPEN", "head_branch": task["branch"], "head_sha": sha, "body": "## Summary\n\nReviewer prose stays.\n"})
+        with self.assertRaisesRegex(sumctl.SumError, "no complete PR identity"):
+            self.publish(task)
+        self.reconcile(task)
+        run = self.evidence_run(task, sha)
+        result = self.publish(task, run=run)
+        publication = result["publication"]
+        self.assertEqual((publication["outcome"], publication["uploaded"], publication["reused"], publication["repository"], publication["number"]), ("published", 2, 0, "douglasjarquin/project", 7))
+        body = self.github_body()
+        self.assertTrue(body.startswith("## Summary\n\nReviewer prose stays.\n"))
+        self.assertEqual(body.count("<!-- before-and-after:start -->"), 1)
+        self.assertIn(f"candidate `{sha[:12]}`", body)
+        self.assertIn("not the coordinator's root verification", body)
+        self.assertNotIn("](./", body)
+        task_dir = self.store.path(task["id"])
+        self.assertTrue((task_dir / "publish" / "receipts.json").is_file())
+        self.assertEqual(len(list((task_dir / "publish" / run / "media").iterdir())), 2, "approved publish copies live under the task record, not only in the checkout")
+        self.assertTrue((Path(task["worktree"]) / ".artifacts/evidence" / run / "counter.click" / f"after-{sha[:12]}" / "screenshot.png").is_file(), "originals untouched")
+        saved = self.store.read(task["id"])
+        records = [r for r in saved["evidence"] if r["kind"] == "publication" and r["source"] == "coordinator"]
+        self.assertEqual((len(records), records[0]["outcome"], records[0]["candidate"], records[0]["receipts"]), (1, "published", sha, str(task_dir / "publish" / "receipts.json")))
+        view = sumctl.evidence_view(saved)
+        self.assertIn("coordinator verification of the current candidate", view["closure"]["missing"], "publication changes no closure prerequisite")
+        again = self.publish(task, run=run)["publication"]
+        self.assertEqual((again["outcome"], again["uploaded"]), ("unchanged", 0))
+        calls = [json.loads(line)["args"] for line in (self.gh_root / "calls.jsonl").read_text().splitlines()]
+        self.assertEqual(len([c for c in calls if c[:2] == ["pr", "edit"] and "--attach" in c]), 1, "the second publication uploads nothing")
+        self.assertTrue(calls[-1][:2] == ["pr", "view"] or calls[-1][:2] == ["repo", "view"])
+
+    def test_pr_evidence_defers_on_old_gh_and_refuses_unrecorded_heads_and_non_coordinators(self):
+        task = self.prepare()
+        sha = self.commit(task, "a.py")
+        self.report(task, handoff=self.handoff(sha))
+        self.attach_fake(version="2.78.0", pr={"number": 7, "state": "OPEN", "head_branch": task["branch"], "head_sha": sha, "body": "prose\n"})
+        self.reconcile(task)
+        run = self.evidence_run(task, sha)
+        result = self.publish(task, run=run)["publication"]
+        self.assertEqual(result["outcome"], "deferred")
+        self.assertIn("2.99.0+", result["reason"])
+        self.assertEqual(self.github_body(), "prose\n")
+        self.assertTrue((self.store.path(task["id"]) / "publish" / run / "media").is_dir(), "publish copies wait for a capable gh")
+        saved = self.store.read(task["id"])
+        self.assertEqual([r["outcome"] for r in saved["evidence"] if r["kind"] == "publication" and r["source"] == "coordinator"], ["deferred"])
+        with self.pane("w-other:p9"):
+            with self.assertRaisesRegex(sumctl.SumError, "not the registered coordinator"):
+                self.publish(task, run=run)
+        saved["pr"]["identity"]["head_sha"] = "e" * 40
+        self.store.save(saved)
+        with self.assertRaisesRegex(sumctl.SumError, "not a recorded worker candidate"):
+            self.publish(task, run=run)
+        self.assertEqual(self.github_body(), "prose\n")
+
 
 for _name in dir(core.CoreTest):
     if _name.startswith("test_"):

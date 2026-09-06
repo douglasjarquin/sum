@@ -2,7 +2,7 @@
 
 ## Installation contract
 
-`mise.toml` pins Python 3.13.5, Node 22.19.0, GitHub CLI 2.78.0, Herdr 0.8.2, and quota-axi 0.1.37. Git and mise are host prerequisites. No global Node package installation is required.
+`mise.toml` pins Python 3.13.5, Node 22.19.0, GitHub CLI 2.100.0, Herdr 0.8.2, and quota-axi 0.1.37. Git and mise are host prerequisites. No global Node package installation is required.
 
 `mise-tasks/setup` installs those versions, then `scripts/setup.py` performs the first install:
 
@@ -15,6 +15,15 @@ Re-running setup is therefore safe while a coordinator, workers, or an MCP serve
 Newer code or dependencies go into a staged release instead (below).
 
 The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
+
+## GitHub CLI 2.100.0 and `--attach`
+
+Evidence publication (`.agents/skills/evidence/scripts/evidence_publish.py`, `sumctl pr evidence`) uploads media only through `gh pr edit --attach`, added in GitHub CLI 2.99.0 (2026-09-01); 2.100.0 (2026-09-03) fixes its retry windows and the 50-file batch limit.
+The pin moved from 2.78.0 to 2.100.0 for that reason and nothing else changed in how gh is used.
+The new version reaches an installation the way every dependency does: `release stage` installs the pinned tools of the bundled `mise.toml` and links them into that release's own `.local/bin`, so a staged release carries gh 2.100.0 while the checkout's existing `.local/bin/gh` link stays at whatever it was (setup never retargets a link a running process may hold).
+`update apply` activates it with the usual checks and `update rollback` returns to the previous release; no running tool, harness, or MCP server is retargeted or restarted.
+Until a capable gh is the runtime's, the publisher reads the installed binary (`capabilities`: version and `pr edit --help`), reports `deferred`, and leaves local evidence and the PR body untouched; capture never depends on it.
+Nothing is installed per publication.
 
 ## Installation identity versus runtime tree
 
@@ -130,6 +139,8 @@ The contract is harness-neutral. The matrix describes installation surfaces, **n
 - Herdr integration installation: https://herdr.dev/docs/integrations/
 - Mesh source: https://github.com/runchr-works/herdr-mesh/tree/54adef519aa6af4dcd0bbd72586d414abab90046
 - quota-axi package: https://github.com/kunchenguid/quota-axi/blob/main/package.json
+- GitHub CLI 2.99.0 (`--attach`): https://github.com/cli/cli/releases/tag/v2.99.0 and 2.100.0: https://github.com/cli/cli/releases/tag/v2.100.0 (2026-09-06)
+- before-and-after skill (PR block markup): https://github.com/vercel-labs/before-and-after at 8306d34f459b6704e08e6adb5829fcddb0dc3557
 - Codex release: https://github.com/openai/codex/releases/tag/rust-v0.153.4
 - Codex MCP configuration: https://developers.openai.com/codex/mcp/
 - Claude MCP configuration: https://code.claude.com/docs/en/mcp

@@ -46,6 +46,16 @@ Then run `sumctl pr reconcile TASK_ID --number N` (optionally `--repo owner/name
 An uncertain lookup (timeout, unknown number) is recorded as uncertain evidence and leaves the last exact observation in place. Reconcile again after every new push. Switching to a different PR number needs `--replace` after inspecting both. A PR from an older task or a legacy prose report is attached the same way, by inspecting the actual PR, never by parsing a URL or matching branch names.
 A task whose identity stays incomplete keeps working; it is simply not ready for cleanup.
 
+### Publish before/after evidence into the PR
+
+When the worker's handoff lists a `comparison.json` (see `.agents/skills/evidence/`) and the boss wants reviewers to see it, run `sumctl pr evidence TASK_ID --run RUN --visibility public|private` after `pr reconcile`.
+It publishes as you, the coordinator, through the runtime's own `evidence_publish.py` (never the candidate's copy) into exactly the reconciled PR: the repository, number, and head SHA come from the record, the head must be a recorded worker candidate, and `--visibility` must match what `gh` reports for the destination or nothing is uploaded.
+Every media file is validated against the worker's comparison and capture manifests (hash, dimensions, containment inside the run directory, size, attachable type, no secret-shaped text) before `gh pr edit --attach` sees it; approved publish copies, receipts per content hash, and result records live under `.sum/tasks/TASK_ID/publish/` and survive cleanup.
+Only the marked `<!-- before-and-after:start/end -->` block is written: appended once, then replaced in place; a second run reuses the receipts and uploads nothing; human prose outside the block is preserved from the body read just before the edit, and a block someone else wrote or edited is refused until you inspect it and pass `--replace-foreign-block`.
+Outcomes are `published`, `unchanged`, `deferred` (the runtime's gh has no `--attach`; stage a release with the current pin), `refused`, `failed` (the previous body was restored), or `uncertain` (read the PR and the receipts before retrying); each is one `publication` record with source `coordinator`.
+The block says in words that the media is the worker's claim about the candidate build. It changes no closure prerequisite: root verification, the independent review, and the boss's merge decision are exactly as before, and nothing here approves, merges, or changes permissions.
+`--dry-run` computes the body and attachments without editing; `--evidence-root` points at a promoted copy when the worker checkout is gone.
+
 ## Clean up after the merge
 
 Only the boss merges. When they say a PR is merged, run `sumctl cleanup TASK_ID` first: it re-observes that exact PR through `gh`, requires `merged` with a merge commit (closed is not merged), compares the checkout HEAD with the merged head (squash and rebase merges pass; an extra local commit blocks), verifies workspace, pane, checkout, branch, and repository by identity, confirms through `agent get`, `pane process-info`, and an `lsof` cwd scan that the agent and any child in the checkout exited (Herdr `idle`/`done` is not exit), and lists staged, modified, untracked, and non-cache ignored files. Every blocker is named; nothing is removed.
