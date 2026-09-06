@@ -31,6 +31,12 @@ The new tests cover staging into an installation reached through a symlink and a
 A real staging probe ran in a temporary lab installation with the real installer: `mise install`/`mise which` against the bundled `mise.toml`, a Mesh clone from the installation's local clone, `npm ci`, the overlay, `herdr --skill`, and the MCP smoke test from the staged tree, followed by `doctor` and the MCP smoke test through the installation entrypoint with `.local/current` pointed at that release.
 No model, GitHub write, live installation state, or user `default` session was involved; `mise run setup` and `mise run test-live` were not re-run for this slice.
 
+## Versioned brief slice (2026-09-05, macOS)
+
+Executed on the development host for issue #5 from a task checkout: the Python suites (78 tests), the Node Mesh tests (10), and the offline demo including its new brief-revision section.
+The new tests cover the dispatch-time version sidecar and `r1`, staging `r2` while a handle reads the original brief (bytes, path, and approved task unchanged), duplicate regeneration writing nothing, the machine-generated change summary and verification flag, refusal to regenerate after the approved body was altered, stale/unknown/damaged/missing revision requests, orphan revision files never overwritten, explicit request and adopt with the notice slot untouched, an unsupported sidecar inspected without migration while `ask`/`report`/`show` keep working, the frozen helper from `b1239a4` preparing, asking, answering, reporting, resolving, and showing on records that also carry new metadata, concurrent old and new writers plus regenerations, and a records-only backup that carries every revision and sidecar and restores relocated paths.
+No model, GitHub write, live installation state, or user `default` session was involved.
+
 ## Not executed here
 
 - A full `mise run setup` dependency download/install. The container could not reach the required network endpoints.

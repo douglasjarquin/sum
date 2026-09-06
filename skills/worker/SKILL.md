@@ -21,6 +21,12 @@ Otherwise report the commands you actually ran, their exit results, and remainin
 
 Stop after two unsuccessful repair iterations. Save a question/report instead of spending the remaining quota in a loop. There is no hidden supervisor enforcing this instruction.
 
+## Brief revisions
+
+Your brief is one numbered revision generated from the task record. The coordinator may stage a newer revision (updated procedure or newly recorded decisions) without touching the file you read.
+`sumctl brief list TASK_ID` (the `show` command also carries a `versions` field) shows revisions, their integrity, and whether one is `requested`.
+Adopt a requested revision only when the coordinator asks: read it, run `sumctl brief adopt TASK_ID rN`, and continue from your current progress. The approved task never changes between revisions; a new revision is not a new task and does not restart your implementation.
+
 ## Questions
 
 Before waiting, use the exact `sumctl ask` command in your brief with a stable short `--key`.

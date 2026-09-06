@@ -34,6 +34,8 @@ Replace `codex` with the actual selected Herdr integration kind. Extra approved 
 No permission-bypass flags are added by sum. The helper calls native `herdr worktree create`, verifies the returned checkout, launches with `agent start`, submits the worker brief through `agent prompt`, and registers the new pane as that task's worker so it can never claim coordination.
 Use `prepare` instead of `dispatch` to create the worktree/record without starting an agent; later `start TASK_ID` starts it once.
 
+The brief written at dispatch is revision `r1`; the task's `versions.json` records the sum version and brief schema it started under. After answers are applied or sum's worker procedure changes, `./bin/sumctl brief regenerate TASK_ID` stages `briefs/rN.md` from the record with a machine-generated change summary; the worker's current brief is never overwritten. Ask the worker to refresh only explicitly: `./bin/sumctl brief request TASK_ID rN`, then tell it in your own words to read that revision and continue. Requesting is bookkeeping separate from the notice slot; it sends nothing by itself.
+
 Use returned IDs and paths. Do not infer IDs from labels. Do not copy the coordinator's instructions into the target repository.
 A trust/auth prompt can make startup uncertain while leaving a real agent alive. Inspect the saved pane. Never blindly call dispatch/start again.
 
