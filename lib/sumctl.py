@@ -5404,7 +5404,7 @@ def writing_logs(record, worktree, window=WRITING_WINDOW):
 
 CLEANUP_SCHEMA = 1
 STOP_FIRST_BLOCKERS = {"service", "service-unknown", "occupant", "writing", "panes"}
-DISPOSABLE_IGNORED = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".DS_Store")
+DISPOSABLE_IGNORED = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".DS_Store", ".artifacts")  # .artifacts/: VERIFY.md run records, per checkout (issue #31).
 LSOF_TIMEOUT = 30
 SHELLS = {"bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "pwsh", "-bash", "-zsh", "-sh", "-fish"}
 

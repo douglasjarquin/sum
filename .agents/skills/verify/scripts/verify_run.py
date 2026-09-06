@@ -192,7 +192,7 @@ def mise_task(root: Path, owner_relative: str, name="verify"):
     if not inside:
         raise Blocked(f"`mise run {name}` here would execute a task defined outside this repository ({source or 'unknown source'}); "
                       "it is another project's command, not this one's verification.")
-    return {"name": name, "source": str(source_path), "owner": str(owner)}
+    return {"name": name, "source": str(source_path), "owner": str(owner), "binary": binary}
 
 
 def freshness_state(root: Path, freshness):
@@ -242,14 +242,14 @@ def parse_scenario_args(values):
     return outcomes
 
 
-def run_entrypoint(root: Path, run_dir: Path, timeout: int):
+def run_entrypoint(root: Path, run_dir: Path, timeout: int, binary: str):
     log = run_dir / "verify.log"
     started = utc_now()
     clock = time.monotonic()
     with log.open("w", encoding="utf-8") as handle:
         try:
-            proc = subprocess.run(["mise", "run", "verify"], cwd=str(root), stdout=handle, stderr=subprocess.STDOUT, timeout=timeout,
-                                  env={**os.environ, "SUM_VERIFY_RUN_DIR": str(run_dir)})
+            proc = subprocess.run([binary, "run", "verify"], cwd=str(root), stdout=handle, stderr=subprocess.STDOUT, timeout=timeout,
+                                  env={**os.environ, "VERIFY_RUN_DIR": str(run_dir)})
             exit_code, timed_out = proc.returncode, False
         except subprocess.TimeoutExpired:
             exit_code, timed_out = None, True
@@ -299,7 +299,7 @@ def main(argv=None):
             run_dir = artifacts / run_id
             run_dir.mkdir(parents=True, exist_ok=False)
             record["artifacts"]["run_dir"] = str(run_dir.relative_to(root))
-            execution = run_entrypoint(root, run_dir, args.timeout or contract["timeout"])
+            execution = run_entrypoint(root, run_dir, args.timeout or contract["timeout"], record["task"]["binary"])
             record["execution"] = execution
             record["freshness"] = freshness_state(root, contract["freshness"])
             automated_status = "pass" if execution["exit"] == 0 else ("blocked" if execution["timed_out"] else "fail")
