@@ -70,7 +70,7 @@ ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
 READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show",
-                      "preset-list", "preset-show", "hook-status"}
+                      "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -2176,7 +2176,16 @@ def hook_manifest(store):
              'platforms = ["linux", "macos"]', "", "[[startup]]", f"command = {command}", ""]
     for event in HOOK_EVENTS:
         lines += ["[[events]]", f"on = {json.dumps(event)}", f"command = {command}", ""]
+    # Issue #18: an optional read-only inbox entrypoint. It runs the ordinary `sumctl inbox` listing (records only, no prompt) in a
+    # Herdr pane and waits for Enter so the output can be read; nothing is invoked unless the user or `metadata inbox` opens it.
+    lines += ["[[panes]]", f"id = {json.dumps(INBOX_ENTRYPOINT)}", 'title = "sum inbox"', 'placement = "popup"', f"command = {toml_list(inbox_command(store))}", ""]
     return "\n".join(lines)
+
+
+def inbox_command(store):
+    """`sh -c` keeps the listing on screen after the helper exits; the helper path and home are fixed arguments, never interpolated."""
+    return ["/bin/sh", "-c", '"$0" "$@"; printf \'\\n[sum inbox] records only; press Enter to close\\n\'; read _',
+            str(ROOT / "bin" / "sumctl"), "--home", str(store.home), "inbox"]
 
 
 def read_health(store):
@@ -2501,8 +2510,11 @@ def hook_event(store, environ):
         snapshots = Snapshots()
         tasks = [t for t in store.all() if t["status"] != "archived" and t.get("session") == session and t["machine"] == machine()]
         result = reconcile(store, None, snapshots, "Herdr started; catching up on saved returns", tasks=tasks) if tasks else {"attention": [], "returns": None}
+        projection = metadata_sync(store, snapshots=snapshots, reason="Herdr started; tokens are not restored across a restart", reconcile=True)
         row = {"at": now(), "event": event, "session": session, "outcome": "reconciled", "tasks": len(tasks), "prompts": (result["returns"] or {}).get("prompts", 0),
                "attention": [r for r in result["attention"] if r.get("outcome") == "recorded"], "handler_ms": round((time.monotonic() - started) * 1000)}
+        if projection.get("enabled"):
+            row["metadata"] = {"forgotten": len(projection.get("forgotten") or []), "written": sum(1 for r in projection.get("tasks", []) for e in r.get("endpoints", []) if e.get("outcome") == "written")}
         write_health(store, {"events": 1, "handled": 1}, last_event=row)
         return row
     try:
@@ -2583,6 +2595,10 @@ def hook_event(store, environ):
             result = pump(store, None, tasks=[task["id"]], recipient="parent", snapshots=snapshots, inline=False, retry_stalled=True, reason="saved task state needs attention")
             outcome["parent_prompts"] = result["prompts"]
         outcomes.append(outcome)
+    projection = metadata_sync(store, tasks=[t["id"] for t in tasks], snapshots=snapshots, reason=f"event {event}", root=True)
+    if projection.get("enabled"):
+        row["metadata"] = {k: projection.get(k) for k in ("degraded", "herdr_calls")} | {"written": sum(1 for r in projection.get("tasks", []) for e in r.get("endpoints", []) if e.get("outcome") == "written"),
+                                                                                        "notification": (projection.get("notification") or {}).get("outcome")}
     row.update(outcome="handled", outcomes=outcomes, herdr_calls=snapshots.calls, handler_ms=round((time.monotonic() - started) * 1000))
     write_health(store, {"events": 1, "handled": 1}, last_event=row)
     return row
@@ -2595,6 +2611,612 @@ def hook_event_main(store, environ):
     except Exception as exc:  # noqa: BLE001 - every failure is recorded before it propagates; KeyboardInterrupt/SystemExit pass through untouched.
         record_hook_error(store, "event", exc, event=environ.get("HERDR_PLUGIN_EVENT"))
         raise
+
+
+# --- native metadata: sum task state projected into namespaced Herdr tokens and optional notifications (issue #18) --------
+#
+# Herdr 0.8.2 renders plugin-reported pane and workspace tokens as `$name` in sidebar rows and exposes them on `pane get`,
+# `agent get/list`, and `workspace get/list` (verified in a named lab session: `pane report-metadata` and `workspace
+# report-metadata` print nothing on success, a token patch sets or clears named keys, any source may clear a key, values are
+# capped at 80 characters, `notification show` answers `shown: false, reason: disabled` while the user's toast delivery is
+# off). sum writes only `sum_*` tokens under its own `sum:<instance>` source, only to the endpoints its records own (the
+# task workspace, the recorded worker pane, the registered coordinator pane), and only when the derived task state changed.
+# Task state comes from the records alone (questions, evidence, cleanup, brief revisions, attention); the agent lifecycle
+# (`report-agent`), pane labels, titles, display names, and state labels are never touched, so a worker seen `working`
+# beside a `needs-decision` token is exactly the truth. Everything here is optional and best effort: a missing capability, a
+# refused write, or a disabled toast is recorded as degraded visibility and never blocks ask/report/dispatch/update.
+
+METADATA_DIR = "metadata"
+METADATA_FILE = "state.json"
+METADATA_SCHEMA = 1
+METADATA_ERRORS = 20
+METADATA_TIMEOUT = 5
+TOKEN_VALUE_MAX = 80
+TOKEN_NAME = re.compile(r"[A-Za-z0-9_-]{1,32}\Z")
+TASK_TOKENS = ("sum_state", "sum_task", "sum_repo", "sum_rev", "sum_pr")
+ROOT_TOKENS = ("sum_inbox", "sum_tasks")
+SUM_STATES = ("needs-attention", "needs-decision", "merged-cleanup-pending", "review-ready", "attention-blocked", "attention-exited",
+              "attention-closed", "attention-idle", "instruction-refresh-pending", "answer-pending", "pr-open", "verified", "preparing", "running")
+NOTIFY_STATES = ("needs-attention", "needs-decision", "merged-cleanup-pending", "review-ready", "attention-blocked", "instruction-refresh-pending")
+NOTIFY_SOUND = {"needs-decision": "request", "attention-blocked": "request", "needs-attention": "request", "review-ready": "done",
+                "merged-cleanup-pending": "done", "instruction-refresh-pending": "none"}
+NOTIFY_TITLE_MAX = 80
+NOTIFY_BODY_MAX = 240
+INBOX_ENTRYPOINT = "inbox"
+INBOX_PLACEMENTS = ("popup", "split", "tab", "zoomed", "overlay")
+METADATA_NOTE = ("Display-only `sum_*` tokens under sum's own source on endpoints this instance recorded; the agent lifecycle, pane labels, and "
+                 "the user's Herdr configuration are untouched. Tokens render only where the user's sidebar rows name them (`metadata snippet`). "
+                 "The CLI and rundown stay authoritative; a missing capability or a refused write is degraded visibility, never a blocked task.")
+
+
+def metadata_path(store):
+    return store.home / METADATA_DIR / METADATA_FILE
+
+
+def empty_metadata():
+    return {"schema": METADATA_SCHEMA, "enabled": False, "notify": False, "source": None, "capabilities": {}, "resources": {}, "root": None,
+            "notified": {}, "errors": [], "degraded": None, "stats": {"passes": 0, "writes": 0, "cleared": 0, "notifications": 0}}
+
+
+def read_metadata(store):
+    path = metadata_path(store)
+    if path.is_symlink():
+        raise SumError(f"{path} must not be a symlink.")
+    if not path.is_file():
+        return empty_metadata()
+    value = read_json(path)
+    if value.get("schema") != METADATA_SCHEMA:
+        raise SumError(f"Unsupported metadata schema in {path}; inspect it, sum never migrates it in place.")
+    return {**empty_metadata(), **value}
+
+
+def write_metadata(store, value):
+    value["errors"] = value.get("errors", [])[-METADATA_ERRORS:]
+    value["updated_at"] = now()
+    atomic_json(metadata_path(store), value)
+
+
+@contextmanager
+def metadata_lock(store):
+    """Serializes projection passes (a task write and a native event may coincide) without holding the task-state lock during Herdr I/O."""
+    store.init()
+    with (store.home / ".metadata.lock").open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def metadata_source(store):
+    state = read_json(store.home / "state.json")
+    if not state.get("instance"):
+        raise SumError("This instance has no identity yet; run ./bin/sumctl init in the coordinator pane first.")
+    return f"sum:{state['instance'][:12]}"
+
+
+def token_value(text):
+    """Herdr's own normalization, applied first so the recorded value equals what the server keeps: one line, no controls, 80 characters."""
+    value = re.sub(r"\s+", " ", "".join(ch for ch in str(text) if ch.isprintable())).strip()
+    return value[:TOKEN_VALUE_MAX]
+
+
+def probe_capabilities(session):
+    """What the pinned, installed binary actually accepts, read from its own schema; documentation fields are not assumed."""
+    try:
+        schema = herdr(["api", "schema", "--json"], session=session, timeout=15)
+    except SumError as exc:
+        return {"pane_tokens": False, "workspace_tokens": False, "notification": False, "error": f"api schema unavailable: {str(exc)[:200]}"}
+    defs = ((schema.get("schemas") or {}).get("request") or {}).get("$defs") or {}
+    def has(name, field):
+        return field in ((defs.get(name) or {}).get("properties") or {})
+    return {"pane_tokens": has("PaneReportMetadataParams", "tokens"), "workspace_tokens": has("WorkspaceReportMetadataParams", "tokens"),
+            "notification": has("NotificationShowParams", "title"), "protocol": schema.get("protocol"), "probed_at": now()}
+
+
+def task_state(store, task):
+    """The sum-specific state of one task, from records only. Ordered by what the boss must do first; never an agent lifecycle status."""
+    if task["status"] == "archived":
+        return None
+    if task["status"] == "needs-attention" or task.get("error"):
+        return "needs-attention"
+    if any(q["status"] == "open" for q in task.get("questions", [])):
+        return "needs-decision"
+    if cleanup_pending(task):
+        return "merged-cleanup-pending"
+    obligations = open_obligations(store, task)
+    kinds = {o["kind"] for o in obligations}
+    if "report" in kinds:
+        return "review-ready"
+    attention = [o["attention"] for o in obligations if o["kind"] == "attention"]
+    for kind in ("blocked", "exited", "closed", "idle-without-report"):
+        if kind in attention:
+            return "attention-" + kind.split("-")[0]
+    if "refresh" in kinds:
+        return "instruction-refresh-pending"
+    if "answer" in kinds:
+        return "answer-pending"
+    pr = task.get("pr") or {}
+    if pr.get("identity") and pr.get("state") not in ("merged", None):
+        return "pr-open"
+    if task.get("report"):
+        return "verified"
+    if task["status"] in ("preparing", "prepared", "starting"):
+        return "preparing"
+    return "running"
+
+
+def task_tokens(store, task, state):
+    """The bounded identity beside the state: task id, repository name, a revision mismatch, and the exact PR URL when one is recorded."""
+    if state is None:
+        return {}
+    tokens = {"sum_state": state, "sum_task": task["id"], "sum_repo": token_value(Path(task["repository"]).name)}
+    try:
+        versions = read_versions(store, task)
+        requested = versions.get("requested")
+        if requested and requested != versions.get("active"):
+            tokens["sum_rev"] = token_value(f"{versions.get('active')}>{requested}")
+    except SumError:
+        pass
+    url = ((task.get("pr") or {}).get("identity") or {}).get("url")
+    if url:
+        tokens["sum_pr"] = token_value(url)
+    return tokens
+
+
+def root_tokens(store, tasks, states):
+    """The coordinator pane's inbox line: counts per state the boss acts on, plus a pending contract refresh; never task prose."""
+    active = [t for t in tasks if t["status"] != "archived"]
+    labels = (("needs-decision", "decision"), ("review-ready", "review"), ("merged-cleanup-pending", "cleanup"), ("needs-attention", "attention"),
+              ("attention-blocked", "blocked"), ("attention-exited", "exited"), ("attention-closed", "closed"), ("attention-idle", "idle"),
+              ("instruction-refresh-pending", "refresh"))
+    counts = [(sum(1 for s in states.values() if s == state), label) for state, label in labels]
+    parts = [f"{n} {label}" for n, label in counts if n]
+    contract = contract_state(store)
+    if contract.get("requested"):
+        parts.append(f"contract {contract['requested']}")
+    return {"sum_inbox": token_value(" · ".join(parts) if parts else "clear"), "sum_tasks": token_value(f"{len(active)} active")}
+
+
+def token_patch(desired, previous):
+    """Only what differs: set keys whose value changed, clear recorded keys that are gone. Empty means no write at all."""
+    sets = {k: v for k, v in desired.items() if previous.get(k) != v}
+    clears = [k for k in previous if k not in desired]
+    return sets, clears
+
+
+def report_metadata(kind, session, target, source, sets, clears):
+    """One `report-metadata` call. Returns (ok, code): success prints nothing in 0.8.2; a Herdr error code is returned, a missing command raises."""
+    args = [kind, "report-metadata", target, "--source", source]
+    for key in sorted(sets):
+        args += ["--token", f"{key}={sets[key]}"]
+    for key in sorted(clears):
+        args += ["--clear-token", key]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
+        raise SumError("Invalid session name.")
+    result = run([tool("herdr"), "--session", session, *args], timeout=METADATA_TIMEOUT, check=False)
+    if result.returncode == 0:
+        return True, None
+    code = herdr_error_code(result)
+    if code:
+        return False, code
+    raise SumError(f"herdr {kind} report-metadata exited {result.returncode}: {(result.stderr or result.stdout).strip()[-300:]}")
+
+
+def record_metadata_error(meta, stage, error, **extra):
+    meta["errors"] = meta.get("errors", []) + [{"at": now(), "stage": stage, "error": str(error)[:500], **extra}]
+    meta["last_error"] = meta["errors"][-1]
+
+
+def verified_pane(session, pane, expected_cwd, snapshots):
+    """The recorded pane still runs in the recorded checkout: from the session snapshot when it hosts an agent, else one `pane get`.
+
+    Returns "ok", "absent" (pane_not_found), "stale" (another cwd: a reused or rebound pane), or "unobservable".
+    """
+    try:
+        snapshot = snapshots.get(session)
+        agent = snapshot["agents"].get(pane) if snapshot["ok"] else None
+        if agent is None:
+            snapshots.calls += 1
+            result, code = herdr_observe(["pane", "get", pane], session=session, timeout=METADATA_TIMEOUT)
+            if code == "pane_not_found":
+                return "absent"
+            if result is None:
+                return "unobservable"
+            agent = result.get("pane", result) if isinstance(result, dict) else {}
+        cwd = agent.get("cwd") or agent.get("working_directory") if isinstance(agent, dict) else None
+        if not cwd or not expected_cwd:
+            return "unobservable"
+        return "ok" if Path(cwd).resolve() == Path(expected_cwd).resolve() else "stale"
+    except SumError:
+        return "unobservable"
+
+
+def project_resource(meta, kind, session, target, desired, resource, *, verify=None):
+    """Bring one pane or workspace to `desired`; returns the outcome row and the updated resource record (None when the endpoint is gone)."""
+    previous = (resource or {}).get("tokens", {}) if resource and resource.get("id") == target else {}
+    capability = "pane_tokens" if kind == "pane" else "workspace_tokens"
+    row = {"kind": kind, "id": target}
+    if resource and resource.get("id") and resource["id"] != target and resource.get("tokens"):
+        # The task moved to another endpoint (rebind): clear only the keys sum wrote on the old one, without observing it first.
+        stale = clear_resource(meta, kind, resource["session"], resource["id"], resource["tokens"])
+        row["cleared_previous"] = {"id": resource["id"], **stale}
+    sets, clears = token_patch(desired, previous)
+    if not sets and not clears:
+        row["outcome"] = "unchanged"
+        return row, ({"id": target, "session": session, "tokens": previous} if desired else None)
+    if not meta["capabilities"].get(capability):
+        row.update(outcome="unsupported", reason=f"{capability} not available in the probed Herdr build")
+        return row, ({"id": target, "session": session, "tokens": previous} if previous else None)
+    if verify and sets:
+        identity_state = verify()
+        row["identity"] = identity_state
+        if identity_state == "absent":
+            row["outcome"] = "absent"
+            return row, None
+        if identity_state != "ok":
+            if previous:  # Our own keys on a pane that no longer runs the task: clear them, write nothing new.
+                row.update(clear_resource(meta, kind, session, target, previous))
+            row.update(outcome="skipped", reason=f"pane identity {identity_state}; tokens are written only to a verified endpoint")
+            return row, None
+    try:
+        ok, code = report_metadata(kind, session, target, meta["source"], sets, clears)
+    except SumError as exc:
+        meta["capabilities"][capability] = False
+        meta["degraded"] = f"{kind} report-metadata failed: {str(exc)[:200]}"
+        record_metadata_error(meta, "report", exc, kind=kind, id=target)
+        row.update(outcome="failed", reason=str(exc)[:200])
+        return row, ({"id": target, "session": session, "tokens": previous} if previous else None)
+    if not ok:
+        if code in ("pane_not_found", "workspace_not_found"):
+            row.update(outcome="absent", code=code)
+            return row, None
+        record_metadata_error(meta, "report", code, kind=kind, id=target)
+        row.update(outcome="refused", code=code)
+        return row, ({"id": target, "session": session, "tokens": previous} if previous else None)
+    meta["stats"]["writes"] += 1
+    meta["stats"]["cleared"] += len(clears)
+    row.update(outcome="written", set=sorted(sets), cleared=sorted(clears))
+    return row, ({"id": target, "session": session, "tokens": dict(desired)} if desired else None)
+
+
+def clear_resource(meta, kind, session, target, tokens):
+    """Clear exactly the recorded keys on one endpoint. An absent endpoint is fine; a refused clear is recorded and reported."""
+    if not tokens:
+        return {"cleared": []}
+    try:
+        ok, code = report_metadata(kind, session, target, meta["source"], {}, list(tokens))
+    except SumError as exc:
+        record_metadata_error(meta, "clear", exc, kind=kind, id=target)
+        return {"cleared": [], "failed": str(exc)[:200]}
+    if ok:
+        meta["stats"]["cleared"] += len(tokens)
+        return {"cleared": sorted(tokens)}
+    if code in ("pane_not_found", "workspace_not_found"):
+        return {"cleared": sorted(tokens), "absent": code}
+    record_metadata_error(meta, "clear", code, kind=kind, id=target)
+    return {"cleared": [], "refused": code}
+
+
+def project_task(store, meta, task, snapshots, transitions):
+    """One task: derive the state, then patch its workspace and (verified) worker pane only where the recorded tokens differ."""
+    state = task_state(store, task)
+    desired = task_tokens(store, task, state)
+    resources = meta["resources"].get(task["id"]) or {}
+    previous_state = resources.get("state")
+    row = {"task": task["id"], "state": state, "previous": previous_state, "endpoints": []}
+    if state != previous_state:
+        meta["notified"].pop(task["id"], None)  # Leaving a state forgets it: entering it again later is a fresh transition, once.
+        if state in NOTIFY_STATES:
+            transitions.append((task, state))
+    updated = {"state": state}
+    if task.get("workspace"):
+        outcome, record = project_resource(meta, "workspace", task["session"], task["workspace"], desired, resources.get("workspace"))
+        row["endpoints"].append(outcome)
+        if record:
+            updated["workspace"] = record
+    elif resources.get("workspace"):
+        row["endpoints"].append({"kind": "workspace", **clear_resource(meta, "workspace", resources["workspace"]["session"], resources["workspace"]["id"], resources["workspace"]["tokens"])})
+    if task.get("pane"):
+        verify = lambda: verified_pane(task["session"], task["pane"], task.get("worktree"), snapshots)  # noqa: E731 - bound once per write.
+        outcome, record = project_resource(meta, "pane", task["session"], task["pane"], desired, resources.get("pane"), verify=verify)
+        row["endpoints"].append(outcome)
+        if record:
+            updated["pane"] = record
+    elif resources.get("pane"):
+        row["endpoints"].append({"kind": "pane", **clear_resource(meta, "pane", resources["pane"]["session"], resources["pane"]["id"], resources["pane"]["tokens"])})
+    if state is None and "workspace" not in updated and "pane" not in updated:
+        meta["resources"].pop(task["id"], None)  # Archived and cleared: nothing owned remains to track.
+        meta["notified"].pop(task["id"], None)
+        row["released"] = True
+    else:
+        meta["resources"][task["id"]] = updated
+    return row
+
+
+def project_root(store, meta, tasks, states, snapshots):
+    """The registered coordinator pane carries the inbox summary; a pane that is not this instance's coordinator gets nothing."""
+    owner = store.owner()
+    previous = meta.get("root")
+    if not owner or owner.get("machine") != machine():
+        if previous and previous.get("tokens"):
+            cleared = clear_resource(meta, "pane", previous["session"], previous["id"], previous["tokens"])
+            meta["root"] = None
+            return {"kind": "pane", "role": "coordinator", "outcome": "cleared", **cleared}
+        return {"kind": "pane", "role": "coordinator", "outcome": "no-owner"}
+    desired = root_tokens(store, tasks, states)
+    verify = lambda: verified_pane(owner["session"], owner["pane"], owner.get("cwd"), snapshots)  # noqa: E731
+    outcome, record = project_resource(meta, "pane", owner["session"], owner["pane"], desired, previous, verify=verify)
+    meta["root"] = record
+    return {"role": "coordinator", **outcome}
+
+
+def notify_transitions(store, meta, transitions, session):
+    """At most one `notification show` per pass, naming task ids, states, and repository names only; question and report prose never travel."""
+    fresh = [(task, state) for task, state in transitions if meta["notified"].get(task["id"]) != state]
+    if not fresh:
+        return None
+    fresh.sort(key=lambda item: (NOTIFY_STATES.index(item[1]), item[0]["id"]))  # Decisions first, then review, cleanup, attention, refresh.
+    for task, state in fresh:
+        meta["notified"][task["id"]] = state
+    if not meta["capabilities"].get("notification"):
+        return {"outcome": "unsupported", "tasks": [t["id"] for t, _ in fresh]}
+    title = token_value(f"sum: {len(fresh)} task{'s' if len(fresh) != 1 else ''} need{'s' if len(fresh) == 1 else ''} you")[:NOTIFY_TITLE_MAX]
+    parts = [f"{task['id']} {state} ({token_value(Path(task['repository']).name)})" for task, state in fresh]
+    body = " · ".join(parts)
+    if len(body) > NOTIFY_BODY_MAX:
+        body = body[:NOTIFY_BODY_MAX - 2].rsplit(" · ", 1)[0] + " …"
+    sound = "none"
+    for _, state in fresh:
+        if NOTIFY_SOUND.get(state) == "request":
+            sound = "request"
+        elif NOTIFY_SOUND.get(state) == "done" and sound == "none":
+            sound = "done"
+    try:
+        shown = herdr(["notification", "show", title, "--body", body, "--sound", sound], session=session, timeout=METADATA_TIMEOUT)
+        meta["stats"]["notifications"] += 1
+        result = {"outcome": "sent", "shown": bool(shown.get("shown")), "reason": shown.get("reason"), "title": title, "body": body, "sound": sound,
+                  "tasks": [t["id"] for t, _ in fresh]}
+    except SumError as exc:
+        record_metadata_error(meta, "notification", exc)
+        result = {"outcome": "failed", "reason": str(exc)[:200], "title": title, "tasks": [t["id"] for t, _ in fresh]}
+    meta["last_notification"] = {**result, "at": now()}
+    return result
+
+
+def reconcile_recorded(meta, snapshots):
+    """Herdr keeps token metadata in memory only: after a server restart the sidebar is empty while sum's record says written.
+
+    Compare what Herdr holds now (one `workspace list` per recorded session plus the agent snapshot) with what sum recorded and
+    forget every key Herdr no longer shows, so the next comparison rewrites it. Panes without an agent are left as recorded.
+    """
+    sessions = {r[kind]["session"] for r in meta["resources"].values() for kind in ("pane", "workspace") if r.get(kind)}
+    if meta.get("root"):
+        sessions.add(meta["root"]["session"])
+    forgotten = []
+    for session in sorted(sessions):
+        held_panes = {pane: (agent.get("tokens") or {}) for pane, agent in snapshots.get(session)["agents"].items()} if snapshots.get(session)["ok"] else None
+        try:
+            snapshots.calls += 1
+            listed = herdr(["workspace", "list"], session=session, timeout=METADATA_TIMEOUT)
+            held_workspaces = {w.get("workspace_id"): (w.get("tokens") or {}) for w in (listed.get("workspaces") or []) if isinstance(w, dict)}
+        except SumError:
+            held_workspaces = None
+        records = [(task_id, kind, r[kind]) for task_id, r in meta["resources"].items() for kind in ("pane", "workspace") if r.get(kind)]
+        if meta.get("root"):
+            records.append((None, "pane", meta["root"]))
+        for task_id, kind, record in records:
+            if record["session"] != session:
+                continue
+            held = (held_panes if kind == "pane" else held_workspaces)
+            if held is None or record["id"] not in held:
+                continue  # Unobservable, or a shell pane without an agent: nothing proves the tokens are gone.
+            actual = {k: v for k, v in held[record["id"]].items() if k in record["tokens"]}
+            if actual != record["tokens"]:
+                forgotten.append({"task": task_id, "kind": kind, "id": record["id"], "missing": sorted(set(record["tokens"]) - set(actual))})
+                record["tokens"] = actual
+    return forgotten
+
+
+def metadata_sync(store, *, tasks=None, snapshots=None, reason=None, root=True, reconcile=False):
+    """One bounded projection pass: records to desired tokens, only changed patches written, at most one notification. Never raises.
+
+    `tasks` limits the per-task work to the tasks a command or event touched; the coordinator summary is recomputed from the
+    records of every task (local files, no Herdr call). Herdr is asked only for what changed: a session snapshot or `pane get`
+    to verify a pane before its first differing write, one `report-metadata` per changed endpoint, one `notification show`.
+    `reconcile` (rundown, coordinator init, startup hook, explicit sync) first compares Herdr's held tokens with the record, so
+    metadata lost to a server restart is written again instead of being believed.
+    """
+    try:
+        meta = read_metadata(store)
+    except SumError as exc:
+        return {"enabled": False, "degraded": True, "reason": f"metadata state unreadable: {exc}"}
+    if not meta["enabled"]:
+        return {"enabled": False, "skipped": True, "reason": "native metadata projection is not enabled"}
+    snapshots = snapshots or Snapshots()
+    calls_before = snapshots.calls
+    try:
+        with metadata_lock(store):
+            meta = read_metadata(store)
+            if not meta["enabled"]:
+                return {"enabled": False, "skipped": True}
+            all_tasks = store.all()
+            local = [t for t in all_tasks if t["machine"] == machine()]
+            states = {t["id"]: task_state(store, t) for t in local}
+            scope = [t for t in local if tasks is None or t["id"] in set(tasks)]
+            forgotten = reconcile_recorded(meta, snapshots) if reconcile else []
+            if forgotten:
+                scope = local  # Something was lost: every task is compared again in this pass, still writing only what differs.
+            transitions, rows = [], []
+            for task in scope:
+                rows.append(project_task(store, meta, task, snapshots, transitions))
+            for task_id in [k for k in list(meta["resources"]) if k not in {t["id"] for t in all_tasks}]:
+                gone = meta["resources"].pop(task_id)  # A task directory removed by hand: release what sum wrote, never anything else.
+                for kind in ("pane", "workspace"):
+                    if gone.get(kind):
+                        rows.append({"task": task_id, "kind": kind, **clear_resource(meta, kind, gone[kind]["session"], gone[kind]["id"], gone[kind]["tokens"])})
+            root_row = project_root(store, meta, all_tasks, states, snapshots) if root else None
+            owner = store.owner()
+            session = (owner or {}).get("session") or next((t["session"] for t in scope if t.get("session")), None)
+            notification = notify_transitions(store, meta, transitions, session) if meta.get("notify") and session else None
+            if transitions and not meta.get("notify"):
+                for task, state in transitions:
+                    meta["notified"][task["id"]] = state  # Remembered so enabling notifications later does not replay old transitions.
+            meta["stats"]["passes"] += 1
+            meta["last_pass"] = {"at": now(), "reason": reason, "tasks": len(scope), "written": sum(1 for r in rows for e in r.get("endpoints", []) if e.get("outcome") == "written"),
+                                 "herdr_calls": snapshots.calls - calls_before, "reconciled": len(forgotten) if reconcile else None}
+            write_metadata(store, meta)
+    except (SumError, OSError, ValueError, KeyError) as exc:
+        try:
+            with metadata_lock(store):
+                meta = read_metadata(store)
+                record_metadata_error(meta, "sync", exc)
+                meta["degraded"] = f"projection pass failed: {str(exc)[:200]}"
+                write_metadata(store, meta)
+        except (SumError, OSError, ValueError):
+            pass
+        return {"enabled": True, "degraded": True, "reason": str(exc)[:300]}
+    return {"enabled": True, "tasks": rows, "root": root_row, "notification": notification, "degraded": meta.get("degraded"), "forgotten": forgotten,
+            "herdr_calls": snapshots.calls - calls_before, "note": METADATA_NOTE}
+
+
+METADATA_TRIGGERS = {"ask", "answer", "resolve", "report", "review", "verify", "archive", "cleanup", "bind", "attention", "notice", "prepare", "dispatch", "start",
+                     "init", "status", "inbox", "pump", "pr", "brief", "refresh", "update", "hook"}
+METADATA_SUBCOMMANDS = {"pr": ("reconcile",), "brief": ("regenerate", "request", "adopt"), "refresh": ("request", "adopt"), "update": ("apply", "rollback"), "hook": ("enable",)}
+
+
+def metadata_after(store, args, value):
+    """The helper path: after a command that changed records, project the tasks it touched. Reads (`show`, `context`, `env show`, ...) trigger nothing."""
+    try:
+        command = args.command
+        if command not in METADATA_TRIGGERS:
+            return None
+        if command in ("status", "inbox") and not getattr(args, "live", False):
+            return None
+        if command == "init" and (not isinstance(value, dict) or value.get("role") != "coordinator"):
+            return None
+        if command in METADATA_SUBCOMMANDS and getattr(args, f"{command}_command", None) not in METADATA_SUBCOMMANDS[command]:
+            return None
+        task = getattr(args, "task", None)
+        tasks = None
+        if isinstance(task, str):
+            tasks = [task]
+        elif isinstance(task, list) and task:
+            tasks = task
+        elif command in ("prepare", "dispatch", "start") and isinstance(value, dict) and value.get("id"):
+            tasks = [value["id"]]
+        return metadata_sync(store, tasks=tasks, reason=command, reconcile=command in ("init", "status", "inbox", "pump"))
+    except Exception as exc:  # noqa: BLE001 - presentation must never turn a finished command into a failure.
+        return {"enabled": True, "degraded": True, "reason": str(exc)[:200]}
+
+
+def metadata_summary(store):
+    """Records only, no Herdr call: what a rundown or init can say about native visibility."""
+    try:
+        meta = read_metadata(store)
+    except SumError as exc:
+        return {"enabled": False, "degraded": True, "reason": f"metadata state unreadable: {exc}"}
+    row = {"enabled": meta["enabled"], "notify": meta.get("notify", False), "source": meta.get("source"), "capabilities": meta.get("capabilities"),
+           "resources": len(meta.get("resources", {})), "last_pass": meta.get("last_pass"), "last_notification": meta.get("last_notification"),
+           "errors": len(meta.get("errors", [])), "last_error": meta.get("last_error"), "degraded": bool(meta.get("degraded")) or not meta["enabled"]}
+    row["reason"] = meta.get("degraded") or (None if meta["enabled"] else "native metadata projection is not enabled; `inbox --live` remains the authoritative view")
+    return row
+
+
+def metadata_enable(store, ctx, notify=False):
+    """Coordinator only. Probe the installed binary, record the namespaced source, then run one full projection pass."""
+    require_coordinator(store, ctx)
+    ensure_version()
+    source = metadata_source(store)
+    capabilities = probe_capabilities(ctx["session"])
+    if not (capabilities.get("pane_tokens") or capabilities.get("workspace_tokens")):
+        raise SumError(f"The installed Herdr does not expose report-metadata tokens ({capabilities.get('error') or 'schema lacks the fields'}); nothing was enabled or written.")
+    with metadata_lock(store):
+        meta = read_metadata(store)
+        meta.update(enabled=True, notify=bool(notify), source=source, capabilities=capabilities, degraded=None,
+                    enabled_at=now(), enabled_from={k: ctx[k] for k in ("session", "pane")})
+        write_metadata(store, meta)
+    snapshots = Snapshots()
+    result = metadata_sync(store, snapshots=snapshots, reason="metadata enabled; projecting saved task state")
+    return {"enabled": True, "notify": bool(notify), "source": source, "capabilities": capabilities, "tokens": {"task": list(TASK_TOKENS), "coordinator": list(ROOT_TOKENS)},
+            "sync": result, "fanout": snapshots.summary(), "snippet": command_for(store, "metadata", "snippet"),
+            "note": METADATA_NOTE + (" Notifications go through the user's own `[ui.toast]` delivery; `shown: false, reason: disabled` means that delivery is off." if notify else
+                                     " Notifications stay off until `metadata enable --notify`.")}
+
+
+def metadata_disable(store, ctx):
+    """Coordinator only. Clear every token sum recorded, then stop projecting; nothing else in Herdr changes."""
+    require_coordinator(store, ctx)
+    cleared = []
+    with metadata_lock(store):
+        meta = read_metadata(store)
+        for task_id, resources in list(meta.get("resources", {}).items()):
+            for kind in ("pane", "workspace"):
+                record = resources.get(kind)
+                if record and record.get("tokens"):
+                    cleared.append({"task": task_id, "kind": kind, "id": record["id"], **clear_resource(meta, kind, record["session"], record["id"], record["tokens"])})
+        root = meta.get("root")
+        if root and root.get("tokens"):
+            cleared.append({"role": "coordinator", "kind": "pane", "id": root["id"], **clear_resource(meta, "pane", root["session"], root["id"], root["tokens"])})
+        meta.update(enabled=False, resources={}, root=None, disabled_at=now())
+        write_metadata(store, meta)
+    return {"enabled": False, "cleared": cleared, "note": "Native metadata projection is off and sum's tokens were cleared where the endpoint still exists; "
+                                                         "the user's labels, rows, theme, and every other plugin's tokens were never touched. The CLI and rundown are unchanged."}
+
+
+def metadata_status(store, ctx=None):
+    summary = metadata_summary(store)
+    meta = read_metadata(store)
+    value = {**summary, "resources_detail": {t: {k: {"id": v["id"], "tokens": v["tokens"]} for k, v in r.items() if k in ("pane", "workspace") and v} | {"state": r.get("state")}
+                                             for t, r in meta.get("resources", {}).items()},
+             "root": meta.get("root"), "errors_log": meta.get("errors", [])[-METADATA_ERRORS:], "states": list(SUM_STATES), "notify_states": list(NOTIFY_STATES),
+             "note": METADATA_NOTE}
+    if ctx and meta["enabled"]:
+        value["capabilities_now"] = probe_capabilities(ctx["session"])
+    return value
+
+
+def metadata_snippet(store):
+    """The optional configuration the user may merge into their own config.toml; sum never writes it."""
+    toml = "\n".join([
+        "# sum: optional sidebar rows that render sum's task tokens. Merge into ~/.config/herdr/config.toml, then run",
+        "# `herdr server reload-config`. `rows` replaces the whole layout, so keep the built-in tokens you already use.",
+        "[ui.sidebar.agents]",
+        'rows = [["state_icon", "workspace", "tab"], ["agent", "$sum_state"], ["$sum_task", "$sum_inbox"]]',
+        "",
+        "[ui.sidebar.spaces]",
+        'rows = [["state_icon", "workspace"], ["branch", "git_status"], ["$sum_state", "$sum_task"]]',
+        "",
+        "# Optional: pop-up notifications for sum transitions need a toast delivery; sum sends them only after `metadata enable --notify`.",
+        "# [ui.toast]",
+        '# delivery = "herdr"',
+        ""])
+    return {"toml": toml, "tokens": {"task": list(TASK_TOKENS), "coordinator": list(ROOT_TOKENS)}, "states": list(SUM_STATES),
+            "enable": command_for(store, "metadata", "enable"), "inbox": command_for(store, "metadata", "inbox"),
+            "note": "Nothing here is written by sum: the snippet is text for the user to merge. Without these rows the tokens exist but stay out of sight; "
+                    "every other setting (theme, keybindings, labels, toast delivery) is the user's."}
+
+
+def metadata_inbox(store, ctx, placement="popup"):
+    """Open the read-only inbox as ordinary terminal output in a Herdr pane through the linked sum plugin's `inbox` entrypoint."""
+    if placement not in INBOX_PLACEMENTS:
+        raise SumError(f"placement must be one of {', '.join(INBOX_PLACEMENTS)}.")
+    health = read_health(store)
+    if not health.get("enabled") or not health.get("plugin_id"):
+        raise SumError("The inbox pane is an entrypoint of this instance's Herdr plugin; run `hook enable` first (it links the manifest that declares it). `sumctl inbox` prints the same listing here.")
+    if health.get("manifest_sha256") != sha256_text(hook_manifest(store)):
+        raise SumError("The linked plugin manifest predates the inbox entrypoint; run `hook enable` again to relink it, then retry.")
+    args = ["plugin", "pane", "open", "--plugin", health["plugin_id"], "--entrypoint", INBOX_ENTRYPOINT, "--placement", placement]
+    if placement in ("split", "zoomed", "overlay"):
+        args += ["--target-pane", ctx["pane"]]
+    if placement != "popup":
+        args += ["--no-focus"]
+    opened = herdr(args, session=ctx["session"], timeout=15)
+    plugin_pane = opened.get("plugin_pane", opened) if isinstance(opened, dict) else {}
+    pane = ((plugin_pane.get("pane") or {}).get("pane_id") if isinstance(plugin_pane, dict) else None)  # A popup has no pane id by design.
+    return {"placement": placement, "entrypoint": INBOX_ENTRYPOINT, "pane": pane, "result": opened,
+            "note": "Read-only: the pane runs `sumctl inbox` (records only, no prompt, no Herdr write) and waits for Enter. Reading it answers, applies, and verifies nothing."}
+
 
 
 # --- durable evidence: handoffs, reviewer findings, coordinator verification, exact PR identity --------
@@ -5356,6 +5978,7 @@ def status(store, live=False, inbox=False):
             row["returns"] = {"error": str(exc)}
     value = {"tasks": rows, "live": live, "capacity": capacity_view(store, tasks),
              "guarantee": "Saved records only; prose-only questions require a rundown. No background monitoring."}
+    value["metadata"] = metadata_summary(store)  # Records only: whether native visibility is projected and how it degraded.
     if live:
         value["hook"] = hook
         if sweep is not None:
@@ -5476,6 +6099,7 @@ def init(store, args):
         result["cleanup_pending"] = [{"task": t["id"], **cleanup_pending(t)} for t in store.all() if cleanup_pending(t)]  # Records only; no Herdr or GitHub call.
         result["returns"] = pump(store, ctx, snapshots=Snapshots(), reason="saved task state needs attention")  # Startup catch-up: one coalesced notice per recipient, this pane's own items inline.
         result["hook"] = hook_summary(store)  # Records only: whether native event delivery is enabled and its last handled event.
+        result["metadata"] = metadata_summary(store)
     result.update(role=role, task=task_id, registration=registration, coordinator=store.owner(),
                   note={"coordinator": "You are the coordinator for this instance. Continue the coordinator startup steps."
                                        + (f" Operating contract revision {result['contract']['requested']} is requested: read it and run `sumctl refresh adopt --coordinator {result['contract']['requested']}` before other work." if result.get("contract", {}).get("requested") else ""),
@@ -6510,6 +7134,18 @@ def parser():
     x.add_argument("--unlink", action="store_true", help="Remove the registration instead of disabling it")
     h.add_parser("status", help="Hook health from records plus one bounded registry observation: last event, errors, pending count/age, enabled")
     h.add_parser("event", help="Internal: the handler Herdr runs for one event (reads HERDR_PLUGIN_* from the environment)")
+    s = sub.add_parser("metadata", help="Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle")
+    m = s.add_subparsers(dest="metadata_command", required=True)
+    x = m.add_parser("enable", help="Coordinator only: probe the installed Herdr for report-metadata, record sum's source, project every saved task once")
+    x.add_argument("--notify", action="store_true", help="Also send one coalesced `notification show` per pass for new needs-decision/review-ready/cleanup/refresh/blocked transitions (task ids and states only)")
+    m.add_parser("disable", help="Coordinator only: clear the tokens sum recorded and stop projecting; nothing else in Herdr changes")
+    m.add_parser("status", help="Recorded projection state, per-task tokens, errors, and (inside Herdr) the capabilities probed now; writes nothing")
+    x = m.add_parser("sync", help="One bounded projection pass from records: only changed endpoints are written; no model, no polling")
+    x.add_argument("--task", action="append", help="Limit the pass to this task (repeatable)")
+    x = m.add_parser("snippet", help="The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum")
+    x.add_argument("--raw", action="store_true", help="Print the TOML text only")
+    x = m.add_parser("inbox", help="Open the read-only `sumctl inbox` listing in a Herdr pane through the linked sum plugin entrypoint (needs `hook enable`)")
+    x.add_argument("--placement", default="popup", choices=INBOX_PLACEMENTS)
     s = sub.add_parser("attention", help="Coordinator only: mark one native attention record seen after inspecting the pane; the record stays")
     s.add_argument("task")
     s.add_argument("attention")
@@ -6610,7 +7246,8 @@ def main(argv=None):
         store = Store(args.home)
         guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}", "preset": lambda: f"preset-{args.preset_command}",
                                 "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}", "hook": lambda: f"hook-{args.hook_command}",
-                                "pr": lambda: f"pr-{args.pr_command}", "env": lambda: f"env-{args.env_command}"}.get(args.command, lambda: args.command)())
+                                "pr": lambda: f"pr-{args.pr_command}", "env": lambda: f"env-{args.env_command}",
+                                "metadata": lambda: f"metadata-{args.metadata_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -6679,6 +7316,29 @@ def main(argv=None):
                 value = hook_enable(store, context())
             else:
                 value = hook_disable(store, context(), unlink=args.unlink)
+        elif args.command == "metadata":
+            if args.metadata_command == "enable":
+                value = metadata_enable(store, context(), notify=args.notify)
+            elif args.metadata_command == "disable":
+                value = metadata_disable(store, context())
+            elif args.metadata_command == "status":
+                try:
+                    ctx = context()
+                except SumError:
+                    ctx = None
+                value = metadata_status(store, ctx)
+            elif args.metadata_command == "sync":
+                ctx = context()
+                if not store.registration(ctx):
+                    raise SumError("Run `sumctl init` in this pane first; projection runs only for a pane registered in this instance.")
+                value = metadata_sync(store, tasks=args.task or None, snapshots=Snapshots(), reason="explicit sync", reconcile=True)
+            elif args.metadata_command == "snippet":
+                value = metadata_snippet(store)
+                if args.raw:
+                    print(value["toml"], end="")
+                    return 0
+            else:
+                value = metadata_inbox(store, context(), placement=args.placement)
         elif args.command == "attention":
             value = attention_seen(store, context(), args.task, args.attention)
         elif args.command == "cleanup":
@@ -6790,6 +7450,7 @@ def main(argv=None):
             return 0
         else:
             raise SumError("Unknown command")
+        metadata_after(store, args, value)  # Presentation only, after the record is complete; never changes `value` or the exit status.
         emit(value)
         return 0
     except (SumError, OSError, ValueError, KeyError) as exc:

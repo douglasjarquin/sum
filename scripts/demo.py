@@ -100,10 +100,28 @@ def main():
         assert ctl("hook", "status")["last_event"]["outcome"] == "handled"
         env["FAKE_PARENT_STATUS"] = "working"
         print("PASS: optional Herdr plugin linked live from records; an unrelated pane was ignored, a stale idle edge typed nothing into the still-busy root, the real idle edge delivered both pending questions in one notice, and a duplicate edge sent nothing.")
+        # Native metadata (#18): sum's task state as `sum_*` tokens on the endpoints it owns; display only, opt-in, nothing else in Herdr changes.
+        assert not ctl("status")["metadata"]["enabled"]
+        def tokens(target):
+            state = json.loads((base / "fake/state.json").read_text())
+            return (state["panes"] if ":" in target else state["workspaces"]).get(target, {}).get("tokens", {})
+        assert tokens(task["pane"]) == {}
+        projected = ctl("metadata", "enable")
+        assert projected["source"].startswith("sum:") and projected["capabilities"]["pane_tokens"] and not projected["notify"], projected
+        assert tokens(task["pane"]) == {"sum_state": "needs-decision", "sum_task": task["id"], "sum_repo": repo.name}, tokens(task["pane"])
+        assert tokens(task["workspace"])["sum_state"] == "needs-decision" and tokens("w-parent:p1") == {"sum_inbox": "1 decision", "sum_tasks": "1 active"}
+        fake_panes = json.loads((base / "fake/state.json").read_text())["panes"]
+        assert fake_panes[task["pane"]]["agent_status"] == "working" and "label" not in fake_panes[task["pane"]]  # Herdr's lifecycle and the user's labels are untouched.
+        snippet = ctl("metadata", "snippet")
+        assert "$sum_state" in snippet["toml"] and not (base / "config").exists()  # Text for the user to merge; sum writes no config.
+        again = ctl("metadata", "sync")
+        assert again["forgotten"] == [] and not any(e["outcome"] == "written" for r in again["tasks"] for e in r["endpoints"]), again  # Nothing changed since: Herdr still holds every token, nothing written.
+        print("PASS: native metadata projected the open decision as sum_* tokens on the worker pane, its workspace, and the coordinator pane; a second pass wrote nothing; notifications stayed off; no label, lifecycle, or config changed.")
         ctl("answer", task["id"], second["question"]["id"], "--text", "No second change.")
         ctl("resolve", task["id"], second["question"]["id"])
         ctl("answer", task["id"], q["question"]["id"], "--text", "Yes, keep it.")
         ctl("resolve", task["id"], q["question"]["id"])
+        assert tokens(task["pane"])["sum_state"] == "running" and tokens("w-parent:p1")["sum_inbox"] == "clear"  # The CLI write path projected the transition.
         worktree = Path(task["worktree"])
         (worktree / "greeting.py").write_text('def greet(name):\n    return f"Hello, {name}!"\n')
         subprocess.run([sys.executable, "-c", "from greeting import greet; assert greet('Doug') == 'Hello, Doug!'"], cwd=worktree, check=True)
@@ -284,7 +302,7 @@ def main():
         # Rolling refresh: the coordinator contract and the running worker get their next immutable revision and one bounded delivery each.
         fake_state = base / "fake/state.json"
         panes = json.loads(fake_state.read_text())
-        panes["panes"][task["pane"]] = {"pane_id": task["pane"], "cwd": task["worktree"], "agent": "codex", "agent_status": "working"}  # The fake rewrote this pane when it acted as the caller above.
+        panes["panes"][task["pane"]] = {"pane_id": task["pane"], "cwd": task["worktree"], "agent": "codex", "agent_status": "working", "created": True}  # A busy scripted worker in its own checkout.
         fake_state.write_text(json.dumps(panes))
         refresh = ctl("refresh", "request")
         rows = {r["target"]: r for r in refresh["targets"]}

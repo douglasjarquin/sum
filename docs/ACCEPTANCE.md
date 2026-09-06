@@ -57,6 +57,15 @@ Then: start the first command again (expect `already_running`, no second pane), 
 Merge the first task's PR and run `cleanup TASK_ID` then `--apply`: the proven service stops, its pane closes, the checkout is removed, and the second task's server, the shared database, and the coordinator pane are untouched; run `--apply` again and confirm it is a no-op.
 Run `update apply` and `refresh request` while a service serves requests and confirm the process, pane, and port are unchanged.
 
+## 10. Native metadata in the real sidebar
+
+With two real tasks running, run `sumctl metadata enable`, merge the printed `metadata snippet` rows into your own `config.toml`, and `herdr server reload-config`.
+Confirm that a worker asking through `sumctl ask` shows `needs-decision` beside its `working`/`idle` icon within one helper command, that answering and `resolve` return it to `running`, that a report shows `review-ready` and a merged PR `merged-cleanup-pending` until cleanup, and that `refresh request` shows `instruction-refresh-pending` with `r1>r2` until the worker adopts.
+Rename a worker pane by hand and give a workspace your own label; confirm both survive every transition and `metadata disable`.
+Enable `--notify` with `[ui.toast] delivery = "herdr"` and confirm one toast per transition naming only task id, state, and repository, none for duplicate events or unchanged rundowns, and none carrying question text.
+Run `metadata inbox` and confirm the popup shows the ordinary `sumctl inbox` JSON and closes on Enter.
+Record how often you asked the coordinator for a status explanation before and after; the intended result is fewer such turns, not a prettier sidebar.
+
 ## Record results
 
 For each real task, record all human-labeled questions, which were saved by workers, which were found during rundown, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.

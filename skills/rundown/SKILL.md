@@ -35,6 +35,12 @@ While the hook is enabled, a worker that Herdr saw `blocked`, idle with nothing 
 If the excerpt holds a real question, save it with `sumctl ask` from the worker's brief commands; that record supersedes the attention. If the worker merely resumed, the record closes itself. After inspecting a record that needs no action, run `./bin/sumctl attention TASK_ID ATTENTION_ID --seen`; the record stays in the task.
 A rundown reconciles missed events once from one snapshot per session; do not wait for the plugin to notice something it already missed.
 
+## Native metadata
+
+`inbox --live` and `init` also show a `metadata` field: whether sum's task state is projected into Herdr `sum_*` tokens, the last pass, and any `degraded` reason. When it is enabled, the boss can read `needs-decision`, `review-ready`, `merged-cleanup-pending`, `instruction-refresh-pending`, or an `attention-*` state in their own sidebar rows without asking you; that token is derived from the same records this rundown reads and changes task semantics in no way.
+`./bin/sumctl metadata status` lists the tokens sum currently owns per task and the bounded error log; `metadata sync` runs one bounded pass (only changed endpoints are written); `metadata snippet` prints the optional `config.toml` rows for the boss to merge themselves. Do not edit their configuration, and do not use `pane report-agent`, `pane rename`, or metadata titles to make a task look finished: Herdr's lifecycle and labels are not yours.
+`metadata inbox` opens the read-only `sumctl inbox` listing as a Herdr pane through the linked plugin (`hook enable` first). A `degraded` metadata row means reduced visibility only; nothing about ask, report, dispatch, update, or this rundown changed.
+
 ## Restart
 
 In the new pane run `./bin/sumctl init`. If another pane still owns coordination you become a developer; inspect that pane before anything else.

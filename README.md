@@ -60,7 +60,8 @@ Herdr's optional native integrations can be installed separately, for example `h
 | Release-matched Herdr skill | Copied from the installed `herdr --skill` during setup |
 | Pinned Herdr Mesh plus a small runtime overlay | Ten relevant MCP tools, current Herdr commands, bounded reads/waits, no swallowed handoff errors |
 | `bin/sumctl` | Durable task/decision/report files, native worktree creation and launch, bounded notices, guarded cleanup of merged task workspaces, records backup, staged releases, atomic update/rollback, and per-session refresh bookkeeping |
-| Optional Herdr plugin (`sumctl hook`) | A per-installation manifest under `.sum/hook` whose event handler runs the same bounded pump and records native attention; no daemon |
+| Optional Herdr plugin (`sumctl hook`) | A per-installation manifest under `.sum/hook` whose event handler runs the same bounded pump and records native attention, plus a read-only inbox pane entrypoint; no daemon |
+| Optional native metadata (`sumctl metadata`) | sum task state (needs-decision, review-ready, merged-cleanup-pending, instruction-refresh-pending, ...) projected as namespaced `sum_*` tokens on the endpoints sum owns, rendered by sidebar rows the user chooses to add; opt-in coalesced notifications |
 | `quota-axi` | Advisory quota evidence; no automatic billing/account switching |
 | Offline tests and a demo | Test behavior without model credentials, a real Herdr installation, or GitHub writes |
 | Explicit live smoke test | Validate the real Herdr API in an isolated named session |
@@ -116,6 +117,20 @@ A recorded worker seen `blocked`, idle with nothing owed in either direction and
 `hook enable` runs one explicit reconciliation (attention from one snapshot per session, then the pump) because Herdr does not run startup hooks at link time; the startup hook does the same after a server restart, and `inbox --live` does it on every rundown while the hook is enabled. Herdr keeps no durable event replay, so missed events are recovered by these reconciliations, not claimed.
 `hook status` shows enabled/disabled, the last handled event, a bounded error log, and the count and age of pending returns; `hook disable` (or `--unlink`) turns the plugin off. Disabled, degraded, or crashing, the handler changes nothing about `ask`/`report`, `inbox --live`, `init`, `bind`, and `pump`: they remain the delivery path and never stop.
 Native idle does not detect a question asked only in prose; the attention record points a human or the coordinator at the pane, and the rundown captures the question with `sumctl ask`.
+
+### Native metadata (optional)
+
+`./bin/sumctl metadata enable` (coordinator only) first reads the installed Herdr's own `api schema` to confirm `pane.report_metadata`, `workspace.report_metadata`, and `notification.show` exist in the pinned build; documentation fields are never assumed.
+It then projects every saved task once and, from that point, after each state-changing helper command (`ask`, `answer`, `resolve`, `report`, `verify`, `pr reconcile`, `brief`, `refresh`, `update apply`, `bind`, `archive`, `cleanup`, `init`, `inbox --live`) and each native event the hook handles.
+The projection is display only: `sum_state`, `sum_task`, `sum_repo`, an optional `sum_rev` (`r1>r2` while a brief revision is requested and not adopted), and an optional `sum_pr` (the exact recorded PR URL) on the task's Herdr workspace and on its worker pane; `sum_inbox` (for example `2 decision · 1 review · contract r2`) and `sum_tasks` on the registered coordinator pane.
+The state comes from the records alone, ordered by what the boss acts on first: `needs-attention`, `needs-decision`, `merged-cleanup-pending`, `review-ready`, `attention-blocked|exited|closed|idle`, `instruction-refresh-pending`, `answer-pending`, `pr-open`, `verified`, `preparing`, `running`.
+Herdr's agent lifecycle (`working`, `idle`, `blocked`) is never reported or overridden by sum; a worker seen `working` beside a `needs-decision` token is exactly the truth. Pane labels, titles, display names, state labels, theme, keybindings, and every other reporter's tokens are untouched.
+All keys live under sum's own source `sum:<instance>`; a worker pane receives tokens only after its identity is verified (the session snapshot or one `pane get` shows the recorded checkout), a stale or reused pane gets nothing and loses sum's old keys, a rebind clears only sum's keys on the old pane, and archive, cleanup, or `metadata disable` clear exactly the recorded keys. Two installations use two sources and two homes.
+Writes happen only when the derived tokens differ from what sum last wrote: a duplicate event or an unchanged rundown makes no Herdr call; the coordinator line is recomputed from local records, never from a fleet observation.
+Tokens are invisible until the user adds `$sum_state`, `$sum_task`, or `$sum_inbox` to their own `[ui.sidebar.agents]`/`[ui.sidebar.spaces]` rows; `./bin/sumctl metadata snippet` prints a starting point and sum never writes `config.toml`.
+Notifications are off by default. `metadata enable --notify` sends at most one `notification show` per projection pass, only for a task newly entering `needs-decision`, `review-ready`, `merged-cleanup-pending`, `instruction-refresh-pending`, `attention-blocked`, or `needs-attention`, naming task ids, states, and repository names only; question and report prose never travel. Delivery follows the user's own `[ui.toast]` setting, and `shown: false, reason: disabled` is recorded honestly when that delivery is off.
+`./bin/sumctl metadata inbox` opens the ordinary `sumctl inbox` listing (records only, no prompt) as a popup or split pane through the linked sum plugin's `inbox` entrypoint; it needs `hook enable`, reads nothing new, and is not a dashboard.
+A missing capability, a refused write, or a failed notification is recorded as `degraded` in `metadata status`, `inbox --live`, and coordinator `init`; the command that changed the record still succeeds, the CLI and rundown stay authoritative, and `metadata disable` returns Herdr to exactly its previous presentation.
 
 To create a task manually:
 
