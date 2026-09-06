@@ -154,6 +154,28 @@ def main():
         assert [e["result"] for e in ctl("--home", inst, "update", "status")["history"] if "result" in e] == ["selected", "selected"]
         assert ctl("--home", inst, "update", "rollback", "--to", head[:12])["default"]["sha"] == head
         print("PASS: merged revision resolved from origin, validated against the live records, and selected with one symlink rename; the checkout stayed untouched, old callbacks kept working, a developer pane was refused, and rollback changed only the code selection.")
+        # Rolling refresh: the coordinator contract and the running worker get their next immutable revision and one bounded delivery each.
+        fake_state = base / "fake/state.json"
+        panes = json.loads(fake_state.read_text())
+        panes["panes"][task["pane"]] = {"pane_id": task["pane"], "cwd": task["worktree"], "agent": "codex", "agent_status": "working"}  # The fake rewrote this pane when it acted as the caller above.
+        fake_state.write_text(json.dumps(panes))
+        refresh = ctl("refresh", "request")
+        rows = {r["target"]: r for r in refresh["targets"]}
+        assert rows["task"]["state"] == "pending-busy" and rows["task"]["revision"] == "r3", rows  # A busy worker keeps its current brief; the request is persisted.
+        assert rows["coordinator"]["state"] == "pending-busy" and rows["coordinator"]["revision"] == "r1"  # The coordinator is its own target.
+        panes["panes"][task["pane"]]["agent_status"] = "idle"
+        fake_state.write_text(json.dumps(panes))
+        refresh = ctl("refresh", "request", "--task", task["id"])
+        [row] = refresh["targets"]
+        assert row["state"] == "submitted-unconfirmed" and row["revision"] == "r3"
+        instruction = json.loads(fake_state.read_text())["panes"][task["pane"]]["last_prompt"]
+        assert instruction.startswith(f"sum refresh {task['id']}: brief revision r3 is requested") and "Saved while" not in instruction
+        assert ctl("show", task["id"])["notice"]["reason"] == "a decision is waiting"  # The notice slot still holds the after-update question; refresh never used it.
+        assert ctl("refresh", "status")["counts"]["submitted-unconfirmed"] == 1
+        assert ctl("brief", "adopt", task["id"], "r3", pane=task["pane"])["active"] == "r3"
+        assert ctl("refresh", "adopt", "--coordinator", "r1")["active"] == "r1"
+        assert ctl("refresh", "status")["counts"]["confirmed"] == 2
+        print("PASS: rolling refresh staged r3 and a coordinator contract snapshot, left the busy worker on its brief, delivered one fixed instruction once it was idle, and confirmed both only through explicit receipts.")
         print("This demo uses NO actual model, Herdr binary, GitHub account, or provider credentials. Temporary fixture cleaned up.")
 
 if __name__ == "__main__": main()
