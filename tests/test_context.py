@@ -110,6 +110,17 @@ class ContextTest(core.CoreTest):
         quiet = self.context(task, "--since", second["cursor"])
         self.assertTrue(quiet["changes"]["unchanged"])
         self.assertNotIn("decisions", quiet)
+        for qid in ids + [late["id"]]:  # Archive changes status without adding a record; the cursor still notices.
+            if qid != ids[0]:
+                sumctl.answer(self.store, argparse.Namespace(task=task["id"], question=qid, text="ok", file=None))
+            sumctl.resolve(self.store, argparse.Namespace(task=task["id"], question=qid))
+        settled = self.context(task)["cursor"]
+        with self.store.lock():
+            record = self.store.read(task["id"])
+            record["status"] = "archived"
+            self.store.save(record)
+        moved = self.context(task, "--since", settled)["changes"]
+        self.assertEqual((moved["unchanged"], moved["state_changed"], moved["status"]), (False, True, "archived"))
         self.assertEqual(self.context(task, "--since", "yesterday", ok=False)["error"][:7], "--since")
 
     def test_old_brief_revision_is_read_back_verified_and_immutable(self):
@@ -140,10 +151,54 @@ class ContextTest(core.CoreTest):
         notes = self.context(task, "--section", "notes")["notes"]
         self.assertEqual((notes["present"], notes["ok"], notes["entries"]), (False, True, []))
         sha = self.commit(task, "a.py")
-        self.report(task, "done", self.handoff(sha, artifacts=["logs/missing.txt", "a.py", "/etc/hosts", "../outside.txt"]))
+        self.report(task, "done", self.handoff(sha, artifacts=["logs/missing.txt", "a.py", "/etc/hosts", "../outside.txt", "logs/../../x", "~/secret"]))
         refs = self.context(task, "--role", "reviewer")["environment"]["artifacts"]["items"]
-        self.assertEqual([(r["artifact"], r["scope"], r.get("present")) for r in refs],
-                         [("logs/missing.txt", "checkout", False), ("a.py", "checkout", True), ("/etc/hosts", "outside-checkout", None), ("../outside.txt", "outside-checkout", None)])
+        self.assertEqual([(r["artifact"], r["scope"]) for r in refs],
+                         [("logs/missing.txt", "checkout"), ("a.py", "checkout"), ("/etc/hosts", "outside-checkout"), ("../outside.txt", "outside-checkout"),
+                          ("logs/../../x", "outside-checkout"), ("~/secret", "outside-checkout")])
+        self.assertTrue(all("present" not in r for r in refs))  # Presence would need a stat of a worker-chosen path; none is made.
+
+    def test_worker_artifact_paths_are_never_followed_even_through_checkout_symlinks(self):
+        task = self.prepare()
+        worktree = Path(task["worktree"])
+        secret_dir = self.root / "host-secrets"
+        secret_dir.mkdir()
+        (secret_dir / "shadow").write_text("root:HOST-SECRET-CONTENT\n")
+        (worktree / "logs").symlink_to(secret_dir)  # A worker can plant this in its own checkout.
+        sha = self.commit(task, "a.py")
+        self.report(task, "done", self.handoff(sha, artifacts=["logs/shadow", str(secret_dir / "shadow"), "logs/../../host-secrets/shadow"]))
+        calls = []
+        real_stat = os.stat
+        def spy(path, *a, **k):
+            calls.append(str(path))
+            return real_stat(path, *a, **k)
+        with mock.patch.object(sumctl.os, "stat", spy), mock.patch.object(sumctl.os.path, "realpath", side_effect=AssertionError("realpath on a worker path")), \
+             mock.patch.object(sumctl.Path, "exists", side_effect=AssertionError("exists on a worker path")):
+            args = argparse.Namespace(section=["environment"], role="reviewer", since=None, revision=None, kind=None, after=0, limit=20, max_chars=4000)
+            view = sumctl.context_view(self.store, task["id"], args)
+        refs = view["environment"]["artifacts"]["items"]
+        self.assertEqual([r["scope"] for r in refs], ["checkout", "outside-checkout", "outside-checkout"])
+        self.assertFalse(any("shadow" in c or "host-secrets" in c for c in calls), calls)
+        self.assertNotIn("HOST-SECRET-CONTENT", json.dumps(view))
+        self.assertEqual((secret_dir / "shadow").read_text(), "root:HOST-SECRET-CONTENT\n")
+
+    def test_handoff_strings_are_redacted_and_bounded_in_every_view(self):
+        task = self.prepare()
+        sha = self.commit(task, "a.py")
+        token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        long_action = "step " * 150
+        self.report(task, "done", self.handoff(sha, next_action=f"push with {token} then {long_action}", files=[f"config?token={token}"],
+                                               checks=[{"command": f"curl -H 'Authorization: Bearer {token}' https://x", "exit": 0, "note": f"password={token}"}],
+                                               decisions_unresolved=[f"api_key={token}"], artifacts=[f"logs/{token}.txt"], task_ref=f"ref {token}", review_ref=f"see {token}"))
+        for view in (self.context(task, "--role", "reviewer"), self.context(task, "--role", "coordinator"), self.context(task, "--section", "evidence"),
+                     self.context(task, "--section", "handoff", "--max-chars", "100")):
+            self.assertNotIn(token, json.dumps(view), view["sections"])
+        handoff = self.context(task, "--section", "handoff", "--max-chars", "100")["handoff"]["handoff"]
+        self.assertEqual((handoff["next_action"]["truncated"], handoff["next_action"]["chars"] > 100, handoff["next_action"]["redactions"]), (True, True, 1))
+        self.assertEqual(len(handoff["next_action"]["text"]), 100)
+        self.assertTrue(all(n >= 1 for n in (handoff["files"]["redactions"], handoff["checks"][0]["command"]["redactions"], handoff["checks"][0]["note"]["redactions"])))
+        self.assertEqual(handoff["candidate_claimed"], sha)
+        self.assertIn(token, self.store.read(task["id"])["evidence"][1]["handoff"]["next_action"])  # The record itself is untouched.
 
     def test_notes_append_refuse_secrets_and_symlinks_and_travel_in_backups(self):
         task = self.prepare()
@@ -177,8 +232,12 @@ class ContextTest(core.CoreTest):
         sumctl.backup(self.store, other)
         with tarfile.open(other) as archive:
             self.assertNotIn(f"state/tasks/{task['id']}/notes.md", archive.getnames())
-        self.assertIn("traversal", "traversal")  # The task-directory path itself is fixed; --section never takes a path.
-        self.assertIn("Unknown section", self.cli("context", task["id"], "--section", "../etc").stderr + "Unknown section")
+        bad = self.cli("context", task["id"], "--section", "../etc")  # --section takes fixed names; argparse refuses anything else before any read.
+        self.assertEqual(bad.returncode, 2)
+        self.assertIn("invalid choice: '../etc'", bad.stderr)
+        bad_task = self.cli("context", "../../etc/passwd")
+        self.assertEqual(bad_task.returncode, 1)
+        self.assertEqual(json.loads(bad_task.stderr), {"error": "Invalid task ID."})
 
     def test_credential_shaped_text_in_records_is_redacted_in_context_but_not_in_records(self):
         task = self.prepare()

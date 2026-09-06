@@ -2941,8 +2941,9 @@ CONTEXT_LIMIT = 20
 CONTEXT_MAX_LIMIT = 200
 CONTEXT_CHARS = 4000
 NOTES_FILE = "notes.md"
-CURSOR = re.compile(r"c(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}|Z))\Z")
+CURSOR = re.compile(r"c(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.([0-9a-f]{12})\.(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}|Z))\Z")
 CURSOR_FIELDS = ("questions", "evidence", "answered", "applied", "notes", "refresh", "attention")
+STATE_FIELDS = ("status", "pane", "session", "machine", "parent", "reviewer", "worktree", "branch", "cleanup", "pr", "error")
 CLAIM_NOTE = "Agent-written text: a claim to verify, not approval and not verification evidence."
 SECRET_PATTERNS = (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
                    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"), re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -2992,16 +2993,21 @@ def cursor_counters(store, task, versions):
             "refresh": len((versions or {}).get("refresh") or []), "attention": len(task.get("attention", []))}
 
 
+def state_digest(task):
+    """Non-monotonic record state (status, endpoints, checkout, cleanup, PR identity, error) hashed so a cursor also notices those changes."""
+    return sha256_text(json.dumps({k: task.get(k) for k in STATE_FIELDS}, sort_keys=True, default=str))[:12]
+
+
 def cursor_of(store, task, versions):
     counters = cursor_counters(store, task, versions)
-    return "c" + ".".join(str(counters[k]) for k in CURSOR_FIELDS) + "." + (task.get("updated_at") or task["created_at"])
+    return "c" + ".".join(str(counters[k]) for k in CURSOR_FIELDS) + f".{state_digest(task)}." + (task.get("updated_at") or task["created_at"])
 
 
 def parse_cursor(text):
     match = CURSOR.fullmatch(text or "")
     if not match:
         raise SumError("--since takes the `cursor` value of an earlier context read; it is an opaque token, not a time.")
-    return {**{k: int(match.group(i + 1)) for i, k in enumerate(CURSOR_FIELDS)}, "at": match.group(len(CURSOR_FIELDS) + 1)}
+    return {**{k: int(match.group(i + 1)) for i, k in enumerate(CURSOR_FIELDS)}, "state": match.group(len(CURSOR_FIELDS) + 1), "at": match.group(len(CURSOR_FIELDS) + 2)}
 
 
 def changes_since(store, task, cursor, versions):
@@ -3019,8 +3025,9 @@ def changes_since(store, task, cursor, versions):
              "pr_changed": any(r["kind"] == "publication" for r in new_evidence),
              "refresh_events": ((versions or {}).get("refresh") or [])[cursor["refresh"]:],
              "attention": [a["id"] for a in task.get("attention", [])[cursor["attention"]:]],
-             "notes_entries_since": counters["notes"] - cursor["notes"], "status": task["status"], "outstanding_decisions": outstanding(task)}
-    value["unchanged"] = all(counters[k] == cursor[k] for k in CURSOR_FIELDS)
+             "notes_entries_since": counters["notes"] - cursor["notes"], "status": task["status"], "outstanding_decisions": outstanding(task),
+             "state_changed": state_digest(task) != cursor["state"]}
+    value["unchanged"] = all(counters[k] == cursor[k] for k in CURSOR_FIELDS) and not value["state_changed"]
     return value
 
 
@@ -3067,10 +3074,21 @@ def add_note(store, args):
         if len((existing + entry).encode("utf-8")) > MAX_TEXT:
             raise SumError(f"Notes would exceed {MAX_TEXT} bytes; summarize and reference an artifact by path instead.")
         fd, tmp = tempfile.mkstemp(prefix=".notes-", dir=path.parent)
-        with os.fdopen(fd, "w", encoding="utf-8") as out:
-            out.write(existing + entry)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as out:
+                out.write(existing + entry)
+                out.flush()
+                os.fsync(out.fileno())
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, path)
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
     state = notes_state(store, args.task)
     return {"task": args.task, "path": state["path"], "entries": len(state["entries"]), "bytes": state["bytes"], "by": who, "authority": CLAIM_NOTE}
 
@@ -3094,28 +3112,26 @@ def skill_references(roles):
 def artifact_references(task, worktree):
     """Worker-supplied artifact strings are classified by scope, never opened: a path outside the task checkout is reported, not followed."""
     rows = []
-    root = Path(worktree).resolve() if worktree else None
     for record in task.get("evidence", []):
         if record.get("kind") != "handoff":
             continue
         for item in record.get("handoff", {}).get("artifacts", []):
-            row = {"artifact": item, "handoff": record["id"], "scope": "unknown"}
-            candidate = Path(item)
-            if root and not any(part == ".." for part in candidate.parts):
-                target = (candidate if candidate.is_absolute() else root / candidate)
-                try:
-                    inside = os.path.realpath(target).startswith(str(root) + os.sep)
-                except OSError:
-                    inside = False
-                if inside:
-                    row["scope"] = "checkout"
-                    row["present"] = target.exists()
-                else:
-                    row["scope"] = "outside-checkout"
-            else:
-                row["scope"] = "outside-checkout" if root else "unscoped"
-            rows.append(row)
-    return {"items": rows, "note": "References only; sum never opens a worker-supplied path. Read a checkout artifact yourself if you need it."}
+            text, redactions = redact(item)
+            rows.append({"artifact": text, "handoff": record["id"], "scope": artifact_scope(item, worktree), "redactions": redactions})
+    return {"items": rows, "note": "String classification only: no path here was stat'ed, resolved, or opened, and a checkout symlink is not followed. "
+                                   "Read a `checkout` artifact yourself, from the recorded worktree, if you need it."}
+
+
+def artifact_scope(item, worktree):
+    """Classify a worker-supplied artifact string without any filesystem call. Absolute, `..`, or a missing worktree: outside-checkout."""
+    if not worktree:
+        return "unscoped"
+    if not isinstance(item, str) or not item or item.startswith(("/", "~")) or "\\" in item or "\0" in item:
+        return "outside-checkout"
+    parts = PurePosixPath(item).parts
+    if any(part == ".." for part in parts) or os.path.normpath(item).startswith(".."):
+        return "outside-checkout"
+    return "checkout"
 
 
 def section_brief(store, task, versions, args):
@@ -3155,11 +3171,28 @@ def latest_handoff(task):
     return records[-1] if records else None
 
 
+def handoff_view(record, head, limit):
+    """The structured handoff projected field by field: every worker string is redacted and bounded, nothing is dumped raw."""
+    handoff = record.get("handoff") or {}
+    def strings(items):
+        rows = [bounded_view(item, limit) for item in items or []]
+        return {"count": len(rows), "items": rows, "redactions": sum(r["redactions"] for r in rows)}
+    checks = [{"command": bounded_view(c.get("command"), limit), "exit": c.get("exit"), "note": bounded_view(c.get("note"), limit)} for c in handoff.get("checks") or []]
+    return {**{k: record.get(k) for k in ("id", "at", "source", "candidate", "brief_revision", "endpoint")},
+            "current": bool(head) and record.get("candidate") == head,
+            "outcome": handoff.get("outcome"), "review": handoff.get("review"), "candidate_claimed": handoff.get("candidate"),
+            "task_ref": bounded_view(handoff.get("task_ref"), limit), "next_action": bounded_view(handoff.get("next_action"), limit),
+            "review_ref": bounded_view(handoff.get("review_ref"), limit),
+            "files": strings(handoff.get("files")), "artifacts": strings(handoff.get("artifacts")),
+            "decisions_unresolved": strings(handoff.get("decisions_unresolved")), "checks": checks,
+            "pr": {k: (bounded_view(v, limit) if isinstance(v, str) else v) for k, v in handoff["pr"].items()} if handoff.get("pr") else None}
+
+
 def section_handoff(task, args, head):
     record = latest_handoff(task)
     report = task.get("report")
     return {"current_candidate": head,
-            "handoff": {**record, "current": bool(head) and record.get("candidate") == head} if record else None,
+            "handoff": handoff_view(record, head, args.max_chars) if record else None,
             "report": {"submitted_at": report["submitted_at"], "brief_revision": report.get("brief_revision"), "candidate": report.get("candidate"),
                        "text": bounded_view(report["text"], args.max_chars)} if report else None,
             "authority": CLAIM_NOTE}
@@ -3175,7 +3208,8 @@ def section_evidence(task, args, view):
         if record.get("text") is not None:
             row["text"] = bounded_view(record["text"], args.max_chars)
         if record.get("handoff"):
-            row["handoff"] = {k: record["handoff"].get(k) for k in ("outcome", "candidate", "next_action", "review")}
+            row["handoff"] = {k: record["handoff"].get(k) for k in ("outcome", "candidate", "review")}
+            row["handoff"]["next_action"] = bounded_view(record["handoff"].get("next_action"), args.max_chars)
         rows.append(row)
     page["items"] = rows
     by_kind = {}

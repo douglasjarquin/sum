@@ -125,7 +125,8 @@ Measured on one representative lab fixture (six questions in three states, two r
 | `help context` | 1698 |
 | `--help` text | 6027 |
 
-Token savings were not measured; the byte counts above are the evidence. Adding the `context` command to the return channel changes the brief fingerprint, so existing tasks receive it through `brief regenerate`/`refresh request` (#7), never by rewriting a brief being read.
+Token savings were not measured; the byte counts above are the evidence.
+Repair 1 (coordinator review of `131a10e`): worker-supplied artifact strings are now classified by string rules alone (absolute, `~`, or any `..` component is `outside-checkout`; no `realpath`, `stat`, `exists`, or `open` on any worker path, so a checkout symlink `logs -> /host-secrets` is never followed); every handoff string in every view (`next_action`, `task_ref`, `review_ref`, `files`, `artifacts`, `decisions_unresolved`, `checks`, PR strings) is projected through redaction and `--max-chars` bounding instead of dumped raw; the cursor carries a digest of status, endpoints, checkout, cleanup, PR identity, and error so `--since` never reports `unchanged` after an archive or rebind; `notes.md` writes fsync the file and directory like every other record. Two regressions added (symlink escape with a stat spy and a realpath/exists trap; tokens in every handoff field), the tautological traversal assertion replaced by the real argparse and task-ID refusals, and an archive-after-cursor check. Suite now 269 tests. Adding the `context` command to the return channel changes the brief fingerprint, so existing tasks receive it through `brief regenerate`/`refresh request` (#7), never by rewriting a brief being read.
 No model, GitHub write, live installation state, or user `default` session was involved; `mise run test-live` was not re-run for this slice (no Herdr call was added).
 
 ## Not executed here
