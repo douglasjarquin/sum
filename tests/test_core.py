@@ -194,10 +194,15 @@ class CoreTest(unittest.TestCase):
     def test_reclaim_is_explicit_identity_checked_and_preserves_task_routes(self):
         task = self.prepare()
         with self.pane("w-second:p1"):
-            with self.assertRaisesRegex(sumctl.SumError, "Refusing reclaim.*agent"):
+            with self.assertRaisesRegex(sumctl.SumError, "Refusing reclaim.*present"):
                 self.init(role="coordinator", reclaim=True)  # The old pane still runs an agent.
         state_path = self.root / "fake/state.json"
         state = json.loads(state_path.read_text())
+        state["panes"]["w-parent:p1"].update(agent=None, agent_status="unknown")
+        state_path.write_text(json.dumps(state))
+        with self.pane("w-second:p1"), mock.patch.dict(os.environ, {"FAKE_PARENT_CWD": "/tmp", "HERDR_PANE_ID": "w-second:p1"}):
+            with self.assertRaisesRegex(sumctl.SumError, "Refusing reclaim.*present"):
+                self.init(role="coordinator", reclaim=True)  # Existing pane whose agent exited is still not reclaimable.
         del state["panes"]["w-parent:p1"]
         state_path.write_text(json.dumps(state))
         with self.pane("w-second:p1"), mock.patch.dict(os.environ, {"SUM_HERDR_BIN": "/nonexistent/herdr"}):
@@ -214,6 +219,32 @@ class CoreTest(unittest.TestCase):
             bound = sumctl.main(["--home", str(self.store.home), "bind", task["id"], "--parent-only"])
         self.assertEqual(bound, 0)
         self.assertEqual(self.store.read(task["id"])["parent"]["pane"], "w-second:p1")
+
+    def test_owner_absence_is_only_the_pane_not_found_code(self):
+        owner = {"machine": socket.gethostname(), "session": "sum-test", "pane": "w-gone:p1"}
+        self.assertEqual(sumctl.observe_owner(owner)[0], "absent")
+        with mock.patch.dict(os.environ, {"FAKE_SESSION": "elsewhere"}):
+            observed, detail = sumctl.observe_owner(owner)  # "wrong session" is an unrelated error.
+        self.assertEqual(observed, "uncertain")
+        self.assertIn("wrong session", detail)
+        self.assertEqual(sumctl.observe_owner({**owner, "pane": "w-parent:p1"})[0], "present")
+        self.assertEqual(sumctl.observe_owner({**owner, "machine": "elsewhere"})[0], "other-machine")
+        with mock.patch.dict(os.environ, {"SUM_HERDR_BIN": "/nonexistent/herdr"}):
+            self.assertEqual(sumctl.observe_owner(owner)[0], "uncertain")
+
+    def test_developer_cannot_start_or_archive(self):
+        task = self.prepare()
+        with self.pane("w-dev:p1"):
+            self.init()
+            with self.assertRaisesRegex(sumctl.SumError, "not the registered coordinator"):
+                sumctl.start(self.store, task["id"])
+            with mock.patch("sys.stderr"):
+                self.assertEqual(sumctl.main(["--home", str(self.store.home), "archive", task["id"], "--acknowledge"]), 1)
+        self.assertEqual(self.store.read(task["id"])["status"], "prepared")
+        self.assertFalse(any(c[:2] == ["agent", "start"] for c in self.calls()))
+        with mock.patch.object(sumctl, "emit"):
+            self.assertEqual(sumctl.main(["--home", str(self.store.home), "archive", task["id"], "--acknowledge"]), 0)
+        self.assertEqual(self.store.read(task["id"])["status"], "archived")
 
     def test_developer_cannot_rebind_task_routes(self):
         task = self.prepare()
@@ -447,6 +478,9 @@ class CoreTest(unittest.TestCase):
         with tarfile.open(target) as archive:
             names = archive.getnames()
             self.assertIn(f"state/tasks/{task['id']}/task.json", names)
+            registrations = [n for n in names if n.startswith("state/sessions/") and n.endswith(".json")]
+            self.assertEqual(len(registrations), 1)
+            self.assertEqual(json.load(archive.extractfile(registrations[0]))["role"], "coordinator")
             self.assertFalse(any(".env" in n or "projects/" in n for n in names))
             self.assertEqual(json.load(archive.extractfile("manifest.json"))["scope"], "records-only")
         with self.assertRaises(sumctl.SumError): sumctl.backup(self.store, target)

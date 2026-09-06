@@ -119,7 +119,7 @@ Setup also runs an MCP initialization/tool-discovery smoke test after installing
 
 ## Recovery and backup
 
-After reopening the coordinator, run `./bin/sumctl init`. If the previous coordinator pane is verifiably gone, run `./bin/sumctl init --role coordinator --reclaim`; it refuses while that pane still runs an agent or while Herdr cannot observe it, and it never rebinds tasks by itself. Then run a rundown. To route an existing task back to the new coordinator:
+After reopening the coordinator, run `./bin/sumctl init`. If the previous coordinator pane is verifiably gone, run `./bin/sumctl init --role coordinator --reclaim`; it proceeds only when Herdr reports that pane as `pane_not_found`; a pane that still exists (even with its agent exited) or that Herdr cannot observe is refused, and it never rebinds tasks by itself. Then run a rundown. To route an existing task back to the new coordinator:
 
 ```sh
 ./bin/sumctl bind TASK_ID --parent-only

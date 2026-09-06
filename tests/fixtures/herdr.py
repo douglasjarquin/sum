@@ -10,7 +10,7 @@ if len(args) < 3 or args[0] != "--session":
     print("explicit session required", file=sys.stderr); sys.exit(2)
 session, args = args[1], args[2:]
 if session != os.environ.get("FAKE_SESSION", "sum-test"):
-    print("wrong session", file=sys.stderr); sys.exit(2)
+    print(json.dumps({"error": {"code": "wrong_session", "message": "wrong session"}}), file=sys.stderr); sys.exit(2)
 with (root / "calls.jsonl").open("a") as out:
     out.write(json.dumps({"session": session, "args": args}) + "\n")
 state_path = root / "state.json"
@@ -19,11 +19,15 @@ parent = os.environ.get("HERDR_PANE_ID", "w-parent:p1")
 state["panes"][parent] = {"pane_id": parent, "cwd": os.environ.get("FAKE_PARENT_CWD", "/tmp"),
   "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": "test-coordinator"}
 
-def fail(text):
-    print(json.dumps({"error": text}), file=sys.stderr); sys.exit(1)
+def save():
+    tmp = state_path.with_name("state.%d.tmp" % os.getpid())  # Atomic like Herdr's own store; concurrent CLI calls must not see partial JSON.
+    tmp.write_text(json.dumps(state)); os.replace(tmp, state_path)
+
+def fail(code, message=None):
+    print(json.dumps({"error": {"code": code, "message": message or code}}), file=sys.stderr); sys.exit(1)
 
 def emit(result):
-    state_path.write_text(json.dumps(state))
+    save()
     print(json.dumps({"result": result})); sys.exit(0)
 
 def arg(name):
@@ -46,7 +50,7 @@ if args[:2] == ["agent", "start"]:
     pane = arg("--pane")
     if pane not in state["panes"] or state["panes"][pane]["agent"]: fail("pane is not an available shell")
     state["panes"][pane].update(agent=arg("--kind"), name=args[2], agent_status="idle")
-    state_path.write_text(json.dumps(state))
+    save()
     if os.environ.get("FAKE_START_UNCERTAIN"): fail("agent_not_ready: simulated trust prompt")
     emit({"agent": state["panes"][pane]})
 if args[:2] in (["agent", "get"], ["pane", "get"]):

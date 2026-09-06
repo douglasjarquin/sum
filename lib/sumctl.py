@@ -384,6 +384,7 @@ def prepare(store, args):
 
 
 def start(store, task_id, extra_args=()):
+    require_coordinator(store, context())
     ensure_version()
     with store.lock():
         task = store.read(task_id)
@@ -544,21 +545,28 @@ def matching_task(store, endpoint):
     return None
 
 
+def herdr_error_code(result):
+    """Herdr 0.8.2 writes JSON errors to stderr: {"error": {"code": ..., "message": ...}}."""
+    try:
+        return json.loads(result.stderr).get("error", {}).get("code")
+    except (ValueError, AttributeError):
+        return None
+
+
 def observe_owner(owner):
-    """Observe the recorded coordinator endpoint. 'absent' means Herdr says the pane is gone; any other failure is uncertain."""
+    """Observe the recorded coordinator endpoint. Only Herdr's pane_not_found code means absent; anything else is uncertain or present."""
     if owner["machine"] != machine():
         return "other-machine", None
     try:
-        pane = herdr(["pane", "get", owner["pane"]], session=owner["session"], timeout=5)
+        result = run([tool("herdr"), "--session", owner["session"], "pane", "get", owner["pane"]], timeout=5, check=False)
     except SumError as exc:
-        text = str(exc).lower()
-        if "not_found" in text or "not found" in text or "unknown pane" in text:
-            return "absent", str(exc)
         return "uncertain", str(exc)
-    pane = pane.get("pane", pane) if isinstance(pane, dict) else {}
-    # Herdr 0.8.2 reports agent_status "unknown" for a plain shell pane (verified in a lab session).
-    live = pane.get("agent") or pane.get("agent_status") not in (None, "unknown")
-    return ("agent" if live else "shell"), pane
+    if result.returncode:
+        code = herdr_error_code(result)
+        if code == "pane_not_found":
+            return "absent", code
+        return "uncertain", (result.stderr or result.stdout).strip()[-300:] or f"exit {result.returncode}"
+    return "present", result.stdout[:300]
 
 
 def init(store, args):
@@ -612,8 +620,8 @@ def init(store, args):
             if not args.reclaim:
                 raise SumError(f"Coordinator is owned by pane {owner['pane']} in session {owner['session']} on {owner['machine']}. Inspect it; use --reclaim only for a deliberate, verified takeover. Task parent routes stay unchanged either way.")
             observed, detail = observe_owner(owner)
-            if observed not in ("absent", "shell"):
-                raise SumError(f"Refusing reclaim: recorded coordinator pane is {observed} ({detail if isinstance(detail, str) else 'live pane'}). An unreachable or uncertain root is not permission to take over.")
+            if observed != "absent":
+                raise SumError(f"Refusing reclaim: recorded coordinator pane is {observed} ({detail}). Only a pane Herdr reports as pane_not_found can be reclaimed; an existing, unreachable, or uncertain root is not permission to take over.")
             owner = {**ctx, "role": "coordinator", "instance": state["instance"], "sum_version": VERSION, "claimed_at": now(),
                      "reclaimed_from": {k: owner.get(k) for k in ("machine", "session", "pane", "at", "claimed_at")}, "previous_observed": observed}
             atomic_json(store.home / "context.json", owner)
@@ -686,6 +694,7 @@ def backup(store, destination):
                     archive.add(path, arcname="manifest.json")
                 # Exact allowlist: nested project clones are never traversed.
                 paths = [store.home / name for name in ("state.json", "preferences.md", "projects.md")]
+                paths.extend(sorted(store.sessions.glob("*.json")) if store.sessions.is_dir() else [])
                 for task in tasks:
                     paths.append(store.path(task["id"]) / "task.json")
                     if task.get("brief_path"):
@@ -791,6 +800,7 @@ def main(argv=None):
         elif args.command == "archive":
             if not args.acknowledge:
                 raise SumError("Use --acknowledge only after inspecting/preserving the work. This command never stops an agent or deletes a checkout.")
+            require_coordinator(store, context())
             with store.lock():
                 task = store.read(args.task)
                 if any(q["status"] != "applied" for q in task["questions"]):
