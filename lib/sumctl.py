@@ -16,6 +16,7 @@ import re
 import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import tarfile
@@ -68,7 +69,7 @@ SNAPSHOT_TIMEOUT = 10              # Seconds for the single per-session `agent l
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show",
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show",
                       "preset-list", "preset-show", "hook-status"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
@@ -2993,14 +2994,14 @@ def cursor_counters(store, task, versions):
             "refresh": len((versions or {}).get("refresh") or []), "attention": len(task.get("attention", []))}
 
 
-def state_digest(task):
-    """Non-monotonic record state (status, endpoints, checkout, cleanup, PR identity, error) hashed so a cursor also notices those changes."""
-    return sha256_text(json.dumps({k: task.get(k) for k in STATE_FIELDS}, sort_keys=True, default=str))[:12]
+def state_digest(task, environment="none"):
+    """Non-monotonic record state (status, endpoints, checkout, cleanup, PR identity, error) plus the environment sidecar stamp, hashed so a cursor notices those changes."""
+    return sha256_text(json.dumps({**{k: task.get(k) for k in STATE_FIELDS}, "environment": environment}, sort_keys=True, default=str))[:12]
 
 
 def cursor_of(store, task, versions):
     counters = cursor_counters(store, task, versions)
-    return "c" + ".".join(str(counters[k]) for k in CURSOR_FIELDS) + f".{state_digest(task)}." + (task.get("updated_at") or task["created_at"])
+    return "c" + ".".join(str(counters[k]) for k in CURSOR_FIELDS) + f".{state_digest(task, environment_stamp(store, task['id']))}." + (task.get("updated_at") or task["created_at"])
 
 
 def parse_cursor(text):
@@ -3026,7 +3027,7 @@ def changes_since(store, task, cursor, versions):
              "refresh_events": ((versions or {}).get("refresh") or [])[cursor["refresh"]:],
              "attention": [a["id"] for a in task.get("attention", [])[cursor["attention"]:]],
              "notes_entries_since": counters["notes"] - cursor["notes"], "status": task["status"], "outstanding_decisions": outstanding(task),
-             "state_changed": state_digest(task) != cursor["state"]}
+             "state_changed": state_digest(task, environment_stamp(store, task["id"])) != cursor["state"]}
     value["unchanged"] = all(counters[k] == cursor[k] for k in CURSOR_FIELDS) and not value["state_changed"]
     return value
 
@@ -3238,7 +3239,8 @@ def section_environment(store, task, versions, roles):
     return {"commands": commands, "brief_path": task.get("brief_path"), "revisions": revisions,
             "notes": {k: v for k, v in notes_state(store, task["id"]).items() if k in ("path", "present", "ok", "error")},
             "skills": skill_references(roles or CONTEXT_ROLES), "runtime": {"path": str(RUNTIME), "sum_version": VERSION},
-            "help": command_for(store, "help", "TOPIC"), "note": "Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout."}
+            "help": command_for(store, "help", "TOPIC"), "dev": environment_view(store, task),
+            "note": "Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout. `dev` is the task-local environment record as last observed."}
 
 
 def section_update(store, task, versions):
@@ -3314,6 +3316,7 @@ def context_view(store, task_id, args):
                 "returns_open": returns if isinstance(returns, dict) else len(returns),
                 "attention_open": len(open_attention(task)), "cleanup": cleanup_pending(task),
                 "notes": {"present": notes["present"], "ok": notes["ok"], "entries": len(notes.get("entries", []))},
+                "environment": environment_outline(store, task),
                 "read": {"sections": list(CONTEXT_SECTIONS), "example": command_for(store, "context", task_id, "--section", "decisions", "--section", "handoff")}}
         elif section == "brief":
             value["brief"] = section_brief(store, task, versions, args)
@@ -3383,6 +3386,781 @@ def help_view(root_parser, topic=None):
             "arguments": arguments(parser_), "subcommands": subcommands(parser_),
             "read_only": topic in READ_ONLY_COMMANDS,
             "read_only_subcommands": sorted(k.split("-", 1)[1] for k in READ_ONLY_COMMANDS if k.startswith(parts[0] + "-")) if len(parts) == 1 else None}
+
+
+# --- issue #16: task-local environment record: discovered commands, observed URLs, logs, and service references -----
+#
+# The record describes the application around the code without owning it. Discovery reads declared configuration
+# (mise tasks, package scripts, Makefile/justfile targets, Procfile, compose, Dockerfile, devcontainer) and stores
+# command *references*; nothing here executes a discovered command, starts or stops a process, or reserves a port.
+# A URL is recorded together with what `lsof` actually observed for its port at that moment; ownership is derived
+# from the listener's cwd (this checkout: owned; another task's checkout or an explicit flag: shared; anything else:
+# unknown). `env inspect` re-observes on demand and marks stale facts; there is no polling. Credentials are refused
+# or redacted at write time, and log paths are validated and stat'ed without following symlinks, never read.
+
+ENVIRONMENT_FILE = "environment.json"
+ENVIRONMENT_SCHEMA = 1
+ENVIRONMENT_HISTORY = 30
+ENVIRONMENT_LIMITS = {"commands": 200, "endpoints": 40, "logs": 40, "resources": 40, "sources": 40}
+OWNERSHIP = ("owned", "shared", "unknown")
+ENDPOINT_STATES = ("observed", "not-listening", "stale", "unverified")
+LOG_STATES = ("present", "missing", "symlink-not-followed", "not-a-file")
+CONFIG_MAX_BYTES = 256 * 1024
+CONFIG_FILES = ("mise.toml", ".mise.toml", ".mise/config.toml", "package.json", "Makefile", "justfile", "Justfile", "Procfile",
+                "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml", "Dockerfile", ".devcontainer/devcontainer.json",
+                ".devcontainer.json", "pyproject.toml")
+VERIFICATION_NAMES = re.compile(r"(?i)^(test|tests|lint|check|verify|ci|typecheck|fmt-check|format-check|e2e|smoke|coverage)(?:[:_-].*)?$")
+SERVICE_NAMES = re.compile(r"(?i)^(dev|serve|start|run|up|watch|preview|server)(?:[:_-].*)?$")
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0", "[::1]", "[::]", "::"}
+DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443, "postgres": 5432, "postgresql": 5432, "mysql": 3306, "redis": 6379,
+                 "amqp": 5672, "mongodb": 27017}
+URL_SCHEMES = set(DEFAULT_PORTS) | {"tcp", "grpc"}
+LISTENER_TIMEOUT = 30
+CONTAINER_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}\Z")
+ENVIRONMENT_NOTE = ("Recorded from declared configuration and one-shot observation; commands are references, never executed by sum, "
+                    "and no port is bound or reserved by being written here. Re-inspect with `env inspect`; nothing polls or restarts.")
+
+
+def environment_path(store, task_id):
+    return store.path(task_id) / ENVIRONMENT_FILE
+
+
+def empty_environment(task_id):
+    return {"schema": ENVIRONMENT_SCHEMA, "task": task_id, "discovery": None, "endpoints": [], "logs": [], "resources": [], "history": [],
+            "created_at": now(), "updated_at": None}
+
+
+def read_environment(store, task_id):
+    """The sidecar as recorded, or an empty record: a task without one continues exactly as before."""
+    path = environment_path(store, task_id)
+    if path.is_symlink():
+        raise SumError(f"{path} is a symlink; the environment record must be a regular file inside the task record.")
+    if not path.is_file():
+        return None
+    value = read_json(path)
+    if value.get("schema") != ENVIRONMENT_SCHEMA or value.get("task") != task_id:
+        raise SumError("Environment record schema/identity mismatch; inspect the sidecar, it is not rewritten.")
+    return value
+
+
+def write_environment(store, record, event):
+    record["updated_at"] = now()
+    record["history"] = (record.get("history") or [])[-(ENVIRONMENT_HISTORY - 1):] + [{"at": record["updated_at"], **event}]
+    path = environment_path(store, record["task"])
+    if path.is_symlink():
+        raise SumError(f"{path} is a symlink; refusing to write through it.")
+    atomic_json(path, record)
+    return record
+
+
+def environment_stamp(store, task_id):
+    """A short digest of the environment sidecar so a context cursor notices environment changes without reading the checkout."""
+    try:
+        record = read_environment(store, task_id)
+    except (SumError, OSError, ValueError):
+        return "err"
+    return sha256_text(json.dumps({k: record.get(k) for k in ("updated_at", "discovery", "endpoints", "logs", "resources")}, sort_keys=True, default=str))[:8] if record else "none"
+
+
+def symlinked_component(worktree, relative):
+    """The first path component under the checkout that is a symlink, walking with lstat only; None when every component is a real entry."""
+    current = Path(worktree)
+    for part in PurePosixPath(relative).parts:
+        current = current / part
+        try:
+            if stat.S_ISLNK(os.lstat(current).st_mode):
+                return str(current.relative_to(worktree))
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return None
+    return None
+
+
+def require_worktree(task):
+    if not task.get("worktree"):
+        raise SumError(f"Task {task['id']} has no recorded worktree; environment facts are recorded against a checkout.")
+    return task["worktree"]
+
+
+def checkout_file(worktree, relative):
+    """One declared configuration file inside the checkout: no component may be a symlink, never larger than the bound; (text, info) or (None, info)."""
+    path = Path(worktree) / relative
+    info = {"path": relative}
+    try:
+        link = symlinked_component(worktree, relative)
+        if link:
+            return None, {**info, "skipped": f"symlink not followed ({link})"}
+        if not path.is_file():
+            return None, None
+        size = path.stat().st_size
+        if size > CONFIG_MAX_BYTES:
+            return None, {**info, "bytes": size, "skipped": f"larger than {CONFIG_MAX_BYTES} bytes"}
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, {**info, "skipped": f"unreadable: {exc}"}
+    return text, {**info, "bytes": len(text.encode("utf-8")), "sha256": sha256_text(text)[:16]}
+
+
+def classify_command(name, kind=None):
+    if kind:
+        return kind
+    if VERIFICATION_NAMES.match(name or ""):
+        return "verification"
+    if SERVICE_NAMES.match(name or ""):
+        return "service"
+    return "task"
+
+
+URL_USERINFO = re.compile(r"(://)[^/\s@:]+:[^/\s@]*@")
+
+
+def redact_reference(value):
+    """Redact a discovered string: credential patterns plus `user:password@` inside URLs; lists and dicts are redacted element-wise."""
+    if isinstance(value, str):
+        text, count = redact(value)
+        text, n = URL_USERINFO.subn(r"\1[redacted]@", text)
+        return text, count + n
+    if isinstance(value, list):
+        rows = [redact_reference(v) for v in value]
+        return [r[0] for r in rows], sum(r[1] for r in rows)
+    if isinstance(value, dict):
+        rows = {k: redact_reference(v) for k, v in value.items()}
+        return {k: r[0] for k, r in rows.items()}, sum(r[1] for r in rows.values())
+    return value, 0
+
+
+def command_row(source, name, command, kind=None, **extra):
+    """A command reference: every string field redacted at write, classified by name, never executed."""
+    text, redactions = redact_reference(command if isinstance(command, str) else json.dumps(command))
+    row = {"source": source, "name": str(name)[:80], "command": text[:400], "kind": classify_command(name, kind)}
+    for key, value in extra.items():
+        if value in (None, [], ""):
+            continue
+        value, count = redact_reference(value)
+        redactions += count
+        row[key] = value
+    row["redactions"] = redactions
+    return row
+
+
+def discover_mise(relative, text):
+    rows = []
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return rows, [f"{relative}: {exc}"]
+    tasks = data.get("tasks") or {}
+    if isinstance(tasks, dict):
+        for name, spec in tasks.items():
+            if isinstance(spec, str):
+                rows.append(command_row(relative, name, spec))
+            elif isinstance(spec, dict):
+                run_ = spec.get("run")
+                command = "\n".join(run_) if isinstance(run_, list) else run_ or (spec.get("file") and f"file: {spec['file']}") or ""
+                rows.append(command_row(relative, name, command, description=spec.get("description"), depends=spec.get("depends")))
+    return rows, []
+
+
+def discover_package(relative, text):
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        return [], [f"{relative}: {exc}"]
+    scripts = data.get("scripts") if isinstance(data, dict) else None
+    return [command_row(relative, name, command) for name, command in (scripts or {}).items() if isinstance(command, str)], []
+
+
+def discover_make(relative, text):
+    rows = []
+    for match in re.finditer(r"^([A-Za-z0-9][A-Za-z0-9_./-]*)\s*:(?!=)", text, re.M):
+        name = match.group(1)
+        if name.startswith(".") or name in {n["name"] for n in rows}:
+            continue
+        rows.append(command_row(relative, name, f"make {name}"))
+    return rows, []
+
+
+def discover_just(relative, text):
+    rows = []
+    for match in re.finditer(r"^(?:@)?([a-zA-Z_][A-Za-z0-9_-]*)(?:\s+[^:\n]*)?:(?!=)\s*(?:[^\n]*)?$", text, re.M):
+        name = match.group(1)
+        if name not in {n["name"] for n in rows}:
+            rows.append(command_row(relative, name, f"just {name}"))
+    return rows, []
+
+
+def discover_procfile(relative, text):
+    rows = []
+    for match in re.finditer(r"^([A-Za-z0-9_-]+):\s*(.+)$", text, re.M):
+        rows.append(command_row(relative, match.group(1), match.group(2), kind="service"))
+    return rows, []
+
+
+def declared_ports(text):
+    """Port numbers named in a mapping like `8080:80`, `127.0.0.1:5432:5432`, or a bare `3000`; declared, never bound."""
+    ports = []
+    for token in re.findall(r"[\"']?([0-9.:\[\]a-fA-F-]+(?:/(?:tcp|udp))?)[\"']?", text):
+        host_port = token.split("/")[0].split(":")
+        candidate = host_port[-2] if len(host_port) >= 2 else host_port[0]
+        candidate = candidate.split("-")[0]
+        if candidate.isdigit() and 0 < int(candidate) < 65536 and int(candidate) not in ports:
+            ports.append(int(candidate))
+    return ports
+
+
+def discover_compose(relative, text):
+    """A minimal indentation scan of compose services: name, image, and declared ports. No YAML engine, no anchors, no execution."""
+    rows, services, current, in_services, in_ports = [], {}, None, False, False
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        indent = len(line) - len(line.lstrip())
+        stripped = line.strip()
+        if indent == 0:
+            in_services = stripped == "services:"
+            current = None
+            continue
+        if not in_services:
+            continue
+        if indent == 2 and stripped.endswith(":") and not stripped.startswith("-"):
+            current = stripped[:-1].strip("\"'")
+            services[current] = {"image": None, "ports": [], "build": False}
+            in_ports = False
+        elif current and indent >= 4:
+            if indent == 4 and stripped.startswith("image:"):
+                services[current]["image"] = stripped.split(":", 1)[1].strip().strip("\"'")[:120]
+                in_ports = False
+            elif indent == 4 and stripped.startswith("build"):
+                services[current]["build"] = True
+                in_ports = False
+            elif indent == 4 and stripped.startswith("ports:"):
+                in_ports = True
+                inline = stripped.split(":", 1)[1].strip()
+                if inline.startswith("["):
+                    services[current]["ports"].extend(declared_ports(inline))
+                    in_ports = False
+            elif indent == 4:
+                in_ports = False
+            elif in_ports and stripped.startswith("-"):
+                services[current]["ports"].extend(declared_ports(stripped[1:]))
+    for name, spec in services.items():
+        rows.append(command_row(relative, name, f"docker compose up {name}", kind="service", image=spec["image"], declared_ports=spec["ports"], build=spec["build"] or None))
+    return rows, []
+
+
+def discover_dockerfile(relative, text):
+    ports = []
+    for match in re.finditer(r"^\s*EXPOSE\s+(.+)$", text, re.M | re.I):
+        ports.extend(p for p in declared_ports(match.group(1)) if p not in ports)
+    return [command_row(relative, "image", f"docker build -f {relative} .", kind="container", declared_ports=ports)], []
+
+
+def discover_devcontainer(relative, text):
+    cleaned = re.sub(r"^\s*//.*$", "", text, flags=re.M)
+    try:
+        data = json.loads(cleaned)
+    except ValueError:
+        return [command_row(relative, "devcontainer", "devcontainer (declared; configuration not parsed)", kind="container")], [f"{relative}: JSON with comments not parsed"]
+    ports = [p for p in (data.get("forwardPorts") or []) if isinstance(p, int)]
+    image = data.get("image") or (data.get("build") or {}).get("dockerfile") if isinstance(data, dict) else None
+    return [command_row(relative, "devcontainer", "devcontainer up", kind="container", image=image, declared_ports=ports,
+                        post_create=data.get("postCreateCommand") if isinstance(data.get("postCreateCommand"), str) else None)], []
+
+
+def discover_pyproject(relative, text):
+    rows = []
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        return rows, [f"{relative}: {exc}"]
+    tool = data.get("tool") or {}
+    if "pytest" in tool:
+        rows.append(command_row(relative, "pytest", "pytest", kind="verification", declared="[tool.pytest]"))
+    for name, spec in ((data.get("project") or {}).get("scripts") or {}).items():
+        rows.append(command_row(relative, name, spec, kind="task"))
+    return rows, []
+
+
+DISCOVERERS = {"mise.toml": discover_mise, ".mise.toml": discover_mise, ".mise/config.toml": discover_mise, "package.json": discover_package,
+               "Makefile": discover_make, "justfile": discover_just, "Justfile": discover_just, "Procfile": discover_procfile,
+               "compose.yaml": discover_compose, "compose.yml": discover_compose, "docker-compose.yaml": discover_compose, "docker-compose.yml": discover_compose,
+               "Dockerfile": discover_dockerfile, ".devcontainer/devcontainer.json": discover_devcontainer, ".devcontainer.json": discover_devcontainer,
+               "pyproject.toml": discover_pyproject}
+
+
+def checkout_head(worktree):
+    result = run(["git", "-C", worktree, "rev-parse", "HEAD"], check=False)
+    return result.stdout.strip() if result.returncode == 0 else None
+
+
+def discover_configuration(worktree):
+    """Read declared configuration inside the checkout and return command references plus a configuration revision. Nothing is executed."""
+    worktree = str(worktree)
+    if not Path(worktree).is_dir():
+        raise SumError(f"Recorded worktree {worktree} is not a directory; nothing was discovered.")
+    sources, commands, problems = [], [], []
+    for relative in CONFIG_FILES:
+        text, info = checkout_file(worktree, relative)
+        if info is None:
+            continue
+        sources.append(info)
+        if text is None:
+            continue
+        rows, errors = DISCOVERERS[relative](relative, text)
+        commands.extend(rows)
+        problems.extend(errors)
+    commands = commands[:ENVIRONMENT_LIMITS["commands"]]
+    head = checkout_head(worktree)
+    revision = sha256_text(json.dumps({"head": head, "sources": [(s["path"], s.get("sha256")) for s in sources]}, sort_keys=True))[:16]
+    return {"observed_at": now(), "worktree": worktree, "head": head, "config_revision": revision, "sources": sources[:ENVIRONMENT_LIMITS["sources"]],
+            "commands": commands, "problems": problems, "stale": False, "current_revision": revision,
+            "summary": {kind: sum(1 for c in commands if c["kind"] == kind) for kind in ("verification", "service", "container", "task")},
+            "note": "Declared by the repository; classification by name. No command here was run, and absence of a `service` entry means none was declared, not that nothing runs."}
+
+
+def parse_endpoint_url(url):
+    """A URL is accepted only without credentials; the port is explicit or the scheme default, and local hosts are the ones sum can observe."""
+    if not isinstance(url, str) or not url.strip() or len(url) > 400 or "\0" in url or any(ch.isspace() for ch in url.strip()):
+        raise SumError("--url must be one URL without whitespace (at most 400 characters).")
+    url = url.strip()
+    match = re.fullmatch(r"([a-z][a-z0-9+.-]*)://([^/?#]*)(.*)", url, re.I)
+    if not match:
+        raise SumError(f"--url {url!r} is not scheme://host[:port][/path]; give the endpoint as the application reports it.")
+    scheme, authority, rest = match.group(1).lower(), match.group(2), match.group(3)
+    if "@" in authority:
+        raise SumError("The URL carries user information (user:password@host); reference where the credential lives instead of storing it.")
+    if redact(url)[1]:
+        raise SumError("The URL contains credential-shaped text; environment records hold no secrets.")
+    if scheme not in URL_SCHEMES:
+        raise SumError(f"Unsupported URL scheme {scheme!r}; supported: {sorted(URL_SCHEMES)}.")
+    host_match = re.fullmatch(r"(\[[0-9a-fA-F:.]+\]|[^:]+)(?::(\d{1,5}))?", authority)
+    if not host_match or not host_match.group(1):
+        raise SumError(f"--url {url!r} has no host.")
+    host = host_match.group(1)
+    port = int(host_match.group(2)) if host_match.group(2) else DEFAULT_PORTS.get(scheme)
+    if port is None:
+        raise SumError(f"--url {url!r} needs an explicit port for scheme {scheme!r}.")
+    if not 0 < port < 65536:
+        raise SumError(f"Port {port} is out of range.")
+    return {"url": url, "scheme": scheme, "host": host, "port": port, "path": rest[:200], "local": host.lower() in LOCAL_HOSTS,
+            "explicit_port": bool(host_match.group(2))}
+
+
+def listeners():
+    """TCP listeners from one bounded `lsof` pass: {port: [{pid, address}]}; a failed pass is uncertainty, not emptiness."""
+    try:
+        result = run([tool("lsof"), "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn", "-w"], timeout=LISTENER_TIMEOUT, check=False)
+    except SumError as exc:
+        return None, str(exc)
+    rows, pid = {}, None
+    for line in result.stdout.splitlines():
+        if line[:1] == "p":
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line[:1] == "n" and pid is not None:
+            address = line[1:]
+            port = address.rsplit(":", 1)[-1] if ":" in address else ""
+            if port.isdigit():
+                rows.setdefault(int(port), []).append({"pid": pid, "address": address})
+    if result.returncode and not rows:  # lsof exits 1 for "no matching files" as well; an empty table with rc 0/1 is a real observation.
+        stderr = (result.stderr or "").strip()
+        if stderr:
+            return None, f"lsof exited {result.returncode}: {stderr[-200:]}"
+    return rows, None
+
+
+def process_cwds(exclude=()):
+    """{pid: cwd} from the same bounded cwd pass cleanup uses; None with an error when the table is unavailable."""
+    try:
+        result = run([tool("lsof"), "-a", "-d", "cwd", "-Fpn", "-w"], timeout=LSOF_TIMEOUT, check=False)
+    except SumError as exc:
+        return None, str(exc)
+    rows, pid = {}, None
+    for line in result.stdout.splitlines():
+        if line[:1] == "p":
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line[:1] == "n" and pid is not None and pid not in set(exclude) | {os.getpid()}:
+            rows[pid] = line[1:]
+    if not rows:
+        return None, f"lsof exited {result.returncode} without a process table: {(result.stderr or '').strip()[-200:]}"
+    return rows, None
+
+
+def inside(path, root):
+    roots = {str(root), os.path.realpath(root)}
+    return any(path == r or path.startswith(r + "/") for r in roots)
+
+
+def task_checkouts(store, task_id):
+    """Other non-archived tasks' checkouts on this machine: the boundary a URL observation is classified against."""
+    rows = []
+    for other in store.all():
+        if other["id"] != task_id and other["status"] != "archived" and other.get("worktree") and other.get("machine") == machine():
+            rows.append(other)
+    return rows
+
+
+def observe_port(store, task, port, snapshot=None):
+    """What listens on a local port right now and whose it is, from observation only; never a claim that a default port is bound."""
+    snapshot = snapshot if snapshot is not None else {}
+    if "listeners" not in snapshot:
+        snapshot["listeners"] = listeners()
+    table, error = snapshot["listeners"]
+    if table is None:
+        return {"state": "unverified", "ownership": "unknown", "error": error, "listeners": []}
+    found = table.get(port) or []
+    if not found:
+        return {"state": "not-listening", "ownership": "unknown", "listeners": []}
+    if "cwds" not in snapshot:
+        snapshot["cwds"] = process_cwds()
+    cwds, cwd_error = snapshot["cwds"]
+    others = task_checkouts(store, task["id"])
+    rows, ownership, notes = [], "unknown", []
+    for item in found:
+        cwd = (cwds or {}).get(item["pid"])
+        row = {"pid": item["pid"], "address": item["address"], "cwd": cwd}
+        if cwd and inside(cwd, task["worktree"]):
+            row["owner"] = "this-task"
+            ownership = "owned" if ownership in ("unknown",) else ownership
+        elif cwd:
+            other = next((o for o in others if inside(cwd, o["worktree"])), None)
+            if other:
+                row["owner"] = other["id"]
+                ownership = "shared"
+                notes.append(f"pid {item['pid']} runs inside task {other['id']}'s checkout {other['worktree']}")
+            else:
+                row["owner"] = "unknown"
+        else:
+            row["owner"] = "unknown"
+            if cwd_error:
+                notes.append(f"process cwd table unavailable: {cwd_error}")
+        rows.append(row)
+    return {"state": "observed", "ownership": ownership, "listeners": rows[:10], "notes": notes}
+
+
+def endpoint_conflicts(store, task, parsed):
+    """Another non-archived task that recorded this URL (or local port) as owned: parallel work never reuses it silently."""
+    rows = []
+    for other in task_checkouts(store, task["id"]):
+        try:
+            record = read_environment(store, other["id"])
+        except SumError:
+            continue
+        for endpoint in (record or {}).get("endpoints", []):
+            same_url = endpoint["url"] == parsed["url"]
+            same_port = parsed["local"] and endpoint.get("local") and endpoint["port"] == parsed["port"]
+            if (same_url or same_port) and endpoint.get("ownership") == "owned" and endpoint.get("state") in ("observed", "not-listening"):
+                rows.append({"task": other["id"], "url": endpoint["url"], "endpoint": endpoint["id"], "worktree": other["worktree"]})
+    return rows
+
+
+def validate_log_path(task, text):
+    """A log reference: absolute, or relative to the checkout; no NUL, no credential-shaped text, `..` never escapes the checkout."""
+    if not isinstance(text, str) or not text.strip() or len(text) > 400 or "\0" in text or "\n" in text:
+        raise SumError("--log must be one path (at most 400 characters).")
+    if redact(text)[1]:
+        raise SumError("The log path contains credential-shaped text; environment records hold no secrets.")
+    text = text.strip()
+    if text.startswith("~"):
+        raise SumError("Give the log path without `~`; it is recorded literally for other panes.")
+    worktree = require_worktree(task)
+    if text.startswith("/"):
+        normal = os.path.normpath(text)
+        if not inside(normal, worktree):
+            return {"path": normal, "scope": "outside-checkout"}
+        relative = os.path.relpath(normal, worktree)
+    else:
+        relative = os.path.normpath(text)
+        if relative.startswith("..") or relative == ".":
+            raise SumError(f"Relative log path {text!r} leaves the checkout; give the absolute path of a log outside it.")
+    return {"path": str(Path(worktree) / relative), "relative": relative, "scope": log_scope(worktree, relative)}
+
+
+def log_scope(worktree, relative):
+    """`checkout` only when no component under the checkout is a symlink; a symlinked component may point anywhere and is never resolved."""
+    return "symlink-not-followed" if symlinked_component(worktree, relative) else "checkout"
+
+
+def observe_log(path, worktree=None, relative=None):
+    """lstat only: existence, kind, and size. Content is never read, a symlink is never followed, and a symlinked component under the checkout is not stat'ed through."""
+    if worktree and relative is not None and symlinked_component(worktree, relative):
+        return {"state": "symlink-not-followed", "bytes": None, "scope": "symlink-not-followed"}
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return {"state": "missing", "bytes": None}
+    except OSError as exc:
+        return {"state": "missing", "bytes": None, "error": str(exc)}
+    if stat.S_ISLNK(info.st_mode):
+        return {"state": "symlink-not-followed", "bytes": None}
+    if not stat.S_ISREG(info.st_mode):
+        return {"state": "not-a-file", "bytes": None}
+    return {"state": "present", "bytes": info.st_size, "modified_at": datetime.fromtimestamp(info.st_mtime, timezone.utc).isoformat(timespec="seconds")}
+
+
+def observe_pane(task, pane_id):
+    """One bounded `pane get` in the task's session: present, cwd, ownership by identity or checkout."""
+    if not PANE_ID.fullmatch(pane_id or ""):
+        raise SumError("--pane must be a Herdr pane ID like w1:p2.")
+    row = {"kind": "pane", "id": pane_id, "session": task.get("session")}
+    if pane_id == task.get("pane"):
+        return {**row, "ownership": "owned", "state": "observed", "note": "the task's own worker pane"}
+    if not task.get("session"):
+        return {**row, "ownership": "unknown", "state": "unverified", "error": "task has no recorded session"}
+    info, code = herdr_observe(["pane", "get", pane_id], session=task["session"], timeout=5)
+    if info is None:
+        return {**row, "ownership": "unknown", "state": "unverified", "error": code}
+    pane = info.get("pane", info)
+    cwd = pane.get("cwd") or pane.get("working_directory")
+    ownership = "owned" if cwd and inside(str(cwd), task["worktree"]) else "unknown"
+    return {**row, "ownership": ownership, "state": "observed", "cwd": cwd, "agent": pane.get("agent")}
+
+
+def endpoint_id(parsed):
+    return "u-" + sha256_text(parsed["url"])[:10]
+
+
+def ensure_environment(store, task):
+    record = read_environment(store, task["id"])
+    return record or empty_environment(task["id"])
+
+
+def env_discover(store, args):
+    """Refresh the declared-configuration part of the record from the checkout; observation state of endpoints and logs is untouched."""
+    endpoint = optional_context()
+    task = store.read(args.task)
+    discovery = discover_configuration(require_worktree(task))  # Checkout reads happen before the store lock; nothing else waits on them.
+    with store.lock():
+        task = store.read(args.task)
+        record = ensure_environment(store, task)
+        previous = record.get("discovery") or {}
+        changed = previous.get("config_revision") != discovery["config_revision"]
+        record["discovery"] = discovery
+        own = {"kind": "pane", "id": task.get("pane"), "session": task.get("session"), "ownership": "owned", "state": "observed",
+               "note": "the task's own worker pane", "observed_at": discovery["observed_at"]}
+        if task.get("pane") and not any(r["kind"] == "pane" and r["id"] == task["pane"] for r in record["resources"]):
+            record["resources"].append(own)
+        role = endpoint_role(task, endpoint) or "unattributed"
+        write_environment(store, record, {"event": "discover", "by": role, "config_revision": discovery["config_revision"], "changed": changed,
+                                          "previous_revision": previous.get("config_revision")})
+    return {"task": task["id"], "path": str(environment_path(store, task["id"])), "config_revision": discovery["config_revision"], "changed": changed,
+            "sources": discovery["sources"], "commands": discovery["summary"], "problems": discovery["problems"], "by": role, "note": ENVIRONMENT_NOTE}
+
+
+def env_record(store, args):
+    """Record one observed fact: a URL (observed on its port now), a log path (lstat), a pane, or a container identity."""
+    given = [name for name in ("url", "log", "pane", "container") if getattr(args, name, None)]
+    if len(given) != 1:
+        raise SumError("Give exactly one of --url, --log, --pane, or --container per record call.")
+    claimed = getattr(args, "ownership", None)
+    if claimed and claimed not in OWNERSHIP:
+        raise SumError(f"--ownership must be one of {list(OWNERSHIP)}")
+    label = (getattr(args, "label", None) or "").strip()[:80]
+    if redact(label)[1]:
+        raise SumError("The label contains credential-shaped text.")
+    endpoint = optional_context()
+    task = store.read(args.task)
+    worktree = require_worktree(task)
+    # Observation (lsof, lstat, pane get) runs before the store lock so a slow pass never stalls the coordinator's inbox or dispatch.
+    if args.url:
+        parsed = parse_endpoint_url(args.url)
+        observation = observe_port(store, task, parsed["port"]) if parsed["local"] else {"state": "unverified", "ownership": "unknown", "listeners": [],
+                                                                                          "note": "remote host: sum observes only local listeners"}
+    elif args.log:
+        validated = validate_log_path(task, args.log)
+        if claimed == "owned" and validated["scope"] != "checkout":
+            raise SumError(f"Log path {validated['path']} is {validated['scope']}; only a regular path inside the checkout can be recorded as owned.")
+        observed = observe_log(validated["path"], worktree, validated.get("relative"))
+    elif args.pane:
+        observed_pane = observe_pane(task, args.pane)
+    with store.lock():
+        task = store.read(args.task)
+        record = ensure_environment(store, task)
+        role = endpoint_role(task, endpoint) or "unattributed"
+        stamp = now()
+        if args.url:
+            conflicts = endpoint_conflicts(store, task, parsed)
+            if conflicts and claimed != "shared":
+                names = ", ".join(f"{c['task']} ({c['url']})" for c in conflicts)
+                raise SumError(f"{parsed['url']} is recorded as owned by another active task: {names}. Parallel tasks never reuse a URL by accident; "
+                               f"use the port the task's own environment reports, or pass --ownership shared for a deliberately shared service.")
+            if observation["ownership"] == "shared" and claimed == "owned":
+                raise SumError("Observation places the listener inside another task's checkout; it cannot be recorded as owned. " + "; ".join(observation.get("notes", [])))
+            ownership = observation["ownership"]
+            if ownership == "unknown" and claimed == "shared":
+                ownership = "shared"
+            row = {"id": endpoint_id(parsed), **{k: parsed[k] for k in ("url", "scheme", "host", "port", "local")}, "label": label or None,
+                   "ownership": ownership, "claimed_ownership": claimed, "state": observation["state"], "observed_at": stamp, "observation": observation,
+                   "conflicts": conflicts, "config_revision": (record.get("discovery") or {}).get("config_revision"), "recorded_by": role, "history": []}
+            previous = next((e for e in record["endpoints"] if e["id"] == row["id"]), None)
+            if previous:
+                row["history"] = (previous.get("history") or [])[-9:] + [{"at": previous["observed_at"], "state": previous["state"], "ownership": previous["ownership"]}]
+                record["endpoints"] = [row if e["id"] == row["id"] else e for e in record["endpoints"]]
+            else:
+                if len(record["endpoints"]) >= ENVIRONMENT_LIMITS["endpoints"]:
+                    raise SumError(f"At most {ENVIRONMENT_LIMITS['endpoints']} endpoints per task; re-record an existing URL to refresh it.")
+                record["endpoints"].append(row)
+            event = {"event": "record", "kind": "url", "id": row["id"], "state": row["state"], "ownership": ownership}
+            result = {"endpoint": row}
+        elif args.log:
+            row = {"id": "l-" + sha256_text(validated["path"])[:10], **validated, "label": label or None, "ownership": claimed or ("owned" if validated["scope"] == "checkout" else "unknown"),
+                   **observed, "observed_at": stamp, "recorded_by": role}
+            if not any(l["id"] == row["id"] for l in record["logs"]) and len(record["logs"]) >= ENVIRONMENT_LIMITS["logs"]:
+                raise SumError(f"At most {ENVIRONMENT_LIMITS['logs']} log references per task.")
+            record["logs"] = [row if l["id"] == row["id"] else l for l in record["logs"]] if any(l["id"] == row["id"] for l in record["logs"]) else record["logs"] + [row]
+            event = {"event": "record", "kind": "log", "id": row["id"], "state": row["state"]}
+            result = {"log": row}
+        else:
+            if args.pane:
+                row = observed_pane
+                if claimed == "owned" and row["ownership"] != "owned":
+                    raise SumError(f"Pane {args.pane} is not the task's pane and its cwd is not inside the checkout; it cannot be recorded as owned.")
+                if claimed == "shared" and row["ownership"] == "unknown":
+                    row["ownership"] = "shared"
+            else:
+                if not CONTAINER_ID.fullmatch(args.container or ""):
+                    raise SumError("--container must be a container name or ID (letters, digits, `_ . -`, at most 80 characters).")
+                row = {"kind": "container", "id": args.container, "ownership": claimed or "unknown", "state": "unverified",
+                       "note": "Container identity recorded as reported; sum does not inspect or control container runtimes in this slice."}
+            row.update({"label": label or None, "observed_at": stamp, "recorded_by": role, "claimed_ownership": claimed})
+            key = (row["kind"], row["id"])
+            exists = any((r["kind"], r["id"]) == key for r in record["resources"])
+            if not exists and len(record["resources"]) >= ENVIRONMENT_LIMITS["resources"]:
+                raise SumError(f"At most {ENVIRONMENT_LIMITS['resources']} pane/container references per task.")
+            record["resources"] = [row if (r["kind"], r["id"]) == key else r for r in record["resources"]] if exists else record["resources"] + [row]
+            event = {"event": "record", "kind": row["kind"], "id": row["id"], "ownership": row["ownership"]}
+            result = {"resource": row}
+        write_environment(store, record, {**event, "by": role})
+    return {"task": task["id"], "path": str(environment_path(store, task["id"])), **result, "by": role, "note": ENVIRONMENT_NOTE}
+
+
+def env_inspect(store, args):
+    """Re-observe every recorded fact once: configuration drift, listeners behind each local URL, log presence. Marks stale; starts and stops nothing."""
+    endpoint = optional_context()
+    task = store.read(args.task)
+    worktree = require_worktree(task)
+    snapshot_record = read_environment(store, task["id"])
+    if snapshot_record is None:
+        raise SumError(f"Task {task['id']} has no environment record yet; run `env discover` or `env record` first.")
+    # Every observation runs against a snapshot of the record before the lock; results are applied by id once the lock is held.
+    current = discover_configuration(worktree) if snapshot_record.get("discovery") and Path(worktree).is_dir() else None
+    snapshot = {}
+    port_observations = {row["id"]: observe_port(store, task, row["port"], snapshot) for row in snapshot_record["endpoints"] if row.get("local")}
+    log_observations = {row["id"]: observe_log(row["path"], worktree, row.get("relative")) for row in snapshot_record["logs"]}
+    with store.lock():
+        task = store.read(args.task)
+        record = read_environment(store, task["id"])
+        if record is None:
+            raise SumError(f"Task {task['id']} has no environment record yet; run `env discover` or `env record` first.")
+        role = endpoint_role(task, endpoint) or "unattributed"
+        stamp = now()
+        changes = {"config_drift": False, "endpoints": [], "logs": []}
+        discovery = record.get("discovery")
+        if discovery and current:
+            discovery["current_revision"] = current["config_revision"]
+            discovery["stale"] = current["config_revision"] != discovery["config_revision"]
+            discovery["checked_at"] = stamp
+            changes["config_drift"] = discovery["stale"]
+            if discovery["stale"]:
+                discovery["stale_reason"] = f"configuration revision {discovery['config_revision']} recorded, {current['config_revision']} now; run `env discover` to refresh the command references"
+        elif discovery:
+            discovery.update(stale=True, checked_at=stamp, stale_reason=f"recorded worktree {task['worktree']} is missing")
+            changes["config_drift"] = True
+        snapshot = {}
+        for row in record["endpoints"]:
+            if row.get("local") and row["id"] not in port_observations:
+                continue  # Recorded after the snapshot; its own record call observed it.
+            before = (row["state"], row["ownership"])
+            history_item = {"at": row["observed_at"], "state": row["state"], "ownership": row["ownership"]}
+            if row.get("local"):
+                observation = port_observations[row["id"]]
+                previous_pids = {l["pid"] for l in (row.get("observation") or {}).get("listeners", [])}
+                current_pids = {l["pid"] for l in observation["listeners"]}
+                if observation["state"] == "not-listening" and before[0] in ("observed", "stale"):
+                    row["state"], row["stale_reason"] = "stale", f"nothing listens on port {row['port']} any more"
+                elif observation["state"] == "observed" and previous_pids and previous_pids != current_pids:
+                    row["state"], row["stale_reason"] = "stale", f"listener changed from pid(s) {sorted(previous_pids)} to {sorted(current_pids)}"
+                elif observation["state"] == "unverified":
+                    row["state"], row["stale_reason"] = "unverified", observation.get("error")
+                else:
+                    row["state"] = observation["state"]
+                    row.pop("stale_reason", None)
+                if observation["state"] == "observed":
+                    row["ownership"] = observation["ownership"] if observation["ownership"] != "unknown" or row.get("claimed_ownership") != "shared" else "shared"
+                row["observation"] = observation
+            else:
+                row["state"] = "unverified"
+            if discovery and row.get("config_revision") and row["config_revision"] != discovery.get("current_revision", discovery["config_revision"]):
+                row["config_stale"] = True
+            else:
+                row.pop("config_stale", None)
+            row["observed_at"] = stamp
+            row["history"] = (row.get("history") or [])[-9:] + [history_item]
+            if (row["state"], row["ownership"]) != before or row.get("config_stale"):
+                changes["endpoints"].append({"id": row["id"], "url": row["url"], "from": before, "to": (row["state"], row["ownership"]), "config_stale": row.get("config_stale", False)})
+        for row in record["logs"]:
+            if row["id"] not in log_observations:
+                continue  # Recorded after the snapshot; its own record call observed it.
+            before = row["state"]
+            row.update(log_observations[row["id"]], observed_at=stamp)
+            if row["state"] != before:
+                changes["logs"].append({"id": row["id"], "path": row["path"], "from": before, "to": row["state"]})
+        write_environment(store, record, {"event": "inspect", "by": role, **{k: (v if isinstance(v, bool) else len(v)) for k, v in changes.items()}})
+    return {"task": task["id"], "path": str(environment_path(store, task["id"])), "inspected_at": stamp, "changes": changes,
+            "discovery": {k: discovery.get(k) for k in ("config_revision", "current_revision", "stale", "stale_reason")} if discovery else None,
+            "endpoints": [{k: e.get(k) for k in ("id", "url", "state", "ownership", "stale_reason", "config_stale")} for e in record["endpoints"]],
+            "logs": [{k: l.get(k) for k in ("id", "path", "state", "bytes")} for l in record["logs"]],
+            "by": role, "touched": "nothing was started, stopped, or reconfigured", "note": ENVIRONMENT_NOTE}
+
+
+def environment_view(store, task, limit=CONTEXT_CHARS):
+    """The compact, redacted record for context readers. From the sidecar only: reading never observes, starts, or stops anything."""
+    try:
+        record = read_environment(store, task["id"])
+    except SumError as exc:
+        return {"present": False, "ok": False, "error": str(exc)}
+    commands = {"discover": command_for(store, "env", "discover", task["id"]), "record": command_for(store, "env", "record", task["id"], "--url", "http://127.0.0.1:PORT"),
+                "inspect": command_for(store, "env", "inspect", task["id"])}
+    if record is None:
+        return {"present": False, "ok": True, "commands": commands,
+                "note": "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container."}
+    discovery = record.get("discovery")
+    def command_view(row):
+        text, redactions = redact(row["command"])
+        return {**{k: row.get(k) for k in ("name", "kind", "source", "description", "image", "declared_ports")}, "command": bounded_view(text, limit) if limit else text,
+                "redactions": row.get("redactions", 0) + redactions}
+    stale = bool(discovery and discovery.get("stale")) or any(e["state"] in ("stale", "unverified") or e.get("config_stale") for e in record["endpoints"]) \
+        or any(l["state"] != "present" for l in record["logs"])
+    return {"present": True, "ok": True, "path": str(environment_path(store, task["id"])), "updated_at": record.get("updated_at"), "stale": stale,
+            "discovery": {**{k: discovery.get(k) for k in ("observed_at", "head", "config_revision", "current_revision", "stale", "stale_reason", "checked_at", "summary", "problems")},
+                          "sources": [{k: s.get(k) for k in ("path", "bytes", "sha256", "skipped")} for s in discovery.get("sources", [])],
+                          "commands": [command_view(c) for c in discovery.get("commands", [])]} if discovery else None,
+            "endpoints": [{**{k: e.get(k) for k in ("id", "url", "port", "local", "label", "ownership", "claimed_ownership", "state", "stale_reason", "config_stale", "observed_at", "recorded_by")},
+                           "listeners": [{k: l.get(k) for k in ("pid", "owner")} for l in (e.get("observation") or {}).get("listeners", [])],
+                           "conflicts": [c["task"] for c in e.get("conflicts", [])]} for e in record["endpoints"]],
+            "logs": [{k: l.get(k) for k in ("id", "path", "scope", "label", "ownership", "state", "bytes", "modified_at", "observed_at")} for l in record["logs"]],
+            "resources": [{k: r.get(k) for k in ("kind", "id", "session", "label", "ownership", "state", "cwd", "note", "observed_at")} for r in record["resources"]],
+            "history": record.get("history", [])[-5:], "commands": commands, "authority": CLAIM_NOTE, "note": ENVIRONMENT_NOTE}
+
+
+def environment_outline(store, task):
+    try:
+        record = read_environment(store, task["id"])
+    except SumError as exc:
+        return {"present": False, "error": str(exc)}
+    if not record:
+        return {"present": False}
+    discovery = record.get("discovery") or {}
+    return {"present": True, "updated_at": record.get("updated_at"), "config_stale": bool(discovery.get("stale")),
+            "endpoints": {state: sum(1 for e in record["endpoints"] if e["state"] == state) for state in ENDPOINT_STATES if any(e["state"] == state for e in record["endpoints"])},
+            "logs_missing": sum(1 for l in record["logs"] if l["state"] != "present"), "resources": len(record["resources"])}
+
+
+def env_show(store, args):
+    task = store.read(args.task)
+    return {"task": task["id"], "environment": environment_view(store, task, limit=getattr(args, "max_chars", CONTEXT_CHARS))}
+
 
 
 # --- issue #10: guarded cleanup of merged task panes and checkouts -------------------------------------------
@@ -4140,7 +4918,9 @@ def backup(store, destination):
                     "scope": "records-only", "includes_worktree_code": False,
                     "credential_files_included": False, "content_redaction": "none; task text may be sensitive", "machine": machine(),
                     "worktrees_not_captured": [{"task": t["id"], "path": t["worktree"], "branch": t["branch"]} for t in tasks],
-                    "brief_revisions_included": True, "settings_included": (store.home / SETTINGS_FILE).is_file(),
+                    "brief_revisions_included": True, "environment_records_included": True,
+                    "environment_exclusions": "command references and URLs redacted at write; no process environments, credentials, log content, or checkout code",
+                    "settings_included": (store.home / SETTINGS_FILE).is_file(),
                     "restore": "Extract into a new directory. Start sumctl with --home <extracted>/state. Do not reuse pane bindings on another machine; inspect and bind explicitly."}
         destination.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -4163,6 +4943,9 @@ def backup(store, destination):
                     notes = store.path(task["id"]) / NOTES_FILE
                     if notes.is_file() and not notes.is_symlink():
                         paths.append(notes)
+                    environment = store.path(task["id"]) / ENVIRONMENT_FILE
+                    if environment.is_file() and not environment.is_symlink():
+                        paths.append(environment)
                     sidecar = store.path(task["id"]) / VERSIONS_FILE
                     if sidecar.is_file() or sidecar.is_symlink():
                         paths.append(sidecar)
@@ -5022,6 +5805,23 @@ def parser():
     g = s.add_mutually_exclusive_group(required=True)
     g.add_argument("--text")
     g.add_argument("--file")
+    s = sub.add_parser("env", help="Task-local environment record: declared dev commands, observed URLs/ports, log paths, pane/container references; observes and records only")
+    e = s.add_subparsers(dest="env_command", required=True)
+    x = e.add_parser("discover", help="Read the checkout's declared configuration (mise, package scripts, Makefile, justfile, Procfile, compose, Dockerfile, devcontainer) into command references; runs nothing")
+    x.add_argument("task")
+    x = e.add_parser("record", help="Record one observed fact: --url (port observed via lsof now), --log (lstat, never read), --pane, or --container; never binds or reserves anything")
+    x.add_argument("task")
+    x.add_argument("--url", help="An endpoint as the application reports it, without credentials; local hosts are observed, remote ones recorded unverified")
+    x.add_argument("--log", help="A log path: absolute, or relative to the checkout; stat'ed without following symlinks")
+    x.add_argument("--pane", help="A related Herdr pane ID (observed with `pane get` in the task session)")
+    x.add_argument("--container", help="A related container name or ID (recorded as reported)")
+    x.add_argument("--label", help="Short human label (at most 80 characters)")
+    x.add_argument("--ownership", choices=OWNERSHIP, help="Claimed ownership; observation overrides a claim it contradicts, `shared` marks a deliberately shared service")
+    x = e.add_parser("inspect", help="Re-observe every recorded fact once (configuration drift, listeners, logs) and mark stale ones; starts and stops nothing")
+    x.add_argument("task")
+    x = e.add_parser("show", help="The compact redacted environment record from the sidecar; observes nothing")
+    x.add_argument("task")
+    x.add_argument("--max-chars", dest="max_chars", type=int, default=CONTEXT_CHARS)
     for name in ("show", "notice", "archive"):
         s = sub.add_parser(name, help={"show": "Full task record plus versions, evidence_view, and returns (unchanged shape; use `context` for a bounded read)",
                                        "notice": "Explicit single retry of the pending notice toward one recipient",
@@ -5184,7 +5984,7 @@ def main(argv=None):
         store = Store(args.home)
         guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}", "preset": lambda: f"preset-{args.preset_command}",
                                 "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}", "hook": lambda: f"hook-{args.hook_command}",
-                                "pr": lambda: f"pr-{args.pr_command}"}.get(args.command, lambda: args.command)())
+                                "pr": lambda: f"pr-{args.pr_command}", "env": lambda: f"env-{args.env_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -5195,6 +5995,9 @@ def main(argv=None):
             value = context_view(store, args.task, args)
         elif args.command == "notes":
             value = add_note(store, args)
+        elif args.command == "env":
+            value = {"discover": lambda: env_discover(store, args), "record": lambda: env_record(store, args),
+                     "inspect": lambda: env_inspect(store, args), "show": lambda: env_show(store, args)}[args.env_command]()
         elif args.command == "init":
             value = init(store, args)
         elif args.command in {"status", "inbox"}:

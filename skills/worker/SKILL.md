@@ -27,6 +27,14 @@ Your brief carries a `context` command. `sumctl context TASK_ID --role worker` r
 `sumctl notes TASK_ID --text '...'` appends to one optional task-local `notes.md` for investigation findings that must outlive your context. Notes are claims backed up with the records; credential-shaped text is refused. Reference logs and artifacts by path.
 `sumctl help TOPIC` gives one command's arguments without the full manual.
 
+## Environment around the code
+
+The `environment` section of your context view carries `dev`: the task-local environment record (declared commands, observed URLs, log paths, related panes/containers) as last observed, so nobody has to repeat how the repository starts or hunt for ports.
+Before you run the application, run `sumctl env discover TASK_ID` once: it reads the checkout's declared configuration (mise tasks, package scripts, Makefile/justfile targets, Procfile, compose, Dockerfile, devcontainer) into command references and a configuration revision. It executes nothing and generates no competing configuration; use the repository's own commands.
+When you have started a service, record what the environment actually reports with `sumctl env record TASK_ID --url http://127.0.0.1:PORT` (the port is observed through `lsof` at that moment and classified owned/shared/unknown by the listener's checkout) and `--log PATH` for its log (stat'ed, never read; a symlinked directory or file under the checkout is recorded as `symlink-not-followed`, never resolved). A URL another active task owns is refused; pass `--ownership shared` only for a deliberately shared service such as a team database. Never write a default port into the record to reserve it.
+`sumctl env inspect TASK_ID` re-observes on demand and marks stale endpoints or configuration drift; nothing polls, restarts, or stops. Starting and stopping owned resources is not part of this record.
+URLs with credentials, credential-shaped labels or paths, and process environments are refused; reference where a value lives instead.
+
 ## Brief revisions
 
 Your brief is one numbered revision generated from the task record. The coordinator may stage a newer revision (updated procedure or newly recorded decisions) without touching the file you read.

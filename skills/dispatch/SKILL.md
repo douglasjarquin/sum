@@ -57,6 +57,7 @@ Write the approved brief to a temporary file. Then run:
 
 `--harness codex` is the explicit form; omit it to use the saved worker default or your own harness. Add `--preset NAME` to expand a saved preset, and `--model`/`--reasoning` for this task only. Extra approved native arguments stay separate `--arg` values, e.g. `--arg=-m --arg=MODEL`; an `--arg` that sets the same flag as `--model` is refused as a conflict before anything is created.
 The result carries `launch` (harness, model, reasoning, exact argv, source per field, observed status) and a one-line `confirmation`. Repeat that line to the boss: which harness and model, from which source, and that a CLI-requested model is requested rather than runtime-verified.
+The brief does not describe the repository's environment; the worker discovers it into the task record (`env discover`) and readers take it from `context --section environment`, so no prompt repeats ports or start commands.
 No permission-bypass flags are added by sum. The helper calls native `herdr worktree create`, verifies the returned checkout, launches with `agent start`, submits the worker brief through `agent prompt`, and registers the new pane as that task's worker so it can never claim coordination.
 Use `prepare` instead of `dispatch` to create the worktree/record without starting an agent; later `start TASK_ID` starts it once.
 

@@ -8,6 +8,7 @@ A worker report is a claim. Read the saved task, its report, relevant changes, a
 `sumctl show TASK_ID` carries `evidence_view`: every report, handoff, reviewer finding, verification, and PR observation, each bound to a candidate SHA and marked `current` against the checkout HEAD, plus `closure.missing`, the prerequisites still absent.
 Worker claims (`source: worker`), reviewer findings (`reviewer`), your own verification (`coordinator`), and GitHub observations (`github`) stay separate records. A legacy prose report appears as unstructured evidence.
 `sumctl context TASK_ID --role reviewer` is the bounded handoff for a reviewer you launch: the approved task, the current candidate with its latest handoff, paged evidence, and the delivery skill as an explicit file reference; worker-supplied artifact paths are classified by scope, never opened. `--section evidence --kind review --after N` pages further records; counts and `next_after` say what a page left out.
+Its `environment.dev` block is the task-local environment record: the repository's declared commands (references, never run by sum), the URLs the worker observed with their ownership and state, log paths, and related panes/containers, each with an observation time. A `stale` flag or `not-listening` state means the fact was not confirmed at the last observation; `sumctl env inspect TASK_ID` re-observes once on demand without starting or stopping anything. Reading the view observes nothing.
 
 ## Verify
 
