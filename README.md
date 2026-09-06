@@ -80,7 +80,10 @@ Workers use the exact commands in their generated brief. The core interaction is
 
 A question is saved **before** notification. A notification is attempted only after an idle/done preflight; a busy, absent, blocked, or unverifiable recipient leaves it pending. A successful send means *submitted, not acknowledged*. Saved answers stay visible until the worker marks them applied.
 
-There is no retry loop while you are away. Run a rundown to find pending notices and workers that stopped without a report. Native `idle`/`done` is not task completion, and a worker's report is not verified success.
+Every pending return is derived from the records themselves: an open question and an unverified report are owed to the parent, an unapplied answer and a requested brief revision to the worker. Nothing has to be acknowledged for it to stay listed, and nothing but a later record (an answer, `resolve`, `verify`, a PR observation, `brief adopt`) closes it. The per-task `returns.json` sidecar keeps only notification state, so a legacy helper rewriting `task.json` cannot erase it.
+Each task write, `inbox --live`, a coordinator `init`, `bind`, and the explicit `sumctl pump` run one synchronous pass: open returns are grouped by their current recipient identity and each recipient gets at most one fixed notice naming the record IDs and commands (never question or report prose). A pending return is sent once; a known failure (busy, absent, wrong checkout, not registered) is retried on later passes up to three times and then shows `stalled`; a timeout after a possible submission or an interrupted pass stays `uncertain` and is never re-sent by itself. `sumctl notice TASK_ID --to parent|worker` is the explicit single retry for those. `show` and `inbox` carry the `returns` view; the old single `notice` field mirrors the latest attempt for existing readers.
+
+There is no retry loop while you are away. Run a rundown to find pending returns and workers that stopped without a report. Native `idle`/`done` is not task completion, and a worker's report is not verified success.
 
 To create a task manually:
 
@@ -203,7 +206,7 @@ A worker brief is generated from the record: the approved task text, base, repos
 ./bin/sumctl brief adopt TASK_ID rN      # the worker records that it now follows the requested revision
 ```
 
-The file at `brief_path` and every earlier revision are never rewritten, so a worker mid-read keeps a valid brief. Each revision records a machine-generated summary of what changed (policy versions, procedure hash, decisions, commands) and whether verification is affected. A report is bound to the brief revision active when it was submitted; a later verification-affecting revision marks that evidence as needing refresh review rather than approving or rejecting it. Refresh bookkeeping is separate from the single notice slot, and old helpers keep working on the same records because the sidecar is additive.
+The file at `brief_path` and every earlier revision are never rewritten, so a worker mid-read keeps a valid brief. Each revision records a machine-generated summary of what changed (policy versions, procedure hash, decisions, commands) and whether verification is affected. A report is bound to the brief revision active when it was submitted; a later verification-affecting revision marks that evidence as needing refresh review rather than approving or rejecting it. Refresh bookkeeping is separate from the notice mirror; a requested revision that `refresh request` could not deliver rides the next coalesced worker notice and is recorded as an attempt in the sidecar. Old helpers keep working on the same records because both sidecars are additive.
 
 ## Update and roll back
 
