@@ -68,5 +68,6 @@ Remove `.artifacts/verification/` when you no longer need the records.
 
 Edits to this file, `mise.toml`, `mise-tasks/`, `docs/features/`, or `.agents/skills/verify/` are policy changes.
 Run the runner with `--base <merge-base>` so such a candidate is flagged `requires_root_review`; it cannot certify its own new standard.
+Without `--base` a run never certifies a SHA, and the contract's optional `policy_files` list can only add paths to that default set.
 The coordinator's separate verification and review (`skills/delivery/SKILL.md`) remain in place and are not replaced by this contract.
 CI: this repository has no hosted CI workflow at the moment; the entrypoint runs locally and in sum's own task checkouts.

@@ -111,7 +111,14 @@ def load_contract(root: Path):
         raise Blocked(f"{CONTRACT_FILE} `timeout_seconds` must be a positive integer.")
     return {"path": path, "sha256": sha256_file(path), "entrypoint": entrypoint, "feature_maps": config["feature_maps"], "artifacts": config["artifacts"],
             "task_owner": owner, "requires": requires, "freshness": freshness, "timeout": timeout,
-            "policy_files": list(config.get("policy_files", POLICY_FILES_DEFAULT))}
+            "policy_files": policy_file_set(config.get("policy_files", []))}
+
+
+def policy_file_set(extra):
+    """The default policy files always count; a candidate's VERIFY.md may add paths but can never remove or shrink the set that governs it."""
+    if not isinstance(extra, list) or not all(isinstance(v, str) and v and not Path(v).is_absolute() and ".." not in Path(v).parts for v in extra):
+        raise Blocked(f"{CONTRACT_FILE} `policy_files` must be a list of relative paths to add to the defaults.")
+    return sorted(set(POLICY_FILES_DEFAULT) | set(extra))
 
 
 def load_feature_maps(root: Path, index_relative: str):
@@ -323,8 +330,8 @@ def main(argv=None):
                 record["outcome"] = "fail"
             else:
                 record["outcome"] = "pass"
-            record["requires_root_review"] = bool(record["policy"]["changed"])
-            record["certifies"] = head if (record["outcome"] == "pass" and not dirty and not record["requires_root_review"]) else None
+            record["requires_root_review"] = bool(record["policy"]["changed"]) or not record["policy"]["checked"]  # Unchecked policy is unreviewed, never green.
+            record["certifies"] = head if (record["outcome"] == "pass" and not dirty and record["policy"]["checked"] and not record["policy"]["changed"]) else None
             record["not_exercised"] = [r["id"] for r in rows if r["status"] in ("not-run", "blocked", "not-applicable")]
     except Blocked as exc:
         record["outcome"], record["blocked_reason"] = "blocked", str(exc)
@@ -345,8 +352,10 @@ def main(argv=None):
             for row in record["scenarios"]:
                 counts[row["status"]] = counts.get(row["status"], 0) + 1
             print("scenarios: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) if counts else "scenarios: none mapped")
-        if record.get("requires_root_review"):
+        if record.get("requires_root_review") and record.get("policy", {}).get("checked"):
             print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(record["policy"]["changed"]))
+        elif record.get("requires_root_review"):
+            print("policy not compared (no --base); the run cannot certify a SHA until VERIFY.md, tasks, and maps are reviewed against a base")
         if record.get("artifacts", {}).get("run_dir"):
             print(f"record: {record['artifacts']['run_dir']}/run.json")
     return {"pass": 0, "checked": 0, "fail": 1, "blocked": 2}[record["outcome"]]

@@ -25,14 +25,14 @@ If your harness has no skill discovery, read `VERIFY.md` at the project root and
 
 ## What the outcomes mean
 
-- `pass`: `mise run verify` exited 0, mapped automated scenarios passed, build outputs (when declared) are fresh, and every manual scenario you reported passed. Only a clean tree without policy changes yields `certifies: <sha>`.
+- `pass`: `mise run verify` exited 0, mapped automated scenarios passed, build outputs (when declared) are fresh, and every manual scenario you reported passed. `certifies: <sha>` appears only for a clean tree whose policy files were compared with `--base` and did not change; without `--base` the record says `requires_root_review` and certifies nothing.
 - `fail`: the entrypoint exited non-zero, a declared build output is stale, or a reported scenario failed. The log stays under the run directory.
 - `blocked`: the run could not be trusted - missing or malformed `VERIFY.md`, a missing or inherited `verify` task, a missing required command, or a timeout. Blocked is never a pass.
 - `not-run` / `not-applicable` on a scenario: it was not exercised, or it does not apply with the stated reason. A passing aggregate command says nothing about these.
 
 ## Rules
 
-- Never edit `VERIFY.md`, feature maps, tests, or tasks to make a run pass. A candidate that changes them is flagged `requires_root_review` and cannot certify itself.
+- Never edit `VERIFY.md`, feature maps, tests, or tasks to make a run pass. A candidate that changes them is flagged `requires_root_review` and cannot certify itself. The default policy set (`VERIFY.md`, `mise.toml`, `mise-tasks/`, `.agents/skills/verify/`, and every feature map) cannot be shrunk by the candidate; `policy_files` in the contract only adds paths.
 - Run only the task the runner validated as this repository's own. An inherited task from a parent directory belongs to another project.
 - A dirty working tree gives a provisional record. Commit first when you need a result bound to an exact SHA.
 - Use the repository's existing isolation (temporary directories, lab sessions, ephemeral ports). No production credentials, no shared-data mutation.

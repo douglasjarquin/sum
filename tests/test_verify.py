@@ -143,7 +143,7 @@ class VerifyLab(unittest.TestCase):
     def test_clean_pass_certifies_sha_dirty_run_is_provisional_and_failure_keeps_the_log(self):
         repo = self.make_repo("cli", self.root / "cli")
         head = self.git(repo, "rev-parse", "HEAD")
-        code, record, _ = self.run_verify(repo)
+        code, record, _ = self.run_verify(repo, "--base", head)  # A clean pass certifies only when policy was compared against a base.
         self.assertEqual((code, record["outcome"]), (0, "pass"), record)
         self.assertEqual(record["certifies"], head)
         self.assertFalse(record["provisional"])
@@ -240,9 +240,42 @@ class VerifyLab(unittest.TestCase):
         code, record, _ = self.run_verify(repo, "--base", "deadbeef")
         self.assertEqual(record["outcome"], "blocked")
         self.assertIn("not a commit", record["blocked_reason"])
-        # Without --base the policy comparison is explicitly not checked, never silently green.
+        # Without --base the policy comparison is explicitly not checked: root review stays required and nothing is certified.
         code, record, _ = self.run_verify(repo)
+        self.assertEqual((code, record["outcome"]), (0, "pass"))
         self.assertEqual(record["policy"], {"checked": False, "base": None, "changed": []})
+        self.assertTrue(record["requires_root_review"])
+        self.assertIsNone(record["certifies"])
+
+    def test_candidate_cannot_shrink_the_policy_file_set(self):
+        repo = self.make_repo("cli", self.root / "cli")
+        base = self.git(repo, "rev-parse", "HEAD")
+        self.git(repo, "checkout", "-q", "-b", "candidate")
+        (repo / "mise.toml").write_text('[tasks]\nverify = "true"\n')
+        contract = repo / "VERIFY.md"
+        for label, declaration in (("empty", "policy_files = []"), ("subset without mise.toml", 'policy_files = ["docs/features/README.md"]')):
+            with self.subTest(label):
+                contract.write_text(contract.read_text().replace('entrypoint = "mise run verify"', f'entrypoint = "mise run verify"\n{declaration}', 1))
+                self.git(repo, "commit", "-qam", f"weaken with {label}")
+                code, record, _ = self.run_verify(repo, "--base", base)
+                self.assertEqual((code, record["outcome"]), (0, "pass"), record)
+                self.assertTrue(record["policy"]["checked"])
+                self.assertIn("mise.toml", record["policy"]["changed"])
+                self.assertIn("VERIFY.md", record["policy"]["changed"])
+                self.assertTrue(record["requires_root_review"])
+                self.assertIsNone(record["certifies"])
+                contract.write_text(contract.read_text().replace(f"\n{declaration}", "", 1))
+        # Adding a path is allowed; a malformed declaration blocks.
+        contract.write_text(contract.read_text().replace('entrypoint = "mise run verify"', 'entrypoint = "mise run verify"\npolicy_files = ["tests/"]', 1))
+        (repo / "tests/test_hello.py").write_text("import unittest\n")
+        self.git(repo, "commit", "-qam", "gut tests")
+        code, record, _ = self.run_verify(repo, "--base", base)
+        self.assertIn("tests/test_hello.py", record["policy"]["changed"])
+        self.assertIsNone(record["certifies"])
+        contract.write_text(contract.read_text().replace('policy_files = ["tests/"]', 'policy_files = ["/etc"]', 1))
+        code, record, _ = self.run_verify(repo, "--check")
+        self.assertEqual(record["outcome"], "blocked")
+        self.assertIn("policy_files", record["blocked_reason"])
 
     # -- three checkout shapes ---------------------------------------------------------------
     def test_same_contract_from_managed_clone_external_clone_and_linked_worktree(self):
@@ -265,7 +298,7 @@ class VerifyLab(unittest.TestCase):
                 external = self.root / f"elsewhere/{fixture}"
                 external.parent.mkdir(exist_ok=True)
                 subprocess.run(["git", "clone", "-q", str(origin), str(external)], check=True)
-                code, record, result = self.run_verify(external)
+                code, record, result = self.run_verify(external, "--base", "HEAD")
                 self.assertEqual((code, record["outcome"]), (0, "pass"), record)
                 self.assertNotIn(str(ROOT), json.dumps(record))  # Nothing in the record points back at sum's checkout.
                 self.assertFalse(any(k.startswith(("SUM_", "HERDR_")) for k in self.env))
