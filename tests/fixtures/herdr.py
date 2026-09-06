@@ -20,7 +20,7 @@ state = json.loads(state_path.read_text()) if state_path.exists() else {"panes":
 state.setdefault("workspaces", {})
 parent = os.environ.get("HERDR_PANE_ID", "w-parent:p1")
 state["panes"][parent] = {"pane_id": parent, "cwd": os.environ.get("FAKE_PARENT_CWD", "/tmp"), "workspace_id": parent.split(":")[0],
-  "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": "test-coordinator"}
+  "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": os.environ.get("FAKE_PARENT_KIND", "claude")}
 state["workspaces"].setdefault(parent.split(":")[0], {"workspace_id": parent.split(":")[0], "label": "coordinator", "worktree": None})
 
 def save():

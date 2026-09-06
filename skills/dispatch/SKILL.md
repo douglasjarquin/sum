@@ -22,8 +22,22 @@ If the main checkout has uncommitted changes, explain that dispatch starts from 
 
 ## Select execution
 
-Honor the user's chosen harness and authorized account. Coordinator and worker may differ.
-Otherwise inspect available harnesses, project preferences, and ask once when authority/account choice is genuinely ambiguous.
+Translate the boss's natural-language choice into an explicit launch specification before the worktree exists; the helper resolves, validates, and persists it at `prepare`, and `start` uses exactly that record even if the defaults change in between.
+Precedence is fixed and the helper enforces it: an explicit instruction in the task, then the saved worker default from `settings show` (`worker` block of `.sum/settings.json`), then the coordinator's own harness as Herdr observes it, then the harness's native model, disclosed as such.
+
+| The boss says | Pass |
+|---|---|
+| nothing about harness or model | no flags: saved default, else your own harness with its native model |
+| "use codex" / "run this on claude" | `--harness codex` (a harness-only override never carries a saved model from another harness) |
+| "use gpt-5-codex" / "fable at low effort" | `--model gpt-5-codex` / `--model fable --reasoning low`, on the saved or explicit harness |
+| "same as you" / "use what you're running" | `--same-as-you` (your harness, native model; overrides a saved default; never claims your exact model) |
+| "make codex with gpt-5 my default" | `./bin/sumctl settings set --worker-harness codex --worker-model gpt-5` first; future dispatches only |
+| native flags the boss spelled out | separate `--arg` values, e.g. `--arg=-m --arg=MODEL`; never a shell string |
+
+`.sum/preferences.md` can describe a preference; it never silently becomes a launch value. Only the boss's explicit "make this my default" is written with `settings set --worker-*`.
+Model and reasoning values are passed only through flags verified from the installed CLI's help (codex, claude, grok, copilot, cursor, pi, omp). A refusal names the harness without a verified flag; then pass the native argument with `--arg` or choose another harness. Do not guess a flag or invent a provider/model equivalence.
+Ask once only for genuine authority/account ambiguity or a requested combination the helper refuses as unusable; a saved default or same-as-root is never a reason to ask.
+Honor the user's chosen harness and authorized account. Coordinator and worker may differ; a worker default never switches your own harness, model, account, or billing route.
 Run `quota-axi --provider <provider>` for the selected provider when available. This is an advisory read, not a guaranteed budget or a scheduler.
 Known exhaustion: do not start on that route. Unknown/stale evidence: disclose it; do not silently switch to paid API use, a work account, or a new provider.
 Do not run repeated quota checks while waiting.
@@ -37,7 +51,8 @@ Write the approved brief to a temporary file. Then run:
   --brief /absolute/path/to/brief.md --harness codex --approved
 ```
 
-Replace `codex` with the actual selected Herdr integration kind. Extra approved harness arguments are separate `--arg` values, e.g. `--arg=-m --arg=MODEL`.
+`--harness codex` is the explicit form; omit it to use the saved worker default or your own harness. Add `--model`/`--reasoning` for this task only. Extra approved native arguments stay separate `--arg` values, e.g. `--arg=-m --arg=MODEL`; an `--arg` that sets the same flag as `--model` is refused as a conflict before anything is created.
+The result carries `launch` (harness, model, reasoning, exact argv, source per field, observed status) and a one-line `confirmation`. Repeat that line to the boss: which harness and model, from which source, and that a CLI-requested model is requested rather than runtime-verified.
 No permission-bypass flags are added by sum. The helper calls native `herdr worktree create`, verifies the returned checkout, launches with `agent start`, submits the worker brief through `agent prompt`, and registers the new pane as that task's worker so it can never claim coordination.
 Use `prepare` instead of `dispatch` to create the worktree/record without starting an agent; later `start TASK_ID` starts it once.
 
