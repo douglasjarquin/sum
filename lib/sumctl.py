@@ -3426,7 +3426,7 @@ def environment_path(store, task_id):
 
 
 def empty_environment(task_id):
-    return {"schema": ENVIRONMENT_SCHEMA, "task": task_id, "discovery": None, "endpoints": [], "logs": [], "resources": [], "history": [],
+    return {"schema": ENVIRONMENT_SCHEMA, "task": task_id, "discovery": None, "endpoints": [], "logs": [], "resources": [], "services": [], "history": [],
             "created_at": now(), "updated_at": None}
 
 
@@ -3440,6 +3440,7 @@ def read_environment(store, task_id):
     value = read_json(path)
     if value.get("schema") != ENVIRONMENT_SCHEMA or value.get("task") != task_id:
         raise SumError("Environment record schema/identity mismatch; inspect the sidecar, it is not rewritten.")
+    value.setdefault("services", [])
     return value
 
 
@@ -3922,8 +3923,9 @@ def endpoint_id(parsed):
 
 
 def ensure_environment(store, task):
-    record = read_environment(store, task["id"])
-    return record or empty_environment(task["id"])
+    record = read_environment(store, task["id"]) or empty_environment(task["id"])
+    record.setdefault("services", [])
+    return record
 
 
 def env_discover(store, args):
@@ -3946,6 +3948,47 @@ def env_discover(store, args):
                                           "previous_revision": previous.get("config_revision")})
     return {"task": task["id"], "path": str(environment_path(store, task["id"])), "config_revision": discovery["config_revision"], "changed": changed,
             "sources": discovery["sources"], "commands": discovery["summary"], "problems": discovery["problems"], "by": role, "note": ENVIRONMENT_NOTE}
+
+
+def build_endpoint(record, parsed, observation, claimed, label, role, stamp, conflicts):
+    """One endpoint row from an observation and the other tasks' records; a claim never overrides what observation contradicts."""
+    if conflicts and claimed != "shared":
+        names = ", ".join(f"{c['task']} ({c['url']})" for c in conflicts)
+        raise SumError(f"{parsed['url']} is recorded as owned by another active task: {names}. Parallel tasks never reuse a URL by accident; "
+                       f"use the port the task's own environment reports, or pass --ownership shared for a deliberately shared service.")
+    if observation["ownership"] == "shared" and claimed == "owned":
+        raise SumError("Observation places the listener inside another task's checkout; it cannot be recorded as owned. " + "; ".join(observation.get("notes", [])))
+    ownership = observation["ownership"]
+    if ownership == "unknown" and claimed == "shared":
+        ownership = "shared"
+    return {"id": endpoint_id(parsed), **{k: parsed[k] for k in ("url", "scheme", "host", "port", "local")}, "label": label or None,
+            "ownership": ownership, "claimed_ownership": claimed, "state": observation["state"], "observed_at": stamp, "observation": observation,
+            "conflicts": conflicts, "config_revision": (record.get("discovery") or {}).get("config_revision"), "recorded_by": role, "history": []}
+
+
+def upsert_endpoint(record, row):
+    previous = next((e for e in record["endpoints"] if e["id"] == row["id"]), None)
+    if previous:
+        row["history"] = (previous.get("history") or [])[-9:] + [{"at": previous["observed_at"], "state": previous["state"], "ownership": previous["ownership"]}]
+        record["endpoints"] = [row if e["id"] == row["id"] else e for e in record["endpoints"]]
+    else:
+        if len(record["endpoints"]) >= ENVIRONMENT_LIMITS["endpoints"]:
+            raise SumError(f"At most {ENVIRONMENT_LIMITS['endpoints']} endpoints per task; re-record an existing URL to refresh it.")
+        record["endpoints"].append(row)
+    return row
+
+
+def build_log(validated, observed, claimed, label, role, stamp):
+    return {"id": "l-" + sha256_text(validated["path"])[:10], **validated, "label": label or None, "ownership": claimed or ("owned" if validated["scope"] == "checkout" else "unknown"),
+            **observed, "observed_at": stamp, "recorded_by": role}
+
+
+def upsert_log(record, row):
+    exists = any(l["id"] == row["id"] for l in record["logs"])
+    if not exists and len(record["logs"]) >= ENVIRONMENT_LIMITS["logs"]:
+        raise SumError(f"At most {ENVIRONMENT_LIMITS['logs']} log references per task.")
+    record["logs"] = [row if l["id"] == row["id"] else l for l in record["logs"]] if exists else record["logs"] + [row]
+    return row
 
 
 def env_record(store, args):
@@ -3980,35 +4023,13 @@ def env_record(store, args):
         role = endpoint_role(task, endpoint) or "unattributed"
         stamp = now()
         if args.url:
-            conflicts = endpoint_conflicts(store, task, parsed)
-            if conflicts and claimed != "shared":
-                names = ", ".join(f"{c['task']} ({c['url']})" for c in conflicts)
-                raise SumError(f"{parsed['url']} is recorded as owned by another active task: {names}. Parallel tasks never reuse a URL by accident; "
-                               f"use the port the task's own environment reports, or pass --ownership shared for a deliberately shared service.")
-            if observation["ownership"] == "shared" and claimed == "owned":
-                raise SumError("Observation places the listener inside another task's checkout; it cannot be recorded as owned. " + "; ".join(observation.get("notes", [])))
-            ownership = observation["ownership"]
-            if ownership == "unknown" and claimed == "shared":
-                ownership = "shared"
-            row = {"id": endpoint_id(parsed), **{k: parsed[k] for k in ("url", "scheme", "host", "port", "local")}, "label": label or None,
-                   "ownership": ownership, "claimed_ownership": claimed, "state": observation["state"], "observed_at": stamp, "observation": observation,
-                   "conflicts": conflicts, "config_revision": (record.get("discovery") or {}).get("config_revision"), "recorded_by": role, "history": []}
-            previous = next((e for e in record["endpoints"] if e["id"] == row["id"]), None)
-            if previous:
-                row["history"] = (previous.get("history") or [])[-9:] + [{"at": previous["observed_at"], "state": previous["state"], "ownership": previous["ownership"]}]
-                record["endpoints"] = [row if e["id"] == row["id"] else e for e in record["endpoints"]]
-            else:
-                if len(record["endpoints"]) >= ENVIRONMENT_LIMITS["endpoints"]:
-                    raise SumError(f"At most {ENVIRONMENT_LIMITS['endpoints']} endpoints per task; re-record an existing URL to refresh it.")
-                record["endpoints"].append(row)
-            event = {"event": "record", "kind": "url", "id": row["id"], "state": row["state"], "ownership": ownership}
+            row = build_endpoint(record, parsed, observation, claimed, label, role, stamp, endpoint_conflicts(store, task, parsed))
+            upsert_endpoint(record, row)
+            event = {"event": "record", "kind": "url", "id": row["id"], "state": row["state"], "ownership": row["ownership"]}
             result = {"endpoint": row}
         elif args.log:
-            row = {"id": "l-" + sha256_text(validated["path"])[:10], **validated, "label": label or None, "ownership": claimed or ("owned" if validated["scope"] == "checkout" else "unknown"),
-                   **observed, "observed_at": stamp, "recorded_by": role}
-            if not any(l["id"] == row["id"] for l in record["logs"]) and len(record["logs"]) >= ENVIRONMENT_LIMITS["logs"]:
-                raise SumError(f"At most {ENVIRONMENT_LIMITS['logs']} log references per task.")
-            record["logs"] = [row if l["id"] == row["id"] else l for l in record["logs"]] if any(l["id"] == row["id"] for l in record["logs"]) else record["logs"] + [row]
+            row = build_log(validated, observed, claimed, label, role, stamp)
+            upsert_log(record, row)
             event = {"event": "record", "kind": "log", "id": row["id"], "state": row["state"]}
             result = {"log": row}
         else:
@@ -4126,12 +4147,15 @@ def environment_view(store, task, limit=CONTEXT_CHARS):
         return {"present": False, "ok": True, "commands": commands,
                 "note": "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container."}
     discovery = record.get("discovery")
+    if discovery:  # Launch commands are offered once the repository's declared names are known; they take only those names.
+        commands["start"] = command_for(store, "env", "start", task["id"], "--command", "NAME", "--url", "http://127.0.0.1:PORT")
+        commands["stop"] = command_for(store, "env", "stop", task["id"])
     def command_view(row):
         text, redactions = redact(row["command"])
         return {**{k: row.get(k) for k in ("name", "kind", "source", "description", "image", "declared_ports")}, "command": bounded_view(text, limit) if limit else text,
                 "redactions": row.get("redactions", 0) + redactions}
     stale = bool(discovery and discovery.get("stale")) or any(e["state"] in ("stale", "unverified") or e.get("config_stale") for e in record["endpoints"]) \
-        or any(l["state"] != "present" for l in record["logs"])
+        or any(l["state"] != "present" for l in record["logs"]) or any(s["state"] in ("unknown", "stopping", "conflict", "failed") for s in record.get("services", []))
     return {"present": True, "ok": True, "path": str(environment_path(store, task["id"])), "updated_at": record.get("updated_at"), "stale": stale,
             "discovery": {**{k: discovery.get(k) for k in ("observed_at", "head", "config_revision", "current_revision", "stale", "stale_reason", "checked_at", "summary", "problems")},
                           "sources": [{k: s.get(k) for k in ("path", "bytes", "sha256", "skipped")} for s in discovery.get("sources", [])],
@@ -4140,7 +4164,8 @@ def environment_view(store, task, limit=CONTEXT_CHARS):
                            "listeners": [{k: l.get(k) for k in ("pid", "owner")} for l in (e.get("observation") or {}).get("listeners", [])],
                            "conflicts": [c["task"] for c in e.get("conflicts", [])]} for e in record["endpoints"]],
             "logs": [{k: l.get(k) for k in ("id", "path", "scope", "label", "ownership", "state", "bytes", "modified_at", "observed_at")} for l in record["logs"]],
-            "resources": [{k: r.get(k) for k in ("kind", "id", "session", "label", "ownership", "state", "cwd", "note", "observed_at")} for r in record["resources"]],
+            "resources": [{k: r.get(k) for k in ("kind", "id", "session", "label", "ownership", "state", "cwd", "note", "service", "observed_at")} for r in record["resources"]],
+            "services": services_view(record),
             "history": record.get("history", [])[-5:], "commands": commands, "authority": CLAIM_NOTE, "note": ENVIRONMENT_NOTE}
 
 
@@ -4154,13 +4179,493 @@ def environment_outline(store, task):
     discovery = record.get("discovery") or {}
     return {"present": True, "updated_at": record.get("updated_at"), "config_stale": bool(discovery.get("stale")),
             "endpoints": {state: sum(1 for e in record["endpoints"] if e["state"] == state) for state in ENDPOINT_STATES if any(e["state"] == state for e in record["endpoints"])},
-            "logs_missing": sum(1 for l in record["logs"] if l["state"] != "present"), "resources": len(record["resources"])}
+            "logs_missing": sum(1 for l in record["logs"] if l["state"] != "present"), "resources": len(record["resources"]),
+            "services": {state: sum(1 for s in record.get("services", []) if s["state"] == state) for state in SERVICE_STATES if any(s["state"] == state for s in record.get("services", []))}}
 
 
 def env_show(store, args):
     task = store.read(args.task)
     return {"task": task["id"], "environment": environment_view(store, task, limit=getattr(args, "max_chars", CONTEXT_CHARS))}
 
+
+
+# --- issue #17: start and stop only explicitly task-owned development services ----------------------------------
+#
+# `env start` launches one command the repository itself declares (a row of `env discover`) in a pane sum splits under
+# the task's worker pane, records launch intent before anything runs, and captures the pane, workspace, shell, and the
+# observed process instance (pid, argv, cwd) as the identity that later grants stop authority. A pid, a cwd, or a
+# familiar port alone never does. `env stop` re-proves that identity, sends one interrupt through Herdr, verifies the
+# exit within a bound, and closes only the pane sum created. Anything unproven stays recorded as unknown and blocks
+# cleanup visibly. Nothing here polls in the background, restarts a failed service, kills by name, or touches a pane,
+# container project, or port that another task, a shared database, or the coordinator uses.
+
+SERVICE_ACTIVE = ("intended", "starting", "running", "ready", "unknown", "stopping")
+SERVICE_STATES = SERVICE_ACTIVE + ("failed", "conflict", "stopped", "lost")
+SERVICE_LIMIT = 20
+READY_TIMEOUT = 30
+READY_TIMEOUT_MAX = 600
+STOP_TIMEOUT = 10
+PROCESS_TIMEOUT = 5
+SERVICE_POLL = 0.25
+INTERRUPT_KEY = "ctrl+c"
+WRITING_WINDOW = 5
+PACKAGE_RUNNERS = (("pnpm-lock.yaml", "pnpm run"), ("yarn.lock", "yarn run"), ("bun.lockb", "bun run"), ("bun.lock", "bun run"))
+COMPOSE_SOURCES = {"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+SERVICE_NOTE = ("A service row is sum's launch record: intent first, then the pane and the observed process instance. Ownership is proven by pane, "
+                "workspace, shell pid, process pid, and argv together; stop authority follows only that proof.")
+
+
+def compose_project(task):
+    """Task-scoped compose project name: containers, networks, and volumes of one task never collide with another task's or a shared project."""
+    return "sum-" + task["id"].replace("t-", "")[:12]
+
+
+def launch_line(row, task, worktree):
+    """The shell line for one declared command, built from the repository's own runner; nothing is invented and nothing redacted is reconstructed."""
+    source, name = row["source"], row["name"]
+    if row.get("redactions"):
+        raise SumError(f"Declared command {name!r} from {source} contains credential-shaped text that was redacted at discovery; sum never reconstructs it. Run it yourself and record the URL.")
+    if source in ("mise.toml", ".mise.toml", ".mise/config.toml"):
+        return f"mise run {shlex.quote(name)}", {"via": "herdr-pane", "runner": "mise"}
+    if source == "package.json":
+        runner = next((r for lock, r in PACKAGE_RUNNERS if (Path(worktree) / lock).is_file()), "npm run")
+        return f"{runner} {shlex.quote(name)}", {"via": "herdr-pane", "runner": runner.split()[0]}
+    if source == "Makefile":
+        return f"make {shlex.quote(name)}", {"via": "herdr-pane", "runner": "make"}
+    if source in ("justfile", "Justfile"):
+        return f"just {shlex.quote(name)}", {"via": "herdr-pane", "runner": "just"}
+    if source == "Procfile":
+        return row["command"], {"via": "herdr-pane", "runner": "procfile"}
+    if source in COMPOSE_SOURCES:
+        project = compose_project(task)
+        return (f"docker compose -f {shlex.quote(source)} --project-name {project} up {shlex.quote(name)}",
+                {"via": "compose", "runner": "docker compose", "project": project, "service": name})
+    if source == "pyproject.toml" and name == "pytest":
+        return "pytest", {"via": "herdr-pane", "runner": "pytest"}
+    raise SumError(f"Declared entry {name!r} from {source} is a reference, not a launchable command (kind {row['kind']}); use the repository's own workflow for it.")
+
+
+def service_command(record, name, source=None):
+    rows = [c for c in (record.get("discovery") or {}).get("commands", []) if c["name"] == name and (source is None or c["source"] == source)]
+    if not rows:
+        known = sorted({c["name"] for c in (record.get("discovery") or {}).get("commands", [])})[:40]
+        raise SumError(f"No declared command {name!r} in the environment record (known: {known}); sum launches only commands the repository declares. Run `env discover` first.")
+    if len(rows) > 1:
+        raise SumError(f"Command {name!r} is declared in several files ({[c['source'] for c in rows]}); pass --source to choose one.")
+    return rows[0]
+
+
+def pane_processes(session, pane_id):
+    """The non-shell foreground processes of a pane plus its shell pid, from one bounded `pane process-info`; (None, code) when uncertain."""
+    info, code = herdr_observe(["pane", "process-info", "--pane", pane_id], session=session, timeout=5)
+    if info is None:
+        return None, code
+    info = info.get("process_info", info)
+    shell = info.get("shell_pid")
+    rows = []
+    for process in info.get("foreground_processes") or []:
+        if process.get("pid") == shell and (process.get("argv0") or process.get("name")) in SHELLS:
+            continue
+        rows.append({k: process.get(k) for k in ("pid", "name", "argv", "cwd")})
+    return {"shell_pid": shell, "processes": rows}, None
+
+
+def process_identity(process, pane_id, shell_pid):
+    return {"pane": pane_id, "shell_pid": shell_pid, "pid": process.get("pid"), "name": process.get("name"), "argv": process.get("argv"), "cwd": process.get("cwd"), "observed_at": now()}
+
+
+def same_instance(recorded, process):
+    """The recorded instance and an observed process are the same only when pid and argv both match; a pid alone can be reused."""
+    return bool(recorded) and process.get("pid") == recorded.get("pid") and (process.get("argv") or None) == (recorded.get("argv") or None)
+
+
+def observe_service(task, service):
+    """Re-prove one service from observation: pane present in the task workspace and checkout, same shell, same process instance."""
+    view = {"id": service["id"], "pane": service.get("pane"), "pane_state": None, "running": None, "ownership": "unknown", "reasons": [], "processes": []}
+    pane_id = service.get("pane")
+    session = task.get("session")
+    if not pane_id or not session:
+        view.update(pane_state="none", running=None)
+        view["reasons"].append("no pane was recorded for this launch; the intent was interrupted before a pane existed")
+        return view
+    pane, code = herdr_observe(["pane", "get", pane_id], session=session, timeout=5)
+    if pane is None:
+        view["pane_state"] = "absent" if code == "pane_not_found" else "uncertain"
+        view["running"] = False if code == "pane_not_found" else None
+        if code != "pane_not_found":
+            view["reasons"].append(f"pane {pane_id} cannot be observed ({code})")
+        return view
+    pane = pane.get("pane", pane)
+    view["pane_state"] = "present"
+    if pane.get("workspace_id") not in {None, task.get("workspace")}:
+        view["reasons"].append(f"pane {pane_id} sits in workspace {pane.get('workspace_id')}, not the task workspace {task.get('workspace')}")
+    cwd = pane.get("cwd") or pane.get("working_directory")
+    if not cwd or not inside(str(cwd), task["worktree"]):
+        view["reasons"].append(f"pane {pane_id} runs in {cwd!r}, not inside the task checkout")
+    info, code = pane_processes(session, pane_id)
+    if info is None:
+        view["reasons"].append(f"process observation for pane {pane_id} is uncertain ({code})")
+        return view
+    recorded = service.get("process") or {}
+    view["processes"] = info["processes"]
+    if recorded.get("shell_pid") is not None and info["shell_pid"] != recorded["shell_pid"]:
+        view["reasons"].append(f"pane shell pid changed from {recorded['shell_pid']} to {info['shell_pid']}; the pane was reused or restarted")
+    if not info["processes"]:
+        view["running"] = False
+    else:
+        view["running"] = True
+        if not recorded.get("pid"):
+            view["reasons"].append("a foreground process runs but no process instance was recorded for this launch")
+        elif not any(same_instance(recorded, p) for p in info["processes"]):
+            view["reasons"].append(f"foreground process(es) {[(p.get('pid'), p.get('name')) for p in info['processes']]} differ from the recorded instance pid {recorded.get('pid')} {recorded.get('name')!r}; restarted or replaced outside sum")
+    if not view["reasons"] and view["running"]:
+        view["ownership"] = "owned"
+    elif not view["reasons"] and view["running"] is False:
+        view["ownership"] = "owned"  # The pane is verifiably sum's and empty; closing it is permitted.
+    return view
+
+
+def service_by_id(record, service_id):
+    row = next((s for s in record.get("services", []) if s["id"] == service_id), None)
+    if row is None:
+        raise SumError(f"No service {service_id!r} recorded for this task.")
+    return row
+
+
+def update_service(store, task_id, service_id, event, **changes):
+    """One locked read-modify-write of a service row; every transition lands in the row's own history and the record's."""
+    with store.lock():
+        record = read_environment(store, task_id)
+        if record is None:
+            raise SumError("Environment record disappeared during the launch; nothing further is done.")
+        row = service_by_id(record, service_id)
+        previous = row.get("state")
+        row.update(changes)
+        row["updated_at"] = now()
+        row["history"] = (row.get("history") or [])[-19:] + [{"at": row["updated_at"], "event": event, "from": previous, "to": row.get("state")}]
+        write_environment(store, record, {"event": event, "service": service_id, "state": row.get("state")})
+        return row
+
+
+def unrecorded_panes(task, record):
+    """Panes of the task workspace that are neither the worker, the reviewer, nor a recorded service pane: never adopted, never closed."""
+    if not task.get("session") or not task.get("workspace"):
+        return [], "task has no session or workspace"
+    listed, code = herdr_observe(["pane", "list", "--workspace", task["workspace"]], session=task["session"], timeout=5)
+    if listed is None:
+        return None, code
+    listed = listed.get("panes", listed) if isinstance(listed, dict) else listed
+    known = {task.get("pane"), (task.get("reviewer") or {}).get("pane")} | {s.get("pane") for s in record.get("services", [])} \
+        | {r["id"] for r in record.get("resources", []) if r.get("kind") == "pane"}  # A pane someone recorded on purpose is known, not adopted.
+    return [{k: p.get(k) for k in ("pane_id", "cwd", "agent")} for p in listed if p.get("pane_id") not in known], None
+
+
+def wait_for_listener(store, task, parsed, pane_pids, timeout):
+    """Bounded readiness: the recorded endpoint's port must be taken by a process of the service pane (or one inside the checkout) before the deadline."""
+    deadline = time.monotonic() + timeout
+    waited = 0.0
+    while True:
+        observation = observe_port(store, task, parsed["port"])
+        if observation["state"] == "observed":
+            mine = [l for l in observation["listeners"] if l["pid"] in set(pane_pids) or l.get("owner") == "this-task"]
+            if mine:
+                return {"ready": True, "checked": "listener", "waited_s": round(waited, 2), "observation": observation, "listener": mine[0]}
+            return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "observation": observation,
+                    "reason": f"port {parsed['port']} is taken by a process sum did not start ({[(l['pid'], l.get('owner')) for l in observation['listeners']]}); reported, not terminated"}
+        if observation["state"] == "unverified":
+            return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "observation": observation, "reason": f"listeners cannot be observed: {observation.get('error')}"}
+        if time.monotonic() >= deadline:
+            return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "observation": observation, "reason": f"nothing listened on port {parsed['port']} within {timeout}s"}
+        time.sleep(SERVICE_POLL)
+        waited += SERVICE_POLL
+
+
+def capture_process(session, pane_id, timeout=PROCESS_TIMEOUT):
+    """Bounded wait for the launched command to appear as the pane's foreground process; (info, None) or (last info, reason)."""
+    deadline = time.monotonic() + timeout
+    info, code = pane_processes(session, pane_id)
+    while (info is None or not info["processes"]) and time.monotonic() < deadline:
+        time.sleep(SERVICE_POLL)
+        info, code = pane_processes(session, pane_id)
+    if info is None:
+        return None, f"process observation uncertain ({code})"
+    if not info["processes"]:
+        return info, "no foreground process appeared; the command exited at once or has not started"
+    return info, None
+
+
+def env_start(store, args):
+    """Launch one declared repository command in a pane sum creates for this task, recording intent, identity, and readiness."""
+    endpoint = optional_context()
+    task = store.read(args.task)
+    store.check_machine(task)
+    worktree = require_worktree(task)
+    if not task.get("session") or not task.get("pane") or not task.get("workspace"):
+        raise SumError("The task has no recorded Herdr session, pane, and workspace; services are launched only beside a dispatched worker pane.")
+    record = read_environment(store, task["id"])
+    if not record or not record.get("discovery"):
+        raise SumError(f"Task {task['id']} has no discovered commands; run `env discover {task['id']}` first. sum launches only what the repository declares.")
+    record.setdefault("services", [])
+    row = service_command(record, args.declared, getattr(args, "source", None))
+    command, launch = launch_line(row, task, worktree)
+    timeout = args.timeout if getattr(args, "timeout", None) is not None else READY_TIMEOUT
+    if not 1 <= timeout <= READY_TIMEOUT_MAX:
+        raise SumError(f"--timeout must be between 1 and {READY_TIMEOUT_MAX} seconds.")
+    parsed = parse_endpoint_url(args.url) if getattr(args, "url", None) else None
+    match = (getattr(args, "match", None) or "").strip() or None
+    if match and (len(match) > 200 or redact(match)[1]):
+        raise SumError("--match must be short readiness text without credential-shaped content.")
+    label = (getattr(args, "label", None) or "").strip()[:80]
+    if redact(label)[1]:
+        raise SumError("The label contains credential-shaped text.")
+    role = endpoint_role(task, endpoint) or "unattributed"
+    session = task["session"]
+    # Reconcile earlier intents for the same command before anything new starts: never a blind duplicate.
+    reuse_pane, reuse_created = None, False
+    for previous in [s for s in record["services"] if s["name"] == row["name"] and s.get("source") == row["source"] and s["state"] in SERVICE_ACTIVE]:
+        view = observe_service(task, previous)
+        if view["pane_state"] == "none":
+            update_service(store, task["id"], previous["id"], "reconciled-no-pane", state="lost", reconciled=view)
+        elif view["pane_state"] == "absent":
+            update_service(store, task["id"], previous["id"], "reconciled-pane-absent", state="lost", reconciled=view)
+        elif view["pane_state"] == "uncertain":
+            raise SumError(f"Service {previous['id']} ({previous['name']}) cannot be observed right now ({'; '.join(view['reasons'])}); not launching a possible duplicate.")
+        elif view["running"] and view["ownership"] == "owned":
+            updated = update_service(store, task["id"], previous["id"], "reconciled-running", state=previous["state"] if previous["state"] in ("running", "ready") else "running", reconciled=view)
+            return {"task": task["id"], "service": updated, "already_running": True, "path": str(environment_path(store, task["id"])),
+                    "note": "The recorded instance is still running in its pane; nothing was launched twice."}
+        elif view["running"]:
+            update_service(store, task["id"], previous["id"], "reconciled-unknown-process", state="unknown", reconciled=view)
+            raise SumError(f"Pane {previous['pane']} of service {previous['id']} hosts a process sum did not start ({'; '.join(view['reasons'])}); not launching a duplicate and not stopping it. Inspect the pane.")
+        else:
+            reasons = view["reasons"]
+            if reasons:
+                update_service(store, task["id"], previous["id"], "reconciled-pane-changed", state="unknown", reconciled=view)
+                raise SumError(f"Pane {previous['pane']} recorded for service {previous['id']} changed ({'; '.join(reasons)}); inspect it before launching again.")
+            update_service(store, task["id"], previous["id"], "reconciled-exited", state="stopped", reconciled=view, exit_verified=True)
+            reuse_pane = previous["pane"]  # An empty pane sum created earlier: reuse it rather than splitting another.
+            reuse_created = bool((previous.get("launch") or {}).get("pane_created"))
+    extra, code = unrecorded_panes(task, record)
+    if extra is None:
+        raise SumError(f"Panes of workspace {task['workspace']} cannot be listed ({code}); not launching without seeing the workspace.")
+    if extra:
+        raise SumError(f"Unrecorded pane(s) {[p['pane_id'] for p in extra]} sit in the task workspace, possibly from an interrupted launch. sum neither adopts nor closes them: "
+                       f"record one with `env record {task['id']} --pane ID` after checking it, or close it yourself, then start again.")
+    conflicts = endpoint_conflicts(store, task, parsed) if parsed else []
+    if conflicts:
+        raise SumError(f"{parsed['url']} is recorded as owned by another active task: {[(c['task'], c['url']) for c in conflicts]}; choose the port this task's environment reports.")
+    if parsed and parsed["local"]:
+        busy = observe_port(store, task, parsed["port"])
+        if busy["state"] == "observed":
+            service = {"id": "s-" + uuid.uuid4().hex[:10], "name": row["name"], "source": row["source"], "kind": row["kind"], "command": command, "launch": launch,
+                       "label": label or None, "url": parsed["url"], "port": parsed["port"], "state": "conflict", "intent_at": now(), "by": role, "pane": None, "process": None,
+                       "conflict": busy, "history": []}
+            with store.lock():
+                current = ensure_environment(store, task)
+                current["services"] = (current.get("services") or [])[-(SERVICE_LIMIT - 1):] + [service]
+                write_environment(store, current, {"event": "start-conflict", "service": service["id"], "port": parsed["port"]})
+            raise SumError(f"Port {parsed['port']} is already taken by {[(l['pid'], l.get('owner'), l.get('cwd')) for l in busy['listeners']]}; recorded as a conflict ({service['id']}). "
+                           f"sum never terminates the occupant; pick the port the repository's configuration reports or stop that service yourself.")
+    # Intent is durable before any pane exists.
+    service = {"id": "s-" + uuid.uuid4().hex[:10], "name": row["name"], "source": row["source"], "kind": row["kind"], "command": command, "launch": {**launch, "cwd": worktree, "pane_created": False},
+               "label": label or None, "url": parsed["url"] if parsed else None, "port": parsed["port"] if parsed else None, "match": match, "readiness_timeout": timeout,
+               "state": "intended", "intent_at": now(), "by": role, "pane": None, "workspace": None, "process": None, "readiness": None, "history": []}
+    with store.lock():
+        current = ensure_environment(store, task)
+        current.setdefault("services", [])
+        if len([s for s in current["services"] if s["state"] in SERVICE_ACTIVE]) >= SERVICE_LIMIT:
+            raise SumError(f"At most {SERVICE_LIMIT} active services per task; stop or reconcile one first.")
+        current["services"] = current["services"][-(SERVICE_LIMIT * 2 - 1):] + [service]
+        write_environment(store, current, {"event": "start-intent", "service": service["id"], "command": row["name"], "by": role})
+    if reuse_pane:
+        pane_id, created = reuse_pane, reuse_created
+    else:
+        split = herdr(["pane", "split", task["pane"], "--direction", "down", "--cwd", worktree, "--no-focus"], session=session, timeout=15)
+        pane_id = (split.get("pane") or {}).get("pane_id")
+        created = True
+        if not pane_id or not PANE_ID.fullmatch(pane_id):
+            update_service(store, task["id"], service["id"], "split-unrecognized", state="unknown", error=f"pane split returned no pane id: {json.dumps(split)[:200]}")
+            raise SumError(f"Herdr `pane split` returned no pane ID ({json.dumps(split)[:200]}); the intent {service['id']} stays recorded for reconciliation.")
+    info, _ = pane_processes(session, pane_id)
+    shell_pid = info["shell_pid"] if info else None
+    update_service(store, task["id"], service["id"], "pane-recorded", state="starting", pane=pane_id, workspace=workspace_of(pane_id), session=session,
+                   launch={**service["launch"], "pane_created": created}, process={"pane": pane_id, "shell_pid": shell_pid, "pid": None, "argv": None, "name": None, "cwd": None, "observed_at": now()})
+    with store.lock():
+        current = ensure_environment(store, task)
+        resource = {"kind": "pane", "id": pane_id, "session": session, "ownership": "owned", "state": "observed", "label": f"service {row['name']}",
+                    "note": f"pane sum split for service {service['id']}", "observed_at": now(), "recorded_by": role, "claimed_ownership": None, "service": service["id"]}
+        current["resources"] = [resource if (r["kind"], r["id"]) == ("pane", pane_id) else r for r in current["resources"]] if any((r["kind"], r["id"]) == ("pane", pane_id) for r in current["resources"]) else current["resources"] + [resource]
+        write_environment(store, current, {"event": "record", "kind": "pane", "id": pane_id, "ownership": "owned", "by": role})
+    herdr(["pane", "run", pane_id, command], session=session, timeout=15, raw=True)  # Real 0.8.2 prints nothing on success.
+    info, problem = capture_process(session, pane_id)
+    process = None
+    if info and info["processes"]:
+        process = process_identity(info["processes"][0], pane_id, info["shell_pid"])
+        process["siblings"] = [p.get("pid") for p in info["processes"][1:]]
+    state = "running" if process else "unknown"
+    update_service(store, task["id"], service["id"], "process-observed", state=state, process=process or {"pane": pane_id, "shell_pid": shell_pid, "pid": None, "name": None, "argv": None, "cwd": None, "observed_at": now()},
+                   launched_at=now(), problem=problem)
+    readiness = None
+    if parsed and parsed["local"]:
+        pids = [p["pid"] for p in (info or {}).get("processes", []) if p.get("pid") is not None]
+        readiness = wait_for_listener(store, task, parsed, pids, timeout)
+    elif match:
+        try:
+            herdr(["pane", "wait-output", pane_id, "--match", match, "--timeout", str(int(timeout * 1000))], session=session, timeout=timeout + 10, raw=True)
+            readiness = {"ready": True, "checked": "output", "match": match}
+        except SumError as exc:
+            readiness = {"ready": False, "checked": "output", "match": match, "reason": f"readiness text not seen within {timeout}s ({str(exc)[-120:]})"}
+    else:
+        readiness = {"ready": None, "checked": "process-only", "note": "no --url or --match given; the process is observed, readiness is not asserted"}
+    if readiness.get("ready"):
+        info2, _ = pane_processes(session, pane_id)  # The instance that is ready is the one recorded; a restart during startup is caught here.
+        if info2 and process and not any(same_instance(process, p) for p in info2["processes"]):
+            process = process_identity(info2["processes"][0], pane_id, info2["shell_pid"]) if info2["processes"] else process
+        state = "ready"
+    elif readiness.get("ready") is False:
+        taken_by_other = readiness.get("checked") == "listener" and (readiness.get("observation") or {}).get("state") == "observed"
+        state = "conflict" if taken_by_other else "failed"
+    row_after = update_service(store, task["id"], service["id"], "readiness", state=state, readiness=readiness, **({"process": process} if process else {}))
+    result = {"task": task["id"], "service": row_after, "path": str(environment_path(store, task["id"])), "already_running": False, "by": role, "note": SERVICE_NOTE}
+    if state == "ready" and parsed:
+        with store.lock():
+            current = ensure_environment(store, task)
+            observation = readiness["observation"]
+            endpoint_row = build_endpoint(current, parsed, observation, None, label or row["name"], role, now(), endpoint_conflicts(store, task, parsed))
+            endpoint_row["service"] = service["id"]
+            upsert_endpoint(current, endpoint_row)
+            write_environment(store, current, {"event": "record", "kind": "url", "id": endpoint_row["id"], "state": endpoint_row["state"], "ownership": endpoint_row["ownership"], "by": role})
+        result["endpoint"] = endpoint_row
+    if getattr(args, "log", None):
+        validated = validate_log_path(task, args.log)
+        with store.lock():
+            current = ensure_environment(store, task)
+            log_row = build_log(validated, observe_log(validated["path"], worktree, validated.get("relative")), None, label or row["name"], role, now())
+            log_row["service"] = service["id"]
+            upsert_log(current, log_row)
+            write_environment(store, current, {"event": "record", "kind": "log", "id": log_row["id"], "state": log_row["state"], "by": role})
+        result["log"] = log_row
+        update_service(store, task["id"], service["id"], "log-recorded", log=log_row["path"])
+        result["service"] = service_by_id(read_environment(store, task["id"]), service["id"])
+    if state in ("failed", "conflict", "unknown"):
+        result["warning"] = readiness.get("reason") or problem or "the launch did not reach a verified running state; the pane is left as it is for inspection"
+    return result
+
+
+def stop_service(store, task, service, timeout=STOP_TIMEOUT):
+    """Stop one proven-owned service: one interrupt through Herdr, a bounded wait for exit, port verification, then the sum-created pane closes."""
+    session = task["session"]
+    view = observe_service(task, service)
+    outcome = {"id": service["id"], "name": service["name"], "pane": service.get("pane"), "before": view}
+    if view["pane_state"] in ("none", "absent"):
+        state = "stopped" if view["pane_state"] == "absent" else "lost"  # A closed pane took its process tree with it; a never-created pane ran nothing.
+        row = update_service(store, task["id"], service["id"], "stop-pane-absent", state=state, stopped_at=now(), exit_verified=False,
+                             stop={"action": "none", "reason": "pane already absent" if state == "stopped" else "no pane was ever recorded"})
+        return {**outcome, "action": "none", "state": row["state"], "closed_pane": False}
+    if view["pane_state"] == "uncertain" or view["ownership"] != "owned":
+        row = update_service(store, task["id"], service["id"], "stop-refused", state="unknown" if view["running"] is not False or view["reasons"] else service["state"], stop={"action": "refused", "reasons": view["reasons"]})
+        return {**outcome, "action": "refused", "state": row["state"], "reasons": view["reasons"], "closed_pane": False}
+    sent = False
+    if view["running"]:
+        update_service(store, task["id"], service["id"], "stop-interrupt", state="stopping", stop={"action": "interrupt", "key": INTERRUPT_KEY, "at": now(), "timeout_s": timeout})
+        herdr(["pane", "send-keys", service["pane"], INTERRUPT_KEY], session=session, timeout=10, raw=True)
+        sent = True
+        deadline = time.monotonic() + timeout
+        while True:
+            info, code = pane_processes(session, service["pane"])
+            if info is not None and not info["processes"]:
+                break
+            if time.monotonic() >= deadline:
+                row = update_service(store, task["id"], service["id"], "stop-timeout", state="stopping",
+                                     stop={"action": "interrupt", "key": INTERRUPT_KEY, "result": "still running after the bound", "timeout_s": timeout,
+                                           "processes": (info or {}).get("processes") if info else None, "error": code})
+                return {**outcome, "action": "interrupt", "state": "stopping", "closed_pane": False,
+                        "reason": f"process still runs {timeout}s after the interrupt; sum escalates nothing (no kill, no pkill). Stop it yourself or run stop again later."}
+            time.sleep(SERVICE_POLL)
+    port_check = None
+    if service.get("port"):
+        port_check = observe_port(store, task, service["port"])
+        if port_check["state"] == "observed":
+            row = update_service(store, task["id"], service["id"], "stop-port-still-taken", state="unknown",
+                                 stop={"action": "interrupt" if sent else "none", "result": f"process exited but port {service['port']} is still taken by {[(l['pid'], l.get('owner')) for l in port_check['listeners']]}"})
+            return {**outcome, "action": "interrupt" if sent else "none", "state": "unknown", "closed_pane": False,
+                    "reason": f"port {service['port']} is still taken after the exit; a detached child or another process holds it, nothing is terminated"}
+    closed = False
+    if (service.get("launch") or {}).get("pane_created"):
+        result, code = herdr_observe(["pane", "close", service["pane"]], session=session, timeout=10)
+        if result is None and code != "pane_not_found":
+            row = update_service(store, task["id"], service["id"], "stop-close-failed", state="stopped", exit_verified=True, stopped_at=now(),
+                                 stop={"action": "interrupt" if sent else "none", "result": "exited", "pane_close": code})
+            return {**outcome, "action": "interrupt" if sent else "none", "state": "stopped", "closed_pane": False, "reason": f"pane close returned {code}; the empty pane stays"}
+        closed = True
+    row = update_service(store, task["id"], service["id"], "stopped", state="stopped", exit_verified=True, stopped_at=now(),
+                         stop={"action": "interrupt" if sent else "none", "result": "exited", "port": port_check and port_check["state"], "pane_closed": closed})
+    return {**outcome, "action": "interrupt" if sent else "none", "state": "stopped", "closed_pane": closed, "exit_verified": True}
+
+
+def stop_services(store, task, service_ids=None, timeout=STOP_TIMEOUT):
+    record = read_environment(store, task["id"]) or {}
+    rows = [s for s in record.get("services", []) if s["state"] in SERVICE_ACTIVE or s["state"] == "failed"]
+    if service_ids is not None:
+        wanted = set(service_ids)
+        rows = [s for s in record.get("services", []) if s["id"] in wanted]
+        missing = wanted - {s["id"] for s in rows}
+        if missing:
+            raise SumError(f"No service {sorted(missing)} recorded for task {task['id']}.")
+    results = [stop_service(store, task, s, timeout) for s in rows]
+    with store.lock():
+        current = read_environment(store, task["id"])
+        if current is not None:
+            closed = {r["pane"] for r in results if r.get("closed_pane")}
+            for resource in current["resources"]:
+                if resource["kind"] == "pane" and resource["id"] in closed:
+                    resource.update(state="closed", observed_at=now(), note=f"{resource.get('note') or ''}; closed after verified exit".strip("; "))
+            if closed:
+                write_environment(store, current, {"event": "stop", "closed_panes": sorted(closed)})
+    return results
+
+
+def env_stop(store, args):
+    """Stop the task's proven-owned services; unproven ones are reported and left running, never guessed at."""
+    task = store.read(args.task)
+    store.check_machine(task)
+    require_worktree(task)
+    if not task.get("session"):
+        raise SumError("The task has no recorded Herdr session; nothing can be observed or stopped.")
+    record = read_environment(store, task["id"])
+    if record is None or not record.get("services"):
+        return {"task": task["id"], "services": [], "note": "No services were launched through sum for this task; nothing to stop. Manually started environments stay untouched."}
+    timeout = args.timeout if getattr(args, "timeout", None) is not None else STOP_TIMEOUT
+    if not 1 <= timeout <= READY_TIMEOUT_MAX:
+        raise SumError(f"--timeout must be between 1 and {READY_TIMEOUT_MAX} seconds.")
+    results = stop_services(store, task, [args.service] if getattr(args, "service", None) else None, timeout)
+    return {"task": task["id"], "services": results, "stopped": [r["id"] for r in results if r["state"] == "stopped"],
+            "refused": [r["id"] for r in results if r["action"] == "refused"], "pending": [r["id"] for r in results if r["state"] in ("stopping", "unknown")],
+            "path": str(environment_path(store, task["id"])), "note": "Only instances re-proven by pane, shell, pid, and argv received one interrupt; nothing was killed by name, port, or cwd."}
+
+
+def services_view(record):
+    return [{**{k: s.get(k) for k in ("id", "name", "source", "kind", "state", "url", "port", "pane", "workspace", "label", "intent_at", "launched_at", "stopped_at", "exit_verified", "by")},
+             "launch": {k: (s.get("launch") or {}).get(k) for k in ("via", "runner", "project", "pane_created")},
+             "process": {k: (s.get("process") or {}).get(k) for k in ("pid", "name", "shell_pid", "observed_at")},
+             "readiness": {k: (s.get("readiness") or {}).get(k) for k in ("ready", "checked", "waited_s", "reason")} if s.get("readiness") else None,
+             "stop": {k: (s.get("stop") or {}).get(k) for k in ("action", "result", "reasons")} if s.get("stop") else None}
+            for s in record.get("services", [])]
+
+
+def writing_logs(record, window=WRITING_WINDOW):
+    """Owned logs whose lstat shows a write inside the window: a process may still write, so disposal waits."""
+    rows = []
+    for log in record.get("logs", []):
+        if log.get("ownership") != "owned":
+            continue
+        observed = observe_log(log["path"], None, None) if log.get("scope") == "checkout" else {"state": "skipped"}
+        modified = observed.get("modified_at")
+        if observed.get("state") == "present" and modified:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(modified)).total_seconds()
+            if age < window:
+                rows.append({"path": log["path"], "modified_at": modified, "age_s": round(age, 1)})
+    return rows
 
 
 # --- issue #10: guarded cleanup of merged task panes and checkouts -------------------------------------------
@@ -4335,6 +4840,15 @@ class Inspection:
         self.blockers = []
         self.resources = {}
         self.view = {"task": task["id"], "at": now()}
+        self.stoppable = []
+        try:
+            self.environment = read_environment(store, task["id"]) or {}
+        except SumError as exc:
+            self.environment = {}
+            self.block("environment", f"environment record unreadable: {exc}")
+
+    def service_panes(self):
+        return {s.get("pane"): s for s in self.environment.get("services", []) if s.get("pane")}
 
     def block(self, code, detail):
         self.blockers.append({"code": code, "detail": detail})
@@ -4385,12 +4899,15 @@ class Inspection:
                 listed = panes.get("panes", panes) if isinstance(panes, dict) else panes
                 self.view["panes"] = [{k: p.get(k) for k in ("pane_id", "cwd", "agent", "agent_status")} for p in listed]
                 reviewer_pane = (task.get("reviewer") or {}).get("pane")
+                service_panes = self.service_panes()
                 for pane in listed:
                     if pane.get("pane_id") == task["pane"]:
                         continue
                     if pane.get("pane_id") == reviewer_pane:
                         self.resources["reviewer_in_task_workspace"] = True
                         continue
+                    if pane.get("pane_id") in service_panes:
+                        continue  # Judged by identity in services(): a recorded launch, stoppable only when re-proven.
                     self.block("panes", f"unknown pane {pane.get('pane_id')} (cwd {pane.get('cwd')!r}, agent {pane.get('agent')!r}) in the task workspace; a service or helper pane sum did not create blocks removal")
         pane, code = herdr_observe(["pane", "get", task["pane"]], session=session, timeout=5)
         if pane is None:
@@ -4496,10 +5013,48 @@ class Inspection:
             if artifacts[key]:
                 self.block("artifacts", f"{label}: {artifacts[key][:10]}{' ...' if len(artifacts[key]) > 10 else ''}; move or commit them, sum never runs git clean")
 
+    def services(self):
+        """Recorded launches: a re-proven running instance is stoppable, anything unproven or still writing keeps cleanup pending."""
+        task = self.task
+        rows = []
+        for service in self.environment.get("services", []):
+            if service["state"] not in SERVICE_ACTIVE and service["state"] != "failed":
+                continue
+            view = observe_service(task, service)
+            rows.append({"id": service["id"], "name": service["name"], "state": service["state"], "observed": view})
+            if view["pane_state"] in ("none", "absent"):
+                continue  # Nothing to stop; `env stop` records the outcome.
+            if view["ownership"] == "owned":
+                self.stoppable.append(service["id"])
+                if view["running"]:
+                    self.block("service", f"service {service['id']} ({service['name']}) still runs in pane {service['pane']} as pid {service.get('process', {}).get('pid')}; cleanup --apply stops it gracefully first")
+                else:
+                    self.block("service", f"service {service['id']} ({service['name']}) has exited but its pane {service['pane']} is still open; cleanup --apply closes it")
+            else:
+                self.block("service-unknown", f"service {service['id']} ({service['name']}) in pane {service['pane']} is not the recorded instance ({'; '.join(view['reasons']) or 'unproven'}); sum stops nothing it cannot prove, inspect the pane")
+        self.view["services"] = rows
+        for row in writing_logs(self.environment):
+            self.block("writing", f"log {row['path']} was modified {row['age_s']}s ago; something may still write, cleanup waits")
+
+    def service_pids(self):
+        pids = set()
+        for service in self.environment.get("services", []):
+            if service["id"] in self.stoppable:
+                pids.add((service.get("process") or {}).get("pid"))
+                pids.update((service.get("process") or {}).get("siblings") or [])
+        return pids - {None}
+
     def occupancy(self):
         task = self.task
         if self.resources.get("pane") == "present":
             view = pane_occupancy(self.ctx["session"], task["pane"], task["worktree"] if self.resources.get("worktree") == "present" else None)
+            owned = self.service_pids()
+            if owned and view.get("detached"):  # A re-proven service is reported once, as a stoppable service, not again as an anonymous occupant.
+                rest = [p for p in view["detached"] if p["pid"] not in owned]
+                view["blockers"] = [b for b in view["blockers"] if not b.startswith("processes still run inside the checkout")]
+                if rest:
+                    view["blockers"].append("processes still run inside the checkout (detached from the pane or another pane): " + ", ".join(f"pid {p['pid']} at {p['cwd']}" for p in rest[:10]))
+                view["detached"] = rest
             self.view["occupancy"] = view
             for detail in view["blockers"]:
                 self.block("occupant", detail)
@@ -4552,7 +5107,7 @@ class Inspection:
 
     def plan(self):
         state = "blocked" if self.blockers else "ready"
-        return {**self.view, "state": state, "blockers": self.blockers, "resources": self.resources}
+        return {**self.view, "state": state, "blockers": self.blockers, "resources": self.resources, "stoppable": self.stoppable}
 
 
 def inspect_task(store, task, ctx, number=None, scope="task"):
@@ -4568,6 +5123,7 @@ def inspect_task(store, task, ctx, number=None, scope="task"):
     inspection.obligations()
     pr = inspection.github(number)
     inspection.checkout(pr["identity"]["head_sha"] if pr else None)
+    inspection.services()
     inspection.occupancy()
     inspection.reviewer()
     return inspection.plan()
@@ -4579,6 +5135,7 @@ def recheck(store, task, ctx, merged_head):
     inspection.herdr()
     inspection.git()
     inspection.checkout(merged_head)
+    inspection.services()
     inspection.occupancy()
     return inspection.plan()
 
@@ -4650,6 +5207,14 @@ def cleanup(store, args):
     if not args.apply:
         save_cleanup(store, task["id"], step="inspected", state=plan["state"], blockers=plan["blockers"], resources=plan["resources"])
         return {**plan, "apply": False, "note": "Inspection only; nothing was removed. `cleanup TASK --apply` removes the verified workspace with native Herdr operations and archives the record only when no blocker remains."}
+    if plan["blockers"] and plan.get("stoppable") and all(b["code"] == "service" for b in plan["blockers"]):
+        # Every remaining blocker is a re-proven, sum-launched service: evidence and obligations are complete, so stop those and only those.
+        save_cleanup(store, task["id"], step="stopping-services", state="pending", services=plan["stoppable"])
+        stopped = stop_services(store, task, plan["stoppable"])
+        save_cleanup(store, task["id"], step="services-stopped", state="pending", services_stopped=[{k: r.get(k) for k in ("id", "name", "state", "action", "closed_pane", "reason")} for r in stopped])
+        task = store.read(args.task)
+        plan = inspect_task(store, task, ctx, number=args.number, scope=scope)
+        plan["services_stopped"] = stopped
     if plan["blockers"]:
         save_cleanup(store, task["id"], step="apply-refused", state="blocked", blockers=plan["blockers"], resources=plan["resources"])
         raise SumError(f"Cleanup of {task['id']} refused; the task stays cleanup-pending. Blockers: " + "; ".join(f"[{b['code']}] {b['detail']}" for b in plan["blockers"]))
@@ -5822,6 +6387,19 @@ def parser():
     x = e.add_parser("show", help="The compact redacted environment record from the sidecar; observes nothing")
     x.add_argument("task")
     x.add_argument("--max-chars", dest="max_chars", type=int, default=CONTEXT_CHARS)
+    x = e.add_parser("start", help="Launch one command the repository declares (an `env discover` row) in a pane split under the worker pane; intent, pane, and process identity are recorded, readiness is bounded")
+    x.add_argument("task")
+    x.add_argument("--command", dest="declared", required=True, help="The declared command name (from `env discover`); sum builds the line from the repository's own runner")
+    x.add_argument("--source", help="Disambiguate a name declared in several files (e.g. package.json vs Makefile)")
+    x.add_argument("--url", help="The endpoint the service will serve; readiness waits until its port is taken by the launched process, a foreign occupant is a reported conflict")
+    x.add_argument("--match", help="Readiness text to wait for in the pane output when the service has no URL")
+    x.add_argument("--log", help="The service's log path to record (stat'ed, never read)")
+    x.add_argument("--label", help="Short human label (at most 80 characters)")
+    x.add_argument("--timeout", type=int, help=f"Readiness bound in seconds (default {READY_TIMEOUT}, at most {READY_TIMEOUT_MAX}); failure is explicit, never a retry")
+    x = e.add_parser("stop", help="Stop this task's sum-launched services whose pane, shell, pid, and argv still match the record: one interrupt, bounded exit wait, verified port release, then the sum-created pane closes")
+    x.add_argument("task")
+    x.add_argument("--service", help="One service ID; default: every active service of the task")
+    x.add_argument("--timeout", type=int, help=f"Exit bound in seconds after the interrupt (default {STOP_TIMEOUT}); a survivor stays recorded as stopping, nothing escalates")
     for name in ("show", "notice", "archive"):
         s = sub.add_parser(name, help={"show": "Full task record plus versions, evidence_view, and returns (unchanged shape; use `context` for a bounded read)",
                                        "notice": "Explicit single retry of the pending notice toward one recipient",
@@ -5997,7 +6575,8 @@ def main(argv=None):
             value = add_note(store, args)
         elif args.command == "env":
             value = {"discover": lambda: env_discover(store, args), "record": lambda: env_record(store, args),
-                     "inspect": lambda: env_inspect(store, args), "show": lambda: env_show(store, args)}[args.env_command]()
+                     "inspect": lambda: env_inspect(store, args), "show": lambda: env_show(store, args),
+                     "start": lambda: env_start(store, args), "stop": lambda: env_stop(store, args)}[args.env_command]()
         elif args.command == "init":
             value = init(store, args)
         elif args.command in {"status", "inbox"}:

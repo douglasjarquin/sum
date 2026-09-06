@@ -79,6 +79,35 @@ def main():
             cli("pane", "wait-output", task["pane"], "--match", marker, "--timeout", "5000")
             assert Path(task["worktree"]).resolve() != repo.resolve()
             print("PASS: real Herdr 0.8.2 worktree response, pane IDs, command input, and bounded output wait.")
+            # Task-owned service (#17) against the real server: split, run, process-info identity, one interrupt, verified exit, pane close.
+            port = 18000 + (os.getpid() % 1000)
+            worktree = Path(task["worktree"])
+            (worktree / "mise.toml").write_text(f'[tasks]\ndev = "python3 -m http.server {port} --bind 127.0.0.1"\n')
+            (worktree / "Makefile").write_text(f"dev:\n\tpython3 -m http.server {port} --bind 127.0.0.1\n")
+            sumctl("--home", str(state), "env", "discover", task["id"])
+            started = time.monotonic()
+            launched = sumctl("--home", str(state), "env", "start", task["id"], "--command", "dev", "--source", "Makefile", "--url", f"http://127.0.0.1:{port}", "--timeout", "20")
+            service = launched["service"]
+            start_wall = round((time.monotonic() - started) * 1000)
+            assert service["state"] == "ready", launched
+            assert service["pane"] != task["pane"] and service["pane"].split(":")[0] == task["workspace"], service
+            assert service["process"]["pid"] and service["process"]["shell_pid"] and service["process"]["argv"], service["process"]
+            info = cli("pane", "process-info", "--pane", service["pane"]).get("process_info")
+            assert info["shell_pid"] == service["process"]["shell_pid"] and any(p["pid"] == service["process"]["pid"] for p in info["foreground_processes"]), (info, service["process"])
+            assert launched["endpoint"]["ownership"] == "owned" and launched["endpoint"]["observation"]["listeners"][0]["pid"] == service["process"]["pid"], launched["endpoint"]
+            assert sumctl("--home", str(state), "env", "start", task["id"], "--command", "dev", "--source", "Makefile", "--url", f"http://127.0.0.1:{port}")["already_running"]
+            started = time.monotonic()
+            stopped = sumctl("--home", str(state), "env", "stop", task["id"])
+            stop_wall = round((time.monotonic() - started) * 1000)
+            assert stopped["stopped"] == [service["id"]] and stopped["services"][0]["closed_pane"], stopped
+            try:
+                cli("pane", "get", service["pane"]); raise AssertionError("service pane still present after stop")
+            except (subprocess.SubprocessError, ValueError, RuntimeError):
+                pass
+            worker_pane = cli("pane", "get", task["pane"])
+            assert (worker_pane.get("pane") or worker_pane)["pane_id"] == task["pane"], worker_pane  # The worker pane is untouched.
+            print(f"PASS: real Herdr 0.8.2 split a service pane under the worker, ran `make dev`, exposed shell and foreground pids that matched the recorded instance and the lsof listener, "
+                  f"refused a duplicate, and one ctrl+c through Herdr ended the process and closed only that pane (start {start_wall} ms, stop {stop_wall} ms).")
             # Bounded fleet lab: twelve prepared tasks (shell panes, no agent) in this real session; one snapshot serves the whole pass.
             fleet = sumctl("--home", str(state), "settings", "set", "--global", "13", "--per-repository", "1")
             assert fleet["capacity"] == {"global": 13, "per_repository": 1}, fleet

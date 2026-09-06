@@ -49,6 +49,14 @@ Then follow the fleet canary in `skills/update/SKILL.md`: update, refresh, answe
 Record each worker's observed state, the `fanout` counts and wall time of every pass, the receipts that appeared and when, and every worker that kept its process, checkout, and partial work.
 Scripted workers in `tests/test_fleet.py` establish the bookkeeping; only this step says anything about a model acting on a refresh.
 
+## 9. Task-owned development services
+
+In a real task whose repository declares a dev server, have the worker run `sumctl env discover`, then `sumctl env start TASK_ID --command dev --url http://127.0.0.1:PORT`, and confirm in the Herdr UI that a pane split under the worker pane runs the repository's own command while the worker keeps working.
+Start a second task in another repository the same way on another port, and keep a shared database (or any listener started by hand) running; record it with `--ownership shared`.
+Then: start the first command again (expect `already_running`, no second pane), try a URL whose port is taken (expect a recorded `conflict` and no termination), restart the service by hand inside its pane (expect `env stop` to refuse it as not the recorded instance), and let one service ignore the interrupt (expect `stopping` after the bound, no escalation).
+Merge the first task's PR and run `cleanup TASK_ID` then `--apply`: the proven service stops, its pane closes, the checkout is removed, and the second task's server, the shared database, and the coordinator pane are untouched; run `--apply` again and confirm it is a no-op.
+Run `update apply` and `refresh request` while a service serves requests and confirm the process, pane, and port are unchanged.
+
 ## Record results
 
 For each real task, record all human-labeled questions, which were saved by workers, which were found during rundown, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.
