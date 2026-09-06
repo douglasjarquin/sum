@@ -1204,6 +1204,295 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual([r["ok"] for r in sumctl.release_list(store)["releases"]], [True, True])
 
 
+class UpdateTest(ReleaseTest):
+    """Atomic local updates and code-only rollback beside running work, entirely offline (a bare Git remote stands in for origin)."""
+
+    def installation(self, name="sum install dir", via_symlink=False):
+        root, store = super().installation(name, via_symlink)
+        real = root.resolve()
+        bare = self.root / (name + " origin.git")
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+        self.git("remote", "add", "origin", str(bare), cwd=real)
+        self.git("push", "-q", "-u", "origin", "main", cwd=real)
+        self.git("remote", "set-head", "origin", "main", cwd=real)
+        # A registered coordinator pane, as `sumctl init` leaves it, so apply/rollback are allowed through the CLI.
+        sumctl.init(store, argparse.Namespace(role=None, task=None, reclaim=False))
+        return root, store
+
+    def commit_upstream(self, root, name, text="next\n"):
+        """A merged upstream change: committed on main and pushed to origin, the way a reviewed PR lands."""
+        (root / name).write_text(text)
+        self.git("add", name, cwd=root)
+        self.git("commit", "-q", "-m", name, cwd=root)
+        self.git("push", "-q", "origin", "main", cwd=root)
+        return self.git("rev-parse", "HEAD", cwd=root)
+
+    def ns(self, **kw):
+        base = {"ref": None, "no_fetch": False, "to": None}
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    def apply(self, store, **kw):
+        return sumctl.update_apply(store, self.ns(**kw), installer=fake_installer)
+
+    def current(self, root):
+        link = root / ".local" / "current"
+        return (link.parent / os.readlink(link)).resolve() if link.is_symlink() else None
+
+    def task_fixture(self, store):
+        """A dispatched task with its brief written by the current helper, so callbacks exist before any update."""
+        repo = self.root / "project"
+        repo.mkdir()
+        self.git("init", "-b", "main", cwd=repo)
+        self.git("config", "user.name", "sum test", cwd=repo)
+        self.git("config", "user.email", "test@example.invalid", cwd=repo)
+        (repo / "README.md").write_text("base\n")
+        self.git("add", ".", cwd=repo)
+        self.git("commit", "-q", "-m", "fixture", cwd=repo)
+        brief = self.root / "brief.md"
+        brief.write_text("Do the approved thing.")
+        with mock.patch.dict(os.environ, {"FAKE_PARENT_CWD": str(ROOT)}):
+            return sumctl.prepare(store, argparse.Namespace(repo=str(repo), brief=str(brief), harness="codex", base="HEAD", kind="ship", approved=True, arg=[]))
+
+    def test_check_resolves_only_merged_origin_revisions_and_never_touches_the_checkout(self):
+        root, store = self.installation(via_symlink=True)
+        head = self.git("rev-parse", "HEAD", cwd=root)
+        value = sumctl.update_check(store, self.ns())
+        self.assertEqual((value["source"]["sha"], value["source"]["branch"], value["source"]["fetched"]), (head, "main", True))
+        self.assertEqual((value["default"]["kind"], value["staged"], value["up_to_date"]), ("checkout", False, False))
+        # A local, unpushed commit (self-development or a task branch) is not update authority.
+        (root / "local.py").write_text("unmerged\n")
+        self.git("add", "local.py", cwd=root)
+        self.git("commit", "-q", "-m", "unmerged", cwd=root)
+        local = self.git("rev-parse", "HEAD", cwd=root)
+        with self.assertRaisesRegex(sumctl.SumError, "not merged on origin/main"):
+            sumctl.update_check(store, self.ns(ref=local))
+        self.assertEqual(sumctl.update_check(store, self.ns())["source"]["sha"], head)  # Default: origin's tip, not local HEAD.
+        # A dirty checkout is reported, never reset; remotes are never changed.
+        (root / "README.md").write_text("dirty edit\n")
+        value = sumctl.update_check(store, self.ns(ref=head))
+        self.assertTrue(value["source"]["checkout"]["dirty"])
+        self.assertEqual((root / "README.md").read_text(), "dirty edit\n")
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=root), local)
+        self.assertEqual(self.git("remote", "get-url", "origin", cwd=root), value["source"]["origin"])
+        with self.assertRaisesRegex(sumctl.SumError, "Unknown revision"):
+            sumctl.update_check(store, self.ns(ref="no-such-ref"))
+        self.git("remote", "remove", "origin", cwd=root)
+        with self.assertRaisesRegex(sumctl.SumError, "no `origin` remote"):
+            sumctl.update_check(store, self.ns())
+        self.assertIsNone(self.current(root))
+
+    def test_apply_switches_atomically_while_old_callbacks_and_in_flight_commands_continue(self):
+        root, store = self.installation(via_symlink=True)
+        root = root.resolve()
+        task = self.task_fixture(store)
+        callback_ask = [root / "bin" / "sumctl", "--home", store.home, "ask", task["id"], "--key", "before", "--text", "Before the update?"]
+        self.assertEqual(self.cli(callback_ask).returncode, 0)
+        records_before = self.snapshot(store.home)
+        new_sha = self.commit_upstream(root, "lib/next.py", "next = True\n")
+        # A helper call from the old default (the checkout) paused across the switch.
+        lab = self.root / "lab"
+        sumctl.Store(lab).init()
+        script = ("import subprocess, sys, time\n" "time.sleep(1.0)\n"
+                  "sys.exit(subprocess.call([sys.executable, sys.argv[1], '--home', sys.argv[2], 'doctor']))")
+        paused = subprocess.Popen([sys.executable, "-c", script, str(root / "lib" / "sumctl.py"), str(lab)],
+                                  env={**os.environ, "SUM_INSTALL_ROOT": str(root)}, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        value = self.apply(store)
+        self.assertTrue(value["changed"])
+        self.assertEqual((value["previous"]["kind"], value["default"]["kind"], value["default"]["sha"]), ("checkout", "release", new_sha))
+        self.assertEqual(self.current(root), root / ".local" / "releases" / new_sha)
+        self.assertTrue(value["compatibility"]["ok"])
+        self.assertTrue(all(p["ok"] for p in value["compatibility"]["probes"]))
+        self.assertIn(("show", task["id"]), {tuple(p["argv"]) for p in value["compatibility"]["probes"]})  # Representative record probed.
+        self.assertTrue(value["post_check"]["ok"])
+        stdout, _ = paused.communicate(timeout=30)
+        self.assertEqual(json.loads(stdout)["runtime"], str(root))  # In-flight command finished on the runtime it resolved.
+        # The unchanged absolute callbacks from the old brief now run the new default and keep working on the same records.
+        after = self.cli([root / "bin" / "sumctl", "--home", store.home, "report", task["id"], "--text", "Reported after the update."])
+        self.assertEqual(after.returncode, 0, after.stderr)
+        version = self.cli([root / "bin" / "sumctl", "--version"])
+        self.assertEqual(version.stdout.strip(), f"sum {sumctl.VERSION}")
+        doctor = json.loads(self.cli([root / "bin" / "sumctl", "--home", store.home, "doctor"]).stdout)
+        self.assertEqual(doctor["runtime"], str(root / ".local" / "releases" / new_sha))
+        shown = json.loads(self.cli([root / "bin" / "sumctl", "--home", store.home, "show", task["id"]]).stdout)
+        self.assertEqual([q["key"] for q in shown["questions"]], ["before"])
+        self.assertEqual(shown["report"]["text"], "Reported after the update.")
+        # Records changed only by the ask/report above; the checkout, .sum roles, and worktree were not touched by the update.
+        changed = {k for k in set(records_before) | set(self.snapshot(store.home)) if records_before.get(k) != self.snapshot(store.home).get(k)}
+        self.assertEqual(changed, {f"tasks/{task['id']}/task.json"})
+        self.assertEqual(self.git("status", "--porcelain", cwd=root), "")
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=task["worktree"]), task["base_sha"])
+        status = sumctl.update_status(store)
+        self.assertEqual((status["default"]["sha"], status["active"]["is_default"]), (new_sha, False))  # This test process runs from the checkout.
+        self.assertEqual([e["result"] for e in status["history"] if "result" in e], ["selected"])
+        self.assertFalse(self.apply(store)["changed"])  # Idempotent.
+
+    def test_activation_failures_leave_a_complete_selection(self):
+        root, store = self.installation()
+        first = self.commit_upstream(root, "one.py")
+        self.apply(store)
+        second = self.commit_upstream(root, "two.py")
+        release_two = Path(sumctl.stage(store, second, installer=fake_installer)["release"])
+        before = self.current(root)
+        # Before the rename: creating the private link fails.
+        with mock.patch.object(sumctl.os, "symlink", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.apply(store, no_fetch=True)
+        self.assertEqual(self.current(root), before)
+        # The rename itself fails.
+        with mock.patch.object(sumctl.os, "replace", side_effect=OSError("rename failed")):
+            with self.assertRaises(OSError):
+                self.apply(store, no_fetch=True)
+        self.assertEqual(self.current(root), before)
+        self.assertEqual([p.name for p in (root / ".local").iterdir() if p.name.startswith(".current-")], [])  # No stray private links.
+        # After the rename: the entrypoint check fails; the new selection is complete and rollback is offered, nothing half-written.
+        with mock.patch.object(sumctl, "post_check", return_value={"ok": False, "detail": "simulated"}):
+            with self.assertRaisesRegex(sumctl.SumError, "entrypoint check failed"):
+                self.apply(store, no_fetch=True)
+        self.assertEqual(self.current(root), release_two)
+        inspection = sumctl.update_status(store)
+        self.assertEqual((inspection["default"]["kind"], inspection["default"]["sha"], inspection["default"]["ok"]), ("release", second, True))
+        # Every restart inspection saw a complete old or complete new selection.
+        self.assertEqual(sumctl.update_rollback(store, self.ns())["default"]["sha"], first)
+        self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+        for entry in sumctl.update_status(store)["history"]:
+            self.assertIn(entry.get("to", {}).get("sha"), {first, second, None})
+
+    def test_bad_candidates_and_concurrent_updates_leave_current_operations_intact(self):
+        root, store = self.installation()
+        task = self.task_fixture(store)
+        first = self.commit_upstream(root, "one.py")
+        self.apply(store)
+        records = self.snapshot(store.home)
+        second = self.commit_upstream(root, "two.py")
+        # Interrupted network install: staging fails, nothing selected, records intact.
+        def broken(target, local_mesh=None):
+            fake_installer(target, local_mesh)
+            raise sumctl.SumError("npm: simulated network interruption")
+        with self.assertRaisesRegex(sumctl.SumError, "partial bundle was removed"):
+            sumctl.update_apply(store, self.ns(), installer=broken)
+        self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+        # Mismatched manifest / bad dependency: refused with the exact incompatibility; the old default keeps serving.
+        release_two = Path(sumctl.stage(store, second, installer=fake_installer)["release"])
+        sumctl.set_read_only(release_two, read_only=False)
+        manifest = json.loads((release_two / "release.json").read_text())
+        manifest["dependencies"]["herdr_mesh"]["overlay"]["server_sha256"] = "0" * 64
+        (release_two / "release.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(sumctl.SumError, "Mesh overlay marker does not match"):  # Refused before the lock; nothing selected.
+            self.apply(store, no_fetch=True)
+        self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+        manifest["dependencies"]["herdr_mesh"]["overlay"] = json.loads((release_two / ".deps/herdr-mesh/.sum-patched").read_text())
+        manifest["contracts"]["herdr_cli"] = "0.9.0"  # A candidate that needs a Herdr upgrade is deferred here, never upgraded globally.
+        (release_two / "release.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(sumctl.SumError, "requires Herdr CLI 0.9.0.*never performs"):
+            self.apply(store, no_fetch=True)
+        manifest["contracts"]["herdr_cli"] = sumctl.HERDR_VERSION
+        manifest["supports"]["brief_schema"] = [0]
+        (release_two / "release.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(sumctl.SumError, f"task {task['id']} uses brief schema 1"):
+            self.apply(store, no_fetch=True)
+        manifest["supports"]["brief_schema"] = [1]
+        (release_two / "release.json").write_text(json.dumps(manifest))
+        (release_two / "lib" / "sumctl.py").write_text("import sys; sys.exit(3)\n")  # A helper that cannot read the records.
+        manifest["files"]["lib/sumctl.py"] = "sha256:" + hashlib_sha(release_two / "lib" / "sumctl.py")
+        (release_two / "release.json").write_text(json.dumps(manifest))
+        with self.assertRaisesRegex(sumctl.SumError, "candidate helper failed"):
+            self.apply(store, no_fetch=True)
+        self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+        self.assertEqual(self.snapshot(store.home), records)
+        self.assertEqual(self.cli([root / "bin" / "sumctl", "--home", store.home, "show", task["id"]]).returncode, 0)
+        # Concurrent update: the second caller is refused while the lock is held; the selection stays complete.
+        sumctl.remove_tree(release_two)
+        with sumctl.activation_lock(root):
+            with self.assertRaisesRegex(sumctl.SumError, "activation lock"):
+                self.apply(store, no_fetch=True)
+        self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+        refused = [e for e in sumctl.update_status(store)["history"] if e.get("result") == "refused"]
+        self.assertGreaterEqual(len(refused), 3)
+        self.assertTrue(all(e["blocking"] for e in refused))
+
+    def test_rollback_keeps_new_records_and_both_callback_generations(self):
+        root, store = self.installation(via_symlink=True)
+        root = root.resolve()
+        task = self.task_fixture(store)
+        first = self.commit_upstream(root, "one.py")
+        self.apply(store)
+        second = self.commit_upstream(root, "two.py")
+        self.apply(store)
+        # New question and report saved while the new default serves.
+        self.assertEqual(self.cli([root / "bin" / "sumctl", "--home", store.home, "ask", task["id"], "--key", "after", "--text", "Saved on the new default?"]).returncode, 0)
+        self.assertEqual(self.cli([root / "bin" / "sumctl", "--home", store.home, "report", task["id"], "--text", "Report on the new default."]).returncode, 0)
+        records = self.snapshot(store.home)
+        worktree_head = self.git("rev-parse", "HEAD", cwd=task["worktree"])
+        value = sumctl.update_rollback(store, self.ns())
+        self.assertEqual((value["changed"], value["previous"]["sha"], value["default"]["sha"]), (True, second, first))
+        self.assertEqual(self.snapshot(store.home), records)  # No stale archive restored, no question removed.
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=task["worktree"]), worktree_head)
+        shown = json.loads(self.cli([root / "bin" / "sumctl", "--home", store.home, "show", task["id"]]).stdout)
+        self.assertEqual([q["key"] for q in shown["questions"]], ["after"])
+        self.assertEqual(shown["report"]["text"], "Report on the new default.")
+        # Both generations of the helper still serve the same records: the rolled-back default through the entrypoint, and the newer release pinned directly.
+        self.assertEqual(self.cli([root / "bin" / "sumctl", "--home", store.home, "resolve", task["id"], shown["questions"][0]["id"]]).returncode, 1)  # Unanswered: contract intact.
+        newer = self.cli([sys.executable, root / ".local" / "releases" / second / "lib" / "sumctl.py", "--home", store.home, "show", task["id"]],
+                         env={"SUM_INSTALL_ROOT": str(root)})
+        self.assertEqual(json.loads(newer.stdout)["report"]["text"], "Report on the new default.")
+        # Rollback all the way to the checkout, and an explicit target; a stale or unknown target is refused.
+        self.assertEqual(sumctl.update_rollback(store, self.ns(to="checkout"))["default"]["kind"], "checkout")
+        self.assertIsNone(self.current(root))
+        self.assertEqual(self.cli([root / "bin" / "sumctl", "--home", store.home, "status"]).returncode, 0)
+        self.assertEqual(sumctl.update_rollback(store, self.ns(to=second[:10]))["default"]["sha"], second)
+        with self.assertRaisesRegex(sumctl.SumError, "0 staged releases match"):
+            sumctl.update_rollback(store, self.ns(to="abcdef1234"))
+        self.assertEqual(self.current(root), root / ".local" / "releases" / second)
+        self.assertEqual(self.snapshot(store.home), records)
+
+    def test_mcp_server_keeps_its_start_tree_and_new_dispatch_selects_the_new_default(self):
+        root, store = self.installation()
+        first = self.commit_upstream(root, "one.py")
+        self.apply(store)
+        release_one = root / ".local" / "releases" / first
+        # A connected MCP server: the stable entrypoint resolved once; the process keeps that tree for its lifetime.
+        server = subprocess.Popen(["bash", "-c", 'RUNTIME=$(cd "$(dirname "$0")/../.local/current" && pwd -P); echo "$RUNTIME"; sleep 2; echo "$RUNTIME"',
+                                   str(root / "bin" / "herdr-mesh")], stdout=subprocess.PIPE, text=True)
+        second = self.commit_upstream(root, "two.py")
+        value = self.apply(store)
+        deferred = {d["what"]: d for d in value["compatibility"]["deferred"]}
+        self.assertIn("mcp", deferred)
+        self.assertIn("until their client restarts", deferred["mcp"]["note"])  # No claim of a client hot reload.
+        stdout, _ = server.communicate(timeout=30)
+        self.assertEqual(stdout.splitlines(), [str(release_one), str(release_one)])
+        # A new dispatch goes through the entrypoint and therefore the new default.
+        doctor = json.loads(self.cli([root / "bin" / "sumctl", "--home", store.home, "doctor"]).stdout)
+        self.assertEqual(doctor["runtime"], str(root / ".local" / "releases" / second))
+        self.assertEqual(json.loads(self.cli([root / "bin" / "sumctl", "--home", store.home, "update", "status"]).stdout)["default"]["sha"], second)
+
+    def test_update_cli_is_gated_to_the_installation_and_its_coordinator(self):
+        root, store = self.installation()
+        self.commit_upstream(root, "one.py")
+        # A developer pane may not apply or roll back.
+        with mock.patch.dict(os.environ, {"HERDR_PANE_ID": "w-dev:p1"}):
+            self.assertEqual(sumctl.init(store, argparse.Namespace(role=None, task=None, reclaim=False))["role"], "developer")
+            for argv in (["update", "apply", "--no-fetch"], ["update", "rollback", "--to", "checkout"]):
+                result = self.cli([sys.executable, root / "lib" / "sumctl.py", "--home", store.home, *argv])
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("not the registered coordinator", result.stderr)
+            self.assertEqual(self.cli([sys.executable, root / "lib" / "sumctl.py", "--home", store.home, "update", "status"]).returncode, 0)
+        self.assertIsNone(self.current(root))
+        # Candidate code (this development/task checkout) cannot publish into an installation's state home.
+        marker = ROOT / ".sum" / "dev.json"
+        if not marker.is_file() and not (ROOT / ".sum" / "state.json").is_file():
+            with mock.patch.object(sumctl, "development_marker", return_value={"installation_home": str(store.home)}):
+                for command in ("update-apply", "update-rollback", "update-stage", "update-check"):
+                    with self.assertRaisesRegex(sumctl.SumError, "Refusing"):
+                        sumctl.guard_candidate(store, command)
+                sumctl.guard_candidate(store, "update-status")
+        # A lab state home that is not an installation gets no update at all.
+        lab = self.root / "lab"
+        sumctl.Store(lab).init()
+        with self.assertRaisesRegex(sumctl.SumError, "not a sum installation"):
+            sumctl.update_status(sumctl.Store(lab))
+
+
 def hashlib_sha(path):
     return sumctl.sha256_file(path)
 

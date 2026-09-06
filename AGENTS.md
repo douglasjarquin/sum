@@ -36,6 +36,7 @@ Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox aga
 - Do not equate idle/done, a successful send, or a worker's report with verified completion.
 - Do not repeatedly wait or poll. Dispatch and return control to the boss. Before replying to a meaningful subsequent user message, do one bounded inbox/rundown when work is active.
 - At most two active tasks, one per repository. Workers get at most two instructed repair iterations; this MVP has no enforceable time or spending cap. Park uncertainty instead of improvising a replacement.
+- Use `skills/update/SKILL.md` when the boss asks to update or roll back sum; only the boss authorizes an update.
 - Use `skills/rundown/SKILL.md` for status/recovery. A closed or busy parent may have a pending notice; no daemon will retry it. Say so rather than promising unattended delivery.
 
 ## Developer contract
@@ -51,6 +52,6 @@ If the boss wants a change deployed, tell them; they decide when the coordinator
 
 ## Skills
 
-Load procedures only when needed: `dispatch`, `delivery`, `rundown`, `worker`, and `develop` under `skills/`.
+Load procedures only when needed: `dispatch`, `delivery`, `rundown`, `worker`, `develop`, and `update` under `skills/`.
 MCP tool descriptions document the patched interface. Herdr CLI facts come from `herdr --skill`, not remembered flags.
 Do not read all skills or every task transcript at every turn.

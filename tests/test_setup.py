@@ -83,7 +83,7 @@ class SetupTest(unittest.TestCase):
 
     def test_all_skill_links_resolve(self):
         for parent in (ROOT / '.agents/skills', ROOT / '.claude/skills'):
-            for name in ('dispatch', 'worker', 'rundown', 'delivery', 'develop'):
+            for name in ('dispatch', 'worker', 'rundown', 'delivery', 'develop', 'update'):
                 self.assertTrue((parent / ('sum-' + name) / 'SKILL.md').is_file())
         self.assertEqual((ROOT / 'CLAUDE.md').resolve(), ROOT / 'AGENTS.md')
 

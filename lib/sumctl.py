@@ -58,7 +58,7 @@ ACTIVE = {"preparing", "prepared", "starting", "running", "waiting", "needs-atte
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "release-list", "release-show", "brief-list"}
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "release-list", "release-show", "brief-list", "update-status"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -1530,6 +1530,333 @@ def release_show(store, sha):
     return release_summary(matches[0], verify_release(matches[0], matches[0].name), staged=False)
 
 
+# --- atomic local updates and code-only rollback --------------------------------------------------
+
+CURRENT = Path(".local") / "current"          # The installation default: a symlink read once per entrypoint invocation.
+UPDATE_LOG = Path(".local") / "updates.jsonl"  # Concise, local, append-only history of selections; never the source of truth.
+UPDATE_LOCK = Path(".local") / "update.lock"
+PROBE_TASKS = 5
+
+
+def default_branch(root):
+    ref = run(["git", "-C", root, "symbolic-ref", "-q", "refs/remotes/origin/HEAD"], check=False).stdout.strip()
+    return ref.removeprefix("refs/remotes/origin/") if ref.startswith("refs/remotes/origin/") else "main"
+
+
+def origin(root):
+    result = run(["git", "-C", root, "remote", "get-url", "origin"], check=False)
+    if result.returncode:
+        raise SumError("The installation has no `origin` remote. Add one yourself; sum never changes remotes.")
+    return result.stdout.strip()
+
+
+def resolve_authorized(root, ref=None, fetch=True):
+    """Resolve the update source to an immutable SHA that is merged on origin's default branch.
+
+    Only refs/remotes/origin/* are updated (git fetch); the working tree, HEAD, and remotes are never touched,
+    so a dirty checkout is reported, not reset. Unmerged work (a task branch, a development branch) is refused.
+    """
+    remote = origin(root)
+    branch = default_branch(root)
+    fetched = False
+    if fetch:
+        run(["git", "-C", root, "fetch", "--quiet", "origin", branch], timeout=300)
+        fetched = True
+    upstream = f"refs/remotes/origin/{branch}"
+    if run(["git", "-C", root, "show-ref", "--verify", "--quiet", upstream], check=False).returncode:
+        raise SumError(f"{upstream} is unknown here. Fetch origin first (omit --no-fetch).")
+    tip = run(["git", "-C", root, "rev-parse", upstream]).stdout.strip()
+    target = ref or upstream
+    resolved = run(["git", "-C", root, "rev-parse", "--verify", f"{target}^{{commit}}", "--"], check=False)
+    if resolved.returncode:
+        raise SumError(f"Unknown revision {target!r}.")
+    sha = resolved.stdout.strip()
+    if run(["git", "-C", root, "merge-base", "--is-ancestor", sha, tip], check=False).returncode:
+        raise SumError(f"{sha} is not merged on origin/{branch} ({tip}). sum activates only merged revisions of its own origin; "
+                       "a development or task branch is never executed as an update.")
+    dirty = run(["git", "-C", root, "status", "--porcelain", "--untracked-files=no"]).stdout.strip()
+    return {"sha": sha, "ref": target, "origin": remote, "branch": branch, "tip": tip, "fetched": fetched,
+            "checkout": {"head": run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip(), "dirty": bool(dirty),
+                         "note": "The checkout is left exactly as it is; an update never pulls, resets, or edits it."}}
+
+
+def default_runtime(root):
+    """What a new entrypoint invocation would run right now: the release behind .local/current, or the checkout."""
+    link = root / CURRENT
+    if not link.is_symlink():
+        return {"kind": "checkout", "path": str(root), "sha": run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip(),
+                "manifest": None, "ok": True}
+    target = os.readlink(link)
+    path = (link.parent / target).resolve() if not os.path.isabs(target) else Path(target).resolve()
+    row = {"kind": "release", "path": str(path), "link": target, "sha": path.name, "manifest": None, "ok": False}
+    try:
+        row["manifest"] = verify_release(path, path.name if re.fullmatch(r"[0-9a-f]{40}", path.name) else None)
+        row["ok"] = True
+    except SumError as exc:
+        row["error"] = str(exc)
+    return row
+
+
+def runtime_contracts(runtime):
+    """The contracts a runtime offers: from its manifest, or this module's constants for the checkout that runs now."""
+    manifest = runtime.get("manifest")
+    if manifest:
+        return {"sum_version": manifest["sum_version"], "herdr_cli": manifest["contracts"]["herdr_cli"], "mcp": manifest["contracts"]["mcp"],
+                "supports": manifest["supports"]}
+    return {"sum_version": VERSION, "herdr_cli": HERDR_VERSION, "mcp": MCP_CONTRACT,
+            "supports": {"state_schema": [SCHEMA], "brief_schema": [BRIEF_SCHEMA]}}
+
+
+def task_contracts(store):
+    """The state and brief schemas the recorded tasks actually use; legacy records count as schema 1."""
+    rows = []
+    for task in store.all():
+        if task["status"] == "archived":
+            continue
+        try:
+            brief_schema = read_versions(store, task).get("brief_schema", 1)
+        except SumError as exc:
+            brief_schema = None
+            rows.append({"task": task["id"], "brief_schema": None, "error": str(exc)})
+            continue
+        rows.append({"task": task["id"], "brief_schema": brief_schema, "status": task["status"]})
+    return rows
+
+
+def probe_candidate(store, root, candidate, tasks):
+    """Run the candidate's own helper read-only against representative records; a contract break shows up as a failure here, not after activation."""
+    python = candidate / ".local" / "bin" / "python3"
+    if not python.is_file():
+        python = Path(sys.executable)
+    env = {**os.environ, "SUM_INSTALL_ROOT": str(root)}
+    probes = []
+    argvs = [["--version"], ["--home", str(store.home), "status"]]
+    argvs.extend(["--home", str(store.home), "show", t["task"]] for t in tasks[-PROBE_TASKS:])
+    for argv in argvs:
+        result = run([python, candidate / "lib" / "sumctl.py", *argv], timeout=60, check=False, env=env)
+        probes.append({"argv": argv[-2:] if argv[0] == "--home" else argv, "ok": result.returncode == 0,
+                       "detail": None if result.returncode == 0 else (result.stderr or result.stdout).strip()[-400:]})
+    return probes
+
+
+def compatibility(store, root, candidate_path, current):
+    """Every check a selection must pass. `blocking` lists exact incompatibilities; `deferred` lists work that waits for clients."""
+    blocking, deferred = [], []
+    try:
+        manifest = verify_release(candidate_path, candidate_path.name)
+    except SumError as exc:
+        return {"ok": False, "blocking": [f"candidate bundle: {exc}"], "deferred": [], "probes": [], "tasks": []}
+    offered = runtime_contracts({"manifest": manifest})
+    state = read_json(store.home / "state.json")
+    if state.get("schema") not in offered["supports"]["state_schema"]:
+        blocking.append(f"state schema {state.get('schema')} is not supported by the candidate ({offered['supports']['state_schema']})")
+    tasks = task_contracts(store)
+    for row in tasks:
+        if row.get("error"):
+            blocking.append(f"task {row['task']}: version sidecar unreadable: {row['error']}")
+        elif row["brief_schema"] not in offered["supports"]["brief_schema"]:
+            blocking.append(f"task {row['task']} uses brief schema {row['brief_schema']}, which the candidate does not support ({offered['supports']['brief_schema']}); "
+                            "already-adopted task contracts are never downgraded implicitly")
+    try:
+        installed = ensure_version()
+    except SumError as exc:
+        installed = None
+        blocking.append(f"installed Herdr: {exc}")
+    if installed and offered["herdr_cli"] not in installed:
+        blocking.append(f"candidate requires Herdr CLI {offered['herdr_cli']}; installed {installed!r}. A Herdr upgrade is a separate, global decision that this update never performs.")
+    pins = manifest["dependencies"]["tools"]["pins"]
+    for name in TOOLS:
+        link = candidate_path / ".local" / "bin" / name
+        if not link.resolve().is_file():
+            blocking.append(f"pinned tool {name} does not resolve in the candidate")
+    if not pins:
+        blocking.append("candidate manifest has no tool pins")
+    running = runtime_contracts(current)
+    if running["mcp"] != offered["mcp"]:
+        deferred.append({"what": "mcp", "from": running["mcp"], "to": offered["mcp"],
+                         "note": "Already-connected MCP clients keep the server and tool set they started; they see the new tools only after the client itself restarts. Nothing is reloaded for them."})
+    else:
+        deferred.append({"what": "mcp", "note": "Already-running MCP servers keep their start tree until their client restarts; the tool contract is unchanged, so nothing is lost meanwhile."})
+    if current["kind"] == "checkout" or current.get("sha") != run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip():
+        deferred.append({"what": "checkout-instructions", "checkout_head": run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip(),
+                         "note": "AGENTS.md and skills read by a plain harness come from the checkout, which this update leaves untouched. Refreshing running sessions' instructions is separate work."})
+    probes = probe_candidate(store, root, candidate_path, tasks) if not blocking else []
+    for probe in probes:
+        if not probe["ok"]:
+            blocking.append(f"candidate helper failed `{' '.join(probe['argv'])}`: {probe['detail']}")
+    return {"ok": not blocking, "blocking": blocking, "deferred": deferred, "probes": probes, "tasks": tasks,
+            "candidate": {"sha": manifest["source"]["sha"], **offered}, "current": {"kind": current["kind"], "sha": current.get("sha"), **running}}
+
+
+def update_log(root, entry):
+    path = root / UPDATE_LOG
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as out:
+        out.write(json.dumps({"at": now(), **entry}, ensure_ascii=True) + "\n")
+        out.flush()
+        os.fsync(out.fileno())
+
+
+def read_update_log(root, limit=20):
+    path = root / UPDATE_LOG
+    rows = []
+    if path.is_file():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                rows.append({"unparsed": line[:200]})
+    return rows[-limit:]
+
+
+@contextmanager
+def activation_lock(root):
+    """Held only around validation-of-selection and the single rename. Staging, fetching, and building happen before it."""
+    path = root / UPDATE_LOCK
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise SumError("Another update or rollback holds the activation lock; the current selection is unchanged. Retry after it finishes.") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def select_default(root, target):
+    """Atomically make <target> the installation default, or remove the pointer so the checkout serves again.
+
+    A new symlink is fully created under a private name and then renamed over .local/current, so any observer
+    sees the complete old selection or the complete new one. Nothing under .sum, .deps, or any release changes.
+    """
+    link = root / CURRENT
+    if target is None:
+        if link.is_symlink():
+            os.unlink(link)
+        return None
+    relative = os.path.relpath(target, link.parent)
+    tmp = link.parent / f".current-{uuid.uuid4().hex[:8]}"
+    os.symlink(relative, tmp)
+    try:
+        os.replace(tmp, link)
+    except BaseException:
+        if tmp.is_symlink():
+            os.unlink(tmp)
+        raise
+    directory = os.open(link.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    return relative
+
+
+def post_check(store, root):
+    """Prove the stable entrypoint serves a complete runtime after the switch: one read-only call through <installation>/bin/sumctl."""
+    result = run([root / "bin" / "sumctl", "--home", store.home, "status"], timeout=60, check=False)
+    return {"ok": result.returncode == 0, "detail": None if result.returncode == 0 else (result.stderr or result.stdout).strip()[-400:]}
+
+
+def activate(store, root, target, action, source):
+    """Validate under the lock, switch once, verify, log. On any failure the previous selection is still complete and serving."""
+    with activation_lock(root):
+        current = default_runtime(root)
+        if target is not None:
+            result = compatibility(store, root, target, current)
+            if not result["ok"]:
+                update_log(root, {"action": action, "result": "refused", "from": current.get("sha"), "to": target.name, "blocking": result["blocking"]})
+                raise SumError(f"{action} refused; the current selection ({current['kind']} {current.get('sha')}) still serves. Exact incompatibilities: " + "; ".join(result["blocking"]))
+            new_sha = target.name
+        else:
+            result = {"ok": True, "blocking": [], "deferred": [{"what": "checkout-instructions", "note": "The checkout serves again; its instructions match its HEAD."}], "probes": []}
+            new_sha = current.get("sha") if current["kind"] == "checkout" else run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()
+        if current["kind"] == ("checkout" if target is None else "release") and current.get("sha") == new_sha:
+            return {"action": action, "changed": False, "default": current, "compatibility": result, "source": source,
+                    "note": "Already the default; nothing changed."}
+        update_log(root, {"action": action, "phase": "selecting", "from": {"kind": current["kind"], "sha": current.get("sha")},
+                          "to": {"kind": "checkout" if target is None else "release", "sha": new_sha}, "source": source})
+        select_default(root, target)
+        after = default_runtime(root)
+        check = post_check(store, root)
+        update_log(root, {"action": action, "result": "selected" if check["ok"] else "selected-but-entrypoint-check-failed",
+                          "from": {"kind": current["kind"], "sha": current.get("sha")}, "to": {"kind": after["kind"], "sha": after.get("sha")},
+                          "deferred": [d["what"] for d in result["deferred"]], "post_check": check})
+    if not check["ok"]:
+        raise SumError(f"{action} switched the default to {after.get('sha')} but the entrypoint check failed: {check['detail']}. Run `update rollback` to select the previous runtime; records are untouched.")
+    return {"action": action, "changed": True, "previous": {"kind": current["kind"], "sha": current.get("sha"), "path": current["path"]},
+            "default": after, "compatibility": result, "post_check": check, "source": source,
+            "note": "New entrypoint invocations and new dispatches use this default. Commands already running finish on the runtime they resolved; "
+                    "connected MCP servers keep their start tree; task records, worktrees, and .sum were not touched."}
+
+
+def update_check(store, args):
+    root = installation_root(store)
+    source = resolve_authorized(root, args.ref, fetch=not args.no_fetch)
+    current = default_runtime(root)
+    staged = (root / RELEASES / source["sha"]).is_dir()
+    value = {"installation": str(root), "source": source, "default": {k: current.get(k) for k in ("kind", "sha", "path", "ok", "error")},
+             "active": {"runtime": str(RUNTIME), "sha": current.get("sha") if str(RUNTIME) == current["path"] else None},
+             "staged": staged, "up_to_date": current.get("sha") == source["sha"] and current["kind"] == "release"}
+    if staged:
+        value["compatibility"] = compatibility(store, root, root / RELEASES / source["sha"], current)
+    value["note"] = ("Read-only apart from refs/remotes/origin. " +
+                     ("This revision is already the default." if value["up_to_date"] else
+                      "Compatibility was evaluated against the staged bundle." if staged else
+                      "Not staged yet: `update stage` builds it without changing the default; `update apply` stages and activates."))
+    return value
+
+
+def update_stage(store, args, installer=install_runtime):
+    root = installation_root(store)
+    source = resolve_authorized(root, args.ref, fetch=not args.no_fetch)
+    staged = stage(store, source["sha"], installer=installer)
+    current = default_runtime(root)
+    return {**staged, "source": source, "compatibility": compatibility(store, root, Path(staged["release"]), current),
+            "note": "Staged and evaluated; the default is unchanged. `update apply` activates it."}
+
+
+def update_apply(store, args, installer=install_runtime):
+    root = installation_root(store)
+    source = resolve_authorized(root, args.ref, fetch=not args.no_fetch)  # Network and authorization first, outside the lock.
+    staged = stage(store, source["sha"], installer=installer)             # Build/install, still outside the lock.
+    return activate(store, root, Path(staged["release"]), "apply", {k: source[k] for k in ("sha", "ref", "origin", "branch", "fetched")})
+
+
+def update_rollback(store, args):
+    root = installation_root(store)
+    current = default_runtime(root)
+    target = args.to
+    if target is None:
+        history = [e for e in read_update_log(root, limit=1000) if e.get("result") in {"selected", "selected-but-entrypoint-check-failed"}]
+        last = next((e for e in reversed(history) if e.get("to", {}).get("sha") == current.get("sha") and e["to"].get("kind") == current["kind"]), None)
+        if not last:
+            raise SumError("No recorded previous selection for the current default. Name the target: `update rollback --to SHA` or `--to checkout`.")
+        target = last["from"]["sha"] if last["from"]["kind"] == "release" else "checkout"
+    if target == "checkout":
+        return activate(store, root, None, "rollback", {"to": "checkout"})
+    if not re.fullmatch(r"[0-9a-f]{7,40}", target):
+        raise SumError("Roll back to a staged release SHA or `checkout`.")
+    matches = [p for p in (root / RELEASES).glob(target + "*") if not p.name.startswith(".")] if (root / RELEASES).is_dir() else []
+    if len(matches) != 1:
+        raise SumError(f"{len(matches)} staged releases match {target}; rollback uses only bundles that are already staged.")
+    return activate(store, root, matches[0], "rollback", {"to": matches[0].name})
+
+
+def update_status(store):
+    root = installation_root(store)
+    current = default_runtime(root)
+    releases = release_list(store)
+    return {"installation": str(root), "default": current,
+            "active": {"runtime": str(RUNTIME), "sum_version": VERSION, "is_default": str(RUNTIME) == current["path"],
+                       "note": "The runtime this very command resolved. A command started before a switch keeps its own runtime until it exits."},
+            "checkout": {"head": run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip(),
+                         "dirty": bool(run(["git", "-C", root, "status", "--porcelain", "--untracked-files=no"]).stdout.strip())},
+            "releases": releases["releases"], "in_progress": releases["in_progress"], "history": read_update_log(root),
+            "note": "Selection is the .local/current symlink; the history is a local log, not the source of truth. Running MCP servers and helpers are not enumerated: they keep the tree they started from."}
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--home", default=os.environ.get("SUM_HOME") or str(ROOT / ".sum"))
@@ -1609,6 +1936,17 @@ def parser():
     r.add_parser("list")
     x = r.add_parser("show")
     x.add_argument("sha")
+    s = sub.add_parser("update", help="Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running")
+    u = s.add_subparsers(dest="update_command", required=True)
+    for name, text in (("check", "Fetch origin, resolve the merged revision, and report compatibility; changes no selection"),
+                       ("stage", "Check plus build the release bundle; the default is unchanged"),
+                       ("apply", "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only)")):
+        x = u.add_parser(name, help=text)
+        x.add_argument("--ref", help="A revision merged on origin's default branch; default: that branch tip")
+        x.add_argument("--no-fetch", action="store_true", help="Use the already fetched origin refs (offline host)")
+    u.add_parser("status", help="Default and active runtime, checkout state, staged releases, recent selections; writes nothing")
+    x = u.add_parser("rollback", help="Atomically select the previous runtime (or --to SHA|checkout) after compatibility checks; records are never touched (coordinator only)")
+    x.add_argument("--to")
     return p
 
 
@@ -1619,7 +1957,8 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         store = Store(args.home)
-        guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}"}.get(args.command, lambda: args.command)())
+        guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}",
+                                "update": lambda: f"update-{args.update_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -1695,6 +2034,12 @@ def main(argv=None):
         elif args.command == "release":
             value = {"stage": lambda: stage(store, args.ref), "list": lambda: release_list(store),
                      "show": lambda: release_show(store, args.sha)}[args.release_command]()
+        elif args.command == "update":
+            if args.update_command in {"apply", "rollback"}:
+                require_coordinator(store, context())  # Task text, a worker, or a developer pane never authorizes an update.
+            value = {"check": lambda: update_check(store, args), "stage": lambda: update_stage(store, args),
+                     "apply": lambda: update_apply(store, args), "status": lambda: update_status(store),
+                     "rollback": lambda: update_rollback(store, args)}[args.update_command]()
         elif args.command == "herdr":
             native_args = args.args[1:] if args.args and args.args[0] == "--" else args.args
             # Scope: the caller's own verified pane, registered in this instance. No saved-context borrowing.
