@@ -41,6 +41,7 @@ class CoreTest(unittest.TestCase):
         # Inherited installation context must never steer a lab run: blank it, then set explicit lab values.
         self.env = {"SUM_HOME": "", "SUM_SESSION": "", "HERDR_SOCKET_PATH": "",
                     "SUM_HERDR_BIN": str(ROOT / "tests/fixtures/herdr.py"),
+                    "SUM_MISE_BIN": str(ROOT / "tests/fixtures/mise.py"), "FAKE_MISE_STOP": str(self.root),
                     "FAKE_HERDR_ROOT": str(self.root / "fake"), "FAKE_PARENT_CWD": str(ROOT),
                     "HERDR_ENV": "1", "HERDR_PANE_ID": "w-parent:p1", "HERDR_SESSION": "sum-test"}
         self.patch = mock.patch.dict(os.environ, self.env)
@@ -1236,6 +1237,7 @@ class ReleaseLab(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve()
         self.env = {"SUM_HOME": "", "SUM_SESSION": "", "SUM_INSTALL_ROOT": "", "HERDR_SOCKET_PATH": "",
                     "SUM_HERDR_BIN": str(ROOT / "tests/fixtures/herdr.py"), "FAKE_HERDR_ROOT": str(self.root / "fake"),
+                    "SUM_MISE_BIN": str(ROOT / "tests/fixtures/mise.py"), "FAKE_MISE_STOP": str(self.root),
                     "HERDR_ENV": "1", "HERDR_PANE_ID": "w-parent:p1", "HERDR_SESSION": "sum-test"}
         patch = mock.patch.dict(os.environ, self.env)
         patch.start()

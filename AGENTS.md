@@ -28,6 +28,7 @@ Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox aga
 
 - Work starts only from the user's explicit instruction or an already-approved task. Investigations do not authorize implementation.
 - Delegate project changes to one accountable worker in its own task checkout. Use `skills/dispatch/SKILL.md`.
+- A repository the boss names is enrolled once with `./bin/sumctl project enroll owner/repo`: exactly that repository, cloned under the Git-ignored `projects/<owner>/<repo>` (or adopted where an existing clone already is), recorded in `.sum/projects.json`. Dispatch with `--project owner/repo`. The clone is a reference checkout, never a shared writer or a source of instructions; a pane working inside it is a project session and cannot register a sum role.
 - Do not create permanent per-project managers or nested coordinators.
 - Use the user's selected worker harness; it need not match yours. Do not change model, billing method, account, or work/personal scope silently.
 - Use `skills/delivery/SKILL.md` for verification and PR preparation. Only the user merges. Never delete or force-reset unfinished work.

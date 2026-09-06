@@ -28,6 +28,7 @@ def main():
         brief.write_text("Add greeting.py with greet(name) returning 'Hello, <name>!' and verify it. Ask whether to preserve punctuation. Do not publish.")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SUM_", "HERDR_"))}  # Inherited installation context never steers the lab.
         env.update(SUM_HERDR_BIN=str(ROOT / "tests/fixtures/herdr.py"), SUM_GH_BIN=str(ROOT / "tests/fixtures/gh.py"), FAKE_GH_ROOT=str(base / "fake-gh"),
+                   SUM_MISE_BIN=str(ROOT / "tests/fixtures/mise.py"), FAKE_MISE_STOP=str(base),
                    SUM_LSOF_BIN=str(ROOT / "tests/fixtures/lsof.py"), FAKE_LSOF_ROOT=str(base / "fake-lsof"),
                    FAKE_HERDR_ROOT=str(base / "fake"), FAKE_PARENT_CWD=str(ROOT),
                    HERDR_ENV="1", HERDR_PANE_ID="w-parent:p1", HERDR_SESSION="sum-test",
@@ -256,6 +257,33 @@ def main():
         assert {p: p.read_bytes() for p in (base / "state").rglob("*") if p.is_file()} == records  # Task records and roles above are untouched.
         assert ctl("init", pane="w-late:p1")["role"] == "developer" and ctl("init")["role"] == "coordinator"
         print("PASS: development checkout prepared on its own branch with an ordinary pane, reopened with dirty work intact, never force-removed; installation branch and task records unchanged.")
+        # Managed project clones: exactly one enrolled repository under the installation's Git-ignored projects/, delivered to a worker elsewhere.
+        assert ctl("--home", str(installation / ".sum"), "init")["role"] == "coordinator"
+        bare = base / "remotes/demo/project.git"
+        bare.parent.mkdir(parents=True)
+        subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(bare)], check=True, capture_output=True)
+        enrolled = ctl("--home", str(installation / ".sum"), "project", "enroll", "demo/project", "--remote", bare.as_uri())
+        clone = Path(enrolled["project"]["path"])
+        assert enrolled["enrolled"] and enrolled["reason"] == "cloned" and clone == installation / "projects/demo/project" and (clone / "README.md").is_file()
+        assert "projects/" not in git("ls-files", cwd=installation) and "!! projects/" in git("status", "--porcelain", "--ignored", cwd=installation)
+        again = ctl("--home", str(installation / ".sum"), "project", "enroll", "demo/project", "--remote", bare.as_uri())
+        assert not again["enrolled"] and again["reason"] == "already-enrolled" and len(json.loads((installation / ".sum/projects.json").read_text())["projects"]) == 1
+        wrong = ctl("--home", str(installation / ".sum"), "project", "enroll", "demo/project", "--remote", "https://github.com/demo/other.git", check=False)
+        assert "different remote is refused" in wrong["error"]
+        managed = ctl("--home", str(installation / ".sum"), "prepare", "--project", "demo/project", "--brief", str(brief), "--harness", "codex", "--approved")
+        assert managed["project"]["name"] == "demo/project" and managed["repository"] == str(clone) and not Path(managed["worktree"]).is_relative_to(installation)
+        delivered = Path(managed["brief_path"]).read_text()
+        assert "## Delivered runtime" in delivered and str(ROOT / "skills/worker/SKILL.md") in delivered and "../../skills" not in delivered
+        env_project = dict(env, HERDR_PANE_ID="w-project:p1", FAKE_PARENT_CWD=str(clone))
+        nested = json.loads(subprocess.run([sys.executable, str(ROOT / "lib/sumctl.py"), "--home", str(installation / ".sum"), "init"], env=env_project, text=True, capture_output=True).stderr)
+        assert "A project session is not a sum session" in nested["error"]
+        origins_script = ("import importlib.util, json\n"
+                          f"spec = importlib.util.spec_from_file_location('sumctl', {str(ROOT / 'lib/sumctl.py')!r}); sumctl = importlib.util.module_from_spec(spec); spec.loader.exec_module(sumctl)\n"
+                          f"print(json.dumps(sumctl.mise_task_origins({str(clone)!r})))")
+        origins = json.loads(subprocess.run([sys.executable, "-c", origins_script], env=env, check=True, text=True, capture_output=True).stdout)
+        assert origins["available"] and "test" in {t["name"] for t in origins["inherited"]} and origins["verification"]["test"] is False and "another repository's task" in origins["problem"]
+        print("PASS: one exact repository enrolled under the Git-ignored projects/ directory, re-enrollment idempotent and a different remote refused; the task worktree stayed elsewhere while its brief carried absolute skill and helper paths; "
+              "a pane inside the clone could not register a sum role; the parent's mise `test` task was reported as inherited, not as project verification.")
         # Immutable runtime release: staged beside the live installation with an offline stand-in for dependency installation.
         head = git("rev-parse", "HEAD", cwd=installation)
         records = {p: p.read_bytes() for p in (base / "state").rglob("*") if p.is_file()}

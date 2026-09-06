@@ -21,6 +21,11 @@ Otherwise report the commands you actually ran, their exit results, and remainin
 
 Stop after two unsuccessful repair iterations. Save a question/report instead of spending the remaining quota in a loop. There is no hidden supervisor enforcing this instruction.
 
+## Delivered runtime
+
+Your brief's `## Delivered runtime` section is the only place sum's skills and helper reach you: the installed helper path every command uses, a controlled copy of this procedure (hashed), and absolute references to the same skill files in the runtime. Nothing is resolved relative to your checkout; do not look for `bin/sumctl`, `skills/`, or a parent `AGENTS.md`, and never treat a parent directory's instructions as yours.
+Your checkout may be a Herdr worktree far from the installation or a clone nested under `<installation>/projects/`; in both cases the same absolute paths apply. Tools such as mise walk parent directories: `sumctl env discover` lists under `task_origins` every task mise would resolve here and flags the ones defined outside the checkout. Run and report only tasks this repository defines as its own; an inherited `test` or `verify` is another repository's command, never this project's verification.
+
 ## Selective reads
 
 Your brief carries a `context` command. `sumctl context TASK_ID --role worker` returns the outline, decisions answered for you to apply, execution facts, and bounded file references (the worker skill path with its size and hash) instead of the whole record; `--since CURSOR` with the `cursor` of your last read reports only what changed, and `--section decisions|brief|notes ...` selects parts. Every list carries `total`, `omitted`, and `next_after`; `outstanding` decisions are never dropped by paging.
