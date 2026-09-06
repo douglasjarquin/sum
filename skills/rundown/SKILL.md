@@ -21,7 +21,9 @@ An answer stays visible until the worker marks it applied. A pending notice can 
 
 ## Restart
 
-Run doctor in the new coordinator pane, then inspect saved tasks and actual Herdr inventory.
+In the new pane run `./bin/sumctl init`. If another pane still owns coordination you become a developer; inspect that pane before anything else.
+Only when the boss confirms the old coordinator pane is gone, run `./bin/sumctl init --role coordinator --reclaim`. It proceeds only when Herdr reports the old pane as `pane_not_found`; an existing pane (even with its agent exited) or an unobservable one is refused, and it never rebinds tasks by itself.
+Then inspect saved tasks and actual Herdr inventory.
 To make an existing task report to this coordinator, explicitly run `sumctl bind TASK_ID --parent-only`.
 To adopt a known existing worker after a pane ID change, use `sumctl bind TASK_ID --worker-pane PANE` after verifying its cwd and task identity.
 Never launch a replacement just because a pane cannot be observed. Missing/uncertain workers need inspection; sum has no automatic retry or process-fencing service.

@@ -10,7 +10,7 @@ if len(args) < 3 or args[0] != "--session":
     print("explicit session required", file=sys.stderr); sys.exit(2)
 session, args = args[1], args[2:]
 if session != os.environ.get("FAKE_SESSION", "sum-test"):
-    print("wrong session", file=sys.stderr); sys.exit(2)
+    print(json.dumps({"error": {"code": "wrong_session", "message": "wrong session"}}), file=sys.stderr); sys.exit(2)
 with (root / "calls.jsonl").open("a") as out:
     out.write(json.dumps({"session": session, "args": args}) + "\n")
 state_path = root / "state.json"
@@ -19,11 +19,15 @@ parent = os.environ.get("HERDR_PANE_ID", "w-parent:p1")
 state["panes"][parent] = {"pane_id": parent, "cwd": os.environ.get("FAKE_PARENT_CWD", "/tmp"),
   "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": "test-coordinator"}
 
-def fail(text):
-    print(json.dumps({"error": text}), file=sys.stderr); sys.exit(1)
+def save():
+    tmp = state_path.with_name("state.%d.tmp" % os.getpid())  # Atomic like Herdr's own store; concurrent CLI calls must not see partial JSON.
+    tmp.write_text(json.dumps(state)); os.replace(tmp, state_path)
+
+def fail(code, message=None):
+    print(json.dumps({"error": {"code": code, "message": message or code}}), file=sys.stderr); sys.exit(1)
 
 def emit(result):
-    state_path.write_text(json.dumps(state))
+    save()
     print(json.dumps({"result": result})); sys.exit(0)
 
 def arg(name):
@@ -36,7 +40,7 @@ if args[:2] == ["worktree", "create"]:
     result = subprocess.run(["git", "-C", arg("--cwd"), "worktree", "add", "-b", arg("--branch"), str(path), arg("--base")], capture_output=True, text=True)
     if result.returncode: fail(result.stderr)
     pane, workspace = "w-" + uuid.uuid4().hex[:6] + ":p1", "workspace-" + uuid.uuid4().hex[:6]
-    state["panes"][pane] = {"pane_id": pane, "cwd": str(path), "agent_status": "idle", "agent": None}
+    state["panes"][pane] = {"pane_id": pane, "cwd": str(path), "agent_status": "unknown", "agent": None}
     response = {"root_pane": {"pane_id": pane}, "workspace": {"workspace_id": workspace},
                 "worktree": {"path": str(path), "branch": arg("--branch")}}
     if os.environ.get("FAKE_BAD_WORKTREE"): response["worktree"]["path"] = arg("--cwd")
@@ -45,13 +49,14 @@ if args[:2] == ["agent", "start"]:
     if "--pane" not in args or "--kind" not in args or "--cwd" in args: fail("obsolete agent-start syntax")
     pane = arg("--pane")
     if pane not in state["panes"] or state["panes"][pane]["agent"]: fail("pane is not an available shell")
-    state["panes"][pane].update(agent=arg("--kind"), name=args[2])
-    state_path.write_text(json.dumps(state))
+    state["panes"][pane].update(agent=arg("--kind"), name=args[2], agent_status="idle")
+    save()
     if os.environ.get("FAKE_START_UNCERTAIN"): fail("agent_not_ready: simulated trust prompt")
     emit({"agent": state["panes"][pane]})
 if args[:2] in (["agent", "get"], ["pane", "get"]):
     pane = state["panes"].get(args[2])
-    if not pane or (args[0] == "agent" and not pane.get("agent")): fail("agent_not_found")
+    if not pane: fail("pane_not_found" if args[0] == "pane" else "agent_not_found")
+    if args[0] == "agent" and not pane.get("agent"): fail("agent_not_found")
     emit({args[0]: pane})
 if args[:2] == ["agent", "list"]: emit({"agents": [p for p in state["panes"].values() if p["agent"]]})
 if args[:2] == ["agent", "prompt"]:

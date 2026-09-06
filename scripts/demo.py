@@ -30,12 +30,28 @@ def main():
                    FAKE_HERDR_ROOT=str(base / "fake"), FAKE_PARENT_CWD=str(ROOT),
                    HERDR_ENV="1", HERDR_PANE_ID="w-parent:p1", HERDR_SESSION="sum-test",
                    FAKE_PARENT_STATUS="working")
-        def ctl(*args):
+        def ctl(*args, pane=None, check=True):
+            pane_env = dict(env, HERDR_PANE_ID=pane) if pane else env
             result = subprocess.run([sys.executable, str(ROOT / "lib/sumctl.py"), "--home", str(base / "state"), *args],
-                                    env=env, check=True, text=True, capture_output=True)
-            return json.loads(result.stdout)
+                                    env=pane_env, check=check, text=True, capture_output=True)
+            return json.loads(result.stdout or result.stderr)
+        (base / "state").mkdir()
+        (base / "state/state.json").write_text('{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-09-05T00:00:00+00:00"}\n')
+        doctor = ctl("doctor", check=False)
+        assert not (base / "state/context.json").exists(), "doctor must not bind"
+        assert ctl("init")["role"] == "coordinator"
+        assert ctl("init")["role"] == "coordinator"
+        second = ctl("init", pane="w-second:p1")
+        assert second["role"] == "developer" and second["coordinator"]["pane"] == "w-parent:p1"
+        assert ctl("init", "--role", "coordinator", pane="w-second:p1", check=False)["error"].startswith("Coordinator is owned by pane w-parent:p1")
+        print("PASS: doctor observed without binding; first pane claimed coordinator once; a second unbriefed pane became a developer.")
         task = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved")
         print("PASS: delegated through sum to a strict fake Herdr; real isolated Git worktree created.")
+        worker = ctl("init", pane=task["pane"])
+        assert worker["role"] == "worker" and worker["task"] == task["id"]
+        refused = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", pane="w-second:p1", check=False)
+        assert "not the registered coordinator" in refused["error"]
+        print("PASS: the dispatched worker pane kept its task role; the developer pane could not dispatch.")
         q = ctl("ask", task["id"], "--key", "punctuation", "--text", "Keep the exclamation mark?")
         assert q["notice"]["status"] == "pending"
         assert ctl("inbox")["tasks"][0]["questions"][0]["text"] == "Keep the exclamation mark?"

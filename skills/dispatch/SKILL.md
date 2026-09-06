@@ -4,7 +4,7 @@ description: Delegate explicitly approved work into an isolated Herdr task check
 ---
 # Dispatch
 
-Use this only for the coordinating session. Workers do not dispatch other workers.
+Use this only from the pane registered as coordinator by `sumctl init`; the helper refuses dispatch from any other pane. Workers do not dispatch other workers.
 
 ## Intake
 
@@ -31,7 +31,7 @@ Write the approved brief to a temporary file. Then run:
 ```
 
 Replace `codex` with the actual selected Herdr integration kind. Extra approved harness arguments are separate `--arg` values, e.g. `--arg=-m --arg=MODEL`.
-No permission-bypass flags are added by sum. The helper calls native `herdr worktree create`, verifies the returned checkout, launches with `agent start`, and submits the worker brief through `agent prompt`.
+No permission-bypass flags are added by sum. The helper calls native `herdr worktree create`, verifies the returned checkout, launches with `agent start`, submits the worker brief through `agent prompt`, and registers the new pane as that task's worker so it can never claim coordination.
 Use `prepare` instead of `dispatch` to create the worktree/record without starting an agent; later `start TASK_ID` starts it once.
 
 Use returned IDs and paths. Do not infer IDs from labels. Do not copy the coordinator's instructions into the target repository.

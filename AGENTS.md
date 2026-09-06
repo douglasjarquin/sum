@@ -6,16 +6,22 @@ sum is an agent distro, not a supervisor service. Herdr owns the live panes.
 
 ## Role boundary
 
-A session explicitly assigned a **worker brief** is a worker, not the coordinator.
-Follow that brief and `skills/worker/SKILL.md`; do not initialize a second coordinator or spawn a management hierarchy.
-Otherwise, follow the coordinator contract below.
+Every session registers its role explicitly with `./bin/sumctl init`; nothing is inferred from the working directory, a checkout, or inherited environment variables.
+Read the `role` field of that command's output and follow only the matching contract:
+
+- `coordinator`: this pane owns coordination for this installation. Follow the coordinator contract below.
+- `worker`: this pane was dispatched for one task. Follow your brief and `skills/worker/SKILL.md`; do not initialize a second coordinator or spawn a management hierarchy.
+- `developer`: another session already owns coordination, or this checkout is not the installation. Follow the developer contract below and nothing else.
+
+A session explicitly assigned a **worker brief** is a worker even before it runs `init`.
+Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox against malicious code running as the same user.
 
 ## Initialize once
 
-1. Run `./bin/sumctl doctor` from this directory. It binds this coordinator pane to the current Herdr session. Do not fake a successful check.
-2. Read `.sum/preferences.md` and `.sum/projects.md` only if they exist.
+1. Run `./bin/sumctl init` from this directory. The first eligible pane in the installation claims coordinator atomically; a later pane becomes a developer and sees the existing owner. Do not fake a successful check. Do not pass `--reclaim` unless the boss asked you to take over a coordinator pane that is verifiably gone.
+2. If the role is `coordinator`: optionally run `./bin/sumctl doctor` (observation only; it never binds), then read `.sum/preferences.md` and `.sum/projects.md` only if they exist.
 3. Run `./bin/sumctl inbox --live` and reconcile saved obligations before starting more work.
-4. Use the configured `sum-herdr` MCP tools. Shell-capable harnesses can use `bin/herdr-scoped` plus the release-matched `.local/skills/herdr/SKILL.md` instead. Both use the same Herdr session.
+4. Use the configured `sum-herdr` MCP tools. Shell-capable harnesses can use `bin/herdr-scoped` plus the release-matched `.local/skills/herdr/SKILL.md` instead. Both act only as this registered pane in its own Herdr session.
 5. State any actual setup/authentication failure briefly. Never install software, change accounts, or disable permission controls to work around it.
 
 ## Operating contract
@@ -31,6 +37,15 @@ Otherwise, follow the coordinator contract below.
 - Do not repeatedly wait or poll. Dispatch and return control to the boss. Before replying to a meaningful subsequent user message, do one bounded inbox/rundown when work is active.
 - At most two active tasks, one per repository. Workers get at most two instructed repair iterations; this MVP has no enforceable time or spending cap. Park uncertainty instead of improvising a replacement.
 - Use `skills/rundown/SKILL.md` for status/recovery. A closed or busy parent may have a pending notice; no daemon will retry it. Say so rather than promising unattended delivery.
+
+## Developer contract
+
+You are here to modify or test sum, not to run it.
+Work only in a development checkout (a separate clone or worktree of sum), never in the live installation directory's state.
+Run the offline suite and demo with temporary state homes and named lab Herdr sessions.
+Do not initialize a coordinator, dispatch work, run setup for the installation, edit `.sum/`, or perform instance-wide updates.
+Do not operate on panes you did not create. The bridge lets a developer registration observe only.
+If the boss wants a change deployed, tell them; they decide when the coordinator picks it up.
 
 ## Skills
 
