@@ -27,6 +27,7 @@ Reopen the coordinator, run `sumctl init --role coordinator --reclaim` once the 
 
 Ask a worker deliberately to print a question without calling `sumctl ask`. Run a rundown. The coordinator should inspect the idle/blocked worker and save the question.
 This measures the attended fallback. Instant unattended capture is NOT a passing criterion claimed by this MVP.
+With `sumctl hook enable` active, also record whether the worker's idle edge produced an `attention` record with a useful excerpt and how long after the pane settled it appeared; label by hand whether the excerpt contained the question. Report unsupported harness cases (no Herdr status, alternate-screen output) explicitly.
 
 ## 5. Uncertain startup
 

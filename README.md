@@ -60,6 +60,7 @@ Herdr's optional native integrations can be installed separately, for example `h
 | Release-matched Herdr skill | Copied from the installed `herdr --skill` during setup |
 | Pinned Herdr Mesh plus a small runtime overlay | Ten relevant MCP tools, current Herdr commands, bounded reads/waits, no swallowed handoff errors |
 | `bin/sumctl` | Durable task/decision/report files, native worktree creation and launch, bounded notices, guarded cleanup of merged task workspaces, records backup, staged releases, atomic update/rollback, and per-session refresh bookkeeping |
+| Optional Herdr plugin (`sumctl hook`) | A per-installation manifest under `.sum/hook` whose event handler runs the same bounded pump and records native attention; no daemon |
 | `quota-axi` | Advisory quota evidence; no automatic billing/account switching |
 | Offline tests and a demo | Test behavior without model credentials, a real Herdr installation, or GitHub writes |
 | Explicit live smoke test | Validate the real Herdr API in an isolated named session |
@@ -84,6 +85,18 @@ Every pending return is derived from the records themselves: an open question an
 Each task write, `inbox --live`, a coordinator `init`, `bind`, and the explicit `sumctl pump` run one synchronous pass: open returns are grouped by their current recipient identity and each recipient gets at most one fixed notice naming the record IDs and commands (never question or report prose). A pending return is sent once; a known failure (busy, absent, wrong checkout, not registered) is retried on later passes up to three times and then shows `stalled`; a timeout after a possible submission or an interrupted pass stays `uncertain` and is never re-sent by itself. `sumctl notice TASK_ID --to parent|worker` is the explicit single retry for those. `show` and `inbox` carry the `returns` view; the old single `notice` field mirrors the latest attempt for existing readers.
 
 There is no retry loop while you are away. Run a rundown to find pending returns and workers that stopped without a report. Native `idle`/`done` is not task completion, and a worker's report is not verified success.
+
+### Native event delivery (optional)
+
+`./bin/sumctl hook enable` (coordinator only) writes a Herdr plugin manifest under `.sum/hook/plugin/` for this installation and links it live with `herdr plugin link`; the server keeps running.
+The plugin declares `pane.agent_status_changed`, `pane.agent_detected`, `pane.exited`, `pane.closed`, `workspace.closed`, and a startup hook, all running the same command: the installation's `bin/sumctl --home <this .sum> hook event`.
+The home is fixed in that command at enable time; the handler never derives it from its working directory or the payload, and a runtime update or rollback changes what the handler runs without touching the registration.
+Herdr plugin registration is user-global, so the handler receives events from every session. It acts only when the event's own session and pane match this installation's recorded coordinator or a recorded worker; everything else is counted as `ignored` and touches no record. Two installations get two plugin ids and two homes.
+On a recorded pane going `idle`/`done`, the handler re-observes the pane and runs one bounded pump toward that recipient: pending questions, reports, answers, and requested brief revisions are delivered at the boundary instead of waiting for the next rundown. A stalled return is tried again on such an edge because every earlier failure was a known non-delivery; an `uncertain` one is never re-sent by an edge. Unchanged busy status and bookkeeping events wake nothing.
+A recorded worker seen `blocked`, idle with nothing owed in either direction and no report, exited, or closed produces an **attention** record on the task with a bounded recent-output excerpt and a pointer to `herdr agent read`. It is evidence, not a question, a result, a quota diagnosis, or permission to approve anything; it is owed to the coordinator like any return and is superseded the moment the worker saves a question or report, closed when the worker resumes, or marked with `sumctl attention TASK_ID ATTENTION_ID --seen`. An open saved question is preserved regardless of newer output.
+`hook enable` runs one explicit reconciliation (attention from one snapshot per session, then the pump) because Herdr does not run startup hooks at link time; the startup hook does the same after a server restart, and `inbox --live` does it on every rundown while the hook is enabled. Herdr keeps no durable event replay, so missed events are recovered by these reconciliations, not claimed.
+`hook status` shows enabled/disabled, the last handled event, a bounded error log, and the count and age of pending returns; `hook disable` (or `--unlink`) turns the plugin off. Disabled, degraded, or crashing, the handler changes nothing about `ask`/`report`, `inbox --live`, `init`, `bind`, and `pump`: they remain the delivery path and never stop.
+Native idle does not detect a question asked only in prose; the attention record points a human or the coordinator at the pane, and the rundown captures the question with `sumctl ask`.
 
 To create a task manually:
 
@@ -261,7 +274,8 @@ mise run demo
 mise run test-live             # explicit, isolated real-Herdr smoke test
 ```
 
-The demo uses **real Git and a strict fake Herdr**, plus a scripted worker—not a real coding model. It exercises dispatch, a question while the parent is busy, answering, a real task-branch commit, a saved report, and a records-only backup. It never changes your live sessions or pushes code.
+The demo uses **real Git and a strict fake Herdr**, plus a scripted worker—not a real coding model. It exercises dispatch, a question while the parent is busy, answering, a real task-branch commit, a saved report, a native idle edge delivering a pending question, and a records-only backup. It never changes your live sessions or pushes code.
+The live smoke test links the plugin into an isolated Herdr registry (`XDG_CONFIG_HOME` under the lab directory) and drives real `pane report-agent` edges; it never touches your user-global plugin list.
 
 Setup also runs an MCP initialization/tool-discovery smoke test after installing Mesh. See [validation](docs/VALIDATION.md) for what was actually executed versus what remains to be run on a networked host, and [acceptance](docs/ACCEPTANCE.md) for the first real-harness tasks.
 

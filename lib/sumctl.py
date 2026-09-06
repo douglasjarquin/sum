@@ -69,7 +69,7 @@ ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
 READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show",
-                      "preset-list", "preset-show"}
+                      "preset-list", "preset-show", "hook-status"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -254,6 +254,17 @@ class Store:
     def lock(self):
         self.init()
         with (self.home / ".lock").open("a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
+
+    @contextmanager
+    def delivery_lock(self):
+        """Serializes delivery passes toward recipients, not task-state writes: concurrent hook processes see each other's attempts."""
+        self.init()
+        with (self.home / ".deliver.lock").open("a") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
             try:
                 yield
@@ -1737,6 +1748,7 @@ def ask(store, args):
                     "status": "open", "created_at": now(), "answer": None}
         task["questions"].append(question)
         task["status"] = "waiting"
+        supersede_attention(task, "question " + question["id"])
         store.save(task)
     return {"question": question, "notice": notify(store, args.task, "parent", "a decision is waiting")}
 
@@ -1790,6 +1802,7 @@ def report(store, args):
         for record in records:
             record["brief_revision"] = revision
         task["status"] = "reported"
+        supersede_attention(task, "report " + records[0]["id"])
         store.save(task)
     return {"task": args.task, "status": "reported-not-verified", "evidence": [r["id"] for r in records],
             "notice": notify(store, args.task, "parent", "a worker report is available")}
@@ -1831,6 +1844,8 @@ def open_obligations(store, task):
     for ref, at in reports:
         if not any(closed >= at for closed in closers):
             items.append({"id": f"report:{ref}", "kind": "report", "ref": ref, "recipient": "parent", "since": at})
+    for a in open_attention(task):
+        items.append({"id": f"attention:{a['id']}", "kind": "attention", "ref": a["id"], "recipient": "parent", "since": a["at"], "attention": a["kind"]})
     try:
         versions = read_versions(store, task)
         requested = versions.get("requested")
@@ -1923,6 +1938,8 @@ def notice_text(store, role, items):
                 parts.append(f"answer to {o['ref']} is recorded and not yet applied")
             elif o["kind"] == "report":
                 parts.append(f"report {o['ref']} is submitted and not verified")
+            elif o["kind"] == "attention":
+                parts.append(f"attention {o['ref']}: native worker status {o['attention']} without a saved report (evidence, not a result or a question); inspect the pane")
             else:
                 parts.append(f"brief revision {o['ref']} is requested; read it, then run {command_for(store, 'brief', 'adopt', task_id, o['ref'])} and continue from saved progress")
         lines.append(f"{task_id}: {'; '.join(parts)}. Read the durable record with {command_for(store, 'show', task_id)}.")
@@ -1974,8 +1991,17 @@ def record_refresh_outcome(store, items, state, reason):
                 write_versions(store, versions)
 
 
-def deliver(store, ctx, route, items, snapshots, force, reason, inline):
-    """One bounded attempt toward one recipient identity: persist first, verify the boundary, prompt once, record the outcome."""
+def deliver(store, ctx, route, items, snapshots, force, reason, inline, retry_stalled=False):
+    """One bounded attempt toward one recipient identity: persist first, verify the boundary, prompt once, record the outcome.
+
+    Passes are serialized per instance so two concurrent callers (a task write and a native event, or two events) cannot both
+    read `pending` and both prompt. The task lock is never held here; the delivery lock is released after one bounded prompt.
+    """
+    with store.delivery_lock():
+        return deliver_locked(store, ctx, route, items, snapshots, force, reason, inline, retry_stalled)
+
+
+def deliver_locked(store, ctx, route, items, snapshots, force, reason, inline, retry_stalled):
     key = route_key(route)
     states = {}
     for task, o in items:
@@ -1983,7 +2009,7 @@ def deliver(store, ctx, route, items, snapshots, force, reason, inline):
     listing = [{"task": task["id"], **{k: o[k] for k in ("id", "kind", "ref")}, "notification": states[(task["id"], o["id"])]} for task, o in items]
     row = {"recipient": {k: route.get(k) for k in ("recipient", "role", "machine", "session", "pane")}, "obligations": listing, "via": None}
     fresh = [o for o in listing if o["notification"]["state"] == "pending"]
-    retry = [o for o in listing if o["notification"]["state"] == "not-delivered"]
+    retry = [o for o in listing if o["notification"]["state"] == "not-delivered" or (retry_stalled and o["notification"]["state"] == "stalled")]
     if not (fresh or retry or force):
         held = {o["notification"]["state"] for o in listing}
         if "stalled" in held:
@@ -2046,12 +2072,13 @@ def deliver(store, ctx, route, items, snapshots, force, reason, inline):
     return {**row, "state": state, "via": "prompt", "reason": detail, "delivery": delivery["id"], "sent_obligations": [o["id"] for _, o in items]}
 
 
-def pump(store, ctx, *, tasks=None, recipient=None, snapshots=None, force=False, reason=None, inline=True):
+def pump(store, ctx, *, tasks=None, recipient=None, snapshots=None, force=False, reason=None, inline=True, retry_stalled=False):
     """One synchronous, bounded delivery pass: every open return grouped by its current recipient identity, at most one prompt each.
 
     Called by task writes, `inbox --live`, coordinator `init`, `bind`, and the explicit `pump`/`notice` commands. No sleep, poll,
     or model call. A pending item is sent once; a known failure is retried up to RETURN_ATTEMPTS times across passes; an uncertain
-    or submitted item stays as it is until a new record or an explicit `notice`.
+    or submitted item stays as it is until a new record or an explicit `notice`. A native status edge (`retry_stalled`) may try a
+    stalled item again, because every earlier failure was a known non-delivery; an uncertain item is never re-sent by an edge.
     """
     buckets = {}
     scope = None
@@ -2067,9 +2094,459 @@ def pump(store, ctx, *, tasks=None, recipient=None, snapshots=None, force=False,
             if scope is not None and identity(route) not in scope:
                 continue
             buckets.setdefault((route_key(route), route["role"]), {"route": route, "items": []})["items"].append((task, obligation))
-    rows = [deliver(store, ctx, bucket["route"], bucket["items"], snapshots, force, reason, inline) for bucket in buckets.values()]
+    rows = [deliver(store, ctx, bucket["route"], bucket["items"], snapshots, force, reason, inline, retry_stalled) for bucket in buckets.values()]
     return {"recipients": rows, "prompts": sum(1 for r in rows if r.get("via") == "prompt" and r["state"] in ("submitted", "uncertain")),
             "note": "One bounded pass over saved returns: at most one prompt per recipient identity, nothing slept or polled, no obligation deleted."}
+
+
+# --- native Herdr events: an optional plugin whose only job is to run the bounded pump at the right moment -----------
+#
+# Herdr 0.8.2 plugins are argv commands launched by the server for declared events (verified in a named lab session:
+# `pane.agent_status_changed`, `pane.agent_detected`, `pane.exited`, `pane.closed`, `workspace.closed`, plus one-shot
+# `[[startup]]`). The handler receives HERDR_SESSION, HERDR_PLUGIN_ID, HERDR_PLUGIN_EVENT, and HERDR_PLUGIN_EVENT_JSON
+# ({"event": ..., "data": {"type": ..., "pane_id": ..., "workspace_id": ..., "agent_status": ...}}). Registration is
+# user-global and takes effect while the server keeps running; startup hooks do not run at link time; a failing hook is
+# logged by Herdr and does not disable the plugin. Nothing here is a daemon: each event is one short process that reads
+# records, observes Herdr once, writes records under the store lock (never during Herdr I/O), and exits.
+#
+# The manifest lives under this instance's own state home and invokes the installation's stable `bin/sumctl`, so a runtime
+# update or rollback (#4-#6) changes what the handler runs without touching the registration. The home comes from that
+# generated command line, never from the process cwd or the payload; a payload only names a pane, which is then matched
+# against recorded task and coordinator endpoints in that exact Herdr session. Everything else is ignored.
+
+HOOK_DIR = "hook"
+HOOK_HEALTH = "health.json"
+HOOK_SCHEMA = 1
+HOOK_ERRORS = 20                   # Bounded error log in health.json; Herdr keeps its own plugin command log.
+HOOK_EVENTS = ("pane.agent_status_changed", "pane.agent_detected", "pane.exited", "pane.closed", "workspace.closed")
+ATTENTION_HISTORY = 20             # Attention records kept per task; older closed ones roll off, open ones are kept.
+ATTENTION_KINDS = ("blocked", "idle-without-report", "exited", "closed")
+EXCERPT_LINES = 40
+EXCERPT_CHARS = 4000
+PANE_ID = re.compile(r"[A-Za-z0-9_-]{1,32}:[A-Za-z0-9_-]{1,32}\Z")
+ATTENTION_NOTE = ("Native Herdr status with a bounded output excerpt. It is attention, not proof of a question, a completed task, "
+                  "a quota cause, or authority to approve a permission prompt; read the pane and act through the recorded commands.")
+
+
+def hook_plugin_id(store):
+    state = read_json(store.home / "state.json")
+    if not state.get("instance"):
+        raise SumError("This instance has no identity yet; run ./bin/sumctl init in the coordinator pane first.")
+    return f"sum.returns.{state['instance'][:12]}"
+
+
+def hook_plugin_dir(store):
+    return store.home / HOOK_DIR / "plugin"
+
+
+def hook_command(store):
+    """The exact argv Herdr runs: the installation entrypoint selects the active runtime; the home is fixed at enable time."""
+    return [str(ROOT / "bin" / "sumctl"), "--home", str(store.home), "hook", "event"]
+
+
+def hook_manifest(store):
+    def toml_list(values):
+        return "[" + ", ".join(json.dumps(v) for v in values) + "]"
+    command = toml_list(hook_command(store))
+    lines = [f"id = {json.dumps(hook_plugin_id(store))}", f"name = {json.dumps('sum returns ' + store.home.name)}",
+             f"version = {json.dumps(VERSION)}", f"min_herdr_version = {json.dumps(HERDR_VERSION)}",
+             f"description = {json.dumps('Runs the bounded sum returns pump for ' + str(store.home) + ' when a recorded pane changes state')}",
+             'platforms = ["linux", "macos"]', "", "[[startup]]", f"command = {command}", ""]
+    for event in HOOK_EVENTS:
+        lines += ["[[events]]", f"on = {json.dumps(event)}", f"command = {command}", ""]
+    return "\n".join(lines)
+
+
+def read_health(store):
+    path = store.home / HOOK_DIR / HOOK_HEALTH
+    if path.is_symlink():
+        raise SumError(f"{path} must not be a symlink.")
+    if not path.is_file():
+        return {"schema": HOOK_SCHEMA, "enabled": False, "plugin_id": None, "events": 0, "ignored": 0, "handled": 0, "errors": [], "last_event": None, "last_error": None}
+    value = read_json(path)
+    if value.get("schema") != HOOK_SCHEMA:
+        raise SumError(f"Unsupported hook health schema in {path}; inspect it, sum never migrates it in place.")
+    return value
+
+
+def write_health(store, increments=None, **changes):
+    """Bounded, lock-protected bookkeeping; counters are incremented under the lock so concurrent handlers never lose each other's count."""
+    with store.lock():
+        health = read_health(store)
+        for key, amount in (increments or {}).items():
+            health[key] = health.get(key, 0) + amount
+        health.update(changes)
+        health["errors"] = health.get("errors", [])[-HOOK_ERRORS:]
+        health["updated_at"] = now()
+        atomic_json(store.home / HOOK_DIR / HOOK_HEALTH, health)
+        return health
+
+
+def record_hook_error(store, stage, error, event=None):
+    try:
+        health = read_health(store)
+        errors = health.get("errors", []) + [{"at": now(), "stage": stage, "error": str(error)[:1000], "event": event}]
+        write_health(store, errors=errors, last_error=errors[-1])
+    except (SumError, OSError, ValueError):
+        pass  # A health write failure must not mask the task-state outcome.
+
+
+def pending_summary(store):
+    """Count and age of every open return across tasks, from records only."""
+    count, oldest = 0, None
+    for task in store.all():
+        for o in open_obligations(store, task):
+            count += 1
+            if o.get("since") and (oldest is None or o["since"] < oldest):
+                oldest = o["since"]
+    age = None
+    if oldest:
+        try:
+            age = max(0, int((datetime.now(timezone.utc) - datetime.fromisoformat(oldest)).total_seconds()))
+        except ValueError:
+            age = None
+    return {"count": count, "oldest_since": oldest, "oldest_age_s": age}
+
+
+def hook_summary(store):
+    """Records only, no Herdr call: what a rundown or init can say about native delivery without observing the server."""
+    try:
+        health = read_health(store)
+    except SumError as exc:
+        return {"enabled": False, "degraded": True, "reason": f"health unreadable: {exc}", "pending": pending_summary(store)}
+    return {"enabled": bool(health.get("enabled")), "plugin_id": health.get("plugin_id"), "last_event": health.get("last_event"),
+            "last_error": health.get("last_error"), "events": health.get("events", 0), "handled": health.get("handled", 0),
+            "ignored": health.get("ignored", 0), "errors": len(health.get("errors", [])), "pending": pending_summary(store),
+            "degraded": not health.get("enabled") or bool(health.get("degraded")),
+            "reason": health.get("degraded") or (None if health.get("enabled") else "native event delivery is not enabled; `inbox --live` remains the delivery path")}
+
+
+def observe_plugin(store, session, plugin_id):
+    """One bounded `plugin list` for this plugin id. Herdr's registry is user-global; the session only names the server asked."""
+    try:
+        listed = herdr(["plugin", "list", "--plugin", plugin_id, "--json"], session=session, timeout=10)
+        plugins = listed.get("plugins", []) if isinstance(listed, dict) else []
+        plugin = next((p for p in plugins if p.get("plugin_id") == plugin_id), None)
+        if not plugin:
+            return {"ok": False, "registered": False, "reason": f"{plugin_id} is not linked in Herdr's plugin registry"}
+        return {"ok": True, "registered": True, "enabled": bool(plugin.get("enabled")), "warnings": plugin.get("warnings", []),
+                "manifest_path": plugin.get("manifest_path"), "events": [e.get("on") for e in plugin.get("events", [])]}
+    except SumError as exc:
+        return {"ok": False, "registered": None, "reason": f"plugin registry cannot be observed: {exc}"}
+
+
+def hook_enable(store, ctx):
+    """Coordinator only. Write the manifest, link/enable it live, then reconcile once because startup hooks do not run at link time."""
+    require_coordinator(store, ctx)
+    ensure_version()
+    plugin_id = hook_plugin_id(store)
+    directory = hook_plugin_dir(store)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    manifest = hook_manifest(store)
+    path = directory / "herdr-plugin.toml"
+    changed = not path.is_file() or path.read_text(encoding="utf-8") != manifest
+    if changed:
+        path.write_text(manifest, encoding="utf-8")
+    linked = herdr(["plugin", "link", str(directory)], session=ctx["session"], timeout=15)  # Idempotent in 0.8.2: relinking the same path re-reads the manifest.
+    plugin = linked.get("plugin", linked) if isinstance(linked, dict) else {}
+    if plugin.get("plugin_id") != plugin_id:
+        raise SumError(f"Herdr linked {plugin.get('plugin_id')!r} instead of {plugin_id}; inspect {path}.")
+    if not plugin.get("enabled"):
+        herdr(["plugin", "enable", plugin_id], session=ctx["session"], timeout=10)
+    write_health(store, enabled=True, plugin_id=plugin_id, manifest_sha256=sha256_text(manifest), manifest_path=str(path),
+                 command=hook_command(store), linked_at=now(), linked_from={k: ctx[k] for k in ("session", "pane")},
+                 degraded=None, warnings=plugin.get("warnings", []))
+    snapshots = Snapshots()
+    reconciliation = reconcile(store, ctx, snapshots, reason="native event delivery enabled; catching up on saved returns")
+    return {"plugin_id": plugin_id, "manifest": str(path), "manifest_changed": changed, "command": hook_command(store),
+            "events": list(HOOK_EVENTS), "warnings": plugin.get("warnings", []), "reconciliation": reconciliation, "fanout": snapshots.summary(),
+            "note": "Linked live without stopping Herdr. Registration is user-global; the handler acts only on panes recorded by this instance in the "
+                    "event's own Herdr session. Startup hooks do not run at link time, so one bounded reconciliation ran now. Disabling or a handler "
+                    "failure returns to the synchronous ask/report path and `inbox --live`; nothing stops."}
+
+
+def hook_disable(store, ctx, unlink=False):
+    require_coordinator(store, ctx)
+    plugin_id = hook_plugin_id(store)
+    observed = observe_plugin(store, ctx["session"], plugin_id)
+    action = None
+    if observed.get("registered"):
+        herdr(["plugin", "unlink" if unlink else "disable", plugin_id], session=ctx["session"], timeout=10)
+        action = "unlinked" if unlink else "disabled"
+    write_health(store, enabled=False, disabled_at=now(), degraded=None)
+    return {"plugin_id": plugin_id, "action": action, "previously": observed,
+            "note": "Native delivery is off; saved returns keep accumulating and `inbox --live`, `init`, `bind`, and `pump` still deliver them. No work stopped."}
+
+
+def hook_status(store, ctx=None):
+    """Health from records plus one bounded registry observation when a session is known."""
+    summary = hook_summary(store)
+    health = read_health(store)
+    value = {**summary, "health": {k: health.get(k) for k in ("plugin_id", "manifest_path", "command", "linked_at", "disabled_at", "updated_at", "warnings", "manifest_sha256")},
+             "errors_log": health.get("errors", [])[-HOOK_ERRORS:], "supported_events": list(HOOK_EVENTS)}
+    if health.get("plugin_id"):
+        try:
+            value["expected_manifest_current"] = health.get("manifest_sha256") == sha256_text(hook_manifest(store))
+        except SumError:
+            value["expected_manifest_current"] = None
+    if ctx and health.get("plugin_id"):
+        observed = observe_plugin(store, ctx["session"], health["plugin_id"])
+        value["registry"] = observed
+        if summary["enabled"] and not (observed.get("registered") and observed.get("enabled")):
+            value["degraded"] = True
+            value["reason"] = observed.get("reason") or "registered but disabled in Herdr; `hook enable` re-enables it"
+    value["note"] = ("Health is what this instance recorded; the registry row is what Herdr reports now. Degraded or disabled means the "
+                     "synchronous path and `inbox --live` are the delivery path; nothing is lost, only not pushed.")
+    return value
+
+
+# --- attention: native blocked/exit/idle-without-report evidence for a worker that saved nothing --------------------
+
+def open_attention(task):
+    """Open attention records that no later worker record has superseded. Derived on read, never stored as an obligation."""
+    later = [q.get("created_at") for q in task.get("questions", [])] + [r.get("at") for r in task.get("evidence", []) if r.get("kind") in ("report", "handoff")]
+    rows = []
+    for a in task.get("attention", []):
+        if a.get("status") != "open":
+            continue
+        if any(t and t > a["at"] for t in later):
+            continue  # The worker saved a question or report after this observation; the record speaks, the status edge is history.
+        rows.append(a)
+    return rows
+
+
+def excerpt(session, pane):
+    """Bounded recent output. Best effort: a closed or exited pane may have nothing to read; never raises."""
+    try:
+        text = herdr(["agent", "read", pane, "--source", "recent-unwrapped", "--lines", str(EXCERPT_LINES)], session=session, timeout=5, raw=True)
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return text[-EXCERPT_CHARS:]  # Herdr 0.8.2 prints the pane text itself.
+        result = data.get("result", data) if isinstance(data, dict) else data
+        if isinstance(result, dict):
+            text = result.get("text") or "\n".join(result.get("lines") or []) or json.dumps(result)
+        return str(text)[-EXCERPT_CHARS:]
+    except SumError as exc:
+        return f"<unreadable: {str(exc)[:300]}>"
+
+
+def pointer(session, pane):
+    return f"herdr --session {session} agent read {pane} --source recent-unwrapped --lines 120"
+
+
+def save_attention(store, task_id, kind, observed, session, pane, event, text):
+    """Append one open attention record unless the same kind is already open; return the record or None. Excerpt read happens before the lock."""
+    with store.lock():
+        task = store.read(task_id)
+        if task["status"] == "archived":
+            return None
+        current = open_attention(task)
+        if any(a["kind"] == kind for a in current):
+            return None  # Duplicate or reordered edge for a state already recorded.
+        record = {"id": "a-" + uuid.uuid4().hex[:10], "kind": kind, "at": now(), "status": "open", "observed": observed,
+                  "source": {"session": session, "pane": pane, "event": event, "pointer": pointer(session, pane)},
+                  "excerpt": text[-EXCERPT_CHARS:], "note": ATTENTION_NOTE}
+        rows = task.get("attention", [])
+        closed = [a for a in rows if a.get("status") != "open"]
+        rows = [a for a in rows if a.get("status") == "open"] + closed[-max(0, ATTENTION_HISTORY - len(current) - 1):]
+        task["attention"] = sorted(rows + [record], key=lambda a: a["at"])
+        store.save(task)
+        return record
+
+
+def supersede_attention(task, reason):
+    """A worker record saved now outranks every earlier native observation of that worker; the records stay for inspection."""
+    for a in task.get("attention", []):
+        if a.get("status") == "open":
+            a.update(status="superseded", closed_at=now(), closed_by=reason)
+
+
+def close_attention(store, task_id, kinds, reason):
+    """Close open attention of the given kinds (the worker resumed, or the coordinator marked it seen). Returns closed IDs."""
+    with store.lock():
+        task = store.read(task_id)
+        closed = []
+        for a in task.get("attention", []):
+            if a.get("status") == "open" and a["kind"] in kinds:
+                a.update(status="closed", closed_at=now(), closed_by=reason)
+                closed.append(a["id"])
+        if closed:
+            store.save(task)
+        return closed
+
+
+def attention_seen(store, ctx, task_id, attention_id):
+    require_coordinator(store, ctx)
+    with store.lock():
+        task = store.read(task_id)
+        record = next((a for a in task.get("attention", []) if a["id"] == attention_id), None)
+        if not record:
+            raise SumError("Attention record not found.")
+        if record["status"] == "open":
+            record.update(status="seen", closed_at=now(), closed_by="coordinator")
+            store.save(task)
+    return record
+
+
+def attention_for(store, task, status):
+    """Which attention kind, if any, a fresh worker observation warrants.
+
+    Idle is ordinary after a saved report, while a question is open, or while an answer or brief revision is still being
+    delivered to the worker: the records already say what happens next. Idle with nothing owed in either direction is silence.
+    """
+    if task["status"] in ("preparing", "prepared", "starting", "archived"):
+        return None  # Not yet prompted: idle here is the launch handshake, not a turn that ended.
+    if status == "blocked":
+        return "blocked"
+    if status in ("idle", "done") and not task.get("report") and not any(o["kind"] != "attention" for o in open_obligations(store, task)):
+        return "idle-without-report"
+    return None
+
+
+def attention_sweep(store, snapshots, tasks=None):
+    """Reconciliation from one bounded snapshot per session: record what is already idle/blocked/absent now. No prompt is sent here."""
+    rows = []
+    for task in tasks or store.all():
+        if task["status"] == "archived" or not task.get("pane") or task["machine"] != machine():
+            continue
+        snapshot = snapshots.get(task["session"])
+        if not snapshot["ok"]:
+            rows.append({"task": task["id"], "outcome": "unobservable", "reason": snapshot["error"]})
+            continue
+        agent = snapshot["agents"].get(task["pane"])
+        if agent is None:
+            kind, observed = ("exited", "absent") if task["status"] not in ("preparing", "prepared", "starting") else (None, "absent")
+        else:
+            observed = agent.get("agent_status", agent.get("status", "unknown"))
+            kind = attention_for(store, task, observed)
+            if observed == "working":
+                closed = close_attention(store, task["id"], ("blocked", "idle-without-report"), "resumed")
+                if closed:
+                    rows.append({"task": task["id"], "outcome": "closed", "closed": closed})
+        if kind:
+            text = excerpt(task["session"], task["pane"]) if agent is not None else "<no agent in the recorded pane>"
+            record = save_attention(store, task["id"], kind, observed, task["session"], task["pane"], "reconciliation", text)
+            rows.append({"task": task["id"], "outcome": "recorded" if record else "already-open", "kind": kind, "observed": observed, "attention": record["id"] if record else None})
+    return rows
+
+
+def reconcile(store, ctx, snapshots, reason, tasks=None):
+    """Explicit bounded catch-up: attention from the snapshot, then one pump pass. Used after enable, on startup, and by the rundown."""
+    sweep = attention_sweep(store, snapshots, tasks)
+    returns = pump(store, ctx, tasks=[t["id"] for t in tasks] if tasks else None, snapshots=snapshots, reason=reason, inline=bool(ctx), retry_stalled=True)
+    return {"attention": sweep, "returns": returns}
+
+
+# --- the event handler ------------------------------------------------------------------------------------------------
+
+def hook_event(store, environ):
+    """One Herdr plugin invocation. Binds to the event's own session and this instance's recorded endpoints; ignores everything else.
+
+    Returns a bounded outcome row (also written to health). Raises SumError for a misconfiguration the operator must see.
+    """
+    started = time.monotonic()
+    event = environ.get("HERDR_PLUGIN_EVENT") or ""
+    plugin_id = environ.get("HERDR_PLUGIN_ID") or ""
+    expected = hook_plugin_id(store)
+    if plugin_id != expected:
+        raise SumError(f"Event addressed to plugin {plugin_id!r}; this home answers only {expected}. Another sum installation or a stale registration is calling the wrong home.")
+    session = environ.get("HERDR_SESSION") or ""
+    if not session:
+        match = re.search(r"/sessions/([^/]+)/herdr\.sock$", environ.get("HERDR_SOCKET_PATH", ""))
+        session = match.group(1) if match else ""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
+        raise SumError("Event carries no identifiable Herdr session; refusing to guess a default session.")
+    health = read_health(store)
+    if not health.get("enabled"):
+        row = {"at": now(), "event": event, "session": session, "outcome": "disabled", "reason": "this instance has native delivery disabled; nothing handled"}
+        write_health(store, {"events": 1, "ignored": 1}, last_event=row)
+        return row
+    if event == "startup":
+        snapshots = Snapshots()
+        tasks = [t for t in store.all() if t["status"] != "archived" and t.get("session") == session and t["machine"] == machine()]
+        result = reconcile(store, None, snapshots, "Herdr started; catching up on saved returns", tasks=tasks) if tasks else {"attention": [], "returns": None}
+        row = {"at": now(), "event": event, "session": session, "outcome": "reconciled", "tasks": len(tasks), "prompts": (result["returns"] or {}).get("prompts", 0),
+               "attention": [r for r in result["attention"] if r.get("outcome") == "recorded"], "handler_ms": round((time.monotonic() - started) * 1000)}
+        write_health(store, {"events": 1, "handled": 1}, last_event=row)
+        return row
+    try:
+        payload = json.loads(environ.get("HERDR_PLUGIN_EVENT_JSON") or "{}")
+        data = payload.get("data", payload) if isinstance(payload, dict) else {}
+    except ValueError as exc:
+        raise SumError(f"HERDR_PLUGIN_EVENT_JSON is not JSON: {exc}") from exc
+    pane = data.get("pane_id") if isinstance(data.get("pane_id"), str) else None
+    workspace = data.get("workspace_id") if isinstance(data.get("workspace_id"), str) else None
+    status = data.get("agent_status") if isinstance(data.get("agent_status"), str) else None
+    released = bool(data.get("released")) if event == "pane.agent_detected" else False
+    if pane and not PANE_ID.fullmatch(pane):
+        raise SumError(f"Malformed pane id in event payload: {pane!r}")
+    row = {"at": now(), "event": event, "session": session, "pane": pane, "workspace": workspace, "status": status}
+    owner = store.owner()
+    endpoint = {"machine": machine(), "session": session, "pane": pane}
+    is_root = bool(owner and pane and identity(owner) == identity(endpoint))
+    tasks = [t for t in store.all() if t["status"] != "archived" and t["machine"] == machine() and t.get("session") == session
+             and ((pane and t.get("pane") == pane) or (event == "workspace.closed" and workspace and t.get("workspace") == workspace))]
+    if not is_root and not tasks:
+        row.update(outcome="ignored", reason="pane is neither this instance's coordinator nor a recorded worker in this session")
+        write_health(store, {"events": 1, "ignored": 1}, last_event=row)
+        return row
+    snapshots = Snapshots()
+    outcomes = []
+    if is_root:
+        if event == "pane.agent_status_changed" and status in ("idle", "done"):
+            result = pump(store, None, recipient="parent", snapshots=snapshots, inline=False, retry_stalled=True, reason="saved task state needs attention")
+            outcomes.append({"role": "coordinator", "action": "pump", "prompts": result["prompts"], "recipients": [(r["state"], r.get("reason")) for r in result["recipients"]]})
+        elif event in ("pane.exited", "pane.closed", "workspace.closed") or released:
+            outcomes.append({"role": "coordinator", "action": "noted", "reason": "coordinator pane is gone or its agent exited; returns stay pending until a pane runs `init`/`bind --parent-only`"})
+        else:
+            outcomes.append({"role": "coordinator", "action": "none", "reason": f"status {status or event} is not a delivery boundary"})
+    for task in tasks:
+        outcome = {"task": task["id"], "role": "worker"}
+        if event == "pane.agent_status_changed" and status == "working":
+            outcome.update(action="resumed", closed=close_attention(store, task["id"], ("blocked", "idle-without-report"), "resumed"))
+        elif event in ("pane.exited", "pane.closed", "workspace.closed") or released:
+            kind = "closed" if event in ("pane.closed", "workspace.closed") else "exited"
+            text = excerpt(session, task["pane"]) if kind == "exited" and event != "pane.exited" else "<pane exited or closed; no agent output to read>"
+            record = save_attention(store, task["id"], kind, "absent", session, task["pane"], event, text)
+            outcome.update(action="attention", kind=kind, attention=record["id"] if record else None, duplicate=record is None)
+        elif event == "pane.agent_status_changed" and status in ("idle", "done", "blocked"):
+            # Recheck at the boundary: the payload is a hint, the fresh observation decides. Herdr I/O happens before any lock.
+            try:
+                fresh = snapshots.agent(session, task["pane"]).get("agent_status", status)
+            except SumError as exc:
+                fresh = None
+                outcome["observation"] = str(exc)[:200]
+            observed = fresh or status
+            outcome["observed"] = observed
+            if observed in ("idle", "done"):
+                result = pump(store, None, tasks=[task["id"]], recipient="worker", snapshots=snapshots, inline=False, retry_stalled=True)
+                outcome.update(action="pump", prompts=result["prompts"], recipients=[(r["state"], r.get("reason")) for r in result["recipients"]])
+            kind = attention_for(store, store.read(task["id"]), observed)
+            if kind and not (observed in ("idle", "done") and outcome.get("prompts")):
+                text = excerpt(session, task["pane"])
+                record = save_attention(store, task["id"], kind, observed, session, task["pane"], event, text)
+                outcome.update(attention=record["id"] if record else None, kind=kind, duplicate=record is None)
+            elif observed == "working":
+                outcome.update(action="resumed", closed=close_attention(store, task["id"], ("blocked", "idle-without-report"), "resumed"))
+        else:
+            outcome.update(action="none", reason=f"{event} {status or ''} is bookkeeping only")
+        if outcome.get("attention"):
+            result = pump(store, None, tasks=[task["id"]], recipient="parent", snapshots=snapshots, inline=False, retry_stalled=True, reason="saved task state needs attention")
+            outcome["parent_prompts"] = result["prompts"]
+        outcomes.append(outcome)
+    row.update(outcome="handled", outcomes=outcomes, herdr_calls=snapshots.calls, handler_ms=round((time.monotonic() - started) * 1000))
+    write_health(store, {"events": 1, "handled": 1}, last_event=row)
+    return row
+
+
+def hook_event_main(store, environ):
+    """CLI wrapper: record any failure in health, keep Herdr's log honest with a non-zero exit, never touch task records on the way out."""
+    try:
+        return 0, hook_event(store, environ)
+    except (SumError, OSError, ValueError, KeyError) as exc:
+        record_hook_error(store, "event", exc, event=environ.get("HERDR_PLUGIN_EVENT"))
+        raise
 
 
 # --- durable evidence: handoffs, reviewer findings, coordinator verification, exact PR identity --------
@@ -2923,8 +3400,10 @@ def cleanup(store, args):
 
 def status(store, live=False, inbox=False):
     rows = []
-    tasks = store.all()
     snapshots = Snapshots() if live else None
+    hook = hook_summary(store) if live else None
+    sweep = attention_sweep(store, snapshots) if live and hook["enabled"] else None  # Reconciliation after possibly missed events; records only what the snapshot shows now.
+    tasks = store.all()
     for task in tasks:
         row = {k: task.get(k) for k in ("id", "status", "repository", "harness", "pane", "session", "worktree", "error")}
         row["model"] = (task.get("launch") or {}).get("model")
@@ -2933,6 +3412,7 @@ def status(store, live=False, inbox=False):
         row["evidence"] = {"records": len(task.get("evidence", [])), "pr": (task.get("pr") or {}).get("identity", {}).get("number") if task.get("pr") else None,
                            "merged_for_task": bool((task.get("pr") or {}).get("merged_for_task"))}
         row["notice"] = task["notice"]
+        row["attention_records"] = [{k: a[k] for k in ("id", "kind", "at", "observed")} for a in open_attention(task)]
         row["cleanup"] = cleanup_pending(task)
         try:
             versions = read_versions(store, task)
@@ -2967,6 +3447,9 @@ def status(store, live=False, inbox=False):
     value = {"tasks": rows, "live": live, "capacity": capacity_view(store, tasks),
              "guarantee": "Saved records only; prose-only questions require a rundown. No background monitoring."}
     if live:
+        value["hook"] = hook
+        if sweep is not None:
+            value["attention_sweep"] = sweep
         value["returns"] = pump(store, optional_context(), snapshots=snapshots, reason="saved task state needs attention")  # The rundown's one bounded delivery pass.
         value["fanout"] = snapshots.summary()
     return value
@@ -3082,6 +3565,7 @@ def init(store, args):
         result["contract"] = contract_state(store)  # A restarted coordinator sees a pending contract refresh here, not in a lost prompt.
         result["cleanup_pending"] = [{"task": t["id"], **cleanup_pending(t)} for t in store.all() if cleanup_pending(t)]  # Records only; no Herdr or GitHub call.
         result["returns"] = pump(store, ctx, snapshots=Snapshots(), reason="saved task state needs attention")  # Startup catch-up: one coalesced notice per recipient, this pane's own items inline.
+        result["hook"] = hook_summary(store)  # Records only: whether native event delivery is enabled and its last handled event.
     result.update(role=role, task=task_id, registration=registration, coordinator=store.owner(),
                   note={"coordinator": "You are the coordinator for this instance. Continue the coordinator startup steps."
                                        + (f" Operating contract revision {result['contract']['requested']} is requested: read it and run `sumctl refresh adopt --coordinator {result['contract']['requested']}` before other work." if result.get("contract", {}).get("requested") else ""),
@@ -4050,6 +4534,17 @@ def parser():
     s = sub.add_parser("pump", help="One bounded delivery pass over saved pending returns: at most one coalesced notice per recipient; nothing sleeps, polls, or is deleted")
     s.add_argument("--task", action="append", help="Limit the pass to this task (repeatable)")
     s.add_argument("--force", action="store_true", help="Also retry returns whose last attempt was uncertain or stalled; still one prompt per recipient")
+    s = sub.add_parser("hook", help="Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon")
+    h = s.add_subparsers(dest="hook_command", required=True)
+    h.add_parser("enable", help="Coordinator only: write this instance's manifest under .sum/hook, link/enable it live, then reconcile once")
+    x = h.add_parser("disable", help="Coordinator only: disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live")
+    x.add_argument("--unlink", action="store_true", help="Remove the registration instead of disabling it")
+    h.add_parser("status", help="Hook health from records plus one bounded registry observation: last event, errors, pending count/age, enabled")
+    h.add_parser("event", help="Internal: the handler Herdr runs for one event (reads HERDR_PLUGIN_* from the environment)")
+    s = sub.add_parser("attention", help="Coordinator only: mark one native attention record seen after inspecting the pane; the record stays")
+    s.add_argument("task")
+    s.add_argument("attention")
+    s.add_argument("--seen", action="store_true", required=True)
     s = sub.add_parser("bind")
     s.add_argument("task")
     s.add_argument("--worker-pane", help="Explicitly adopt an existing worker; never launch a replacement")
@@ -4145,7 +4640,7 @@ def main(argv=None):
     try:
         store = Store(args.home)
         guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}", "preset": lambda: f"preset-{args.preset_command}",
-                                "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}",
+                                "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}", "hook": lambda: f"hook-{args.hook_command}",
                                 "pr": lambda: f"pr-{args.pr_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
@@ -4192,6 +4687,21 @@ def main(argv=None):
             if not store.registration(ctx):
                 raise SumError("Run `sumctl init` in this pane first; the pump delivers only for a pane registered in this instance.")
             value = pump(store, ctx, tasks=args.task or None, force=args.force, snapshots=Snapshots())
+        elif args.command == "hook":
+            if args.hook_command == "event":
+                value = hook_event_main(store, os.environ)[1]
+            elif args.hook_command == "status":
+                try:
+                    ctx = context()
+                except SumError:
+                    ctx = None
+                value = hook_status(store, ctx)
+            elif args.hook_command == "enable":
+                value = hook_enable(store, context())
+            else:
+                value = hook_disable(store, context(), unlink=args.unlink)
+        elif args.command == "attention":
+            value = attention_seen(store, context(), args.task, args.attention)
         elif args.command == "cleanup":
             value = cleanup(store, args)
         elif args.command == "archive":

@@ -27,6 +27,13 @@ Each row's `returns` lists what is still owed and to whom: open questions and un
 `inbox --live` already ran one bounded pass: at most one coalesced notice per recipient, with record IDs and commands only. Items routed to you appear inline in that output; reading them answers, applies, and verifies nothing.
 For an `uncertain` or `stalled` item, first look at the recipient pane, then try once with `sumctl notice TASK_ID --to worker` (or `--to parent`). `sumctl pump` repeats the ordinary pass; `--force` includes uncertain and stalled items. Do not loop.
 
+## Native events and attention
+
+`inbox --live` and `init` show a `hook` field: whether native event delivery is enabled, its last handled event, and the pending count/age. `./bin/sumctl hook status` adds Herdr's own registry row and the bounded error log; `degraded` means the plugin is off, unlinked, or failing and this rundown is the delivery path. Nothing stopped because of that.
+While the hook is enabled, a worker that Herdr saw `blocked`, idle with nothing owed and no report, exited, or closed has an `attention` record (`attention_records` in each row, `attention:ID` under `returns`) with a bounded output excerpt and a `herdr agent read` pointer. Read the pane before deciding anything: the record proves a native status, not a question, a finished task, a quota cause, or permission to answer an approval prompt.
+If the excerpt holds a real question, save it with `sumctl ask` from the worker's brief commands; that record supersedes the attention. If the worker merely resumed, the record closes itself. After inspecting a record that needs no action, run `./bin/sumctl attention TASK_ID ATTENTION_ID --seen`; the record stays in the task.
+A rundown reconciles missed events once from one snapshot per session; do not wait for the plugin to notice something it already missed.
+
 ## Restart
 
 In the new pane run `./bin/sumctl init`. If another pane still owns coordination you become a developer; inspect that pane before anything else.

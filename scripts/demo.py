@@ -72,6 +72,10 @@ def main():
         refused = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", pane="w-second:p1", check=False)
         assert "not the registered coordinator" in refused["error"]
         print("PASS: the dispatched worker pane kept its task role; the developer pane could not dispatch.")
+        hook = ctl("hook", "enable")  # Optional native events (#14), enabled by the coordinator from records; the fake registry is user-global like Herdr's.
+        assert hook["plugin_id"].startswith("sum.returns.") and Path(hook["manifest"]).is_relative_to(base / "state"), hook
+        assert hook["command"][:3] == [str(ROOT / "bin" / "sumctl"), "--home", str(base / "state")]
+        assert hook["reconciliation"]["returns"]["recipients"] == [] and hook["fanout"]["herdr_calls"] == 1, hook["reconciliation"]  # Nothing pending yet: one snapshot, no prompt.
         q = ctl("ask", task["id"], "--key", "punctuation", "--text", "Keep the exclamation mark?")
         assert q["notice"]["status"] == "pending"
         assert ctl("inbox")["tasks"][0]["questions"][0]["text"] == "Keep the exclamation mark?"
@@ -80,6 +84,22 @@ def main():
         second = ctl("ask", task["id"], "--key", "second", "--text", "Second question while busy?")
         assert second["notice"]["returns"]["recipients"][0]["state"] == "not-delivered" and len(ctl("show", task["id"])["returns"]["open"]) == 2
         print("PASS: question remained visible while the coordinator was busy; a second question coalesced with it instead of replacing its notice, and no prompt was typed into the busy pane.")
+        # Native events (#14): a replayed Herdr idle edge for the root pane delivers the pending questions once.
+        def herdr_event(pane, status, session="sum-test"):
+            payload = {"event": "pane_agent_status_changed", "data": {"type": "pane_agent_status_changed", "pane_id": pane, "workspace_id": pane.split(":")[0], "agent_status": status, "agent": "claude"}}
+            event_env = dict(env, HERDR_PLUGIN_ID=hook["plugin_id"], HERDR_PLUGIN_EVENT="pane.agent_status_changed", HERDR_PLUGIN_EVENT_JSON=json.dumps(payload), HERDR_SESSION=session)
+            result = subprocess.run([str(ROOT / "bin" / "sumctl"), "--home", str(base / "state"), "hook", "event"], env=event_env, text=True, capture_output=True, check=True)
+            return json.loads(result.stdout)
+        assert herdr_event("w-stranger:p7", "idle")["outcome"] == "ignored"  # An unrelated pane in the same session touches nothing.
+        assert herdr_event("w-parent:p1", "idle")["outcomes"][0]["prompts"] == 0  # Herdr said idle, the fresh observation still says working: nothing typed.
+        env["FAKE_PARENT_STATUS"] = "idle"
+        edge = herdr_event("w-parent:p1", "idle")
+        assert edge["outcomes"][0]["prompts"] == 1 and edge["herdr_calls"] <= 3, edge
+        assert all(r["notification"]["state"] == "submitted" for r in ctl("show", task["id"])["returns"]["open"])
+        assert herdr_event("w-parent:p1", "idle")["outcomes"][0]["prompts"] == 0  # A duplicate edge re-sends nothing.
+        assert ctl("hook", "status")["last_event"]["outcome"] == "handled"
+        env["FAKE_PARENT_STATUS"] = "working"
+        print("PASS: optional Herdr plugin linked live from records; an unrelated pane was ignored, a stale idle edge typed nothing into the still-busy root, the real idle edge delivered both pending questions in one notice, and a duplicate edge sent nothing.")
         ctl("answer", task["id"], second["question"]["id"], "--text", "No second change.")
         ctl("resolve", task["id"], second["question"]["id"])
         ctl("answer", task["id"], q["question"]["id"], "--text", "Yes, keep it.")
