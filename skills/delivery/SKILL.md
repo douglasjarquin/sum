@@ -12,6 +12,7 @@ Worker claims (`source: worker`), reviewer findings (`reviewer`), your own verif
 
 Confirm the checkout, branch, candidate SHA, and actual diff. Confirm the reported verification commands and evidence.
 Use the repo's configured MADE/No Mistakes route when available. Otherwise arrange a fresh-context review through a separately launched reviewer or the harness's supported independent-review facility.
+When you launch that reviewer yourself, `./bin/sumctl settings show` may name a saved reviewer preset (`reviewer.preset`); `./bin/sumctl preset show NAME` gives the exact harness and argv to start it with. It is a launch shortcut only: it applies solely to a reviewer sum is responsible for starting, never wraps or overrides MADE or the repository's own verification tool, and its absence changes nothing.
 The reviewer receives the task contract and candidate, not an instruction to rubber-stamp the worker's summary. Do not have simultaneous writers in the checkout.
 If a separate reviewer is unavailable, say independent review was not performed; do not label the result fully reviewed.
 Check `sumctl brief list TASK_ID`: the report is bound to a brief revision, and `verification_policy_changed_since` means a later revision changed the worker procedure or brief schema. Review under the current policy before accepting that evidence.

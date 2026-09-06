@@ -58,7 +58,9 @@ MAX_TEXT = 256 * 1024
 TASK_ID = re.compile(r"t-[a-f0-9]{12}\Z")
 SETTINGS_FILE = "settings.json"   # The one owner of executable admission values and worker launch defaults; absent means the defaults below.
 SETTINGS_SCHEMA = 1
-SETTINGS_KEYS = ("schema", "capacity", "worker")
+SETTINGS_KEYS = ("schema", "capacity", "worker", "presets", "reviewer")
+PRESET_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
+PRESET_MAX = 32                     # Named launch shortcuts per installation; presets are shortcuts, not a configuration framework.
 DEFAULT_CAPACITY = {"global": 2, "per_repository": 1}
 CAPACITY_MAX = 64
 RECIPIENT_TIMEOUT = 5              # Seconds granted to one recipient's prompt; one stuck worker costs at most this.
@@ -66,7 +68,8 @@ SNAPSHOT_TIMEOUT = 10              # Seconds for the single per-session `agent l
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show"}
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show",
+                      "preset-list", "preset-show"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -335,15 +338,22 @@ def validate_capacity(value):
     return result
 
 
-def validate_worker(value):
-    """Exact validation of the optional worker launch defaults; a model or reasoning value needs a verified adapter for its harness."""
+def validate_worker(value, presets=None):
+    """Exact validation of the optional worker launch defaults; a model or reasoning value needs a verified adapter for its harness.
+
+    The block is either a launch specification or `{"preset": NAME}`, a reference to a saved preset that is expanded at dispatch."""
     if value is None:
         return None
     if not isinstance(value, dict):
         raise SumError("worker must be an object")
+    if "preset" in value:
+        if set(value) != {"preset"}:
+            raise SumError("worker is either {'preset': NAME} or a harness/model/reasoning block, not both")
+        validate_preset_reference("worker.preset", value["preset"], presets)
+        return {"preset": value["preset"]}
     unknown = sorted(set(value) - {"harness", "model", "reasoning"})
     if unknown:
-        raise SumError(f"unknown worker keys {unknown}; allowed: ['harness', 'model', 'reasoning']")
+        raise SumError(f"unknown worker keys {unknown}; allowed: ['harness', 'model', 'reasoning'] or ['preset']")
     harness = value.get("harness")
     if not isinstance(harness, str) or not HARNESS_KIND.fullmatch(harness):
         raise SumError("worker.harness must be a Herdr integration kind such as codex or claude")
@@ -365,13 +375,72 @@ def validate_launch_value(harness, field, value):
     return value
 
 
+def validate_preset_reference(field, name, presets):
+    if not isinstance(name, str) or not PRESET_NAME.fullmatch(name):
+        raise SumError(f"{field} must name a preset (lowercase letters, digits, _ -), got {name!r}")
+    if presets is not None and name not in presets:
+        raise SumError(f"{field} names unknown preset {name!r}; saved presets: {sorted(presets) or 'none'}. Create it with `preset set {name} --harness ...` or point the default elsewhere.")
+
+
+def validate_preset(name, value):
+    """Exact validation of one named preset: a harness, optional model/reasoning through a verified adapter, optional plain native args, and a revision."""
+    if not isinstance(name, str) or not PRESET_NAME.fullmatch(name):
+        raise SumError(f"preset name must be lowercase letters, digits, _ or - (up to 32 characters), got {name!r}")
+    if not isinstance(value, dict):
+        raise SumError(f"presets.{name} must be an object")
+    allowed = ("harness", "model", "reasoning", "args", "revision")
+    unknown = sorted(set(value) - set(allowed))
+    if unknown:
+        raise SumError(f"unknown keys {unknown} in presets.{name}; allowed: {list(allowed)}")
+    harness = value.get("harness")
+    if not isinstance(harness, str) or not HARNESS_KIND.fullmatch(harness):
+        raise SumError(f"presets.{name}.harness must be a Herdr integration kind such as codex or claude")
+    result = {"harness": harness}
+    for field in ("model", "reasoning"):
+        if value.get(field) is not None:
+            result[field] = validate_launch_value(harness, field, value[field])
+    args = value.get("args") or []
+    if not isinstance(args, list) or any(not isinstance(a, str) or not a or "\0" in a for a in args):
+        raise SumError(f"presets.{name}.args must be a list of plain non-empty strings")
+    for field in ("model", "reasoning"):
+        if result.get(field) is not None and argv_conflicts(harness, field, args):
+            raise SumError(f"presets.{name}: {field} {result[field]!r} and an entry of args both set the {harness} {field} flag. Give one.")
+    if args:
+        result["args"] = list(args)
+    revision = value.get("revision", 1)
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 1:
+        raise SumError(f"presets.{name}.revision must be a positive integer")
+    result["revision"] = revision
+    return result
+
+
+def validate_presets(value):
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise SumError("presets must be an object keyed by preset name")
+    if len(value) > PRESET_MAX:
+        raise SumError(f"at most {PRESET_MAX} presets are supported")
+    return {name: validate_preset(name, spec) for name, spec in value.items()}
+
+
+def validate_reviewer(value, presets):
+    """The optional reviewer default: a preset name for the coordinator's own reviewer launch, never a launch sum performs by itself."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"preset"}:
+        raise SumError("reviewer must be {'preset': NAME}")
+    validate_preset_reference("reviewer.preset", value["preset"], presets)
+    return {"preset": value["preset"]}
+
+
 def load_settings(store):
     """Read and validate `.sum/settings.json`. Absent: defaults. Present but invalid: an error before any side effect."""
     path = store.home / SETTINGS_FILE
     if path.is_symlink():
         raise SumError(f"{path} must not be a symlink.")
     if not path.is_file():
-        return {"schema": SETTINGS_SCHEMA, "capacity": dict(DEFAULT_CAPACITY), "worker": None, "source": "defaults", "path": str(path)}
+        return {"schema": SETTINGS_SCHEMA, "capacity": dict(DEFAULT_CAPACITY), "worker": None, "presets": {}, "reviewer": None, "source": "defaults", "path": str(path)}
     try:
         value = read_json(path)
         if not isinstance(value, dict):
@@ -382,11 +451,13 @@ def load_settings(store):
         if unknown:
             raise SumError(f"unknown keys {unknown}; allowed: {sorted(SETTINGS_KEYS)}")
         capacity = validate_capacity(value.get("capacity", {}))
-        worker = validate_worker(value.get("worker"))
+        presets = validate_presets(value.get("presets"))
+        worker = validate_worker(value.get("worker"), presets)
+        reviewer = validate_reviewer(value.get("reviewer"), presets)
     except SumError as exc:
         raise SumError(f"Invalid {path}: {exc}. Fix or remove the file; nothing was admitted or changed, and existing tasks keep running. "
                        f"Defaults ({DEFAULT_CAPACITY['global']} global, {DEFAULT_CAPACITY['per_repository']} per repository, worker same as root) apply only when the file is absent.") from exc
-    return {"schema": SETTINGS_SCHEMA, "capacity": capacity, "worker": worker, "source": "settings.json", "path": str(path)}
+    return {"schema": SETTINGS_SCHEMA, "capacity": capacity, "worker": worker, "presets": presets, "reviewer": reviewer, "source": "settings.json", "path": str(path)}
 
 
 def occupancy(tasks):
@@ -405,6 +476,7 @@ def capacity_view(store, tasks=None):
         return {"limits": None, "worker": None, "source": "invalid", "error": str(exc), "occupied": occupancy(tasks),
                 "note": "Admission is refused until settings.json is fixed; every recorded task keeps its slot and callbacks."}
     return {"limits": settings["capacity"], "worker": settings["worker"], "source": settings["source"], "occupied": occupancy(tasks),
+            "presets": preset_summary(settings["presets"]), "reviewer": settings["reviewer"],
             "worker_note": "Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.",
             "note": "A slot is held by every non-archived task and released only by `archive --acknowledge`; idle, reported, or unobservable workers keep theirs."}
 
@@ -429,10 +501,25 @@ def settings_document(settings):
     document = {"schema": SETTINGS_SCHEMA, "capacity": settings["capacity"]}
     if settings.get("worker"):
         document["worker"] = settings["worker"]
+    if settings.get("presets"):
+        document["presets"] = settings["presets"]
+    if settings.get("reviewer"):
+        document["reviewer"] = settings["reviewer"]
     return document
 
 
-def write_settings(store, capacity=None, worker=None, clear_worker=False):
+def save_settings(store, settings):
+    """One atomic, owner-only write of the fully validated document. Call under the store lock."""
+    path = store.home / SETTINGS_FILE
+    atomic_json(path, settings_document(settings))
+    os.chmod(path, 0o600)
+    return path
+
+
+SETTINGS_NOTE = "Applies to future admissions and dispatches only. No worker was stopped, relaunched, or switched; the coordinator's own harness and model are untouched."
+
+
+def write_settings(store, capacity=None, worker=None, clear_worker=False, worker_preset=None, reviewer_preset=None, clear_reviewer=False):
     """Validate the merged settings fully before one atomic write; a saved worker default changes future dispatches only."""
     with store.lock():
         current = load_settings(store)
@@ -440,20 +527,108 @@ def write_settings(store, capacity=None, worker=None, clear_worker=False):
         merged_worker = current["worker"]
         if clear_worker:
             merged_worker = None
+        elif worker_preset is not None:
+            merged_worker = validate_worker({"preset": worker_preset}, current["presets"])  # The default becomes a reference; the preset is expanded at dispatch.
         elif worker:
-            harness = worker.get("harness") or (current["worker"] or {}).get("harness")
+            saved = current["worker"] if current["worker"] and "preset" not in current["worker"] else {}
+            harness = worker.get("harness") or saved.get("harness")
             if not harness:
                 raise SumError("Give --worker-harness when saving a worker model or reasoning default; a model belongs to one harness.")
-            base = dict(current["worker"] or {}) if harness == (current["worker"] or {}).get("harness") else {}
-            merged_worker = validate_worker({**base, **worker, "harness": harness})  # A harness change drops the old harness's model/reasoning.
-        path = store.home / SETTINGS_FILE
-        previous = {"capacity": current["capacity"], "worker": current["worker"]}
-        atomic_json(path, settings_document({"capacity": merged_capacity, "worker": merged_worker}))
-        os.chmod(path, 0o600)
+            base = dict(saved) if harness == saved.get("harness") else {}
+            merged_worker = validate_worker({**base, **worker, "harness": harness})  # A harness change (or a replaced preset reference) drops the old model/reasoning.
+        merged_reviewer = current["reviewer"]
+        if clear_reviewer:
+            merged_reviewer = None
+        elif reviewer_preset is not None:
+            merged_reviewer = validate_reviewer({"preset": reviewer_preset}, current["presets"])
+        previous = {"capacity": current["capacity"], "worker": current["worker"], "reviewer": current["reviewer"]}
+        path = save_settings(store, {"capacity": merged_capacity, "worker": merged_worker, "presets": current["presets"], "reviewer": merged_reviewer})
         occupied = occupancy(store.all())
     return {"path": str(path), "previous": previous["capacity"], "capacity": merged_capacity,
-            "previous_worker": previous["worker"], "worker": merged_worker, "occupied": occupied,
-            "note": "Applies to future admissions and dispatches only. No worker was stopped, relaunched, or switched; the coordinator's own harness and model are untouched."}
+            "previous_worker": previous["worker"], "worker": merged_worker,
+            "previous_reviewer": previous["reviewer"], "reviewer": merged_reviewer, "occupied": occupied, "note": SETTINGS_NOTE}
+
+
+# --- named launch presets: validated harness/model/argv shortcuts in the same settings file ---------------
+#
+# A preset is expanded at `prepare` into the same explicit launch specification every dispatch gets, and the
+# specification plus the preset's name and revision are persisted with the task. Editing or deleting the preset
+# afterwards changes future dispatches only. Nothing here starts an agent, holds a credential, or adds a role.
+
+def preset_launch(name, spec):
+    argv = []
+    for field in ("model", "reasoning"):
+        if spec.get(field) is not None:
+            argv.extend(adapter_argv(spec["harness"], field, spec[field]))
+    argv.extend(spec.get("args", []))
+    return {"harness": spec["harness"], "model": spec.get("model"), "reasoning": spec.get("reasoning"), "argv": argv}
+
+
+def preset_summary(presets):
+    return {name: {"harness": spec["harness"], "model": spec.get("model"), "reasoning": spec.get("reasoning"), "args": spec.get("args", []), "revision": spec["revision"]}
+            for name, spec in sorted(presets.items())}
+
+
+def preset_references(settings, name):
+    refs = []
+    if (settings.get("worker") or {}).get("preset") == name:
+        refs.append("worker default (`settings set --clear-worker` or another `--worker-preset`)")
+    if (settings.get("reviewer") or {}).get("preset") == name:
+        refs.append("reviewer default (`settings set --clear-reviewer` or another `--reviewer-preset`)")
+    return refs
+
+
+def preset_list(store):
+    settings = load_settings(store)
+    return {"presets": preset_summary(settings["presets"]), "worker": settings["worker"], "reviewer": settings["reviewer"], "source": settings["source"], "path": settings["path"],
+            "note": "Presets are dispatch shortcuts expanded at prepare; each task keeps the specification it was prepared with. Nothing here is a running agent, a role, or a default until you say so."}
+
+
+def preset_show(store, name):
+    settings = load_settings(store)
+    validate_preset_reference("preset", name, settings["presets"])
+    spec = settings["presets"][name]
+    return {"name": name, "revision": spec["revision"], "preset": spec, "launch": preset_launch(name, spec),
+            "used_by": [ref.split(" (")[0] for ref in preset_references(settings, name)],
+            "note": "`launch.argv` is exactly what `dispatch --preset` appends after the harness executable; a model here is CLI-requested, never runtime-verified."}
+
+
+def write_preset(store, name, harness=None, model=None, reasoning=None, args=None, clear=()):
+    """Create or revise one preset. A revision bumps on every change so a task record can name the exact version it expanded."""
+    with store.lock():
+        current = load_settings(store)
+        previous = current["presets"].get(name)
+        if not PRESET_NAME.fullmatch(name or ""):
+            raise SumError(f"preset name must be lowercase letters, digits, _ or - (up to 32 characters), got {name!r}")
+        base = {k: v for k, v in (previous or {}).items() if k not in ("revision", *clear)}
+        if harness and previous and harness != previous["harness"]:
+            base = {}  # A harness change drops the old harness's model, reasoning, and native args instead of carrying them across CLIs.
+        merged = {**base, **{k: v for k, v in (("harness", harness), ("model", model), ("reasoning", reasoning)) if v is not None}}
+        if args is not None:
+            merged["args"] = list(args)
+        if "harness" not in merged:
+            raise SumError(f"Give --harness when creating preset {name!r}; a preset is a shortcut for one harness.")
+        merged["revision"] = (previous["revision"] + 1) if previous else 1
+        spec = validate_preset(name, merged)
+        if not previous and len(current["presets"]) >= PRESET_MAX:
+            raise SumError(f"At most {PRESET_MAX} presets; delete one first.")
+        presets = {**current["presets"], name: spec}
+        path = save_settings(store, {**current, "presets": presets})
+    return {"path": str(path), "name": name, "previous": previous, "preset": spec, "launch": preset_launch(name, spec),
+            "note": "Future dispatches that select this preset expand this revision. Prepared or running tasks keep the specification they were prepared with. " + SETTINGS_NOTE}
+
+
+def delete_preset(store, name):
+    with store.lock():
+        current = load_settings(store)
+        validate_preset_reference("preset", name, current["presets"])
+        refs = preset_references(current, name)
+        if refs:
+            raise SumError(f"Preset {name!r} is still the {' and the '.join(refs)}. Repoint or clear that default first; nothing was deleted.")
+        presets = {k: v for k, v in current["presets"].items() if k != name}
+        path = save_settings(store, {**current, "presets": presets})
+    return {"path": str(path), "deleted": name, "remaining": sorted(presets),
+            "note": "Tasks prepared with this preset keep their persisted specification; nothing running was touched."}
 
 
 # --- worker launch: precedence, verified adapters, explicit argv persisted at prepare -----------------
@@ -491,53 +666,83 @@ def argv_conflicts(harness, field, extra):
     return any(a == flag or a.startswith(flag + "=") for a in extra)
 
 
-def resolve_launch(settings, ctx, harness=None, model=None, reasoning=None, same_as_root=False, extra=()):
-    """One explicit launch specification from the precedence: explicit instruction, saved worker default, known root, native default.
+def resolve_launch(settings, ctx, harness=None, model=None, reasoning=None, same_as_root=False, extra=(), preset=None):
+    """One explicit launch specification from the precedence: explicit instruction, chosen preset, saved worker default, known root, native default.
 
     Every conflict is reported here, before any record or Herdr call. The result is the exact argv that `start` will pass."""
-    if same_as_root and (harness or model or reasoning):
-        raise SumError("--same-as-you conflicts with --harness/--model/--reasoning: same-as-you means the coordinator's own harness and native model.")
+    if same_as_root and (harness or model or reasoning or preset):
+        raise SumError("--same-as-you conflicts with --harness/--model/--reasoning/--preset: same-as-you means the coordinator's own harness and native model.")
     if harness is not None and not HARNESS_KIND.fullmatch(harness):
         raise SumError("Harness must be a Herdr integration kind, such as codex, claude, grok, or cursor.")
     extra = list(extra)
     if any(not isinstance(a, str) or "\0" in a for a in extra):
         raise SumError("Harness arguments must be plain strings.")
+    presets = settings.get("presets") or {}
     saved = settings.get("worker") or {}
+    chosen = None  # {"name", "revision", "source", spec fields}: the preset whose fields this launch inherits, if any.
+    if preset is not None:
+        if preset not in presets:
+            raise SumError(f"Unknown preset {preset!r}; saved presets: {sorted(presets) or 'none'}. Run `preset list`, or create it with `preset set {preset} --harness ...`. Nothing was created.")
+        chosen = {"name": preset, "source": "preset", **presets[preset]}
+        if harness and harness != chosen["harness"]:
+            raise SumError(f"Preset {preset!r} runs on {chosen['harness']} but --harness {harness} was requested. Choose one: drop --harness, pick another preset, or dispatch without --preset. Nothing was created.")
+    elif saved.get("preset") and not same_as_root:
+        if saved["preset"] not in presets:
+            raise SumError(f"The saved worker default names unknown preset {saved['preset']!r}. Fix .sum/settings.json (`preset set` or `settings set --clear-worker`), or pass --preset/--harness explicitly.")
+        default = presets[saved["preset"]]
+        if harness and harness != default["harness"]:
+            chosen = None  # A harness-only override never carries another harness's preset along; same rule as a plain saved default.
+        else:
+            chosen = {"name": saved["preset"], "source": "saved-default", **default}
+    plain_saved = saved if saved and "preset" not in saved else {}
     root = None
     source = {}
     if harness:
         source["harness"] = "explicit"
-    elif same_as_root or not saved:
+    elif chosen:
+        harness = chosen["harness"]
+        source["harness"] = chosen["source"]
+    elif same_as_root or not plain_saved:
         root = root_launch(ctx)
         if not root["harness"]:
             raise SumError(f"Cannot determine the coordinator's own harness ({root['error']}). Pass --harness explicitly or save a worker default with `settings set --worker-harness`.")
         harness = root["harness"]
         source["harness"] = "same-as-you" if same_as_root else "root"
     else:
-        harness = saved["harness"]
+        harness = plain_saved["harness"]
         source["harness"] = "saved-default"
     # A saved model/reasoning belongs to the saved harness only; a harness-only override never inherits it.
-    inherits_saved = bool(saved) and not same_as_root and harness == saved.get("harness")
+    inherits_saved = bool(plain_saved) and not same_as_root and harness == plain_saved.get("harness")
+    preset_args = list(chosen.get("args", [])) if chosen else []
+    all_extra = [*preset_args, *extra]
     values = {}
     for field, explicit in (("model", model), ("reasoning", reasoning)):
         if explicit is not None:
             values[field] = validate_launch_value(harness, field, explicit)
             source[field] = "explicit"
-        elif inherits_saved and saved.get(field):
-            values[field] = validate_launch_value(harness, field, saved[field])
+        elif chosen and chosen.get(field):
+            values[field] = validate_launch_value(harness, field, chosen[field])
+            source[field] = chosen["source"]
+        elif inherits_saved and plain_saved.get(field):
+            values[field] = validate_launch_value(harness, field, plain_saved[field])
             source[field] = "saved-default"
         else:
             values[field] = None
             source[field] = "native-default"  # Unknown root model or none saved: the harness's own default, disclosed, never claimed as inheritance.
-        if values[field] is not None and argv_conflicts(harness, field, extra):
-            raise SumError(f"Conflicting {field}: --{field} {values[field]!r} and an explicit --arg both set the {harness} {field} flag. Give one.")
+        if values[field] is not None and argv_conflicts(harness, field, all_extra):
+            where = "a preset arg" if argv_conflicts(harness, field, preset_args) else "an explicit --arg"
+            raise SumError(f"Conflicting {field}: {field} {values[field]!r} ({source[field]}) and {where} both set the {harness} {field} flag. Give one.")
     argv = []
     for field in ("model", "reasoning"):
         if values[field] is not None:
             argv.extend(adapter_argv(harness, field, values[field]))
-    argv.extend(extra)
+    argv.extend(all_extra)
+    preset_record = None
+    if chosen:
+        preset_record = {"name": chosen["name"], "revision": chosen["revision"], "source": chosen["source"],
+                         "harness": chosen["harness"], "model": chosen.get("model"), "reasoning": chosen.get("reasoning"), "args": preset_args}
     return {"schema": LAUNCH_SCHEMA, "harness": harness, "model": values["model"], "reasoning": values["reasoning"], "argv": argv,
-            "source": source, "explicit_args": extra, "same_as_root": same_as_root, "root": root,
+            "source": source, "explicit_args": extra, "same_as_root": same_as_root, "root": root, "preset": preset_record,
             "saved_default": saved or None, "resolved_at": now(),
             "observed": {"status": "not-started", "harness": None, "model": "not-exposed"}}
 
@@ -549,6 +754,8 @@ def launch_confirmation(launch):
         parts.append(f"reasoning {launch['reasoning']} ({launch['source']['reasoning']})")
     if launch["explicit_args"]:
         parts.append(f"explicit args {launch['explicit_args']}")
+    if launch.get("preset"):
+        parts.append(f"preset {launch['preset']['name']} r{launch['preset']['revision']} ({launch['preset']['source']})")
     status = launch["observed"]["status"]
     verification = {"not-started": "not started yet",
                     "harness-observed": "Herdr confirmed the harness kind; a CLI-requested model is not runtime-verified because no harness exposes it",
@@ -563,7 +770,7 @@ def task_launch(task):
         return launch
     return {"schema": LAUNCH_SCHEMA, "harness": task["harness"], "model": None, "reasoning": None, "argv": [],
             "source": {"harness": "legacy-record", "model": "native-default", "reasoning": "native-default"},
-            "explicit_args": [], "same_as_root": False, "root": None, "saved_default": None, "resolved_at": None,
+            "explicit_args": [], "same_as_root": False, "root": None, "preset": None, "saved_default": None, "resolved_at": None,
             "observed": {"status": "not-started", "harness": None, "model": "not-exposed"}}
 
 
@@ -1343,7 +1550,8 @@ def prepare(store, args):
     # The launch specification is resolved and validated here, before any record or Herdr side effect, and persisted with the task:
     # a later change of the saved defaults never changes how this prepared task starts.
     launch = resolve_launch(load_settings(store), ctx, harness=args.harness, model=getattr(args, "model", None),
-                            reasoning=getattr(args, "reasoning", None), same_as_root=getattr(args, "same_as_you", False), extra=args.arg)
+                            reasoning=getattr(args, "reasoning", None), same_as_root=getattr(args, "same_as_you", False), extra=args.arg,
+                            preset=getattr(args, "preset", None))
     with store.lock():  # Admission is decided and recorded here from local files only; Herdr is called after the lock is released.
         admission = admit(store, store.all(), repo)
         tid = "t-" + uuid.uuid4().hex[:12]
@@ -3502,6 +3710,7 @@ def parser():
         s.add_argument("--model", help="Explicit model for this task only, passed through the verified flag of the resolved harness; never saved")
         s.add_argument("--reasoning", help="Explicit reasoning/effort level for this task only (harnesses with a verified flag); never saved")
         s.add_argument("--same-as-you", action="store_true", help="Explicit request for the coordinator's own harness with its native model, ignoring a saved worker default")
+        s.add_argument("--preset", help="Expand a saved named preset (see `preset list`) for this task; --model/--reasoning/--arg refine it, a different --harness is refused")
         s.add_argument("--base", default="HEAD")
         s.add_argument("--kind", choices=["ship", "scout"], default="ship")
         s.add_argument("--approved", action="store_true")
@@ -3572,7 +3781,26 @@ def parser():
     x.add_argument("--worker-harness", help="Save the default worker harness for future dispatches (the coordinator keeps its own)")
     x.add_argument("--worker-model", help="Save the default worker model for the saved worker harness (needs a verified adapter)")
     x.add_argument("--worker-reasoning", help="Save the default worker reasoning/effort level for the saved worker harness")
+    x.add_argument("--worker-preset", help="Save a preset name as the worker default for future dispatches; expanded at each prepare")
     x.add_argument("--clear-worker", action="store_true", help="Remove the saved worker default: workers run the coordinator's harness again")
+    x.add_argument("--reviewer-preset", help="Save the preset the coordinator uses when it launches a reviewer itself; never applied when MADE or the repository's own tool owns review")
+    x.add_argument("--clear-reviewer", action="store_true", help="Remove the saved reviewer preset")
+    s = sub.add_parser("preset", help="Named launch presets in .sum/settings.json: validated harness/model/argv shortcuts expanded at dispatch, not agents or roles")
+    g = s.add_subparsers(dest="preset_command", required=True)
+    g.add_parser("list", help="Saved presets with harness, model, reasoning, args, and revision; writes nothing")
+    x = g.add_parser("show", help="One preset and the exact argv it expands to; writes nothing")
+    x.add_argument("name")
+    x = g.add_parser("set", help="Coordinator only: create or revise one preset atomically; prepared and running tasks keep their own specification")
+    x.add_argument("name")
+    x.add_argument("--harness", help="Herdr integration kind (required when creating; changing it drops the old harness's model/reasoning/args)")
+    x.add_argument("--model", help="Model passed through the harness's verified flag")
+    x.add_argument("--reasoning", help="Reasoning/effort level passed through the harness's verified flag")
+    x.add_argument("--arg", action="append", default=None, help="Replace the preset's native args with these exact tokens (repeatable; use --arg=-m for leading dashes)")
+    x.add_argument("--clear-model", action="store_true", help="Drop the preset's model")
+    x.add_argument("--clear-reasoning", action="store_true", help="Drop the preset's reasoning")
+    x.add_argument("--clear-args", action="store_true", help="Drop the preset's native args")
+    x = g.add_parser("delete", help="Coordinator only: remove one preset that no default references; tasks prepared with it are unaffected")
+    x.add_argument("name")
     s = sub.add_parser("herdr", help="Session-scoped native CLI bridge for Mesh; no protocol reimplementation")
     s.add_argument("args", nargs=argparse.REMAINDER)
     s = sub.add_parser("dev", help="Prepare, list, or remove isolated self-development checkouts of this installation")
@@ -3632,7 +3860,7 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         store = Store(args.home)
-        guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}",
+        guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}", "preset": lambda: f"preset-{args.preset_command}",
                                 "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}",
                                 "pr": lambda: f"pr-{args.pr_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
@@ -3711,11 +3939,30 @@ def main(argv=None):
                 require_coordinator(store, context())
                 changes = {k: v for k, v in (("global", args.global_limit), ("per_repository", args.per_repository)) if v is not None}
                 worker = {k: v for k, v in (("harness", args.worker_harness), ("model", args.worker_model), ("reasoning", args.worker_reasoning)) if v is not None}
-                if args.clear_worker and worker:
+                if args.clear_worker and (worker or args.worker_preset is not None):
                     raise SumError("--clear-worker conflicts with --worker-* values.")
-                if not changes and not worker and not args.clear_worker:
-                    raise SumError("Give --global, --per-repository, --worker-harness/--worker-model/--worker-reasoning, or --clear-worker.")
-                value = write_settings(store, changes, worker, args.clear_worker)
+                if args.worker_preset is not None and worker:
+                    raise SumError("--worker-preset conflicts with --worker-harness/--worker-model/--worker-reasoning: a default is either a preset reference or a plain specification.")
+                if args.clear_reviewer and args.reviewer_preset is not None:
+                    raise SumError("--clear-reviewer conflicts with --reviewer-preset.")
+                if not changes and not worker and args.worker_preset is None and not args.clear_worker and args.reviewer_preset is None and not args.clear_reviewer:
+                    raise SumError("Give --global, --per-repository, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, or --clear-reviewer.")
+                value = write_settings(store, changes, worker, args.clear_worker, worker_preset=args.worker_preset,
+                                       reviewer_preset=args.reviewer_preset, clear_reviewer=args.clear_reviewer)
+        elif args.command == "preset":
+            if args.preset_command == "list":
+                value = preset_list(store)
+            elif args.preset_command == "show":
+                value = preset_show(store, args.name)
+            else:
+                require_coordinator(store, context())
+                if args.preset_command == "delete":
+                    value = delete_preset(store, args.name)
+                else:
+                    clear = tuple(f for f, on in (("model", args.clear_model), ("reasoning", args.clear_reasoning), ("args", args.clear_args)) if on)
+                    if ("model" in clear and args.model) or ("reasoning" in clear and args.reasoning) or ("args" in clear and args.arg is not None):
+                        raise SumError("--clear-* conflicts with a value for the same field.")
+                    value = write_preset(store, args.name, harness=args.harness, model=args.model, reasoning=args.reasoning, args=args.arg, clear=clear)
         elif args.command == "dev":
             value = {"prepare": lambda: dev_prepare(store, args), "list": lambda: dev_list(store),
                      "remove": lambda: dev_remove(store, args)}[args.dev_command]()
