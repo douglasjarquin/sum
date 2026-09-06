@@ -2,7 +2,7 @@
 
 This file is the single repository-local verification convention for sum.
 It works in an ordinary clone with Git, mise, and Python 3.11 or newer; no sum installation, Herdr session, or absolute path outside this checkout is required.
-The portable procedure and the runner that records evidence live in `.agents/skills/verify/` (alias `.claude/skills/verify`).
+The portable procedure and the runner that records evidence live in `.agents/skills/verify/` (alias `.claude/skills/verify`); `.agents/skills/create-verification/` scaffolds this convention in another repository and `.agents/skills/maintain-verification/` audits it after a change.
 A harness without skill discovery follows this file directly.
 
 ```verify
@@ -34,7 +34,7 @@ It runs, in order, the existing commands and stops at the first failure:
 
 | Check | Command | Proves |
 | --- | --- | --- |
-| Offline behavior suites | `python -m unittest discover -s tests -p 'test_*.py'` | Task state, roles, dispatch, environment, evidence, cleanup, projects, verification runner, and the #8 twelve-worker mixed-version regression, against real Git and a strict fake Herdr |
+| Offline behavior suites | `python -m unittest discover -s tests -p 'test_*.py'` | Task state, roles, dispatch, environment, evidence, cleanup, projects, the verification runner and its create/maintain skills against fixtures, and the #8 twelve-worker mixed-version regression, against real Git and a strict fake Herdr |
 | Mesh command contracts | `node --test tests/mesh.test.mjs` | Herdr Mesh command construction and bounded waits |
 | Scripted end-to-end demo | `python scripts/demo.py` | Delegation, a question surviving a busy coordinator, an answer, a branch commit, a report, and a records backup |
 
@@ -66,7 +66,7 @@ Remove `.artifacts/verification/` when you no longer need the records.
 
 ## Policy
 
-Edits to this file, `mise.toml`, `mise-tasks/`, `docs/features/`, or `.agents/skills/verify/` are policy changes.
+Edits to this file, `mise.toml`, `mise-tasks/`, `docs/features/`, or the skills under `.agents/skills/verify/`, `.agents/skills/create-verification/`, and `.agents/skills/maintain-verification/` are policy changes.
 Run the runner with `--base <merge-base>` so such a candidate is flagged `requires_root_review`; it cannot certify its own new standard.
 Without `--base` a run never certifies a SHA, and the contract's optional `policy_files` list can only add paths to that default set.
 The coordinator's separate verification and review (`skills/delivery/SKILL.md`) remain in place and are not replaced by this contract.
