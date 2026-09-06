@@ -160,7 +160,38 @@ def main():
         assert ctl("context", task["id"], "--role", "reviewer")["environment"]["dev"]["endpoints"][0]["state"] == "observed"  # Reading observes nothing.
         inspected = ctl("env", "inspect", task["id"])
         assert inspected["changes"]["config_drift"] and inspected["endpoints"][0]["state"] == "stale" and inspected["touched"].startswith("nothing was started")
+        # Task-owned services (#17): a declared command launched in a pane sum splits, proven by identity, stopped with one interrupt.
+        (worktree / "mise.toml").write_text('[tasks]\ndev = "python3 -m http.server 8080"\n')
+        ctl("env", "discover", task["id"])
+        env["FAKE_RUN_LISTEN"] = "127.0.0.1:8080"
+        started = ctl("env", "start", task["id"], "--command", "dev", "--url", "http://127.0.0.1:8080", pane=task["pane"])
+        service = started["service"]
+        assert service["state"] == "ready" and service["command"] == "mise run dev" and service["pane"] != task["pane"] and service["process"]["pid"], service
+        assert started["endpoint"]["ownership"] == "owned" and [h["event"] for h in service["history"]][:3] == ["pane-recorded", "process-observed", "readiness"]
+        assert ctl("env", "start", task["id"], "--command", "dev", "--url", "http://127.0.0.1:8080", pane=task["pane"])["already_running"]
+        del env["FAKE_RUN_LISTEN"]
+        scenario = json.loads((base / "fake-lsof/cwds.json").read_text())
+        scenario["processes"].append({"pid": 7001, "cwd": "/opt/db"}); scenario["listeners"].append({"pid": 7001, "address": "127.0.0.1:5432"})
+        (base / "fake-lsof/cwds.json").write_text(json.dumps(scenario))
+        (worktree / "mise.toml").write_text('[tasks]\ndev = "python3 -m http.server 8080"\ndb = "postgres -p 5432"\n')
+        ctl("env", "discover", task["id"])
+        busy = ctl("env", "start", task["id"], "--command", "db", "--url", "postgres://127.0.0.1:5432/demo", check=False)["error"]
+        assert busy.startswith("Port 5432 is already taken") and "never terminates" in busy, busy
+        assert {"pid": 7001, "address": "127.0.0.1:5432"} in json.loads((base / "fake-lsof/cwds.json").read_text())["listeners"]
+        fake_state = json.loads((base / "fake/state.json").read_text())
+        fake_state["panes"][service["pane"]]["processes"][0]["pid"] += 1  # Restarted outside sum: same command, another instance.
+        (base / "fake/state.json").write_text(json.dumps(fake_state))
+        refused = ctl("env", "stop", task["id"], pane=task["pane"])
+        assert refused["refused"] == [service["id"]] and refused["services"][0]["reasons"][0].startswith("foreground process(es)"), refused
+        fake_state["panes"][service["pane"]]["processes"][0]["pid"] -= 1
+        (base / "fake/state.json").write_text(json.dumps(fake_state))
+        stopped = ctl("env", "stop", task["id"], pane=task["pane"])
+        assert stopped["stopped"] == [service["id"]] and stopped["services"][0]["closed_pane"], stopped
+        assert service["pane"] not in json.loads((base / "fake/state.json").read_text())["panes"]
         (worktree / "mise.toml").unlink()
+        print("PASS: a declared dev command ran in a pane split under the worker with intent, pane, and process identity recorded; a second start returned the running instance; "
+              "a port held by a foreign process was a recorded conflict, not a kill; an instance restarted outside sum was refused as unproven; the proven one received one interrupt, exited, and only its pane closed.")
+        (base / "fake-lsof/cwds.json").write_text(json.dumps({"processes": [], "listeners": []}))
         print("PASS: declared mise tasks recorded as references without running them; an owned app URL, a shared database, an unbound default port, and a missing log were recorded as observed; drift and a vanished listener were marked stale only on an explicit inspect.")
         assert git("rev-parse", "HEAD") == main_sha
         assert not (repo / "greeting.py").exists()

@@ -275,11 +275,11 @@ class EnvironmentTest(core.CoreTest):
         self.assertEqual(shown["endpoints"][0]["url"], "http://127.0.0.1:8000")
         with mock.patch.object(sumctl, "ROOT", self.root / "candidate"), mock.patch.object(sumctl, "installation_hint", lambda root: self.store.home):
             self.assertIsNone(sumctl.guard_candidate(self.store, "env-show"))
-            for command in ("env-discover", "env-record", "env-inspect"):
+            for command in ("env-discover", "env-record", "env-inspect", "env-start", "env-stop"):
                 with self.assertRaisesRegex(sumctl.SumError, "Refusing"):
                     sumctl.guard_candidate(self.store, command)
         topic = json.loads(self.cli("help", "env").stdout)
-        self.assertEqual((sorted(topic["subcommands"]), topic["read_only_subcommands"]), (["discover", "inspect", "record", "show"], ["show"]))
+        self.assertEqual((sorted(topic["subcommands"]), topic["read_only_subcommands"]), (["discover", "inspect", "record", "show", "start", "stop"], ["show"]))
 
     def test_environment_record_travels_in_backups_with_exclusions_named_and_symlinks_refused(self):
         task = self.prepare()
