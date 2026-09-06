@@ -93,6 +93,28 @@ cp templates/task.md /tmp/my-task.md
 
 `--approved` records the caller's assertion of approval; it is not a security boundary. `prepare` creates the record/worktree without launching; `start TASK_ID` starts that prepared task once. An uncertain launch is retained for inspection and cannot simply be started again.
 
+### Worker harness and model
+
+`--harness` is optional.
+Without it, the worker runs the saved worker default when one exists, otherwise the coordinator's own harness, as observed from Herdr; the model is then that harness's native default because no harness exposes its running model through Herdr, and sum says so instead of claiming exact inheritance.
+The precedence is fixed: an explicit instruction (`--harness`, `--model`, `--reasoning`, or `--same-as-you`), then the saved worker default in `.sum/settings.json`, then the reliably known root harness, then the disclosed native default.
+
+```sh
+./bin/sumctl settings set --worker-harness codex --worker-model gpt-5-codex --worker-reasoning high   # coordinator only; future dispatches
+./bin/sumctl settings set --worker-harness claude                                                    # switching harness drops the old harness's model
+./bin/sumctl settings set --clear-worker                                                             # back to same-as-root
+./bin/sumctl dispatch --repo R --brief B --approved --model o4-mini                                  # this task only; the default is unchanged
+./bin/sumctl dispatch --repo R --brief B --approved --harness claude                                 # harness-only override: a saved Codex model is never applied to claude
+./bin/sumctl dispatch --repo R --brief B --approved --same-as-you                                    # the coordinator's harness and native model, ignoring the saved default
+```
+
+A model or reasoning value is translated only through a flag verified from the installed CLI's own help: `codex -m MODEL -c model_reasoning_effort=LEVEL`, `claude --model MODEL --effort LEVEL`, `grok -m MODEL --reasoning-effort LEVEL`, `copilot --model MODEL --effort LEVEL`, `cursor --model MODEL`, `pi --model MODEL`, `omp --model=MODEL`.
+A harness without a verified flag refuses `--model`/`--reasoning` instead of guessing; pass the native argument yourself with `--arg`, which still works exactly as before.
+Conflicts (`--same-as-you` with a harness or model, `--model` plus an `--arg` that sets the same flag, a flag-shaped value) are refused before any record, slot, or Herdr call, and arguments are passed as exact argv tokens, never through a shell.
+The resolved specification (harness, model, reasoning, exact argv, the source of each field, the observed root harness, and the observed-versus-requested status) is saved with the task at `prepare`, so a prepared task starts with the same specification even if the defaults change in between; `start --arg` may append but not contradict it.
+`settings show` and every `prepare`/`dispatch`/`start` result carry the saved default and a one-line `confirmation`; Herdr confirms the harness kind after start, while a CLI-requested model stays "requested, not runtime-verified".
+Saving a default affects future dispatches only: no running worker, the coordinator's own harness or model, account, or billing route changes, and the existing advisory quota checks still apply.
+
 By default there are at most two execution slots globally and one per repository; see [capacity](#capacity) for the optional settings file. Repair limits in worker instructions are **soft**, not enforced spending or wall-clock limits.
 
 ### Capacity
@@ -106,9 +128,9 @@ Admission is decided atomically under the local record lock from the records alo
 ./bin/sumctl settings set --global 12 --per-repository 1     # coordinator only; validated and written atomically
 ```
 
-`.sum/settings.json` is the one owner of executable admission values (`{"schema": 1, "capacity": {"global": N, "per_repository": M}}`, integers from 1 to 64, `per_repository` at most `global`).
+`.sum/settings.json` is the one owner of executable admission values and worker launch defaults (`{"schema": 1, "capacity": {"global": N, "per_repository": M}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."}}`; capacity integers from 1 to 64, `per_repository` at most `global`; the `worker` block is optional and its model/reasoning need a verified adapter for that harness).
 Precedence is that file, then the built-in defaults; an installation without the file keeps the original two-and-one capacity.
-`.sum/preferences.md` and `.sum/projects.md` stay narrative and never set a limit.
+`.sum/preferences.md` and `.sum/projects.md` stay narrative and never set a limit or a worker default; only the boss's explicit "make this my default" becomes a `settings set --worker-*` write.
 An invalid file is refused with the exact defect before any side effect: nothing is admitted, no task or worker is touched, `ask`/`report`/`show` keep working, and `settings set` refuses to overwrite it silently.
 Lowering a limit affects future admission only; tasks above the new limit keep their slots, processes, and checkouts.
 Raising `global` never raises `per_repository`: one checkout gets one writer unless you say otherwise.

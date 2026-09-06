@@ -49,8 +49,12 @@ def main():
         print("PASS: doctor observed without binding; first pane claimed coordinator once; a second unbriefed pane became a developer.")
         capacity = ctl("settings", "show")
         assert capacity["limits"] == {"global": 2, "per_repository": 1} and capacity["source"] == "defaults"
-        task = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved")
+        assert capacity["worker"] is None
+        task = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--approved")
         assert task["admission"]["occupied_before"] == {"global": 0, "repository": 0}
+        assert task["launch"]["harness"] == "claude" and task["launch"]["source"]["harness"] == "root" and task["launch"]["argv"] == []
+        assert "model native default" in task["confirmation"]
+        print("PASS: with no saved worker default the worker launched on the coordinator's own harness with its native model, disclosed as such.")
         refused = ctl("prepare", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", check=False)
         assert "1 of 1 slots for" in refused["error"] and len(ctl("status")["tasks"]) == 1
         print("PASS: delegated through sum to a strict fake Herdr; real isolated Git worktree created; a second writer for the same checkout was refused at admission.")

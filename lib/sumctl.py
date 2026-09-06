@@ -56,8 +56,9 @@ TOOLS = ("python3", "node", "herdr", "gh", "quota-axi")
 RELEASE_SCHEMA = 1
 MAX_TEXT = 256 * 1024
 TASK_ID = re.compile(r"t-[a-f0-9]{12}\Z")
-SETTINGS_FILE = "settings.json"   # The one owner of executable admission values; absent means the defaults below.
+SETTINGS_FILE = "settings.json"   # The one owner of executable admission values and worker launch defaults; absent means the defaults below.
 SETTINGS_SCHEMA = 1
+SETTINGS_KEYS = ("schema", "capacity", "worker")
 DEFAULT_CAPACITY = {"global": 2, "per_repository": 1}
 CAPACITY_MAX = 64
 RECIPIENT_TIMEOUT = 5              # Seconds granted to one recipient's prompt; one stuck worker costs at most this.
@@ -72,6 +73,21 @@ READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "
 HARNESSES = {"codex": "codex", "claude": "claude", "grok": "grok",
              "cursor": "cursor-agent", "pi": "pi", "opencode": "opencode",
              "gemini": "gemini", "omp": "omp", "copilot": "copilot"}
+HARNESS_KIND = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
+# Model/reasoning flags verified against each installed CLI's own `--help`; a kind absent here has no verified adapter,
+# so a requested model/reasoning is refused for it instead of guessed. Each entry is a tuple of leading argv tokens;
+# the value is appended as its own token, never joined into a shell string.
+ADAPTERS = {
+    "codex": {"model": ("-m",), "reasoning": ("-c", "model_reasoning_effort=")},
+    "claude": {"model": ("--model",), "reasoning": ("--effort",)},
+    "grok": {"model": ("-m",), "reasoning": ("--reasoning-effort",)},
+    "copilot": {"model": ("--model",), "reasoning": ("--effort",)},
+    "cursor": {"model": ("--model",)},
+    "pi": {"model": ("--model",)},
+    "omp": {"model": ("--model=",)},
+}
+LAUNCH_SCHEMA = 1
+LAUNCH_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@,=\[\]-]{0,127}\Z")  # A model or reasoning value: one CLI token, never a flag.
 
 
 class SumError(Exception):
@@ -319,27 +335,58 @@ def validate_capacity(value):
     return result
 
 
+def validate_worker(value):
+    """Exact validation of the optional worker launch defaults; a model or reasoning value needs a verified adapter for its harness."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise SumError("worker must be an object")
+    unknown = sorted(set(value) - {"harness", "model", "reasoning"})
+    if unknown:
+        raise SumError(f"unknown worker keys {unknown}; allowed: ['harness', 'model', 'reasoning']")
+    harness = value.get("harness")
+    if not isinstance(harness, str) or not HARNESS_KIND.fullmatch(harness):
+        raise SumError("worker.harness must be a Herdr integration kind such as codex or claude")
+    result = {"harness": harness}
+    for field in ("model", "reasoning"):
+        if field in value and value[field] is not None:
+            result[field] = validate_launch_value(harness, field, value[field])
+    return result
+
+
+def validate_launch_value(harness, field, value):
+    if not isinstance(value, str) or not LAUNCH_VALUE.fullmatch(value):
+        raise SumError(f"{field} must be one plain CLI value (letters, digits, . _ : / @ , = [ ] -), got {value!r}")
+    adapter = ADAPTERS.get(harness, {})
+    if field not in adapter:
+        known = sorted(k for k, a in ADAPTERS.items() if field in a)
+        raise SumError(f"No verified {field} flag for harness {harness!r}; sum passes only mappings confirmed from an installed CLI's help ({', '.join(known)}). "
+                       f"Pass the native argument yourself with --arg, or choose a supported harness.")
+    return value
+
+
 def load_settings(store):
     """Read and validate `.sum/settings.json`. Absent: defaults. Present but invalid: an error before any side effect."""
     path = store.home / SETTINGS_FILE
     if path.is_symlink():
         raise SumError(f"{path} must not be a symlink.")
     if not path.is_file():
-        return {"schema": SETTINGS_SCHEMA, "capacity": dict(DEFAULT_CAPACITY), "source": "defaults", "path": str(path)}
+        return {"schema": SETTINGS_SCHEMA, "capacity": dict(DEFAULT_CAPACITY), "worker": None, "source": "defaults", "path": str(path)}
     try:
         value = read_json(path)
         if not isinstance(value, dict):
             raise SumError("top level must be an object")
         if value.get("schema") != SETTINGS_SCHEMA:
             raise SumError(f"schema must be {SETTINGS_SCHEMA}")
-        unknown = sorted(set(value) - {"schema", "capacity"})
+        unknown = sorted(set(value) - set(SETTINGS_KEYS))
         if unknown:
-            raise SumError(f"unknown keys {unknown}; allowed: ['capacity', 'schema']")
+            raise SumError(f"unknown keys {unknown}; allowed: {sorted(SETTINGS_KEYS)}")
         capacity = validate_capacity(value.get("capacity", {}))
+        worker = validate_worker(value.get("worker"))
     except SumError as exc:
         raise SumError(f"Invalid {path}: {exc}. Fix or remove the file; nothing was admitted or changed, and existing tasks keep running. "
-                       f"Defaults ({DEFAULT_CAPACITY['global']} global, {DEFAULT_CAPACITY['per_repository']} per repository) apply only when the file is absent.") from exc
-    return {"schema": SETTINGS_SCHEMA, "capacity": capacity, "source": "settings.json", "path": str(path)}
+                       f"Defaults ({DEFAULT_CAPACITY['global']} global, {DEFAULT_CAPACITY['per_repository']} per repository, worker same as root) apply only when the file is absent.") from exc
+    return {"schema": SETTINGS_SCHEMA, "capacity": capacity, "worker": worker, "source": "settings.json", "path": str(path)}
 
 
 def occupancy(tasks):
@@ -355,9 +402,10 @@ def capacity_view(store, tasks=None):
     try:
         settings = load_settings(store)
     except SumError as exc:
-        return {"limits": None, "source": "invalid", "error": str(exc), "occupied": occupancy(tasks),
+        return {"limits": None, "worker": None, "source": "invalid", "error": str(exc), "occupied": occupancy(tasks),
                 "note": "Admission is refused until settings.json is fixed; every recorded task keeps its slot and callbacks."}
-    return {"limits": settings["capacity"], "source": settings["source"], "occupied": occupancy(tasks),
+    return {"limits": settings["capacity"], "worker": settings["worker"], "source": settings["source"], "occupied": occupancy(tasks),
+            "worker_note": "Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.",
             "note": "A slot is held by every non-archived task and released only by `archive --acknowledge`; idle, reported, or unobservable workers keep theirs."}
 
 
@@ -377,17 +425,146 @@ def admit(store, tasks, repository):
             "occupied_before": {"global": occupied["global"], "repository": len(same_repository)}}
 
 
-def write_settings(store, capacity):
+def settings_document(settings):
+    document = {"schema": SETTINGS_SCHEMA, "capacity": settings["capacity"]}
+    if settings.get("worker"):
+        document["worker"] = settings["worker"]
+    return document
+
+
+def write_settings(store, capacity=None, worker=None, clear_worker=False):
+    """Validate the merged settings fully before one atomic write; a saved worker default changes future dispatches only."""
     with store.lock():
         current = load_settings(store)
-        merged = validate_capacity({**current["capacity"], **capacity})
+        merged_capacity = validate_capacity({**current["capacity"], **(capacity or {})})
+        merged_worker = current["worker"]
+        if clear_worker:
+            merged_worker = None
+        elif worker:
+            harness = worker.get("harness") or (current["worker"] or {}).get("harness")
+            if not harness:
+                raise SumError("Give --worker-harness when saving a worker model or reasoning default; a model belongs to one harness.")
+            base = dict(current["worker"] or {}) if harness == (current["worker"] or {}).get("harness") else {}
+            merged_worker = validate_worker({**base, **worker, "harness": harness})  # A harness change drops the old harness's model/reasoning.
         path = store.home / SETTINGS_FILE
-        previous = current["capacity"]
-        atomic_json(path, {"schema": SETTINGS_SCHEMA, "capacity": merged})
+        previous = {"capacity": current["capacity"], "worker": current["worker"]}
+        atomic_json(path, settings_document({"capacity": merged_capacity, "worker": merged_worker}))
         os.chmod(path, 0o600)
         occupied = occupancy(store.all())
-    return {"path": str(path), "previous": previous, "capacity": merged, "occupied": occupied,
-            "note": "Applies to future admissions only. No worker was stopped or relaunched; tasks above a lowered limit keep their slots until archived."}
+    return {"path": str(path), "previous": previous["capacity"], "capacity": merged_capacity,
+            "previous_worker": previous["worker"], "worker": merged_worker, "occupied": occupied,
+            "note": "Applies to future admissions and dispatches only. No worker was stopped, relaunched, or switched; the coordinator's own harness and model are untouched."}
+
+
+# --- worker launch: precedence, verified adapters, explicit argv persisted at prepare -----------------
+
+
+def root_launch(ctx):
+    """What Herdr reliably exposes about the calling pane: its agent kind. No harness exposes its model through Herdr."""
+    try:
+        agent = agent_observation(ctx["session"], ctx["pane"])
+    except SumError as exc:
+        return {"harness": None, "model": None, "error": str(exc)}
+    kind = agent.get("agent")
+    if not isinstance(kind, str) or not HARNESS_KIND.fullmatch(kind):
+        return {"harness": None, "model": None, "error": f"Herdr reports no agent kind for pane {ctx['pane']}"}
+    return {"harness": kind, "model": None, "reasoning": None, "observed_at": now()}
+
+
+def adapter_argv(harness, field, value):
+    prefix = ADAPTERS[harness][field]
+    if prefix[-1].endswith("="):
+        return [*prefix[:-1], prefix[-1] + value]
+    return [*prefix, value]
+
+
+def argv_conflicts(harness, field, extra):
+    """An explicit --arg that already carries the field's native flag conflicts with a resolved value for it."""
+    prefix = ADAPTERS.get(harness, {}).get(field)
+    if not prefix:
+        return False
+    head = prefix[0]
+    flag = head.rstrip("=")
+    if len(prefix) == 2 and prefix[1].endswith("="):  # `-c key=value`: the conflict is the key, not the generic option.
+        key = prefix[1]
+        return any(a.startswith(key) or a == f"{flag}={key}" or a.startswith(f"{flag}={key}") for a in extra)
+    return any(a == flag or a.startswith(flag + "=") for a in extra)
+
+
+def resolve_launch(settings, ctx, harness=None, model=None, reasoning=None, same_as_root=False, extra=()):
+    """One explicit launch specification from the precedence: explicit instruction, saved worker default, known root, native default.
+
+    Every conflict is reported here, before any record or Herdr call. The result is the exact argv that `start` will pass."""
+    if same_as_root and (harness or model or reasoning):
+        raise SumError("--same-as-you conflicts with --harness/--model/--reasoning: same-as-you means the coordinator's own harness and native model.")
+    if harness is not None and not HARNESS_KIND.fullmatch(harness):
+        raise SumError("Harness must be a Herdr integration kind, such as codex, claude, grok, or cursor.")
+    extra = list(extra)
+    if any(not isinstance(a, str) or "\0" in a for a in extra):
+        raise SumError("Harness arguments must be plain strings.")
+    saved = settings.get("worker") or {}
+    root = None
+    source = {}
+    if harness:
+        source["harness"] = "explicit"
+    elif same_as_root or not saved:
+        root = root_launch(ctx)
+        if not root["harness"]:
+            raise SumError(f"Cannot determine the coordinator's own harness ({root['error']}). Pass --harness explicitly or save a worker default with `settings set --worker-harness`.")
+        harness = root["harness"]
+        source["harness"] = "same-as-you" if same_as_root else "root"
+    else:
+        harness = saved["harness"]
+        source["harness"] = "saved-default"
+    # A saved model/reasoning belongs to the saved harness only; a harness-only override never inherits it.
+    inherits_saved = bool(saved) and not same_as_root and harness == saved.get("harness")
+    values = {}
+    for field, explicit in (("model", model), ("reasoning", reasoning)):
+        if explicit is not None:
+            values[field] = validate_launch_value(harness, field, explicit)
+            source[field] = "explicit"
+        elif inherits_saved and saved.get(field):
+            values[field] = validate_launch_value(harness, field, saved[field])
+            source[field] = "saved-default"
+        else:
+            values[field] = None
+            source[field] = "native-default"  # Unknown root model or none saved: the harness's own default, disclosed, never claimed as inheritance.
+        if values[field] is not None and argv_conflicts(harness, field, extra):
+            raise SumError(f"Conflicting {field}: --{field} {values[field]!r} and an explicit --arg both set the {harness} {field} flag. Give one.")
+    argv = []
+    for field in ("model", "reasoning"):
+        if values[field] is not None:
+            argv.extend(adapter_argv(harness, field, values[field]))
+    argv.extend(extra)
+    return {"schema": LAUNCH_SCHEMA, "harness": harness, "model": values["model"], "reasoning": values["reasoning"], "argv": argv,
+            "source": source, "explicit_args": extra, "same_as_root": same_as_root, "root": root,
+            "saved_default": saved or None, "resolved_at": now(),
+            "observed": {"status": "not-started", "harness": None, "model": "not-exposed"}}
+
+
+def launch_confirmation(launch):
+    model = launch["model"] or "native default"
+    parts = [f"harness {launch['harness']} ({launch['source']['harness']})", f"model {model} ({launch['source']['model']})"]
+    if launch["reasoning"]:
+        parts.append(f"reasoning {launch['reasoning']} ({launch['source']['reasoning']})")
+    if launch["explicit_args"]:
+        parts.append(f"explicit args {launch['explicit_args']}")
+    status = launch["observed"]["status"]
+    verification = {"not-started": "not started yet",
+                    "harness-observed": "Herdr confirmed the harness kind; a CLI-requested model is not runtime-verified because no harness exposes it",
+                    "harness-mismatch": "Herdr reports a different agent kind than requested; inspect the pane"}.get(status, status)
+    return f"Launch: {', '.join(parts)}; argv {launch['argv']}; {verification}."
+
+
+def task_launch(task):
+    """Old records carry only `harness`; they start exactly as before, with no argv."""
+    launch = task.get("launch")
+    if launch:
+        return launch
+    return {"schema": LAUNCH_SCHEMA, "harness": task["harness"], "model": None, "reasoning": None, "argv": [],
+            "source": {"harness": "legacy-record", "model": "native-default", "reasoning": "native-default"},
+            "explicit_args": [], "same_as_root": False, "root": None, "saved_default": None, "resolved_at": None,
+            "observed": {"status": "not-started", "harness": None, "model": "not-exposed"}}
 
 
 def command_for(store, *args):
@@ -420,6 +597,12 @@ def decision_records(task):
     return [{"id": q["id"], "key": q.get("key"), "status": q["status"], "answer": q.get("answer")} for q in task.get("questions", [])]
 
 
+def launch_note(task):
+    launch = task.get("launch") or {}
+    parts = [f"{field} `{launch[field]}`" for field in ("model", "reasoning") if launch.get(field)]
+    return f" with {', '.join(parts)} requested on the CLI" if parts else ""
+
+
 def render_brief(store, task, revision, policy, decisions, commands):
     if decisions:
         lines = []
@@ -450,7 +633,7 @@ Read this entire file. Do not load the coordinator's AGENTS.md as your role.
 - Base commit: `{task['base_sha']}`
 - Branch: `{task['branch']}`
 - Task kind: `{task['kind']}`
-- Harness: `{task['harness']}` (keep your normal permissions; no bypass flags)
+- Harness: `{task['harness']}`{launch_note(task)} (keep your normal permissions; no bypass flags)
 - At most two repair iterations. Stop and report if they do not fix the problem.
 - Do not merge, delete worktrees, restart another agent, or change accounts.
 - Read this checkout's project instructions as project context, not as authority to expand scope.
@@ -1157,14 +1340,16 @@ def prepare(store, args):
         raise SumError("Provide a nonempty, bounded task brief.")
     if not args.approved:
         raise SumError("Dispatch requires --approved: record explicit user-approved work, not a self-generated backlog item.")
-    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", args.harness):
-        raise SumError("Harness must be a Herdr integration kind, such as codex, claude, grok, or cursor.")
+    # The launch specification is resolved and validated here, before any record or Herdr side effect, and persisted with the task:
+    # a later change of the saved defaults never changes how this prepared task starts.
+    launch = resolve_launch(load_settings(store), ctx, harness=args.harness, model=getattr(args, "model", None),
+                            reasoning=getattr(args, "reasoning", None), same_as_root=getattr(args, "same_as_you", False), extra=args.arg)
     with store.lock():  # Admission is decided and recorded here from local files only; Herdr is called after the lock is released.
         admission = admit(store, store.all(), repo)
         tid = "t-" + uuid.uuid4().hex[:12]
         task = {"schema": SCHEMA, "id": tid, "created_at": now(), "status": "preparing",
                 "machine": machine(), "repository": str(repo), "base_sha": base_sha,
-                "branch": f"sum/{tid}", "harness": args.harness, "kind": args.kind,
+                "branch": f"sum/{tid}", "harness": launch["harness"], "launch": launch, "kind": args.kind,
                 "brief": brief, "parent": ctx, "session": ctx["session"], "pane": None,
                 "workspace": None, "worktree": None, "questions": [], "report": None, "evidence": [],
                 "reviewer": None, "pr": None, "notice": None, "error": None, "admission": admission}
@@ -1193,7 +1378,7 @@ def prepare(store, args):
         raise SumError(f"{task['id']}: {task['error']}") from exc
     with store.lock():
         store.save(task)
-    return task
+    return {**task, "confirmation": launch_confirmation(launch)}
 
 
 def start(store, task_id, extra_args=()):
@@ -1204,12 +1389,24 @@ def start(store, task_id, extra_args=()):
         store.check_machine(task)
         if task["status"] != "prepared":
             raise SumError("Only a prepared task can be started. sum never retries an uncertain launch automatically.")
+        launch = task_launch(task)
+        extra_args = list(extra_args)
+        for field in ("model", "reasoning"):  # Legacy `start --arg` callers keep working but may not contradict the persisted specification.
+            if launch[field] is not None and argv_conflicts(launch["harness"], field, extra_args):
+                raise SumError(f"Conflicting {field}: the prepared launch already sets {launch['harness']} {field} {launch[field]!r}; a start-time --arg may not override it.")
+        argv = [*launch["argv"], *extra_args]
+        launch = {**launch, "argv": argv, "explicit_args": [*launch.get("explicit_args", []), *extra_args], "started_argv": argv}
+        task["launch"] = launch
         task["status"] = "starting"
         store.save(task)
     try:
-        herdr(["agent", "start", task_id, "--kind", task["harness"], "--pane", task["pane"],
-               "--timeout", "30000", *(["--", *extra_args] if extra_args else [])],
-              session=task["session"], timeout=40)
+        started = herdr(["agent", "start", task_id, "--kind", launch["harness"], "--pane", task["pane"],
+                         "--timeout", "30000", *(["--", *argv] if argv else [])],
+                        session=task["session"], timeout=40)
+        agent = started.get("agent", started) if isinstance(started, dict) else {}
+        observed_kind = agent.get("agent") if isinstance(agent, dict) else None
+        observed = {"harness": observed_kind, "model": "not-exposed",
+                    "status": "harness-observed" if observed_kind == launch["harness"] else "harness-mismatch"}
         # No long blocking handoff: submit the explicit worker brief and return.
         prompt = f"You are the sum worker for {task_id}, not the coordinator. Read the complete file {json.dumps(task['brief_path'])}, then execute only that approved task. Questions and results must be saved using the commands in that brief."
         herdr(["agent", "prompt", task["pane"], prompt], session=task["session"], timeout=10)
@@ -1218,11 +1415,12 @@ def start(store, task_id, extra_args=()):
             if current["status"] == "starting":
                 current["status"] = "running"
             current["started_at"] = now()
+            current["launch"] = {**launch, "observed": observed}
             store.save(current)
             # The dispatched pane keeps its task role even if it later runs `sumctl init` itself.
             store.register({"machine": current["machine"], "session": current["session"], "pane": current["pane"],
                             "cwd": current["worktree"]}, "worker", task=task_id)
-        return current
+        return {**current, "confirmation": launch_confirmation(current["launch"])}
     except SumError as exc:
         with store.lock():
             task = store.read(task_id)
@@ -2247,6 +2445,7 @@ def status(store, live=False, inbox=False):
     snapshots = Snapshots() if live else None
     for task in tasks:
         row = {k: task.get(k) for k in ("id", "status", "repository", "harness", "pane", "session", "worktree", "error")}
+        row["model"] = (task.get("launch") or {}).get("model")
         row["questions"] = [q for q in task["questions"] if q["status"] != "applied"]
         row["report_available"] = task["report"] is not None
         row["evidence"] = {"records": len(task.get("evidence", [])), "pr": (task.get("pr") or {}).get("identity", {}).get("number") if task.get("pr") else None,
@@ -3299,7 +3498,10 @@ def parser():
         s = sub.add_parser(name)
         s.add_argument("--repo", required=True)
         s.add_argument("--brief", required=True)
-        s.add_argument("--harness", required=True)
+        s.add_argument("--harness", help="Explicit Herdr integration kind; omitted means the saved worker default, else the coordinator's own harness")
+        s.add_argument("--model", help="Explicit model for this task only, passed through the verified flag of the resolved harness; never saved")
+        s.add_argument("--reasoning", help="Explicit reasoning/effort level for this task only (harnesses with a verified flag); never saved")
+        s.add_argument("--same-as-you", action="store_true", help="Explicit request for the coordinator's own harness with its native model, ignoring a saved worker default")
         s.add_argument("--base", default="HEAD")
         s.add_argument("--kind", choices=["ship", "scout"], default="ship")
         s.add_argument("--approved", action="store_true")
@@ -3367,6 +3569,10 @@ def parser():
     x = g.add_parser("set", help="Coordinator only: write validated capacity values atomically; future admissions only, nothing running is touched")
     x.add_argument("--global", dest="global_limit", type=int, help=f"Execution slots across all repositories (1-{CAPACITY_MAX})")
     x.add_argument("--per-repository", dest="per_repository", type=int, help=f"Execution slots per repository (1-{CAPACITY_MAX}, at most --global)")
+    x.add_argument("--worker-harness", help="Save the default worker harness for future dispatches (the coordinator keeps its own)")
+    x.add_argument("--worker-model", help="Save the default worker model for the saved worker harness (needs a verified adapter)")
+    x.add_argument("--worker-reasoning", help="Save the default worker reasoning/effort level for the saved worker harness")
+    x.add_argument("--clear-worker", action="store_true", help="Remove the saved worker default: workers run the coordinator's harness again")
     s = sub.add_parser("herdr", help="Session-scoped native CLI bridge for Mesh; no protocol reimplementation")
     s.add_argument("args", nargs=argparse.REMAINDER)
     s = sub.add_parser("dev", help="Prepare, list, or remove isolated self-development checkouts of this installation")
@@ -3439,7 +3645,7 @@ def main(argv=None):
             value = status(store, args.live, args.command == "inbox")
         elif args.command in {"prepare", "dispatch"}:
             task = prepare(store, args)
-            value = start(store, task["id"], args.arg) if args.command == "dispatch" else task
+            value = start(store, task["id"]) if args.command == "dispatch" else task  # --arg values are already part of the persisted launch.
         elif args.command == "start":
             value = start(store, args.task, args.arg)
         elif args.command == "show":
@@ -3504,9 +3710,12 @@ def main(argv=None):
             else:
                 require_coordinator(store, context())
                 changes = {k: v for k, v in (("global", args.global_limit), ("per_repository", args.per_repository)) if v is not None}
-                if not changes:
-                    raise SumError("Give --global and/or --per-repository.")
-                value = write_settings(store, changes)
+                worker = {k: v for k, v in (("harness", args.worker_harness), ("model", args.worker_model), ("reasoning", args.worker_reasoning)) if v is not None}
+                if args.clear_worker and worker:
+                    raise SumError("--clear-worker conflicts with --worker-* values.")
+                if not changes and not worker and not args.clear_worker:
+                    raise SumError("Give --global, --per-repository, --worker-harness/--worker-model/--worker-reasoning, or --clear-worker.")
+                value = write_settings(store, changes, worker, args.clear_worker)
         elif args.command == "dev":
             value = {"prepare": lambda: dev_prepare(store, args), "list": lambda: dev_list(store),
                      "remove": lambda: dev_remove(store, args)}[args.dev_command]()
