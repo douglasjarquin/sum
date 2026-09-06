@@ -282,6 +282,24 @@ class ServiceTest(ServiceLab, core.CoreTest):
         logs.symlink_to(host)
         self.assertEqual(sumctl.writing_logs(self.record(task), task["worktree"]), [])
 
+    def test_immediate_exit_with_url_finishes_within_the_bound_as_unknown(self):
+        task = self.discovered(self.prepare())
+        started = time.monotonic()
+        result = self.start(task, listen=None, timeout=2, FAKE_RUN_BEHAVIOR="exit")  # --url given; nothing ever holds the port.
+        self.assertLess(time.monotonic() - started, 30)
+        service = result["service"]
+        self.assertEqual((service["state"], service["process"]["pid"], service["readiness"]["ready"], service["readiness"]["changed"]), ("unknown", None, False, True))
+        self.assertIn("no recorded process instance", service["readiness"]["reason"])
+        self.assertIsNone(result.get("endpoint"))
+        self.assertEqual(self.record(task)["endpoints"], [])
+        self.assertEqual(self.calls_of("pane", "send-keys"), [])
+
+    def test_empty_argv_is_never_a_pid_only_match(self):
+        recorded = {"pid": 7, "argv": ["make", "dev"]}
+        self.assertFalse(sumctl.same_instance(recorded, {"pid": 7, "argv": None}))
+        self.assertFalse(sumctl.same_instance({"pid": 7, "argv": None}, {"pid": 7, "argv": None}))
+        self.assertTrue(sumctl.same_instance(recorded, {"pid": 7, "argv": ["/usr/bin/make", "dev"]}))
+
     def test_crash_between_pane_creation_and_registration_reconciles_without_a_duplicate(self):
         task = self.discovered(self.prepare())
         error = self.start(task, FAKE_SPLIT_CRASH="1", ok=False)["error"]

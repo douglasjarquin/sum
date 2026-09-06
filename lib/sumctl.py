@@ -4283,7 +4283,8 @@ def normalized_argv(argv):
 
 def same_instance(recorded, process):
     """The recorded instance and an observed process are the same only when pid and argv both match; a pid alone can be reused."""
-    return bool(recorded) and process.get("pid") == recorded.get("pid") and normalized_argv(process.get("argv")) == normalized_argv(recorded.get("argv"))
+    mine, seen = normalized_argv(recorded.get("argv")) if recorded else None, normalized_argv(process.get("argv"))
+    return bool(recorded) and mine is not None and seen is not None and process.get("pid") == recorded.get("pid") and mine == seen  # No argv is a miss, never a pid-only match.
 
 
 def observe_service(task, service):
@@ -4371,6 +4372,9 @@ def wait_for_listener(store, task, parsed, session, pane_id, process, timeout):
     """Bounded readiness: the port must be taken by a process of the service pane while the recorded instance is still its foreground.
 
     A listener inside the checkout with another pid, or a foreground that changed during the wait, is never adopted: pid, cwd, or port alone is not ownership."""
+    if not process or process.get("pid") is None:
+        return {"ready": False, "checked": "listener", "waited_s": 0.0, "changed": True,
+                "reason": "no recorded process instance to wait for; the launched line never became the pane foreground, so no listener can be attributed to it"}
     deadline = time.monotonic() + timeout
     waited, misses = 0.0, 0
     while True:
@@ -4378,10 +4382,12 @@ def wait_for_listener(store, task, parsed, session, pane_id, process, timeout):
         if info is None:
             return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "changed": True, "reason": f"the service pane cannot be observed during startup ({code}); the launch is unknown"}
         misses = 0 if any(same_instance(process, p) for p in info["processes"]) else misses + 1
-        if process and misses >= 2:  # One poll may catch a pid mid-exec with no argv yet; two in a row is a real change.
+        if misses >= 2:  # One poll may catch a pid mid-exec with no argv yet; two in a row is a real change.
             return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "changed": True, "processes": info["processes"],
                     "reason": f"the pane foreground changed during startup from pid {process.get('pid')} {process.get('name')!r} to {[(p.get('pid'), p.get('name')) for p in info['processes']]}; the launch is unknown and the new process is not adopted"}
         if misses:
+            if time.monotonic() >= deadline:  # Every path reaches the deadline.
+                return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "changed": True, "processes": info["processes"], "reason": f"the recorded instance was not the pane foreground at the deadline ({timeout}s); the launch is unknown"}
             time.sleep(SERVICE_POLL); waited += SERVICE_POLL
             continue
         pane_pids = {p["pid"] for p in info["processes"] if p.get("pid") is not None}
