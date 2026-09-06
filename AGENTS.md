@@ -58,7 +58,7 @@ If the boss wants a change deployed, tell them; they decide when the coordinator
 
 Load procedures only when needed: `dispatch`, `delivery`, `rundown`, `worker`, `develop`, and `update` under `skills/`.
 `VERIFY.md` at the root is this repository's verification contract; `.agents/skills/verify` is the portable procedure and runner behind `mise run verify`, usable in any clone without sum.
-`.agents/skills/create-verification` bootstraps that contract in another repository and `.agents/skills/maintain-verification` audits it after a change; a standardized project checkout carries its own vendored copies.
+`.agents/skills/evidence` captures before/after proof (screenshots, screencasts, transcripts) of one mapped scenario from the base and candidate builds and compares them; `.agents/skills/create-verification` bootstraps that contract in another repository and `.agents/skills/maintain-verification` audits it after a change; a standardized project checkout carries its own vendored copies.
 MCP tool descriptions document the patched interface. Herdr CLI facts come from `herdr --skill`, not remembered flags.
 Do not read all skills or every task transcript at every turn.
 `./bin/sumctl help [TOPIC]` lists commands without the whole manual; `./bin/sumctl context TASK_ID --role coordinator` (or `--section ...`, `--since CURSOR`) reads only the parts of a task you need. Full `show` stays for the complete record.

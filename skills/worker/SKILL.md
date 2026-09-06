@@ -22,6 +22,7 @@ Attach it to your handoff as `verification` (`run_id`, `outcome`, `record`, `can
 Your run is the worker's claim. The coordinator executes the same contract again under its own run id in a separate checkout and then performs the independent review; a run id is recorded once, so never reuse or edit one, and never carry a run of an earlier SHA over to a repaired candidate: run it again.
 `VERIFY.md`, `mise.toml`, `mise-tasks/`, the feature maps, and `.agents/skills/verify/` are verification policy; changing them is reviewed explicitly, and a candidate must not weaken the gate that certifies it.
 A `not-yet-standardized` checkout keeps the verification commands written in the approved task; list each with its exit code under `checks`.
+When the task fixes something a user can see, or a map row's Evidence cell names a screenshot, screencast, or red/green pair, follow `.agents/skills/evidence/SKILL.md`: capture the before state from a separate checkout of the base SHA and the after state from your committed candidate, compare them, and list the `comparison.json` path under `artifacts`. A base you cannot run is recorded `unavailable`, never a fabricated red; a CLI/API change records transcripts with visual proof not applicable.
 
 If the repository already uses MADE/No Mistakes, follow that verified configuration. Do not wrap it in a second autonomous repair/review loop.
 Otherwise report the commands you actually ran, their exit results, and remaining gaps. A successful command is evidence, not proof that its assertions are sufficient.

@@ -967,7 +967,7 @@ def verification_contract_text(task):
         "- Attach that run to your handoff as `verification`: `{\"run_id\", \"outcome\", \"record\", \"candidate\", \"certifies\", \"requires_root_review\", \"contract_sha256\", \"policy_changed\"}` copied from run.json (`record` is the run.json path). "
         "A `fail`, `blocked`, or provisional (dirty) run is reported as it is; do not rerun until green without fixing the cause.",
         "- The coordinator executes the same contract again under its own run id and performs the independent review; your run is a claim, never the gate. Do not reuse or edit a run id.",
-        f"- `VERIFY.md`, `mise.toml`, `mise-tasks/`, `{policy.get('feature_maps') or 'the feature maps'}`, and `.agents/skills/verify/` are verification policy. "
+        f"- `VERIFY.md`, `mise.toml`, `mise-tasks/`, `{policy.get('feature_maps') or 'the feature maps'}`, `.agents/skills/verify/`, and `.agents/skills/evidence/` are verification policy. "
         "Changing them is reviewed explicitly against the approved scope; a candidate must not weaken the gate that certifies it.",
     ])
 
@@ -3330,7 +3330,7 @@ RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{3,79}\Z")
 RUN_OUTCOMES = ("pass", "fail", "blocked")
 RUN_OUTCOME_RESULT = {"pass": "pass", "fail": "fail", "blocked": "inconclusive"}
 RUN_RECORD_SCHEMA = 1
-VERIFICATION_POLICY_FILES = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
+VERIFICATION_POLICY_FILES = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
 VERIFICATION_RUNNER = ".agents/skills/verify/scripts/verify_run.py"
 VERIFICATION_DIR = "verification"  # Task-local copies of root run records (run.json + verify.log); never a second result store.
 

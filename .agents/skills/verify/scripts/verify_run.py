@@ -36,10 +36,11 @@ SCHEMA = 1
 CONTRACT_FILE = "VERIFY.md"
 REQUIRED_HEADINGS = ("Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts")
 SCENARIO_STATUSES = ("pass", "fail", "blocked", "not-run", "not-applicable")
-POLICY_FILES_DEFAULT = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
+POLICY_FILES_DEFAULT = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
 FENCE = re.compile(r"^```verify[ \t]*\n(.*?)^```[ \t]*$", re.S | re.M)
 LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
 ROW = re.compile(r"^\|\s*`?([A-Za-z0-9][A-Za-z0-9._:/-]{0,79})`?\s*\|(.*)\|\s*$")
+EVIDENCE_REQUIRED = re.compile(r"\b(screenshot|screencast|red/green|before/after)\b", re.I)  # An Evidence cell naming visual proof needs a comparison manifest.
 
 
 class Blocked(Exception):
@@ -92,6 +93,9 @@ def load_contract(root: Path):
         value = config.get(key)
         if not isinstance(value, str) or not value or Path(value).is_absolute() or ".." in Path(value).parts:
             raise Blocked(f"{CONTRACT_FILE} `{key}` must be a relative path inside the repository, found {value!r}.")
+    evidence = config.get("evidence", ".artifacts/evidence")
+    if not isinstance(evidence, str) or not evidence or Path(evidence).is_absolute() or ".." in Path(evidence).parts:
+        raise Blocked(f"{CONTRACT_FILE} `evidence` must be a relative path inside the repository, found {evidence!r}.")
     owner = config.get("task_owner", ".")
     if not isinstance(owner, str) or Path(owner).is_absolute() or ".." in Path(owner).parts:
         raise Blocked(f"{CONTRACT_FILE} `task_owner` must be a relative directory inside the repository, found {owner!r}.")
@@ -109,7 +113,7 @@ def load_contract(root: Path):
     timeout = config.get("timeout_seconds", 3600)
     if not isinstance(timeout, int) or timeout <= 0:
         raise Blocked(f"{CONTRACT_FILE} `timeout_seconds` must be a positive integer.")
-    return {"path": path, "sha256": sha256_file(path), "entrypoint": entrypoint, "feature_maps": config["feature_maps"], "artifacts": config["artifacts"],
+    return {"path": path, "sha256": sha256_file(path), "entrypoint": entrypoint, "feature_maps": config["feature_maps"], "artifacts": config["artifacts"], "evidence": evidence,
             "task_owner": owner, "requires": requires, "freshness": freshness, "timeout": timeout,
             "policy_files": policy_file_set(config.get("policy_files", []))}
 
@@ -162,8 +166,10 @@ def load_feature_maps(root: Path, index_relative: str):
             if scenario_id in seen:
                 raise Blocked(f"Scenario id {scenario_id} is defined twice across the feature maps.")
             seen.add(scenario_id)
+            evidence_text = cells[driver_column + 1].strip() if driver_column + 1 < len(cells) else ""
             scenarios.append({"id": scenario_id, "map": str(relative), "driver": "automated" if driver.lower().startswith("automated") else "manual",
-                              "driver_text": driver[:200], "description": (cells[0] if cells else "")[:200]})
+                              "driver_text": driver[:200], "description": (cells[0] if cells else "")[:200],
+                              "requires_evidence": bool(EVIDENCE_REQUIRED.search(evidence_text))})
     return maps, scenarios
 
 
@@ -232,6 +238,26 @@ def policy_change(root: Path, base: str | None, files):
     result = git(root, "diff", "--name-only", f"{base}...HEAD", "--", *files)
     changed = [line for line in result.stdout.splitlines() if line.strip()]
     return {"checked": True, "base": base, "changed": changed}
+
+
+def evidence_state(root: Path, evidence_relative: str, head: str, scenarios):
+    """Comparison manifests written by .agents/skills/evidence for this candidate SHA, and the mapped scenarios that name visual evidence but have none.
+    Missing evidence is reported, never invented and never turned into a pass for that scenario."""
+    required = [s["id"] for s in scenarios if s.get("requires_evidence")]
+    present = {}
+    evidence_dir = root / evidence_relative
+    if evidence_dir.is_dir():
+        for manifest in evidence_dir.glob("*/*/comparison.json"):
+            try:
+                comparison = json.loads(manifest.read_text(encoding="utf-8"))
+            except ValueError:
+                continue
+            after_sha = (comparison.get("after") or {}).get("sha")
+            declared = (comparison.get("candidate") or {}).get("sha")
+            usable = comparison.get("verdict") not in (None, "mismatch", "capture-failed") and after_sha and head.startswith(after_sha[:12]) and (not declared or head.startswith(declared[:12]))
+            if comparison.get("scenario") in required and usable:
+                present.setdefault(comparison["scenario"], []).append({"path": str(manifest.relative_to(root)), "verdict": comparison.get("verdict"), "visual_proof": comparison.get("visual_proof")})
+    return {"dir": evidence_relative, "required": required, "present": present, "missing": [i for i in required if i not in present]}
 
 
 def parse_scenario_args(values):
@@ -320,6 +346,10 @@ def main(argv=None):
                     status, reason = "not-run", "manual/interactive scenario was not exercised in this run"
                 rows.append({**scenario, "status": status, "reason": reason})
             record["scenarios"] = rows
+            record["evidence"] = evidence_state(root, contract["evidence"], head, scenarios)
+            for row in rows:
+                if row["id"] in record["evidence"]["missing"]:
+                    row["reason"] += "; required visual evidence (screenshot/screencast comparison for this candidate) is missing"
             if execution["timed_out"]:
                 record["outcome"], record["blocked_reason"] = "blocked", f"`mise run verify` exceeded {args.timeout or contract['timeout']}s and was stopped"
             elif execution["exit"] != 0:
@@ -356,6 +386,8 @@ def main(argv=None):
             print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(record["policy"]["changed"]))
         elif record.get("requires_root_review"):
             print("policy not compared (no --base); the run cannot certify a SHA until VERIFY.md, tasks, and maps are reviewed against a base")
+        if record.get("evidence", {}).get("missing"):
+            print("required evidence missing for: " + ", ".join(record["evidence"]["missing"]) + f" (no comparison for this candidate under {record['evidence']['dir']})")
         if record.get("artifacts", {}).get("run_dir"):
             print(f"record: {record['artifacts']['run_dir']}/run.json")
     return {"pass": 0, "checked": 0, "fail": 1, "blocked": 2}[record["outcome"]]

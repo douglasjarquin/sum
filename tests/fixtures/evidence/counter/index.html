@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Counter</title>
+<style>body{font-family:system-ui;margin:2rem}@media (prefers-color-scheme: dark){body{background:#1e1e1e;color:#eee}}</style></head>
+<body>
+<h1>Counter</h1>
+<p id="count">Count: 0</p>
+<button id="add">Add</button>
+<script>
+  let n = 0;
+  document.getElementById("add").addEventListener("click", () => {
+    n += 1;
+    document.getElementById("count").textContent = "Count: " + (n - 1); // BUG: off by one; the fix replaces (n - 1) with n
+  });
+</script>
+</body>
+</html>

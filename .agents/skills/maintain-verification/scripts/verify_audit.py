@@ -284,7 +284,7 @@ def main(argv=None):
         record["notes"].append({"kind": "proof", **record["runs"]})
         if args.base:
             changed = changed_since(root, args.base)
-            policy_prefixes = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", *map_shas)
+            policy_prefixes = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", *map_shas)
             policy = [c for c in changed if c.startswith(policy_prefixes)]
             affected, unmapped = {}, []
             for change in changed:
