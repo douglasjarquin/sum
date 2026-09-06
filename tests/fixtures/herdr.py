@@ -80,6 +80,8 @@ if args[:2] == ["agent", "prompt"]:
     if os.environ.get("FAKE_FAIL_PROMPT") or args[2] in os.environ.get("FAKE_FAIL_PROMPT_PANES", "").split(","): fail("simulated uncertain prompt")
     pane["last_prompt"] = args[3]
     pane["agent_status"] = "working"
+    if os.environ.get("FAKE_PROMPT_HANG"):  # The prompt reached the pane, then the CLI never answered: the caller sees only a timeout.
+        save(); import time; time.sleep(float(os.environ["FAKE_PROMPT_HANG"]))
     emit({"agent": pane})
 if args[:2] == ["agent", "wait"]:
     if "--status" in args or "--until" not in args: fail("obsolete --status flag")

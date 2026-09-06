@@ -334,7 +334,8 @@ class FleetTest(FleetLab):
         self.assertEqual(self.ctl(root, store, "ask", second["id"], "--key", "k", "--text", "Still saved?", env=env)["question"]["status"], "open")
         self.assertEqual(self.ctl(root, store, "show", first["id"])["report"]["text"], "Done, says the worker.")
         self.assertEqual({k for k in set(records) | set(self.snapshot(store.home)) if records.get(k) != self.snapshot(store.home).get(k)},
-                         {"settings.json", f"tasks/{second['id']}/task.json"})
+                         {"settings.json", f"tasks/{second['id']}/task.json", f"tasks/{second['id']}/returns.json",
+                          f"tasks/{first['id']}/task.json", f"tasks/{first['id']}/returns.json"})  # One coalesced notice to the parent named both tasks' open returns.
         settings.symlink_to(settings.with_name("elsewhere.json")) if not settings.exists() else settings.unlink()
         settings.symlink_to(settings.with_name("elsewhere.json"))
         self.assertIn("must not be a symlink", self.ctl(root, store, "prepare", "--repo", third_repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env, ok=False)["error"])

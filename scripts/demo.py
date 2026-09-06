@@ -75,7 +75,13 @@ def main():
         q = ctl("ask", task["id"], "--key", "punctuation", "--text", "Keep the exclamation mark?")
         assert q["notice"]["status"] == "pending"
         assert ctl("inbox")["tasks"][0]["questions"][0]["text"] == "Keep the exclamation mark?"
-        print("PASS: question remained visible while the coordinator was busy.")
+        returns = ctl("show", task["id"])["returns"]["open"]  # The obligation is derived from the record; its notification state is kept apart from it.
+        assert [(r["kind"], r["obligation"], r["notification"]["state"]) for r in returns] == [("question", "open", "not-delivered")]
+        second = ctl("ask", task["id"], "--key", "second", "--text", "Second question while busy?")
+        assert second["notice"]["returns"]["recipients"][0]["state"] == "not-delivered" and len(ctl("show", task["id"])["returns"]["open"]) == 2
+        print("PASS: question remained visible while the coordinator was busy; a second question coalesced with it instead of replacing its notice, and no prompt was typed into the busy pane.")
+        ctl("answer", task["id"], second["question"]["id"], "--text", "No second change.")
+        ctl("resolve", task["id"], second["question"]["id"])
         ctl("answer", task["id"], q["question"]["id"], "--text", "Yes, keep it.")
         ctl("resolve", task["id"], q["question"]["id"])
         worktree = Path(task["worktree"])
@@ -110,7 +116,7 @@ def main():
         original_brief = Path(task["brief_path"]).read_bytes()
         staged = ctl("brief", "regenerate", task["id"])
         assert not staged["duplicate"] and staged["revision"]["id"] == "r2" and staged["active"] == "r1"
-        assert staged["revision"]["summary"] == [f"decision {q['question']['id']} recorded (applied)"]
+        assert staged["revision"]["summary"] == [f"decision {q['question']['id']} recorded (applied)", f"decision {second['question']['id']} recorded (applied)"]
         assert ctl("brief", "regenerate", task["id"])["duplicate"]
         assert Path(task["brief_path"]).read_bytes() == original_brief and ctl("show", task["id"])["brief"] == brief.read_text()
         assert "Yes, keep it." in Path(staged["revision"]["path"]).read_text()
@@ -188,7 +194,7 @@ def main():
         assert "not the registered coordinator" in refused["error"]
         rolled = ctl("--home", inst, "update", "rollback")
         assert rolled["changed"] and rolled["default"]["kind"] == "checkout" and not (installation / ".local/current").exists()
-        assert [q["key"] for q in ctl("show", task["id"])["questions"]] == ["punctuation", "after-update"]  # Rollback kept the new question.
+        assert [q["key"] for q in ctl("show", task["id"])["questions"]] == ["punctuation", "second", "after-update"]  # Rollback kept the new question.
         assert [e["result"] for e in ctl("--home", inst, "update", "status")["history"] if "result" in e] == ["selected", "selected"]
         assert ctl("--home", inst, "update", "rollback", "--to", head[:12])["default"]["sha"] == head
         print("PASS: merged revision resolved from origin, validated against the live records, and selected with one symlink rename; the checkout stayed untouched, old callbacks kept working, a developer pane was refused, and rollback changed only the code selection.")

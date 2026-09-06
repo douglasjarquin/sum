@@ -19,14 +19,20 @@ Record the boss's actual answer with:
 ./bin/sumctl answer TASK_ID QUESTION_ID --text 'The authorized answer'
 ```
 
-An answer stays visible until the worker marks it applied. `sumctl brief list TASK_ID` shows whether a report was produced under an older brief revision whose verification policy has since changed; treat that as evidence needing refresh review, not as a failure or an approval. A pending notice can be tried once with `sumctl notice TASK_ID --to worker` after checking the recipient is available. Do not loop.
+An answer stays visible until the worker marks it applied. `sumctl brief list TASK_ID` shows whether a report was produced under an older brief revision whose verification policy has since changed; treat that as evidence needing refresh review, not as a failure or an approval.
+
+## Pending returns
+
+Each row's `returns` lists what is still owed and to whom: open questions and unverified reports to you, unapplied answers and requested brief revisions to the worker. The `obligation` is open until a later record closes it; the `notification` beside it is only what is known about telling the current recipient: `pending`, `submitted` (prompt accepted or presented in your own output), `uncertain` (a timeout after a possible submission or an interrupted pass), `not-delivered` (busy, absent, wrong checkout, not registered) or `stalled` (three known failures).
+`inbox --live` already ran one bounded pass: at most one coalesced notice per recipient, with record IDs and commands only. Items routed to you appear inline in that output; reading them answers, applies, and verifies nothing.
+For an `uncertain` or `stalled` item, first look at the recipient pane, then try once with `sumctl notice TASK_ID --to worker` (or `--to parent`). `sumctl pump` repeats the ordinary pass; `--force` includes uncertain and stalled items. Do not loop.
 
 ## Restart
 
 In the new pane run `./bin/sumctl init`. If another pane still owns coordination you become a developer; inspect that pane before anything else.
 Only when the boss confirms the old coordinator pane is gone, run `./bin/sumctl init --role coordinator --reclaim`. It proceeds only when Herdr reports the old pane as `pane_not_found`; an existing pane (even with its agent exited) or an unobservable one is refused, and it never rebinds tasks by itself.
 Then inspect saved tasks and actual Herdr inventory.
-To make an existing task report to this coordinator, explicitly run `sumctl bind TASK_ID --parent-only`.
+To make an existing task report to this coordinator, explicitly run `sumctl bind TASK_ID --parent-only`. Its output carries one catch-up listing of everything still owed to the parent; the returns that failed against the old pane are not retried against it.
 To adopt a known existing worker after a pane ID change, use `sumctl bind TASK_ID --worker-pane PANE` after verifying its cwd and task identity.
 Never launch a replacement just because a pane cannot be observed. Missing/uncertain workers need inspection; sum has no automatic retry or process-fencing service.
 Do not alter Herdr's global auto-resume policy. Herdr is the sole process/restore owner in this MVP.

@@ -1555,7 +1555,7 @@ class UpdateTest(UpdateLab):
         self.assertEqual(shown["report"]["text"], "Reported after the update.")
         # Records changed only by the ask/report above; the checkout, .sum roles, and worktree were not touched by the update.
         changed = {k for k in set(records_before) | set(self.snapshot(store.home)) if records_before.get(k) != self.snapshot(store.home).get(k)}
-        self.assertEqual(changed, {f"tasks/{task['id']}/task.json"})
+        self.assertEqual(changed, {f"tasks/{task['id']}/task.json", f"tasks/{task['id']}/returns.json"})  # The record and its notification sidecar only.
         self.assertEqual(self.git("status", "--porcelain", cwd=root), "")
         self.assertEqual(self.git("rev-parse", "HEAD", cwd=task["worktree"]), task["base_sha"])
         status = sumctl.update_status(store)
