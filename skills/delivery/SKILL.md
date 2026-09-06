@@ -32,6 +32,14 @@ A closed/merged PR is not permission to create another automatically. Ask when t
 Describe the approved intent, changes, test evidence, review status, and limitations. Show the boss the full PR URL and the remaining merge decision.
 Then run `sumctl pr reconcile TASK_ID --number N` (optionally `--repo owner/name`). It resolves the task repository's GitHub identity through `gh`, inspects that exact PR, and records repository, number, URL, head repository/branch, base branch, head SHA, state, and the observation time. Findings name every mismatch: a fork head, another branch, a head SHA that is not a recorded candidate, a missing base. `merged_for_task` is true only for a merged PR with a merge commit and no finding; a closed, unmerged, or mismatched PR is never the task's result.
 An uncertain lookup (timeout, unknown number) is recorded as uncertain evidence and leaves the last exact observation in place. Reconcile again after every new push. Switching to a different PR number needs `--replace` after inspecting both. A PR from an older task or a legacy prose report is attached the same way, by inspecting the actual PR, never by parsing a URL or matching branch names.
-A task whose identity stays incomplete keeps working; it is simply not ready for the cleanup that a later slice adds.
+A task whose identity stays incomplete keeps working; it is simply not ready for cleanup.
 
-Never merge, waive a failing required check, or tear down unfinished work. `sumctl archive --acknowledge` only archives the record after inspection; it deliberately does not stop agents or remove checkouts.
+## Clean up after the merge
+
+Only the boss merges. When they say a PR is merged, run `sumctl cleanup TASK_ID` first: it re-observes that exact PR through `gh`, requires `merged` with a merge commit (closed is not merged), compares the checkout HEAD with the merged head (squash and rebase merges pass; an extra local commit blocks), verifies workspace, pane, checkout, branch, and repository by identity, confirms through `agent get`, `pane process-info`, and an `lsof` cwd scan that the agent and any child in the checkout exited (Herdr `idle`/`done` is not exit), and lists staged, modified, untracked, and non-cache ignored files. Every blocker is named; nothing is removed.
+Report blockers to the boss as they are. Do not kill processes, `git clean`, reset, or force anything to clear them; a blocked task stays visibly cleanup-pending and keeps working.
+When the inspection is `ready`, run `sumctl cleanup TASK_ID --apply`. It rechecks, saves the intent, removes the workspace and clean checkout with one native `herdr worktree remove` without force, closes a bound reviewer pane that saved findings, verifies the branch survived, and archives the record. Repeating it is a no-op.
+`sumctl cleanup TASK_ID --reviewer-only --apply` closes just a reviewer pane with saved findings and an exited agent; the shared implementation checkout is never touched by it.
+If the command is interrupted, run it again: it reconciles from the saved intent and Herdr observation rather than repeating or forcing the removal.
+
+Never merge, waive a failing required check, or tear down unfinished work. `sumctl archive --acknowledge` only archives the record after inspection; it deliberately does not stop agents or remove checkouts, and it is not a substitute for `cleanup`.

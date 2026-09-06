@@ -6,11 +6,12 @@ import argparse
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
+from fnmatch import fnmatch
 import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import shutil
@@ -1654,12 +1655,19 @@ def pr_reconcile(store, args):
             record = append_evidence(task, "publication", "github", {"outcome": "uncertain", "number": args.number, "repository": args.repo, "error": str(exc)}, endpoint=ctx)
             store.save(task)
         raise SumError(f"PR observation for #{args.number} is uncertain and was recorded as such ({record['id']}): {exc}. Inspect GitHub before creating or closing anything.") from exc
-    findings = pr_findings(task, observation)
-    merged_for_task = observation["state"] == "merged" and observation["merge_commit"] is not None and not findings
+    pr, record, previous = save_pr_observation(store, args.task, observation, ctx, replace=args.replace)
+    return {"task": args.task, "pr": pr, "evidence": record["id"], "previous": previous,
+            "note": "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains."}
+
+
+def save_pr_observation(store, task_id, observation, ctx, replace=False):
+    """Record one exact GitHub observation as the task's PR identity plus an append-only evidence record."""
     with store.lock():
-        task = store.read(args.task)
+        task = store.read(task_id)
+        findings = pr_findings(task, observation)
+        merged_for_task = observation["state"] == "merged" and observation["merge_commit"] is not None and not findings
         previous = task.get("pr")
-        if previous and previous.get("identity", {}).get("number") not in {None, observation["identity"]["number"]} and not args.replace:
+        if previous and previous.get("identity", {}).get("number") not in {None, observation["identity"]["number"]} and not replace:
             raise SumError(f"Task already records PR #{previous['identity']['number']}; pass --replace after inspecting both PRs to switch the recorded identity.")
         pr = {"identity": observation["identity"], "state": observation["state"], "merged_at": observation["merged_at"], "merge_commit": observation["merge_commit"],
               "observed_at": now(), "observed_by": {k: ctx[k] for k in ("machine", "session", "pane")}, "findings": findings,
@@ -1667,8 +1675,7 @@ def pr_reconcile(store, args):
         task["pr"] = pr
         record = append_evidence(task, "publication", "github", {"outcome": "observed", "pr": pr}, candidate=observation["identity"]["head_sha"], endpoint=ctx)
         store.save(task)
-    return {"task": args.task, "pr": pr, "evidence": record["id"], "previous": previous,
-            "note": "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains."}
+    return pr, record, previous
 
 
 def evidence_view(task):
@@ -1702,7 +1709,536 @@ def evidence_view(task):
             "closure": {"prerequisites_met": not missing, "missing": missing, "merged_for_task": bool(pr and pr.get("merged_for_task")),
                         "note": "Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged."}}
 
+# --- issue #10: guarded cleanup of merged task panes and checkouts -------------------------------------------
+#
+# Cleanup is explicit and idempotent: `cleanup TASK` inspects and persists the plan, `cleanup TASK --apply` removes only
+# the verified task workspace through native `herdr worktree remove` without force, then archives the record. Every
+# blocker is named. Nothing here polls, kills a process, runs `git clean`, resets, forces, or deletes a branch. The
+# intent is saved before the native removal so a crash between removal and archiving reconciles from records and
+# observation, never by recreating or guessing.
 
+CLEANUP_SCHEMA = 1
+DISPOSABLE_IGNORED = ("__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".DS_Store")
+LSOF_TIMEOUT = 30
+SHELLS = {"bash", "zsh", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "pwsh", "-bash", "-zsh", "-sh", "-fish"}
+
+
+def herdr_observe(args, *, session, timeout=10):
+    """Bounded native observation: (result, None), or (None, code) for a Herdr error code such as pane_not_found."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", session):
+        raise SumError("Invalid session name.")
+    result = run([tool("herdr"), "--session", session, *args], timeout=timeout, check=False)
+    if result.returncode:
+        code = herdr_error_code(result)
+        if code:
+            return None, code
+        raise SumError(f"herdr {' '.join(args[:2])} exited {result.returncode}: {(result.stderr or result.stdout).strip()[-300:]}")
+    try:
+        data = json.loads(result.stdout)
+    except ValueError as exc:
+        raise SumError(f"Herdr did not return JSON: {result.stdout[:300]}") from exc
+    return (data.get("result", data) if isinstance(data, dict) else data), None
+
+
+def workspace_of(pane_id):
+    """Herdr pane IDs are workspace-qualified (`w2:p1`); the prefix names the workspace."""
+    return str(pane_id).split(":")[0] if pane_id else None
+
+
+def disposable_ignored(relative):
+    return any(fnmatch(part, pattern) for part in PurePosixPath(relative).parts for pattern in DISPOSABLE_IGNORED)
+
+
+def worktree_artifacts(worktree):
+    """Tracked, staged, untracked, and ignored paths of a checkout; ignored paths are split into a fixed disposable list and preserved ones."""
+    out = run(["git", "-C", worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"]).stdout
+    entries = out.split("\0")
+    result = {"tracked_modified": [], "staged": [], "untracked": [], "ignored_preserved": [], "ignored_disposable": []}
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if len(entry) < 4:
+            continue
+        code, path = entry[:2], entry[3:]
+        if code[0] in "RC":
+            index += 1  # The original name of a rename/copy follows as its own entry.
+        if code == "!!":
+            result["ignored_disposable" if disposable_ignored(path) else "ignored_preserved"].append(path)
+        elif code == "??":
+            result["untracked"].append(path)
+        else:
+            if code[0] != " ":
+                result["staged"].append(path)
+            if code[1] != " ":
+                result["tracked_modified"].append(path)
+    return result
+
+
+def commits_not_covered(worktree, merged_head):
+    """Commits in the checkout that the merged PR head does not contain. Squash/rebase merges never require ancestry of the default branch."""
+    head = run(["git", "-C", worktree, "rev-parse", "HEAD"]).stdout.strip()
+    if head == merged_head:
+        return head, []
+    known = run(["git", "-C", worktree, "cat-file", "-e", f"{merged_head}^{{commit}}"], check=False).returncode == 0
+    if not known:
+        return head, [f"checkout HEAD {head} differs from the merged PR head {merged_head}, which is not a local object"]
+    return head, run(["git", "-C", worktree, "rev-list", f"{merged_head}..HEAD"]).stdout.split()
+
+
+def processes_in(worktree, exclude=()):
+    """Every process whose cwd is inside the checkout, from one bounded `lsof` pass; a failed pass is uncertainty, not emptiness."""
+    try:
+        result = run([tool("lsof"), "-a", "-d", "cwd", "-Fpn", "-w"], timeout=LSOF_TIMEOUT, check=False)
+    except SumError as exc:
+        return None, str(exc)
+    rows, pid = [], None
+    for line in result.stdout.splitlines():
+        if line[:1] == "p":
+            pid = int(line[1:]) if line[1:].isdigit() else None
+        elif line[:1] == "n" and pid is not None:
+            rows.append({"pid": pid, "cwd": line[1:]})
+    if not rows:
+        return None, f"lsof exited {result.returncode} without a process table: {(result.stderr or '').strip()[-200:]}"
+    roots = {str(worktree), os.path.realpath(worktree)}
+    inside = [r for r in rows if r["pid"] not in set(exclude) | {os.getpid()}
+              and any(r["cwd"] == root or r["cwd"].startswith(root + "/") for root in roots)]
+    return inside, None
+
+
+def pane_occupancy(session, pane_id, worktree=None):
+    """What still runs in a pane, from supported observation only: `agent get` and `pane process-info`, plus cwd-based processes for a checkout."""
+    view = {"pane": pane_id, "agent": None, "foreground": [], "detached": [], "blockers": []}
+    agent, code = herdr_observe(["agent", "get", pane_id], session=session, timeout=5)
+    if agent is not None:
+        agent = agent.get("agent", agent)
+        view["agent"] = {k: agent.get(k) for k in ("name", "agent", "agent_status")}
+        view["blockers"].append(f"pane {pane_id} still hosts agent {agent.get('agent')!r} ({agent.get('agent_status')}); Herdr idle/done is not exit, wait for the agent process to end")
+    elif code != "agent_not_found":
+        view["blockers"].append(f"agent observation for pane {pane_id} is uncertain ({code})")
+    info, code = herdr_observe(["pane", "process-info", "--pane", pane_id], session=session, timeout=5)
+    if info is None:
+        view["blockers"].append(f"process observation for pane {pane_id} is uncertain ({code})")
+        return view
+    info = info.get("process_info", info)
+    shell = info.get("shell_pid")
+    view["shell_pid"] = shell
+    for process in info.get("foreground_processes") or []:
+        if process.get("pid") == shell and (process.get("argv0") or process.get("name")) in SHELLS:
+            continue
+        view["foreground"].append({k: process.get(k) for k in ("pid", "name", "cmdline", "cwd")})
+    if view["foreground"]:
+        names = ", ".join(f"{p['name']} (pid {p['pid']})" for p in view["foreground"])
+        view["blockers"].append(f"pane {pane_id} has foreground processes besides its shell: {names}")
+    if shell is None:
+        view["blockers"].append(f"pane {pane_id} reported no shell pid; occupancy cannot be established")
+    if worktree:
+        inside, error = processes_in(worktree, exclude=[shell] if shell else [])
+        if inside is None:
+            view["blockers"].append(f"processes with a cwd in the checkout cannot be established: {error}")
+        elif inside:
+            view["detached"] = inside
+            view["blockers"].append("processes still run inside the checkout (detached from the pane or another pane): "
+                                    + ", ".join(f"pid {p['pid']} at {p['cwd']}" for p in inside[:10]))
+    return view
+
+
+def cleanup_record(task):
+    return task.get("cleanup") or {"schema": CLEANUP_SCHEMA, "state": None, "history": []}
+
+
+def cleanup_pending(task):
+    """A task the boss should hear about: merged on record, or a cleanup that was started and is not complete."""
+    record = task.get("cleanup") or {}
+    if task["status"] == "archived" and record.get("state") in (None, "complete"):
+        return None
+    if record.get("state") in ("blocked", "removing", "ready", "pending"):
+        return {"state": record["state"], "at": record.get("at"), "blockers": [b["code"] for b in record.get("blockers", [])]}
+    if (task.get("pr") or {}).get("merged_for_task"):
+        return {"state": "pending", "at": task["pr"].get("observed_at"), "blockers": [], "note": f"PR merged on record; run cleanup {task['id']}"}
+    return None
+
+
+def save_cleanup(store, task_id, **changes):
+    with store.lock():
+        task = store.read(task_id)
+        record = cleanup_record(task)
+        record.update(schema=CLEANUP_SCHEMA, at=now(), **changes)
+        record.setdefault("history", []).append({"at": record["at"], "state": record.get("state"), "step": changes.get("step")})
+        record["history"] = record["history"][-40:]
+        task["cleanup"] = record
+        if changes.get("state") == "complete":
+            task["status"] = "archived"
+        store.save(task)
+    return task
+
+
+class Inspection:
+    """One bounded pass over records, Git, GitHub, and Herdr for one task; every problem becomes a named blocker."""
+
+    def __init__(self, store, task, ctx):
+        self.store, self.task, self.ctx = store, task, ctx
+        self.blockers = []
+        self.resources = {}
+        self.view = {"task": task["id"], "at": now()}
+
+    def block(self, code, detail):
+        self.blockers.append({"code": code, "detail": detail})
+
+    def identity(self):
+        task = self.task
+        for key in ("pane", "workspace", "worktree", "branch", "repository", "session"):
+            if not task.get(key):
+                self.block("identity", f"task record has no {key}; nothing can be matched to a Herdr resource")
+        if task["machine"] != machine():
+            self.block("identity", f"task belongs to machine {task['machine']}, this is {machine()}")
+        if task["session"] != self.ctx["session"]:
+            self.block("identity", f"task lives in Herdr session {task['session']}, the coordinator runs in {self.ctx['session']}")
+        if self.blockers:
+            return
+        own_workspace = workspace_of(self.ctx["pane"])
+        pane, code = herdr_observe(["pane", "get", self.ctx["pane"]], session=self.ctx["session"], timeout=5)
+        if pane is not None:
+            own_workspace = pane.get("pane", pane).get("workspace_id") or own_workspace
+        if task["workspace"] in {own_workspace, workspace_of(task["parent"]["pane"])}:
+            self.block("identity", f"task workspace {task['workspace']} is the coordinator's own workspace; refusing")
+        if task["pane"] == self.ctx["pane"]:
+            self.block("identity", "task pane is the calling coordinator pane; refusing")
+        worktree = Path(task["worktree"])
+        repository = Path(task["repository"])
+        if worktree == repository or repository in worktree.parents or worktree in repository.parents:
+            self.block("identity", f"task worktree {worktree} overlaps the source repository {repository}; refusing")
+
+    def herdr(self):
+        task, session = self.task, self.ctx["session"]
+        workspace, code = herdr_observe(["workspace", "get", task["workspace"]], session=session, timeout=5)
+        if workspace is None:
+            if code == "workspace_not_found":
+                self.resources["workspace"] = "absent"
+            else:
+                self.block("workspace", f"workspace {task['workspace']} cannot be observed ({code})")
+                self.resources["workspace"] = "uncertain"
+        else:
+            workspace = workspace.get("workspace", workspace)
+            self.resources["workspace"] = "present"
+            checkout = ((workspace.get("worktree") or {}).get("checkout_path"))
+            if not checkout or Path(checkout).resolve() != Path(task["worktree"]).resolve():
+                self.block("workspace", f"workspace {task['workspace']} is not the task checkout (checkout_path {checkout!r}, expected {task['worktree']})")
+            panes, code = herdr_observe(["pane", "list", "--workspace", task["workspace"]], session=session, timeout=5)
+            if panes is None:
+                self.block("panes", f"panes of workspace {task['workspace']} cannot be listed ({code})")
+            else:
+                listed = panes.get("panes", panes) if isinstance(panes, dict) else panes
+                self.view["panes"] = [{k: p.get(k) for k in ("pane_id", "cwd", "agent", "agent_status")} for p in listed]
+                reviewer_pane = (task.get("reviewer") or {}).get("pane")
+                for pane in listed:
+                    if pane.get("pane_id") == task["pane"]:
+                        continue
+                    if pane.get("pane_id") == reviewer_pane:
+                        self.resources["reviewer_in_task_workspace"] = True
+                        continue
+                    self.block("panes", f"unknown pane {pane.get('pane_id')} (cwd {pane.get('cwd')!r}, agent {pane.get('agent')!r}) in the task workspace; a service or helper pane sum did not create blocks removal")
+        pane, code = herdr_observe(["pane", "get", task["pane"]], session=session, timeout=5)
+        if pane is None:
+            if code == "pane_not_found":
+                self.resources["pane"] = "absent"
+            else:
+                self.block("pane", f"pane {task['pane']} cannot be observed ({code})")
+                self.resources["pane"] = "uncertain"
+        else:
+            pane = pane.get("pane", pane)
+            self.resources["pane"] = "present"
+            if pane.get("workspace_id") not in {None, task["workspace"]}:
+                self.block("pane", f"pane {task['pane']} now sits in workspace {pane.get('workspace_id')}, not {task['workspace']}; possible moved or reused pane")
+            cwd = pane.get("cwd") or pane.get("foreground_cwd")
+            if not cwd or Path(cwd).resolve() != Path(task["worktree"]).resolve():
+                self.block("pane", f"pane {task['pane']} runs in {cwd!r}, not the task checkout; refusing a possibly reused pane")
+
+    def git(self):
+        task = self.task
+        worktree = Path(task["worktree"])
+        registered = None
+        try:
+            registered = worktree_paths(task["repository"])
+        except SumError as exc:
+            self.block("git", f"cannot list worktrees of {task['repository']}: {exc}")
+        branch_exists = run(["git", "-C", task["repository"], "show-ref", "--verify", "--quiet", f"refs/heads/{task['branch']}"], check=False).returncode == 0
+        self.resources["branch"] = "present" if branch_exists else "absent"
+        if not branch_exists:
+            self.block("git", f"branch {task['branch']} does not exist in {task['repository']}; history must survive cleanup, inspect before continuing")
+        if not worktree.is_dir():
+            self.resources["worktree"] = "absent"
+            if registered is not None and worktree.resolve() in registered:
+                self.block("git", f"{worktree} is gone but still registered as a worktree; inspect `git worktree list` before continuing")
+            return
+        self.resources["worktree"] = "present"
+        try:
+            toplevel = Path(run(["git", "-C", worktree, "rev-parse", "--show-toplevel"]).stdout.strip()).resolve()
+            common = Path(run(["git", "-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"]).stdout.strip()).resolve()
+            branch = run(["git", "-C", worktree, "branch", "--show-current"]).stdout.strip()
+        except SumError as exc:
+            self.block("git", f"{worktree} is not a readable Git checkout: {exc}")
+            return
+        if toplevel != worktree.resolve():
+            self.block("git", f"{worktree} is not the top level of its checkout ({toplevel})")
+        if common.parent != Path(task["repository"]).resolve():
+            self.block("git", f"{worktree} does not belong to {task['repository']} (common dir {common})")
+        if branch != task["branch"]:
+            self.block("git", f"checkout is on {branch!r}, not the task branch {task['branch']!r}")
+        if registered is not None and worktree.resolve() not in registered:
+            self.block("git", f"{worktree} is not a registered worktree of {task['repository']}")
+
+    def obligations(self):
+        task = self.task
+        open_questions = [q["id"] for q in task["questions"] if q["status"] != "applied"]
+        if open_questions:
+            self.block("obligations", f"questions not yet answered and applied: {open_questions}")
+        handoffs = [r for r in task.get("evidence", []) if r.get("kind") == "handoff" and r.get("source") == "worker" and r.get("candidate")]
+        if not handoffs:
+            self.block("handoff", "no structured worker handoff saved; a prose report is not a handoff")
+            return None
+        return handoffs[-1]["candidate"]
+
+    def github(self, number=None):
+        task = self.task
+        recorded = task.get("pr")
+        if number is None and not (recorded and recorded.get("complete")):
+            self.block("pr", "no complete PR identity recorded; run `pr reconcile TASK --number N` or pass --number")
+            return None
+        number = number if number is not None else recorded["identity"]["number"]
+        try:
+            observation = observe_pr(task, None, number)
+        except SumError as exc:
+            with self.store.lock():
+                current = self.store.read(task["id"])
+                record = append_evidence(current, "publication", "github", {"outcome": "uncertain", "number": number, "repository": None, "error": str(exc)}, endpoint=self.ctx)
+                self.store.save(current)
+            self.block("pr-uncertain", f"GitHub observation of PR #{number} failed and was recorded as uncertain ({record['id']}): {exc}")
+            return None
+        pr, record, previous = save_pr_observation(self.store, task["id"], observation, self.ctx)
+        self.view["pr"] = {"number": pr["identity"]["number"], "state": pr["state"], "head_sha": pr["identity"]["head_sha"], "merge_commit": pr["merge_commit"],
+                           "findings": pr["findings"], "evidence": record["id"]}
+        if recorded and recorded.get("identity", {}).get("head_sha") and recorded["identity"]["head_sha"] != pr["identity"]["head_sha"]:
+            self.block("pr", f"PR head moved from recorded {recorded['identity']['head_sha']} to {pr['identity']['head_sha']}; reconcile and verify the new head first")
+        if pr["state"] != "merged" or not pr["merge_commit"]:
+            self.block("pr", f"PR #{number} is {pr['state']}, not merged with a merge commit; closed or open PRs never justify cleanup")
+        for finding in pr["findings"]:
+            self.block("pr", finding)
+        return pr
+
+    def checkout(self, merged_head):
+        task = self.task
+        if self.resources.get("worktree") != "present":
+            return
+        if merged_head:
+            head, extra = commits_not_covered(task["worktree"], merged_head)
+            self.view["head"] = head
+            if extra:
+                self.block("commits", f"{len(extra)} commit(s) in the checkout are not in the merged PR head {merged_head}: {extra[:5]}")
+        artifacts = worktree_artifacts(task["worktree"])
+        self.view["artifacts"] = artifacts
+        for key, label in (("staged", "staged changes"), ("tracked_modified", "modified tracked files"), ("untracked", "untracked files"),
+                           ("ignored_preserved", "ignored files that are not known disposable caches")):
+            if artifacts[key]:
+                self.block("artifacts", f"{label}: {artifacts[key][:10]}{' ...' if len(artifacts[key]) > 10 else ''}; move or commit them, sum never runs git clean")
+
+    def occupancy(self):
+        task = self.task
+        if self.resources.get("pane") == "present":
+            view = pane_occupancy(self.ctx["session"], task["pane"], task["worktree"] if self.resources.get("worktree") == "present" else None)
+            self.view["occupancy"] = view
+            for detail in view["blockers"]:
+                self.block("occupant", detail)
+        elif self.resources.get("worktree") == "present":
+            inside, error = processes_in(task["worktree"])
+            if inside is None:
+                self.block("occupant", f"processes with a cwd in the checkout cannot be established: {error}")
+            elif inside:
+                self.block("occupant", "processes still run inside the checkout: " + ", ".join(f"pid {p['pid']} at {p['cwd']}" for p in inside[:10]))
+
+    def reviewer(self):
+        """The bound reviewer pane may close only with saved findings and an exited occupant; it is never the worker or coordinator pane."""
+        task = self.task
+        reviewer = task.get("reviewer")
+        if not reviewer:
+            self.resources["reviewer_pane"] = None
+            return
+        row = {"pane": reviewer["pane"], "closable": False, "reason": None}
+        self.view["reviewer"] = row
+        findings = [r for r in task.get("evidence", []) if r.get("kind") == "review"]
+        if not findings:
+            row["reason"] = "no saved reviewer findings"
+            self.block("reviewer", f"reviewer pane {reviewer['pane']} has no saved findings; it stays open")
+            return
+        if identity(reviewer) in {identity(task), identity(task["parent"]), identity(self.ctx)}:
+            row["reason"] = "reviewer endpoint is the worker or coordinator pane"
+            self.block("reviewer", "reviewer endpoint equals the worker or coordinator pane; refusing")
+            return
+        if reviewer["machine"] != machine() or reviewer["session"] != self.ctx["session"]:
+            row["reason"] = "reviewer pane is in another session or machine"
+            self.block("reviewer", f"reviewer pane {reviewer['pane']} is in session {reviewer['session']} on {reviewer['machine']}; not observable from here")
+            return
+        pane, code = herdr_observe(["pane", "get", reviewer["pane"]], session=self.ctx["session"], timeout=5)
+        if pane is None:
+            if code == "pane_not_found":
+                self.resources["reviewer_pane"] = "absent"
+                row.update(closable=False, reason="already absent")
+            else:
+                self.block("reviewer", f"reviewer pane {reviewer['pane']} cannot be observed ({code})")
+            return
+        self.resources["reviewer_pane"] = "present"
+        view = pane_occupancy(self.ctx["session"], reviewer["pane"])
+        row["occupancy"] = view
+        if view["blockers"]:
+            row["reason"] = "reviewer occupant has not exited"
+            for detail in view["blockers"]:
+                self.block("reviewer", detail)
+            return
+        row["closable"] = True
+
+    def plan(self):
+        state = "blocked" if self.blockers else "ready"
+        return {**self.view, "state": state, "blockers": self.blockers, "resources": self.resources}
+
+
+def inspect_task(store, task, ctx, number=None, scope="task"):
+    inspection = Inspection(store, task, ctx)
+    inspection.identity()
+    if inspection.blockers:
+        return inspection.plan()
+    if scope == "reviewer":
+        inspection.reviewer()
+        return inspection.plan()
+    inspection.herdr()
+    inspection.git()
+    inspection.obligations()
+    pr = inspection.github(number)
+    inspection.checkout(pr["identity"]["head_sha"] if pr else None)
+    inspection.occupancy()
+    inspection.reviewer()
+    return inspection.plan()
+
+
+def recheck(store, task, ctx, merged_head):
+    """The bounded second look taken after occupants exited and immediately before native removal."""
+    inspection = Inspection(store, task, ctx)
+    inspection.herdr()
+    inspection.git()
+    inspection.checkout(merged_head)
+    inspection.occupancy()
+    return inspection.plan()
+
+
+def resources_absent(task, session):
+    """After a removal (or a crash right after one): is every task resource verifiably gone by identity, not by label?"""
+    workspace, code = herdr_observe(["workspace", "get", task["workspace"]], session=session, timeout=5)
+    worktree = Path(task["worktree"])
+    registered = worktree.resolve() in worktree_paths(task["repository"]) if Path(task["repository"]).is_dir() else False
+    detail = {"workspace": "absent" if workspace is None and code == "workspace_not_found" else ("present" if workspace is not None else f"uncertain ({code})"),
+              "worktree": "absent" if not worktree.exists() else "present", "registered": registered,
+              "branch": "present" if run(["git", "-C", task["repository"], "show-ref", "--verify", "--quiet", f"refs/heads/{task['branch']}"], check=False).returncode == 0 else "absent"}
+    return detail["workspace"] == "absent" and detail["worktree"] == "absent" and not registered, detail
+
+
+def cleanup_reconcile(store, task, ctx):
+    """Finish or roll back a cleanup interrupted between native removal and archiving. Records and observation only."""
+    record = cleanup_record(task)
+    if record.get("state") != "removing":
+        return None
+    gone, detail = resources_absent(task, ctx["session"])
+    if gone:
+        task = save_cleanup(store, task["id"], state="complete", step="reconciled-after-interruption", removed=detail, blockers=[])
+        return {"task": task["id"], "state": "complete", "reconciled": True, "resources": detail}
+    if detail["workspace"] == "present":
+        task = save_cleanup(store, task["id"], state="pending", step="reconciled-nothing-removed", resources=detail)
+        return {"task": task["id"], "state": "pending", "reconciled": True, "resources": detail, "note": "The workspace still exists; the interrupted removal did not happen. Run cleanup again."}
+    task = save_cleanup(store, task["id"], state="blocked", step="reconciled-partial", resources=detail,
+                        blockers=[{"code": "partial", "detail": f"resources after interruption: {detail}; inspect before continuing, nothing is recreated or forced"}])
+    return {"task": task["id"], "state": "blocked", "reconciled": True, "resources": detail}
+
+
+def close_reviewer_pane(store, task, ctx, plan):
+    """Close only the bound reviewer pane through native `pane close`; it never touches the implementation checkout."""
+    row = plan.get("reviewer") or {}
+    if not row.get("closable"):
+        return {"closed": False, "reason": row.get("reason") or "not closable"}
+    result, code = herdr_observe(["pane", "close", task["reviewer"]["pane"]], session=ctx["session"], timeout=10)
+    if result is None and code != "pane_not_found":
+        raise SumError(f"pane close for reviewer pane {task['reviewer']['pane']} failed ({code}); nothing else was changed")
+    save_cleanup(store, task["id"], step="reviewer-pane-closed", reviewer_pane_closed={"pane": task["reviewer"]["pane"], "at": now(), "already_absent": result is None})
+    return {"closed": True, "pane": task["reviewer"]["pane"], "already_absent": result is None}
+
+
+def cleanup(store, args):
+    ctx = context()
+    require_coordinator(store, ctx)
+    ensure_version()
+    task = store.read(args.task)
+    store.check_machine(task)
+    record = cleanup_record(task)
+    if record.get("state") == "complete":
+        return {"task": task["id"], "state": "complete", "already": True, "resources": record.get("removed"), "archived": task["status"] == "archived",
+                "note": "Cleanup already completed; nothing was observed or changed."}
+    if record.get("state") == "removing":
+        reconciled = cleanup_reconcile(store, task, ctx)
+        if reconciled["state"] != "pending":
+            return reconciled
+        task = store.read(args.task)
+    scope = "reviewer" if args.reviewer_only else "task"
+    plan = inspect_task(store, task, ctx, number=args.number, scope=scope)
+    if scope == "reviewer":
+        if not args.apply:
+            save_cleanup(store, task["id"], step="inspected-reviewer", reviewer=plan.get("reviewer"))  # Reviewer scope never marks the task cleanup-pending.
+            return {**plan, "apply": False, "scope": scope, "note": "Inspection only. --apply closes just the reviewer pane; the task checkout, workspace, and worker pane are untouched."}
+        if plan["blockers"]:
+            raise SumError("Reviewer pane not closed: " + "; ".join(b["detail"] for b in plan["blockers"]))
+        return {"task": task["id"], "scope": scope, "reviewer": close_reviewer_pane(store, task, ctx, plan), "state": record.get("state")}
+    if not args.apply:
+        save_cleanup(store, task["id"], step="inspected", state=plan["state"], blockers=plan["blockers"], resources=plan["resources"])
+        return {**plan, "apply": False, "note": "Inspection only; nothing was removed. `cleanup TASK --apply` removes the verified workspace with native Herdr operations and archives the record only when no blocker remains."}
+    if plan["blockers"]:
+        save_cleanup(store, task["id"], step="apply-refused", state="blocked", blockers=plan["blockers"], resources=plan["resources"])
+        raise SumError(f"Cleanup of {task['id']} refused; the task stays cleanup-pending. Blockers: " + "; ".join(f"[{b['code']}] {b['detail']}" for b in plan["blockers"]))
+    merged_head = plan["pr"]["head_sha"]
+    intent = {"workspace": task["workspace"], "pane": task["pane"], "worktree": task["worktree"], "branch": task["branch"], "repository": task["repository"],
+              "head": plan.get("head"), "merged_head": merged_head, "merge_commit": plan["pr"]["merge_commit"], "pr": plan["pr"]["number"], "at": now()}
+    save_cleanup(store, task["id"], step="intent", state="ready", intent=intent, blockers=[], resources=plan["resources"])
+    removed = {"performed": False}
+    if plan["resources"].get("workspace") == "present":
+        again = recheck(store, task, ctx, merged_head)  # Writers may have appeared or files changed since the inspection.
+        if again["blockers"]:
+            save_cleanup(store, task["id"], step="recheck-refused", state="blocked", blockers=again["blockers"], resources=again["resources"])
+            raise SumError(f"Cleanup of {task['id']} refused at the recheck before removal: " + "; ".join(f"[{b['code']}] {b['detail']}" for b in again["blockers"]))
+        save_cleanup(store, task["id"], step="removing", state="removing")  # Persisted before the one native, non-forced removal.
+        result, code = herdr_observe(["worktree", "remove", "--workspace", task["workspace"]], session=ctx["session"], timeout=60)
+        if result is None:
+            if code == "workspace_not_found":
+                pass  # Verified below by identity; already-absent is acceptable only after that inspection.
+            elif code in {"dirty_worktree_requires_force", "worktree_requires_force"}:
+                save_cleanup(store, task["id"], step="removal-refused-by-herdr", state="blocked",
+                             blockers=[{"code": "artifacts", "detail": f"Herdr refused the non-forced removal ({code}); the checkout changed under us and is preserved"}])
+                raise SumError(f"Herdr refused the non-forced removal ({code}); nothing was removed and the task stays cleanup-pending.")
+            else:
+                save_cleanup(store, task["id"], step="removal-uncertain", state="removing", error=code)
+                raise SumError(f"worktree remove for workspace {task['workspace']} returned {code}; the outcome is uncertain, run cleanup again to reconcile from observation.")
+        else:
+            removed = {"performed": True, "path": result.get("path"), "forced": bool(result.get("forced"))}
+            if removed["forced"]:
+                raise SumError("Herdr reports a forced removal; sum never requested force. Inspect the Herdr build before trusting this cleanup.")
+    elif plan["resources"].get("worktree") == "present":
+        save_cleanup(store, task["id"], step="apply-refused", state="blocked",
+                     blockers=[{"code": "workspace", "detail": "the Herdr workspace is gone but the checkout remains; reopen it with `herdr worktree open` or remove it yourself, sum removes checkouts only through the native workspace operation"}])
+        raise SumError(f"Cleanup of {task['id']} refused: no Herdr workspace owns the remaining checkout {task['worktree']}.")
+    gone, detail = resources_absent(task, ctx["session"])
+    if not gone:
+        save_cleanup(store, task["id"], step="removal-incomplete", state="removing", resources=detail)
+        raise SumError(f"After removal the task resources are not all absent ({detail}); nothing further was changed. Inspect, then run cleanup again to reconcile.")
+    if detail["branch"] != "present":
+        detail["warning"] = f"branch {task['branch']} is missing; sum never deletes branches, inspect the repository"
+    reviewer = close_reviewer_pane(store, task, ctx, plan) if task.get("reviewer") else None
+    task = save_cleanup(store, task["id"], state="complete", step="archived", removed={**detail, **removed}, blockers=[], reviewer_pane=reviewer)
+    return {"task": task["id"], "state": "complete", "archived": True, "removed": {**detail, **removed}, "kept": {"branch": task["branch"], "records": str(store.path(task["id"]))},
+            "reviewer": reviewer, "note": "Only the verified task workspace and its clean checkout were removed, through native Herdr without force. The branch, brief revisions, decisions, reports, and PR evidence stay."}
 
 
 def status(store, live=False, inbox=False):
@@ -1716,6 +2252,7 @@ def status(store, live=False, inbox=False):
         row["evidence"] = {"records": len(task.get("evidence", [])), "pr": (task.get("pr") or {}).get("identity", {}).get("number") if task.get("pr") else None,
                            "merged_for_task": bool((task.get("pr") or {}).get("merged_for_task"))}
         row["notice"] = task["notice"]
+        row["cleanup"] = cleanup_pending(task)
         try:
             versions = read_versions(store, task)
             row["brief"] = {"active": versions.get("active"), "requested": versions.get("requested")}
@@ -1732,7 +2269,13 @@ def status(store, live=False, inbox=False):
                     row["attention"] = "No report. Inspect this worker's current output; lifecycle state is not a task result."
             except SumError as exc:
                 row["attention"] = f"Cannot observe worker: {exc}"
-        if not inbox or row["questions"] or row["error"] or row.get("attention") or row["report_available"]:
+        if live and (task.get("cleanup") or {}).get("state") == "removing":  # An interrupted cleanup reconciles at the next bounded pass, never in a loop.
+            try:
+                row["cleanup_reconciled"] = cleanup_reconcile(store, task, context())
+                row["cleanup"] = cleanup_pending(store.read(task["id"]))
+            except SumError as exc:
+                row["attention"] = f"Interrupted cleanup could not be reconciled: {exc}"
+        if not inbox or row["questions"] or row["error"] or row.get("attention") or row["report_available"] or row["cleanup"]:
             if task["status"] != "archived" or row["questions"]:
                 rows.append(row)
     value = {"tasks": rows, "live": live, "capacity": capacity_view(store, tasks),
@@ -1850,6 +2393,7 @@ def init(store, args):
         registration = store.register(ctx, role, task=task_id)
     if role == "coordinator":
         result["contract"] = contract_state(store)  # A restarted coordinator sees a pending contract refresh here, not in a lost prompt.
+        result["cleanup_pending"] = [{"task": t["id"], **cleanup_pending(t)} for t in store.all() if cleanup_pending(t)]  # Records only; no Herdr or GitHub call.
     result.update(role=role, task=task_id, registration=registration, coordinator=store.owner(),
                   note={"coordinator": "You are the coordinator for this instance. Continue the coordinator startup steps."
                                        + (f" Operating contract revision {result['contract']['requested']} is requested: read it and run `sumctl refresh adopt --coordinator {result['contract']['requested']}` before other work." if result.get("contract", {}).get("requested") else ""),
@@ -1861,7 +2405,7 @@ def init(store, args):
 def doctor(store):
     """Observational only: no state, context, or registration is written."""
     checks = []
-    for name in ("python3", "node", "git", "gh", "herdr", "quota-axi"):
+    for name in ("python3", "node", "git", "gh", "herdr", "quota-axi", "lsof"):
         try:
             path = tool(name)
             checks.append({"tool": name, "path": path, "ok": True})
@@ -2806,6 +3350,11 @@ def parser():
     x.add_argument("--number", type=int, required=True)
     x.add_argument("--repo", help="owner/name; must equal the task repository's GitHub identity")
     x.add_argument("--replace", action="store_true", help="Switch a task from one recorded PR number to another after inspecting both")
+    s = sub.add_parser("cleanup", help="Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay")
+    s.add_argument("task")
+    s.add_argument("--apply", action="store_true", help="Remove the verified workspace/checkout without force and archive the record; without it, only inspect and persist the plan")
+    s.add_argument("--reviewer-only", action="store_true", help="Inspect or close only the bound reviewer pane (needs saved findings and an exited occupant); the checkout is untouched")
+    s.add_argument("--number", type=int, help="Observe this PR number when no complete PR identity is recorded yet")
     s = sub.add_parser("bind")
     s.add_argument("task")
     s.add_argument("--worker-pane", help="Explicitly adopt an existing worker; never launch a replacement")
@@ -2916,6 +3465,8 @@ def main(argv=None):
             value = report(store, args)
         elif args.command == "notice":
             value = notify(store, args.task, args.to, "saved task state needs attention")
+        elif args.command == "cleanup":
+            value = cleanup(store, args)
         elif args.command == "archive":
             if not args.acknowledge:
                 raise SumError("Use --acknowledge only after inspecting/preserving the work. This command never stops an agent or deletes a checkout.")

@@ -5,7 +5,9 @@ description: Reconcile saved tasks with bounded Herdr observations, surface unre
 # Rundown
 
 Run `./bin/sumctl inbox --live`. This takes one bounded `agent list` snapshot per Herdr session and reads every active task's state from it: twelve workers cost one observation call, not twelve sequential waits, and a worker missing from the snapshot is an attention item without its own lookup. The `fanout` field shows the Herdr calls and local elapsed time of that pass, and `capacity` shows the held slots. It is not a background monitor.
-Surface unanswered decisions first, then reports ready for review, then failures/uncertainty. Keep unchanged status silent unless the boss asked for it.
+Surface unanswered decisions first, then reports ready for review, then failures/uncertainty, then tasks whose `cleanup` field is `pending` or `blocked`. Keep unchanged status silent unless the boss asked for it.
+A `cleanup: pending` row means the exact PR was observed merged and the task still holds its workspace and slot; offer `sumctl cleanup TASK_ID` (see `skills/delivery/SKILL.md`). A `blocked` row names the blocker codes; relay them, do not clear them by force.
+A cleanup interrupted after the native removal shows as `removing`; `inbox --live` reconciles it once from records and observation and reports `cleanup_reconciled`. Nothing polls for merges.
 
 For a worker that is idle/done/blocked without a report, read bounded relevant output with MCP `herdr_agent_read` or `bin/herdr-scoped agent read PANE --source visible --lines 120`.
 Do not assume idle means done. Inspect ambiguous prose; ask for a file report when screen output is incomplete. If a question was never saved, capture it using `sumctl ask` before relaying it to the boss.
