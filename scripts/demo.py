@@ -129,6 +129,31 @@ def main():
         assert subprocess.run([str(installation / "bin/sumctl"), "--home", str(base / "state"), "status"], env=env, text=True, capture_output=True).returncode == 0
         assert {p: p.read_bytes() for p in (base / "state").rglob("*") if p.is_file()} == records
         print("PASS: immutable release staged under .local/releases/<sha> with a validated manifest; nothing activated, the release owns no state, the installation entrypoint still serves old callbacks.")
+        # Atomic update and code-only rollback: a bare repository stands in for origin; the staged bundle above is the merged candidate.
+        origin = base / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+        git("remote", "add", "origin", str(origin), cwd=installation)
+        git("push", "-q", "-u", "origin", "main", cwd=installation)
+        git("remote", "set-head", "origin", "main", cwd=installation)
+        inst = str(installation / ".sum")
+        assert ctl("--home", inst, "init")["role"] == "coordinator"
+        check = ctl("--home", inst, "update", "check")
+        assert check["source"]["sha"] == head and check["default"]["kind"] == "checkout" and check["staged"] and check["compatibility"]["ok"]
+        applied = ctl("--home", inst, "update", "apply", "--no-fetch")
+        assert applied["changed"] and applied["previous"]["kind"] == "checkout" and applied["default"]["sha"] == head and applied["post_check"]["ok"]
+        assert Path(os.readlink(installation / ".local/current")) == Path("releases") / head
+        served = json.loads(subprocess.run([str(installation / "bin/sumctl"), "--home", str(base / "state"), "doctor"], env=env, text=True, capture_output=True).stdout)
+        assert served["runtime"] == str(release) and served["installation"] == str(installation)  # New entrypoint calls run the new default.
+        ctl("ask", task["id"], "--key", "after-update", "--text", "Saved while the new default serves?")  # Old absolute callback, same records.
+        assert git("status", "--porcelain", cwd=installation) == "" and git("rev-parse", "HEAD", cwd=installation) == head  # Checkout untouched.
+        refused = ctl("--home", inst, "update", "apply", "--no-fetch", pane="w-second:p1", check=False)
+        assert "not the registered coordinator" in refused["error"]
+        rolled = ctl("--home", inst, "update", "rollback")
+        assert rolled["changed"] and rolled["default"]["kind"] == "checkout" and not (installation / ".local/current").exists()
+        assert [q["key"] for q in ctl("show", task["id"])["questions"]] == ["punctuation", "after-update"]  # Rollback kept the new question.
+        assert [e["result"] for e in ctl("--home", inst, "update", "status")["history"] if "result" in e] == ["selected", "selected"]
+        assert ctl("--home", inst, "update", "rollback", "--to", head[:12])["default"]["sha"] == head
+        print("PASS: merged revision resolved from origin, validated against the live records, and selected with one symlink rename; the checkout stayed untouched, old callbacks kept working, a developer pane was refused, and rollback changed only the code selection.")
         print("This demo uses NO actual model, Herdr binary, GitHub account, or provider credentials. Temporary fixture cleaned up.")
 
 if __name__ == "__main__": main()

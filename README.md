@@ -56,10 +56,10 @@ Herdr's optional native integrations can be installed separately, for example `h
 | Component | Purpose |
 | --- | --- |
 | `AGENTS.md` and harness instruction aliases | A short coordinator contract, with a separate worker role |
-| Five bundled skills | Dispatch, worker execution, verification/PR delivery, rundown/recovery, and isolated self-development |
+| Six bundled skills | Dispatch, worker execution, verification/PR delivery, rundown/recovery, isolated self-development, and atomic updates with code-only rollback |
 | Release-matched Herdr skill | Copied from the installed `herdr --skill` during setup |
 | Pinned Herdr Mesh plus a small runtime overlay | Ten relevant MCP tools, current Herdr commands, bounded reads/waits, no swallowed handoff errors |
-| `bin/sumctl` | Durable task/decision/report files, native worktree creation and launch, bounded notices, and records backup |
+| `bin/sumctl` | Durable task/decision/report files, native worktree creation and launch, bounded notices, records backup, staged releases, and atomic update/rollback |
 | `quota-axi` | Advisory quota evidence; no automatic billing/account switching |
 | Offline tests and a demo | Test behavior without model credentials, a real Herdr installation, or GitHub writes |
 | Explicit live smoke test | Validate the real Herdr API in an isolated named session |
@@ -107,6 +107,23 @@ A worker brief is generated from the record: the approved task text, base, repos
 ```
 
 The file at `brief_path` and every earlier revision are never rewritten, so a worker mid-read keeps a valid brief. Each revision records a machine-generated summary of what changed (policy versions, procedure hash, decisions, commands) and whether verification is affected. A report is bound to the brief revision active when it was submitted; a later verification-affecting revision marks that evidence as needing refresh review rather than approving or rejecting it. Refresh bookkeeping is separate from the single notice slot, and old helpers keep working on the same records because the sidecar is additive.
+
+## Update and roll back
+
+```sh
+./bin/sumctl update check          # fetch origin, resolve the merged revision, report default/active/compatibility
+./bin/sumctl update apply          # stage the release, validate coexistence, switch .local/current in one rename
+./bin/sumctl update status         # old/new SHA, default versus active runtime, staged releases, recent selections
+./bin/sumctl update rollback       # reselect the previous runtime; records, questions, reports, and worktrees stay
+```
+
+An update activates only a revision merged on the sum `origin` default branch, resolved to an immutable SHA.
+It never pulls or resets the checkout, never restarts Herdr, agents, dev services, or a connected MCP server, and never upgrades Herdr.
+Network, build, and dependency work happen before the activation lock; validation covers the release manifest, the state and brief schemas of the recorded tasks, the installed Herdr, the pinned tools, and a read-only run of the candidate helper against the real records.
+The switch is one symlink rename, so an interrupted update leaves either the complete old or the complete new selection.
+Commands already running finish on the runtime they resolved; worker briefs carry stable `<installation>/bin/sumctl` commands, so their callbacks keep working across the switch; new dispatches use the new default; connected MCP clients keep their tool set until the client itself restarts.
+A refusal names the exact incompatibility and leaves the old installation serving.
+See `skills/update/SKILL.md` for bootstrap, canary, and rollback steps.
 
 ## Test it
 

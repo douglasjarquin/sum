@@ -22,7 +22,7 @@ The checkout where setup ran is the **installation**: it owns `.sum/` (records, 
 A **runtime** is a code-plus-dependency tree that a process executes from: the installation checkout itself today, or an immutable release staged beside it.
 
 `bin/sumctl` and `bin/herdr-mesh` are small stable entrypoints.
-Each resolves its runtime exactly once per invocation (the checkout, or the tree behind `.local/current` when a later activation slice creates that pointer), exports `SUM_INSTALL_ROOT=<installation>`, and executes that runtime's Python or Node.
+Each resolves its runtime exactly once per invocation (the checkout, or the tree behind `.local/current` once `sumctl update apply` creates that pointer), exports `SUM_INSTALL_ROOT=<installation>`, and executes that runtime's Python or Node.
 A started Mesh process and the `bin/herdr-scoped` bridge it spawns keep using the tree they started from; nothing re-reads a pointer mid-call.
 The helper honors `SUM_INSTALL_ROOT` only when it runs from that installation or from one of its releases, so an inherited variable cannot make a development or task checkout adopt another installation's state, and a release run directly refuses to own state.
 
@@ -49,6 +49,23 @@ Two concurrent requests for one SHA end with a single bundle; each installation 
 Staging never activates anything: no pointer, MCP configuration, or live process changes.
 Old releases are kept until you remove one deliberately; there is no automatic garbage collection.
 A release tree contains no `.sum`, and running its `bin/sumctl` directly is refused; only the installation's entrypoint selects a runtime.
+
+## Activation and rollback
+
+```sh
+./bin/sumctl update check|stage|apply [--ref REF] [--no-fetch]
+./bin/sumctl update status
+./bin/sumctl update rollback [--to SHA|checkout]
+```
+
+`.local/current` is the installation default; `bin/sumctl` and `bin/herdr-mesh` follow it when it exists and otherwise run the checkout.
+`update apply` resolves the source to a SHA merged on `origin/<default branch>` (only `refs/remotes/origin/*` are fetched; HEAD, the working tree, and remotes are never changed), stages the release, and only then takes `.local/update.lock`.
+Under the lock it validates the manifest, the installation state schema, each non-archived task's brief schema, the installed Herdr CLI version against `release.json`, the pinned tool links, and a read-only run of the candidate helper (`--version`, `status`, `show`) against the records; then it creates the new symlink under a private name and renames it over `.local/current`.
+`.local/updates.jsonl` records each refusal and selection (old/new SHA, blocking items, deferred work, post-check); the symlink, not the log, is the source of truth.
+A candidate needing another Herdr version is refused here.
+A changed MCP contract is applied with `deferred` naming the clients that keep their old tool set until they restart.
+`update rollback` reselects a staged release or the checkout through the same checks and touches nothing under `.sum`, the releases, or any worktree.
+Coexistence is the design: several releases stay staged, each process keeps the tree it started from, and every brief's absolute `<installation>/bin/sumctl` command reaches whichever runtime is the default at call time.
 
 An optional `--install-codex` installs `@openai/codex@0.153.4` into `.deps/harnesses`. It does not authenticate or switch accounts. Other existing harnesses remain usable.
 
