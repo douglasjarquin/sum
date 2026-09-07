@@ -40,6 +40,8 @@ def main() -> int:
     args = parser.parse_args()
     if not 1 <= args.samples <= 200:
         parser.error("--samples must be between 1 and 200")
+    source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    source_dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
     args.output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sum-benchmark-", dir="/tmp") as tmp:
         base = Path(tmp).resolve()
@@ -159,7 +161,7 @@ def main() -> int:
         opportunities = weighted_opportunities(scenarios, frequency)
         raw = {
             "schema": 1,
-            "source": {"sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())},
+            "source": {"sha": source_sha, "dirty": source_dirty},
             "environment": {"machine": platform.node(), "platform": platform.platform(), "python": platform.python_version(), "git": tool_version("git", "--version"), "node": tool_version("node", "--version"), "herdr": tool_version("herdr", "--version")},
             "methodology": {"warmups": 1, "randomization_seed": 37, "outliers": "retained", "harness_overhead_ms": round(sorted(overhead)[len(overhead) // 2], 3), "cache_conditions": {"cold": "new process; first filesystem sample retained", "warm-fs": "unrecorded warmup before new-process samples"}},
             "inventory": INVENTORY,
