@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Measure Sum helper hot paths in isolated labs and produce issue #37 raw data plus a decision report"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec python scripts/benchmark.py "$@"
