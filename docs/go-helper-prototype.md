@@ -29,7 +29,9 @@ python3 scripts/benchmark_go.py --binary /tmp/sumctl-go --output /tmp/sum-go-ben
 
 The benchmark includes compiled version and help paths plus representative fixture reads and an expected failure through the compatibility boundary.
 
-It records binary size, latency, exit codes, and the exact reference revision.
+It records binary size, latency, peak memory, exit codes, subprocess counts, allocation results, and the exact reference revision.
+
+The JSON also evaluates the #37 latency, frequency, behavior, and memory gates and records the explicit `defer` decision with its comparison inputs.
 
 The #37 gate remains 50 ms and 35% on a measured interactive hot path, 500 ms of serial frequency-weighted opportunity, zero behavior regressions, and at most 10% peak-memory regression.
 

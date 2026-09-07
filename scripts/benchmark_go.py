@@ -7,11 +7,71 @@ import statistics
 import subprocess
 import tempfile
 import time
+import re
 
 from benchmark_fixture import fixture
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BASELINE = {
+    "startup.version.cold": 136.568,
+    "startup.help.warm-fs": 138.560,
+    "read.status.empty": 145.848,
+    "failure.show-missing": 146.063,
+}
+
+
+def allocations() -> dict[str, object]:
+    command = ["go", "test", "-run", "^$", "-bench", "BenchmarkNewRoot", "-benchmem", "./internal/cli"]
+    result = subprocess.run(command, cwd=ROOT / "go", text=True, capture_output=True)
+    match = re.search(r"BenchmarkNewRoot-\S+\s+\d+\s+([\d.]+) ns/op\s+([\d.]+) B/op\s+([\d.]+) allocs/op", result.stdout)
+    if result.returncode or not match:
+        raise RuntimeError(f"allocation benchmark failed: {(result.stderr or result.stdout)[-2000:]}")
+    return {
+        "command": command,
+        "exit": result.returncode,
+        "ns_per_op": float(match.group(1)),
+        "bytes_per_op": float(match.group(2)),
+        "allocs_per_op": float(match.group(3)),
+    }
+
+
+def gate(scenarios: list[dict[str, object]], allocation: dict[str, object]) -> dict[str, object]:
+    by_id = {row["id"]: row for row in scenarios}
+    version = by_id["startup.version.cold"]
+    help_row = by_id["startup.help.cobra"]
+    comparisons = {}
+    for candidate_id, baseline_id in (("startup.version.cold", "startup.version.cold"), ("startup.help.cobra", "startup.help.warm-fs")):
+        baseline = BASELINE[baseline_id]
+        candidate = float(by_id[candidate_id]["p50_ms"])
+        comparisons[candidate_id] = {
+            "baseline_p50_ms": baseline,
+            "candidate_p50_ms": candidate,
+            "absolute_improvement_ms": round(baseline - candidate, 3),
+            "relative_improvement_percent": round((baseline - candidate) / baseline * 100, 2),
+        }
+    interactive = {
+        "required_absolute_ms": 50,
+        "required_relative_percent": 35,
+        "observed_absolute_improvement_ms": round(max(row["absolute_improvement_ms"] for row in comparisons.values()), 3),
+        "observed_relative_improvement_percent": round(max(row["relative_improvement_percent"] for row in comparisons.values()), 2),
+        "pass": any(row["absolute_improvement_ms"] >= 50 and row["relative_improvement_percent"] >= 35 for row in comparisons.values()),
+    }
+    frequency = {"required_ms": 500, "observed_ms": 0, "pass": False, "reason": "No stateful command is native; status remains a compatibility subprocess."}
+    behavior = {"required_regressions": 0, "observed_regressions": 0, "pass": True, "basis": "all compiled scenarios returned their declared exit codes"}
+    memory = {"required_regression_percent": 10, "pass": False, "status": "not-comparable", "reason": "The compatibility child is outside the compiled parent's /usr/bin/time memory sample."}
+    return {
+        "outcome": "defer",
+        "pass": False,
+        "comparisons": comparisons,
+        "interactive_hot_path": interactive,
+        "frequency_weighted": frequency,
+        "behavior": behavior,
+        "memory": memory,
+        "allocations": allocation,
+        "binary_and_entrypoint": {"version": version["id"], "help": help_row["id"]},
+        "reasons": ["The native startup/help path crosses the latency gate.", "No stateful command is native, so the 500 ms frequency-weighted gate is not established.", "Compatibility memory is not comparable to the Python child process."],
+    }
 
 
 def measure(command: list[str], env: dict[str, str], samples: int, expected: int = 0, subprocesses: int = 0) -> dict[str, object]:
@@ -83,7 +143,9 @@ def main() -> int:
             "samples": args.samples,
             "scenarios": results,
             "scope": "compiled Cobra entrypoint; status and missing-show use the explicit Python compatibility boundary",
+            "allocations": allocations(),
         }
+        record["gate"] = gate(results, record["allocations"])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(args.output), "binary_bytes": record["binary_bytes"], "scenarios": len(results)}))

@@ -85,6 +85,37 @@ func TestCompatibilityCommandPreservesLeadingDashAndRepeatedArguments(t *testing
 	}
 }
 
+func TestCompatibilityNormalizesGlobalHomeBeforeTheCommand(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	reference := filepath.Join(dir, "reference.sh")
+	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
+	for _, input := range [][]string{
+		{"--home", filepath.Join(dir, "before"), "status", "--arg=-m"},
+		{"status", "--home=" + filepath.Join(dir, "after"), "--arg=-m"},
+	} {
+		root := NewRoot(reference, &bytes.Buffer{}, &bytes.Buffer{})
+		root.SetArgs(input)
+		if err := root.ExecuteContext(context.Background()); err != nil {
+			t.Fatalf("compatibility command failed for %q: %v", input, err)
+		}
+		got, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "--home\n" + input[1] + "\nstatus\n--arg=-m\n"
+		if input[0] == "status" {
+			want = "--home=" + input[1][len("--home="):] + "\nstatus\n--arg=-m\n"
+		}
+		if string(got) != want {
+			t.Fatalf("reference argv = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestCompatibilityHonorsCancellation(t *testing.T) {
 	dir := t.TempDir()
 	reference := filepath.Join(dir, "reference.sh")
