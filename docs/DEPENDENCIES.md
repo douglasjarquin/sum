@@ -2,7 +2,7 @@
 
 ## Installation contract
 
-`mise.toml` pins Python 3.13.5, Node 22.19.0, GitHub CLI 2.100.0, Herdr 0.8.2, and quota-axi 0.1.37. Git and mise are host prerequisites. No global Node package installation is required.
+`mise.toml` pins Python 3.13.5, Node 22.19.0, GitHub CLI 2.100.0, Herdr 0.8.2, quota-axi 0.1.37, and codegraph 1.5.0 (`npm:@colbymchenry/codegraph`). Git and mise are host prerequisites. No global Node package installation is required.
 
 `mise-tasks/setup` installs those versions, then `scripts/setup.py` performs the first install:
 
@@ -24,6 +24,36 @@ The new version reaches an installation the way every dependency does: `release 
 `update apply` activates it with the usual checks and `update rollback` returns to the previous release; no running tool, harness, or MCP server is retargeted or restarted.
 Until a capable gh is the runtime's, the publisher reads the installed binary (`capabilities`: version and `pr edit --help`), reports `deferred`, and leaves local evidence and the PR body untouched; capture never depends on it.
 Nothing is installed per publication.
+
+## codegraph 1.5.0 per checkout
+
+`npm:@colbymchenry/codegraph` 1.5.0 is pinned in `mise.toml` and reaches an installation like every tool: `mise run setup` and `release stage` install the pinned package and link `.local/bin/codegraph` once (the link is never retargeted; a staged release carries its own).
+Provenance recorded in every `release.json` under `dependencies.codegraph`: package `@colbymchenry/codegraph`, version 1.5.0, MIT license, source https://github.com/colbymchenry/codegraph (release tag v1.5.0, git head `ea72e1b190921232aa7bd02e96bef5bbe4fe0ab6`), registry tarball `codegraph-1.5.0.tgz` with integrity `sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw==`.
+The package is a thin launcher whose per-platform bundle (a vendored Node 24 plus the app) is npm's optional dependency of the same exact version; sum sets `CODEGRAPH_NO_DOWNLOAD=1` so a missing bundle is a reported failure, never a download at task time.
+sum uses only the runtime's own link: a global `codegraph`, `npx`, `codegraph upgrade`, and `codegraph install` are never run, and a link whose `--version` is not the pin is reported `unavailable` rather than used.
+
+What sum runs, and only in the checkout it just created and validated (task worktree at `prepare`/`dispatch`, the detached root verification checkout of `verify --execute`, the self-development checkout of `dev prepare`):
+
+1. `codegraph status --json <checkout>` to see whether an index exists and belongs to that path (`indexPath`, `worktreeMismatch`), which version and extraction schema built it, and which uncommitted edits are pending.
+2. `codegraph init <checkout>` when there is none; `codegraph index --quiet <checkout>` (full rebuild) when the index belongs to another path, another codegraph version, or another extraction schema; `codegraph sync <checkout>` when edits are pending or HEAD moved since sum last built or synced it; nothing when everything matches.
+3. `codegraph status --json` again for the recorded index identity (`fileCount`, `nodeCount`, `edgeCount`, `dbSizeBytes`, `lastIndexed`, `builtWithVersion`).
+
+Every call runs with `CODEGRAPH_NO_DAEMON=1` (no shared background server, no watcher outlives the command), `CODEGRAPH_NO_DOWNLOAD=1`, and `NO_COLOR=1`, under one timeout (300 s by default; `SUM_GRAPH_TIMEOUT` is a lab knob) after which the child is killed and the attempt recorded as timed out, and inside one of two per-installation build slots (lock files under the temporary directory, never in `.sum`); a full house is recorded `deferred`, not queued without bound.
+The record (`.sum/tasks/<id>/graph.json`, summarized as `graph` in `task.json`, `dev.json`, and the root run evidence) carries the tool path and version, the checkout identity (top level, HEAD, branch, common Git directory), every attempt with action, exit, duration, and error, the index identity, a point-in-time freshness check, and the exact CLI commands the brief prints.
+States: `ready`, `failed` (retry with `sumctl graph init TASK_ID`), `exhausted` (three failed attempts; the recorded fallback is source inspection), `deferred`, `unavailable` (no pinned tool in this runtime, or a version other than the pin). None of them changes the task, its checkout, its worker, or the source-reading route.
+
+Facts taken from the pinned binary in an isolated lab, not from its README:
+
+- `codegraph init` writes `.codegraph/` with its own `.gitignore` (`*` and `!.gitignore`) and does not edit the repository's `.gitignore`; `.codegraph/.gitignore` is therefore an untracked file until something ignores the directory. sum's own `.gitignore` lists `.codegraph/`; for any other repository sum appends `.codegraph/` once, under a marker comment, to the repository-local `.git/info/exclude` (shared by that repository's worktrees, never committed, not a user configuration file) and records the write; a repository that already ignores the directory gets no write. The portable verify runner's dirty check (`--untracked-files=normal`) therefore stays clean.
+- A linked worktree without its own index answers queries from the main worktree's index with a warning that the results come from a different worktree; `status --json` reports `initialized: false` for it. Only an index inside the worktree is that worktree's graph, which is why sum initializes each one.
+- Indexing honors Git's ignore rules including `info/exclude`: sum's own index (47 files, 2,200 symbols, 10,204 edges at this commit) contains nothing under `projects/`, `.sum/`, `.local/`, `.deps/`, or `.artifacts/`.
+- `pendingChanges` in `status --json` counts only uncommitted edits: after a commit it reads zero while a query for the committed symbol returns nothing, and `status` never syncs on its own. sum therefore also records the HEAD it last built or synced and treats a moved HEAD as stale; the brief tells the worker to sync after commits, checkouts, and rebases, and a worker in CLI mode has no watcher.
+- `CODEGRAPH_DIR` accepts only a plain directory name, so the writable index always sits inside the checkout.
+- `codegraph install --print-config <agent>` prints the per-agent MCP snippet without writing; `sumctl graph config --harness claude|codex|cursor|opencode` prints the same shapes with the pinned binary path instead of a PATH lookup. sum never runs the installer, which by default writes agent configuration, an instructions block, and (for Claude Code) an auto-allow permission list.
+
+Measured on this machine (macOS, Apple Silicon, warm cache, real binary): `init` of sum's checkout 0.69 s wall (234 ms indexing), a repeated `init` on the existing index 0.08 s, `sync` after one edit 0.24 s, `query` 0.15 s, `explore` 0.14 s. Upstream's benchmark figures are not repeated here as local measurements.
+
+Cleanup classifies `.codegraph/` as a regenerable cache (with `__pycache__`, `node_modules`, `.artifacts`), so a merged task's checkout is removable with its index; a records backup carries `graph.json` and rebuild metadata, never an index; a release bundle is refused if it contains `.codegraph`. sum starts no watcher, so it stops none; a harness's own `codegraph serve --mcp` process inside a checkout is that session's and shows up as an ordinary occupant until the session exits.
 
 ## Installation identity versus runtime tree
 
@@ -141,6 +171,7 @@ The contract is harness-neutral. The matrix describes installation surfaces, **n
 - quota-axi package: https://github.com/kunchenguid/quota-axi/blob/main/package.json
 - GitHub CLI 2.99.0 (`--attach`): https://github.com/cli/cli/releases/tag/v2.99.0 and 2.100.0: https://github.com/cli/cli/releases/tag/v2.100.0 (2026-09-06)
 - before-and-after skill (PR block markup): https://github.com/vercel-labs/before-and-after at 8306d34f459b6704e08e6adb5829fcddb0dc3557
+- codegraph 1.5.0: https://github.com/colbymchenry/codegraph/releases/tag/v1.5.0 and https://www.npmjs.com/package/@colbymchenry/codegraph/v/1.5.0 (2026-09-06)
 - Codex release: https://github.com/openai/codex/releases/tag/rust-v0.153.4
 - Codex MCP configuration: https://developers.openai.com/codex/mcp/
 - Claude MCP configuration: https://code.claude.com/docs/en/mcp

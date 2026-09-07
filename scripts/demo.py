@@ -28,6 +28,7 @@ def main():
         brief.write_text("Add greeting.py with greet(name) returning 'Hello, <name>!' and verify it. Ask whether to preserve punctuation. Do not publish.")
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SUM_", "HERDR_"))}  # Inherited installation context never steers the lab.
         env.update(SUM_HERDR_BIN=str(ROOT / "tests/fixtures/herdr.py"), SUM_GH_BIN=str(ROOT / "tests/fixtures/gh.py"), FAKE_GH_ROOT=str(base / "fake-gh"),
+                   SUM_CODEGRAPH_BIN=str(ROOT / "tests/fixtures/codegraph.py"), FAKE_CODEGRAPH_ROOT=str(base / "fake-codegraph"),
                    SUM_MISE_BIN=str(ROOT / "tests/fixtures/mise.py"), FAKE_MISE_STOP=str(base),
                    SUM_LSOF_BIN=str(ROOT / "tests/fixtures/lsof.py"), FAKE_LSOF_ROOT=str(base / "fake-lsof"),
                    FAKE_HERDR_ROOT=str(base / "fake"), FAKE_PARENT_CWD=str(ROOT),
@@ -68,6 +69,20 @@ def main():
         refused = ctl("prepare", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", check=False)
         assert "1 of 1 slots for" in refused["error"] and len(ctl("status")["tasks"]) == 1
         print("PASS: delegated through sum to a strict fake Herdr; real isolated Git worktree created; a second writer for the same checkout was refused at admission.")
+        # Code graph (#36): the pinned codegraph initialized once in the new checkout, an index local to it, the brief carrying exact CLI commands and the fallback.
+        assert task["graph"]["state"] == "ready" and task["graph"]["last_action"] == "init", task["graph"]
+        assert (Path(task["worktree"]) / ".codegraph" / "codegraph.db").is_file() and not (repo / ".codegraph").exists()
+        assert git("status", "--porcelain", "--untracked-files=all", cwd=Path(task["worktree"])) == ""  # The index never dirties the checkout.
+        brief_text = Path(task["brief_path"]).read_text()
+        assert "## Code graph" in brief_text and "State: `ready`" in brief_text and "CODEGRAPH_NO_DAEMON=1" in brief_text and "Do not run `codegraph install`" in brief_text
+        graph = ctl("graph", "status", task["id"])
+        assert graph["recorded"]["state"] == "ready" and graph["live"]["freshness"]["state"] == "fresh" and graph["live"]["reconcile_needed"] is None, graph
+        assert ctl("graph", "init", task["id"])["graph"]["attempts"][-1]["action"] == "verified"  # A repeat init reconciles; it never rebuilds.
+        snippet = ctl("graph", "config", "--harness", "claude")
+        assert json.loads(snippet["snippet"])["mcpServers"]["codegraph"]["command"] == str(ROOT / "tests/fixtures/codegraph.py") and not (base / "home").exists()
+        fake_calls = [json.loads(line)["args"][0] for line in (base / "fake-codegraph/calls.jsonl").read_text().splitlines()]
+        assert not {"install", "serve", "upgrade", "uninstall"} & set(fake_calls), fake_calls
+        print("PASS: the pinned codegraph built one index inside the new task checkout only; the brief carries the exact CLI commands and the source fallback; a repeat init reconciled without a rebuild; the MCP snippet was printed, not written.")
         worker = ctl("init", pane=task["pane"])
         assert worker["role"] == "worker" and worker["task"] == task["id"]
         refused = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", pane="w-second:p1", check=False)

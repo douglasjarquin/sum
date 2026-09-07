@@ -74,6 +74,16 @@ Dispatch a real task with `--project`, open its brief, and confirm the `## Deliv
 Start a harness by hand inside the managed clone and run the installation's `bin/sumctl init` from there; it must refuse with "A project session is not a sum session" and leave `.sum/context.json` unchanged. Then, in that clone, run `mise tasks ls` and confirm sum's `test`/`demo` tasks resolve from the parent; run `sumctl env discover` for a task and confirm `task_origins` flags them as inherited rather than as project verification.
 Enroll `douglasjarquin/sum` itself and confirm the registration points at the installation with nothing cloned. Stage a release and confirm the bundle contains no `projects/` entry; take a records backup and confirm `state/projects.json` is present and no clone file is.
 
+## 12. Code graph per checkout with a real harness
+
+After `mise run setup` (or a staged release) on the pinned tools, confirm `./bin/sumctl doctor` lists `codegraph` as available at version 1.5.0 under the runtime's `.local/bin`, and that no global `codegraph install` was run (`~/.claude.json`, `~/.codex/config.toml`, `~/.cursor/mcp.json` unchanged).
+Dispatch a real task into a repository with a few source files; confirm the task record's `graph.state` is `ready`, `.codegraph/` exists only in the task worktree (not in the clone), `git status` there is clean, and the brief's `## Code graph` section names the runtime binary and the checkout path.
+In the worker pane, run the brief's `explore` and `query` commands, then commit an edit and run `query` for the new symbol before and after the brief's `sync` command; confirm the symbol appears only after the sync and that `graph status TASK_ID` reported `stale` with a moved HEAD in between.
+Dispatch a second task into the same repository (raise `--per-repository` first) with a different implementation of one symbol; confirm each worker's query returns its own implementation and `status --json` for the clone reports `initialized: false`.
+Run `./bin/sumctl verify TASK_ID --candidate SHA --execute` and confirm the evidence record's `graph.state` is `ready` with an index path under `.sum/tasks/TASK_ID/verification/` that no longer exists afterwards; run `dev prepare --name canary` and confirm its `graph.state`.
+Optionally print `./bin/sumctl graph config --harness <yours>`, merge it by hand into the task checkout's local MCP file, restart the harness in that pane, and confirm the graph tools answer for that checkout; confirm cleanup after the merge reports the `codegraph serve` process as an occupant until the session exits, and that the archived task's records keep `graph.json` while the removed checkout took its index with it.
+Record init and query wall times from `graph.json` attempts and your shell; upstream's published speedups are not evidence for this host.
+
 ## Record results
 
 For each real task, record all human-labeled questions, which were saved by workers, which were found during rundown, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.
