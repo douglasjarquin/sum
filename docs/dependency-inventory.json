@@ -117,7 +117,7 @@
       "checksum": "h1:0zOSupjKUxPKSocPT1Wtago+mUHU2/uZ4xSOY0FGReU=",
       "license": "Apache-2.0/MIT transition",
       "platforms": ["all supported Go targets"],
-      "requirements": ["go >= 1.25", "go/go.mod", "compiled into future Mesh builtin"],
+      "requirements": ["go >= 1.25", "go/go.mod", "compiled into Go Mesh builtin"],
       "role": "build",
       "owner": "Model Context Protocol",
       "contracts": {"cli": [], "mcp": ["MCP 2025-11-25 compatibility"]}
@@ -133,6 +133,18 @@
       "role": "runtime",
       "owner": "sum",
       "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []}
+    },
+    {
+      "id": "herdr-mesh-go",
+      "source": "go/cmd/herdr-mesh",
+      "version": "0.1.0",
+      "checksum": "release.json#dependencies.native.herdr-mesh-go.sha256",
+      "license": "MIT",
+      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
+      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["bin/herdr-mesh-go"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
     }
   ],
   "integrations": [

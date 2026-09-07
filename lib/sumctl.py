@@ -7881,6 +7881,22 @@ def resolve_tools(target):
 
 def build_native_artifact(target):
     target = Path(target)
+    source = target / "go"
+    if not (source / "go.mod").is_file():
+        raise SumError(f"Native Go source is missing from {source}")
+    outputs = {"sumctl-go": "./cmd/sumctl-go", "herdr-mesh-go": "./cmd/herdr-mesh"}
+    output_dir = target / ".local" / "bin"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pending = []
+    for name, package in outputs.items():
+        output = output_dir / name
+        if output.exists() or output.is_symlink():
+            if not output.is_file() or not os.access(output, os.X_OK):
+                raise SumError(f"Existing native artifact {output} is not executable")
+        else:
+            pending.append((name, package))
+    if not pending:
+        return output_dir / "sumctl-go"
     go = os.environ.get("SUM_GO_BIN")
     if not go:
         mise = shutil.which("mise")
@@ -7891,34 +7907,27 @@ def build_native_artifact(target):
     go = go or shutil.which("go")
     if not go:
         raise SumError("Missing Go 1.25+; install the pinned build tool with mise before staging native artifacts.")
-    source = target / "go"
-    if not (source / "go.mod").is_file():
-        raise SumError(f"Native Go source is missing from {source}")
-    output = target / ".local" / "bin" / "sumctl-go"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists() or output.is_symlink():
-        if not output.is_file() or not os.access(output, os.X_OK):
-            raise SumError(f"Existing native artifact {output} is not executable")
-        return output
-    temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        target = native_platform()
-        goos, goarch = target.split("-", 1)
-        build_env = {**os.environ, "CGO_ENABLED": "0", "GOENV": "off", "GOOS": goos, "GOARCH": goarch}
-        for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN"):
-            build_env.pop(variable, None)
-        run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, "./cmd/sumctl-go"], cwd=source,
-            env=build_env, timeout=900)
-        if not temporary.is_file() or not os.access(temporary, os.X_OK):
-            raise SumError(f"Go build did not produce an executable at {temporary}")
+    platform_name = native_platform()
+    goos, goarch = platform_name.split("-", 1)
+    build_env = {**os.environ, "CGO_ENABLED": "0", "GOENV": "off", "GOOS": goos, "GOARCH": goarch}
+    for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN"):
+        build_env.pop(variable, None)
+    for name, package in pending:
+        output = output_dir / name
+        temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
         try:
-            os.link(temporary, output)
-        except FileExistsError:
-            pass
-    finally:
-        if temporary.exists():
-            temporary.unlink()
-    return output
+            run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, package], cwd=source,
+                env=build_env, timeout=900)
+            if not temporary.is_file() or not os.access(temporary, os.X_OK):
+                raise SumError(f"Go build did not produce an executable at {temporary}")
+            try:
+                os.link(temporary, output)
+            except FileExistsError:
+                pass
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+    return output_dir / "sumctl-go"
 
 
 def native_platform():
@@ -8059,6 +8068,13 @@ def build_manifest(store, root, sha, target):
     native = {**native, "path": ".local/bin/sumctl-go", "sha256": sha256_file(native_path),
               "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
               "runtime": {"requires": []}}
+    native_artifacts = {"sumctl-go": native}
+    mesh_path = target / ".local" / "bin" / "herdr-mesh-go"
+    if mesh_path.is_file() and os.access(mesh_path, os.X_OK):
+        native_artifacts["herdr-mesh-go"] = {"source": "go/cmd/herdr-mesh", "version": "0.1.0",
+                                              "path": ".local/bin/herdr-mesh-go", "sha256": sha256_file(mesh_path),
+                                              "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
+                                              "runtime": {"requires": []}}
     state = read_json(store.home / "state.json") if (store.home / "state.json").is_file() else {}
     return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": VERSION,
             "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
@@ -8066,7 +8082,7 @@ def build_manifest(store, root, sha, target):
             "dependencies": {"herdr_mesh": {"remote": MESH_REMOTE, "rev": MESH_REV, "path": ".deps/herdr-mesh", "overlay": patched},
                              "tools": {"pins": tool_pins(target), "paths": tools},
                              "codegraph": {**CODEGRAPH_PROVENANCE, "pin": tool_pins(target).get(f"npm:{CODEGRAPH_PACKAGE}"), "path": ".local/bin/codegraph"},
-                             "inventory": inventory, "native": {"sumctl-go": native}},
+                             "inventory": inventory, "native": native_artifacts},
             "contracts": {"herdr_cli": HERDR_VERSION, "mcp": MCP_CONTRACT},
             "supports": {"state_schema": [SCHEMA], "brief_schema": [BRIEF_SCHEMA]},
             "staged_at": now(), "staged_by": {"machine": machine(), "installation": str(root), "instance": state.get("instance")}}
