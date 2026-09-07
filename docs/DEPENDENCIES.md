@@ -1,18 +1,29 @@
 # Dependencies and compatibility
 
+The machine-readable inventory in [`dependency-inventory.json`](dependency-inventory.json) is the single record of dependency source, version, checksum or provenance, license, supported platforms, requirements, build/runtime role, owner, and consumed CLI/MCP contracts.
+Release manifests copy that inventory and add the platform-specific SHA-256 of each staged native artifact.
+
 ## Installation contract
 
-`mise.toml` pins Python 3.13.5, Node 22.19.0, GitHub CLI 2.100.0, Herdr 0.8.2, quota-axi 0.1.37, and codegraph 1.5.0 (`npm:@colbymchenry/codegraph`). Git and mise are host prerequisites. No global Node package installation is required.
+`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.19.0, GitHub CLI 2.100.0, Herdr 0.8.2, quota-axi 0.1.37, and codegraph 1.5.0 (`npm:@colbymchenry/codegraph`). Git and mise are host prerequisites. No global Node package installation is required.
+
+The `go/` module pins Cobra v1.9.1 and the official Model Context Protocol Go SDK v1.6.1 in ordinary `go.mod`/`go.sum` files.
+The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, generator, provider SDK, or configuration framework is installed.
 
 `mise-tasks/setup` installs those versions, then `scripts/setup.py` performs the first install:
 
 1. Creates local runtime symlinks under `.local/bin`, once. An existing link is never retargeted, because a running process may depend on it; setup reports a differing pin instead.
 2. Clones Herdr Mesh at **54adef519aa6af4dcd0bbd72586d414abab90046** into a private staging directory, runs `npm ci --omit=dev --ignore-scripts` against the upstream committed lockfile there, applies the documented runtime overlay below, and renames the finished tree to `.deps/herdr-mesh`. An existing `.deps/herdr-mesh` is never rewritten, reinstalled, or re-patched; drift between its overlay and the current `patches/` is only reported.
 3. Copies the release-matched Herdr skill from `herdr --skill`.
-4. Generates repository-local MCP settings and tests MCP initialization/discovery.
+4. Builds the cgo-free `go/cmd/sumctl-go` companion as `.local/bin/sumctl-go`; it is not selected by `bin/sumctl` and does not replace the Python helper.
+5. Generates repository-local MCP settings and tests MCP initialization/discovery.
 
 Re-running setup is therefore safe while a coordinator, workers, or an MCP server are using the checkout; it changes nothing they hold open.
 Newer code or dependencies go into a staged release instead (below).
+
+The native companion is also built in a release staging directory with `CGO_ENABLED=0`.
+The staged binary's source, build requirements, runtime requirements, and SHA-256 are recorded in `release.json` under `dependencies.native.sumctl-go`.
+Running it requires no Go toolchain, module download, Node, Python, or Cobra generator.
 
 The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
 

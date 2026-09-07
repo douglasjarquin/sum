@@ -7878,6 +7878,43 @@ def resolve_tools(target):
     return links
 
 
+def build_native_artifact(target):
+    target = Path(target)
+    go = os.environ.get("SUM_GO_BIN")
+    if not go:
+        mise = shutil.which("mise")
+        if mise and (target / "mise.toml").is_file():
+            result = run([mise, "which", "go"], cwd=target, env=mise_env(target), timeout=60, check=False)
+            if result.returncode == 0 and result.stdout.strip():
+                go = result.stdout.strip()
+    go = go or shutil.which("go")
+    if not go:
+        raise SumError("Missing Go 1.25+; install the pinned build tool with mise before staging native artifacts.")
+    source = target / "go"
+    if not (source / "go.mod").is_file():
+        raise SumError(f"Native Go source is missing from {source}")
+    output = target / ".local" / "bin" / "sumctl-go"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists() or output.is_symlink():
+        if not output.is_file() or not os.access(output, os.X_OK):
+            raise SumError(f"Existing native artifact {output} is not executable")
+        return output
+    temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, "./cmd/sumctl-go"], cwd=source,
+            env={**os.environ, "CGO_ENABLED": "0"}, timeout=900)
+        if not temporary.is_file() or not os.access(temporary, os.X_OK):
+            raise SumError(f"Go build did not produce an executable at {temporary}")
+        try:
+            os.link(temporary, output)
+        except FileExistsError:
+            pass
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return output
+
+
 def install_mesh(destination, source_root, local_mesh=None):
     """Clone, install, and overlay the pinned Mesh into a fresh directory; never into one that already exists."""
     destination, source_root = Path(destination), Path(source_root)
@@ -7942,6 +7979,7 @@ def install_runtime(target, local_mesh=None):
     """Install every runtime dependency into one tree and prove the MCP server starts from it. Used for staging."""
     target = Path(target)
     resolve_tools(target)
+    build_native_artifact(target)
     install_mesh(target / ".deps" / "herdr-mesh", target, local_mesh=local_mesh)
     write_herdr_skill(target)
     run([target / ".local" / "bin" / "node", target / "scripts" / "mcp_smoke.mjs"], timeout=60)
@@ -7971,6 +8009,25 @@ def tool_pins(target):
         raise SumError(f"Cannot read bundled mise.toml: {exc}") from exc
 
 
+def dependency_inventory(root):
+    value = read_json(Path(root) / "docs" / "dependency-inventory.json")
+    validate_dependency_inventory(value)
+    return value
+
+
+def validate_dependency_inventory(value):
+    if value.get("schema") != 1 or not isinstance(value.get("dependencies"), list):
+        raise SumError("Dependency inventory has an unsupported schema")
+    required = {"id", "source", "version", "checksum", "license", "platforms", "requirements", "role", "owner", "contracts"}
+    seen = set()
+    for entry in value["dependencies"]:
+        if not isinstance(entry, dict) or not required.issubset(entry) or not entry.get("id"):
+            raise SumError("Dependency inventory contains an incomplete entry")
+        if entry["id"] in seen:
+            raise SumError(f"Dependency inventory repeats {entry['id']}")
+        seen.add(entry["id"])
+
+
 def build_manifest(store, root, sha, target):
     target = Path(target)
     files = {name: content_id(target / name) for name in source_files(root, sha)}
@@ -7982,13 +8039,21 @@ def build_manifest(store, root, sha, target):
         tools[name] = os.readlink(link)
     mesh = target / ".deps" / "herdr-mesh"
     patched = read_json(mesh / ".sum-patched")
+    inventory = dependency_inventory(target)
+    native = next((entry for entry in inventory["dependencies"] if entry["id"] == "sumctl-go"), None)
+    native_path = target / ".local" / "bin" / "sumctl-go"
+    if native is None or not native_path.is_file() or not os.access(native_path, os.X_OK):
+        raise SumError("Release is missing the staged native sumctl-go artifact")
+    native = {**native, "path": ".local/bin/sumctl-go", "sha256": sha256_file(native_path),
+              "build": {"cgo": False, "requires": ["go >= 1.25"]}, "runtime": {"requires": []}}
     state = read_json(store.home / "state.json") if (store.home / "state.json").is_file() else {}
     return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": VERSION,
             "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
             "files": files,
             "dependencies": {"herdr_mesh": {"remote": MESH_REMOTE, "rev": MESH_REV, "path": ".deps/herdr-mesh", "overlay": patched},
                              "tools": {"pins": tool_pins(target), "paths": tools},
-                             "codegraph": {**CODEGRAPH_PROVENANCE, "pin": tool_pins(target).get(f"npm:{CODEGRAPH_PACKAGE}"), "path": ".local/bin/codegraph"}},
+                             "codegraph": {**CODEGRAPH_PROVENANCE, "pin": tool_pins(target).get(f"npm:{CODEGRAPH_PACKAGE}"), "path": ".local/bin/codegraph"},
+                             "inventory": inventory, "native": {"sumctl-go": native}},
             "contracts": {"herdr_cli": HERDR_VERSION, "mcp": MCP_CONTRACT},
             "supports": {"state_schema": [SCHEMA], "brief_schema": [BRIEF_SCHEMA]},
             "staged_at": now(), "staged_by": {"machine": machine(), "installation": str(root), "instance": state.get("instance")}}
@@ -8042,6 +8107,22 @@ def verify_release(path, expected_sha=None):
         link = path / ".local" / "bin" / name
         if not link.is_symlink() or os.readlink(link) != paths.get(name) or not link.resolve().is_file():
             raise SumError(f"{path}: pinned tool {name} is missing or does not resolve")
+    native = manifest.get("dependencies", {}).get("native", {})
+    inventory = manifest.get("dependencies", {}).get("inventory")
+    if inventory is not None:
+        validate_dependency_inventory(inventory)
+    if native:
+        if not isinstance(native, dict) or "sumctl-go" not in native:
+            raise SumError(f"{path}: native dependency metadata is incomplete")
+        for name, artifact in native.items():
+            relative = artifact.get("path") if isinstance(artifact, dict) else None
+            if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or ".." in PurePosixPath(relative).parts:
+                raise SumError(f"{path}: native artifact {name} has an invalid path")
+            member = path / relative
+            if member.is_symlink() or not member.is_file() or not os.access(member, os.X_OK):
+                raise SumError(f"{path}: native artifact {name} is missing or not executable")
+            if artifact.get("sha256") != sha256_file(member):
+                raise SumError(f"{path}: native artifact {name} does not match its manifest hash")
     return manifest
 
 

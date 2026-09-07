@@ -1,0 +1,158 @@
+{
+  "schema": 1,
+  "generated_by": "issue-40",
+  "dependencies": [
+    {
+      "id": "go",
+      "source": "https://go.dev/dl/",
+      "version": "1.25.0",
+      "checksum": "mise.toml#tools.go",
+      "license": "BSD-3-Clause",
+      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
+      "requirements": ["setup-only", "CGO_ENABLED=0"],
+      "role": "build",
+      "owner": "sum",
+      "contracts": {"cli": ["go build"], "mcp": []}
+    },
+    {
+      "id": "python",
+      "source": "https://www.python.org/",
+      "version": "3.13.5",
+      "checksum": "mise.toml#tools.python",
+      "license": "PSF-2.0",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["runtime", "setup"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["sumctl.py"], "mcp": []}
+    },
+    {
+      "id": "node",
+      "source": "https://nodejs.org/",
+      "version": "22.19.0",
+      "checksum": "mise.toml#tools.node",
+      "license": "MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["runtime", "setup", "Mesh MCP server"],
+      "role": "runtime",
+      "owner": "sum/herdr-mesh",
+      "contracts": {"cli": ["node scripts/mcp_smoke.mjs"], "mcp": ["stdio"]}
+    },
+    {
+      "id": "herdr",
+      "source": "https://github.com/herdrdev/herdr",
+      "version": "0.8.2",
+      "checksum": "mise.toml#tools.herdr",
+      "license": "MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["runtime", "named Herdr session"],
+      "role": "runtime",
+      "owner": "Herdr",
+      "contracts": {"cli": ["agent", "pane", "workspace", "api schema"], "mcp": []}
+    },
+    {
+      "id": "gh",
+      "source": "https://github.com/cli/cli",
+      "version": "2.100.0",
+      "checksum": "mise.toml#tools.github-cli",
+      "license": "MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["setup/release staging", "existing user authentication"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["gh pr edit --attach", "gh repo clone"], "mcp": []}
+    },
+    {
+      "id": "quota-axi",
+      "source": "https://github.com/kunchenguid/quota-axi",
+      "version": "0.1.37",
+      "checksum": "mise.toml#tools.npm:quota-axi",
+      "license": "MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["only scopes not migrated to Remainder"],
+      "role": "runtime",
+      "owner": "quota-axi",
+      "contracts": {"cli": ["quota-axi"], "mcp": []}
+    },
+    {
+      "id": "codegraph",
+      "source": "https://github.com/colbymchenry/codegraph",
+      "version": "1.5.0",
+      "checksum": "sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw==",
+      "license": "MIT",
+      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
+      "requirements": ["optional per checkout", "CODEGRAPH_NO_DOWNLOAD=1"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["status --json", "init", "sync", "query", "explore"], "mcp": ["stdio optional"]}
+    },
+    {
+      "id": "herdr-mesh",
+      "source": "https://github.com/runchr-works/herdr-mesh",
+      "version": "54adef519aa6af4dcd0bbd72586d414abab90046",
+      "checksum": "git:54adef519aa6af4dcd0bbd72586d414abab90046",
+      "license": "MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["setup/release staging", "Node runtime", "sum overlay"],
+      "role": "runtime",
+      "owner": "Herdr Mesh",
+      "contracts": {"cli": ["bin/herdr-mesh"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
+    },
+    {
+      "id": "cobra",
+      "source": "https://github.com/spf13/cobra",
+      "version": "v1.9.1",
+      "checksum": "h1:CXSaggrXdbHK9CF+8ywj8Amf7PBRmPCOJugH954Nnlo=",
+      "license": "Apache-2.0",
+      "platforms": ["all supported Go targets"],
+      "requirements": ["go/go.mod", "compiled into native artifacts"],
+      "role": "build",
+      "owner": "sum",
+      "contracts": {"cli": ["Cobra command/flag/help surface"], "mcp": []}
+    },
+    {
+      "id": "mcp-go-sdk",
+      "source": "https://github.com/modelcontextprotocol/go-sdk",
+      "version": "v1.6.1",
+      "checksum": "h1:0zOSupjKUxPKSocPT1Wtago+mUHU2/uZ4xSOY0FGReU=",
+      "license": "Apache-2.0/MIT transition",
+      "platforms": ["all supported Go targets"],
+      "requirements": ["go >= 1.25", "go/go.mod", "compiled into future Mesh builtin"],
+      "role": "build",
+      "owner": "Model Context Protocol",
+      "contracts": {"cli": [], "mcp": ["MCP 2025-11-25 compatibility"]}
+    },
+    {
+      "id": "sumctl-go",
+      "source": "go/cmd/sumctl-go",
+      "version": "sum 0.1.0",
+      "checksum": "release.json#dependencies.native.sumctl-go.sha256",
+      "license": "MIT",
+      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
+      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []}
+    }
+  ],
+  "integrations": [
+    {
+      "id": "remainder",
+      "source": "https://github.com/douglasjarquin/remainder",
+      "version": null,
+      "status": "external-not-consumed",
+      "owner": "Remainder",
+      "contracts": {"cli": [], "mcp": []},
+      "note": "Sum does not install, copy, or invoke Remainder until its independently released route is approved."
+    },
+    {
+      "id": "pinchos",
+      "source": "https://github.com/douglasjarquin/pinchos",
+      "version": null,
+      "status": "independent-consumer",
+      "owner": "Pinchos",
+      "contracts": {"cli": [], "mcp": []},
+      "note": "Pinchos owns its executable, TOML, scheduler, and cache; Sum does not modify them."
+    }
+  ]
+}
