@@ -126,3 +126,25 @@ func TestStdioMalformedInputAndEOFShutdown(t *testing.T) {
 		t.Fatal("malformed input produced no stderr diagnostic")
 	}
 }
+
+func TestStdioEOFShutdownAfterInitialize(t *testing.T) {
+	command, input, output, stderr := protocolProcess(t)
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for output.Scan() {
+		var frame map[string]any
+		if err := json.Unmarshal(output.Bytes(), &frame); err != nil {
+			t.Fatalf("EOF path wrote non-JSON: %q", output.Bytes())
+		}
+	}
+	if err := command.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if output.Err() != nil {
+		t.Fatalf("stdout read error: %v", output.Err())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
