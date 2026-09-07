@@ -26,6 +26,12 @@ import time
 import tomllib
 import uuid
 
+_MEASUREMENT = None
+if os.environ.get("SUM_MEASURE_FILE"):
+    from sum_measure import Recorder
+
+    _MEASUREMENT = Recorder.from_environment()
+
 RUNTIME = Path(__file__).resolve().parents[1]  # The code/dependency tree this process runs from: a checkout or an immutable release.
 RELEASE_MANIFEST = "release.json"
 RELEASES = Path(".local") / "releases"
@@ -118,6 +124,9 @@ def emit(value):
 
 def run(argv, *, cwd=None, timeout=20, check=True, env=None):
     """Never interpret command arguments through a shell."""
+    measured_at = time.perf_counter_ns() if _MEASUREMENT else 0
+    if _MEASUREMENT:
+        _MEASUREMENT.add_subprocess(str(argv[0]))
     try:
         result = subprocess.run([str(a) for a in argv], cwd=cwd, text=True, env=env,
                                 capture_output=True, timeout=timeout)
@@ -125,6 +134,9 @@ def run(argv, *, cwd=None, timeout=20, check=True, env=None):
         raise CommandTimeout(f"{Path(str(argv[0])).name}: timed out after {timeout}s; its effect is unknown") from exc
     except OSError as exc:
         raise SumError(f"{Path(str(argv[0])).name}: {exc}") from exc
+    finally:
+        if _MEASUREMENT:
+            _MEASUREMENT.add_phase("subprocess", measured_at)
     if check and result.returncode:
         detail = (result.stderr or result.stdout).strip()[-4000:]
         raise SumError(f"{Path(str(argv[0])).name} exited {result.returncode}: {detail}")
@@ -132,6 +144,7 @@ def run(argv, *, cwd=None, timeout=20, check=True, env=None):
 
 
 def atomic_json(path, value):
+    measured_at = time.perf_counter_ns() if _MEASUREMENT else 0
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     fd, tmp = tempfile.mkstemp(prefix=".write-", dir=path.parent)
@@ -150,13 +163,19 @@ def atomic_json(path, value):
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+        if _MEASUREMENT:
+            _MEASUREMENT.add_phase("io.atomic_json", measured_at)
 
 
 def read_json(path):
+    measured_at = time.perf_counter_ns() if _MEASUREMENT else 0
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise SumError(f"Cannot read {path}: {exc}") from exc
+    finally:
+        if _MEASUREMENT:
+            _MEASUREMENT.add_phase("io.read_json", measured_at)
 
 
 def text_input(args):
@@ -257,7 +276,10 @@ class Store:
     def lock(self):
         self.init()
         with (self.home / ".lock").open("a") as handle:
+            measured_at = time.perf_counter_ns() if _MEASUREMENT else 0
             fcntl.flock(handle, fcntl.LOCK_EX)
+            if _MEASUREMENT:
+                _MEASUREMENT.add_phase("lock.state_wait", measured_at)
             try:
                 yield
             finally:
@@ -268,7 +290,10 @@ class Store:
         """Serializes delivery passes toward recipients, not task-state writes: concurrent hook processes see each other's attempts."""
         self.init()
         with (self.home / ".deliver.lock").open("a") as handle:
+            measured_at = time.perf_counter_ns() if _MEASUREMENT else 0
             fcntl.flock(handle, fcntl.LOCK_EX)
+            if _MEASUREMENT:
+                _MEASUREMENT.add_phase("lock.delivery_wait", measured_at)
             try:
                 yield
             finally:
@@ -2773,7 +2798,10 @@ def metadata_lock(store):
     """Serializes projection passes (a task write and a native event may coincide) without holding the task-state lock during Herdr I/O."""
     store.init()
     with (store.home / ".metadata.lock").open("a") as handle:
+        measured_at = time.perf_counter_ns() if _MEASUREMENT else 0
         fcntl.flock(handle, fcntl.LOCK_EX)
+        if _MEASUREMENT:
+            _MEASUREMENT.add_phase("lock.metadata_wait", measured_at)
         try:
             yield
         finally:
@@ -8711,6 +8739,9 @@ def main(argv=None):
         print(json.dumps({"error": f"{RUNTIME} is an immutable release tree. Run the installation's bin/sumctl, which selects a runtime and keeps state in its own .sum; a release never owns state."}), file=sys.stderr)
         return 1
     args = parser().parse_args(argv)
+    if _MEASUREMENT:
+        nested = getattr(args, f"{args.command}_command", None)
+        _MEASUREMENT.set_command(args.command, nested)
     try:
         store = Store(args.home)
         guard_candidate(store, {"release": lambda: f"release-{args.release_command}", "brief": lambda: f"brief-{args.brief_command}", "settings": lambda: f"settings-{args.settings_command}", "preset": lambda: f"preset-{args.preset_command}",
@@ -8940,4 +8971,13 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    exit_code = 1
+    try:
+        exit_code = main()
+    except SystemExit as exc:
+        exit_code = exc.code if isinstance(exc.code, int) else 1
+        raise
+    finally:
+        if _MEASUREMENT:
+            _MEASUREMENT.finish(exit_code)
+    sys.exit(exit_code)
