@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+BINARY="$ROOT/.local/bin/herdr-mesh-go"
+if [[ ! -x "$BINARY" ]]; then
+  echo "herdr-mesh-go: staged native binary is missing; build the release or run the native build" >&2
+  exit 1
+fi
+export SUM_INSTALL_ROOT="${SUM_INSTALL_ROOT:-$ROOT}"
+export SUM_HERDR_BIN="${SUM_HERDR_BIN:-$ROOT/.local/bin/herdr}"
+exec "$BINARY" "$@"

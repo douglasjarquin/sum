@@ -40,6 +40,18 @@ class NativePackagingTest(unittest.TestCase):
                 self.assertEqual(sumctl.build_native_artifact(target), output)
             self.assertEqual(output.read_bytes(), original)
 
+    def test_native_build_stages_mesh_companion_without_runtime_tools(self):
+        with tempfile.TemporaryDirectory(prefix="sum-mesh-native-") as name:
+            target = Path(name)
+            (target / "go").symlink_to(ROOT / "go", target_is_directory=True)
+            empty = target / "empty"
+            empty.mkdir()
+            with mock.patch.dict(sumctl.os.environ, {"SUM_GO_BIN": shutil.which("go"), "GOROOT": "/stale/go", "GOTOOLDIR": "/stale/go/pkg/tool", "GOTOOLCHAIN": "local"}):
+                sumctl.build_native_artifact(target)
+            mesh = target / ".local" / "bin" / "herdr-mesh-go"
+            result = subprocess.run([str(mesh), "--version"], env={"PATH": str(empty)}, capture_output=True, text=True, check=True)
+            self.assertEqual((result.stdout, result.stderr), ("herdr-mesh 0.1.0\n", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
