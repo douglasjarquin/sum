@@ -8,9 +8,9 @@ Use this only from the pane registered as coordinator by `sumctl init`; the help
 
 ## Capacity
 
-`./bin/sumctl settings show` gives the limits (default two slots globally, one per repository), their source, and who holds them.
+`./bin/sumctl settings show` gives the configured limits, their source, and who holds them; absent capacity is unlimited.
 Every non-archived task holds a slot; a report or an idle pane frees nothing, only `archive --acknowledge` after you inspected and preserved the work.
-A refused dispatch names the held slots. Do not archive to make room unless the work was actually inspected, and do not raise capacity yourself: `settings set --global N` is the boss's decision, and per-repository isolation stays at one writer per checkout unless the boss also raises `--per-repository`.
+A refused dispatch names the held slots. Do not archive to make room unless the work was actually inspected, and do not set capacity yourself: `settings set --global N` is the boss's decision, and per-repository isolation is enforced only when a capacity block is configured.
 A free slot is never a reason to dispatch; work starts only from an explicit approved instruction.
 
 ## Intake

@@ -242,7 +242,7 @@ class LegacyAndMigrationTest(ProjectLab):
         self.assertIn("Migration refused", refused["error"])
         self.assertTrue(legacy.is_dir() and (legacy / "wip.txt").is_file())
         self.assertEqual(self.git("rev-parse", "HEAD", cwd=task["worktree"]), self.git("rev-parse", "HEAD", cwd=legacy))
-        # Dispatch keeps working from the legacy path by name, and a second writer into the same clone is still refused at admission.
+        self.ctl("settings", "set", "--global", "2", "--per-repository", "1")
         self.assertIn("Capacity", self.brief_for("--project", "acme/widgets").get("error", "Capacity") if False else
                       self.cli([self.root_install / "bin/sumctl", "--home", self.store.home, "prepare", "--project", "acme/widgets", "--brief", str(self.root / "brief.md"), "--harness", "codex", "--approved"]).stderr)
 

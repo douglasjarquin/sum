@@ -65,7 +65,7 @@ CORE_TOOLS = ("python3", "node", "herdr", "gh")  # A release bundle must carry a
 RELEASE_SCHEMA = 1
 MAX_TEXT = 256 * 1024
 TASK_ID = re.compile(r"t-[a-f0-9]{12}\Z")
-SETTINGS_FILE = "settings.json"   # The one owner of executable admission values and worker launch defaults; absent means the defaults below.
+SETTINGS_FILE = "settings.json"
 SETTINGS_SCHEMA = 1
 SETTINGS_KEYS = ("schema", "capacity", "worker", "presets", "reviewer")
 PRESET_NAME = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
@@ -480,12 +480,11 @@ def validate_reviewer(value, presets):
 
 
 def load_settings(store):
-    """Read and validate `.sum/settings.json`. Absent: defaults. Present but invalid: an error before any side effect."""
     path = store.home / SETTINGS_FILE
     if path.is_symlink():
         raise SumError(f"{path} must not be a symlink.")
     if not path.is_file():
-        return {"schema": SETTINGS_SCHEMA, "capacity": dict(DEFAULT_CAPACITY), "worker": None, "presets": {}, "reviewer": None, "source": "defaults", "path": str(path)}
+        return {"schema": SETTINGS_SCHEMA, "capacity": None, "worker": None, "presets": {}, "reviewer": None, "source": "unlimited", "path": str(path)}
     try:
         value = read_json(path)
         if not isinstance(value, dict):
@@ -495,13 +494,13 @@ def load_settings(store):
         unknown = sorted(set(value) - set(SETTINGS_KEYS))
         if unknown:
             raise SumError(f"unknown keys {unknown}; allowed: {sorted(SETTINGS_KEYS)}")
-        capacity = validate_capacity(value.get("capacity", {}))
+        capacity = validate_capacity(value["capacity"]) if "capacity" in value else None
         presets = validate_presets(value.get("presets"))
         worker = validate_worker(value.get("worker"), presets)
         reviewer = validate_reviewer(value.get("reviewer"), presets)
     except SumError as exc:
         raise SumError(f"Invalid {path}: {exc}. Fix or remove the file; nothing was admitted or changed, and existing tasks keep running. "
-                       f"Defaults ({DEFAULT_CAPACITY['global']} global, {DEFAULT_CAPACITY['per_repository']} per repository, worker same as root) apply only when the file is absent.") from exc
+                       "Only an explicit capacity block configures admission.") from exc
     return {"schema": SETTINGS_SCHEMA, "capacity": capacity, "worker": worker, "presets": presets, "reviewer": reviewer, "source": "settings.json", "path": str(path)}
 
 
@@ -532,18 +531,20 @@ def admit(store, tasks, repository):
     occupied = occupancy(tasks)
     limits = settings["capacity"]
     same_repository = occupied["by_repository"].get(str(repository), [])
-    if occupied["global"] >= limits["global"]:
+    if limits is not None and occupied["global"] >= limits["global"]:
         raise SumError(f"Capacity: {occupied['global']} of {limits['global']} global execution slots are held ({settings['source']}). "
                        "Archive inspected work with `archive --acknowledge` or raise capacity.global in .sum/settings.json; nothing was dispatched.")
-    if len(same_repository) >= limits["per_repository"]:
+    if limits is not None and len(same_repository) >= limits["per_repository"]:
         raise SumError(f"Capacity: {len(same_repository)} of {limits['per_repository']} slots for {repository} are held by {same_repository} ({settings['source']}). "
-                       "One checkout gets one writer by default; raising capacity.global never raises this limit.")
+                       "Raise capacity.per_repository in .sum/settings.json if this checkout needs another writer.")
     return {"at": now(), "limits": limits, "source": settings["source"],
             "occupied_before": {"global": occupied["global"], "repository": len(same_repository)}}
 
 
 def settings_document(settings):
-    document = {"schema": SETTINGS_SCHEMA, "capacity": settings["capacity"]}
+    document = {"schema": SETTINGS_SCHEMA}
+    if settings.get("capacity") is not None:
+        document["capacity"] = settings["capacity"]
     if settings.get("worker"):
         document["worker"] = settings["worker"]
     if settings.get("presets"):
@@ -564,11 +565,16 @@ def save_settings(store, settings):
 SETTINGS_NOTE = "Applies to future admissions and dispatches only. No worker was stopped, relaunched, or switched; the coordinator's own harness and model are untouched."
 
 
-def write_settings(store, capacity=None, worker=None, clear_worker=False, worker_preset=None, reviewer_preset=None, clear_reviewer=False):
+def write_settings(store, capacity=None, worker=None, clear_worker=False, worker_preset=None, reviewer_preset=None, clear_reviewer=False, clear_capacity=False):
     """Validate the merged settings fully before one atomic write; a saved worker default changes future dispatches only."""
     with store.lock():
         current = load_settings(store)
-        merged_capacity = validate_capacity({**current["capacity"], **(capacity or {})})
+        if clear_capacity:
+            merged_capacity = None
+        elif capacity:
+            merged_capacity = validate_capacity({**(current["capacity"] or {}), **capacity})
+        else:
+            merged_capacity = current["capacity"]
         merged_worker = current["worker"]
         if clear_worker:
             merged_worker = None
@@ -8631,12 +8637,13 @@ def parser():
     s.add_argument("--parent-only", action="store_true")
     s = sub.add_parser("backup", help="Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code")
     s.add_argument("destination")
-    s = sub.add_parser("settings", help="Show or set the validated optional admission settings in .sum/settings.json (defaults: 2 global, 1 per repository)")
+    s = sub.add_parser("settings", help="Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited")
     g = s.add_subparsers(dest="settings_command", required=True)
     g.add_parser("show", help="Current limits, their source, and held slots; writes nothing")
     x = g.add_parser("set", help="Coordinator only: write validated capacity values atomically; future admissions only, nothing running is touched")
     x.add_argument("--global", dest="global_limit", type=int, help=f"Execution slots across all repositories (1-{CAPACITY_MAX})")
     x.add_argument("--per-repository", dest="per_repository", type=int, help=f"Execution slots per repository (1-{CAPACITY_MAX}, at most --global)")
+    x.add_argument("--clear-capacity", action="store_true", help="Remove the capacity block and return admission to unlimited without changing worker or preset settings")
     x.add_argument("--worker-harness", help="Save the default worker harness for future dispatches (the coordinator keeps its own)")
     x.add_argument("--worker-model", help="Save the default worker model for the saved worker harness (needs a verified adapter)")
     x.add_argument("--worker-reasoning", help="Save the default worker reasoning/effort level for the saved worker harness")
@@ -8882,16 +8889,19 @@ def main(argv=None):
                 require_coordinator(store, context())
                 changes = {k: v for k, v in (("global", args.global_limit), ("per_repository", args.per_repository)) if v is not None}
                 worker = {k: v for k, v in (("harness", args.worker_harness), ("model", args.worker_model), ("reasoning", args.worker_reasoning)) if v is not None}
+                if args.clear_capacity and changes:
+                    raise SumError("--clear-capacity conflicts with --global/--per-repository.")
                 if args.clear_worker and (worker or args.worker_preset is not None):
                     raise SumError("--clear-worker conflicts with --worker-* values.")
                 if args.worker_preset is not None and worker:
                     raise SumError("--worker-preset conflicts with --worker-harness/--worker-model/--worker-reasoning: a default is either a preset reference or a plain specification.")
                 if args.clear_reviewer and args.reviewer_preset is not None:
                     raise SumError("--clear-reviewer conflicts with --reviewer-preset.")
-                if not changes and not worker and args.worker_preset is None and not args.clear_worker and args.reviewer_preset is None and not args.clear_reviewer:
-                    raise SumError("Give --global, --per-repository, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, or --clear-reviewer.")
+                if not changes and not args.clear_capacity and not worker and args.worker_preset is None and not args.clear_worker and args.reviewer_preset is None and not args.clear_reviewer:
+                    raise SumError("Give --global, --per-repository, --clear-capacity, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, or --clear-reviewer.")
                 value = write_settings(store, changes, worker, args.clear_worker, worker_preset=args.worker_preset,
-                                       reviewer_preset=args.reviewer_preset, clear_reviewer=args.clear_reviewer)
+                                       reviewer_preset=args.reviewer_preset, clear_reviewer=args.clear_reviewer,
+                                       clear_capacity=args.clear_capacity)
         elif args.command == "preset":
             if args.preset_command == "list":
                 value = preset_list(store)

@@ -191,7 +191,7 @@ Precedence stays fixed: an explicit `--harness`/`--model`/`--reasoning` refines 
 The preset is expanded at `prepare` and the resolved specification is persisted with the task together with the preset's name and revision (`launch.preset`); `preset set` bumps the revision and, like `preset delete`, changes future dispatches only, so a prepared or running task keeps exactly what it was prepared with.
 A model in a preset is CLI-requested, never runtime-verified, and presets change nothing about authorization, accounts, or the advisory quota checks.
 
-By default there are at most two execution slots globally and one per repository; see [capacity](#capacity) for the optional settings file. Repair limits in worker instructions are **soft**, not enforced spending or wall-clock limits.
+Admission is unlimited until a capacity block is configured; see [capacity](#capacity) for the optional settings file. Repair limits in worker instructions are **soft**, not enforced spending or wall-clock limits.
 
 ### Capacity
 
@@ -202,10 +202,11 @@ Admission is decided atomically under the local record lock from the records alo
 ```sh
 ./bin/sumctl settings show                                   # limits, their source, and the held slots per repository
 ./bin/sumctl settings set --global 12 --per-repository 1     # coordinator only; validated and written atomically
+./bin/sumctl settings set --clear-capacity                   # return to unlimited without changing worker or preset settings
 ```
 
-`.sum/settings.json` is the one owner of executable admission values, worker launch defaults, and named presets (`{"schema": 1, "capacity": {"global": N, "per_repository": M}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."} | {"preset": "deep"}, "presets": {"deep": {"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1}}, "reviewer": {"preset": "review"}}`; capacity integers from 1 to 64, `per_repository` at most `global`; `worker`, `presets`, and `reviewer` are optional, a model/reasoning needs a verified adapter for its harness, and a referenced preset must exist).
-Precedence is that file, then the built-in defaults; an installation without the file keeps the original two-and-one capacity.
+`.sum/settings.json` is the one owner of executable admission values, worker launch defaults, and named presets (`{"schema": 1, "capacity": {"global": N, "per_repository": M}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."} | {"preset": "deep"}, "presets": {"deep": {"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1}}, "reviewer": {"preset": "review"}}`); capacity integers from 1 to 64, `per_repository` at most `global`; `capacity`, `worker`, `presets`, and `reviewer` are optional, a model/reasoning needs a verified adapter for its harness, and a referenced preset must exist.
+Absent `capacity` means no admission cap, including when the settings file exists for worker or preset defaults; `settings show` reports `limits: null` for this state.
 `.sum/preferences.md` and `.sum/projects.md` stay narrative and never set a limit or a worker default; only the boss's explicit "make this my default" becomes a `settings set --worker-*` write.
 An invalid file is refused with the exact defect before any side effect: nothing is admitted, no task or worker is touched, `ask`/`report`/`show` keep working, and `settings set` refuses to overwrite it silently.
 Lowering a limit affects future admission only; tasks above the new limit keep their slots, processes, and checkouts.
