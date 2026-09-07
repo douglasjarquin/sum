@@ -1219,6 +1219,9 @@ def fake_installer(target, local_mesh=None):
     for name in sumctl.TOOLS:
         real = {"python3": sys.executable, "node": shutil.which("node") or sys.executable}.get(name, str(ROOT / "tests/fixtures/herdr.py"))
         sumctl.link_tool(target / ".local" / "bin" / name, real)
+    native = target / ".local" / "bin" / "sumctl-go"
+    native.write_text("#!/bin/sh\nprintf '%s\\n' 'sum 0.1.0'\n")
+    native.chmod(0o755)
     (target / ".local" / "skills" / "herdr").mkdir(parents=True)
     (target / ".local" / "skills" / "herdr" / "SKILL.md").write_text("fake herdr skill\n")
 
@@ -1319,6 +1322,25 @@ class ReleaseTest(ReleaseLab):
         listing = sumctl.release_list(store)
         self.assertEqual([(r["sha"], r["ok"]) for r in listing["releases"]], [(head, True)])
         self.assertEqual(sumctl.release_show(store, head[:8])["sha"], head)
+
+    def test_stage_packages_native_bridge_with_runtime_provenance(self):
+        root, store = self.installation()
+        release = Path(self.stage(store)["release"])
+        native = json.loads((release / "release.json").read_text())["dependencies"]["native"]["sumctl-go"]
+        binary = release / native["path"]
+        self.assertEqual(native["source"], "go/cmd/sumctl-go")
+        self.assertEqual(native["version"], "sum 0.1.0")
+        self.assertEqual(native["platform"], sumctl.native_platform())
+        self.assertEqual(native["build"], {"cgo": False, "requires": ["go >= 1.25"]})
+        self.assertEqual(native["runtime"], {"requires": []})
+        self.assertTrue(binary.is_file() and os.access(binary, os.X_OK))
+        self.assertEqual(native["sha256"], hashlib_sha(binary))
+        self.assertEqual(self.cli([binary, "--version"]).stdout, "sum 0.1.0\n")
+
+        sumctl.set_read_only(release, read_only=False)
+        binary.write_text("corrupt\n")
+        with self.assertRaisesRegex(sumctl.SumError, "native artifact sumctl-go"):
+            sumctl.verify_release(release, release.name)
 
     def test_release_tree_never_owns_state_and_runs_only_for_its_installation(self):
         root, store = self.installation()
