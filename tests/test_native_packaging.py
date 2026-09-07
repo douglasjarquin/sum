@@ -40,6 +40,18 @@ class NativePackagingTest(unittest.TestCase):
                 self.assertEqual(sumctl.build_native_artifact(target), output)
             self.assertEqual(output.read_bytes(), original)
 
+    def test_mesh_native_build_produces_cgo_free_opt_in_server(self):
+        with tempfile.TemporaryDirectory(prefix="sum-mesh-build-") as name:
+            target = Path(name)
+            (target / "go").symlink_to(ROOT / "go", target_is_directory=True)
+            empty = target / "empty"
+            empty.mkdir()
+            with mock.patch.dict(sumctl.os.environ, {"SUM_GO_BIN": shutil.which("go"), "GOROOT": "/stale/go", "GOTOOLDIR": "/stale/go/pkg/tool", "GOTOOLCHAIN": "local", "GOOS": "linux", "GOARCH": "amd64"}):
+                output = sumctl.build_mesh_artifact(target)
+            result = subprocess.run([str(output), "--help"], env={"PATH": str(empty)}, capture_output=True, text=True, check=True)
+            self.assertIn("Sum-owned Herdr Mesh MCP bridge", result.stdout)
+            self.assertEqual(result.stderr, "")
+
 
 if __name__ == "__main__":
     unittest.main()

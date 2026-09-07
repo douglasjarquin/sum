@@ -7880,6 +7880,14 @@ def resolve_tools(target):
 
 
 def build_native_artifact(target):
+    return build_go_artifact(target, "sumctl-go", "./cmd/sumctl-go")
+
+
+def build_mesh_artifact(target):
+    return build_go_artifact(target, "herdr-mesh-go", "./cmd/herdr-mesh")
+
+
+def build_go_artifact(target, name, package):
     target = Path(target)
     go = os.environ.get("SUM_GO_BIN")
     if not go:
@@ -7894,7 +7902,7 @@ def build_native_artifact(target):
     source = target / "go"
     if not (source / "go.mod").is_file():
         raise SumError(f"Native Go source is missing from {source}")
-    output = target / ".local" / "bin" / "sumctl-go"
+    output = target / ".local" / "bin" / name
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists() or output.is_symlink():
         if not output.is_file() or not os.access(output, os.X_OK):
@@ -7902,12 +7910,12 @@ def build_native_artifact(target):
         return output
     temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
     try:
-        target = native_platform()
-        goos, goarch = target.split("-", 1)
+        platform_target = native_platform()
+        goos, goarch = platform_target.split("-", 1)
         build_env = {**os.environ, "CGO_ENABLED": "0", "GOENV": "off", "GOOS": goos, "GOARCH": goarch}
-        for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN"):
+        for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN", "GOBIN"):
             build_env.pop(variable, None)
-        run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, "./cmd/sumctl-go"], cwd=source,
+        run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, package], cwd=source,
             env=build_env, timeout=900)
         if not temporary.is_file() or not os.access(temporary, os.X_OK):
             raise SumError(f"Go build did not produce an executable at {temporary}")
@@ -7992,6 +8000,7 @@ def install_runtime(target, local_mesh=None):
     target = Path(target)
     resolve_tools(target)
     build_native_artifact(target)
+    build_mesh_artifact(target)
     install_mesh(target / ".deps" / "herdr-mesh", target, local_mesh=local_mesh)
     write_herdr_skill(target)
     run([target / ".local" / "bin" / "node", target / "scripts" / "mcp_smoke.mjs"], timeout=60)
@@ -8052,13 +8061,15 @@ def build_manifest(store, root, sha, target):
     mesh = target / ".deps" / "herdr-mesh"
     patched = read_json(mesh / ".sum-patched")
     inventory = dependency_inventory(target)
-    native = next((entry for entry in inventory["dependencies"] if entry["id"] == "sumctl-go"), None)
-    native_path = target / ".local" / "bin" / "sumctl-go"
-    if native is None or not native_path.is_file() or not os.access(native_path, os.X_OK):
-        raise SumError("Release is missing the staged native sumctl-go artifact")
-    native = {**native, "path": ".local/bin/sumctl-go", "sha256": sha256_file(native_path),
-              "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
-              "runtime": {"requires": []}}
+    native = {}
+    for artifact_id in ("sumctl-go", "herdr-mesh-go"):
+        catalog = next((entry for entry in inventory["dependencies"] if entry["id"] == artifact_id), None)
+        native_path = target / ".local" / "bin" / artifact_id
+        if catalog is None or not native_path.is_file() or not os.access(native_path, os.X_OK):
+            raise SumError(f"Release is missing the staged native {artifact_id} artifact")
+        native[artifact_id] = {**catalog, "path": f".local/bin/{artifact_id}", "sha256": sha256_file(native_path),
+                               "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
+                               "runtime": {"requires": []}}
     state = read_json(store.home / "state.json") if (store.home / "state.json").is_file() else {}
     return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": VERSION,
             "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
@@ -8066,7 +8077,7 @@ def build_manifest(store, root, sha, target):
             "dependencies": {"herdr_mesh": {"remote": MESH_REMOTE, "rev": MESH_REV, "path": ".deps/herdr-mesh", "overlay": patched},
                              "tools": {"pins": tool_pins(target), "paths": tools},
                              "codegraph": {**CODEGRAPH_PROVENANCE, "pin": tool_pins(target).get(f"npm:{CODEGRAPH_PACKAGE}"), "path": ".local/bin/codegraph"},
-                             "inventory": inventory, "native": {"sumctl-go": native}},
+                             "inventory": inventory, "native": native},
             "contracts": {"herdr_cli": HERDR_VERSION, "mcp": MCP_CONTRACT},
             "supports": {"state_schema": [SCHEMA], "brief_schema": [BRIEF_SCHEMA]},
             "staged_at": now(), "staged_by": {"machine": machine(), "installation": str(root), "instance": state.get("instance")}}

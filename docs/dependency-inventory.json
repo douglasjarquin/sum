@@ -133,6 +133,18 @@
       "role": "runtime",
       "owner": "sum",
       "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []}
+    },
+    {
+      "id": "herdr-mesh-go",
+      "source": "go/cmd/herdr-mesh",
+      "version": "herdr-mesh-sum 0.1.0",
+      "checksum": "release.json#dependencies.native.herdr-mesh-go.sha256",
+      "license": "MIT",
+      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
+      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["Cobra server mode"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
     }
   ],
   "integrations": [

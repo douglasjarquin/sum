@@ -1222,6 +1222,9 @@ def fake_installer(target, local_mesh=None):
     native = target / ".local" / "bin" / "sumctl-go"
     native.write_text("#!/bin/sh\nprintf '%s\\n' 'sum 0.1.0'\n")
     native.chmod(0o755)
+    mesh_native = target / ".local" / "bin" / "herdr-mesh-go"
+    mesh_native.write_text("#!/bin/sh\nprintf '%s\\n' 'herdr-mesh-sum 0.1.0'\n")
+    mesh_native.chmod(0o755)
     (target / ".local" / "skills" / "herdr").mkdir(parents=True)
     (target / ".local" / "skills" / "herdr" / "SKILL.md").write_text("fake herdr skill\n")
 
