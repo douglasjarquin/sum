@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+RUNTIME="$ROOT"
+if [[ -L "$ROOT/.local/current" ]]; then
+  RUNTIME=$(cd -- "$ROOT/.local/current" 2>/dev/null && pwd -P) || { echo "herdr-mesh-go: $ROOT/.local/current points to a missing runtime" >&2; exit 1; }
+fi
+[[ -x "$RUNTIME/.local/bin/herdr-mesh-go" ]] || { echo 'Stage the opt-in Go Mesh binary before starting it.' >&2; exit 1; }
+export SUM_INSTALL_ROOT="$ROOT"
+export HERDR_BIN="$RUNTIME/bin/herdr-scoped"
+exec "$RUNTIME/.local/bin/herdr-mesh-go" "$@"

@@ -33,14 +33,17 @@ type Runner struct {
 }
 
 func NewRunner(command string) *Runner {
-	if command == "" {
-		command = "herdr"
-	}
 	return &Runner{command: command, maxOutput: maxCommandOutput}
 }
 
 func NewRunnerFromEnv() *Runner {
-	return NewRunner(os.Getenv("HERDR_BIN"))
+	command := os.Getenv("HERDR_BIN")
+	if command == "" {
+		if root := os.Getenv("SUM_INSTALL_ROOT"); root != "" {
+			command = filepath.Join(root, "bin", "herdr-scoped")
+		}
+	}
+	return NewRunner(command)
 }
 
 func (r *Runner) Run(ctx context.Context, args []string, timeout time.Duration) (CommandResult, error) {

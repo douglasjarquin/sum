@@ -100,3 +100,13 @@ func TestRunnerRequiresExplicitSession(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestRunnerFromEnvDoesNotFallBackToRawHerdr(t *testing.T) {
+	t.Setenv("HERDR_BIN", "")
+	t.Setenv("SUM_INSTALL_ROOT", "")
+	t.Setenv("SUM_SESSION", "sum-test")
+	_, err := NewRunnerFromEnv().Run(context.Background(), []string{"agent", "list"}, 0)
+	if err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("error = %v", err)
+	}
+}

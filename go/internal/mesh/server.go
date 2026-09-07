@@ -2,6 +2,8 @@ package mesh
 
 import (
 	"context"
+	"errors"
+	"io"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -51,7 +53,11 @@ type startInput struct {
 }
 
 func Serve(ctx context.Context) error {
-	return NewServer(NewOperations(NewRunnerFromEnv())).Run(ctx, &mcp.StdioTransport{})
+	err := NewServer(NewOperations(NewRunnerFromEnv())).Run(ctx, &mcp.StdioTransport{})
+	if errors.Is(err, io.EOF) || errors.Is(err, mcp.ErrConnectionClosed) {
+		return nil
+	}
+	return err
 }
 
 func NewServer(operations *Operations) *mcp.Server {
