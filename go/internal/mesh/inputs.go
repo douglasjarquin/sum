@@ -6,6 +6,8 @@ import (
 	"unicode/utf8"
 )
 
+type emptyInput struct{}
+
 type targetInput struct {
 	Target string `json:"target"`
 }

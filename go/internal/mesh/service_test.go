@@ -134,6 +134,18 @@ func TestService_rejectsMalformedTargetBeforeHerdr(t *testing.T) {
 	}
 }
 
+func TestService_rejectsUnknownArgumentsBeforeHerdr(t *testing.T) {
+	runner := &fakeRunner{}
+	service := newTestService(t, "coordinator", runner)
+
+	if _, err := service.Call(context.Background(), "herdr_agent_list", json.RawMessage(`{"unexpected":true}`)); err == nil {
+		t.Fatal("unknown argument unexpectedly succeeded")
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls=%d, want none", len(runner.calls))
+	}
+}
+
 func TestService_wait_clampsTimeoutLikeTheNodeHandler(t *testing.T) {
 	runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"agent":{"agent_status":"idle"}}}`}}}
 	service := newTestService(t, "coordinator", runner)

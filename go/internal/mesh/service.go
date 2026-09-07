@@ -1,9 +1,11 @@
 package mesh
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 	"unicode"
@@ -22,6 +24,10 @@ func NewService(config Config) Service {
 func (s Service) Call(ctx context.Context, name string, arguments json.RawMessage) (string, error) {
 	switch name {
 	case "herdr_agent_list":
+		var input emptyInput
+		if err := parse(arguments, &input); err != nil {
+			return "", err
+		}
 		return s.list(ctx)
 	case "herdr_agent_get":
 		var input targetInput
@@ -88,6 +94,10 @@ func (s Service) Call(ctx context.Context, name string, arguments json.RawMessag
 		}
 		return s.json(ctx, []string{"agent", "focus", input.Target}, 10*time.Second)
 	case "herdr_integration_status":
+		var input emptyInput
+		if err := parse(arguments, &input); err != nil {
+			return "", err
+		}
 		return s.json(ctx, []string{"integration", "status"}, 10*time.Second)
 	case "herdr_pane_read":
 		var input paneReadInput
@@ -212,7 +222,16 @@ func parse(data json.RawMessage, target any) error {
 	if len(data) == 0 {
 		data = []byte("{}")
 	}
-	if err := json.Unmarshal(data, target); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("invalid tool arguments: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("invalid tool arguments: multiple JSON values")
+		}
 		return fmt.Errorf("invalid tool arguments: %w", err)
 	}
 	return nil
