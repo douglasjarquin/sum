@@ -378,8 +378,9 @@ class CoreTest(unittest.TestCase):
         with self.assertRaises(sumctl.SumError): sumctl.start(self.store, task["id"])
 
     def test_one_active_task_per_repo(self):
+        sumctl.write_settings(self.store, {"global": 2, "per_repository": 1})
         self.prepare()
-        with self.assertRaisesRegex(sumctl.SumError, "1 of 1 slots for .*One checkout gets one writer"):
+        with self.assertRaisesRegex(sumctl.SumError, "1 of 1 slots for .*Raise capacity.per_repository"):
             self.prepare()
 
     def test_session_override_inside_native_arguments_is_refused(self):
@@ -389,6 +390,7 @@ class CoreTest(unittest.TestCase):
             sumctl.herdr(["agent", "list", "--session=default"], session="sum-test")
 
     def test_global_recorded_task_limit(self):
+        sumctl.write_settings(self.store, {"global": 2, "per_repository": 1})
         self.prepare()
         other = self.root / "another-repo"
         subprocess.run(["git", "clone", "--quiet", str(self.repo), str(other)], check=True)

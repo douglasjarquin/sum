@@ -60,6 +60,13 @@ class LaunchTest(test_fleet.FleetLab):
         other = self.dispatch(env={"FAKE_PARENT_KIND": "codex"})
         self.assertEqual((self.kind(other["id"]), other["launch"]["source"]["harness"]), ("codex", "root"))
 
+    def test_saving_worker_default_does_not_create_capacity_for_an_unlimited_home(self):
+        (self.store.home / "settings.json").unlink()
+        saved = self.settings("--worker-harness", "codex", "--worker-model", "gpt-5-codex")
+        self.assertEqual(saved["worker"], {"harness": "codex", "model": "gpt-5-codex"})
+        document = json.loads((self.store.home / "settings.json").read_text())
+        self.assertNotIn("capacity", document)
+
     def test_saved_defaults_are_the_one_structured_surface_and_apply_to_future_dispatches_only(self):
         (self.store.home / "preferences.md").write_text("- Preferred worker harness: grok with model grok-9\n")  # Narrative only.
         before = self.dispatch()

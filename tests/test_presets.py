@@ -46,6 +46,11 @@ class PresetTest(test_fleet.FleetLab):
         self.assertIn("Unknown preset 'review'", self.dispatch("--preset", "review", command="prepare", ok=False)["error"])
         self.assertIn("unknown preset 'review'", self.preset("show", "review", ok=False)["error"])
 
+    def test_saving_preset_does_not_create_capacity_for_an_unlimited_home(self):
+        (self.store.home / "settings.json").unlink()
+        self.preset("set", "deep", "--harness", "codex")
+        self.assertNotIn("capacity", self.settings_file())
+
     def test_set_show_list_and_delete_are_validated_and_revisioned(self):
         created = self.preset("set", "deep", "--harness", "codex", "--model", "gpt-5-codex", "--reasoning", "high", "--arg=--search")
         self.assertEqual(created["preset"], {"harness": "codex", "model": "gpt-5-codex", "reasoning": "high", "args": ["--search"], "revision": 1})
@@ -224,4 +229,3 @@ class PresetTest(test_fleet.FleetLab):
             sumctl.resolve_launch(settings, ctx, preset="missing")
         with self.assertRaises(sumctl.SumError):
             sumctl.write_preset(self.store, "deep", harness="codex", args=["-m", "x"])  # args may not duplicate the kept model flag
-

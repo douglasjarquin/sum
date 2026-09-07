@@ -95,7 +95,7 @@ class FleetTest(FleetLab):
         root, store = self.installation()
         env = {"FAKE_PARENT_CWD": str(root.resolve())}
         settings = self.ctl(root, store, "settings", "set", "--global", "12", "--per-repository", "1", env=env)
-        self.assertEqual((settings["previous"], settings["capacity"]), ({"global": 2, "per_repository": 1}, {"global": 12, "per_repository": 1}))
+        self.assertEqual((settings["previous"], settings["capacity"]), (None, {"global": 12, "per_repository": 1}))
         roles = ["busy-tool-call", "dirty-checkout", "open-question", "answered-unapplied", "pending-report", "old-mcp-client",
                  "closed-parent", "unknown-worker", "failed-refresh", "ignores-refresh", "cooperative-a", "cooperative-b"]
         tasks = {}
@@ -301,12 +301,12 @@ class FleetTest(FleetLab):
         with self.assertRaisesRegex(sumctl.SumError, "per_repository \\(3\\) exceeds capacity.global \\(2\\)"):
             sumctl.write_settings(store, {"global": 2, "per_repository": 3})
 
-    def test_legacy_defaults_invalid_settings_and_lowered_limits_never_touch_running_work(self):
+    def test_explicit_limits_invalid_settings_and_lowered_limits_never_touch_running_work(self):
         root, store = self.installation()
         env = {"FAKE_PARENT_CWD": str(root.resolve())}
-        # Legacy installation: no settings file, the original two-global/one-per-repository capacity.
+        self.ctl(root, store, "settings", "set", "--global", "2", "--per-repository", "1", env=env)
         shown = self.ctl(root, store, "settings", "show")
-        self.assertEqual((shown["limits"], shown["source"]), ({"global": 2, "per_repository": 1}, "defaults"))
+        self.assertEqual((shown["limits"], shown["source"]), ({"global": 2, "per_repository": 1}, "settings.json"))
         first = self.ctl(root, store, "dispatch", "--repo", self.project("one"), "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
         second = self.ctl(root, store, "dispatch", "--repo", self.project("two"), "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
         third_repo = self.project("three")
@@ -373,6 +373,38 @@ class FleetTest(FleetLab):
             self.assertEqual(sumctl.main(["--home", str(store.home), "settings", "show"]), 0)
             self.assertEqual(sumctl.main(["--home", str(store.home), "settings", "set", "--global", "8"]), 1)
         self.assertEqual(sumctl.load_settings(store)["capacity"]["global"], 1)
+
+    def test_absent_capacity_is_unlimited_and_missing_capacity_key_is_unlimited(self):
+        root, store = self.installation()
+        env = {"FAKE_PARENT_CWD": str(root.resolve())}
+        repo = self.project("unlimited")
+        first = self.ctl(root, store, "dispatch", "--repo", repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
+        second = self.ctl(root, store, "dispatch", "--repo", repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
+        self.assertNotEqual(first["id"], second["id"])
+        shown = self.ctl(root, store, "settings", "show")
+        self.assertEqual((shown["limits"], shown["source"], shown["occupied"]["global"]), (None, "unlimited", 2))
+        (store.home / "settings.json").write_text(json.dumps({"schema": 1}))
+        third = self.ctl(root, store, "dispatch", "--repo", repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
+        self.assertNotEqual(second["id"], third["id"])
+        shown = self.ctl(root, store, "settings", "show")
+        self.assertEqual((shown["limits"], shown["source"], shown["occupied"]["global"]), (None, "settings.json", 3))
+
+    def test_explicit_capacity_remains_enforced_and_clearable(self):
+        root, store = self.installation()
+        env = {"FAKE_PARENT_CWD": str(root.resolve())}
+        repo = self.project("limited")
+        self.ctl(root, store, "settings", "set", "--global", "1", env=env)
+        first = self.ctl(root, store, "dispatch", "--repo", repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
+        refused = self.ctl(root, store, "prepare", "--repo", repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env, ok=False)
+        self.assertIn("1 of 1 global execution slots", refused["error"])
+        self.assertEqual(self.ctl(root, store, "settings", "show")["limits"], {"global": 1, "per_repository": 1})
+        self.ctl(root, store, "preset", "set", "deep", "--harness", "codex", env=env)
+        self.ctl(root, store, "settings", "set", "--worker-preset", "deep", env=env)
+        self.ctl(root, store, "settings", "set", "--clear-capacity", env=env)
+        shown = self.ctl(root, store, "settings", "show")
+        self.assertEqual((shown["limits"], shown["worker"], sorted(shown["presets"])), (None, {"preset": "deep"}, ["deep"]))
+        second = self.ctl(root, store, "dispatch", "--repo", repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
+        self.assertNotEqual(first["id"], second["id"])
 
 
 if __name__ == "__main__":

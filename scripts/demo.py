@@ -50,7 +50,7 @@ def main():
         assert ctl("init", "--role", "coordinator", pane="w-second:p1", check=False)["error"].startswith("Coordinator is owned by pane w-parent:p1")
         print("PASS: doctor observed without binding; first pane claimed coordinator once; a second unbriefed pane became a developer.")
         capacity = ctl("settings", "show")
-        assert capacity["limits"] == {"global": 2, "per_repository": 1} and capacity["source"] == "defaults"
+        assert capacity["limits"] is None and capacity["source"] == "unlimited"
         assert capacity["worker"] is None
         task = ctl("dispatch", "--repo", str(repo), "--brief", str(brief), "--approved")
         assert task["admission"]["occupied_before"] == {"global": 0, "repository": 0}
@@ -66,6 +66,7 @@ def main():
         assert "runs on codex but --harness claude" in ctl("prepare", "--repo", str(repo), "--brief", str(brief), "--approved", "--preset", "deep", "--harness", "claude", check=False)["error"]
         assert len(ctl("status")["tasks"]) == 1  # The refusals created no record and hold no slot.
         print("PASS: presets are optional shortcuts: none configured changed nothing; an unknown name and a cross-harness choice were refused before any worktree; one preset saved at revision 1.")
+        ctl("settings", "set", "--global", "2", "--per-repository", "1")
         refused = ctl("prepare", "--repo", str(repo), "--brief", str(brief), "--harness", "codex", "--approved", check=False)
         assert "1 of 1 slots for" in refused["error"] and len(ctl("status")["tasks"]) == 1
         print("PASS: delegated through sum to a strict fake Herdr; real isolated Git worktree created; a second writer for the same checkout was refused at admission.")
