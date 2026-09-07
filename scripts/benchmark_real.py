@@ -149,5 +149,17 @@ def run_real(base: Path, runs: int, include_mcp: bool):
             server.wait(timeout=5)
         log.close()
         shutil.rmtree(lab_root)
-    cleanup = {"real_lab": "removed", "session": name, "server_exit": server.returncode, "mcp_exit": mesh.returncode if mesh else None, "path_absent": not lab_root.exists(), "log": str(log_path)}
+    cleanup = {
+        "real_lab": "removed",
+        "session": name,
+        "server_exit": server.returncode,
+        "mcp_exit": mesh.returncode if mesh else None,
+        "path_absent": not lab_root.exists(),
+        "log": str(log_path),
+        "tools": {
+            "runtime": tools["runtime"].name,
+            "node": subprocess.check_output([str(tools["node"]), "--version"], text=True).strip(),
+            "herdr": subprocess.check_output([str(tools["herdr"]), "--version"], text=True).strip(),
+        },
+    }
     return scenarios, cleanup

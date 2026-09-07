@@ -162,7 +162,7 @@ def main() -> int:
         raw = {
             "schema": 1,
             "source": {"sha": source_sha, "dirty": source_dirty},
-            "environment": {"machine": platform.node(), "platform": platform.platform(), "python": platform.python_version(), "git": tool_version("git", "--version"), "node": tool_version("node", "--version"), "herdr": tool_version("herdr", "--version")},
+            "environment": {"machine": platform.node(), "platform": platform.platform(), "python": platform.python_version(), "git": tool_version("git", "--version"), "runner_node": tool_version("node", "--version"), "runner_herdr": tool_version("herdr", "--version"), "real_lab_tools": cleanup.get("tools")},
             "methodology": {"warmups": 1, "randomization_seed": 37, "outliers": "retained", "harness_overhead_ms": round(sorted(overhead)[len(overhead) // 2], 3), "cache_conditions": {"cold": "new process; first filesystem sample retained", "warm-fs": "unrecorded warmup before new-process samples"}},
             "inventory": INVENTORY,
             "scenarios": scenarios,

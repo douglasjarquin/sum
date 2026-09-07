@@ -138,11 +138,18 @@ def decide(scenarios, opportunities):
 
 
 def render(raw):
+    real_tools = raw["environment"]["real_lab_tools"]
+    tool_summary = (
+        f"Runner Python {raw['environment']['python']}; the real lab used runtime `{real_tools['runtime']}`, Node {real_tools['node']}, and {real_tools['herdr']}."
+        if real_tools
+        else f"Runner Python {raw['environment']['python']}; the real-lab toolchain was not run."
+    )
     lines = [
         "# Sum helper latency and call-frequency decision",
         "",
         f"Measured source: `{raw['source']['sha']}` on {raw['environment']['platform']}.",
-        f"Decision: **{raw['decision']['outcome'].upper()}** for a Go replacement.",
+        tool_summary,
+        f"Decision: **{raw['decision']['outcome'].upper()}** to a bounded #38 prototype; do not commit to a rewrite yet.",
         raw["decision"]["reason"],
         "",
         "## Decision gate",
@@ -212,13 +219,6 @@ def render(raw):
         f"Median no-op process harness overhead was {raw['methodology']['harness_overhead_ms']} ms and is reported separately, not subtracted from raw samples.",
         "Cold means a new Python process; warm-fs means the same fixture was read after an unrecorded warmup without attempting privileged OS cache eviction.",
         "The trace separates Python-owned time from state JSON/fsync/locking and Git/Herdr/Node subprocess time; network and model work are absent.",
-        "",
-        "## Simpler alternatives before a rewrite",
-        "",
-        "- Keep one Herdr snapshot per session rather than restoring per-worker scans.",
-        "- Prefer bounded `context` reads over repeated full `show` reads.",
-        "- Batch only reads the native API already supports; retain durability fsyncs and every safety check.",
-        "- Remove a proven redundant subprocess hop only after measuring the exact caller; do not mix that gain into a language-only claim.",
         "",
         "## Reproduce",
         "",
