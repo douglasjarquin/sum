@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -13,18 +14,28 @@ spec.loader.exec_module(sumctl)
 
 
 class NativePackagingTest(unittest.TestCase):
-    def test_native_build_reuses_existing_executable_without_replacing_it(self):
+    def test_native_build_produces_cgo_free_binary_without_runtime_tools(self):
+        with tempfile.TemporaryDirectory(prefix="sum-native-build-") as name:
+            target = Path(name)
+            (target / "go").symlink_to(ROOT / "go", target_is_directory=True)
+            empty = target / "empty"
+            empty.mkdir()
+            with mock.patch.dict(sumctl.os.environ, {"SUM_GO_BIN": shutil.which("go"), "GOROOT": "/stale/go", "GOTOOLDIR": "/stale/go/pkg/tool", "GOTOOLCHAIN": "local", "GOOS": "linux", "GOARCH": "amd64"}):
+                output = sumctl.build_native_artifact(target)
+            result = subprocess.run([str(output), "--version"], env={"PATH": str(empty)}, capture_output=True, text=True, check=True)
+            self.assertEqual((result.stdout, result.stderr), ("sum 0.1.0\n", ""))
+            self.assertEqual(sumctl.native_platform(), "darwin-arm64")
+
+    def test_native_build_does_not_replace_existing_executable(self):
         with tempfile.TemporaryDirectory(prefix="sum-native-") as name:
             target = Path(name)
             (target / "go").symlink_to(ROOT / "go", target_is_directory=True)
             with mock.patch.dict(sumctl.os.environ, {"SUM_GO_BIN": shutil.which("go"), "GOROOT": "/stale/go", "GOTOOLDIR": "/stale/go/pkg/tool", "GOTOOLCHAIN": "local"}):
                 output = sumctl.build_native_artifact(target)
             original = output.read_bytes()
-            output.write_bytes(b"existing native artifact")
             with mock.patch.dict(sumctl.os.environ, {"SUM_GO_BIN": "/missing/go"}):
                 self.assertEqual(sumctl.build_native_artifact(target), output)
-            self.assertEqual(output.read_bytes(), b"existing native artifact")
-            self.assertNotEqual(original, output.read_bytes())
+            self.assertEqual(output.read_bytes(), original)
 
 
 if __name__ == "__main__":

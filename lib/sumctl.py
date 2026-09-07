@@ -12,6 +12,7 @@ import io
 import json
 import os
 from pathlib import Path, PurePosixPath
+import platform
 import re
 import shlex
 import shutil
@@ -7902,7 +7903,7 @@ def build_native_artifact(target):
     temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
     try:
         build_env = {**os.environ, "CGO_ENABLED": "0"}
-        for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN"):
+        for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN", "GOOS", "GOARCH"):
             build_env.pop(variable, None)
         run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, "./cmd/sumctl-go"], cwd=source,
             env=build_env, timeout=900)
@@ -7916,6 +7917,12 @@ def build_native_artifact(target):
         if temporary.exists():
             temporary.unlink()
     return output
+
+
+def native_platform():
+    system = {"darwin": "darwin", "linux": "linux"}.get(sys.platform, sys.platform)
+    machine = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
+    return f"{system}-{machine}"
 
 
 def install_mesh(destination, source_root, local_mesh=None):
@@ -8048,7 +8055,8 @@ def build_manifest(store, root, sha, target):
     if native is None or not native_path.is_file() or not os.access(native_path, os.X_OK):
         raise SumError("Release is missing the staged native sumctl-go artifact")
     native = {**native, "path": ".local/bin/sumctl-go", "sha256": sha256_file(native_path),
-              "build": {"cgo": False, "requires": ["go >= 1.25"]}, "runtime": {"requires": []}}
+              "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
+              "runtime": {"requires": []}}
     state = read_json(store.home / "state.json") if (store.home / "state.json").is_file() else {}
     return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": VERSION,
             "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
@@ -8126,6 +8134,12 @@ def verify_release(path, expected_sha=None):
                 raise SumError(f"{path}: native artifact {name} is missing or not executable")
             if artifact.get("sha256") != sha256_file(member):
                 raise SumError(f"{path}: native artifact {name} does not match its manifest hash")
+            target = artifact.get("platform")
+            if not isinstance(target, str) or not re.fullmatch(r"[a-z0-9]+-[a-z0-9]+", target):
+                raise SumError(f"{path}: native artifact {name} lacks a valid GOOS-GOARCH target")
+            catalog = next((entry for entry in (inventory or {}).get("dependencies", []) if entry.get("id") == name), None)
+            if catalog is None or target not in catalog.get("platforms", []):
+                raise SumError(f"{path}: native artifact {name} target {target} is not in the dependency inventory")
     return manifest
 
 

@@ -1330,6 +1330,7 @@ class ReleaseTest(ReleaseLab):
         binary = release / native["path"]
         self.assertEqual(native["source"], "go/cmd/sumctl-go")
         self.assertEqual(native["version"], "sum 0.1.0")
+        self.assertEqual(native["platform"], sumctl.native_platform())
         self.assertEqual(native["build"], {"cgo": False, "requires": ["go >= 1.25"]})
         self.assertEqual(native["runtime"], {"requires": []})
         self.assertTrue(binary.is_file() and os.access(binary, os.X_OK))
