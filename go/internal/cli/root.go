@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -44,6 +43,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		SilenceErrors:      true,
 		SilenceUsage:       true,
 		DisableSuggestions: true,
+		TraverseChildren:   true,
 		Args:               cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			return fmt.Errorf("command is required")
@@ -53,10 +53,10 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	root.SetErr(errOut)
 	root.SetVersionTemplate("{{.Version}}\n")
 	root.CompletionOptions.DisableDefaultCmd = true
-	root.PersistentFlags().StringVar(&opts.home, "home", "", "state home")
-	root.PersistentFlags().Lookup("home").NoOptDefVal = ""
+	root.Flags().StringVar(&opts.home, "home", "", "state home")
+	root.Flags().Lookup("home").NoOptDefVal = ""
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
-		opts.homeSet = cmd.Flags().Changed("home") || cmd.InheritedFlags().Changed("home")
+		opts.homeSet = root.Flags().Changed("home")
 	}
 	root.SetHelpCommand(nil)
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
@@ -113,31 +113,8 @@ func (o *rootOptions) compat(ctx context.Context, args []string) error {
 
 func normalizeHome(args []string, home string, homeSet bool) []string {
 	var prefix []string
-	var body []string
-	seenHome := false
-	afterSeparator := false
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		if arg == "--" {
-			afterSeparator = true
-			body = append(body, arg)
-			continue
-		}
-		if !afterSeparator && arg == "--home" && index+1 < len(args) {
-			prefix = append(prefix, arg, args[index+1])
-			seenHome = true
-			index++
-			continue
-		}
-		if !afterSeparator && strings.HasPrefix(arg, "--home=") {
-			prefix = append(prefix, arg)
-			seenHome = true
-			continue
-		}
-		body = append(body, arg)
-	}
-	if homeSet && !seenHome {
+	if homeSet {
 		prefix = append([]string{"--home", home}, prefix...)
 	}
-	return append(prefix, body...)
+	return append(prefix, args...)
 }

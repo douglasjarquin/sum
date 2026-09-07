@@ -85,7 +85,7 @@ func TestCompatibilityCommandPreservesLeadingDashAndRepeatedArguments(t *testing
 	}
 }
 
-func TestCompatibilityNormalizesGlobalHomeBeforeTheCommand(t *testing.T) {
+func TestCompatibilityPreservesGlobalHomePosition(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
 	reference := filepath.Join(dir, "reference.sh")
@@ -108,7 +108,7 @@ func TestCompatibilityNormalizesGlobalHomeBeforeTheCommand(t *testing.T) {
 		}
 		want := "--home\n" + input[1] + "\nstatus\n--arg=-m\n"
 		if input[0] == "status" {
-			want = "--home=" + input[1][len("--home="):] + "\nstatus\n--arg=-m\n"
+			want = "status\n" + input[1] + "\n--arg=-m\n"
 		}
 		if string(got) != want {
 			t.Fatalf("reference argv = %q, want %q", got, want)
