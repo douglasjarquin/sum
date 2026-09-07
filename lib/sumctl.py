@@ -7901,8 +7901,11 @@ def build_native_artifact(target):
         return output
     temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
     try:
+        build_env = {**os.environ, "CGO_ENABLED": "0"}
+        for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN"):
+            build_env.pop(variable, None)
         run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, "./cmd/sumctl-go"], cwd=source,
-            env={**os.environ, "CGO_ENABLED": "0"}, timeout=900)
+            env=build_env, timeout=900)
         if not temporary.is_file() or not os.access(temporary, os.X_OK):
             raise SumError(f"Go build did not produce an executable at {temporary}")
         try:

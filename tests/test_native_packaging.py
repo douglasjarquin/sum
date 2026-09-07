@@ -17,7 +17,7 @@ class NativePackagingTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="sum-native-") as name:
             target = Path(name)
             (target / "go").symlink_to(ROOT / "go", target_is_directory=True)
-            with mock.patch.dict(sumctl.os.environ, {"SUM_GO_BIN": shutil.which("go")}):
+            with mock.patch.dict(sumctl.os.environ, {"SUM_GO_BIN": shutil.which("go"), "GOROOT": "/stale/go", "GOTOOLDIR": "/stale/go/pkg/tool", "GOTOOLCHAIN": "local"}):
                 output = sumctl.build_native_artifact(target)
             original = output.read_bytes()
             output.write_bytes(b"existing native artifact")
