@@ -7902,8 +7902,10 @@ def build_native_artifact(target):
         return output
     temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
     try:
-        build_env = {**os.environ, "CGO_ENABLED": "0"}
-        for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN", "GOOS", "GOARCH"):
+        target = native_platform()
+        goos, goarch = target.split("-", 1)
+        build_env = {**os.environ, "CGO_ENABLED": "0", "GOENV": "off", "GOOS": goos, "GOARCH": goarch}
+        for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN"):
             build_env.pop(variable, None)
         run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, "./cmd/sumctl-go"], cwd=source,
             env=build_env, timeout=900)
