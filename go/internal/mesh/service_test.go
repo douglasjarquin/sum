@@ -146,6 +146,18 @@ func TestService_rejectsUnknownArgumentsBeforeHerdr(t *testing.T) {
 	}
 }
 
+func TestService_rejectsTrailingArgumentsBeforeHerdr(t *testing.T) {
+	runner := &fakeRunner{}
+	service := newTestService(t, "coordinator", runner)
+
+	if _, err := service.Call(context.Background(), "herdr_agent_list", json.RawMessage(`{} {}`)); err == nil {
+		t.Fatal("trailing JSON unexpectedly succeeded")
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("calls=%d, want none", len(runner.calls))
+	}
+}
+
 func TestService_wait_clampsTimeoutLikeTheNodeHandler(t *testing.T) {
 	runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"agent":{"agent_status":"idle"}}}`}}}
 	service := newTestService(t, "coordinator", runner)

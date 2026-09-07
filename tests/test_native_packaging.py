@@ -52,6 +52,24 @@ class NativePackagingTest(unittest.TestCase):
             result = subprocess.run([str(mesh), "--version"], env={"PATH": str(empty)}, capture_output=True, text=True, check=True)
             self.assertEqual((result.stdout, result.stderr), ("herdr-mesh 0.1.0\n", ""))
 
+    def test_mesh_launcher_uses_selected_runtime(self):
+        with tempfile.TemporaryDirectory(prefix="sum-mesh-launcher-") as name:
+            target = Path(name)
+            launcher = target / "bin" / "herdr-mesh-go"
+            launcher.parent.mkdir()
+            shutil.copy2(ROOT / "bin" / "herdr-mesh-go", launcher)
+            launcher.chmod(0o755)
+            release = target / "release"
+            binary = release / ".local" / "bin" / "herdr-mesh-go"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\nprintf 'selected-runtime\\n'\n")
+            binary.chmod(0o755)
+            (target / ".local").mkdir()
+            (target / ".local" / "current").symlink_to(release, target_is_directory=True)
+
+            result = subprocess.run([str(launcher), "--version"], env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True, check=True)
+            self.assertEqual((result.stdout, result.stderr), ("selected-runtime\n", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
