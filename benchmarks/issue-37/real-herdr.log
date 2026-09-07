@@ -1,0 +1,6 @@
+herdr server running; you can use any herdr CLI command in another terminal.
+api socket: /private/tmp/sum-bench-real-olsklo_6/config/herdr/sessions/sum-benchmark-91ebb8473c/herdr.sock
+client socket: /private/tmp/sum-bench-real-olsklo_6/config/herdr/sessions/sum-benchmark-91ebb8473c/herdr-client.sock
+logs: /private/tmp/sum-bench-real-olsklo_6/config/herdr/sessions/sum-benchmark-91ebb8473c/herdr-server.log
+did you mean to open the Herdr TUI? run `herdr`; you do not need `herdr server`.
+herdr-mesh MCP server running on stdio
