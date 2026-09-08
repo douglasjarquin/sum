@@ -1,4 +1,4 @@
-/** Herdr 0.8.2 command surface. Pure command planning; no MCP dependency in tests. */
+/** Herdr 0.9.0 command surface. Pure command planning; no MCP dependency in tests. */
 export function handlers(runHerdr) {
   const run = async (args, timeoutMs = 10000) => runHerdr(args, { timeoutMs });
   const payload = (r) => r.json?.result ?? r.json ?? r.stdout;

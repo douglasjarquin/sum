@@ -1330,7 +1330,7 @@ class ReleaseTest(ReleaseLab):
         self.assertEqual(manifest["files"]["CLAUDE.md"], "link:AGENTS.md")
         self.assertEqual(manifest["dependencies"]["herdr_mesh"]["rev"], sumctl.MESH_REV)
         self.assertEqual(manifest["dependencies"]["tools"]["pins"]["node"], "22.19.0")
-        self.assertEqual(manifest["contracts"], {"herdr_cli": "0.8.2", "mcp": {"server": "herdr-mesh-sum", "version": "0.1.0", "tools": 10}})
+        self.assertEqual(manifest["contracts"], {"herdr_cli": "0.9.0", "mcp": {"server": "herdr-mesh-sum", "version": "0.1.0", "tools": 10}})
         self.assertEqual(manifest["supports"], {"state_schema": [1], "brief_schema": [1]})
         self.assertEqual(manifest["staged_by"]["instance"], json.loads((store.home / "state.json").read_text()).get("instance"))
         self.assertFalse((release / ".sum").exists())
@@ -1668,9 +1668,9 @@ class UpdateTest(UpdateLab):
             self.apply(store, no_fetch=True)
         self.assertEqual(self.current(root), root / ".local" / "releases" / first)
         manifest["dependencies"]["herdr_mesh"]["overlay"] = json.loads((release_two / ".deps/herdr-mesh/.sum-patched").read_text())
-        manifest["contracts"]["herdr_cli"] = "0.9.0"  # A candidate that needs a Herdr upgrade is deferred here, never upgraded globally.
+        manifest["contracts"]["herdr_cli"] = "0.10.0"  # A candidate that needs a Herdr upgrade is deferred here, never upgraded globally.
         (release_two / "release.json").write_text(json.dumps(manifest))
-        with self.assertRaisesRegex(sumctl.SumError, "requires Herdr CLI 0.9.0.*never performs"):
+        with self.assertRaisesRegex(sumctl.SumError, "requires Herdr CLI 0.10.0.*never performs"):
             self.apply(store, no_fetch=True)
         manifest["contracts"]["herdr_cli"] = sumctl.HERDR_VERSION
         manifest["supports"]["brief_schema"] = [0]
