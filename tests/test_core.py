@@ -1614,6 +1614,36 @@ class UpdateTest(UpdateLab):
         self.assertEqual([e["result"] for e in status["history"] if "result" in e], ["selected"])
         self.assertFalse(self.apply(store)["changed"])  # Idempotent.
 
+    def test_candidate_contract_drives_transition_mismatch_and_rollback(self):
+        root, store = self.installation()
+        with mock.patch.object(sumctl, "HERDR_VERSION", "0.8.2"), mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": "herdr 0.9.0"}):
+            first = self.commit_upstream(root, "one.py")
+            staged = Path(self.stage(store, first)["release"])
+            manifest = json.loads((staged / "release.json").read_text())
+            self.assertEqual(manifest["contracts"]["herdr_cli"], "0.9.0")
+
+            applied = self.apply(store, no_fetch=True)
+            self.assertTrue(applied["changed"])
+            self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+
+            second = self.commit_upstream(root, "two.py")
+            second_release = Path(self.stage(store, second)["release"])
+            sumctl.set_read_only(second_release, read_only=False)
+            second_manifest = json.loads((second_release / "release.json").read_text())
+            second_manifest["contracts"]["herdr_cli"] = "0.10.0"
+            (second_release / "release.json").write_text(json.dumps(second_manifest))
+            with self.assertRaisesRegex(sumctl.SumError, "requires Herdr CLI 0.10.0.*installed 'herdr 0.9.0'"):
+                self.apply(store, no_fetch=True)
+            self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+
+            second_manifest["contracts"]["herdr_cli"] = "0.9.0"
+            (second_release / "release.json").write_text(json.dumps(second_manifest))
+            sumctl.set_read_only(second_release)
+            self.assertTrue(self.apply(store, no_fetch=True)["changed"])
+            self.assertEqual(self.current(root), second_release)
+            self.assertEqual(sumctl.update_rollback(store, self.ns())["default"]["sha"], first)
+            self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+
     def test_activation_failures_leave_a_complete_selection(self):
         root, store = self.installation()
         first = self.commit_upstream(root, "one.py")

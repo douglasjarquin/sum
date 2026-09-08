@@ -78,7 +78,7 @@ SNAPSHOT_TIMEOUT = 10              # Seconds for the single per-session `agent l
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show", "skills-check",
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "release-contract", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show", "skills-check",
                       "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet", "project-list", "project-show", "graph-status", "graph-config"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
@@ -241,8 +241,16 @@ def herdr(args, *, session, timeout=10, raw=False):
     return data.get("result", data) if isinstance(data, dict) else data
 
 
-def ensure_version():
+def herdr_version():
     found = run([tool("herdr"), "--version"]).stdout.strip()
+    match = re.search(r"\b(\d+\.\d+\.\d+)\b", found)
+    if not match:
+        raise SumError(f"Herdr did not report a semantic version; found {found!r}. Run mise run setup; do not silently mix CLI contracts.")
+    return found
+
+
+def ensure_version():
+    found = herdr_version()
     match = re.search(r"\b(\d+\.\d+\.\d+)\b", found)
     if not match or match.group(1) != HERDR_VERSION:
         raise SumError(f"This MVP is pinned to Herdr {HERDR_VERSION}; found {found!r}. Run mise run setup; do not silently mix CLI contracts.")
@@ -8138,6 +8146,7 @@ def validate_dependency_inventory(value):
 
 def build_manifest(store, root, sha, target):
     target = Path(target)
+    contract = candidate_contract(target)
     files = {name: content_id(target / name) for name in source_files(root, sha)}
     tools = {}
     for name in TOOLS:
@@ -8163,15 +8172,15 @@ def build_manifest(store, root, sha, target):
                                               "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
                                               "runtime": {"requires": []}}
     state = read_json(store.home / "state.json") if (store.home / "state.json").is_file() else {}
-    return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": VERSION,
+    return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": contract["sum_version"],
             "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
             "files": files,
             "dependencies": {"herdr_mesh": {"remote": MESH_REMOTE, "rev": MESH_REV, "path": ".deps/herdr-mesh", "overlay": patched},
                              "tools": {"pins": tool_pins(target), "paths": tools},
                              "codegraph": {**CODEGRAPH_PROVENANCE, "pin": tool_pins(target).get(f"npm:{CODEGRAPH_PACKAGE}"), "path": ".local/bin/codegraph"},
                              "inventory": inventory, "native": native_artifacts},
-            "contracts": {"herdr_cli": HERDR_VERSION, "mcp": MCP_CONTRACT},
-            "supports": {"state_schema": [SCHEMA], "brief_schema": [BRIEF_SCHEMA]},
+            "contracts": contract["contracts"],
+            "supports": contract["supports"],
             "staged_at": now(), "staged_by": {"machine": machine(), "installation": str(root), "instance": state.get("instance")}}
 
 
@@ -8418,6 +8427,28 @@ def runtime_contracts(runtime):
             "supports": {"state_schema": [SCHEMA], "brief_schema": [BRIEF_SCHEMA]}}
 
 
+def release_contract():
+    offered = runtime_contracts({})
+    return {"sum_version": offered["sum_version"], "contracts": {"herdr_cli": offered["herdr_cli"], "mcp": offered["mcp"]},
+            "supports": offered["supports"]}
+
+
+def candidate_contract(target):
+    target = Path(target)
+    python = target / ".local" / "bin" / "python3"
+    if not python.is_file():
+        python = Path(sys.executable)
+    result = run([python, target / "lib" / "sumctl.py", "--home", target / ".sum", "release-contract"],
+                 timeout=60, env={**os.environ, "SUM_INSTALL_ROOT": str(target)})
+    try:
+        contract = json.loads(result.stdout)
+    except ValueError as exc:
+        raise SumError(f"Candidate release contract is not JSON: {result.stdout[:300]}") from exc
+    if not isinstance(contract, dict) or not {"sum_version", "contracts", "supports"}.issubset(contract):
+        raise SumError("Candidate release contract is incomplete")
+    return contract
+
+
 def task_contracts(store):
     """The state and brief schemas the recorded tasks actually use; legacy records count as schema 1."""
     rows = []
@@ -8469,7 +8500,7 @@ def compatibility(store, root, candidate_path, current):
             blocking.append(f"task {row['task']} uses brief schema {row['brief_schema']}, which the candidate does not support ({offered['supports']['brief_schema']}); "
                             "already-adopted task contracts are never downgraded implicitly")
     try:
-        installed = ensure_version()
+        installed = herdr_version()
     except SumError as exc:
         installed = None
         blocking.append(f"installed Herdr: {exc}")
@@ -8674,6 +8705,7 @@ def parser():
     p.add_argument("--version", action="version", version=f"sum {VERSION}")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="Observe setup, Herdr context, and this pane's registered role; writes nothing")
+    sub.add_parser("release-contract", help="Print this runtime's release contract; writes nothing")
     s = sub.add_parser("init", help="Explicitly register this pane's role in this instance; the first eligible pane claims coordinator")
     s.add_argument("--role", choices=ROLES, help="Requested role; omitted means coordinator if unowned, worker if dispatched, else developer")
     s.add_argument("--task", help="Task ID when explicitly registering as its dispatched worker")
@@ -8972,6 +9004,10 @@ def main(argv=None):
             value = doctor(store)
             emit(value)
             return 0 if value["ok"] else 1
+        if args.command == "release-contract":
+            value = release_contract()
+            emit(value)
+            return 0
         if args.command == "help":
             value = help_view(parser(), args.topic)
         elif args.command == "context":
