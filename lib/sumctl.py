@@ -8438,7 +8438,14 @@ def candidate_contract(target):
     python = target / ".local" / "bin" / "python3"
     if not python.is_file():
         python = Path(sys.executable)
-    result = run([python, target / "lib" / "sumctl.py", "--home", target / ".sum", "release-contract"],
+    script = ("import importlib.util,json,sys; "
+              "spec=importlib.util.spec_from_file_location('candidate_sumctl',sys.argv[1]); "
+              "module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+              "offered=module.runtime_contracts({}); "
+              "print(json.dumps({'sum_version':offered['sum_version'],"
+              "'contracts':{'herdr_cli':offered['herdr_cli'],'mcp':offered['mcp']},"
+              "'supports':offered['supports']}))")
+    result = run([python, "-c", script, target / "lib" / "sumctl.py"],
                  timeout=60, env={**os.environ, "SUM_INSTALL_ROOT": str(target)})
     try:
         contract = json.loads(result.stdout)
