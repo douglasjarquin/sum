@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A strict fake for documented Herdr 0.8.2 calls. Uses real Git worktrees."""
+"""A strict fake for documented Herdr 0.9.0 calls. Uses real Git worktrees."""
 import fcntl, json, os, pathlib, subprocess, sys, uuid
 root = pathlib.Path(os.environ["FAKE_HERDR_ROOT"])
 root.mkdir(exist_ok=True, parents=True)
@@ -7,7 +7,7 @@ _lock = (root / ".lock").open("a")  # Like Herdr's server, one invocation at a t
 fcntl.flock(_lock, fcntl.LOCK_EX)
 args = sys.argv[1:]
 if args == ["--version"]:
-    print(os.environ.get("FAKE_HERDR_VERSION", "herdr 0.8.2")); sys.exit(0)
+    print(os.environ.get("FAKE_HERDR_VERSION", "herdr 0.9.0")); sys.exit(0)
 if len(args) < 3 or args[0] != "--session":
     print("explicit session required", file=sys.stderr); sys.exit(2)
 session, args = args[1], args[2:]
@@ -91,7 +91,7 @@ if args[:2] == ["agent", "wait"]:
     if not pane or pane["agent_status"] != arg("--until"): fail("timeout")
     emit({"agent": pane})
 if args[:2] == ["integration", "status"]: emit({"integrations": []})
-# --- issue #18 metadata surface, as the real 0.8.2 CLI behaves: token patches print nothing, tokens ride get/list responses -----
+# --- issue #18 metadata surface, as the real 0.9.0 CLI behaves: token patches print nothing, tokens ride get/list responses -----
 if args[:2] == ["api", "schema"]:
     if "--json" not in args: fail("text_output", "the fake only speaks --json")
     defs = {"PaneReportMetadataParams": {"properties": {"pane_id": {}, "source": {}, "tokens": {}, "title": {}, "state_labels": {}}},
@@ -118,7 +118,7 @@ if args[1:2] == ["report-metadata"] and args[0] in ("pane", "workspace"):
         if a == "--clear-token":
             tokens.pop(args[i + 1], None); sources.pop(args[i + 1], None)  # Any source may clear a key: the latest accepted update wins.
     if len(tokens) > 32: fail("too_many_tokens", "a pane or workspace keeps at most 32 keys")
-    save(); sys.exit(0)  # Real 0.8.2 prints nothing on success.
+    save(); sys.exit(0)  # Real 0.9.0 prints nothing on success.
 if args[:2] == ["notification", "show"]:
     if "--body" in args and len(args[args.index("--body") + 1]) > 240: fail("invalid_params", "body too long")
     if "--sound" in args and arg("--sound") not in ("none", "done", "request"): fail("invalid_params", "bad sound")
@@ -153,7 +153,7 @@ if args[:2] == ["agent", "read"]:
     pane = state["panes"].get(args[2])
     if not pane or not pane.get("agent"): fail("agent_not_found")
     if "--source" not in args or "--lines" not in args: fail("explicit read source and line count required")
-    print(pane.get("screen", "")); save(); sys.exit(0)  # Real 0.8.2 prints the text itself, not a JSON envelope.
+    print(pane.get("screen", "")); save(); sys.exit(0)  # Real 0.9.0 prints the text itself, not a JSON envelope.
 # --- issue #14 plugin registry: user-global like Herdr's, so every session sees the same rows -------------------------------
 import tomllib
 registry_path = root / "plugins.json"
@@ -303,13 +303,13 @@ if args[:2] == ["worktree", "remove"]:
     if not workspace: fail("workspace_not_found", f"workspace {arg('--workspace')} not found")
     if not workspace.get("worktree"): fail("worktree_not_found", "workspace has no worktree")
     path = workspace["worktree"]["checkout_path"]
-    if os.environ.get("FAKE_REMOVE_CRASH"):  # Real Herdr 0.8.2 removed the checkout and closed the workspace; the caller crashed before recording it.
+    if os.environ.get("FAKE_REMOVE_CRASH"):  # Real Herdr 0.9.0 removed the checkout and closed the workspace; the caller crashed before recording it.
         subprocess.run(["git", "-C", workspace["worktree"]["repo_root"], "worktree", "remove", path], capture_output=True, text=True)
         for pane_id in [p for p, v in state["panes"].items() if v.get("workspace_id") == workspace["workspace_id"]]: del state["panes"][pane_id]
         del state["workspaces"][workspace["workspace_id"]]
         save(); sys.exit(137)
     result = subprocess.run(["git", "-C", workspace["worktree"]["repo_root"], "worktree", "remove", path], capture_output=True, text=True)
-    if result.returncode:  # Herdr 0.8.2: plain `git worktree remove` failure surfaces as this code; nothing was removed.
+    if result.returncode:  # Herdr 0.9.0: plain `git worktree remove` failure surfaces as this code; nothing was removed.
         fail("dirty_worktree_requires_force", result.stderr.strip())
     for pane_id in [p for p, v in state["panes"].items() if v.get("workspace_id") == workspace["workspace_id"]]: del state["panes"][pane_id]
     del state["workspaces"][workspace["workspace_id"]]

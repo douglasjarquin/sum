@@ -25,8 +25,8 @@ def main():
             raise RuntimeError("Run mise run setup first, or make the pinned herdr available on PATH.")
         binary = Path(found)
     version = subprocess.check_output([str(binary), "--version"], text=True)
-    if "0.8.2" not in version:
-        raise RuntimeError(f"Expected pinned Herdr 0.8.2, got {version.strip()}")
+    if "0.9.0" not in version:
+        raise RuntimeError(f"Expected pinned Herdr 0.9.0, got {version.strip()}")
     name = "sum-test-" + uuid.uuid4().hex[:10]
     assert name.startswith("sum-test-") and name != "default"
     # Herdr's socket lives under XDG_CONFIG_HOME; macOS caps sun_path at 104 bytes, so the lab needs a short root, not $TMPDIR.
@@ -78,7 +78,7 @@ def main():
             cli("pane", "run", task["pane"], "printf '%s\\n' " + shlex.quote(marker))
             cli("pane", "wait-output", task["pane"], "--match", marker, "--timeout", "5000")
             assert Path(task["worktree"]).resolve() != repo.resolve()
-            print("PASS: real Herdr 0.8.2 worktree response, pane IDs, command input, and bounded output wait.")
+            print("PASS: real Herdr 0.9.0 worktree response, pane IDs, command input, and bounded output wait.")
             # Task-owned service (#17) against the real server: split, run, process-info identity, one interrupt, verified exit, pane close.
             port = 18000 + (os.getpid() % 1000)
             worktree = Path(task["worktree"])
@@ -108,7 +108,7 @@ def main():
                 pass
             worker_pane = cli("pane", "get", task["pane"])
             assert (worker_pane.get("pane") or worker_pane)["pane_id"] == task["pane"], worker_pane  # The worker pane is untouched.
-            print(f"PASS: real Herdr 0.8.2 split a service pane under the worker, ran `make dev`, exposed shell and foreground pids that matched the recorded instance and the lsof listener, "
+            print(f"PASS: real Herdr 0.9.0 split a service pane under the worker, ran `make dev`, exposed shell and foreground pids that matched the recorded instance and the lsof listener, "
                   f"refused a duplicate, and one ctrl+c through Herdr ended the process and closed only that pane (start {start_wall} ms, stop {stop_wall} ms).")
             # Bounded fleet lab: twelve prepared tasks (shell panes, no agent) in this real session; one snapshot serves the whole pass.
             fleet = sumctl("--home", str(state), "settings", "set", "--global", "13", "--per-repository", "1")
@@ -140,7 +140,7 @@ def main():
             hook = sumctl("--home", str(state), "hook", "enable")
             listed = cli("plugin", "list", "--plugin", hook["plugin_id"], "--json")["plugins"]
             assert len(listed) == 1 and listed[0]["enabled"] and listed[0]["manifest_path"] == hook["manifest"], listed
-            assert listed[0].get("warnings", []) == [], listed[0]  # Every declared event name is known to the pinned build; 0.8.2 omits the field when empty.
+            assert listed[0].get("warnings", []) == [], listed[0]  # Every declared event name is known to the pinned build; 0.9.0 omits the field when empty.
             assert hook["fanout"]["herdr_calls"] == 1, hook["fanout"]
             marker = "SUM_EXCERPT_" + uuid.uuid4().hex[:8]
             cli("pane", "run", task["pane"], "printf '%s\\n' " + shlex.quote(marker))
@@ -226,17 +226,17 @@ def main():
             assert inbox_pane and inbox_pane.split(":")[0] == parent["workspace"]["workspace_id"], opened
             cli("pane", "wait-output", inbox_pane, "--match", "records only; press Enter to close", "--timeout", "15000", timeout=20)
             text = subprocess.run([str(binary), "--session", name, "pane", "read", inbox_pane, "--source", "recent-unwrapped", "--lines", "200"], env=env, check=True,
-                                  text=True, capture_output=True, timeout=10).stdout  # 0.8.2 prints the pane text itself, not JSON.
+                                  text=True, capture_output=True, timeout=10).stdout  # 0.9.0 prints the pane text itself, not JSON.
             assert task["id"] in text and '"guarantee"' in text, text[-500:]
             cli("pane", "close", inbox_pane)  # Only the pane this lab opened.
             cleared = sumctl("--home", str(state), "metadata", "disable")
             assert len(cleared["cleared"]) == 27, len(cleared["cleared"])  # 13 workspaces, 13 panes, the coordinator pane.
             assert "tokens" not in cli("workspace", "get", task["workspace"])["workspace"] and "tokens" not in cli("pane", "get", parent["root_pane"]["pane_id"])["pane"]
-            print(f"PASS: real Herdr 0.8.2 accepted sum's namespaced tokens on 13 workspaces, 13 verified panes, and the coordinator pane in {enable_wall} ms "
+            print(f"PASS: real Herdr 0.9.0 accepted sum's namespaced tokens on 13 workspaces, 13 verified panes, and the coordinator pane in {enable_wall} ms "
                   f"({projected['fanout']['herdr_calls']} observation calls), left labels and an unrelated workspace alone, opened the read-only inbox as an ordinary pane, and cleared exactly sum's keys on disable.")
             disabled = sumctl("--home", str(state), "hook", "disable", "--unlink")
             assert disabled["action"] == "unlinked" and cli("plugin", "list", "--plugin", hook["plugin_id"], "--json")["plugins"] == []
-            print(f"PASS: real Herdr 0.8.2 linked the lab plugin live, ran the handler for idle/blocked/working edges with the documented environment, "
+            print(f"PASS: real Herdr 0.9.0 linked the lab plugin live, ran the handler for idle/blocked/working edges with the documented environment, "
                   f"recorded bounded attention with a real output excerpt, ignored an unrelated pane, and unlinked cleanly. "
                   f"Event-to-attention wall time on this host: idle {wall_idle} ms (handler {handler_idle} ms), blocked {wall_blocked} ms (handler {handler_blocked} ms), "
                   f"working {wall_working} ms (handler {handler_working} ms). No model was involved; a shell reported as an agent is not semantic question detection.")

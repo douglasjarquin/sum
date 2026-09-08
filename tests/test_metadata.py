@@ -1,6 +1,6 @@
 """Issue #18: sum task state projected into namespaced native Herdr tokens and optional notifications.
 
-Everything runs against the strict fake Herdr whose metadata surface mirrors the lab-verified 0.8.2 CLI (token patches print
+Everything runs against the strict fake Herdr whose metadata surface mirrors the lab-verified 0.9.0 CLI (token patches print
 nothing, tokens ride `pane get`/`agent list`/`workspace get`, any source may clear a key, `notification show` reports the
 user's toast delivery). No model, network, credentials, live installation state, or user `default` session.
 """

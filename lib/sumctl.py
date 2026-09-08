@@ -57,7 +57,7 @@ ROOT = resolve_installation()
 VERSION = "0.1.0"
 SCHEMA = 1
 BRIEF_SCHEMA = 1  # The worker brief format written by write_brief; recorded in release manifests.
-HERDR_VERSION = "0.8.2"
+HERDR_VERSION = "0.9.0"
 MESH_REV = "54adef519aa6af4dcd0bbd72586d414abab90046"
 MESH_REMOTE = "https://github.com/runchr-works/herdr-mesh.git"
 MCP_CONTRACT = {"server": "herdr-mesh-sum", "version": "0.1.0", "tools": 10}
@@ -2334,7 +2334,7 @@ def pump(store, ctx, *, tasks=None, recipient=None, snapshots=None, force=False,
 
 # --- native Herdr events: an optional plugin whose only job is to run the bounded pump at the right moment -----------
 #
-# Herdr 0.8.2 plugins are argv commands launched by the server for declared events (verified in a named lab session:
+# Herdr 0.9.0 plugins are argv commands launched by the server for declared events (verified in a named lab session:
 # `pane.agent_status_changed`, `pane.agent_detected`, `pane.exited`, `pane.closed`, `workspace.closed`, plus one-shot
 # `[[startup]]`). The handler receives HERDR_SESSION, HERDR_PLUGIN_ID, HERDR_PLUGIN_EVENT, and HERDR_PLUGIN_EVENT_JSON
 # ({"event": ..., "data": {"type": ..., "pane_id": ..., "workspace_id": ..., "agent_status": ...}}). Registration is
@@ -2489,7 +2489,7 @@ def hook_enable(store, ctx):
     changed = not path.is_file() or path.read_text(encoding="utf-8") != manifest
     if changed:
         path.write_text(manifest, encoding="utf-8")
-    linked = herdr(["plugin", "link", str(directory)], session=ctx["session"], timeout=15)  # Idempotent in 0.8.2: relinking the same path re-reads the manifest.
+    linked = herdr(["plugin", "link", str(directory)], session=ctx["session"], timeout=15)  # Idempotent in 0.9.0: relinking the same path re-reads the manifest.
     plugin = linked.get("plugin", linked) if isinstance(linked, dict) else {}
     if plugin.get("plugin_id") != plugin_id:
         raise SumError(f"Herdr linked {plugin.get('plugin_id')!r} instead of {plugin_id}; inspect {path}.")
@@ -2564,7 +2564,7 @@ def excerpt(session, pane):
         try:
             data = json.loads(text)
         except ValueError:
-            return text[-EXCERPT_CHARS:]  # Herdr 0.8.2 prints the pane text itself.
+            return text[-EXCERPT_CHARS:]  # Herdr 0.9.0 prints the pane text itself.
         result = data.get("result", data) if isinstance(data, dict) else data
         if isinstance(result, dict):
             text = result.get("text") or "\n".join(result.get("lines") or []) or json.dumps(result)
@@ -2826,7 +2826,7 @@ def hook_event_main(store, environ):
 
 # --- native metadata: sum task state projected into namespaced Herdr tokens and optional notifications (issue #18) --------
 #
-# Herdr 0.8.2 renders plugin-reported pane and workspace tokens as `$name` in sidebar rows and exposes them on `pane get`,
+# Herdr 0.9.0 renders plugin-reported pane and workspace tokens as `$name` in sidebar rows and exposes them on `pane get`,
 # `agent get/list`, and `workspace get/list` (verified in a named lab session: `pane report-metadata` and `workspace
 # report-metadata` print nothing on success, a token patch sets or clears named keys, any source may clear a key, values are
 # capped at 80 characters, `notification show` answers `shown: false, reason: disabled` while the user's toast delivery is
@@ -3000,7 +3000,7 @@ def token_patch(desired, previous):
 
 
 def report_metadata(kind, session, target, source, sets, clears):
-    """One `report-metadata` call. Returns (ok, code): success prints nothing in 0.8.2; a Herdr error code is returned, a missing command raises."""
+    """One `report-metadata` call. Returns (ok, code): success prints nothing in 0.9.0; a Herdr error code is returned, a missing command raises."""
     args = [kind, "report-metadata", target, "--source", source]
     for key in sorted(sets):
         args += ["--token", f"{key}={sets[key]}"]
@@ -5679,7 +5679,7 @@ def env_start(store, args):
                     "note": f"pane sum split for service {service['id']}", "observed_at": now(), "recorded_by": role, "claimed_ownership": None, "service": service["id"]}
         current["resources"] = [resource if (r["kind"], r["id"]) == ("pane", pane_id) else r for r in current["resources"]] if any((r["kind"], r["id"]) == ("pane", pane_id) for r in current["resources"]) else current["resources"] + [resource]
         write_environment(store, current, {"event": "record", "kind": "pane", "id": pane_id, "ownership": "owned", "by": role})
-    herdr(["pane", "run", pane_id, command], session=session, timeout=15, raw=True)  # Real 0.8.2 prints nothing on success.
+    herdr(["pane", "run", pane_id, command], session=session, timeout=15, raw=True)  # Real 0.9.0 prints nothing on success.
     info, found, problem = capture_process(session, pane_id, command)
     process = None
     if found:
@@ -6529,7 +6529,7 @@ def matching_task(store, endpoint):
 
 
 def herdr_error_code(result):
-    """Herdr 0.8.2 writes JSON errors to stderr: {"error": {"code": ..., "message": ...}}."""
+    """Herdr 0.9.0 writes JSON errors to stderr: {"error": {"code": ..., "message": ...}}."""
     try:
         return json.loads(result.stderr).get("error", {}).get("code")
     except (ValueError, AttributeError):
@@ -6575,7 +6575,7 @@ def init(store, args):
     ensure_version()
     pane = herdr(["pane", "get", ctx["pane"]], session=ctx["session"], timeout=5)  # Verify the caller's own endpoint exists.
     pane = pane.get("pane", pane) if isinstance(pane, dict) else {}
-    # Herdr 0.8.2 reports the pane's start `cwd` and the foreground process's `foreground_cwd`; a shell that changed into a clone counts as working there.
+    # Herdr 0.9.0 reports the pane's start `cwd` and the foreground process's `foreground_cwd`; a shell that changed into a clone counts as working there.
     nested = next((n for n in (pane_inside_project(store, installation_of(store), pane.get(k)) for k in ("foreground_cwd", "cwd", "working_directory")) if n), None) if isinstance(pane, dict) else None
     if nested and not matching_task(store, ctx):
         raise SumError(f"This pane works inside managed project {nested['name'] or nested['path']} ({nested['why']}). A project session is not a sum session: "

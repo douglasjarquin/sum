@@ -1,6 +1,6 @@
 """Issue #14: native Herdr events drive the bounded pump and record attention; the synchronous path stays whole without them.
 
-Events are replayed exactly as Herdr 0.8.2 delivers them to a plugin command (environment variables verified in a named lab
+Events are replayed exactly as Herdr 0.9.0 delivers them to a plugin command (environment variables verified in a named lab
 session), against the strict fake Herdr. No model, network, or credentials.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ class HookTest(unittest.TestCase):
         return sumctl.hook_plugin_id(self.store)
 
     def event(self, name, pane=None, status=None, session="sum-test", plugin_id=None, extra=None, home=None):
-        """Replay one plugin invocation with the exact variables Herdr 0.8.2 injects."""
+        """Replay one plugin invocation with the exact variables Herdr 0.9.0 injects."""
         data = {"type": name.replace(".", "_"), "workspace_id": (pane or "w0:p0").split(":")[0]}
         if pane:
             data["pane_id"] = pane

@@ -5,7 +5,7 @@ Release manifests copy that inventory and add the platform-specific SHA-256 of e
 
 ## Installation contract
 
-`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.19.0, GitHub CLI 2.100.0, Herdr 0.8.2, quota-axi 0.1.37, and codegraph 1.5.0 (`npm:@colbymchenry/codegraph`). Git and mise are host prerequisites. No global Node package installation is required.
+`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.19.0, GitHub CLI 2.100.0, Herdr 0.9.0, quota-axi 0.1.37, and codegraph 1.5.0 (`npm:@colbymchenry/codegraph`). Git and mise are host prerequisites. No global Node package installation is required.
 
 The `go/` module pins Cobra v1.9.1 and the official Model Context Protocol Go SDK v1.6.1 in ordinary `go.mod`/`go.sum` files.
 The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, generator, provider SDK, or configuration framework is installed.
@@ -173,7 +173,7 @@ The contract is harness-neutral. The matrix describes installation surfaces, **n
 
 ## Sources used when implementing (2026-09-05)
 
-- Herdr 0.8.2 release: https://github.com/herdrdev/herdr/releases/tag/v0.8.2
+- Herdr 0.9.0 release: https://github.com/herdrdev/herdr/releases/tag/v0.9.0
 - Herdr automation and response shapes: https://herdr.dev/docs/agent-automation/
 - Herdr installation through mise: https://herdr.dev/docs/install/
 - Release-matched skill: https://herdr.dev/docs/agent-skill/
