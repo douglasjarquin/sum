@@ -8282,9 +8282,6 @@ def stage(store, ref, installer=install_runtime):
     """
     root = installation_root(store)
     sha = run(["git", "-C", root, "rev-parse", "--verify", f"{ref}^{{commit}}", "--"]).stdout.strip()
-    inventory = skill_inventory(root)
-    if not inventory["ok"]:
-        raise SumError("Skill inventory refused release staging: " + "; ".join(inventory["errors"]))
     releases = root / RELEASES
     releases.mkdir(parents=True, exist_ok=True)
     final = releases / sha
@@ -8293,6 +8290,9 @@ def stage(store, ref, installer=install_runtime):
     staging = Path(tempfile.mkdtemp(prefix=f".staging-{sha[:12]}-", dir=releases))
     try:
         archive_source(root, sha, staging)
+        inventory = skill_inventory(staging)
+        if not inventory["ok"]:
+            raise SumError("Skill inventory refused release staging: " + "; ".join(inventory["errors"]))
         if (staging / ".sum").exists() or (staging / RELEASE_MANIFEST).exists():
             raise SumError("The committed tree must not contain .sum or a release manifest.")
         installer(staging, local_mesh=root / ".deps" / "herdr-mesh")

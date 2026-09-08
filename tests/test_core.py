@@ -1293,6 +1293,30 @@ class ReleaseLab(unittest.TestCase):
 class ReleaseTest(ReleaseLab):
     """Staging immutable runtime releases beside a live installation, entirely offline."""
 
+    def test_stage_checks_the_archived_candidate_inventory_not_the_dirty_checkout(self):
+        root, store = self.installation()
+        collision = root / ".agents/skills/sum-external"
+        collision.symlink_to("../../skills/sum-worker")
+        self.git("add", ".agents/skills/sum-external", cwd=root)
+        self.git("commit", "-q", "-m", "candidate collision", cwd=root)
+        bad_sha = self.git("rev-parse", "HEAD", cwd=root)
+        collision.unlink()
+
+        with self.assertRaisesRegex(sumctl.SumError, "Skill inventory refused release staging"):
+            self.stage(store, ref=bad_sha)
+
+    def test_verify_release_accepts_an_immutable_historical_worker_path(self):
+        _, store = self.installation()
+        historical = self.root / "historical-release"
+        sumctl.archive_source(ROOT, "de92361b87181837c58308acf2521fdae2677cec", historical)
+        fake_installer(historical)
+        manifest = sumctl.build_manifest(store, ROOT, "de92361b87181837c58308acf2521fdae2677cec", historical)
+        sumctl.atomic_json(historical / sumctl.RELEASE_MANIFEST, manifest)
+
+        verified = sumctl.verify_release(historical, "de92361b87181837c58308acf2521fdae2677cec")
+        self.assertIn("skills/worker/SKILL.md", verified["files"])
+        self.assertNotIn("skills/sum-worker/SKILL.md", verified["files"])
+
     def test_stage_builds_a_validated_immutable_bundle_outside_state(self):
         root, store = self.installation(via_symlink=True)
         head = self.git("rev-parse", "HEAD", cwd=root)
