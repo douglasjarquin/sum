@@ -293,7 +293,7 @@ class DeliveryTest(ProjectLab):
         self.assertEqual(task["project"]["name"], "acme/widgets")
         self.assertEqual(task["repository"], str(self.root_install / "projects/acme/widgets"))
         brief = Path(task["brief_path"]).read_text()
-        skill_path = self.root_install / "skills/worker/SKILL.md"
+        skill_path = self.root_install / "skills/sum-worker/SKILL.md"
         digest = sumctl.sha256_text(skill_path.read_text())[:16]
         self.assertIn("## Delivered runtime", brief)
         self.assertIn(f"`{skill_path}` ({len(skill_path.read_bytes())} bytes, sha256 `{digest}`)", brief)

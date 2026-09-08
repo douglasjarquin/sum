@@ -289,7 +289,7 @@ def main():
         managed = ctl("--home", str(installation / ".sum"), "prepare", "--project", "demo/project", "--brief", str(brief), "--harness", "codex", "--approved")
         assert managed["project"]["name"] == "demo/project" and managed["repository"] == str(clone) and not Path(managed["worktree"]).is_relative_to(installation)
         delivered = Path(managed["brief_path"]).read_text()
-        assert "## Delivered runtime" in delivered and str(ROOT / "skills/worker/SKILL.md") in delivered and "../../skills" not in delivered
+        assert "## Delivered runtime" in delivered and str(ROOT / "skills/sum-worker/SKILL.md") in delivered and "../../skills" not in delivered
         env_project = dict(env, HERDR_PANE_ID="w-project:p1", FAKE_PARENT_CWD=str(clone))
         nested = json.loads(subprocess.run([sys.executable, str(ROOT / "lib/sumctl.py"), "--home", str(installation / ".sum"), "init"], env=env_project, text=True, capture_output=True).stderr)
         assert "A project session is not a sum session" in nested["error"]

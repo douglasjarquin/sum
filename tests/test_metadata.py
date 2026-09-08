@@ -566,7 +566,7 @@ class MetadataFleetTest(test_core.UpdateLab):
             state = self.fake_state()
             state["panes"][task["pane"]]["agent_status"] = "working"  # Every worker is mid-turn: the refresh cannot be delivered yet.
             (self.root / "fake/state.json").write_text(json.dumps(state))
-        sha = self.commit_upstream(root, "skills/worker/SKILL.md", (root / "skills/worker/SKILL.md").read_text() + "\nUpdate: reread decisions.\n")
+        sha = self.commit_upstream(root, "skills/sum-worker/SKILL.md", (root / "skills/sum-worker/SKILL.md").read_text() + "\nUpdate: reread decisions.\n")
         applied = self.ctl(root, store, "update", "apply", env=env)
         self.assertEqual(applied["default"]["sha"], sha)
         before = len(self.calls())

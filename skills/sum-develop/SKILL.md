@@ -44,7 +44,7 @@ python3 scripts/demo.py
 mise run test-live
 ```
 
-Commit on the `sum-dev/<name>` branch, then follow `skills/delivery/SKILL.md` like any other project: verification, a reviewable PR, no merge.
+Commit on the `sum-dev/<name>` branch, then follow `skills/sum-delivery/SKILL.md` like any other project: verification, a reviewable PR, no merge.
 Candidate code becomes installation code only when a human merges it and the coordinator picks it up; a checked-out branch is not an update.
 
 ## Clean up

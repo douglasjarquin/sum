@@ -278,7 +278,7 @@ Network, build, and dependency work happen before the activation lock; validatio
 The switch is one symlink rename, so an interrupted update leaves either the complete old or the complete new selection.
 Commands already running finish on the runtime they resolved; worker briefs carry stable `<installation>/bin/sumctl` commands, so their callbacks keep working across the switch; new dispatches use the new default; connected MCP clients keep their tool set until the client itself restarts.
 A refusal names the exact incompatibility and leaves the old installation serving.
-See `skills/update/SKILL.md` for bootstrap, canary, and rollback steps.
+See `skills/sum-update/SKILL.md` for bootstrap, canary, and rollback steps.
 
 ### Refresh running sessions
 
@@ -359,7 +359,7 @@ The installation checkout serves the live coordinator, so sum is changed from an
 cd .sum/dev/my-topic && ./bin/sumctl init       # reports developer
 ```
 
-`dev prepare` is plain `git worktree add` into `.sum/dev/<name>` on branch `sum-dev/<name>`, plus a `.sum/dev.json` marker in the new checkout. Rerunning it reopens the checkout with uncommitted work intact. The checkout keeps its own `.sum`, `.local`, `.deps`, and generated configs; setup there never designates it, so no coordinator can be claimed in it. Its `bin/sumctl` refuses every write aimed at the installation's state, including through an inherited `SUM_HOME`, so lab tests cannot touch production records; a dispatched task whose target is sum gets the same isolation and keeps using the installed helper for its callbacks. `dev list` shows checkouts, and `dev remove --name my-topic` uses `git worktree remove` and `git branch -d` only, so dirty trees and unmerged branches are preserved. Ship through the normal task, verification, and PR procedure; nothing is installed until a human merges. Details and a bootstrap recipe for the preceding release are in `skills/develop/SKILL.md`.
+`dev prepare` is plain `git worktree add` into `.sum/dev/<name>` on branch `sum-dev/<name>`, plus a `.sum/dev.json` marker in the new checkout. Rerunning it reopens the checkout with uncommitted work intact. The checkout keeps its own `.sum`, `.local`, `.deps`, and generated configs; setup there never designates it, so no coordinator can be claimed in it. Its `bin/sumctl` refuses every write aimed at the installation's state, including through an inherited `SUM_HOME`, so lab tests cannot touch production records; a dispatched task whose target is sum gets the same isolation and keeps using the installed helper for its callbacks. `dev list` shows checkouts, and `dev remove --name my-topic` uses `git worktree remove` and `git branch -d` only, so dirty trees and unmerged branches are preserved. Ship through the normal task, verification, and PR procedure; nothing is installed until a human merges. Details and a bootstrap recipe for the preceding release are in `skills/sum-develop/SKILL.md`.
 
 ## Runtime releases
 

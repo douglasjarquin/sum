@@ -78,7 +78,7 @@ SNAPSHOT_TIMEOUT = 10              # Seconds for the single per-session `agent l
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show",
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show", "skills-check",
                       "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet", "project-list", "project-show", "graph-status", "graph-config"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
@@ -834,8 +834,95 @@ def sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+SUM_SKILL_NAMES = ("sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker")
+LEGACY_SUM_SKILL_NAMES = {name.removeprefix("sum-"): name for name in SUM_SKILL_NAMES}
+PORTABLE_SKILL_NAMES = ("create-verification", "evidence", "maintain-verification", "verify")
+
+
+def _frontmatter_name(path):
+    """Read the machine-consumed `name` field from a skill's YAML frontmatter."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not lines or lines[0].strip() != "---":
+        return None
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        key, separator, value = line.partition(":")
+        if separator and key.strip() == "name":
+            return value.strip().strip("'\"")
+    return None
+
+
+def skill_inventory(root):
+    """Check Sum skill names, portable imports, projections, and fixed legacy references."""
+    root = Path(root)
+    errors = []
+    compatibility = []
+    active = list(SUM_SKILL_NAMES)
+    canonical_root = root / "skills"
+    expected_legacy = {legacy: canonical for legacy, canonical in LEGACY_SUM_SKILL_NAMES.items()}
+    if not canonical_root.is_dir():
+        errors.append(f"missing skill source directory: {canonical_root}")
+    else:
+        for child in canonical_root.iterdir():
+            if child.name.startswith("sum-") and child.name not in SUM_SKILL_NAMES:
+                errors.append(f"namespace collision: unexpected Sum skill {child.name}")
+        for name in SUM_SKILL_NAMES:
+            path = canonical_root / name
+            skill_file = path / "SKILL.md"
+            if not path.is_dir() or path.is_symlink():
+                errors.append(f"missing canonical skill directory: {path}")
+            elif not skill_file.is_file():
+                errors.append(f"missing skill resource: {skill_file}")
+            elif _frontmatter_name(skill_file) != name:
+                errors.append(f"skill name mismatch: {skill_file} is {_frontmatter_name(skill_file)!r}, expected {name!r}")
+        for legacy, canonical in expected_legacy.items():
+            path = canonical_root / legacy
+            if path.is_symlink() and os.readlink(path) == canonical:
+                compatibility.append(f"skills/{legacy}->skills/{canonical}")
+            elif path.exists() or path.is_symlink():
+                errors.append(f"legacy compatibility reference mismatch: {path} must point to {canonical}")
+
+    routes = {}
+    for route, directory, native_target in (("agents", root / ".agents/skills", None), ("claude", root / ".claude/skills", ".agents/skills")):
+        discovered = []
+        if not directory.is_dir():
+            errors.append(f"missing discovery route: {directory}")
+            routes[route] = discovered
+            continue
+        for child in directory.iterdir():
+            if child.name.startswith("sum-"):
+                if child.name not in SUM_SKILL_NAMES:
+                    errors.append(f"namespace collision: unexpected projected skill {child.name} in {directory}")
+                else:
+                    discovered.append(child.name)
+        for name in SUM_SKILL_NAMES:
+            path = directory / name
+            target = f"../../skills/{name}"
+            if not path.is_symlink() or os.readlink(path) != target:
+                errors.append(f"projection mismatch: {path} must point to {target}")
+        for name in PORTABLE_SKILL_NAMES:
+            path = directory / name
+            if native_target is None:
+                if not path.is_dir() or path.is_symlink() or _frontmatter_name(path / "SKILL.md") != name:
+                    errors.append(f"portable skill mismatch: {path} must remain a native {name} skill")
+            else:
+                target = f"../../.agents/skills/{name}"
+                if not path.is_symlink() or os.readlink(path) != target:
+                    errors.append(f"portable projection mismatch: {path} must point to {target}")
+        routes[route] = sorted(set(discovered + list(PORTABLE_SKILL_NAMES)))
+    return {"ok": not errors, "active": active, "routes": routes, "compatibility": compatibility, "errors": errors}
+
+
 def worker_skill():
-    return (RUNTIME / "skills" / "worker" / "SKILL.md").read_text(encoding="utf-8")
+    for name in ("sum-worker", "worker"):
+        path = RUNTIME / "skills" / name / "SKILL.md"
+        if path.is_file():
+            return path.read_text(encoding="utf-8")
+    return (RUNTIME / "skills" / "sum-worker" / "SKILL.md").read_text(encoding="utf-8")
 
 
 def brief_policy():
@@ -3976,7 +4063,7 @@ CONTEXT_ROLES = ("worker", "reviewer", "coordinator")
 ROLE_SECTIONS = {"worker": ("outline", "decisions", "execution", "environment", "notes"),
                  "reviewer": ("outline", "brief", "handoff", "evidence", "environment"),
                  "coordinator": ("outline", "decisions", "handoff", "returns", "update")}
-ROLE_SKILLS = {"worker": ("worker",), "reviewer": ("delivery",), "coordinator": ("rundown", "delivery", "dispatch")}
+ROLE_SKILLS = {"worker": ("sum-worker",), "reviewer": ("sum-delivery",), "coordinator": ("sum-rundown", "sum-delivery", "sum-dispatch")}
 ROLE_CONTRACT = {
     "worker": ("You own exactly this task; you are not the coordinator. Do not init a coordinator, dispatch, or run setup.",
                "Work only in the recorded checkout on the recorded branch. Apply answered decisions with `resolve`; never invent an approval.",
@@ -8109,9 +8196,11 @@ def verify_release(path, expected_sha=None):
             raise SumError(f"{path}: missing {name}")
         if content_id(member) != expected:
             raise SumError(f"{path}: {name} does not match its manifest hash")
-    for required in ("bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "lib/sumctl.py", "skills/worker/SKILL.md"):
+    for required in ("bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "lib/sumctl.py"):
         if required not in files:
             raise SumError(f"{path}: release lacks {required}")
+    if not any(required in files for required in ("skills/sum-worker/SKILL.md", "skills/worker/SKILL.md")):
+        raise SumError(f"{path}: release lacks a Sum worker skill resource")
     if not os.access(path / "bin" / "sumctl", os.X_OK):
         raise SumError(f"{path}: bin/sumctl is not executable")
     if (path / ".sum").exists():
@@ -8193,6 +8282,9 @@ def stage(store, ref, installer=install_runtime):
     """
     root = installation_root(store)
     sha = run(["git", "-C", root, "rev-parse", "--verify", f"{ref}^{{commit}}", "--"]).stdout.strip()
+    inventory = skill_inventory(root)
+    if not inventory["ok"]:
+        raise SumError("Skill inventory refused release staging: " + "; ".join(inventory["errors"]))
     releases = root / RELEASES
     releases.mkdir(parents=True, exist_ok=True)
     final = releases / sha
@@ -8589,6 +8681,10 @@ def parser():
     for name in ("status", "inbox"):
         s = sub.add_parser(name, help="All recorded tasks" if name == "status" else "Only tasks that need attention: questions, reports, errors, cleanup")
         s.add_argument("--live", action="store_true", help="One bounded native-status lookup per task")
+    s = sub.add_parser("skills", help="Check Sum skill names, projections, portable imports, and compatibility references")
+    g = s.add_subparsers(dest="skills_command", required=True)
+    x = g.add_parser("check", help="Refuse mismatched names, missing references, or namespace collisions")
+    x.add_argument("--root", default=str(RUNTIME), help="Checkout or release tree to inspect")
     for name in ("prepare", "dispatch"):
         s = sub.add_parser(name, help="Coordinator only: record an approved task and create its isolated worktree" + ("; then launch the worker" if name == "dispatch" else " (no launch)"))
         s.add_argument("--repo", help="Absolute path of the repository checkout to branch from (or use --project)")
@@ -8871,7 +8967,7 @@ def main(argv=None):
                                 "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}", "hook": lambda: f"hook-{args.hook_command}",
                                 "pr": lambda: f"pr-{args.pr_command}", "env": lambda: f"env-{args.env_command}",
                                 "metadata": lambda: f"metadata-{args.metadata_command}", "project": lambda: f"project-{args.project_command}",
-                                "graph": lambda: f"graph-{args.graph_command}"}.get(args.command, lambda: args.command)())
+                                "graph": lambda: f"graph-{args.graph_command}", "skills": lambda: f"skills-{args.skills_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -8890,6 +8986,8 @@ def main(argv=None):
             value = init(store, args)
         elif args.command in {"status", "inbox"}:
             value = status(store, args.live, args.command == "inbox")
+        elif args.command == "skills":
+            value = skill_inventory(args.root)
         elif args.command in {"prepare", "dispatch"}:
             task = prepare(store, args)
             value = start(store, task["id"]) if args.command == "dispatch" else task  # --arg values are already part of the persisted launch.
@@ -9090,7 +9188,7 @@ def main(argv=None):
             raise SumError("Unknown command")
         metadata_after(store, args, value)  # Presentation only, after the record is complete; never changes `value` or the exit status.
         emit(value)
-        return 0
+        return 0 if args.command != "skills" or value["ok"] else 1
     except (SumError, OSError, ValueError, KeyError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=True), file=sys.stderr)
         return 1
