@@ -345,7 +345,7 @@ class CoreTest(unittest.TestCase):
             with self.assertRaises(sumctl.SumError): sumctl.session_from_env()
 
     def test_version_drift_is_rejected_before_mutation(self):
-        with mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": "herdr 0.9.0"}):
+        with mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": "herdr 0.10.0"}):
             with self.assertRaisesRegex(sumctl.SumError, "pinned"):
                 self.prepare()
         self.assertEqual(self.store.all(), [])
@@ -686,7 +686,7 @@ class CoreTest(unittest.TestCase):
 
     def test_legacy_helper_records_interoperate_with_versioned_briefs(self):
         helper = self.legacy_helper()
-        env = {"FAKE_PARENT_STATUS": "working"}
+        env = {"FAKE_PARENT_STATUS": "working", "FAKE_HERDR_VERSION": "herdr 0.8.2"}
         prepared = self.legacy_cli(helper, "prepare", "--repo", str(self.repo), "--brief", str(self.brief), "--harness", "codex", "--approved", env=env)
         self.assertEqual(prepared.returncode, 0, prepared.stderr)
         task = json.loads(prepared.stdout)
@@ -729,6 +729,7 @@ class CoreTest(unittest.TestCase):
         task = self.prepare()
         env = os.environ.copy()
         env["FAKE_PARENT_STATUS"] = "working"
+        env["FAKE_HERDR_VERSION"] = "herdr 0.8.2"
         first = self.question(task, key="early", text="Early?")["question"]
         sumctl.answer(self.store, argparse.Namespace(task=task["id"], question=first["id"], text="Keep it.", file=None))
         altered = self.root / "altered-runtime"
