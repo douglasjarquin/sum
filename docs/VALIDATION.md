@@ -87,7 +87,7 @@ Measured on this host (Apple Silicon macOS, Python 3.13.5, strict fake Herdr sub
 Before this slice the same passes made one `agent get` per task (twelve observation calls, each with its own five-second ceiling) before any delivery; now one snapshot per session bounds observation, each prompt keeps its own five-second ceiling, and no transcript is read.
 
 The real-Herdr lab (`scripts/live_smoke.py`) prepared thirteen tasks as shell panes without agents in one named session: `status --live` took 73 ms and `refresh request` 289 ms with exactly one real `herdr agent list` each, every row honestly `pending-unreachable`.
-No model was launched; the authenticated-harness fleet canary in `skills/update/SKILL.md` and `docs/ACCEPTANCE.md` section 8 remains a documented manual step and was not executed for this slice.
+No model was launched; the authenticated-harness fleet canary in `skills/sum-update/SKILL.md` and `docs/ACCEPTANCE.md` section 8 remains a documented manual step and was not executed for this slice.
 
 ## Pending returns slice (2026-09-06, macOS)
 

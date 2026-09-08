@@ -548,7 +548,7 @@ class CoreTest(unittest.TestCase):
         runtime = self.root / "altered-runtime" / sumctl.sha256_text(marker)[:8]
         if not runtime.exists():
             shutil.copytree(ROOT / "skills", runtime / "skills")
-            skill = runtime / "skills/worker/SKILL.md"
+            skill = runtime / "skills/sum-worker/SKILL.md"
             skill.write_text(skill.read_text() + "\n" + marker)
         return mock.patch.object(sumctl, "RUNTIME", runtime)
 
@@ -733,7 +733,7 @@ class CoreTest(unittest.TestCase):
         sumctl.answer(self.store, argparse.Namespace(task=task["id"], question=first["id"], text="Keep it.", file=None))
         altered = self.root / "altered-runtime"
         shutil.copytree(ROOT / "skills", altered / "skills")
-        (altered / "skills/worker/SKILL.md").write_text((altered / "skills/worker/SKILL.md").read_text() + "\nchanged\n")
+        (altered / "skills/sum-worker/SKILL.md").write_text((altered / "skills/sum-worker/SKILL.md").read_text() + "\nchanged\n")
         def new_cli(*args):
             return subprocess.run([sys.executable, str(ROOT / "lib/sumctl.py"), "--home", str(self.store.home), *args], env=env, capture_output=True, text=True)
         def regenerate(i):
@@ -1293,6 +1293,30 @@ class ReleaseLab(unittest.TestCase):
 class ReleaseTest(ReleaseLab):
     """Staging immutable runtime releases beside a live installation, entirely offline."""
 
+    def test_stage_checks_the_archived_candidate_inventory_not_the_dirty_checkout(self):
+        root, store = self.installation()
+        collision = root / ".agents/skills/sum-external"
+        collision.symlink_to("../../skills/sum-worker")
+        self.git("add", ".agents/skills/sum-external", cwd=root)
+        self.git("commit", "-q", "-m", "candidate collision", cwd=root)
+        bad_sha = self.git("rev-parse", "HEAD", cwd=root)
+        collision.unlink()
+
+        with self.assertRaisesRegex(sumctl.SumError, "Skill inventory refused release staging"):
+            self.stage(store, ref=bad_sha)
+
+    def test_verify_release_accepts_an_immutable_historical_worker_path(self):
+        _, store = self.installation()
+        historical = self.root / "historical-release"
+        sumctl.archive_source(ROOT, "de92361b87181837c58308acf2521fdae2677cec", historical)
+        fake_installer(historical)
+        manifest = sumctl.build_manifest(store, ROOT, "de92361b87181837c58308acf2521fdae2677cec", historical)
+        sumctl.atomic_json(historical / sumctl.RELEASE_MANIFEST, manifest)
+
+        verified = sumctl.verify_release(historical, "de92361b87181837c58308acf2521fdae2677cec")
+        self.assertIn("skills/worker/SKILL.md", verified["files"])
+        self.assertNotIn("skills/sum-worker/SKILL.md", verified["files"])
+
     def test_stage_builds_a_validated_immutable_bundle_outside_state(self):
         root, store = self.installation(via_symlink=True)
         head = self.git("rev-parse", "HEAD", cwd=root)
@@ -1409,7 +1433,7 @@ class ReleaseTest(ReleaseLab):
         root, store = self.installation()
         release = Path(self.stage(store)["release"])
         sumctl.set_read_only(release, read_only=False)
-        (release / "skills" / "worker" / "SKILL.md").write_text("tampered\n")
+        (release / "skills" / "sum-worker" / "SKILL.md").write_text("tampered\n")
         with self.assertRaisesRegex(sumctl.SumError, "does not match its manifest hash"):
             sumctl.release_show(store, release.name)
         self.assertFalse(sumctl.release_list(store)["releases"][0]["ok"])
@@ -1745,9 +1769,9 @@ class UpdateTest(UpdateLab):
             return json.loads((store.path(task["id"]) / "versions.json").read_text())
         ctl("ask", task["id"], "--key", "before", "--text", "Obligation recorded before any update?")
         settle()
-        skill = (root / "skills/worker/SKILL.md").read_text()
+        skill = (root / "skills/sum-worker/SKILL.md").read_text()
         # Update one: the worker procedure changed upstream; the refresh runs on the new default and stages r2 from it.
-        sha1 = self.commit_upstream(root, "skills/worker/SKILL.md", skill + "\nUpdate one: reread decisions before continuing.\n")
+        sha1 = self.commit_upstream(root, "skills/sum-worker/SKILL.md", skill + "\nUpdate one: reread decisions before continuing.\n")
         self.assertEqual(self.apply(store)["default"]["sha"], sha1)
         first = ctl("refresh", "request")
         rows = {r["target"]: r for r in first["targets"]}
@@ -1760,7 +1784,7 @@ class UpdateTest(UpdateLab):
         settle()
         # Update two before anyone adopted r2: r3 supersedes it; the old instruction can no longer become active.
         sha2 = self.commit_upstream(root, "AGENTS.md", (root / "AGENTS.md").read_text() + "\nUpdate two.\n")
-        self.commit_upstream(root, "skills/worker/SKILL.md", skill + "\nUpdate two: reread decisions before continuing.\n")
+        self.commit_upstream(root, "skills/sum-worker/SKILL.md", skill + "\nUpdate two: reread decisions before continuing.\n")
         sha2 = self.git("rev-parse", "HEAD", cwd=root)
         self.assertEqual(self.apply(store)["default"]["sha"], sha2)
         second = ctl("refresh", "request")

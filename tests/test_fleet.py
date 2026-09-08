@@ -142,8 +142,8 @@ class FleetTest(FleetLab):
         self.assertIn("agent_not_found", next(r for r in inbox["tasks"] if r["id"] == tasks["unknown-worker"]["id"])["attention"])
         self.assertEqual(inbox["capacity"]["occupied"]["global"], 12)
         # Stage N+1 (a changed worker procedure), activate it, and request a rolling refresh from the new default.
-        skill = (root / "skills/worker/SKILL.md").read_text()
-        sha1 = self.commit_upstream(root, "skills/worker/SKILL.md", skill + "\nUpdate one: reread decisions before continuing.\n")
+        skill = (root / "skills/sum-worker/SKILL.md").read_text()
+        sha1 = self.commit_upstream(root, "skills/sum-worker/SKILL.md", skill + "\nUpdate one: reread decisions before continuing.\n")
         applied = self.apply(store)
         self.assertEqual((applied["changed"], applied["default"]["sha"]), (True, sha1))
         first, delta = self.measure("refresh request after update one (12 workers)", root, store, "refresh", "request", env=env)
@@ -179,7 +179,7 @@ class FleetTest(FleetLab):
             self.pane_state(task["pane"], agent_status="working" if role == "busy-tool-call" else "idle") if role != "unknown-worker" else None
         # Update two, then the updater is interrupted in the middle of its fan-out: everything persisted so far stays, nothing is half-written.
         self.commit_upstream(root, "AGENTS.md", (root / "AGENTS.md").read_text() + "\nUpdate two.\n")
-        sha2 = self.commit_upstream(root, "skills/worker/SKILL.md", skill + "\nUpdate two: reread decisions before continuing.\n")
+        sha2 = self.commit_upstream(root, "skills/sum-worker/SKILL.md", skill + "\nUpdate two: reread decisions before continuing.\n")
         self.assertEqual(self.apply(store)["default"]["sha"], sha2)
         release2 = root / ".local" / "releases" / sha2
         real_delivery = sumctl.attempt_delivery

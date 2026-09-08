@@ -24,3 +24,6 @@ opencode.json
 
 # Verification run records written by .agents/skills/verify (see VERIFY.md).
 .artifacts/
+
+# Codex omo ultrawork local state (never product).
+.omo/

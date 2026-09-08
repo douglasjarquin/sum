@@ -45,7 +45,7 @@ Create a records backup. Inspect its manifest: worktree code is explicitly exclu
 
 Raise the lab installation to ten or more slots with `sumctl settings set --global 12 --per-repository 1` and dispatch that many tiny approved tasks across throwaway repositories with the authenticated harnesses in use.
 Confirm a dispatch beyond the limit is refused without creating a worktree, that a second task into an occupied repository is refused even with global room, and that a reported task still holds its slot until `archive --acknowledge`.
-Then follow the fleet canary in `skills/update/SKILL.md`: update, refresh, answer and report through old callbacks, roll back, refresh again.
+Then follow the fleet canary in `skills/sum-update/SKILL.md`: update, refresh, answer and report through old callbacks, roll back, refresh again.
 Record each worker's observed state, the `fanout` counts and wall time of every pass, the receipts that appeared and when, and every worker that kept its process, checkout, and partial work.
 Scripted workers in `tests/test_fleet.py` establish the bookkeeping; only this step says anything about a model acting on a refresh.
 

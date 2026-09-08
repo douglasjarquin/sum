@@ -29,7 +29,7 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 ## Worker run, root run, review
 
 Issue #33: dispatch records the contract, the worker attaches its own run to the handoff, the coordinator executes the contract again under a distinct run id (`sumctl verify --execute` or `--run`), the independent review stays, and only then is the task ready for the human's merge decision.
-Entry points in `lib/sumctl.py`: `prepare` records `verification_policy`, `report` accepts `handoff.verification`, `verify` records the coordinator's run (`--run`, `--execute`), `review` takes `--tool` and `--policy-reviewed`, and `evidence_view` computes the closure prerequisites; the procedures are `skills/worker/SKILL.md` and `skills/delivery/SKILL.md`.
+Entry points in `lib/sumctl.py`: `prepare` records `verification_policy`, `report` accepts `handoff.verification`, `verify` records the coordinator's run (`--run`, `--execute`), `review` takes `--tool` and `--policy-reviewed`, and `evidence_view` computes the closure prerequisites; the procedures are `skills/sum-worker/SKILL.md` and `skills/sum-delivery/SKILL.md`.
 
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
