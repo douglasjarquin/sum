@@ -17,7 +17,7 @@ const log = async (line) => { await appendFile(diag, `${new Date().toISOString()
 if (typeof WebSocket !== "function") {
   out.errors.push(`node ${process.version} has no global WebSocket; Node 22 or newer is required`);
   console.log(JSON.stringify(out));
-  process.exit(2);
+  process.exitCode = 2;
 }
 
 const profile = await mkdtemp(path.join(tmpdir(), "evidence-profile-"));
@@ -211,4 +211,4 @@ try {
   await rm(profile, { recursive: true, force: true }).catch(() => {});
 }
 console.log(JSON.stringify(out));
-process.exit(exitCode);
+process.exitCode = exitCode;
