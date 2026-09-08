@@ -78,7 +78,7 @@ SNAPSHOT_TIMEOUT = 10              # Seconds for the single per-session `agent l
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show", "skills-check",
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show", "skills-check", "skills-inspect",
                       "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet", "project-list", "project-show", "graph-status", "graph-config"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
@@ -8685,6 +8685,15 @@ def parser():
     g = s.add_subparsers(dest="skills_command", required=True)
     x = g.add_parser("check", help="Refuse mismatched names, missing references, or namespace collisions")
     x.add_argument("--root", default=str(RUNTIME), help="Checkout or release tree to inspect")
+    x = g.add_parser("inspect", help="Inspect one exact Git skill directory without installing or enabling it")
+    x.add_argument("--repository", required=True)
+    x.add_argument("--ref", required=True)
+    x.add_argument("--path", required=True)
+    x.add_argument("--route", choices=(".agents/skills", ".claude/skills"), default=".agents/skills")
+    x = g.add_parser("install", help="Install one or more exact Git skill selections into a target worktree")
+    x.add_argument("--target", required=True)
+    x.add_argument("--route", choices=(".agents/skills", ".claude/skills"), default=".agents/skills")
+    x.add_argument("--selection", nargs=3, action="append", required=True, metavar=("REPOSITORY", "REF", "PATH"))
     for name in ("prepare", "dispatch"):
         s = sub.add_parser(name, help="Coordinator only: record an approved task and create its isolated worktree" + ("; then launch the worker" if name == "dispatch" else " (no launch)"))
         s.add_argument("--repo", help="Absolute path of the repository checkout to branch from (or use --project)")
@@ -8958,6 +8967,11 @@ def main(argv=None):
         print(json.dumps({"error": f"{RUNTIME} is an immutable release tree. Run the installation's bin/sumctl, which selects a runtime and keeps state in its own .sum; a release never owns state."}), file=sys.stderr)
         return 1
     args = parser().parse_args(argv)
+    library = Path(__file__).resolve().parent
+    if str(library) not in sys.path:
+        sys.path.insert(0, str(library))
+    from skill_install import check as check_installed_skills, install as install_skills
+    from skill_source import Selection, SkillError, inspect as inspect_skill
     if _MEASUREMENT:
         nested = getattr(args, f"{args.command}_command", None)
         _MEASUREMENT.set_command(args.command, nested)
@@ -8987,7 +9001,15 @@ def main(argv=None):
         elif args.command in {"status", "inbox"}:
             value = status(store, args.live, args.command == "inbox")
         elif args.command == "skills":
-            value = skill_inventory(args.root)
+            if args.skills_command == "check":
+                value = skill_inventory(args.root) if (Path(args.root) / "skills").is_dir() else {"ok": True, "active": [], "routes": {}, "compatibility": [], "errors": []}
+                installed = check_installed_skills(args.root)
+                value["selected"] = installed
+                value["ok"] = value["ok"] and installed["ok"]
+            elif args.skills_command == "inspect":
+                value = inspect_skill(Selection(args.repository, args.ref, args.path, args.route))
+            else:
+                value = install_skills(args.target, tuple(Selection(repository, ref, path, args.route) for repository, ref, path in args.selection))
         elif args.command in {"prepare", "dispatch"}:
             task = prepare(store, args)
             value = start(store, task["id"]) if args.command == "dispatch" else task  # --arg values are already part of the persisted launch.
@@ -9188,8 +9210,8 @@ def main(argv=None):
             raise SumError("Unknown command")
         metadata_after(store, args, value)  # Presentation only, after the record is complete; never changes `value` or the exit status.
         emit(value)
-        return 0 if args.command != "skills" or value["ok"] else 1
-    except (SumError, OSError, ValueError, KeyError) as exc:
+        return 0 if args.command != "skills" or args.skills_command != "check" or value["ok"] else 1
+    except (SumError, SkillError, OSError, ValueError, KeyError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=True), file=sys.stderr)
         return 1
 
