@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from contextlib import contextmanager
 
-from skill_source import JsonObject, PreparedSelection, Selection, SkillError, prepare, validate_selection
+from skill_source import JsonObject, PreparedSelection, Selection, SKILL_NAME, SUPPORTED_ROUTES, SkillError, prepare, validate_selection
 
 
 LOCK_SCHEMA = 1
@@ -82,6 +82,13 @@ def _selection_key(value: dict) -> tuple[str, str, str, str]:
     return tuple(value.get(field, "") for field in ("repository", "ref", "path", "route"))
 
 
+def _valid_record(value: JsonObject) -> bool:
+    return (isinstance(value.get("repository"), str) and isinstance(value.get("ref"), str) and isinstance(value.get("path"), str)
+            and isinstance(value.get("route"), str) and value["route"] in SUPPORTED_ROUTES
+            and isinstance(value.get("name"), str) and SKILL_NAME.fullmatch(value["name"]) is not None and not value["name"].startswith("sum-")
+            and isinstance(value.get("snapshot"), str) and re.fullmatch(r"snapshots/[0-9a-f]{32}", value["snapshot"]) is not None)
+
+
 def _snapshot_id(prepared: PreparedSelection) -> str:
     value = "\0".join((prepared.origin, prepared.commit, prepared.selection.path, prepared.selection.route))
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
@@ -91,7 +98,10 @@ def _same_snapshot(record: dict, target: Path) -> bool:
     snapshot = record.get("snapshot")
     if not isinstance(snapshot, str) or not re.fullmatch(r"snapshots/[0-9a-f]{32}", snapshot):
         return False
-    path = target / ".sum-skills" / snapshot / "skill" / record.get("name", "")
+    snapshot_root = target / ".sum-skills" / snapshot
+    if snapshot_root.is_symlink():
+        return False
+    path = snapshot_root / "skill" / record.get("name", "")
     return path.is_dir() and not path.is_symlink()
 
 
@@ -126,6 +136,8 @@ def install(target: str | Path, selections: tuple[Selection, ...] | list[Selecti
         lock_path = store / "selection-lock.json"
         lock = _read_lock(lock_path)
         records = list(lock["selections"])
+        if any(not isinstance(record, dict) or not _valid_record(record) for record in records):
+            raise SkillError("selection lock contains an invalid record")
         by_key = {_selection_key(record): record for record in records}
         reused = []
         prepared = []
@@ -211,6 +223,9 @@ def check(target: str | Path) -> JsonObject:
             errors.append(f"invalid selected skill snapshot: {snapshot!r}")
             continue
         snapshot_root = store / snapshot
+        if snapshot_root.is_symlink():
+            errors.append(f"selected skill snapshot is symlinked: {snapshot_root}")
+            continue
         expected = set()
         for item in record.get("files", []):
             relative = item.get("path") if isinstance(item, dict) else None
