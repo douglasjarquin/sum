@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 import uuid
 
 
@@ -8,6 +9,7 @@ SCHEMA = 1
 HELD_STATES = frozenset({"held", "observing", "starting", "running", "uncertain"})
 STATES = HELD_STATES | {"released"}
 KINDS = frozenset({"worker", "verifier"})
+SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 
 
 class ReservationFormatError(Exception):
@@ -35,6 +37,44 @@ def new_execution(worker):
     return {"schema": SCHEMA, "worker": worker, "verifiers": []}
 
 
+def _pid(value):
+    return type(value) is int and value > 0
+
+
+def _argv(value):
+    return isinstance(value, list) and value and all(isinstance(item, str) and item for item in value)
+
+
+def _occupant(value, kind):
+    if not isinstance(value, dict):
+        return False
+    if kind == "worker":
+        return set(value) == {"machine", "session", "pane", "checkout", "harness", "name", "shell_pid", "pid", "argv"} and \
+            all(isinstance(value[field], str) and value[field] for field in ("machine", "session", "pane", "checkout")) and \
+            (value["harness"] is None or isinstance(value["harness"], str)) and \
+            (value["name"] is None or isinstance(value["name"], str)) and \
+            (value["shell_pid"] is None or _pid(value["shell_pid"])) and \
+            (value["pid"] is None or _pid(value["pid"])) and \
+            (value["argv"] is None or _argv(value["argv"]))
+    return set(value) == {"machine", "pid", "argv", "checkout"} and \
+        isinstance(value["machine"], str) and value["machine"] and _pid(value["pid"]) and \
+        _argv(value["argv"]) and isinstance(value["checkout"], str) and value["checkout"]
+
+
+def _observation(value):
+    if not isinstance(value, dict) or not isinstance(value.get("at"), str) or not value["at"] or \
+            not isinstance(value.get("outcome"), str) or not value["outcome"]:
+        return False
+    if "pid" in value and value["pid"] is not None and not _pid(value["pid"]):
+        return False
+    if "argv" in value and not _argv(value["argv"]):
+        return False
+    for field in ("reason", "checkout", "pane", "workspace", "descendant_error"):
+        if field in value and value[field] is not None and not isinstance(value[field], str):
+            return False
+    return all(isinstance(value[field], bool) for field in ("checkout_present",) if field in value)
+
+
 def _attempt(value, expected_kind):
     if not isinstance(value, dict):
         raise ReservationFormatError(f"{expected_kind} reservation is not an object")
@@ -54,8 +94,14 @@ def _attempt(value, expected_kind):
         raise ReservationFormatError(f"{expected_kind} reservation has invalid owner or observations")
     if value["checkout"] is not None and not isinstance(value["checkout"], str):
         raise ReservationFormatError(f"{expected_kind} reservation has an invalid checkout")
+    if value.get("candidate") is not None and (not isinstance(value["candidate"], str) or not SHA40.fullmatch(value["candidate"])):
+        raise ReservationFormatError(f"{expected_kind} reservation has an invalid candidate")
+    if "occupant" in value and not _occupant(value["occupant"], expected_kind):
+        raise ReservationFormatError(f"{expected_kind} reservation has an invalid occupant")
+    if not all(_observation(row) for row in value["observations"]):
+        raise ReservationFormatError(f"{expected_kind} reservation has an invalid observation")
     for field in ("operation_pid", "observer_pid"):
-        if field in value and (type(value[field]) is not int or value[field] <= 0):
+        if field in value and not _pid(value[field]):
             raise ReservationFormatError(f"{expected_kind} reservation has an invalid {field}")
     return value
 
