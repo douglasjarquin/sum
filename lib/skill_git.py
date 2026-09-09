@@ -21,6 +21,7 @@ MAX_TREE_FILES: Final = 2048
 MAX_GIT_OUTPUT_BYTES: Final = 16 * 1024 * 1024
 MAX_GIT_STDERR_BYTES: Final = 64 * 1024
 MAX_REMOTE_REPOSITORY_BYTES: Final = 64 * 1024 * 1024
+MAX_REMOTE_REPOSITORY_ENTRIES: Final = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,18 +39,33 @@ class GitCommand:
     stdout_limit: int = MAX_GIT_OUTPUT_BYTES
     timeout: int = 120
     footprint: Path | None = None
+    allow_lazy_fetch: bool = False
 
 
 def _repository_bytes(root: Path) -> int:
     total = 0
-    for directory, _, files in os.walk(root, followlinks=False):
-        for name in files:
-            try:
-                total += (Path(directory) / name).lstat().st_size
-            except FileNotFoundError:
-                continue
-            if total > MAX_REMOTE_REPOSITORY_BYTES:
-                return total
+    entries = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            members = os.scandir(directory)
+        except OSError:
+            return MAX_REMOTE_REPOSITORY_BYTES + 1
+        with members:
+            for entry in members:
+                entries += 1
+                if entries > MAX_REMOTE_REPOSITORY_ENTRIES:
+                    return MAX_REMOTE_REPOSITORY_BYTES + 1
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(Path(entry.path))
+                    continue
+                try:
+                    total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    return MAX_REMOTE_REPOSITORY_BYTES + 1
+                if total > MAX_REMOTE_REPOSITORY_BYTES:
+                    return total
     return total
 
 
@@ -59,11 +75,19 @@ def _run_git(command: GitCommand) -> bytes:
         argv.extend(("-C", str(command.repo)))
     argv.extend(command.args)
     try:
+        environment = {
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_NO_REPLACE_OBJECTS": "1",
+        }
+        if not command.allow_lazy_fetch:
+            environment["GIT_NO_LAZY_FETCH"] = "1"
         process = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
+            env=environment,
             start_new_session=True,
         )
     except OSError as exc:
@@ -167,7 +191,8 @@ class GitRepository:
         self.footprint = footprint
 
     def _run(self, *args: str, stdout_limit: int = MAX_GIT_OUTPUT_BYTES, timeout: int = 120) -> bytes:
-        return _run_git(GitCommand(self.path, args, stdout_limit, timeout, self.footprint))
+        return _run_git(GitCommand(self.path, args, stdout_limit, timeout, self.footprint,
+                                   allow_lazy_fetch=self.footprint is not None))
 
     def resolve(self, ref: str) -> str:
         value = self._run("rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}", stdout_limit=128).decode().strip()

@@ -19,40 +19,53 @@ MAX_LOCK_BYTES = 8 * 1024 * 1024
 MAX_LOCK_RECORDS = 2048
 
 
-def _read_lock(path: Path) -> JsonObject:
-    if path.is_symlink():
-        raise SkillError(f"refusing symlinked selection lock: {path}")
-    if not path.exists():
-        return {"schema": LOCK_SCHEMA, "selections": []}
-    try:
-        if not stat.S_ISREG(path.stat().st_mode) or path.stat().st_size > MAX_LOCK_BYTES:
-            raise SkillError(f"selection lock must be a bounded regular file: {path}")
-        with path.open("rb") as source:
-            data = source.read(MAX_LOCK_BYTES + 1)
-        if len(data) > MAX_LOCK_BYTES:
-            raise SkillError(f"selection lock must be a bounded regular file: {path}")
-        value = json.loads(data.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
-        raise SkillError(f"cannot read selection lock {path}: {exc}") from exc
+def _validate_lock(value: object, path: Path) -> None:
     if not isinstance(value, dict) or value.get("schema") != LOCK_SCHEMA or not isinstance(value.get("selections"), list):
         raise SkillError(f"unsupported selection lock: {path}")
     records = value["selections"]
-    if (len(records) > MAX_LOCK_RECORDS
-            or any(not isinstance(record, dict) or not valid_record(record) for record in records)):
+    if len(records) > MAX_LOCK_RECORDS:
+        raise SkillError(f"selection lock record limit of {MAX_LOCK_RECORDS} would be exceeded: {path}")
+    if any(not isinstance(record, dict) or not valid_record(record) for record in records):
         raise SkillError(f"selection lock contains an invalid record: {path}")
     keys = [selection_key(record) for record in records]
     names = [record["name"] for record in records]
     if len(set(keys)) != len(keys) or len(set(names)) != len(names):
         raise SkillError(f"selection lock contains an invalid record: {path}")
+
+
+def _read_lock(path: Path) -> JsonObject:
+    if path.is_symlink():
+        raise SkillError(f"refusing symlinked selection lock: {path}")
+    try:
+        flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+        with os.fdopen(os.open(path, flags), "rb") as source:
+            status = os.fstat(source.fileno())
+            if not stat.S_ISREG(status.st_mode) or status.st_size > MAX_LOCK_BYTES:
+                raise SkillError(f"selection lock must be a bounded regular file: {path}")
+            data = source.read(MAX_LOCK_BYTES + 1)
+        if len(data) > MAX_LOCK_BYTES:
+            raise SkillError(f"selection lock must be a bounded regular file: {path}")
+        value = json.loads(data.decode("utf-8"))
+    except FileNotFoundError:
+        return {"schema": LOCK_SCHEMA, "selections": []}
+    except (OSError, RecursionError, UnicodeDecodeError, ValueError) as exc:
+        raise SkillError(f"cannot read selection lock {path}: {exc}") from exc
+    _validate_lock(value, path)
     return value
 
 
 def _write_json(path: Path, value: dict) -> None:
+    _validate_lock(value, path)
+    try:
+        data = (json.dumps(value, indent=2, ensure_ascii=True) + "\n").encode("utf-8")
+    except (RecursionError, ValueError) as exc:
+        raise SkillError(f"cannot encode selection lock {path}: {exc}") from exc
+    if len(data) > MAX_LOCK_BYTES:
+        raise SkillError(f"selection lock byte limit of {MAX_LOCK_BYTES} would be exceeded: {path}")
     fd, temporary = tempfile.mkstemp(prefix=".selection-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as output:
-            json.dump(value, output, indent=2, ensure_ascii=True)
-            output.write("\n")
+        with os.fdopen(fd, "wb") as output:
+            output.write(data)
             output.flush()
             os.fsync(output.fileno())
         os.replace(temporary, path)
@@ -64,7 +77,15 @@ def _write_json(path: Path, value: dict) -> None:
 @contextmanager
 def _lock(path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a+") as handle:
+    flags = os.O_RDWR | os.O_CREAT | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise SkillError(f"cannot open bounded install lock {path}: {exc}") from exc
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise SkillError(f"install lock must be a regular file: {path}")
+    with os.fdopen(descriptor, "a+") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield
@@ -123,8 +144,6 @@ def install(target: str | Path, selections: tuple[Selection, ...] | list[Selecti
         lock_path = store / "selection-lock.json"
         lock = _read_lock(lock_path)
         records = list(lock["selections"])
-        if any(not isinstance(record, dict) or not valid_record(record) for record in records):
-            raise SkillError("selection lock contains an invalid record")
         by_key = {selection_key(record): record for record in records}
         reused = []
         prepared = []

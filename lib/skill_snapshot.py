@@ -52,7 +52,9 @@ def valid_record(value: dict) -> bool:
     if not all(isinstance(item, str) for item in (repository, origin, ref, commit, path, route, name, snapshot)):
         return False
     try:
-        validate_selection(Selection(repository, ref, path, route))
+        stored = Selection(repository, ref, path, route)
+        if validate_selection(stored) != stored:
+            return False
     except SkillError:
         return False
     if (not origin.startswith("git:") or len(origin) == 4 or re.fullmatch(r"[0-9a-f]{40}", commit) is None
@@ -84,14 +86,19 @@ def snapshot_id(prepared: PreparedSelection) -> str:
 def _snapshot_files(root: Path) -> set[str] | None:
     paths = set()
     entries = 0
-    for directory, names, files in os.walk(root, followlinks=False):
-        for name in (*names, *files):
-            entries += 1
-            if entries > MAX_SNAPSHOT_ENTRIES:
-                return None
-            member = Path(directory) / name
-            if member.is_file() or member.is_symlink():
-                paths.add(member.relative_to(root).as_posix())
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as members:
+            for entry in members:
+                member = Path(entry.path)
+                entries += 1
+                if entries > MAX_SNAPSHOT_ENTRIES:
+                    return None
+                if entry.is_symlink() or entry.is_file(follow_symlinks=False):
+                    paths.add(member.relative_to(root).as_posix())
+                elif entry.is_dir(follow_symlinks=False):
+                    pending.append(member)
     return paths
 
 
@@ -144,7 +151,11 @@ def snapshot_errors(record: dict, target: Path) -> list[str]:
                 errors.append(f"selected skill resource mode mismatch: {member}")
         except (OSError, RuntimeError) as exc:
             errors.append(f"missing selected skill resource {member}: {exc}")
-    actual = _snapshot_files(snapshot_root)
+    try:
+        actual = _snapshot_files(snapshot_root)
+    except OSError as exc:
+        errors.append(f"cannot inspect selected skill snapshot {snapshot_root}: {exc}")
+        return errors
     if actual is None:
         errors.append(f"selected skill snapshot exceeds entry limit of {MAX_SNAPSHOT_ENTRIES}: {snapshot_root}")
     elif actual != expected:

@@ -3,16 +3,22 @@ from __future__ import annotations
 from urllib.parse import unquote, urlsplit
 
 
+def _escaped(text: str, index: int) -> bool:
+    backslashes = 0
+    index -= 1
+    while index >= 0 and text[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return backslashes % 2 == 1
+
+
 def _closing(text: str, start: int, opener: str, closer: str) -> int:
     depth = 0
     index = start
     while index < len(text):
-        if text[index] == "\\" and index + 1 < len(text):
-            index += 2
-            continue
-        if text[index] == opener:
+        if text[index] == opener and not _escaped(text, index):
             depth += 1
-        elif text[index] == closer:
+        elif text[index] == closer and not _escaped(text, index):
             depth -= 1
             if depth == 0:
                 return index
@@ -134,18 +140,21 @@ def markdown_targets(data: bytes) -> tuple[str, ...]:
     definitions, spans = _definitions(text)
     targets = []
     index = 0
+    span_index = 0
     while index < len(text):
         start = text.find("[", index)
         if start < 0:
             break
-        if start > 0 and text[start - 1] == "\\":
+        if _escaped(text, start):
             index = start + 1
             continue
         end = _closing(text, start, "[", "]")
         if end < 0:
             break
         index = end + 1
-        if any(first <= start < last for first, last in spans):
+        while span_index < len(spans) and spans[span_index][1] <= start:
+            span_index += 1
+        if span_index < len(spans) and spans[span_index][0] <= start < spans[span_index][1]:
             continue
         target = None
         if text[index:index + 1] == "(":

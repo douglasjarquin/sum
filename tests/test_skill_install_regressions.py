@@ -271,6 +271,125 @@ class SkillInstallRegressionTest(unittest.TestCase):
         self.assertNotEqual(reused.returncode, 0)
         self.assertIn("invalid record", reused.stderr)
 
+    def test_install_never_writes_a_lock_beyond_its_record_limit(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        store = self.target / ".sum-skills"
+        store.mkdir()
+        records = []
+        for index in range(2048):
+            name = f"existing-{index}"
+            repository = f"https://repository-{index}.invalid/source.git"
+            commit = f"{index + 1:040x}"
+            path = f"skills/{name}"
+            identity = "\0".join((repository, commit, path, ".agents/skills"))
+            records.append({
+                "repository": repository,
+                "origin": f"git:{repository}",
+                "ref": commit,
+                "commit": commit,
+                "path": path,
+                "route": ".agents/skills",
+                "name": name,
+                "snapshot": f"snapshots/{hashlib.sha256(identity.encode()).hexdigest()[:32]}",
+                "content_sha256": "0" * 64,
+                "files": [{
+                    "path": "SKILL.md",
+                    "snapshot_path": f"skill/{name}/SKILL.md",
+                    "mode": 0o644,
+                    "sha256": "0" * 64,
+                }],
+            })
+        lock_path = store / "selection-lock.json"
+        lock_path.write_text(json.dumps({"schema": 1, "selections": records}))
+        before = lock_path.read_bytes()
+
+        installed = self.install(ref)
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("selection lock record limit", installed.stderr)
+        self.assertEqual(lock_path.read_bytes(), before)
+        self.assertFalse((self.target / ".agents/skills/alpha").exists())
+
+    def test_install_never_writes_a_lock_beyond_its_byte_limit(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        store = self.target / ".sum-skills"
+        store.mkdir()
+        path = "skills/existing"
+        route = ".agents/skills"
+        commit = "1" * 40
+
+        def lock_bytes(padding: int) -> bytes:
+            repository = "https://fixture.invalid/" + "a" * padding
+            identity = "\0".join((repository, commit, path, route))
+            record = {
+                "repository": repository,
+                "origin": f"git:{repository}",
+                "ref": commit,
+                "commit": commit,
+                "path": path,
+                "route": route,
+                "name": "existing",
+                "snapshot": f"snapshots/{hashlib.sha256(identity.encode()).hexdigest()[:32]}",
+                "content_sha256": "0" * 64,
+                "files": [{
+                    "path": "SKILL.md",
+                    "snapshot_path": "skill/existing/SKILL.md",
+                    "mode": 0o644,
+                    "sha256": "0" * 64,
+                }],
+            }
+            return (json.dumps({"schema": 1, "selections": [record]}, indent=2) + "\n").encode()
+
+        base_size = len(lock_bytes(0))
+        before = lock_bytes((8 * 1024 * 1024 - 256 - base_size) // 2)
+        self.assertLess(len(before), 8 * 1024 * 1024)
+        lock_path = store / "selection-lock.json"
+        lock_path.write_bytes(before)
+
+        installed = self.install(ref)
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("selection lock byte limit", installed.stderr)
+        self.assertEqual(lock_path.read_bytes(), before)
+        self.assertFalse((self.target / ".agents/skills/alpha").exists())
+
+    def test_relative_repository_is_bound_to_the_calling_directory(self) -> None:
+        workspaces = [self.root / name for name in ("first", "second")]
+        commits = []
+        for index, workspace in enumerate(workspaces):
+            repository = workspace / "repo"
+            skill = repository / "skills/alpha"
+            skill.mkdir(parents=True)
+            (repository / "LICENSE").write_text("license\n")
+            (skill / "SKILL.md").write_text(
+                f"---\nname: alpha\ndescription: alpha\n---\n\nsource {index}\n"
+            )
+            subprocess.run(["git", "init", "-q", "-b", "main", str(repository)], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.name", "fixture"], check=True)
+            subprocess.run(["git", "-C", str(repository), "config", "user.email", "fixture@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(repository), "add", "."], check=True)
+            subprocess.run(["git", "-C", str(repository), "commit", "-q", "-m", "fixture"], check=True)
+            commits.append(subprocess.run(
+                ["git", "-C", str(repository), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip())
+        command = [
+            sys.executable, str(SUMCTL), "--home", str(self.root / "home"),
+            "skills", "install", "--target", str(self.target), "--selection",
+            "repo", commits[0], "skills/alpha",
+        ]
+        first = subprocess.run(command, cwd=workspaces[0], capture_output=True, text=True)
+
+        second = subprocess.run(command, cwd=workspaces[1], capture_output=True, text=True)
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertNotEqual(second.returncode, 0)
+        self.assertNotIn("reused", second.stdout)
+
     def test_selection_lock_fifo_and_oversized_file_are_refused(self) -> None:
         for label in ("fifo", "oversized"):
             with self.subTest(label=label):
@@ -295,6 +414,37 @@ class SkillInstallRegressionTest(unittest.TestCase):
 
                 self.assertNotEqual(checked.returncode, 0)
                 self.assertIn("selection lock must be a bounded regular file", checked.stdout + checked.stderr)
+
+    def test_install_lock_fifo_is_refused_without_blocking(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        store = self.target / ".sum-skills"
+        store.mkdir()
+        os.mkfifo(store / "install.lock")
+
+        installed = subprocess.run(
+            [sys.executable, str(SUMCTL), "--home", str(self.root / "home"),
+             "skills", "install", "--target", str(self.target), "--selection",
+             str(self.source), ref, "skills/alpha"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("install lock must be a regular file", installed.stderr)
+
+    def test_deeply_nested_selection_lock_is_a_structured_error(self) -> None:
+        store = self.target / ".sum-skills"
+        store.mkdir()
+        lock_path = store / "selection-lock.json"
+        lock_path.write_text('{"schema":1,"selections":' + "[" * 10000 + "0" + "]" * 10000 + "}")
+
+        checked = self.cli("skills", "check", "--root", str(self.target))
+
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertNotIn("Traceback", checked.stderr)
+        self.assertIn("cannot read selection lock", checked.stdout + checked.stderr)
 
     def test_oversized_installed_snapshot_member_is_refused_before_read(self) -> None:
         self.skill("alpha\n")
@@ -368,6 +518,7 @@ class SkillInstallRegressionTest(unittest.TestCase):
         cases = {
             "nested": "[nested [label]](../outside.md)\n",
             "escaped": r"[escaped \] label][resource]" "\n\n[resource]: ../outside.md\n",
+            "even-escape": r"\\[active label](../outside.md)" "\n",
         }
         for name, body in cases.items():
             with self.subTest(name=name):

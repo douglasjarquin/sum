@@ -6,6 +6,7 @@ from pathlib import Path, PurePosixPath
 import re
 import tempfile
 from typing import TypeAlias
+from urllib.parse import urlparse
 
 from skill_content import (
     SKILL_NAME,
@@ -83,6 +84,15 @@ def _validate_path(value: str, label: str) -> str:
     return str(path)
 
 
+def _canonical_repository(value: str) -> str:
+    parsed = urlparse(value)
+    if parsed.scheme == "file" and not (parsed.netloc or parsed.query or parsed.fragment):
+        return Path(parsed.path).expanduser().resolve().as_uri()
+    if not parsed.scheme and re.fullmatch(r"[^/@:\s]+@[^/:\s]+:.+", value) is None:
+        return str(Path(value).expanduser().resolve())
+    return value
+
+
 def validate_selection(selection: Selection) -> Selection:
     if not selection.repository or "\x00" in selection.repository:
         raise SkillError("repository is required")
@@ -100,7 +110,7 @@ def validate_selection(selection: Selection) -> Selection:
     route = _validate_path(selection.route, "destination route")
     if route not in SUPPORTED_ROUTES:
         raise SkillError(f"unsupported destination route {route!r}; use one of {SUPPORTED_ROUTES}")
-    return Selection(selection.repository, selection.ref, path, route)
+    return Selection(_canonical_repository(selection.repository), selection.ref, path, route)
 
 
 def _license_entries(repository: GitRepository, commit: str, selected: str) -> dict[str, tuple[int, str]]:

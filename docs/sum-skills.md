@@ -37,6 +37,8 @@ One install invocation accepts at most 32 MiB of selected resources, with an 8 M
 
 Governing-license expansion is limited to 64 files, and offline checks refuse non-regular or oversized selection locks, oversized or over-aggregate snapshot content, and overlarge snapshot trees.
 
+Local repository paths are stored as canonical absolute locators, and each lock update must satisfy the same record and byte limits as the next read.
+
 The installer never invokes a skill, grants permissions, enables MCP or model settings, changes global Cursor or Claude configuration, follows submodules, or runs upstream hooks and scripts.
 
 Use `bin/sumctl skills check --root /path/to/worktree` to validate installed hashes without network access.
