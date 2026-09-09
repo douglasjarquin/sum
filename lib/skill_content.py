@@ -27,21 +27,31 @@ class SourceFile:
     link_target: str | None = None
 
 
-def _scalar(value: str) -> str:
+def _scalar(value: str, source: str) -> str:
     value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    quoted = False
-    escaped = False
-    for index, character in enumerate(value):
-        if character == "\\" and not escaped:
-            escaped = True
-            continue
-        if character in "'\"" and not escaped:
-            quoted = not quoted
-        if character == "#" and not quoted and (index == 0 or value[index - 1].isspace()):
-            return value[:index].rstrip()
+    if value.startswith(("[", "{")):
+        raise SkillError(f"{source}: malformed frontmatter scalar")
+    if value[:1] in "'\"":
+        quote = value[0]
+        index = 1
         escaped = False
+        while index < len(value):
+            character = value[index]
+            if quote == "'" and character == quote and index + 1 < len(value) and value[index + 1] == quote:
+                index += 2
+                continue
+            if character == quote and not escaped:
+                suffix = value[index + 1:].strip()
+                if suffix and not suffix.startswith("#"):
+                    raise SkillError(f"{source}: malformed frontmatter scalar")
+                parsed = value[1:index]
+                return parsed.replace("''", "'") if quote == "'" else parsed
+            escaped = quote == '"' and character == "\\" and not escaped
+            index += 1
+        raise SkillError(f"{source}: malformed frontmatter scalar")
+    for index, character in enumerate(value):
+        if character == "#" and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
     return value
 
 
@@ -92,7 +102,7 @@ def frontmatter(data: bytes, source: str) -> tuple[str, tuple[str, ...]]:
             while index < end and (not lines[index].strip() or lines[index][:1].isspace()):
                 index += 1
             continue
-        fields[key] = _scalar(value)
+        fields[key] = _scalar(value, source)
         index += 1
     name = fields.get("name")
     if not name or not SKILL_NAME.fullmatch(name):

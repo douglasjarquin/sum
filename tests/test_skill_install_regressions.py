@@ -133,6 +133,36 @@ class SkillInstallRegressionTest(unittest.TestCase):
         for member in members:
             self.assertEqual(stat.S_IMODE(member.stat().st_mode) & 0o222, 0, member)
 
+    def test_unterminated_quoted_frontmatter_scalar_is_refused(self) -> None:
+        directory = self.skill("alpha\n")
+        (directory / "SKILL.md").write_text(
+            '---\nname: alpha\ndescription: "unterminated\n---\n\nalpha\n'
+        )
+        ref = self.commit()
+
+        inspected = self.cli(
+            "skills", "inspect", "--repository", str(self.source),
+            "--ref", ref, "--path", "skills/alpha",
+        )
+
+        self.assertNotEqual(inspected.returncode, 0)
+        self.assertIn("malformed frontmatter", inspected.stderr)
+
+    def test_flow_collection_frontmatter_scalar_is_refused(self) -> None:
+        directory = self.skill("alpha\n")
+        (directory / "SKILL.md").write_text(
+            "---\nname: alpha\ndescription: [unterminated\n---\n\nalpha\n"
+        )
+        ref = self.commit()
+
+        inspected = self.cli(
+            "skills", "inspect", "--repository", str(self.source),
+            "--ref", ref, "--path", "skills/alpha",
+        )
+
+        self.assertNotEqual(inspected.returncode, 0)
+        self.assertIn("malformed frontmatter", inspected.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
