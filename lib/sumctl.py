@@ -246,13 +246,12 @@ def herdr_version():
     match = re.search(r"\b(\d+\.\d+\.\d+)\b", found)
     if not match:
         raise SumError(f"Herdr did not report a semantic version; found {found!r}. Run mise run setup; do not silently mix CLI contracts.")
-    return found
+    return match.group(1), found
 
 
 def ensure_version():
-    found = herdr_version()
-    match = re.search(r"\b(\d+\.\d+\.\d+)\b", found)
-    if not match or match.group(1) != HERDR_VERSION:
+    version, found = herdr_version()
+    if version != HERDR_VERSION:
         raise SumError(f"This MVP is pinned to Herdr {HERDR_VERSION}; found {found!r}. Run mise run setup; do not silently mix CLI contracts.")
     return found
 
@@ -8445,8 +8444,8 @@ def candidate_contract(target):
               "print(json.dumps({'sum_version':offered['sum_version'],"
               "'contracts':{'herdr_cli':offered['herdr_cli'],'mcp':offered['mcp']},"
               "'supports':offered['supports']}))")
-    result = run([python, "-c", script, target / "lib" / "sumctl.py"],
-                 timeout=60, env={**os.environ, "SUM_INSTALL_ROOT": str(target)})
+    result = run([python, "-I", "-c", script, target / "lib" / "sumctl.py"],
+                 cwd=target, timeout=60, env={"SUM_INSTALL_ROOT": str(target)})
     try:
         contract = json.loads(result.stdout)
     except ValueError as exc:
@@ -8491,11 +8490,21 @@ def probe_candidate(store, root, candidate, tasks):
 def compatibility(store, root, candidate_path, current):
     """Every check a selection must pass. `blocking` lists exact incompatibilities; `deferred` lists work that waits for clients."""
     blocking, deferred = [], []
-    try:
-        manifest = verify_release(candidate_path, candidate_path.name)
-    except SumError as exc:
-        return {"ok": False, "blocking": [f"candidate bundle: {exc}"], "deferred": [], "probes": [], "tasks": []}
-    offered = runtime_contracts({"manifest": manifest})
+    checkout = candidate_path.resolve() == Path(root).resolve()
+    if checkout:
+        try:
+            offered = runtime_contracts({"manifest": candidate_contract(candidate_path)})
+        except SumError as exc:
+            return {"ok": False, "blocking": [f"checkout contract: {exc}"], "deferred": [], "probes": [], "tasks": []}
+        candidate_sha = run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()
+        manifest = None
+    else:
+        try:
+            manifest = verify_release(candidate_path, candidate_path.name)
+        except SumError as exc:
+            return {"ok": False, "blocking": [f"candidate bundle: {exc}"], "deferred": [], "probes": [], "tasks": []}
+        offered = runtime_contracts({"manifest": manifest})
+        candidate_sha = manifest["source"]["sha"]
     state = read_json(store.home / "state.json")
     if state.get("schema") not in offered["supports"]["state_schema"]:
         blocking.append(f"state schema {state.get('schema')} is not supported by the candidate ({offered['supports']['state_schema']})")
@@ -8507,19 +8516,21 @@ def compatibility(store, root, candidate_path, current):
             blocking.append(f"task {row['task']} uses brief schema {row['brief_schema']}, which the candidate does not support ({offered['supports']['brief_schema']}); "
                             "already-adopted task contracts are never downgraded implicitly")
     try:
-        installed = herdr_version()
+        installed, installed_text = herdr_version()
     except SumError as exc:
         installed = None
+        installed_text = None
         blocking.append(f"installed Herdr: {exc}")
-    if installed and offered["herdr_cli"] not in installed:
-        blocking.append(f"candidate requires Herdr CLI {offered['herdr_cli']}; installed {installed!r}. A Herdr upgrade is a separate, global decision that this update never performs.")
-    pins = manifest["dependencies"]["tools"]["pins"]
-    for name in manifest["dependencies"]["tools"]["paths"]:
-        link = candidate_path / ".local" / "bin" / name
-        if not link.resolve().is_file():
-            blocking.append(f"pinned tool {name} does not resolve in the candidate")
-    if not pins:
-        blocking.append("candidate manifest has no tool pins")
+    if installed and installed != offered["herdr_cli"]:
+        blocking.append(f"candidate requires Herdr CLI {offered['herdr_cli']}; installed {installed_text!r}. A Herdr upgrade is a separate, global decision that this update never performs.")
+    if manifest:
+        pins = manifest["dependencies"]["tools"]["pins"]
+        for name in manifest["dependencies"]["tools"]["paths"]:
+            link = candidate_path / ".local" / "bin" / name
+            if not link.resolve().is_file():
+                blocking.append(f"pinned tool {name} does not resolve in the candidate")
+        if not pins:
+            blocking.append("candidate manifest has no tool pins")
     running = runtime_contracts(current)
     if running["mcp"] != offered["mcp"]:
         deferred.append({"what": "mcp", "from": running["mcp"], "to": offered["mcp"],
@@ -8534,7 +8545,7 @@ def compatibility(store, root, candidate_path, current):
         if not probe["ok"]:
             blocking.append(f"candidate helper failed `{' '.join(probe['argv'])}`: {probe['detail']}")
     return {"ok": not blocking, "blocking": blocking, "deferred": deferred, "probes": probes, "tasks": tasks,
-            "candidate": {"sha": manifest["source"]["sha"], **offered}, "current": {"kind": current["kind"], "sha": current.get("sha"), **running}}
+            "candidate": {"sha": candidate_sha, **offered}, "current": {"kind": current["kind"], "sha": current.get("sha"), **running}}
 
 
 def update_log(root, entry):
@@ -8619,7 +8630,10 @@ def activate(store, root, target, action, source):
                 raise SumError(f"{action} refused; the current selection ({current['kind']} {current.get('sha')}) still serves. Exact incompatibilities: " + "; ".join(result["blocking"]))
             new_sha = target.name
         else:
-            result = {"ok": True, "blocking": [], "deferred": [{"what": "checkout-instructions", "note": "The checkout serves again; its instructions match its HEAD."}], "probes": []}
+            result = compatibility(store, root, Path(root), current)
+            if not result["ok"]:
+                update_log(root, {"action": action, "result": "refused", "from": current.get("sha"), "to": "checkout", "blocking": result["blocking"]})
+                raise SumError(f"{action} refused; the current selection ({current['kind']} {current.get('sha')}) still serves. Exact incompatibilities: " + "; ".join(result["blocking"]))
             new_sha = current.get("sha") if current["kind"] == "checkout" else run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()
         if current["kind"] == ("checkout" if target is None else "release") and current.get("sha") == new_sha:
             return {"action": action, "changed": False, "default": current, "compatibility": result, "source": source,

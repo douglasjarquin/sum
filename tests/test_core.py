@@ -1628,6 +1628,11 @@ class UpdateTest(UpdateLab):
 
             second = self.commit_upstream(root, "two.py")
             second_release = Path(self.stage(store, second)["release"])
+            before = self.current(root)
+            with mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": "herdr 10.9.0"}):
+                with self.assertRaisesRegex(sumctl.SumError, "requires Herdr CLI 0.9.0.*installed 'herdr 10.9.0'"):
+                    self.apply(store, no_fetch=True)
+            self.assertEqual(self.current(root), before)
             sumctl.set_read_only(second_release, read_only=False)
             second_manifest = json.loads((second_release / "release.json").read_text())
             second_manifest["contracts"]["herdr_cli"] = "0.10.0"
@@ -1643,6 +1648,51 @@ class UpdateTest(UpdateLab):
             self.assertEqual(self.current(root), second_release)
             self.assertEqual(sumctl.update_rollback(store, self.ns())["default"]["sha"], first)
             self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+
+    def test_candidate_contract_probe_ignores_caller_import_shadowing(self):
+        root, store = self.installation()
+        caller = self.root / "caller-cwd"
+        caller.mkdir()
+        marker = self.root / "shadow-marker"
+        (caller / "json.py").write_text(f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\nraise RuntimeError('shadowed json')\n")
+        previous = Path.cwd()
+        os.chdir(caller)
+        try:
+            staged = self.stage(store)
+        finally:
+            os.chdir(previous)
+        self.assertTrue(Path(staged["release"]).is_dir())
+        self.assertFalse(marker.exists())
+
+    def test_checkout_rollback_validates_contract_and_schemas_before_pointer_change(self):
+        root, store = self.installation()
+        task = self.task_fixture(store)
+        self.commit_upstream(root, "one.py")
+        self.apply(store)
+        before = self.current(root)
+
+        with mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": "herdr 0.10.0"}):
+            with self.assertRaisesRegex(sumctl.SumError, "candidate requires Herdr CLI 0.9.0"):
+                sumctl.update_rollback(store, self.ns(to="checkout"))
+        self.assertEqual(self.current(root), before)
+
+        state_path = store.home / "state.json"
+        state = json.loads(state_path.read_text())
+        state["schema"] = 99
+        state_path.write_text(json.dumps(state))
+        with self.assertRaisesRegex(sumctl.SumError, "state schema 99"):
+            sumctl.update_rollback(store, self.ns(to="checkout"))
+        self.assertEqual(self.current(root), before)
+        state["schema"] = sumctl.SCHEMA
+        state_path.write_text(json.dumps(state))
+
+        versions_path = store.path(task["id"]) / "versions.json"
+        versions = json.loads(versions_path.read_text())
+        versions["brief_schema"] = 99
+        versions_path.write_text(json.dumps(versions))
+        with self.assertRaisesRegex(sumctl.SumError, f"task {task['id']} uses brief schema 99"):
+            sumctl.update_rollback(store, self.ns(to="checkout"))
+        self.assertEqual(self.current(root), before)
 
     def test_activation_failures_leave_a_complete_selection(self):
         root, store = self.installation()
