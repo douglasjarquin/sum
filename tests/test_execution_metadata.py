@@ -18,28 +18,34 @@ class ExecutionMetadataTest(unittest.TestCase):
         self.env = {"FAKE_PARENT_CWD": str(self.root.resolve())}
         self.task = self.lab.dispatch(self.root, self.store, "metadata")
 
-    def malformed_verifier(self, field, value):
+    def malformed_verifier(self, field, value, *, state="uncertain"):
         saved = self.store.read(self.task["id"])
         verifier = sumctl.reservations.new_attempt(
             "verifier",
             saved["execution"]["worker"]["owner"],
             None,
             sumctl.now(),
-            state="uncertain",
+            state=state,
         )
         verifier[field] = value
         saved["execution"]["verifiers"] = [verifier]
         self.store.save(saved)
         return verifier
 
-    def test_malformed_optional_metadata_refuses_prepare_before_worktree_creation(self):
-        for field, value in (
+    def test_malformed_metadata_refuses_prepare_before_worktree_creation(self):
+        for index, (field, value) in enumerate((
             ("occupant", "not-an-object"),
             ("candidate", ["not", "a", "sha"]),
             ("observations", ["not-an-object"]),
-        ):
+            ("created_at", {"bad": True}),
+            ("updated_at", []),
+            ("created_at", "not-a-timestamp"),
+            ("owner", {"machine": "", "session": "", "pane": None}),
+            ("owner", {"machine": "main", "session": "sum-test", "pane": ""}),
+            ("checkout", ""),
+        )):
             with self.subTest(field=field):
-                verifier = self.malformed_verifier(field, value)
+                verifier = self.malformed_verifier(field, value, state="released")
                 before = self.lab.calls()
 
                 result = self.lab.cli(
@@ -50,7 +56,7 @@ class ExecutionMetadataTest(unittest.TestCase):
                         self.store.home,
                         "prepare",
                         "--repo",
-                        self.lab.project(f"blocked-{field}"),
+                        self.lab.project(f"blocked-{index}"),
                         "--brief",
                         self.lab.brief(),
                         "--harness",
@@ -65,11 +71,17 @@ class ExecutionMetadataTest(unittest.TestCase):
                 self.assertEqual(self.lab.calls(), before)
                 self.assertEqual(self.store.read(self.task["id"])["execution"]["verifiers"], [verifier])
 
-    def test_malformed_optional_metadata_refuses_verifier_park_before_release(self):
+    def test_malformed_metadata_refuses_verifier_park_before_release(self):
         for field, value in (
             ("occupant", "not-an-object"),
             ("candidate", ["not", "a", "sha"]),
             ("observations", ["not-an-object"]),
+            ("created_at", {"bad": True}),
+            ("updated_at", []),
+            ("created_at", "not-a-timestamp"),
+            ("owner", {"machine": "", "session": "", "pane": None}),
+            ("owner", {"machine": "main", "session": "sum-test", "pane": ""}),
+            ("checkout", ""),
         ):
             with self.subTest(field=field):
                 verifier = self.malformed_verifier(field, value)

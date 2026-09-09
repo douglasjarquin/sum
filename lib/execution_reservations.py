@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
 import re
 import uuid
 
@@ -39,6 +40,15 @@ def new_execution(worker):
 
 def _pid(value):
     return type(value) is int and value > 0
+
+
+def _timestamp(value):
+    if not isinstance(value, str):
+        return False
+    try:
+        return datetime.fromisoformat(value).utcoffset() is not None
+    except ValueError:
+        return False
 
 
 def _argv(value):
@@ -89,11 +99,14 @@ def _attempt(value, expected_kind):
     if isinstance(value["generation"], bool) or not isinstance(value["generation"], int) or value["generation"] < 1:
         raise ReservationFormatError(f"{expected_kind} reservation has an invalid generation")
     if not isinstance(value["owner"], dict) or set(value["owner"]) != {"machine", "session", "pane"} or \
-            not isinstance(value["owner"].get("machine"), str) or not isinstance(value["owner"].get("session"), str) or \
-            (value["owner"].get("pane") is not None and not isinstance(value["owner"].get("pane"), str)) or not isinstance(value["observations"], list):
+            not all(isinstance(value["owner"].get(field), str) and value["owner"][field] for field in ("machine", "session")) or \
+            (value["owner"].get("pane") is not None and (not isinstance(value["owner"]["pane"], str) or not value["owner"]["pane"])) or not isinstance(value["observations"], list):
         raise ReservationFormatError(f"{expected_kind} reservation has invalid owner or observations")
-    if value["checkout"] is not None and not isinstance(value["checkout"], str):
+    if value["checkout"] is not None and (not isinstance(value["checkout"], str) or not value["checkout"]):
         raise ReservationFormatError(f"{expected_kind} reservation has an invalid checkout")
+    for field in ("created_at", "updated_at"):
+        if not _timestamp(value[field]):
+            raise ReservationFormatError(f"{expected_kind} reservation has an invalid {field}")
     if value.get("candidate") is not None and (not isinstance(value["candidate"], str) or not SHA40.fullmatch(value["candidate"])):
         raise ReservationFormatError(f"{expected_kind} reservation has an invalid candidate")
     if "occupant" in value and not _occupant(value["occupant"], expected_kind):
