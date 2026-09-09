@@ -417,6 +417,27 @@ class SkillInstallRegressionTest(unittest.TestCase):
         self.assertIn("stderr limit", installed.stderr)
         self.assertLess(len(installed.stderr), 4096)
 
+    def test_fast_git_stdout_limit_failure_remains_structured(self) -> None:
+        environment = {**os.environ, "PYTHONPATH": str(ROOT / "lib")}
+        checked = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from skill_content import SkillError; "
+                "from skill_git import GitCommand, _run_git; "
+                "\ntry: _run_git(GitCommand(None, ('--version',), stdout_limit=1, timeout=5))"
+                "\nexcept SkillError as exc: print(exc)"
+                "\nelse: raise SystemExit('expected bounded failure')",
+            ],
+            capture_output=True,
+            text=True,
+            env=environment,
+        )
+
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertIn("stdout limit", checked.stdout)
+        self.assertNotIn("Traceback", checked.stderr)
+
     def test_remote_source_uses_partial_exact_ref_fetch(self) -> None:
         self.skill("alpha\n")
         ref = self.commit()

@@ -107,9 +107,13 @@ def _run_git(command: GitCommand) -> bytes:
             except subprocess.TimeoutExpired:
                 failure = f"git source operation timed out after {command.timeout} seconds"
         if failure is not None:
-            with suppress(ProcessLookupError):
+            with suppress(ProcessLookupError, PermissionError):
                 os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
         process.stdout.close()
         process.stderr.close()
     if failure is None and command.footprint is not None and _repository_bytes(command.footprint) > MAX_REMOTE_REPOSITORY_BYTES:
