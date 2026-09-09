@@ -243,9 +243,9 @@ def herdr(args, *, session, timeout=10, raw=False):
 
 def herdr_version():
     found = run([tool("herdr"), "--version"]).stdout.strip()
-    match = re.search(r"\b(\d+\.\d+\.\d+)\b", found)
+    match = re.fullmatch(r"herdr[ \t]+(\d+\.\d+\.\d+)", found, re.IGNORECASE)
     if not match:
-        raise SumError(f"Herdr did not report a semantic version; found {found!r}. Run mise run setup; do not silently mix CLI contracts.")
+        raise SumError(f"Herdr did not report one exact stable semantic version; found {found!r}. Run mise run setup; do not silently mix CLI contracts.")
     return match.group(1), found
 
 

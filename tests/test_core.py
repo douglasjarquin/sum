@@ -1694,6 +1694,35 @@ class UpdateTest(UpdateLab):
             sumctl.update_rollback(store, self.ns(to="checkout"))
         self.assertEqual(self.current(root), before)
 
+    def test_nonstable_or_ambiguous_herdr_banners_preserve_selection_across_update_paths(self):
+        root, store = self.installation()
+        first = self.commit_upstream(root, "one.py")
+        self.apply(store)
+        second = self.commit_upstream(root, "two.py")
+        second_release = Path(self.stage(store, second)["release"])
+        self.apply(store, no_fetch=True)
+
+        for banner in ("herdr 0.9.0-rc.1", "herdr 0.9.0.1", "herdr 0.9.0 and 0.9.0"):
+            before = self.current(root)
+            with self.subTest(path="apply", banner=banner):
+                with mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": banner}):
+                    with self.assertRaisesRegex(sumctl.SumError, "one exact stable semantic version"):
+                        self.apply(store, no_fetch=True)
+                self.assertEqual(self.current(root), before)
+
+        before = self.current(root)
+        with mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": "herdr 0.9.0-rc.1"}):
+            with self.assertRaisesRegex(sumctl.SumError, "one exact stable semantic version"):
+                sumctl.update_rollback(store, self.ns(to=first))
+        self.assertEqual(self.current(root), before)
+
+        before = self.current(root)
+        with mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": "herdr 0.9.0.1"}):
+            with self.assertRaisesRegex(sumctl.SumError, "one exact stable semantic version"):
+                sumctl.update_rollback(store, self.ns(to="checkout"))
+        self.assertEqual(self.current(root), before)
+        self.assertEqual(self.current(root), second_release)
+
     def test_activation_failures_leave_a_complete_selection(self):
         root, store = self.installation()
         first = self.commit_upstream(root, "one.py")
