@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import shutil
 import socket
-import stat
 import time
 import subprocess
 import sys
@@ -342,7 +341,8 @@ class CoreTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HERDR_SESSION": "", "SUM_SESSION": "", "HERDR_SOCKET_PATH": "/tmp/config/sessions/explicit/herdr.sock"}):
             self.assertEqual(sumctl.session_from_env(), "explicit")
         with mock.patch.dict(os.environ, {"HERDR_SESSION": "", "SUM_SESSION": "", "HERDR_SOCKET_PATH": "/tmp/unknown.sock"}):
-            with self.assertRaises(sumctl.SumError): sumctl.session_from_env()
+            with self.assertRaises(sumctl.SumError):
+                sumctl.session_from_env()
 
     def test_version_drift_is_rejected_before_mutation(self):
         with mock.patch.dict(os.environ, {"FAKE_HERDR_VERSION": "herdr 0.10.0"}):
@@ -375,7 +375,8 @@ class CoreTest(unittest.TestCase):
         saved = self.store.read(task["id"])
         self.assertEqual(saved["status"], "needs-attention")
         self.assertTrue(Path(task["worktree"]).exists())
-        with self.assertRaises(sumctl.SumError): sumctl.start(self.store, task["id"])
+        with self.assertRaises(sumctl.SumError):
+            sumctl.start(self.store, task["id"])
 
     def test_one_active_task_per_repo(self):
         sumctl.write_settings(self.store, {"global": 2, "per_repository": 1})
@@ -492,7 +493,8 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(json.loads((self.store.home / "state.json").read_text())["schema"], 999)
 
     def test_ids_cannot_escape_state_directory(self):
-        with self.assertRaises(sumctl.SumError): self.store.read("../../etc/passwd")
+        with self.assertRaises(sumctl.SumError):
+            self.store.read("../../etc/passwd")
 
     def test_backup_is_records_only_and_excludes_secrets(self):
         task = self.prepare()
@@ -512,7 +514,8 @@ class CoreTest(unittest.TestCase):
             self.assertEqual(json.load(archive.extractfile(registrations[0]))["role"], "coordinator")
             self.assertFalse(any(".env" in n or "projects/" in n for n in names))
             self.assertEqual(json.load(archive.extractfile("manifest.json"))["scope"], "records-only")
-        with self.assertRaises(sumctl.SumError): sumctl.backup(self.store, target)
+        with self.assertRaises(sumctl.SumError):
+            sumctl.backup(self.store, target)
 
     def test_concurrent_cli_questions_are_not_lost(self):
         task = self.prepare()
@@ -630,7 +633,7 @@ class CoreTest(unittest.TestCase):
         with self.assertRaisesRegex(sumctl.SumError, "already the active"):
             sumctl.request_brief(self.store, task["id"], "r1")
         with self.altered_runtime():
-            r2 = sumctl.regenerate_brief(self.store, task["id"])["revision"]
+            sumctl.regenerate_brief(self.store, task["id"])
         with self.altered_runtime("## Changed again\n"):
             r3 = sumctl.regenerate_brief(self.store, task["id"])["revision"]
         with self.assertRaisesRegex(sumctl.SumError, "Stale request.*superseded by r3"):
@@ -868,7 +871,7 @@ class CoreTest(unittest.TestCase):
         text = contract.read_text()
         self.assertIn("# sum coordinator contract — r1", text)
         self.assertIn((ROOT / "AGENTS.md").read_text(), text)
-        self.assertIn(f"refresh adopt --coordinator r1", text)
+        self.assertIn("refresh adopt --coordinator r1", text)
         self.assertEqual(rows["coordinator"]["summary"], ["initial contract snapshot"])
         with self.assertRaisesRegex(sumctl.SumError, "Refusing to overwrite"):
             sumctl.write_once(contract, "x")
@@ -964,7 +967,6 @@ class CoreTest(unittest.TestCase):
         q = self.question(task)["question"]
         sumctl.answer(self.store, argparse.Namespace(task=task["id"], question=q["id"], text="Yes.", file=None))
         self.pane_state(task["pane"], agent_status="idle")
-        home = str(self.store.home)
         def worker(i):
             return self.cli("ask", task["id"], "--key", f"k{i}", "--text", f"Question {i}?")
         def coordinator(i):
@@ -992,7 +994,7 @@ class CoreTest(unittest.TestCase):
         self.assertEqual([r["deferred"] for r in result["targets"]], [[], []])
         # A runtime with another MCP tool contract: the instruction revision is requested, the tool surface is deferred with a reason.
         with mock.patch.object(sumctl, "MCP_CONTRACT", {**sumctl.MCP_CONTRACT, "tools": 11}):
-            q = self.question(task)["question"]
+            self.question(task)
             self.pane_state(task["pane"], agent_status="idle")
             result = self.refresh()
             rows = {r["target"]: r for r in result["targets"]}
@@ -1022,7 +1024,7 @@ class CoreTest(unittest.TestCase):
         self.assertIn("was not recorded", row["deferred"][0]["reason"])
 
     def test_refresh_cli_is_gated_and_status_is_read_only(self):
-        task = self.started_task()
+        self.started_task()
         with mock.patch.object(sumctl, "emit") as emitted:
             self.assertEqual(sumctl.main(["--home", str(self.store.home), "refresh", "status"]), 0)
         self.assertEqual(emitted.call_args[0][0]["counts"]["confirmed"], 1)
@@ -1857,4 +1859,5 @@ def hashlib_sha(path):
     return sumctl.sha256_file(path)
 
 
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()
