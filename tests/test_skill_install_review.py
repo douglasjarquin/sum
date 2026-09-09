@@ -101,6 +101,61 @@ class SkillInstallReviewTest(unittest.TestCase):
         self.assertNotEqual(checked.returncode, 0)
         self.assertIn("error", checked.stdout)
 
+    def test_read_only_release_snapshot_remains_valid(self):
+        repo, ref = self.source()
+        target = self.root / "target"
+        target.mkdir()
+        installed = self.cli("skills", "install", "--target", str(target), "--selection", str(repo), ref, "skills/alpha")
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("sumctl_read_only", SUMCTL)
+        sumctl_read_only = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(sumctl_read_only)
+        sumctl_read_only.set_read_only(target / ".sum-skills")
+
+        checked = self.cli("skills", "check", "--root", str(target))
+
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertTrue(json.loads(checked.stdout)["selected"]["ok"])
+
+    def test_snapshot_symlinked_ancestor_outside_target_is_refused(self):
+        repo, ref = self.source()
+        target = self.root / "target"
+        target.mkdir()
+        installed = self.cli("skills", "install", "--target", str(target), "--selection", str(repo), ref, "skills/alpha")
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        snapshots = target / ".sum-skills/snapshots"
+        outside = self.root / "outside-snapshots"
+        snapshots.rename(outside)
+        snapshots.symlink_to(outside)
+
+        checked = self.cli("skills", "check", "--root", str(target))
+
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn("symlinked ancestor", checked.stdout)
+
+    def test_yaml_comments_are_accepted(self):
+        frontmatter = "---\nname: alpha\n# valid YAML comment\ndescription: alpha # inline comment\n---\n\nalpha\n"
+        repo, ref = self.source(frontmatter=frontmatter)
+
+        inspected = self.cli("skills", "inspect", "--repository", str(repo), "--ref", ref, "--path", "skills/alpha")
+
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        self.assertEqual(json.loads(inspected.stdout)["name"], "alpha")
+
+    def test_explicit_missing_markdown_resource_is_refused(self):
+        repo, ref = self.source(frontmatter="---\nname: alpha\ndescription: alpha\n---\n\nSee [the required guide](references/missing.md).\n")
+        target = self.root / "target"
+        target.mkdir()
+
+        installed = self.cli("skills", "install", "--target", str(target), "--selection", str(repo), ref, "skills/alpha")
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("missing explicit resource", installed.stderr)
+        self.assertFalse((target / ".agents/skills/alpha").exists())
+
     def test_capability_bearing_skill_is_classified_and_not_projected(self):
         frontmatter = "---\nname: alpha\ndescription: alpha\nallowed-tools: Bash\n---\n\nalpha\n"
         repo, ref = self.source(frontmatter=frontmatter)

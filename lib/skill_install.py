@@ -118,6 +118,9 @@ def _snapshot_errors(record: dict, target: Path) -> list[str]:
     snapshot = record.get("snapshot")
     assert isinstance(snapshot, str)
     snapshot_root = target / ".sum-skills" / snapshot
+    ancestor = _symlink_ancestor(snapshot_root, target)
+    if ancestor:
+        return [f"selected skill snapshot has a symlinked ancestor: {ancestor}"]
     if snapshot_root.is_symlink() or not snapshot_root.is_dir():
         return [f"selected skill snapshot is missing or symlinked: {snapshot_root}"]
     expected = set()
@@ -138,7 +141,7 @@ def _snapshot_errors(record: dict, target: Path) -> list[str]:
                 raise OSError("missing")
             if hashlib.sha256(actual_data).hexdigest() != item["sha256"]:
                 errors.append(f"selected skill resource hash mismatch: {member}")
-            if actual_mode != item["mode"]:
+            if not _mode_matches(item["mode"], actual_mode):
                 errors.append(f"selected skill resource mode mismatch: {member}")
         except OSError as exc:
             errors.append(f"missing selected skill resource {member}: {exc}")
@@ -150,6 +153,12 @@ def _snapshot_errors(record: dict, target: Path) -> list[str]:
 
 def _same_snapshot(record: dict, target: Path) -> bool:
     return not _snapshot_errors(record, target)
+
+
+def _mode_matches(expected: int, actual: int) -> bool:
+    if actual == expected:
+        return True
+    return expected in (0o644, 0o755) and actual == expected & ~0o222
 
 
 def _projection(target: Path, record: dict) -> Path:

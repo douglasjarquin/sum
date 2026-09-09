@@ -7,7 +7,7 @@ import re
 import subprocess
 import tempfile
 from typing import TypeAlias
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse, urlsplit
 
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
@@ -178,6 +178,17 @@ def _scalar(value: str) -> str:
     value = value.strip()
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
         return value[1:-1]
+    quoted = False
+    escaped = False
+    for index, character in enumerate(value):
+        if character == "\\" and not escaped:
+            escaped = True
+            continue
+        if character in "'\"" and not escaped:
+            quoted = not quoted
+        if character == "#" and not quoted and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+        escaped = False
     return value
 
 
@@ -196,7 +207,7 @@ def _frontmatter(data: bytes, source: str) -> tuple[str, tuple[str, ...]]:
     index = 1
     while index < end:
         line = lines[index]
-        if not line.strip():
+        if not line.strip() or line.lstrip().startswith("#"):
             index += 1
             continue
         if line[:1].isspace():
@@ -252,6 +263,47 @@ def _normal_target(link: str, source_path: str) -> str:
     return "/".join(parts)
 
 
+_MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))")
+
+
+def _markdown_targets(data: bytes) -> tuple[str, ...]:
+    text = data.decode("utf-8")
+    targets = []
+    for match in _MARKDOWN_LINK.finditer(text):
+        raw = unquote(match.group(1) or match.group(2) or "")
+        parsed = urlsplit(raw)
+        if not parsed.path or parsed.scheme or parsed.netloc or raw.startswith(("#", "/")):
+            continue
+        targets.append(parsed.path)
+    return tuple(targets)
+
+
+def _relative_path(source_path: str, link: str) -> PurePosixPath | None:
+    parts = list(PurePosixPath(source_path).parent.parts)
+    for part in PurePosixPath(link).parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+        else:
+            parts.append(part)
+    return PurePosixPath(*parts)
+
+
+def _validate_markdown_resources(files: list[SourceFile], names: set[str], selected_root: str) -> None:
+    selected = PurePosixPath(selected_root)
+    for item in files:
+        if not item.path.lower().endswith(".md"):
+            continue
+        source_path = f"{selected_root}/{item.path}"
+        for link in _markdown_targets(item.data):
+            resolved = _relative_path(source_path, link)
+            if resolved is None or not resolved.is_relative_to(selected) or resolved.as_posix() not in names:
+                raise SkillError(f"{source_path}: missing explicit resource {link!r}; select it explicitly")
+
+
 def prepare(selection: Selection) -> PreparedSelection:
     selection = validate_selection(selection)
     with tempfile.TemporaryDirectory(prefix="sum-skill-source-") as directory:
@@ -280,6 +332,7 @@ def prepare(selection: Selection) -> PreparedSelection:
                 raise SkillError(f"{path}: unsupported Git file mode {mode:o}")
             relative = path.removeprefix(selection.path + "/")
             files.append(SourceFile(relative, f"skill/{name}/{relative}", mode & 0o777, data, hashlib.sha256(data).hexdigest(), link_target))
+        _validate_markdown_resources(files, names, selection.path)
         root_rows = _git(repo, "ls-tree", "-r", "-z", "--full-tree", commit, binary=True)
         assert isinstance(root_rows, bytes)
         licenses = []
