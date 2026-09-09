@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 75
     env:
       MISE_ENABLE_TOOLS: go,python,node
+      EVIDENCE_BROWSER: /usr/bin/google-chrome
     steps:
       - name: Check out candidate
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
