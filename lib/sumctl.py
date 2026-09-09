@@ -8384,7 +8384,119 @@ def release_show(store, sha):
 CURRENT = Path(".local") / "current"          # The installation default: a symlink read once per entrypoint invocation.
 UPDATE_LOG = Path(".local") / "updates.jsonl"  # Concise, local, append-only history of selections; never the source of truth.
 UPDATE_LOCK = Path(".local") / "update.lock"
+UPDATE_APPROVALS = Path(".local") / "approvals.json"
+ACTIVATION_STATE = Path(".local") / "activation.json"
+RECOVERY_DIR = Path(".local") / "recovery"
 PROBE_TASKS = 5
+
+RECOVERY_CAPSULE = '''#!/usr/bin/env python3
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--root", required=True)
+parser.add_argument("--home", required=True)
+parser.add_argument("--generation", required=True)
+parser.add_argument("--runtime", required=True)
+parser.add_argument("--helper-sha256", required=True)
+parser.add_argument("--check", action="store_true")
+args = parser.parse_args()
+root = Path(args.root).resolve()
+module_path = Path(args.runtime) / "lib" / "sumctl.py"
+helper_hash = hashlib.sha256(module_path.read_bytes()).hexdigest()
+if helper_hash != args.helper_sha256:
+    raise SystemExit("prior known-good helper hash does not match recovery record")
+state_path = root / ".local" / "activation.json"
+if not args.check:
+    state = json.loads(state_path.read_text())
+    identity = json.loads((Path(args.home) / "state.json").read_text())
+    pending = state.get("pending")
+    recovery = pending.get("recovery", {}) if isinstance(pending, dict) else {}
+    capsule_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    if (state.get("schema") != 1 or state.get("installation") != str(root)
+            or state.get("instance") != identity.get("instance") or not isinstance(pending, dict)
+            or pending.get("generation") != args.generation
+            or recovery.get("capsule") != str(Path(__file__).resolve()) or recovery.get("sha256") != capsule_hash
+            or recovery.get("runtime") != args.runtime or recovery.get("helper_sha256") != helper_hash):
+        raise SystemExit("recovery state, installation identity, or recorded hashes do not match")
+os.environ["SUM_INSTALL_ROOT"] = str(root)
+spec = importlib.util.spec_from_file_location("sum_known_good_recovery", module_path)
+if spec is None or spec.loader is None:
+    raise SystemExit("cannot load prior known-good runtime")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+required = ("Store", "context", "require_coordinator", "activation_lock", "default_runtime", "select_default", "post_check", "atomic_json", "compatibility", "verify_release", "origin", "run", "sha256_file")
+missing = [name for name in required if not hasattr(module, name)]
+if missing:
+    raise SystemExit("prior runtime lacks recovery primitives: " + ", ".join(missing))
+if args.check:
+    print(json.dumps({"ok": True, "runtime": str(module.RUNTIME)}))
+else:
+    store = module.Store(args.home)
+    module.require_coordinator(store, module.context())
+    with module.activation_lock(root):
+        state = json.loads(state_path.read_text())
+        pending = state.get("pending")
+        if not isinstance(pending, dict) or pending.get("generation") != args.generation:
+            raise SystemExit("recovery generation is not pending")
+        recovery = pending.get("recovery", {})
+        if module.sha256_file(Path(__file__)) != recovery.get("sha256"):
+            raise SystemExit("recovery capsule hash does not match activation state")
+        current_runtime = module.default_runtime(root)
+        current = {"kind": current_runtime["kind"], "sha": current_runtime.get("sha"), "path": current_runtime["path"]}
+        previous = pending["from"]
+        intended = pending["to"]
+        if current not in (previous, intended):
+            raise SystemExit("current selection matches neither recovery endpoint")
+        approvals = json.loads((root / ".local" / "approvals.json").read_text())
+        identity = json.loads((store.home / "state.json").read_text())
+        if (approvals.get("schema") != 1 or approvals.get("installation") != str(root)
+                or approvals.get("instance") != identity.get("instance") or approvals.get("origin") != module.origin(root)):
+            raise SystemExit("approval records do not belong to this installation")
+        prior_target = None if previous["kind"] == "checkout" else Path(previous["path"])
+        if prior_target is None:
+            if module.run(["git", "-C", root, "status", "--porcelain", "--untracked-files=all"]).stdout.strip():
+                raise SystemExit("known-good checkout is no longer clean")
+            sha = module.run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()
+            if sha != previous["sha"] or previous["path"] != str(root):
+                raise SystemExit("known-good checkout no longer matches its recorded revision and path")
+            tree = module.run(["git", "-C", root, "rev-parse", "--verify", f"{sha}^{{tree}}", "--"]).stdout.strip()
+        else:
+            if prior_target.resolve().parent != (root / ".local" / "releases").resolve():
+                raise SystemExit("known-good release is outside this installation")
+            manifest = module.verify_release(prior_target, previous["sha"])
+            staged = manifest.get("staged_by", {})
+            if (manifest["source"].get("repository") != str(root) or staged.get("installation") != str(root)
+                    or staged.get("instance") != identity.get("instance")):
+                raise SystemExit("known-good release provenance does not match this installation")
+            sha = manifest["source"]["sha"]
+            tree = manifest["source"].get("tree")
+        receipt = approvals.get("revisions", {}).get(sha)
+        if (not isinstance(receipt, dict) or receipt.get("sha") != sha or receipt.get("tree") != tree
+                or not isinstance(receipt.get("branch"), str) or not isinstance(receipt.get("tip"), str)):
+            raise SystemExit("known-good selection lacks its exact approval receipt")
+        checked = module.compatibility(store, root, root if prior_target is None else prior_target, current_runtime)
+        if not checked["ok"]:
+            raise SystemExit("known-good selection is no longer compatible: " + "; ".join(checked["blocking"]))
+        changed = current == intended
+        if changed:
+            module.select_default(root, prior_target)
+        check = module.post_check(store, root)
+        if not check["ok"]:
+            pending["recovery_status"] = "failed"
+            pending["recovery_check"] = check
+            module.atomic_json(state_path, state)
+            raise SystemExit("restored stable entrypoint check failed: " + str(check["detail"]))
+        state["pending"] = None
+        module.atomic_json(state_path, state)
+        result = {"action": "recover", "generation": args.generation, "changed": changed,
+                  "default": {"kind": previous["kind"], "sha": previous["sha"], "path": previous["path"]}, "post_check": check}
+    print(json.dumps(result, indent=2))
+'''
 
 
 def default_branch(root):
@@ -8444,6 +8556,53 @@ def default_runtime(root):
     except SumError as exc:
         row["error"] = str(exc)
     return row
+
+
+def approve_update_target(store, root, target):
+    root = Path(root).resolve()
+    state = read_json(store.home / "state.json")
+    if target is None:
+        if run(["git", "-C", root, "status", "--porcelain", "--untracked-files=all"]).stdout.strip():
+            raise SumError("Checkout rollback requires a clean approved checkout; local changes were preserved.")
+        sha = run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()
+        manifest_tree = None
+    else:
+        target = Path(target)
+        if target.is_symlink() or target.resolve().parent != (root / RELEASES).resolve():
+            raise SumError("Update target must be an immutable release of this installation.")
+        manifest = verify_release(target, target.name)
+        staged = manifest.get("staged_by", {})
+        if (manifest["source"].get("repository") != str(root)
+                or staged.get("installation") != str(root)
+                or staged.get("instance") != state.get("instance")):
+            raise SumError("Release provenance does not match this installation; selection unchanged.")
+        sha = manifest["source"]["sha"]
+        manifest_tree = manifest["source"].get("tree")
+    path = root / UPDATE_APPROVALS
+    if path.is_symlink():
+        raise SumError("Update approval records must not be a symlink.")
+    identity = {"installation": str(root), "instance": state["instance"], "origin": origin(root)}
+    approvals = read_json(path) if path.exists() else {"schema": 1, **identity, "revisions": {}}
+    if (not isinstance(approvals, dict) or approvals.get("schema") != 1
+            or any(approvals.get(key) != value for key, value in identity.items())
+            or not isinstance(approvals.get("revisions"), dict)):
+        raise SumError("Update approval records are malformed or belong to another installation.")
+    receipt = approvals["revisions"].get(sha)
+    if receipt is not None:
+        expected_tree = manifest_tree if target is not None else run(
+            ["git", "-C", root, "rev-parse", "--verify", f"{sha}^{{tree}}", "--"]).stdout.strip()
+        if (not isinstance(receipt, dict) or receipt.get("sha") != sha
+                or receipt.get("tree") != expected_tree):
+            raise SumError("Update approval receipt does not match the selected revision and tree.")
+        return receipt
+    tree = run(["git", "-C", root, "rev-parse", "--verify", f"{sha}^{{tree}}", "--"]).stdout.strip()
+    if manifest_tree is not None and manifest_tree != tree:
+        raise SumError("Release source tree does not match its approved Git revision.")
+    source = resolve_authorized(root, sha, fetch=False)
+    receipt = {"sha": sha, "tree": tree, "branch": source["branch"], "tip": source["tip"], "approved_at": now()}
+    approvals["revisions"][sha] = receipt
+    atomic_json(path, approvals)
+    return receipt
 
 
 def runtime_contracts(runtime):
@@ -8645,43 +8804,222 @@ def select_default(root, target):
 
 def post_check(store, root):
     """Prove the stable entrypoint serves a complete runtime after the switch: one read-only call through <installation>/bin/sumctl."""
-    result = run([root / "bin" / "sumctl", "--home", store.home, "status"], timeout=60, check=False)
+    try:
+        result = run([root / "bin" / "sumctl", "--home", store.home, "status"], timeout=60, check=False)
+    except SumError as exc:
+        return {"ok": False, "detail": str(exc)[-400:]}
     return {"ok": result.returncode == 0, "detail": None if result.returncode == 0 else (result.stderr or result.stdout).strip()[-400:]}
 
 
-def activate(store, root, target, action, source):
-    """Validate under the lock, switch once, verify, log. On any failure the previous selection is still complete and serving."""
-    with activation_lock(root):
-        current = default_runtime(root)
-        if target is not None:
-            result = compatibility(store, root, target, current)
-            if not result["ok"]:
-                update_log(root, {"action": action, "result": "refused", "from": current.get("sha"), "to": target.name, "blocking": result["blocking"]})
-                raise SumError(f"{action} refused; the current selection ({current['kind']} {current.get('sha')}) still serves. Exact incompatibilities: " + "; ".join(result["blocking"]))
-            new_sha = target.name
-        else:
-            result = compatibility(store, root, Path(root), current)
-            if not result["ok"]:
-                update_log(root, {"action": action, "result": "refused", "from": current.get("sha"), "to": "checkout", "blocking": result["blocking"]})
-                raise SumError(f"{action} refused; the current selection ({current['kind']} {current.get('sha')}) still serves. Exact incompatibilities: " + "; ".join(result["blocking"]))
-            new_sha = current.get("sha") if current["kind"] == "checkout" else run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()
-        if current["kind"] == ("checkout" if target is None else "release") and current.get("sha") == new_sha:
-            return {"action": action, "changed": False, "default": current, "compatibility": result, "source": source,
-                    "note": "Already the default; nothing changed."}
-        update_log(root, {"action": action, "phase": "selecting", "from": {"kind": current["kind"], "sha": current.get("sha")},
-                          "to": {"kind": "checkout" if target is None else "release", "sha": new_sha}, "source": source})
-        select_default(root, target)
-        after = default_runtime(root)
-        check = post_check(store, root)
-        update_log(root, {"action": action, "result": "selected" if check["ok"] else "selected-but-entrypoint-check-failed",
-                          "from": {"kind": current["kind"], "sha": current.get("sha")}, "to": {"kind": after["kind"], "sha": after.get("sha")},
-                          "deferred": [d["what"] for d in result["deferred"]], "post_check": check})
+def selection_descriptor(runtime):
+    return {"kind": runtime["kind"], "sha": runtime.get("sha"), "path": runtime["path"]}
+
+
+def read_activation_state(store, root):
+    path = Path(root) / ACTIVATION_STATE
+    if path.is_symlink():
+        raise SumError("Activation state must not be a symlink.")
+    if not path.exists():
+        return None
+    state = read_json(path)
+    identity = read_json(store.home / "state.json")
+    if (not isinstance(state, dict) or state.get("schema") != 1 or state.get("installation") != str(Path(root).resolve())
+            or state.get("instance") != identity.get("instance") or not isinstance(state.get("known_good"), dict)
+            or state["known_good"].get("kind") not in {"checkout", "release"}
+            or not isinstance(state["known_good"].get("sha"), str) or not isinstance(state["known_good"].get("path"), str)
+            or (state.get("pending") is not None and not isinstance(state.get("pending"), dict))):
+        raise SumError("Activation state is malformed or belongs to another installation.")
+    return state
+
+
+def write_activation_state(store, root, state):
+    identity = read_json(store.home / "state.json")
+    atomic_json(Path(root) / ACTIVATION_STATE,
+                {"schema": 1, "installation": str(Path(root).resolve()), "instance": identity["instance"], **state})
+
+
+def descriptor_target(root, descriptor):
+    if descriptor["kind"] == "checkout":
+        sha = run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip()
+        if descriptor["sha"] != sha or descriptor["path"] != str(Path(root).resolve()):
+            raise SumError("The known-good checkout no longer matches its recorded revision and path.")
+        return None
+    target = Path(descriptor["path"])
+    if target.resolve().parent != (Path(root) / RELEASES).resolve() or target.name != descriptor["sha"]:
+        raise SumError("Activation state names a release outside this installation.")
+    verify_release(target, descriptor["sha"])
+    return target
+
+
+def ensure_activation_state(store, root, current):
+    state = read_activation_state(store, root)
+    if state is not None:
+        if state.get("pending") is None and state["known_good"] != selection_descriptor(current):
+            raise SumError("The selected runtime differs from committed known-good activation state; refusing to overwrite recovery history.")
+        return state
+    target = descriptor_target(root, selection_descriptor(current))
+    approve_update_target(store, root, target)
+    checked = compatibility(store, root, Path(root) if target is None else target, current)
+    if not checked["ok"]:
+        raise SumError("The current runtime cannot be established as known-good: " + "; ".join(checked["blocking"]))
+    check = post_check(store, root)
     if not check["ok"]:
-        raise SumError(f"{action} switched the default to {after.get('sha')} but the entrypoint check failed: {check['detail']}. Run `update rollback` to select the previous runtime; records are untouched.")
-    return {"action": action, "changed": True, "previous": {"kind": current["kind"], "sha": current.get("sha"), "path": current["path"]},
-            "default": after, "compatibility": result, "post_check": check, "source": source,
+        raise SumError("The current stable entrypoint cannot be established as known-good: " + str(check["detail"]))
+    descriptor = selection_descriptor(current)
+    write_activation_state(store, root, {"generation": None, "from": descriptor, "to": descriptor,
+                                         "known_good": descriptor, "pending": None})
+    return read_activation_state(store, root)
+
+
+def stage_recovery_capsule(store, root, generation, prior):
+    capsule_dir = Path(root) / RECOVERY_DIR / generation
+    capsule_dir.mkdir(parents=True, mode=0o700)
+    capsule = capsule_dir / "sum-recover.py"
+    with capsule.open("x", encoding="utf-8") as handle:
+        handle.write(RECOVERY_CAPSULE)
+        handle.flush()
+        os.fchmod(handle.fileno(), 0o500)
+        os.fsync(handle.fileno())
+    for parent in (capsule_dir, capsule_dir.parent, capsule_dir.parent.parent):
+        directory = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    runtime = Path(prior["path"])
+    helper = runtime / "lib" / "sumctl.py"
+    if not helper.is_file():
+        raise SumError("The prior known-good runtime has no recovery helper module; selection unchanged.")
+    helper_sha256 = sha256_file(helper)
+    python = runtime / ".local" / "bin" / "python3"
+    if not python.is_file():
+        python = Path(sys.executable)
+    argv = [str(python.resolve()), str(capsule), "--root", str(Path(root).resolve()), "--home", str(store.home),
+            "--generation", generation, "--runtime", str(runtime), "--helper-sha256", helper_sha256]
+    checked = run([*argv, "--check"], env={**os.environ, "SUM_INSTALL_ROOT": str(Path(root).resolve())}, check=False, timeout=60)
+    if checked.returncode:
+        raise SumError("The prior known-good runtime cannot execute recovery; selection unchanged: " + (checked.stderr or checked.stdout).strip()[-400:])
+    return {"capsule": str(capsule), "sha256": sha256_file(capsule), "runtime": str(runtime),
+            "helper_sha256": helper_sha256, "python": str(python.resolve()), "argv": argv}
+
+
+def _recover_pending_locked(store, root, generation):
+    state = read_activation_state(store, root)
+    if state is None or state.get("pending") is None:
+        raise SumError("There is no pending activation to recover.")
+    pending = state["pending"]
+    if pending.get("generation") != generation:
+        raise SumError(f"Recovery generation {generation} is stale; pending generation is {pending.get('generation')}.")
+    recovery = pending.get("recovery", {})
+    capsule = Path(recovery.get("capsule", ""))
+    if not capsule.is_file() or sha256_file(capsule) != recovery.get("sha256"):
+        raise SumError("The generation recovery capsule is missing or does not match its recorded hash.")
+    current = selection_descriptor(default_runtime(root))
+    target = descriptor_target(root, pending["from"])
+    approve_update_target(store, root, target)
+    checked = compatibility(store, root, Path(root) if target is None else target, default_runtime(root))
+    if not checked["ok"]:
+        raise SumError("The prior known-good runtime is no longer compatible: " + "; ".join(checked["blocking"]))
+    if current == pending["from"]:
+        check = post_check(store, root)
+        if not check["ok"]:
+            pending["recovery_status"] = "failed"
+            pending["recovery_check"] = check
+            write_activation_state(store, root, state)
+            raise SumError(f"Recovery generation {generation} found the prior selection but its stable entrypoint check failed: {check['detail']}")
+        state["pending"] = None
+        write_activation_state(store, root, state)
+        return {"action": "recover", "generation": generation, "changed": False, "default": current,
+                "post_check": check, "note": "Activation stopped before selection; the known-good runtime was already serving."}
+    if current != pending["to"]:
+        raise SumError("The current selection matches neither endpoint of the pending generation; recovery refused without mutation.")
+    select_default(root, target)
+    restored = selection_descriptor(default_runtime(root))
+    check = post_check(store, root)
+    if not check["ok"]:
+        pending["recovery_status"] = "failed"
+        pending["recovery_check"] = check
+        write_activation_state(store, root, state)
+        raise SumError(f"Recovery generation {generation} restored {restored.get('sha')} but its stable entrypoint check failed: {check['detail']}")
+    state["pending"] = None
+    write_activation_state(store, root, state)
+    update_log(root, {"action": "recover", "result": "recovered", "generation": generation,
+                      "from": pending["to"], "to": restored, "post_check": check})
+    return {"action": "recover", "generation": generation, "changed": True, "default": restored, "post_check": check}
+
+
+def recover_activation(store, root, generation):
+    with activation_lock(root):
+        return _recover_pending_locked(store, Path(root).resolve(), generation)
+
+
+def require_no_pending_activation(store, root):
+    state = read_activation_state(store, root)
+    if state is not None and state.get("pending") is not None:
+        generation = state["pending"].get("generation")
+        raise SumError(f"An activation is pending; run `update recover --generation {generation}` before another update or rollback.")
+
+
+def _activate_locked(store, root, target, action, source):
+    require_no_pending_activation(store, root)
+    current = default_runtime(root)
+    state = ensure_activation_state(store, root, current)
+    approve_update_target(store, root, target)
+    candidate = Path(root) if target is None else target
+    result = compatibility(store, root, candidate, current)
+    new_sha = run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip() if target is None else target.name
+    if not result["ok"]:
+        update_log(root, {"action": action, "result": "refused", "from": current.get("sha"), "to": new_sha, "blocking": result["blocking"]})
+        raise SumError(f"{action} refused; the current selection ({current['kind']} {current.get('sha')}) still serves. Exact incompatibilities: " + "; ".join(result["blocking"]))
+    if current["kind"] == ("checkout" if target is None else "release") and current.get("sha") == new_sha:
+        return {"action": action, "changed": False, "default": current, "compatibility": result, "source": source,
+                "note": "Already the default; nothing changed."}
+    generation = uuid.uuid4().hex
+    before = selection_descriptor(current)
+    intended = {"kind": "checkout" if target is None else "release", "sha": new_sha,
+                "path": str(Path(root).resolve() if target is None else target.resolve())}
+    recovery = stage_recovery_capsule(store, root, generation, state["known_good"])
+    pending = {"generation": generation, "action": action, "from": state["known_good"], "to": intended,
+               "source": source, "recovery": recovery, "status": "prepared"}
+    state["pending"] = pending
+    write_activation_state(store, root, state)
+    update_log(root, {"action": action, "phase": "selecting", "generation": generation,
+                      "from": before, "to": intended, "source": source})
+    try:
+        select_default(root, target)
+    except OSError as selection_error:
+        try:
+            _recover_pending_locked(store, root, generation)
+        except SumError as recovery_error:
+            raise SumError(f"{action} could not replace the selection: {selection_error}. Recovery also failed: {recovery_error}. "
+                           f"Run `{shlex.join(recovery['argv'])}`; records are untouched.") from recovery_error
+        raise
+    after = default_runtime(root)
+    check = post_check(store, root)
+    if not check["ok"]:
+        try:
+            recovered = _recover_pending_locked(store, root, generation)
+        except SumError as recovery_error:
+            update_log(root, {"action": action, "result": "selected-but-entrypoint-check-failed", "generation": generation,
+                              "from": before, "to": selection_descriptor(after), "post_check": check, "recovery": "failed"})
+            raise SumError(f"{action} switched the default to {after.get('sha')} but the entrypoint check failed: {check['detail']}. "
+                           f"Recovery also failed: {recovery_error}. Run `{shlex.join(recovery['argv'])}`; records are untouched.") from recovery_error
+        raise SumError(f"{action} candidate entrypoint check failed: {check['detail']}. The prior known-good runtime "
+                       f"{recovered['default'].get('sha')} was restored and verified; records are untouched.")
+    committed = {"generation": generation, "from": before, "to": selection_descriptor(after),
+                 "known_good": selection_descriptor(after), "pending": None}
+    write_activation_state(store, root, committed)
+    update_log(root, {"action": action, "result": "selected", "generation": generation, "from": before,
+                      "to": selection_descriptor(after), "deferred": [d["what"] for d in result["deferred"]], "post_check": check})
+    return {"action": action, "changed": True, "previous": before, "default": after, "compatibility": result,
+            "post_check": check, "source": source, "generation": generation, "recovery": recovery,
             "note": "New entrypoint invocations and new dispatches use this default. Commands already running finish on the runtime they resolved; "
                     "connected MCP servers keep their start tree; task records, worktrees, and .sum were not touched."}
+
+
+def activate(store, root, target, action, source):
+    with activation_lock(root):
+        return _activate_locked(store, Path(root).resolve(), target, action, source)
 
 
 def update_check(store, args):
@@ -8705,6 +9043,8 @@ def update_stage(store, args, installer=install_runtime):
     root = installation_root(store)
     source = resolve_authorized(root, args.ref, fetch=not args.no_fetch)
     staged = stage(store, source["sha"], installer=installer)
+    with activation_lock(root):
+        approve_update_target(store, root, Path(staged["release"]))
     current = default_runtime(root)
     return {**staged, "source": source, "compatibility": compatibility(store, root, Path(staged["release"]), current),
             "note": "Staged and evaluated; the default is unchanged. `update apply` activates it."}
@@ -8712,6 +9052,8 @@ def update_stage(store, args, installer=install_runtime):
 
 def update_apply(store, args, installer=install_runtime):
     root = installation_root(store)
+    with activation_lock(root):
+        require_no_pending_activation(store, root)
     source = resolve_authorized(root, args.ref, fetch=not args.no_fetch)  # Network and authorization first, outside the lock.
     staged = stage(store, source["sha"], installer=installer)             # Build/install, still outside the lock.
     return activate(store, root, Path(staged["release"]), "apply", {k: source[k] for k in ("sha", "ref", "origin", "branch", "fetched")})
@@ -8719,34 +9061,42 @@ def update_apply(store, args, installer=install_runtime):
 
 def update_rollback(store, args):
     root = installation_root(store)
-    current = default_runtime(root)
-    target = args.to
-    if target is None:
-        history = [e for e in read_update_log(root, limit=1000) if e.get("result") in {"selected", "selected-but-entrypoint-check-failed"}]
-        last = next((e for e in reversed(history) if e.get("to", {}).get("sha") == current.get("sha") and e["to"].get("kind") == current["kind"]), None)
-        if not last:
-            raise SumError("No recorded previous selection for the current default. Name the target: `update rollback --to SHA` or `--to checkout`.")
-        target = last["from"]["sha"] if last["from"]["kind"] == "release" else "checkout"
-    if target == "checkout":
-        return activate(store, root, None, "rollback", {"to": "checkout"})
-    if not re.fullmatch(r"[0-9a-f]{7,40}", target):
-        raise SumError("Roll back to a staged release SHA or `checkout`.")
-    matches = [p for p in (root / RELEASES).glob(target + "*") if not p.name.startswith(".")] if (root / RELEASES).is_dir() else []
-    if len(matches) != 1:
-        raise SumError(f"{len(matches)} staged releases match {target}; rollback uses only bundles that are already staged.")
-    return activate(store, root, matches[0], "rollback", {"to": matches[0].name})
+    with activation_lock(root):
+        require_no_pending_activation(store, root)
+        current = default_runtime(root)
+        state = ensure_activation_state(store, root, current)
+        requested = args.to
+        if requested is None:
+            previous = state.get("from")
+            if not isinstance(previous, dict) or previous == selection_descriptor(current):
+                raise SumError("No recorded previous known-good selection. Name the target: `update rollback --to SHA` or `--to checkout`.")
+            requested = previous["sha"] if previous["kind"] == "release" else "checkout"
+        if requested == "checkout":
+            return _activate_locked(store, root, None, "rollback", {"to": "checkout"})
+        if not re.fullmatch(r"[0-9a-f]{7,40}", requested):
+            raise SumError("Roll back to a staged release SHA or `checkout`.")
+        matches = [p for p in (root / RELEASES).glob(requested + "*") if not p.name.startswith(".")] if (root / RELEASES).is_dir() else []
+        if len(matches) != 1:
+            raise SumError(f"{len(matches)} staged releases match {requested}; rollback uses only bundles that are already staged.")
+        return _activate_locked(store, root, matches[0], "rollback", {"to": matches[0].name})
+
+
+def update_recover(store, args):
+    return recover_activation(store, installation_root(store), args.generation)
 
 
 def update_status(store):
     root = installation_root(store)
     current = default_runtime(root)
     releases = release_list(store)
+    activation = read_activation_state(store, root)
     return {"installation": str(root), "default": current,
             "active": {"runtime": str(RUNTIME), "sum_version": VERSION, "is_default": str(RUNTIME) == current["path"],
                        "note": "The runtime this very command resolved. A command started before a switch keeps its own runtime until it exits."},
             "checkout": {"head": run(["git", "-C", root, "rev-parse", "HEAD"]).stdout.strip(),
                          "dirty": bool(run(["git", "-C", root, "status", "--porcelain", "--untracked-files=no"]).stdout.strip())},
-            "releases": releases["releases"], "in_progress": releases["in_progress"], "history": read_update_log(root),
+            "releases": releases["releases"], "in_progress": releases["in_progress"], "activation": activation,
+            "history": read_update_log(root),
             "note": "Selection is the .local/current symlink; the history is a local log, not the source of truth. Running MCP servers and helpers are not enumerated: they keep the tree they started from."}
 
 
@@ -9038,6 +9388,8 @@ def parser():
     u.add_parser("status", help="Default and active runtime, checkout state, staged releases, recent selections; writes nothing")
     x = u.add_parser("rollback", help="Atomically select the previous runtime (or --to SHA|checkout) after compatibility checks; records are never touched (coordinator only)")
     x.add_argument("--to")
+    x = u.add_parser("recover", help="Complete generation-checked compensation for an interrupted activation (coordinator only)")
+    x.add_argument("--generation", required=True)
     return p
 
 
@@ -9263,11 +9615,11 @@ def main(argv=None):
             value = {"stage": lambda: stage(store, args.ref), "list": lambda: release_list(store),
                      "show": lambda: release_show(store, args.sha)}[args.release_command]()
         elif args.command == "update":
-            if args.update_command in {"apply", "rollback"}:
+            if args.update_command in {"apply", "rollback", "recover"}:
                 require_coordinator(store, context())  # Task text, a worker, or a developer pane never authorizes an update.
             value = {"check": lambda: update_check(store, args), "stage": lambda: update_stage(store, args),
                      "apply": lambda: update_apply(store, args), "status": lambda: update_status(store),
-                     "rollback": lambda: update_rollback(store, args)}[args.update_command]()
+                     "rollback": lambda: update_rollback(store, args), "recover": lambda: update_recover(store, args)}[args.update_command]()
         elif args.command == "herdr":
             native_args = args.args[1:] if args.args and args.args[0] == "--" else args.args
             # Scope: the caller's own verified pane, registered in this instance. No saved-context borrowing.

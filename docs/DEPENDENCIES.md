@@ -121,15 +121,26 @@ A release tree contains no `.sum`, and running its `bin/sumctl` directly is refu
 ./bin/sumctl update check|stage|apply [--ref REF] [--no-fetch]
 ./bin/sumctl update status
 ./bin/sumctl update rollback [--to SHA|checkout]
+./bin/sumctl update recover --generation GENERATION
 ```
 
 `.local/current` is the installation default; `bin/sumctl` and `bin/herdr-mesh` follow it when it exists and otherwise run the checkout.
-`update apply` resolves the source to a SHA merged on `origin/<default branch>` (only `refs/remotes/origin/*` are fetched; HEAD, the working tree, and remotes are never changed), stages the release, and only then takes `.local/update.lock`.
+`update apply` first refuses a pending activation under `.local/update.lock`, then resolves the source to a SHA merged on `origin/<default branch>` and stages the release outside the lock.
+Only `refs/remotes/origin/*` are fetched; HEAD, the working tree, and remotes are never changed.
 Under the lock it validates the manifest, the installation state schema, each non-archived task's brief schema, the installed Herdr CLI version against `release.json`, the pinned tool links, and a read-only run of the candidate helper (`--version`, `status`, `show`) against the records; then it creates the new symlink under a private name and renames it over `.local/current`.
-`.local/updates.jsonl` records each refusal and selection (old/new SHA, blocking items, deferred work, post-check); the symlink, not the log, is the source of truth.
+`.local/approvals.json` records installation-bound source approval; plain `release stage` does not approve a release.
+Existing approval receipts allow compatible immutable rollback without fetching or retaining historical Git objects.
+`.local/activation.json` records committed known-good selection and any pending generation; `.local/updates.jsonl` is diagnostic history, not the recovery source of truth.
+Before switching, SUM durably writes and checks a generation-specific `.local/recovery/<generation>/sum-recover.py` using the prior runtime's interpreter and helper.
+The stable entrypoint is checked after selection; failure restores and checks the prior known-good runtime under the same activation lock.
+If recovery fails or the process is interrupted, the pending record remains and another apply or rollback is refused until explicit `update recover --generation GENERATION` resolves it.
+Recovery compares the generation and actual selection with the recorded endpoints, checks the prior target again, and never repeats an update or worker callback.
+The independent command in `activation.pending.recovery.argv` remains usable when the candidate helper cannot import; it also requires the registered coordinator.
 A candidate needing another Herdr version is refused here.
 A changed MCP contract is applied with `deferred` naming the clients that keep their old tool set until they restart.
-`update rollback` reselects a staged release or the checkout through the same checks and touches nothing under `.sum`, the releases, or any worktree.
+`update rollback` chooses the previous known-good target while holding the activation lock, or accepts an explicit approved target through the same compatibility checks.
+The checkout path must be clean and approved; recovery to a checkout additionally requires its exact recorded revision and path.
+Selection and recovery touch no task records, releases, or worktrees.
 Coexistence is the design: several releases stay staged, each process keeps the tree it started from, and every brief's absolute `<installation>/bin/sumctl` command reaches whichever runtime is the default at call time.
 
 An optional `--install-codex` installs `@openai/codex@0.153.4` into `.deps/harnesses`. It does not authenticate or switch accounts. Other existing harnesses remain usable.

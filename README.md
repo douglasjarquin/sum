@@ -271,12 +271,17 @@ The file at `brief_path` and every earlier revision are never rewritten, so a wo
 ./bin/sumctl update apply          # stage the release, validate coexistence, switch .local/current in one rename
 ./bin/sumctl update status         # old/new SHA, default versus active runtime, staged releases, recent selections
 ./bin/sumctl update rollback       # reselect the previous runtime; records, questions, reports, and worktrees stay
+./bin/sumctl update recover --generation GENERATION  # resolve one interrupted activation, without repeating the update
 ```
 
 An update activates only a revision merged on the sum `origin` default branch, resolved to an immutable SHA.
 It never pulls or resets the checkout, never restarts Herdr, agents, dev services, or a connected MCP server, and never upgrades Herdr.
 Network, build, and dependency work happen before the activation lock; validation covers the release manifest, the state and brief schemas of the recorded tasks, the installed Herdr, the pinned tools, and a read-only run of the candidate helper against the real records.
-The switch is one symlink rename, so an interrupted update leaves either the complete old or the complete new selection.
+Staged files are not approval: `.local/approvals.json` binds approved revisions to this installation, while `.local/activation.json` records the known-good runtime and any pending activation.
+Before switching, SUM prepares an independent recovery command using the previous runtime.
+If the new stable entrypoint fails its check, SUM restores and checks the previous known-good runtime; if recovery also fails, it preserves the pending operation and reports both failures.
+An interrupted update requires explicit generation-bound recovery before another apply or rollback; the atomic pointer change alone does not prove activation completed.
+Rollback requires an approved compatible target, and checkout rollback also requires a clean checkout with a matching approval.
 Commands already running finish on the runtime they resolved; worker briefs carry stable `<installation>/bin/sumctl` commands, so their callbacks keep working across the switch; new dispatches use the new default; connected MCP clients keep their tool set until the client itself restarts.
 A refusal names the exact incompatibility and leaves the old installation serving.
 See `skills/sum-update/SKILL.md` for bootstrap, canary, and rollback steps.

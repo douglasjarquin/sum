@@ -1733,7 +1733,7 @@ class UpdateTest(UpdateLab):
         first = self.commit_upstream(root, "one.py")
         self.apply(store)
         second = self.commit_upstream(root, "two.py")
-        release_two = Path(sumctl.stage(store, second, installer=fake_installer)["release"])
+        sumctl.stage(store, second, installer=fake_installer)
         before = self.current(root)
         # Before the rename: creating the private link fails.
         with mock.patch.object(sumctl.os, "symlink", side_effect=OSError("disk full")):
@@ -1746,16 +1746,14 @@ class UpdateTest(UpdateLab):
                 self.apply(store, no_fetch=True)
         self.assertEqual(self.current(root), before)
         self.assertEqual([p.name for p in (root / ".local").iterdir() if p.name.startswith(".current-")], [])  # No stray private links.
-        # After the rename: the entrypoint check fails; the new selection is complete and rollback is offered, nothing half-written.
         with mock.patch.object(sumctl, "post_check", return_value={"ok": False, "detail": "simulated"}):
-            with self.assertRaisesRegex(sumctl.SumError, "entrypoint check failed"):
+            with self.assertRaisesRegex(sumctl.SumError, "Recovery also failed"):
                 self.apply(store, no_fetch=True)
-        self.assertEqual(self.current(root), release_two)
+        self.assertEqual(self.current(root), before)
         inspection = sumctl.update_status(store)
-        self.assertEqual((inspection["default"]["kind"], inspection["default"]["sha"], inspection["default"]["ok"]), ("release", second, True))
-        # Every restart inspection saw a complete old or complete new selection.
-        self.assertEqual(sumctl.update_rollback(store, self.ns())["default"]["sha"], first)
-        self.assertEqual(self.current(root), root / ".local" / "releases" / first)
+        self.assertEqual((inspection["default"]["kind"], inspection["default"]["sha"], inspection["default"]["ok"]), ("release", first, True))
+        pending = json.loads((root / ".local" / "activation.json").read_text())["pending"]
+        self.assertEqual((pending["generation"] is not None, pending["recovery_status"]), (True, "failed"))
         for entry in sumctl.update_status(store)["history"]:
             self.assertIn(entry.get("to", {}).get("sha"), {first, second, None})
 
