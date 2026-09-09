@@ -8433,7 +8433,7 @@ if spec is None or spec.loader is None:
     raise SystemExit("cannot load prior known-good runtime")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-required = ("Store", "context", "require_coordinator", "activation_lock", "default_runtime", "select_default", "post_check", "atomic_json", "compatibility", "verify_release", "origin", "run", "sha256_file")
+required = ("Store", "context", "require_coordinator", "activation_lock", "default_runtime", "select_default", "post_check", "atomic_json", "compatibility", "verify_release", "origin", "run", "sha256_file", "update_log")
 missing = [name for name in required if not hasattr(module, name)]
 if missing:
     raise SystemExit("prior runtime lacks recovery primitives: " + ", ".join(missing))
@@ -8502,6 +8502,8 @@ else:
             pending["recovery_check"] = check
             module.atomic_json(state_path, state)
             raise SystemExit("restored stable entrypoint check failed: " + str(check["detail"]))
+        module.update_log(root, {"action": "recover", "result": "recovered", "generation": args.generation,
+                                 "changed": changed, "from": current, "to": previous, "post_check": check})
         state["pending"] = None
         module.atomic_json(state_path, state)
         result = {"action": "recover", "generation": args.generation, "changed": changed,
@@ -8947,6 +8949,8 @@ def _recover_pending_locked(store, root, generation):
             pending["recovery_check"] = check
             write_activation_state(store, root, state)
             raise SumError(f"Recovery generation {generation} found the prior selection but its stable entrypoint check failed: {check['detail']}")
+        update_log(root, {"action": "recover", "result": "recovered", "generation": generation,
+                          "changed": False, "from": current, "to": current, "post_check": check})
         state["pending"] = None
         write_activation_state(store, root, state)
         return {"action": "recover", "generation": generation, "changed": False, "default": current,
@@ -8962,7 +8966,7 @@ def _recover_pending_locked(store, root, generation):
         write_activation_state(store, root, state)
         raise SumError(f"Recovery generation {generation} restored {restored.get('sha')} but its stable entrypoint check failed: {check['detail']}")
     update_log(root, {"action": "recover", "result": "recovered", "generation": generation,
-                      "from": pending["to"], "to": restored, "post_check": check})
+                      "changed": True, "from": pending["to"], "to": restored, "post_check": check})
     state["pending"] = None
     write_activation_state(store, root, state)
     return {"action": "recover", "generation": generation, "changed": True, "default": restored, "post_check": check}

@@ -13,11 +13,12 @@ class RecoveryReviewTest(UpdateLab):
         return self.cli([root / "bin/sumctl", "--home", store.home, *args], cwd=root,
                         env={"PATH": f"{Path(sys.executable).parent}:{os.environ['PATH']}"})
 
-    def pending_update(self, root, store):
+    def pending_update(self, root, store, before_selection=False):
         select = sumctl.select_default
 
         def interrupt(installation, target):
-            select(installation, target)
+            if not before_selection:
+                select(installation, target)
             raise KeyboardInterrupt("after selection")
 
         with mock.patch.object(sumctl, "select_default", side_effect=interrupt):
@@ -46,22 +47,86 @@ class RecoveryReviewTest(UpdateLab):
         self.assertEqual(recovered.returncode, 0, recovered.stderr)
         self.assertEqual(self.current(root), root / ".local/releases" / first)
 
-    def test_failed_recovery_audit_preserves_pending_without_reselecting_on_resume(self):
+    def test_cli_recovery_audit_failure_retains_pending_and_audits_prior_resume(self):
         root, store = self.installation()
+        task = self.task_fixture(store)
         first = self.commit_upstream(root, "one.py", "one = True\n")
         self.apply(store)
         self.commit_upstream(root, "two.py", "two = True\n")
         pending = self.pending_update(root, store)
-        with mock.patch.object(sumctl, "update_log", side_effect=OSError("recovery audit failed")):
-            with self.assertRaisesRegex(OSError, "recovery audit failed"):
-                sumctl.recover_activation(store, root, pending["generation"])
+        asked = self.cli_at(root, store, "ask", task["id"], "--key", "before-recovery", "--text", "Still working?")
+        self.assertEqual(asked.returncode, 0, asked.stderr)
+        callbacks = self.snapshot(store.home)
+        audit_log = root / sumctl.UPDATE_LOG
+        self.assertTrue(audit_log.is_file())
+        audit_history = audit_log.with_name("updates.jsonl.history")
+        audit_log.replace(audit_history)
+        audit_log.mkdir()
+
+        failed = self.cli_at(root, store, "update", "recover", "--generation", pending["generation"])
+        self.assertNotEqual(failed.returncode, 0, "recovery must not clear pending state when its audit cannot append")
+        self.assertIn("Is a directory", failed.stderr)
         saved = json.loads((root / ".local/activation.json").read_text())["pending"]
         self.assertIsInstance(saved, dict, "failed recovery audit must retain the pending generation")
         self.assertEqual(saved["generation"], pending["generation"])
         self.assertEqual(self.current(root), root / ".local/releases" / first)
+        self.assertEqual(self.snapshot(store.home), callbacks, "recovery must not replay or alter callback records")
+        audit_log.rmdir()
+        audit_history.replace(audit_log)
+
         recovered = self.cli_at(root, store, "update", "recover", "--generation", pending["generation"])
         self.assertEqual(recovered.returncode, 0, recovered.stderr)
         self.assertFalse(json.loads(recovered.stdout)["changed"])
+        self.assertIsNone(json.loads((root / ".local/activation.json").read_text())["pending"])
+        self.assertEqual(self.snapshot(store.home), callbacks, "resumed recovery must preserve callback records")
+        audit = json.loads(audit_log.read_text().splitlines()[-1])
+        self.assertEqual(audit["action"], "recover")
+        self.assertEqual(audit["result"], "recovered")
+        self.assertEqual(audit["generation"], pending["generation"])
+        self.assertFalse(audit["changed"])
+        self.assertEqual(audit["from"], pending["from"])
+        self.assertEqual(audit["to"], pending["from"])
+
+    def test_standalone_recovery_audit_failure_retains_pending_and_audits_prior_resume(self):
+        root, store = self.installation()
+        task = self.task_fixture(store)
+        first = self.commit_upstream(root, "one.py", "one = True\n")
+        self.apply(store)
+        self.commit_upstream(root, "two.py", "two = True\n")
+        pending = self.pending_update(root, store, before_selection=True)
+        asked = self.cli_at(root, store, "ask", task["id"], "--key", "before-standalone", "--text", "Still working?")
+        self.assertEqual(asked.returncode, 0, asked.stderr)
+        callbacks = self.snapshot(store.home)
+        audit_log = root / sumctl.UPDATE_LOG
+        self.assertTrue(audit_log.is_file())
+        audit_history = audit_log.with_name("updates.jsonl.history")
+        audit_log.replace(audit_history)
+        audit_log.mkdir()
+
+        failed = self.cli(pending["recovery"]["argv"], env={"SUM_INSTALL_ROOT": str(root)}, cwd=root)
+        self.assertNotEqual(failed.returncode, 0, "standalone recovery must not clear pending state when its audit cannot append")
+        self.assertIn("Is a directory", failed.stderr)
+        saved = json.loads((root / ".local/activation.json").read_text())["pending"]
+        self.assertIsInstance(saved, dict, "failed standalone audit must retain the pending generation")
+        self.assertEqual(saved["generation"], pending["generation"])
+        self.assertEqual(self.current(root), root / ".local/releases" / first)
+        self.assertEqual(self.snapshot(store.home), callbacks, "standalone recovery must not replay or alter callback records")
+        audit_log.rmdir()
+        audit_history.replace(audit_log)
+
+        recovered = self.cli(pending["recovery"]["argv"], env={"SUM_INSTALL_ROOT": str(root)}, cwd=root)
+        self.assertEqual(recovered.returncode, 0, recovered.stderr)
+        value = json.loads(recovered.stdout)
+        self.assertFalse(value["changed"])
+        self.assertIsNone(json.loads((root / ".local/activation.json").read_text())["pending"])
+        self.assertEqual(self.snapshot(store.home), callbacks, "resumed standalone recovery must preserve callback records")
+        audit = json.loads(audit_log.read_text().splitlines()[-1])
+        self.assertEqual(audit["action"], "recover")
+        self.assertEqual(audit["result"], "recovered")
+        self.assertEqual(audit["generation"], pending["generation"])
+        self.assertFalse(audit["changed"])
+        self.assertEqual(audit["from"], pending["from"])
+        self.assertEqual(audit["to"], pending["from"])
 
     def test_incomplete_approval_provenance_refuses_rollback(self):
         root, store = self.installation()
