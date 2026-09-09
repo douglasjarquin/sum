@@ -131,6 +131,8 @@ Under the lock it validates the manifest, the installation state schema, each no
 `.local/approvals.json` records installation-bound source approval; plain `release stage` does not approve a release.
 Existing approval receipts allow compatible immutable rollback without fetching or retaining historical Git objects.
 `.local/activation.json` records committed known-good selection and any pending generation; `.local/updates.jsonl` is diagnostic history, not the recovery source of truth.
+Activation state and the independent recovery record are bound to the exact canonical state-home path as well as the installation and instance.
+Pending state is cleared only after the successful selection or recovery audit write, so a failed audit remains explicitly recoverable.
 Before switching, SUM durably writes and checks a generation-specific `.local/recovery/<generation>/sum-recover.py` using the prior runtime's interpreter and helper.
 The stable entrypoint is checked after selection; failure restores and checks the prior known-good runtime under the same activation lock.
 If recovery fails or the process is interrupted, the pending record remains and another apply or rollback is refused until explicit `update recover --generation GENERATION` resolves it.

@@ -101,6 +101,7 @@ Run `update recover --generation GENERATION` for the exact saved generation; app
 Recovery validates the prior target and current endpoints, then restores and checks the prior known-good selection without replaying any update or task mutation.
 If the prior checkout has changed, or either endpoint no longer matches, recovery refuses rather than selecting different code.
 If recovery also fails, preserve the pending record and report both outcomes; do not delete the record to retry.
+A failed audit write also retains pending state; inspect and recover that generation instead of repeating apply or rollback.
 
 When the selected helper cannot start, read the saved independent command without invoking that helper:
 
@@ -109,6 +110,7 @@ python3 -c 'import json,shlex; print(shlex.join(json.load(open(".local/activatio
 ```
 
 Run the printed command from the registered coordinator pane.
+Keep its recorded state-home argument unchanged; a copied state directory is not interchangeable with the bound home.
 It uses the prior interpreter and hash-checked helper, not the failed candidate, and checks the same pending generation before changing selection.
 
 ## Bootstrap on an installation without `update`

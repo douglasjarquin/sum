@@ -8391,11 +8391,13 @@ PROBE_TASKS = 5
 
 RECOVERY_CAPSULE = '''#!/usr/bin/env python3
 import argparse
+from datetime import datetime
 import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--root", required=True)
@@ -8418,9 +8420,11 @@ if not args.check:
     recovery = pending.get("recovery", {}) if isinstance(pending, dict) else {}
     capsule_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     if (state.get("schema") != 1 or state.get("installation") != str(root)
+            or state.get("home") != str(Path(args.home).resolve())
             or state.get("instance") != identity.get("instance") or not isinstance(pending, dict)
             or pending.get("generation") != args.generation
             or recovery.get("capsule") != str(Path(__file__).resolve()) or recovery.get("sha256") != capsule_hash
+            or recovery.get("home") != str(Path(args.home).resolve())
             or recovery.get("runtime") != args.runtime or recovery.get("helper_sha256") != helper_hash):
         raise SystemExit("recovery state, installation identity, or recorded hashes do not match")
 os.environ["SUM_INSTALL_ROOT"] = str(root)
@@ -8441,7 +8445,8 @@ else:
     with module.activation_lock(root):
         state = json.loads(state_path.read_text())
         pending = state.get("pending")
-        if not isinstance(pending, dict) or pending.get("generation") != args.generation:
+        if (state.get("home") != str(store.home.resolve()) or not isinstance(pending, dict)
+                or pending.get("generation") != args.generation):
             raise SystemExit("recovery generation is not pending")
         recovery = pending.get("recovery", {})
         if module.sha256_file(Path(__file__)) != recovery.get("sha256"):
@@ -8476,8 +8481,14 @@ else:
             sha = manifest["source"]["sha"]
             tree = manifest["source"].get("tree")
         receipt = approvals.get("revisions", {}).get(sha)
+        try:
+            approved_at = datetime.fromisoformat(receipt.get("approved_at", "")) if isinstance(receipt, dict) else None
+        except (ValueError, TypeError):
+            approved_at = None
         if (not isinstance(receipt, dict) or receipt.get("sha") != sha or receipt.get("tree") != tree
-                or not isinstance(receipt.get("branch"), str) or not isinstance(receipt.get("tip"), str)):
+                or not isinstance(receipt.get("branch"), str) or not receipt["branch"]
+                or not isinstance(receipt.get("tip"), str) or not re.fullmatch(r"[0-9a-f]{40}", receipt["tip"])
+                or approved_at is None or approved_at.tzinfo is None):
             raise SystemExit("known-good selection lacks its exact approval receipt")
         checked = module.compatibility(store, root, root if prior_target is None else prior_target, current_runtime)
         if not checked["ok"]:
@@ -8591,8 +8602,15 @@ def approve_update_target(store, root, target):
     if receipt is not None:
         expected_tree = manifest_tree if target is not None else run(
             ["git", "-C", root, "rev-parse", "--verify", f"{sha}^{{tree}}", "--"]).stdout.strip()
+        try:
+            approved_at = datetime.fromisoformat(receipt.get("approved_at", "")) if isinstance(receipt, dict) else None
+        except (ValueError, TypeError):
+            approved_at = None
         if (not isinstance(receipt, dict) or receipt.get("sha") != sha
-                or receipt.get("tree") != expected_tree):
+                or receipt.get("tree") != expected_tree
+                or not isinstance(receipt.get("branch"), str) or not receipt["branch"]
+                or not isinstance(receipt.get("tip"), str) or not re.fullmatch(r"[0-9a-f]{40}", receipt["tip"])
+                or approved_at is None or approved_at.tzinfo is None):
             raise SumError("Update approval receipt does not match the selected revision and tree.")
         return receipt
     tree = run(["git", "-C", root, "rev-parse", "--verify", f"{sha}^{{tree}}", "--"]).stdout.strip()
@@ -8824,6 +8842,7 @@ def read_activation_state(store, root):
     state = read_json(path)
     identity = read_json(store.home / "state.json")
     if (not isinstance(state, dict) or state.get("schema") != 1 or state.get("installation") != str(Path(root).resolve())
+            or state.get("home") != str(store.home.resolve())
             or state.get("instance") != identity.get("instance") or not isinstance(state.get("known_good"), dict)
             or state["known_good"].get("kind") not in {"checkout", "release"}
             or not isinstance(state["known_good"].get("sha"), str) or not isinstance(state["known_good"].get("path"), str)
@@ -8835,7 +8854,8 @@ def read_activation_state(store, root):
 def write_activation_state(store, root, state):
     identity = read_json(store.home / "state.json")
     atomic_json(Path(root) / ACTIVATION_STATE,
-                {"schema": 1, "installation": str(Path(root).resolve()), "instance": identity["instance"], **state})
+                {"schema": 1, "installation": str(Path(root).resolve()), "home": str(store.home.resolve()),
+                 "instance": identity["instance"], **state})
 
 
 def descriptor_target(root, descriptor):
@@ -8900,7 +8920,7 @@ def stage_recovery_capsule(store, root, generation, prior):
     if checked.returncode:
         raise SumError("The prior known-good runtime cannot execute recovery; selection unchanged: " + (checked.stderr or checked.stdout).strip()[-400:])
     return {"capsule": str(capsule), "sha256": sha256_file(capsule), "runtime": str(runtime),
-            "helper_sha256": helper_sha256, "python": str(python.resolve()), "argv": argv}
+            "home": str(store.home.resolve()), "helper_sha256": helper_sha256, "python": str(python.resolve()), "argv": argv}
 
 
 def _recover_pending_locked(store, root, generation):
@@ -8930,7 +8950,7 @@ def _recover_pending_locked(store, root, generation):
         state["pending"] = None
         write_activation_state(store, root, state)
         return {"action": "recover", "generation": generation, "changed": False, "default": current,
-                "post_check": check, "note": "Activation stopped before selection; the known-good runtime was already serving."}
+                "post_check": check, "note": "The prior known-good runtime was already selected and has been verified; no pointer change was needed."}
     if current != pending["to"]:
         raise SumError("The current selection matches neither endpoint of the pending generation; recovery refused without mutation.")
     select_default(root, target)
@@ -8941,10 +8961,10 @@ def _recover_pending_locked(store, root, generation):
         pending["recovery_check"] = check
         write_activation_state(store, root, state)
         raise SumError(f"Recovery generation {generation} restored {restored.get('sha')} but its stable entrypoint check failed: {check['detail']}")
-    state["pending"] = None
-    write_activation_state(store, root, state)
     update_log(root, {"action": "recover", "result": "recovered", "generation": generation,
                       "from": pending["to"], "to": restored, "post_check": check})
+    state["pending"] = None
+    write_activation_state(store, root, state)
     return {"action": "recover", "generation": generation, "changed": True, "default": restored, "post_check": check}
 
 
@@ -9008,9 +9028,9 @@ def _activate_locked(store, root, target, action, source):
                        f"{recovered['default'].get('sha')} was restored and verified; records are untouched.")
     committed = {"generation": generation, "from": before, "to": selection_descriptor(after),
                  "known_good": selection_descriptor(after), "pending": None}
-    write_activation_state(store, root, committed)
     update_log(root, {"action": action, "result": "selected", "generation": generation, "from": before,
                       "to": selection_descriptor(after), "deferred": [d["what"] for d in result["deferred"]], "post_check": check})
+    write_activation_state(store, root, committed)
     return {"action": action, "changed": True, "previous": before, "default": after, "compatibility": result,
             "post_check": check, "source": source, "generation": generation, "recovery": recovery,
             "note": "New entrypoint invocations and new dispatches use this default. Commands already running finish on the runtime they resolved; "
