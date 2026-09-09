@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
@@ -69,7 +70,13 @@ class PreparedSelection:
 
 def _git(repo: Path, *args: str, binary: bool = False) -> bytes | str:
     try:
-        result = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, timeout=120, text=not binary)
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            timeout=120,
+            text=not binary,
+            env={**os.environ, "GIT_NO_REPLACE_OBJECTS": "1"},
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SkillError(f"git source operation failed: {exc}") from exc
     if result.returncode:
@@ -146,7 +153,20 @@ def _resolve_commit(repo: Path, ref: str) -> str:
     return value
 
 
-def _tree(repo: Path, commit: str, selected: str) -> list[tuple[int, str, str]]:
+def _safe_tree_path(value: str, selected: PurePosixPath | None = None) -> str:
+    path = PurePosixPath(value)
+    invalid = (
+        not value or "\\" in value or path.is_absolute() or path.as_posix() != value
+        or any(part in ("", ".", "..") or part.casefold() == ".git" for part in path.parts)
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+        or (selected is not None and (path == selected or not path.is_relative_to(selected)))
+    )
+    if invalid:
+        raise SkillError(f"unsafe Git tree path: {value!r}")
+    return value
+
+
+def _tree(repo: Path, commit: str, selected: str) -> list[tuple[int, str, str, str]]:
     raw = _git(repo, "ls-tree", "-r", "-z", "--full-tree", commit, "--", selected, binary=True)
     assert isinstance(raw, bytes)
     rows = []
@@ -155,11 +175,15 @@ def _tree(repo: Path, commit: str, selected: str) -> list[tuple[int, str, str]]:
         if not record:
             continue
         header, name_bytes = record.split(b"\t", 1)
-        mode_bytes, kind, oid = header.split(b" ", 2)
-        name = name_bytes.decode("utf-8")
-        if not name.startswith(prefix) or kind.decode() not in ("blob", "commit"):
+        mode_bytes, kind, oid_bytes = header.split(b" ", 2)
+        try:
+            name = _safe_tree_path(name_bytes.decode("utf-8"), PurePosixPath(selected))
+            oid = oid_bytes.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise SkillError("unsafe Git tree path or object identifier encoding") from exc
+        if not name.startswith(prefix) or kind.decode() not in ("blob", "commit") or re.fullmatch(r"[0-9a-f]{40}", oid) is None:
             raise SkillError(f"Git selection contains an unsupported tree entry: {name}")
-        rows.append((int(mode_bytes, 8), kind.decode(), name))
+        rows.append((int(mode_bytes, 8), kind.decode(), oid, name))
     if not rows:
         raise SkillError(f"selected skill directory does not exist at {selected!r}")
     if len(rows) > MAX_TREE_FILES:
@@ -167,8 +191,8 @@ def _tree(repo: Path, commit: str, selected: str) -> list[tuple[int, str, str]]:
     return rows
 
 
-def _blob(repo: Path, commit: str, name: str) -> bytes:
-    raw = _git(repo, "show", f"{commit}:{name}", binary=True)
+def _blob(repo: Path, oid: str, name: str) -> bytes:
+    raw = _git(repo, "cat-file", "blob", oid, binary=True)
     assert isinstance(raw, bytes)
     if len(raw) > MAX_FILE_BYTES:
         raise SkillError(f"selected resource is larger than {MAX_FILE_BYTES} bytes: {name}")
@@ -181,19 +205,20 @@ def prepare(selection: Selection) -> PreparedSelection:
         repo, origin = _source_repo(selection.repository, Path(directory))
         commit = _resolve_commit(repo, selection.ref)
         rows = _tree(repo, commit, selection.path)
-        names = {name for _, kind, name in rows if kind == "blob"}
+        names = {path for _, kind, _, path in rows if kind == "blob"}
         skill_path = f"{selection.path}/SKILL.md"
         if skill_path not in names:
             raise SkillError(f"selected skill is missing {skill_path}")
-        name, unsupported_capabilities = frontmatter(_blob(repo, commit, skill_path), skill_path)
+        skill_oid = next(oid for _, kind, oid, path in rows if kind == "blob" and path == skill_path)
+        name, unsupported_capabilities = frontmatter(_blob(repo, skill_oid, skill_path), skill_path)
         if name != PurePosixPath(selection.path).name:
             raise SkillError(f"{skill_path}: native name {name!r} does not match its selected directory")
         files = []
-        for mode, kind, path in rows:
+        for mode, kind, oid, path in rows:
             if kind == "commit":
                 raise SkillError(f"{path}: submodules are not imported")
-            data = _blob(repo, commit, path)
-            relative = path.removeprefix(selection.path + "/")
+            data = _blob(repo, oid, path)
+            relative = PurePosixPath(path).relative_to(selection.path).as_posix()
             snapshot_path = f"skill/{name}/{relative}"
             link_target = None
             if mode == 0o120000:
@@ -217,12 +242,18 @@ def prepare(selection: Selection) -> PreparedSelection:
             if not record:
                 continue
             header, name_bytes = record.split(b"\t", 1)
-            mode_bytes, kind, oid = header.split(b" ", 2)
-            path = name_bytes.decode("utf-8")
+            mode_bytes, kind, oid_bytes = header.split(b" ", 2)
+            try:
+                path = _safe_tree_path(name_bytes.decode("utf-8"))
+                oid = oid_bytes.decode("ascii")
+            except UnicodeDecodeError as exc:
+                raise SkillError("unsafe Git tree path or object identifier encoding") from exc
+            if re.fullmatch(r"[0-9a-f]{40}", oid) is None:
+                raise SkillError(f"Git tree contains an invalid object identifier: {path}")
             path_object = PurePosixPath(path)
             if kind.decode() != "blob" or path_object.parent not in ancestor_paths or not path_object.name.lower().startswith(("license", "notice", "copying")):
                 continue
-            licenses.append(SourceFile(f"licenses/{path}", f"licenses/{path}", int(mode_bytes, 8) & 0o777, _blob(repo, commit, path), "", None))
+            licenses.append(SourceFile(f"licenses/{path}", f"licenses/{path}", int(mode_bytes, 8) & 0o777, _blob(repo, oid, path), "", None))
         if not licenses and not any(Path(item.path).name.lower().startswith(("license", "notice", "copying")) for item in files):
             raise SkillError("source has no license, notice, or copying file")
         all_files = files + [item for item in licenses if item.snapshot_path not in {file.snapshot_path for file in files}]

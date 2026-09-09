@@ -40,6 +40,21 @@ class SkillInstallRegressionTest(unittest.TestCase):
         self.git("commit", "-q", "-m", "fixture")
         return self.git("rev-parse", "HEAD")
 
+    def object(self, kind: str, data: bytes) -> str:
+        return subprocess.run(
+            ["git", "-C", str(self.source), "hash-object", "-w", "--stdin", "-t", kind, "--literally"],
+            input=data,
+            check=True,
+            capture_output=True,
+        ).stdout.decode().strip()
+
+    def tree(self, entries: list[tuple[str, str, str]]) -> str:
+        data = b"".join(
+            f"{mode} {name}".encode() + b"\0" + bytes.fromhex(oid)
+            for mode, name, oid in entries
+        )
+        return self.object("tree", data)
+
     def skill(self, body: str, path: str = "skills/alpha") -> Path:
         directory = self.source / path
         directory.mkdir(parents=True)
@@ -162,6 +177,53 @@ class SkillInstallRegressionTest(unittest.TestCase):
 
         self.assertNotEqual(inspected.returncode, 0)
         self.assertIn("malformed frontmatter", inspected.stderr)
+
+    def test_malformed_tree_paths_are_refused_before_materialization(self) -> None:
+        skill = self.object(
+            "blob", b"---\nname: alpha\ndescription: alpha\n---\n\nalpha\n",
+        )
+        license_blob = self.object("blob", b"license\n")
+        escaped = self.object("blob", b"escaped\n")
+        nested = self.tree([("100644", "escaped", escaped)])
+        for _ in range(4):
+            nested = self.tree([("40000", "..", nested)])
+        alpha = self.tree([
+            ("40000", "..", nested),
+            ("100644", "SKILL.md", skill),
+        ])
+        skills = self.tree([("40000", "alpha", alpha)])
+        root = self.tree([
+            ("100644", "LICENSE", license_blob),
+            ("40000", "skills", skills),
+        ])
+        commit = self.object(
+            "commit",
+            (
+                f"tree {root}\n"
+                "author fixture <fixture@example.invalid> 0 +0000\n"
+                "committer fixture <fixture@example.invalid> 0 +0000\n\n"
+                "malformed tree\n"
+            ).encode(),
+        )
+
+        installed = self.install(commit)
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("unsafe Git tree path", installed.stderr)
+        self.assertFalse((self.target / "escaped").exists())
+
+    def test_git_replacement_objects_do_not_change_pinned_bytes(self) -> None:
+        directory = self.skill("original\n")
+        original_text = (directory / "SKILL.md").read_text()
+        original = self.commit()
+        (directory / "SKILL.md").write_text(original_text.replace("original", "replacement"))
+        replacement = self.commit()
+        self.git("replace", original, replacement)
+
+        installed = self.install(original)
+
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        self.assertEqual((self.target / ".agents/skills/alpha/SKILL.md").read_text(), original_text)
 
 
 if __name__ == "__main__":

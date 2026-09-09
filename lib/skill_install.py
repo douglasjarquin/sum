@@ -69,7 +69,7 @@ def _ensure_directory(path: Path, boundary: Path | None = None) -> None:
 def _write_snapshot(root: Path, prepared: PreparedSelection) -> None:
     for item in prepared.files:
         destination = root / item.snapshot_path
-        _ensure_directory(destination.parent)
+        _ensure_directory(destination.parent, root)
         if item.link_target is not None:
             os.symlink(item.link_target, destination)
         else:
@@ -144,6 +144,8 @@ def install(target: str | Path, selections: tuple[Selection, ...] | list[Selecti
                     raise SkillError(f"snapshot collision: {snapshot}")
                 temporary = Path(tempfile.mkdtemp(prefix=".snapshot-", dir=store / "snapshots"))
                 record = item.record(f"snapshots/{snapshot_id_value}")
+                if not valid_record(record):
+                    raise SkillError("prepared selection produced an invalid snapshot record")
                 try:
                     _write_snapshot(temporary, item)
                     os.rename(temporary, snapshot)

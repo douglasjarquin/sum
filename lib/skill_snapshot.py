@@ -2,15 +2,23 @@ from __future__ import annotations
 
 import hashlib
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import stat
 
 from skill_content import content_digest
-from skill_source import PreparedSelection, SKILL_NAME, SUPPORTED_ROUTES
+from skill_source import JsonValue, PreparedSelection, SKILL_NAME, SUPPORTED_ROUTES
 
 
 LOCK_SCHEMA = 1
+
+
+def safe_record_path(value: JsonValue) -> bool:
+    if not isinstance(value, str) or not value or "\\" in value:
+        return False
+    path = PurePosixPath(value)
+    return (not path.is_absolute() and path.as_posix() == value
+            and all(part not in ("", ".", "..") and part.casefold() != ".git" for part in path.parts))
 
 
 def selection_key(value: dict) -> tuple[str, str, str, str]:
@@ -25,9 +33,8 @@ def valid_record(value: dict) -> bool:
                                                   and isinstance(item.get("snapshot_path"), str)
                                                   and isinstance(item.get("mode"), int) and item["mode"] in (0, 0o644, 0o755)
                                                   and isinstance(item.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None
-                                                  and not Path(item["path"]).is_absolute() and ".." not in Path(item["path"]).parts
-                                                  and not Path(item["snapshot_path"]).is_absolute()
-                                                  and ".." not in Path(item["snapshot_path"]).parts
+                                                  and safe_record_path(item["path"])
+                                                  and safe_record_path(item["snapshot_path"])
                                                   and (item["snapshot_path"].startswith(f"skill/{value.get('name', '')}/") or item["snapshot_path"].startswith("licenses/")) for item in files)
     return (isinstance(value, dict) and isinstance(value.get("repository"), str) and isinstance(value.get("ref"), str) and isinstance(value.get("commit"), str)
             and re.fullmatch(r"[0-9a-f]{40}", value["commit"]) is not None and isinstance(value.get("path"), str)
