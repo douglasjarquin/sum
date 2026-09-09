@@ -14,6 +14,7 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_TREE_FILES = 2048
 SKILL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 SUPPORTED_ROUTES = (".agents/skills", ".claude/skills")
+UNSUPPORTED_CAPABILITIES = frozenset({"allowed-tools", "command", "commands", "context", "hooks", "mcp", "mcp-servers", "model", "permission", "permissions", "tools"})
 JsonValue: TypeAlias = str | int | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 
@@ -33,6 +34,7 @@ class Selection:
 @dataclass(frozen=True, slots=True)
 class SourceFile:
     path: str
+    snapshot_path: str
     mode: int
     data: bytes
     digest: str
@@ -47,6 +49,7 @@ class PreparedSelection:
     name: str
     files: tuple[SourceFile, ...]
     content_sha256: str
+    unsupported_capabilities: tuple[str, ...]
 
     def record(self, snapshot: str) -> JsonObject:
         return {
@@ -59,7 +62,7 @@ class PreparedSelection:
             "name": self.name,
             "snapshot": snapshot,
             "content_sha256": self.content_sha256,
-            "files": [{"path": item.path, "mode": item.mode, "sha256": item.digest} for item in self.files],
+            "files": [{"path": item.path, "snapshot_path": item.snapshot_path, "mode": item.mode, "sha256": item.digest} for item in self.files],
         }
 
 
@@ -171,7 +174,14 @@ def _blob(repo: Path, commit: str, name: str) -> bytes:
     return raw
 
 
-def _frontmatter(data: bytes, source: str) -> str:
+def _scalar(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value
+
+
+def _frontmatter(data: bytes, source: str) -> tuple[str, tuple[str, ...]]:
     try:
         lines = data.decode("utf-8").splitlines()
     except UnicodeDecodeError as exc:
@@ -183,19 +193,47 @@ def _frontmatter(data: bytes, source: str) -> str:
     except StopIteration as exc:
         raise SkillError(f"{source}: malformed frontmatter closing") from exc
     fields = {}
-    for line in lines[1:end]:
+    index = 1
+    while index < end:
+        line = lines[index]
         if not line.strip():
+            index += 1
             continue
+        if line[:1].isspace():
+            raise SkillError(f"{source}: malformed frontmatter indentation")
         key, separator, value = line.partition(":")
-        if not separator or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", key.strip()) or not value.strip():
+        key = key.strip()
+        value = value.strip()
+        if not separator or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", key):
             raise SkillError(f"{source}: malformed frontmatter field")
-        if key.strip() in fields:
-            raise SkillError(f"{source}: duplicate frontmatter field {key.strip()!r}")
-        fields[key.strip()] = value.strip().strip("'\"")
+        if key in fields:
+            raise SkillError(f"{source}: duplicate frontmatter field {key!r}")
+        if value in (">", ">-", ">+", "|", "|-", "|+"):
+            block = []
+            index += 1
+            while index < end and (not lines[index].strip() or lines[index][:1].isspace()):
+                block.append(lines[index][2:] if lines[index].startswith("  ") else lines[index].lstrip())
+                index += 1
+            if not block:
+                raise SkillError(f"{source}: empty YAML block scalar")
+            if value.startswith(">"):
+                parsed = " ".join(part.strip() for part in block if part.strip())
+            else:
+                parsed = "\n".join(block)
+            fields[key] = parsed if value.endswith("+") else parsed.rstrip()
+            continue
+        if not value:
+            fields[key] = "structured"
+            index += 1
+            while index < end and (not lines[index].strip() or lines[index][:1].isspace()):
+                index += 1
+            continue
+        fields[key] = _scalar(value)
+        index += 1
     name = fields.get("name")
     if not name or not SKILL_NAME.fullmatch(name):
         raise SkillError(f"{source}: frontmatter has no valid native name")
-    return name
+    return name, tuple(sorted(UNSUPPORTED_CAPABILITIES.intersection(fields)))
 
 
 def _normal_target(link: str, source_path: str) -> str:
@@ -224,7 +262,7 @@ def prepare(selection: Selection) -> PreparedSelection:
         skill_path = f"{selection.path}/SKILL.md"
         if skill_path not in names:
             raise SkillError(f"selected skill is missing {skill_path}")
-        name = _frontmatter(_blob(repo, commit, skill_path), skill_path)
+        name, unsupported_capabilities = _frontmatter(_blob(repo, commit, skill_path), skill_path)
         if name != PurePosixPath(selection.path).name:
             raise SkillError(f"{skill_path}: native name {name!r} does not match its selected directory")
         files = []
@@ -240,28 +278,35 @@ def prepare(selection: Selection) -> PreparedSelection:
                     raise SkillError(f"{path}: external or missing shared resource {link_target!r}; select it explicitly")
             elif mode not in (0o100644, 0o100755):
                 raise SkillError(f"{path}: unsupported Git file mode {mode:o}")
-            files.append(SourceFile(path.removeprefix(selection.path + "/"), mode & 0o777, data, hashlib.sha256(data).hexdigest(), link_target))
-        root_rows = _git(repo, "ls-tree", "-z", "--full-tree", commit, binary=True)
+            relative = path.removeprefix(selection.path + "/")
+            files.append(SourceFile(relative, f"skill/{name}/{relative}", mode & 0o777, data, hashlib.sha256(data).hexdigest(), link_target))
+        root_rows = _git(repo, "ls-tree", "-r", "-z", "--full-tree", commit, binary=True)
         assert isinstance(root_rows, bytes)
         licenses = []
+        ancestor_paths = {PurePosixPath(".")}
+        selected_parts = PurePosixPath(selection.path).parts
+        ancestor_paths.update(PurePosixPath(*selected_parts[:index]) for index in range(1, len(selected_parts)))
         for record in root_rows.split(b"\0"):
             if not record:
                 continue
             header, name_bytes = record.split(b"\t", 1)
             mode_bytes, kind, oid = header.split(b" ", 2)
             path = name_bytes.decode("utf-8")
-            if kind.decode() != "blob" or not Path(path).name.lower().startswith(("license", "notice", "copying")):
+            path_object = PurePosixPath(path)
+            if kind.decode() != "blob" or path_object.parent not in ancestor_paths or not path_object.name.lower().startswith(("license", "notice", "copying")):
                 continue
-            licenses.append(SourceFile(f"licenses/{path}", int(mode_bytes, 8) & 0o777, _blob(repo, commit, path), "", None))
+            licenses.append(SourceFile(f"licenses/{path}", f"licenses/{path}", int(mode_bytes, 8) & 0o777, _blob(repo, commit, path), "", None))
         if not licenses and not any(Path(item.path).name.lower().startswith(("license", "notice", "copying")) for item in files):
             raise SkillError("source has no license, notice, or copying file")
-        all_files = files + [item for item in licenses if item.path not in {file.path for file in files}]
-        all_files = [SourceFile(item.path, item.mode, item.data, hashlib.sha256(item.data).hexdigest(), item.link_target) for item in all_files]
-        digest_input = "\n".join(f"{item.path}\0{item.mode:o}\0{item.digest}" for item in sorted(all_files, key=lambda value: value.path)).encode()
-        return PreparedSelection(selection, origin, commit, name, tuple(all_files), hashlib.sha256(digest_input).hexdigest())
+        all_files = files + [item for item in licenses if item.snapshot_path not in {file.snapshot_path for file in files}]
+        all_files = [SourceFile(item.path, item.snapshot_path, item.mode, item.data, hashlib.sha256(item.data).hexdigest(), item.link_target) for item in all_files]
+        digest_input = "\n".join(f"{item.path}\0{item.snapshot_path}\0{item.mode:o}\0{item.digest}" for item in sorted(all_files, key=lambda value: value.snapshot_path)).encode()
+        return PreparedSelection(selection, origin, commit, name, tuple(all_files), hashlib.sha256(digest_input).hexdigest(), unsupported_capabilities)
 
 
 def inspect(selection: Selection) -> JsonObject:
     prepared = prepare(selection)
-    return {**prepared.record("not-installed"), "files": [{"path": item.path, "mode": item.mode, "sha256": item.digest} for item in prepared.files],
-            "capabilities": {"invocation": False, "permissions": False, "settings": False, "submodules": False}}
+    return {**prepared.record("not-installed"), "files": [{"path": item.path, "snapshot_path": item.snapshot_path, "mode": item.mode, "sha256": item.digest} for item in prepared.files],
+            "capabilities": {"invocation": False, "permissions": False, "settings": False, "submodules": False,
+                              "native_projection": not prepared.unsupported_capabilities,
+                              "unsupported": list(prepared.unsupported_capabilities)}}

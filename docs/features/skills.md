@@ -2,6 +2,9 @@
 
 Selected upstream skills remain pinned, hash-checked, and separate from Sum-owned wrappers.
 
+Implementation entry points are `lib/skill_source.py`, `lib/skill_install.py`, and the `skills` dispatch in `lib/sumctl.py`.
+Regression coverage is in `tests/test_skill_install.py`, `tests/test_skill_install_review.py`, and `tests/test_setup.py`.
+
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
 | `skills.inspect` | Inspecting a repository, ref, and exact relative skill directory reports native metadata and capability limits without writing a target | automated: `tests/test_skill_install.py` | offline suite |

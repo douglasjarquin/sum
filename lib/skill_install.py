@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import tempfile
 from contextlib import contextmanager
 
@@ -25,8 +26,10 @@ def _read_lock(path: Path) -> JsonObject:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise SkillError(f"cannot read selection lock {path}: {exc}") from exc
-    if value.get("schema") != LOCK_SCHEMA or not isinstance(value.get("selections"), list):
+    if not isinstance(value, dict) or value.get("schema") != LOCK_SCHEMA or not isinstance(value.get("selections"), list):
         raise SkillError(f"unsupported selection lock: {path}")
+    if any(not isinstance(record, dict) or not _valid_record(record) for record in value["selections"]):
+        raise SkillError(f"selection lock contains an invalid record: {path}")
     return value
 
 
@@ -55,12 +58,13 @@ def _lock(path: Path):
             fcntl.flock(handle, fcntl.LOCK_UN)
 
 
-def _ensure_directory(path: Path) -> None:
-    if path.is_symlink():
-        raise SkillError(f"refusing symlinked destination directory: {path}")
+def _ensure_directory(path: Path, boundary: Path | None = None) -> None:
+    ancestor = _symlink_ancestor(path, boundary) if boundary is not None else (path if path.is_symlink() else None)
+    if ancestor:
+        raise SkillError(f"refusing symlinked destination directory: {ancestor}")
     if not path.exists():
         if path.parent != path:
-            _ensure_directory(path.parent)
+            _ensure_directory(path.parent, boundary)
         path.mkdir()
     if not path.is_dir():
         raise SkillError(f"destination is not a directory: {path}")
@@ -68,8 +72,7 @@ def _ensure_directory(path: Path) -> None:
 
 def _write_snapshot(root: Path, prepared: PreparedSelection) -> None:
     for item in prepared.files:
-        relative = Path(item.path) if item.path.startswith("licenses/") else Path("skill") / prepared.name / item.path
-        destination = root / relative
+        destination = root / item.snapshot_path
         _ensure_directory(destination.parent)
         if item.link_target is not None:
             os.symlink(item.link_target, destination)
@@ -83,10 +86,24 @@ def _selection_key(value: dict) -> tuple[str, str, str, str]:
 
 
 def _valid_record(value: JsonObject) -> bool:
-    return (isinstance(value.get("repository"), str) and isinstance(value.get("ref"), str) and isinstance(value.get("path"), str)
+    if not isinstance(value, dict):
+        return False
+    files = value.get("files")
+    valid_files = isinstance(files, list) and bool(files) and all(isinstance(item, dict) and isinstance(item.get("path"), str)
+                                                  and isinstance(item.get("snapshot_path"), str)
+                                                  and isinstance(item.get("mode"), int) and item["mode"] in (0, 0o644, 0o755)
+                                                  and isinstance(item.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None
+                                                  and not Path(item["path"]).is_absolute() and ".." not in Path(item["path"]).parts
+                                                  and not Path(item["snapshot_path"]).is_absolute()
+                                                  and ".." not in Path(item["snapshot_path"]).parts
+                                                  and (item["snapshot_path"].startswith(f"skill/{value.get('name', '')}/") or item["snapshot_path"].startswith("licenses/")) for item in files)
+    return (isinstance(value, dict) and isinstance(value.get("repository"), str) and isinstance(value.get("ref"), str) and isinstance(value.get("commit"), str)
+            and re.fullmatch(r"[0-9a-f]{40}", value["commit"]) is not None and isinstance(value.get("path"), str)
             and isinstance(value.get("route"), str) and value["route"] in SUPPORTED_ROUTES
             and isinstance(value.get("name"), str) and SKILL_NAME.fullmatch(value["name"]) is not None and not value["name"].startswith("sum-")
-            and isinstance(value.get("snapshot"), str) and re.fullmatch(r"snapshots/[0-9a-f]{32}", value["snapshot"]) is not None)
+            and isinstance(value.get("snapshot"), str) and re.fullmatch(r"snapshots/[0-9a-f]{32}", value["snapshot"]) is not None
+            and isinstance(value.get("content_sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", value["content_sha256"]) is not None
+            and valid_files and len({item["snapshot_path"] for item in files}) == len(files))
 
 
 def _snapshot_id(prepared: PreparedSelection) -> str:
@@ -94,24 +111,65 @@ def _snapshot_id(prepared: PreparedSelection) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
 
 
-def _same_snapshot(record: dict, target: Path) -> bool:
+def _snapshot_errors(record: dict, target: Path) -> list[str]:
+    errors = []
+    if not _valid_record(record):
+        return ["selection lock record is malformed"]
     snapshot = record.get("snapshot")
-    if not isinstance(snapshot, str) or not re.fullmatch(r"snapshots/[0-9a-f]{32}", snapshot):
-        return False
+    assert isinstance(snapshot, str)
     snapshot_root = target / ".sum-skills" / snapshot
-    if snapshot_root.is_symlink():
-        return False
-    path = snapshot_root / "skill" / record.get("name", "")
-    return path.is_dir() and not path.is_symlink()
+    if snapshot_root.is_symlink() or not snapshot_root.is_dir():
+        return [f"selected skill snapshot is missing or symlinked: {snapshot_root}"]
+    expected = set()
+    for item in record["files"]:
+        relative = item["snapshot_path"]
+        expected.add(relative)
+        member = snapshot_root / relative
+        try:
+            if member.is_symlink():
+                actual_mode = 0
+                actual_data = os.readlink(member).encode()
+                if not member.resolve().is_relative_to(snapshot_root.resolve()):
+                    errors.append(f"selected skill resource escapes its snapshot: {member}")
+            elif member.is_file():
+                actual_mode = stat.S_IMODE(member.stat().st_mode)
+                actual_data = member.read_bytes()
+            else:
+                raise OSError("missing")
+            if hashlib.sha256(actual_data).hexdigest() != item["sha256"]:
+                errors.append(f"selected skill resource hash mismatch: {member}")
+            if actual_mode != item["mode"]:
+                errors.append(f"selected skill resource mode mismatch: {member}")
+        except OSError as exc:
+            errors.append(f"missing selected skill resource {member}: {exc}")
+    actual = {path.relative_to(snapshot_root).as_posix() for path in snapshot_root.rglob("*") if path.is_file() or path.is_symlink()}
+    if actual != expected:
+        errors.append(f"selected skill snapshot file set changed: {snapshot_root}")
+    return errors
+
+
+def _same_snapshot(record: dict, target: Path) -> bool:
+    return not _snapshot_errors(record, target)
 
 
 def _projection(target: Path, record: dict) -> Path:
     return target / record["route"] / record["name"]
 
 
+def _symlink_ancestor(path: Path, boundary: Path) -> Path | None:
+    current = path
+    while current != boundary:
+        if current.is_symlink():
+            return current
+        if current == current.parent:
+            break
+        current = current.parent
+    return boundary if boundary.is_symlink() else None
+
+
 def _reused(target: Path, record: dict) -> bool:
     projection = _projection(target, record)
-    if not _same_snapshot(record, target) or not projection.is_symlink():
+    if _symlink_ancestor(projection.parent, target) or not _same_snapshot(record, target) or not projection.is_symlink():
         return False
     return projection.resolve() == (target / ".sum-skills" / record["snapshot"] / "skill" / record["name"]).resolve()
 
@@ -131,8 +189,8 @@ def install(target: str | Path, selections: tuple[Selection, ...] | list[Selecti
     if store.exists() and store.is_symlink():
         raise SkillError(f"refusing symlinked skill store: {store}")
     with _lock(store / "install.lock"):
-        _ensure_directory(store)
-        _ensure_directory(store / "snapshots")
+        _ensure_directory(store, target)
+        _ensure_directory(store / "snapshots", target)
         lock_path = store / "selection-lock.json"
         lock = _read_lock(lock_path)
         records = list(lock["selections"])
@@ -150,6 +208,8 @@ def install(target: str | Path, selections: tuple[Selection, ...] | list[Selecti
         names = {record.get("name") for record in records}
         new_names = set()
         for item in prepared:
+            if item.unsupported_capabilities:
+                raise SkillError(f"skill {item.name!r} requests unsupported native capabilities: {', '.join(item.unsupported_capabilities)}; use a reviewed Sum wrapper")
             if item.name.startswith("sum-"):
                 raise SkillError(f"reserved Sum skill name is not installable: {item.name}")
             if item.name in names or item.name in new_names:
@@ -175,7 +235,7 @@ def install(target: str | Path, selections: tuple[Selection, ...] | list[Selecti
                         shutil.rmtree(temporary)
                 created_snapshots.append(snapshot)
                 destination = target / item.selection.route / item.name
-                _ensure_directory(destination.parent)
+                _ensure_directory(destination.parent, target)
                 relative = os.path.relpath(snapshot / "skill" / item.name, destination.parent)
                 os.symlink(relative, destination)
                 created_links.append(destination)
@@ -201,6 +261,8 @@ def check(target: str | Path) -> JsonObject:
     target = Path(target).expanduser().resolve()
     store = target / ".sum-skills"
     errors = []
+    if store.is_symlink():
+        return {"ok": False, "target": str(target), "selections": [], "errors": [f"refusing symlinked skill store: {store}"]}
     if not store.exists():
         return {"ok": True, "target": str(target), "selections": [], "errors": []}
     try:
@@ -209,6 +271,9 @@ def check(target: str | Path) -> JsonObject:
         return {"ok": False, "target": str(target), "selections": [], "errors": [str(exc)]}
     seen = set()
     for record in lock["selections"]:
+        if not isinstance(record, dict) or not _valid_record(record):
+            errors.append("selection lock contains an invalid record")
+            continue
         name = record.get("name")
         route = record.get("route")
         snapshot = record.get("snapshot")
@@ -226,31 +291,12 @@ def check(target: str | Path) -> JsonObject:
         if snapshot_root.is_symlink():
             errors.append(f"selected skill snapshot is symlinked: {snapshot_root}")
             continue
-        expected = set()
-        for item in record.get("files", []):
-            relative = item.get("path") if isinstance(item, dict) else None
-            if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or ".." in Path(relative).parts:
-                errors.append(f"invalid selected skill resource path: {relative!r}")
-                continue
-            relative_path = Path(relative) if relative.startswith("licenses/") else Path("skill") / name / relative
-            expected.add(relative_path.as_posix())
-            member = snapshot_root / relative_path
-            try:
-                if not member.is_file() and not member.is_symlink():
-                    raise OSError("missing")
-                digest = hashlib.sha256(os.readlink(member).encode() if member.is_symlink() else member.read_bytes()).hexdigest()
-            except OSError as exc:
-                errors.append(f"missing selected skill resource {member}: {exc}")
-                continue
-            if digest != item.get("sha256"):
-                errors.append(f"selected skill resource hash mismatch: {member}")
-            if member.is_symlink() and not member.resolve().is_relative_to(snapshot_root.resolve()):
-                errors.append(f"selected skill resource escapes its snapshot: {member}")
-        actual = {path.relative_to(snapshot_root).as_posix() for path in snapshot_root.rglob("*") if path.is_file() or path.is_symlink()} if snapshot_root.is_dir() else set()
-        if actual != expected:
-            errors.append(f"selected skill snapshot file set changed: {snapshot_root}")
+        errors.extend(_snapshot_errors(record, target))
         projection = target / route / name
         expected_projection = snapshot_root / "skill" / name
+        ancestor = _symlink_ancestor(projection.parent, target)
+        if ancestor:
+            errors.append(f"selected skill projection has a symlinked destination ancestor: {ancestor}")
         if not projection.is_symlink() or projection.resolve() != expected_projection.resolve():
             errors.append(f"selected skill projection changed: {projection}")
     return {"ok": not errors, "target": str(target), "selections": sorted(seen), "errors": errors}

@@ -914,6 +914,14 @@ def skill_inventory(root):
                 if not path.is_symlink() or os.readlink(path) != target:
                     errors.append(f"portable projection mismatch: {path} must point to {target}")
         routes[route] = sorted(set(discovered + list(PORTABLE_SKILL_NAMES)))
+    if (root / ".sum-skills").exists() or (root / ".sum-skills").is_symlink():
+        library = str(Path(__file__).resolve().parent)
+        if library not in sys.path:
+            sys.path.insert(0, library)
+        from skill_install import check as check_installed_skills
+        selected = check_installed_skills(root)
+        if not selected["ok"]:
+            errors.extend(f"selection lock: {error}" for error in selected["errors"])
     return {"ok": not errors, "active": active, "routes": routes, "compatibility": compatibility, "errors": errors}
 
 
