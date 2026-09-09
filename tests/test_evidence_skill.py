@@ -191,7 +191,7 @@ class EvidenceLab(unittest.TestCase):
             self.assertTrue(converted[0]["derived"] and converted[0]["source"] == "screencast.avi" and converted[0]["tool"].startswith("ffmpeg"))
             self.assertTrue((dirs["after"] / "screencast.avi").is_file())  # The original survives conversion.
         else:
-            self.assertTrue(any("ffmpeg" in l for l in after["limitations"]), after["limitations"])  # No converter: said so, AVI original kept.
+            self.assertTrue(any("ffmpeg" in limitation for limitation in after["limitations"]), after["limitations"])  # No converter: said so, AVI original kept.
         code, result = self.run_skill(repo, "compare", "--scenario", "counter.add", "--run", run, "--base", base, "--candidate", candidate, "--json")
         comparison = self.json_out(result)
         self.assertEqual((code, comparison["verdict"], comparison["visual_proof"], comparison["proves_claim"]), (0, "red-green", "captured", True), result.stderr)
@@ -264,7 +264,7 @@ class EvidenceLab(unittest.TestCase):
                           "        self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers(); self.wfile.write(body)\n    def log_message(self, *a): pass\n"
                           "s = http.server.HTTPServer(('127.0.0.1', 0), H); print(s.server_address[1], flush=True); s.serve_forever()\n")
         proc = subprocess.Popen([sys.executable, str(server)], stdout=subprocess.PIPE, text=True, env=self.env)
-        self.addCleanup(proc.terminate)
+        self.servers.append(proc)
         port = proc.stdout.readline().strip()
         code, result = self.run_skill(repo, "capture", "--scenario", "api.owner", "--role", "after", "--kind", "nonvisual", "--run", "run-http", "--redact", r"(CASE-)\d+",
                                       "http", "--expect-status", "200", "--expect-text", '"ok": true', "GET", f"http://127.0.0.1:{port}/owner")

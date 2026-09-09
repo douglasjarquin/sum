@@ -61,7 +61,7 @@ HERDR_VERSION = "0.9.0"
 MESH_REV = "54adef519aa6af4dcd0bbd72586d414abab90046"
 MESH_REMOTE = "https://github.com/runchr-works/herdr-mesh.git"
 MCP_CONTRACT = {"server": "herdr-mesh-sum", "version": "0.1.0", "tools": 10}
-TOOLS = ("python3", "node", "herdr", "gh", "quota-axi", "codegraph")
+TOOLS = ("python3", "node", "herdr", "gh", "quota-axi", "codegraph", "skills")
 CORE_TOOLS = ("python3", "node", "herdr", "gh")  # A release bundle must carry at least these; older bundles without later pins stay selectable.
 RELEASE_SCHEMA = 1
 MAX_TEXT = 256 * 1024
@@ -87,6 +87,9 @@ HARNESSES = {"codex": "codex", "claude": "claude", "grok": "grok",
              "cursor": "cursor-agent", "pi": "pi", "opencode": "opencode",
              "gemini": "gemini", "omp": "omp", "copilot": "copilot"}
 HARNESS_KIND = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
+SKILLS_VERSION = "1.5.25"
+SKILLS_BIN = RUNTIME / ".local" / "bin" / "skills"
+SKILLS_ARGUMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 # Model/reasoning flags verified against each installed CLI's own `--help`; a kind absent here has no verified adapter,
 # so a requested model/reasoning is refused for it instead of guessed. Each entry is a tuple of leading argv tokens;
 # the value is appended as its own token, never joined into a shell string.
@@ -922,6 +925,33 @@ def skill_inventory(root):
                     errors.append(f"portable projection mismatch: {path} must point to {target}")
         routes[route] = sorted(set(discovered + list(PORTABLE_SKILL_NAMES)))
     return {"ok": not errors, "active": active, "routes": routes, "compatibility": compatibility, "errors": errors}
+
+
+def install_project_skills(args):
+    target = Path(args.target).expanduser()
+    if target.is_symlink() or not target.is_dir():
+        raise SumError(f"Skill target must be an existing project directory, not a symlink: {target}")
+    target = target.resolve()
+    project = run(["git", "-C", target, "rev-parse", "--show-toplevel"], check=False)
+    if project.returncode or Path(project.stdout.strip()).resolve() != target:
+        raise SumError(f"Skill target must be the root of a Git project: {target}. Nothing was installed globally.")
+    if not args.source or args.source.startswith("-"):
+        raise SumError("Skill source must be one explicit package, repository URL, or local path and cannot look like an option.")
+    source = str(Path(args.source).expanduser().resolve()) if Path(args.source).expanduser().exists() else args.source
+    if any(not SKILLS_ARGUMENT.fullmatch(name) or name.casefold().startswith("sum-") for name in args.skill):
+        raise SumError("Every selected skill must be an explicit safe name outside Sum's reserved sum-* namespace; wildcards are refused.")
+    if any(not SKILLS_ARGUMENT.fullmatch(agent) for agent in args.agent):
+        raise SumError("Every agent must be an explicit safe name; wildcards are refused.")
+    if not SKILLS_BIN.is_file() or not os.access(SKILLS_BIN, os.X_OK):
+        raise SumError(f"Pinned Vercel Skills CLI is missing from this runtime: {SKILLS_BIN}. Run mise run setup or stage a release.")
+    found = run([SKILLS_BIN, "--version"], timeout=30).stdout.strip()
+    if found != SKILLS_VERSION:
+        raise SumError(f"Vercel Skills CLI at {SKILLS_BIN} is {found!r}, not the tested pin {SKILLS_VERSION}. Nothing was installed.")
+    command = [SKILLS_BIN, "add", source, "--skill", *args.skill, "--agent", *args.agent, "--copy", "--yes"]
+    run(command, cwd=target, timeout=300, env={**os.environ, "NO_COLOR": "1", "DO_NOT_TRACK": "1", "DISABLE_TELEMETRY": "1"})
+    return {"target": str(target), "source": source, "skills": args.skill, "agents": args.agent,
+            "scope": "project", "mode": "copy", "tool": {"path": str(SKILLS_BIN), "version": found},
+            "note": "Vercel Skills installed explicit project-local copies. Review the copied skill before use."}
 
 
 def worker_skill():
@@ -8734,10 +8764,15 @@ def parser():
     for name in ("status", "inbox"):
         s = sub.add_parser(name, help="All recorded tasks" if name == "status" else "Only tasks that need attention: questions, reports, errors, cleanup")
         s.add_argument("--live", action="store_true", help="One bounded native-status lookup per task")
-    s = sub.add_parser("skills", help="Check Sum skill names, projections, portable imports, and compatibility references")
+    s = sub.add_parser("skills", help="Check Sum-owned skill projections or copy explicit third-party skills into one project")
     g = s.add_subparsers(dest="skills_command", required=True)
     x = g.add_parser("check", help="Refuse mismatched names, missing references, or namespace collisions")
     x.add_argument("--root", default=str(RUNTIME), help="Checkout or release tree to inspect")
+    x = g.add_parser("install", help="Use the pinned Vercel Skills CLI to copy explicitly selected skills into a Git project")
+    x.add_argument("--target", required=True)
+    x.add_argument("--source", required=True, help="Vercel Skills source: package, repository URL, or local path")
+    x.add_argument("--skill", action="append", required=True, help="Exact skill name to copy (repeatable; wildcards and sum-* are refused)")
+    x.add_argument("--agent", action="append", required=True, help="Exact Vercel Skills agent name (repeatable; wildcards are refused)")
     for name in ("prepare", "dispatch"):
         s = sub.add_parser(name, help="Coordinator only: record an approved task and create its isolated worktree" + ("; then launch the worker" if name == "dispatch" else " (no launch)"))
         s.add_argument("--repo", help="Absolute path of the repository checkout to branch from (or use --project)")
@@ -9011,6 +9046,9 @@ def main(argv=None):
         print(json.dumps({"error": f"{RUNTIME} is an immutable release tree. Run the installation's bin/sumctl, which selects a runtime and keeps state in its own .sum; a release never owns state."}), file=sys.stderr)
         return 1
     args = parser().parse_args(argv)
+    library = Path(__file__).resolve().parent
+    if str(library) not in sys.path:
+        sys.path.insert(0, str(library))
     if _MEASUREMENT:
         nested = getattr(args, f"{args.command}_command", None)
         _MEASUREMENT.set_command(args.command, nested)
@@ -9044,7 +9082,10 @@ def main(argv=None):
         elif args.command in {"status", "inbox"}:
             value = status(store, args.live, args.command == "inbox")
         elif args.command == "skills":
-            value = skill_inventory(args.root)
+            if args.skills_command == "check":
+                value = skill_inventory(args.root) if (Path(args.root) / "skills").is_dir() else {"ok": True, "active": [], "routes": {}, "compatibility": [], "errors": []}
+            else:
+                value = install_project_skills(args)
         elif args.command in {"prepare", "dispatch"}:
             task = prepare(store, args)
             value = start(store, task["id"]) if args.command == "dispatch" else task  # --arg values are already part of the persisted launch.
@@ -9245,7 +9286,7 @@ def main(argv=None):
             raise SumError("Unknown command")
         metadata_after(store, args, value)  # Presentation only, after the record is complete; never changes `value` or the exit status.
         emit(value)
-        return 0 if args.command != "skills" or value["ok"] else 1
+        return 0 if args.command != "skills" or args.skills_command != "check" or value["ok"] else 1
     except (SumError, OSError, ValueError, KeyError) as exc:
         print(json.dumps({"error": str(exc)}, ensure_ascii=True), file=sys.stderr)
         return 1

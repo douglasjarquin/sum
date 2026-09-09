@@ -29,7 +29,7 @@
     {
       "id": "node",
       "source": "https://nodejs.org/",
-      "version": "22.19.0",
+      "version": "22.20.0",
       "checksum": "mise.toml#tools.node",
       "license": "MIT",
       "platforms": ["darwin", "linux"],
@@ -85,6 +85,18 @@
       "role": "runtime",
       "owner": "sum",
       "contracts": {"cli": ["status --json", "init", "sync", "query", "explore"], "mcp": ["stdio optional"]}
+    },
+    {
+      "id": "skills",
+      "source": "https://github.com/vercel-labs/skills",
+      "version": "1.5.25",
+      "checksum": "sha512-E4iBTLaeih3uwzajrlvXd55dWw9/ihxxaIPePB5OoN5GOQ0HrDF2CXhwYM+LpJQ/8Zbk/IA69A0B9C27/sMCbw==",
+      "license": "MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["Node >=22.20.0", "project-local copy mode"],
+      "role": "runtime",
+      "owner": "Vercel Labs",
+      "contracts": {"cli": ["add", "--skill", "--agent", "--copy", "--yes"], "mcp": []}
     },
     {
       "id": "herdr-mesh",

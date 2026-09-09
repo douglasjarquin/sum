@@ -16,7 +16,7 @@ const log = async (line) => { await appendFile(diag, `${new Date().toISOString()
 
 if (typeof WebSocket !== "function") {
   out.errors.push(`node ${process.version} has no global WebSocket; Node 22 or newer is required`);
-  console.log(JSON.stringify(out));
+  await new Promise((resolve) => process.stdout.write(`${JSON.stringify(out)}\n`, resolve));
   process.exit(2);
 }
 
@@ -211,4 +211,4 @@ try {
   await rm(profile, { recursive: true, force: true }).catch(() => {});
 }
 console.log(JSON.stringify(out));
-process.exit(exitCode);
+process.exitCode = exitCode;

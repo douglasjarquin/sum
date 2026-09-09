@@ -10,6 +10,7 @@ incremental; `index` rebuilds; `query NAME -p PATH --json` returns the symbols o
 Knobs: FAKE_CODEGRAPH_ROOT (call log, concurrency accounting), FAKE_CODEGRAPH_VERSION, FAKE_CODEGRAPH_FAIL=1 (init/index/sync exit 1),
 FAKE_CODEGRAPH_SLEEP=SECONDS (slow build, for timeouts and slot bounds), FAKE_CODEGRAPH_EXTRACTION (schema version of new indexes)."""
 import hashlib
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -69,9 +70,11 @@ def concurrency_enter():
     marker.write_text("1")
     count = len(list(active.iterdir()))
     peak = ROOT / "peak.txt"
-    previous = int(peak.read_text()) if peak.is_file() else 0
-    if count > previous:
-        peak.write_text(str(count))
+    with (ROOT / "peak.lock").open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        previous = int(peak.read_text()) if peak.is_file() else 0
+        if count > previous:
+            peak.write_text(str(count))
     return marker
 
 
@@ -100,7 +103,7 @@ def pending_changes(project, indexed):
     result = subprocess.run(["git", "-C", str(project), "status", "--porcelain", "--untracked-files=all"], capture_output=True, text=True)
     pending = {"added": 0, "modified": 0, "removed": 0}
     for line in result.stdout.splitlines() if result.returncode == 0 else []:
-        code, name = line[:2], line[3:]
+        name = line[3:]
         if name.startswith(".codegraph/"):
             continue
         path = project / name
