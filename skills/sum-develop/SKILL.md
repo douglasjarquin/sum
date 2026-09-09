@@ -35,14 +35,14 @@ Move all edits, builds, and tests into that path. Run `./bin/sumctl init` there;
 
 ## Verify and ship
 
-Run the offline suite and demo in the checkout, then the live smoke test when a real Herdr is available:
+Run the canonical verifier once for this role in the checkout, using the candidate's merge base:
 
 ```sh
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-node --test tests/mesh.test.mjs
-python3 scripts/demo.py
-mise run test-live
+MISE_ENABLE_TOOLS=go,python,node python3 .agents/skills/verify/scripts/verify_run.py --base "$(git merge-base origin/main HEAD)"
 ```
+
+Do not run the aggregate's constituent offline suites and demo in addition to that final aggregate for the same role.
+Run `mise run test-live` separately only when a real Herdr is available and the live smoke scenario applies; otherwise the verifier records it as `not-run`.
 
 Commit on the `sum-dev/<name>` branch, then follow `skills/sum-delivery/SKILL.md` like any other project: verification, a reviewable PR, no merge.
 Candidate code becomes installation code only when a human merges it and the coordinator picks it up; a checked-out branch is not an update.
