@@ -234,7 +234,8 @@ def open_repository(repository: str, ref: str, scratch: Path) -> tuple[GitReposi
         top = _run_git(GitCommand(local.resolve(), ("rev-parse", "--show-toplevel"), 4096)).decode().strip()
         source = GitRepository(Path(top).resolve(), repository if repository.startswith("file://") else str(Path(top).resolve()))
         return source, source.resolve(ref)
-    remote = ((parsed.scheme in ("https", "ssh") and not parsed.username and not parsed.password and bool(parsed.hostname))
+    remote = ((parsed.scheme == "https" and not parsed.username and not parsed.password and bool(parsed.hostname))
+              or (parsed.scheme == "ssh" and parsed.password is None and bool(parsed.hostname))
               or re.fullmatch(r"[^/@:\s]+@[^/:\s]+:.+", repository) is not None)
     if not remote:
         raise SkillError("unsupported Git transport; use a local path, file://, https://, ssh://, or scp-style Git remote")

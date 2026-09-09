@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import tempfile
 from contextlib import contextmanager
 
@@ -14,18 +15,34 @@ from skill_git import ResourceBudget
 from skill_snapshot import LOCK_SCHEMA, reused as snapshot_reused, selection_key, snapshot_errors, snapshot_id, symlink_ancestor, valid_record
 
 
+MAX_LOCK_BYTES = 8 * 1024 * 1024
+MAX_LOCK_RECORDS = 2048
+
+
 def _read_lock(path: Path) -> JsonObject:
-    if not path.exists():
-        return {"schema": LOCK_SCHEMA, "selections": []}
     if path.is_symlink():
         raise SkillError(f"refusing symlinked selection lock: {path}")
+    if not path.exists():
+        return {"schema": LOCK_SCHEMA, "selections": []}
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        if not stat.S_ISREG(path.stat().st_mode) or path.stat().st_size > MAX_LOCK_BYTES:
+            raise SkillError(f"selection lock must be a bounded regular file: {path}")
+        with path.open("rb") as source:
+            data = source.read(MAX_LOCK_BYTES + 1)
+        if len(data) > MAX_LOCK_BYTES:
+            raise SkillError(f"selection lock must be a bounded regular file: {path}")
+        value = json.loads(data.decode("utf-8"))
     except (OSError, UnicodeDecodeError, ValueError) as exc:
         raise SkillError(f"cannot read selection lock {path}: {exc}") from exc
     if not isinstance(value, dict) or value.get("schema") != LOCK_SCHEMA or not isinstance(value.get("selections"), list):
         raise SkillError(f"unsupported selection lock: {path}")
-    if any(not isinstance(record, dict) or not valid_record(record) for record in value["selections"]):
+    records = value["selections"]
+    if (len(records) > MAX_LOCK_RECORDS
+            or any(not isinstance(record, dict) or not valid_record(record) for record in records)):
+        raise SkillError(f"selection lock contains an invalid record: {path}")
+    keys = [selection_key(record) for record in records]
+    names = [record["name"] for record in records]
+    if len(set(keys)) != len(keys) or len(set(names)) != len(names):
         raise SkillError(f"selection lock contains an invalid record: {path}")
     return value
 

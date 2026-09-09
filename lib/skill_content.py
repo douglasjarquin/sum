@@ -6,7 +6,8 @@ from pathlib import PurePosixPath
 import posixpath
 import re
 from typing import Callable, Iterable
-from urllib.parse import unquote, urlsplit
+
+from skill_markdown import markdown_targets
 
 
 SKILL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -126,13 +127,6 @@ def normal_target(link: str, source_path: str) -> str:
     return "/".join(parts)
 
 
-_MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))")
-_MARKDOWN_REFERENCE_DEFINITION = re.compile(
-    r"(?m)^[ \t]{0,3}\[([^\]\n]+)\]:[ \t]*(?:<([^>\n]+)>|([^\s\n]+))"
-)
-_MARKDOWN_REFERENCE_USE = re.compile(r"!?\[([^\]\n]+)\](?:\[([^\]\n]*)\])?")
-
-
 def snapshot_link_target(source_path: str, resolved_target: str, selected_root: str) -> str:
     source = PurePosixPath(source_path).relative_to(selected_root)
     target = PurePosixPath(resolved_target).relative_to(selected_root)
@@ -143,6 +137,7 @@ def governing_licenses(
     root_files: dict[str, tuple[int, str]],
     read_blob: Callable[[str, str], bytes],
     read_entry: Callable[[str], tuple[int, str] | None],
+    max_files: int,
 ) -> list[SourceFile]:
     paths = set(root_files)
     data_by_path = {}
@@ -163,6 +158,8 @@ def governing_licenses(
                     raise SkillError(f"{path}: external or missing governing license target {target!r}")
                 root_files[target] = entry
             if target not in paths:
+                if len(paths) >= max_files:
+                    raise SkillError(f"source exceeds governing license file limit of {max_files}")
                 paths.add(target)
                 pending.append(target)
     licenses = []
@@ -174,74 +171,6 @@ def governing_licenses(
             raise SkillError(f"{path}: unsupported governing license mode {mode:o}")
         licenses.append(SourceFile(f"licenses/{path}", f"licenses/{path}", mode & 0o777, data, "", link_target))
     return licenses
-
-
-def _local_markdown_target(raw: str) -> str | None:
-    raw = unquote(raw)
-    parsed = urlsplit(raw)
-    if not parsed.path or parsed.scheme or parsed.netloc or raw.startswith(("#", "/")):
-        return None
-    return parsed.path
-
-
-def _reference_label(value: str) -> str:
-    return " ".join(value.split()).casefold()
-
-
-def _markdown_prose(text: str) -> str:
-    output = []
-    fence: tuple[str, int] | None = None
-    for line in text.splitlines(keepends=True):
-        content = line.lstrip(" ")
-        indent = len(line) - len(content)
-        marker = content[:1]
-        width = len(content) - len(content.lstrip(marker)) if marker in ("`", "~") else 0
-        if fence is not None:
-            if marker == fence[0] and width >= fence[1] and not content[width:].strip():
-                fence = None
-            output.append("".join(character if character in "\r\n" else " " for character in line))
-            continue
-        if indent <= 3 and width >= 3:
-            fence = (marker, width)
-            output.append("".join(character if character in "\r\n" else " " for character in line))
-            continue
-        visible = list(line)
-        cursor = 0
-        while (start := line.find("`", cursor)) >= 0:
-            width = len(line[start:]) - len(line[start:].lstrip("`"))
-            token = "`" * width
-            end = line.find(token, start + width)
-            if end < 0:
-                break
-            visible[start:end + width] = " " * (end + width - start)
-            cursor = end + width
-        output.append("".join(visible))
-    return "".join(output)
-
-
-def _markdown_targets(data: bytes) -> tuple[str, ...]:
-    text = _markdown_prose(data.decode("utf-8"))
-    targets = []
-    for match in _MARKDOWN_LINK.finditer(text):
-        target = _local_markdown_target(match.group(1) or match.group(2) or "")
-        if target is not None:
-            targets.append(target)
-    definitions = {}
-    spans = []
-    for match in _MARKDOWN_REFERENCE_DEFINITION.finditer(text):
-        label = _reference_label(match.group(1))
-        definitions.setdefault(label, _local_markdown_target(match.group(2) or match.group(3) or ""))
-        spans.append(match.span())
-    for match in _MARKDOWN_REFERENCE_USE.finditer(text):
-        if any(start <= match.start() < end for start, end in spans):
-            continue
-        if match.end() < len(text) and text[match.end()] == "(":
-            continue
-        label = match.group(2) or match.group(1)
-        target = definitions.get(_reference_label(label))
-        if target is not None:
-            targets.append(target)
-    return tuple(dict.fromkeys(targets))
 
 
 def _relative_path(source_path: str, link: str) -> PurePosixPath | None:
@@ -264,7 +193,7 @@ def validate_markdown_resources(files: list[SourceFile], names: set[str], select
         if not item.path.lower().endswith(".md"):
             continue
         source_path = f"{selected_root}/{item.path}"
-        for link in _markdown_targets(item.data):
+        for link in markdown_targets(item.data):
             resolved = _relative_path(source_path, link)
             if resolved is None or not resolved.is_relative_to(selected) or resolved.as_posix() not in names:
                 raise SkillError(f"{source_path}: missing explicit resource {link!r}; select it explicitly")

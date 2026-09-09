@@ -21,6 +21,7 @@ from skill_content import (
 )
 from skill_git import (
     MAX_FILE_BYTES,
+    MAX_SELECTED_BYTES,
     MAX_TREE_FILES,
     GitRepository,
     ResourceBudget,
@@ -30,10 +31,11 @@ from skill_git import (
 
 
 SUPPORTED_ROUTES = (".agents/skills", ".claude/skills")
+MAX_LICENSE_FILES = 64
 JsonValue: TypeAlias = str | int | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 __all__ = (
-    "JsonObject", "JsonValue", "MAX_FILE_BYTES", "MAX_TREE_FILES", "PreparedSelection",
+    "JsonObject", "JsonValue", "MAX_FILE_BYTES", "MAX_SELECTED_BYTES", "MAX_TREE_FILES", "PreparedSelection",
     "SKILL_NAME", "SUPPORTED_ROUTES", "Selection", "SkillError", "SourceFile",
     "UNSUPPORTED_CAPABILITIES", "inspect", "prepare", "validate_selection",
 )
@@ -109,6 +111,8 @@ def _license_entries(repository: GitRepository, commit: str, selected: str) -> d
         for item in repository.directory(commit, ancestor):
             if item.kind == "blob" and PurePosixPath(item.path).name.lower().startswith(("license", "notice", "copying")):
                 entries[item.path] = (item.mode, item.oid)
+                if len(entries) > MAX_LICENSE_FILES:
+                    raise SkillError(f"source exceeds governing license file limit of {MAX_LICENSE_FILES}")
     return entries
 
 
@@ -156,7 +160,7 @@ def prepare(selection: Selection, budget: ResourceBudget | None = None) -> Prepa
             entry = repository.entry(commit, path)
             return (entry.mode, entry.oid) if entry is not None and entry.kind == "blob" else None
 
-        licenses = governing_licenses(root_files, read_license, read_entry)
+        licenses = governing_licenses(root_files, read_license, read_entry, MAX_LICENSE_FILES)
         if not licenses and not any(Path(item.path).name.lower().startswith(("license", "notice", "copying")) for item in files):
             raise SkillError("source has no license, notice, or copying file")
         all_files = files + [item for item in licenses if item.snapshot_path not in {file.snapshot_path for file in files}]

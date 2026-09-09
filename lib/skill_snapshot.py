@@ -7,10 +7,23 @@ import re
 import stat
 
 from skill_content import content_digest
-from skill_source import JsonValue, PreparedSelection, SKILL_NAME, SUPPORTED_ROUTES
+from skill_source import (
+    JsonValue,
+    MAX_FILE_BYTES,
+    MAX_LICENSE_FILES,
+    MAX_SELECTED_BYTES,
+    MAX_TREE_FILES,
+    PreparedSelection,
+    SKILL_NAME,
+    Selection,
+    SkillError,
+    validate_selection,
+)
 
 
 LOCK_SCHEMA = 1
+MAX_SNAPSHOT_FILES = MAX_TREE_FILES + MAX_LICENSE_FILES
+MAX_SNAPSHOT_ENTRIES = MAX_SNAPSHOT_FILES * 4
 
 
 def safe_record_path(value: JsonValue) -> bool:
@@ -25,29 +38,61 @@ def selection_key(value: dict) -> tuple[str, str, str, str]:
     return tuple(value.get(field, "") for field in ("repository", "ref", "path", "route"))
 
 
+def _snapshot_id(origin: str, commit: str, path: str, route: str) -> str:
+    value = "\0".join((origin, commit, path, route))
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
+
+
 def valid_record(value: dict) -> bool:
     if not isinstance(value, dict):
         return False
     files = value.get("files")
-    valid_files = isinstance(files, list) and bool(files) and all(isinstance(item, dict) and isinstance(item.get("path"), str)
-                                                  and isinstance(item.get("snapshot_path"), str)
-                                                  and isinstance(item.get("mode"), int) and item["mode"] in (0, 0o644, 0o755)
-                                                  and isinstance(item.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None
-                                                  and safe_record_path(item["path"])
-                                                  and safe_record_path(item["snapshot_path"])
-                                                  and (item["snapshot_path"].startswith(f"skill/{value.get('name', '')}/") or item["snapshot_path"].startswith("licenses/")) for item in files)
-    return (isinstance(value, dict) and isinstance(value.get("repository"), str) and isinstance(value.get("ref"), str) and isinstance(value.get("commit"), str)
-            and re.fullmatch(r"[0-9a-f]{40}", value["commit"]) is not None and isinstance(value.get("path"), str)
-            and isinstance(value.get("route"), str) and value["route"] in SUPPORTED_ROUTES
-            and isinstance(value.get("name"), str) and SKILL_NAME.fullmatch(value["name"]) is not None and not value["name"].startswith("sum-")
-            and isinstance(value.get("snapshot"), str) and re.fullmatch(r"snapshots/[0-9a-f]{32}", value["snapshot"]) is not None
-            and isinstance(value.get("content_sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", value["content_sha256"]) is not None
-            and valid_files and len({item["snapshot_path"] for item in files}) == len(files))
+    repository, origin, ref, commit = (value.get(field) for field in ("repository", "origin", "ref", "commit"))
+    path, route, name, snapshot = (value.get(field) for field in ("path", "route", "name", "snapshot"))
+    if not all(isinstance(item, str) for item in (repository, origin, ref, commit, path, route, name, snapshot)):
+        return False
+    try:
+        validate_selection(Selection(repository, ref, path, route))
+    except SkillError:
+        return False
+    if (not origin.startswith("git:") or len(origin) == 4 or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+            or (re.fullmatch(r"[0-9a-f]{40}", ref) is not None and ref != commit)
+            or SKILL_NAME.fullmatch(name) is None or name.startswith("sum-")
+            or PurePosixPath(path).name != name
+            or snapshot != f"snapshots/{_snapshot_id(origin[4:], commit, path, route)}"):
+        return False
+    valid_files = isinstance(files, list) and 0 < len(files) <= MAX_SNAPSHOT_FILES and all(
+        isinstance(item, dict) and isinstance(item.get("path"), str)
+        and isinstance(item.get("snapshot_path"), str)
+        and isinstance(item.get("mode"), int) and item["mode"] in (0, 0o644, 0o755)
+        and isinstance(item.get("sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None
+        and safe_record_path(item["path"])
+        and safe_record_path(item["snapshot_path"])
+        and (item["snapshot_path"].startswith(f"skill/{name}/") or item["snapshot_path"].startswith("licenses/"))
+        for item in files
+    )
+    return (valid_files and isinstance(value.get("content_sha256"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", value["content_sha256"]) is not None
+            and len({item["path"] for item in files}) == len(files)
+            and len({item["snapshot_path"] for item in files}) == len(files))
 
 
 def snapshot_id(prepared: PreparedSelection) -> str:
-    value = "\0".join((prepared.origin, prepared.commit, prepared.selection.path, prepared.selection.route))
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
+    return _snapshot_id(prepared.origin, prepared.commit, prepared.selection.path, prepared.selection.route)
+
+
+def _snapshot_files(root: Path) -> set[str] | None:
+    paths = set()
+    entries = 0
+    for directory, names, files in os.walk(root, followlinks=False):
+        for name in (*names, *files):
+            entries += 1
+            if entries > MAX_SNAPSHOT_ENTRIES:
+                return None
+            member = Path(directory) / name
+            if member.is_file() or member.is_symlink():
+                paths.add(member.relative_to(root).as_posix())
+    return paths
 
 
 def snapshot_errors(record: dict, target: Path) -> list[str]:
@@ -69,6 +114,7 @@ def snapshot_errors(record: dict, target: Path) -> list[str]:
     if snapshot_root.is_symlink() or not snapshot_root.is_dir():
         return [f"selected skill snapshot is missing or symlinked: {snapshot_root}"]
     expected = set()
+    bytes_read = 0
     for item in record["files"]:
         relative = item["snapshot_path"]
         expected.add(relative)
@@ -81,17 +127,27 @@ def snapshot_errors(record: dict, target: Path) -> list[str]:
                     errors.append(f"selected skill resource escapes its snapshot: {member}")
             elif member.is_file():
                 actual_mode = stat.S_IMODE(member.stat().st_mode)
-                actual_data = member.read_bytes()
+                with member.open("rb") as source:
+                    actual_data = source.read(MAX_FILE_BYTES + 1)
+                if len(actual_data) > MAX_FILE_BYTES:
+                    errors.append(f"installed resource exceeds file limit of {MAX_FILE_BYTES} bytes: {member}")
+                    continue
             else:
                 raise OSError("missing")
+            bytes_read += len(actual_data)
+            if bytes_read > MAX_SELECTED_BYTES:
+                errors.append(f"installed resources exceed aggregate limit of {MAX_SELECTED_BYTES} bytes")
+                return errors
             if hashlib.sha256(actual_data).hexdigest() != item["sha256"]:
                 errors.append(f"selected skill resource hash mismatch: {member}")
             if not mode_matches(item["mode"], actual_mode):
                 errors.append(f"selected skill resource mode mismatch: {member}")
         except (OSError, RuntimeError) as exc:
             errors.append(f"missing selected skill resource {member}: {exc}")
-    actual = {path.relative_to(snapshot_root).as_posix() for path in snapshot_root.rglob("*") if path.is_file() or path.is_symlink()}
-    if actual != expected:
+    actual = _snapshot_files(snapshot_root)
+    if actual is None:
+        errors.append(f"selected skill snapshot exceeds entry limit of {MAX_SNAPSHOT_ENTRIES}: {snapshot_root}")
+    elif actual != expected:
         errors.append(f"selected skill snapshot file set changed: {snapshot_root}")
     return errors
 

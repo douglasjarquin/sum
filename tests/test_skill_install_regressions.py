@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # noqa: SIZE_OK - one shared Git/CLI adversarial fixture keeps all skill-ingestion regressions deterministic.
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -87,7 +88,11 @@ class SkillInstallRegressionTest(unittest.TestCase):
             path,
         )
 
-    def git_environment(self, mode: str) -> tuple[dict[str, str], Path, Path]:
+    def git_environment(
+        self,
+        mode: str,
+        remote: str = "https://fixture.invalid/repository.git",
+    ) -> tuple[dict[str, str], Path, Path]:
         real_git = shutil.which("git")
         self.assertIsNotNone(real_git)
         wrapper_dir = self.root / f"git-{mode}"
@@ -121,20 +126,24 @@ class SkillInstallRegressionTest(unittest.TestCase):
             "exit $status\n"
         )
         wrapper.chmod(0o755)
-        fake_remote = "https://fixture.invalid/repository.git"
         environment = {
             **os.environ,
             "PATH": f"{wrapper_dir}:{os.environ['PATH']}",
             "GIT_CONFIG_COUNT": "1",
             "GIT_CONFIG_KEY_0": f"url.file://{self.source}/.insteadOf",
-            "GIT_CONFIG_VALUE_0": fake_remote,
+            "GIT_CONFIG_VALUE_0": remote,
         }
         return environment, log, marker
 
-    def remote_install(self, environment: dict[str, str], ref: str = "main") -> subprocess.CompletedProcess[str]:
+    def remote_install(
+        self,
+        environment: dict[str, str],
+        ref: str = "main",
+        repository: str = "https://fixture.invalid/repository.git",
+    ) -> subprocess.CompletedProcess[str]:
         return self.cli(
             "skills", "install", "--target", str(self.target), "--selection",
-            "https://fixture.invalid/repository.git", ref, "skills/alpha",
+            repository, ref, "skills/alpha",
             env=environment,
         )
 
@@ -202,6 +211,146 @@ class SkillInstallRegressionTest(unittest.TestCase):
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(json.loads(second.stdout)["reused"], ["alpha"])
 
+    def test_full_commit_reuse_rejects_relabelled_snapshot_identity(self) -> None:
+        directory = self.skill("original\n")
+        original = self.commit()
+        installed = self.install(original)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        (directory / "SKILL.md").write_text(
+            (directory / "SKILL.md").read_text().replace("original", "replacement")
+        )
+        requested = self.commit()
+
+        for label, commit in (("ref-commit", original), ("snapshot", requested)):
+            with self.subTest(label=label):
+                target = self.root / f"forged-{label}"
+                shutil.copytree(self.target, target, symlinks=True)
+                lock_path = target / ".sum-skills/selection-lock.json"
+                lock = json.loads(lock_path.read_text())
+                lock["selections"][0]["ref"] = requested
+                lock["selections"][0]["commit"] = commit
+                lock_path.write_text(json.dumps(lock))
+
+                reused = self.cli(
+                    "skills", "install", "--target", str(target), "--selection",
+                    str(self.source), requested, "skills/alpha",
+                )
+
+                self.assertNotEqual(reused.returncode, 0)
+                self.assertIn("invalid record", reused.stderr)
+
+    def test_duplicate_selection_lock_keys_are_refused(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        installed = self.install(ref)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        lock_path = self.target / ".sum-skills/selection-lock.json"
+        lock = json.loads(lock_path.read_text())
+        lock["selections"].append(dict(lock["selections"][0]))
+        lock_path.write_text(json.dumps(lock))
+
+        reused = self.install(ref)
+
+        self.assertNotEqual(reused.returncode, 0)
+        self.assertIn("invalid record", reused.stderr)
+
+    def test_duplicate_native_names_are_refused_before_reuse(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        installed = self.install(ref)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        lock_path = self.target / ".sum-skills/selection-lock.json"
+        lock = json.loads(lock_path.read_text())
+        duplicate = dict(lock["selections"][0])
+        duplicate["repository"] = f"file://{self.source}"
+        lock["selections"].append(duplicate)
+        lock_path.write_text(json.dumps(lock))
+
+        reused = self.install(ref)
+
+        self.assertNotEqual(reused.returncode, 0)
+        self.assertIn("invalid record", reused.stderr)
+
+    def test_selection_lock_fifo_and_oversized_file_are_refused(self) -> None:
+        for label in ("fifo", "oversized"):
+            with self.subTest(label=label):
+                target = self.root / f"lock-{label}"
+                store = target / ".sum-skills"
+                store.mkdir(parents=True)
+                lock_path = store / "selection-lock.json"
+                if label == "fifo":
+                    os.mkfifo(lock_path)
+                else:
+                    with lock_path.open("wb") as handle:
+                        handle.seek(8 * 1024 * 1024)
+                        handle.write(b"\0")
+
+                checked = subprocess.run(
+                    [sys.executable, str(SUMCTL), "--home", str(self.root / "home"),
+                     "skills", "check", "--root", str(target)],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                )
+
+                self.assertNotEqual(checked.returncode, 0)
+                self.assertIn("selection lock must be a bounded regular file", checked.stdout + checked.stderr)
+
+    def test_oversized_installed_snapshot_member_is_refused_before_read(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        installed = self.install(ref)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        skill_file = self.target / ".agents/skills/alpha/SKILL.md"
+        skill_file.chmod(0o644)
+        with skill_file.open("r+b") as handle:
+            handle.seek(8 * 1024 * 1024)
+            handle.write(b"x")
+
+        checked = self.cli("skills", "check", "--root", str(self.target))
+
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn("installed resource exceeds file limit", checked.stdout)
+
+    def test_installed_snapshot_aggregate_bytes_are_bounded(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        installed = self.install(ref)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        lock_path = self.target / ".sum-skills/selection-lock.json"
+        lock = json.loads(lock_path.read_text())
+        record = lock["selections"][0]
+        snapshot = self.target / ".sum-skills" / record["snapshot"]
+        skill_root = snapshot / "skill/alpha"
+        skill_root.chmod(0o755)
+        data = b"x" * (7 * 1024 * 1024)
+        digest = hashlib.sha256(data).hexdigest()
+        for index in range(5):
+            path = skill_root / f"extra-{index}.bin"
+            path.write_bytes(data)
+            path.chmod(0o444)
+            record["files"].append({
+                "path": f"extra-{index}.bin",
+                "snapshot_path": f"skill/alpha/extra-{index}.bin",
+                "mode": 0o644,
+                "sha256": digest,
+            })
+        fields = (
+            (item["path"], item["snapshot_path"], item["mode"], item["sha256"])
+            for item in record["files"]
+        )
+        encoded = "\n".join(
+            f"{path}\0{snapshot_path}\0{mode:o}\0{sha256}"
+            for path, snapshot_path, mode, sha256 in sorted(fields, key=lambda item: item[1])
+        )
+        record["content_sha256"] = hashlib.sha256(encoded.encode()).hexdigest()
+        lock_path.write_text(json.dumps(lock))
+
+        checked = self.cli("skills", "check", "--root", str(self.target))
+
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn("installed resources exceed aggregate limit", checked.stdout)
+
     def test_installed_snapshot_tree_is_read_only(self) -> None:
         self.skill("alpha\n")
         ref = self.commit()
@@ -214,6 +363,30 @@ class SkillInstallRegressionTest(unittest.TestCase):
         self.assertTrue(members)
         for member in members:
             self.assertEqual(stat.S_IMODE(member.stat().st_mode) & 0o222, 0, member)
+
+    def test_nested_and_escaped_markdown_labels_are_validated(self) -> None:
+        cases = {
+            "nested": "[nested [label]](../outside.md)\n",
+            "escaped": r"[escaped \] label][resource]" "\n\n[resource]: ../outside.md\n",
+        }
+        for name, body in cases.items():
+            with self.subTest(name=name):
+                directory = self.source / f"skills/{name}"
+                directory.mkdir(parents=True)
+                (directory / "SKILL.md").write_text(
+                    f"---\nname: {name}\ndescription: {name}\n---\n\n{body}"
+                )
+                ref = self.commit()
+                target = self.root / f"target-{name}"
+                target.mkdir()
+
+                installed = self.cli(
+                    "skills", "install", "--target", str(target), "--selection",
+                    str(self.source), ref, f"skills/{name}",
+                )
+
+                self.assertNotEqual(installed.returncode, 0)
+                self.assertIn("missing explicit resource", installed.stderr)
 
     def test_unterminated_quoted_frontmatter_scalar_is_refused(self) -> None:
         directory = self.skill("alpha\n")
@@ -454,6 +627,22 @@ class SkillInstallRegressionTest(unittest.TestCase):
         self.assertIn("--no-tags", fetch)
         self.assertIn(ref, fetch)
 
+    def test_ssh_remote_allows_username_but_refuses_password(self) -> None:
+        self.skill("alpha\n")
+        self.commit()
+        remote = "ssh://git@fixture.invalid/repository.git"
+        environment, _, _ = self.git_environment("log", remote)
+
+        installed = self.remote_install(environment, repository=remote)
+        refused = self.remote_install(
+            environment,
+            repository="ssh://git:secret@fixture.invalid/repository.git",
+        )
+
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("unsupported Git transport", refused.stderr)
+
     def test_remote_repository_footprint_is_bounded(self) -> None:
         self.skill("alpha\n")
         self.commit()
@@ -499,6 +688,17 @@ class SkillInstallRegressionTest(unittest.TestCase):
         self.assertTrue(any(" -- legal/NOTICE.txt" in line for line in log.read_text().splitlines()))
         snapshot = next((self.target / ".sum-skills/snapshots").iterdir())
         self.assertEqual((snapshot / "licenses/LICENSE").read_text(), "license target\n")
+
+    def test_governing_license_file_count_is_bounded(self) -> None:
+        for index in range(65):
+            (self.source / f"LICENSE-{index:02d}").write_bytes(b"")
+        self.skill("alpha\n")
+        ref = self.commit()
+
+        installed = self.install(ref)
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("governing license file limit", installed.stderr)
 
     def test_cyclic_projection_runtime_error_is_structured_corruption(self) -> None:
         self.skill("alpha\n")
