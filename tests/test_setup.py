@@ -72,7 +72,8 @@ class SetupTest(unittest.TestCase):
         path = self.root / '.mcp.json'
         path.write_text(json.dumps({'mcpServers': {'sum-herdr': {'command': 'user-owned'}}}))
         before = path.read_text()
-        with self.assertRaises(RuntimeError): setup.configure(self.root)
+        with self.assertRaises(RuntimeError):
+            setup.configure(self.root)
         self.assertEqual(path.read_text(), before)
 
     def test_existing_codex_settings_are_preserved(self):
@@ -89,7 +90,8 @@ class SetupTest(unittest.TestCase):
     def test_unmanaged_codex_entry_is_not_overwritten(self):
         path = self.root / 'config.toml'
         path.write_text('[mcp_servers.sum-herdr]\ncommand = "user-owned"\n')
-        with self.assertRaises(RuntimeError): setup.codex_config(path, '/new/bin')
+        with self.assertRaises(RuntimeError):
+            setup.codex_config(path, '/new/bin')
 
     def test_all_skill_links_resolve(self):
         for parent in (ROOT / '.agents/skills', ROOT / '.claude/skills'):
@@ -104,7 +106,8 @@ class SetupTest(unittest.TestCase):
         second = setup.sumctl.link_tool(link, '/opt/node-22.20.0/bin/node')  # A new pin never moves a link a live process may use.
         self.assertEqual((second['created'], second['differs'], os.readlink(link)), (False, True, '/opt/node-22.19.0/bin/node'))
         (self.root / 'regular').write_text('x')
-        with self.assertRaises(setup.sumctl.SumError): setup.sumctl.link_tool(self.root / 'regular', '/elsewhere')
+        with self.assertRaises(setup.sumctl.SumError):
+            setup.sumctl.link_tool(self.root / 'regular', '/elsewhere')
 
     def test_installed_mesh_is_never_rewritten_and_drift_is_only_reported(self):
         mesh = self.root / '.deps/herdr-mesh'
@@ -114,7 +117,9 @@ class SetupTest(unittest.TestCase):
         setup.sumctl.apply_overlay(ROOT, mesh)
         self.assertTrue(setup.sumctl.mesh_state(ROOT, mesh)['matches_source'])
         (mesh / 'dist/server.js').write_text('// older overlay\n')
-        json.dump({'upstream': setup.sumctl.MESH_REV, 'server_sha256': 'old', 'commands_sha256': 'old'}, (mesh / '.sum-patched').open('w'))
+        (mesh / '.sum-patched').write_text(json.dumps(
+            {'upstream': setup.sumctl.MESH_REV, 'server_sha256': 'old', 'commands_sha256': 'old'}
+        ))
         state = setup.sumctl.mesh_state(ROOT, mesh)
         self.assertEqual((state['patched'], state['matches_source']), (True, False))
         self.assertEqual((mesh / 'dist/server.js').read_text(), '// older overlay\n')
@@ -128,4 +133,5 @@ class SetupTest(unittest.TestCase):
             for path in (ROOT / parent).rglob('*.py'):
                 compile(path.read_text(), str(path), 'exec')
 
-if __name__ == '__main__': unittest.main()
+if __name__ == '__main__':
+    unittest.main()
