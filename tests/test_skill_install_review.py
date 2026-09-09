@@ -91,8 +91,8 @@ class SkillInstallReviewTest(unittest.TestCase):
         first = self.cli("skills", "install", "--target", str(target), "--selection", str(repo), ref, "skills/alpha")
         self.assertEqual(first.returncode, 0, first.stderr)
         snapshot = next((target / ".sum-skills/snapshots").iterdir())
-        (snapshot / "skill/alpha/run.sh").write_text("tampered\n")
         (snapshot / "skill/alpha/run.sh").chmod(0o644)
+        (snapshot / "skill/alpha/run.sh").write_text("tampered\n")
 
         reused = self.cli("skills", "install", "--target", str(target), "--selection", str(repo), ref, "skills/alpha")
         checked = self.cli("skills", "check", "--root", str(target))

@@ -81,11 +81,13 @@ class SkillInstallTest(unittest.TestCase):
                          (self.commit, self.commit, "pstack/skills/alpha", "alpha"))
         self.assertTrue(selection["content_sha256"])
         self.assertTrue(selection["origin"].startswith("git:"))
-        self.assertEqual(stat.S_IMODE((self.target / ".agents/skills/alpha/scripts/run.sh").stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE((self.target / ".agents/skills/alpha/scripts/run.sh").stat().st_mode), 0o555)
         checked = self.cli("skills", "check", "--root", str(self.target))
         self.assertEqual(checked.returncode, 0, checked.stderr)
         self.assertEqual(json.loads(checked.stdout)["selected"]["selections"], ["alpha"])
-        (self.target / ".sum-skills" / selection["snapshot"] / "skill/alpha/SKILL.md").write_text("tampered\n")
+        skill_file = self.target / ".sum-skills" / selection["snapshot"] / "skill/alpha/SKILL.md"
+        skill_file.chmod(0o644)
+        skill_file.write_text("tampered\n")
         tampered = self.cli("skills", "check", "--root", str(self.target))
         self.assertNotEqual(tampered.returncode, 0)
 

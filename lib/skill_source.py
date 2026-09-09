@@ -7,20 +7,31 @@ import re
 import subprocess
 import tempfile
 from typing import TypeAlias
-from urllib.parse import unquote, urlparse, urlsplit
+from urllib.parse import urlparse
+
+from skill_content import (
+    SKILL_NAME,
+    UNSUPPORTED_CAPABILITIES,
+    SkillError,
+    SourceFile,
+    content_digest,
+    frontmatter,
+    normal_target,
+    snapshot_link_target,
+    validate_markdown_resources,
+)
 
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_TREE_FILES = 2048
-SKILL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 SUPPORTED_ROUTES = (".agents/skills", ".claude/skills")
-UNSUPPORTED_CAPABILITIES = frozenset({"allowed-tools", "command", "commands", "context", "hooks", "mcp", "mcp-servers", "model", "permission", "permissions", "tools"})
 JsonValue: TypeAlias = str | int | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
-
-
-class SkillError(Exception):
-    pass
+__all__ = (
+    "JsonObject", "JsonValue", "MAX_FILE_BYTES", "MAX_TREE_FILES", "PreparedSelection",
+    "SKILL_NAME", "SUPPORTED_ROUTES", "Selection", "SkillError", "SourceFile",
+    "UNSUPPORTED_CAPABILITIES", "inspect", "prepare", "validate_selection",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,16 +40,6 @@ class Selection:
     ref: str
     path: str
     route: str = ".agents/skills"
-
-
-@dataclass(frozen=True, slots=True)
-class SourceFile:
-    path: str
-    snapshot_path: str
-    mode: int
-    data: bytes
-    digest: str
-    link_target: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,136 +175,6 @@ def _blob(repo: Path, commit: str, name: str) -> bytes:
     return raw
 
 
-def _scalar(value: str) -> str:
-    value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-        return value[1:-1]
-    quoted = False
-    escaped = False
-    for index, character in enumerate(value):
-        if character == "\\" and not escaped:
-            escaped = True
-            continue
-        if character in "'\"" and not escaped:
-            quoted = not quoted
-        if character == "#" and not quoted and (index == 0 or value[index - 1].isspace()):
-            return value[:index].rstrip()
-        escaped = False
-    return value
-
-
-def _frontmatter(data: bytes, source: str) -> tuple[str, tuple[str, ...]]:
-    try:
-        lines = data.decode("utf-8").splitlines()
-    except UnicodeDecodeError as exc:
-        raise SkillError(f"{source}: SKILL.md is not UTF-8") from exc
-    if not lines or lines[0].strip() != "---":
-        raise SkillError(f"{source}: malformed frontmatter opening")
-    try:
-        end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
-    except StopIteration as exc:
-        raise SkillError(f"{source}: malformed frontmatter closing") from exc
-    fields = {}
-    index = 1
-    while index < end:
-        line = lines[index]
-        if not line.strip() or line.lstrip().startswith("#"):
-            index += 1
-            continue
-        if line[:1].isspace():
-            raise SkillError(f"{source}: malformed frontmatter indentation")
-        key, separator, value = line.partition(":")
-        key = key.strip()
-        value = value.strip()
-        if not separator or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", key):
-            raise SkillError(f"{source}: malformed frontmatter field")
-        if key in fields:
-            raise SkillError(f"{source}: duplicate frontmatter field {key!r}")
-        if value in (">", ">-", ">+", "|", "|-", "|+"):
-            block = []
-            index += 1
-            while index < end and (not lines[index].strip() or lines[index][:1].isspace()):
-                block.append(lines[index][2:] if lines[index].startswith("  ") else lines[index].lstrip())
-                index += 1
-            if not block:
-                raise SkillError(f"{source}: empty YAML block scalar")
-            if value.startswith(">"):
-                parsed = " ".join(part.strip() for part in block if part.strip())
-            else:
-                parsed = "\n".join(block)
-            fields[key] = parsed if value.endswith("+") else parsed.rstrip()
-            continue
-        if not value:
-            fields[key] = "structured"
-            index += 1
-            while index < end and (not lines[index].strip() or lines[index][:1].isspace()):
-                index += 1
-            continue
-        fields[key] = _scalar(value)
-        index += 1
-    name = fields.get("name")
-    if not name or not SKILL_NAME.fullmatch(name):
-        raise SkillError(f"{source}: frontmatter has no valid native name")
-    return name, tuple(sorted(UNSUPPORTED_CAPABILITIES.intersection(fields)))
-
-
-def _normal_target(link: str, source_path: str) -> str:
-    if not link or "\x00" in link or link.startswith("/") or "\\" in link:
-        raise SkillError(f"{source_path}: unsafe symlink target")
-    parts = []
-    for part in (PurePosixPath(source_path).parent / link).parts:
-        if part in ("", "."):
-            continue
-        if part == "..":
-            if not parts:
-                raise SkillError(f"{source_path}: symlink escapes the selected skill directory")
-            parts.pop()
-        else:
-            parts.append(part)
-    return "/".join(parts)
-
-
-_MARKDOWN_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))")
-
-
-def _markdown_targets(data: bytes) -> tuple[str, ...]:
-    text = data.decode("utf-8")
-    targets = []
-    for match in _MARKDOWN_LINK.finditer(text):
-        raw = unquote(match.group(1) or match.group(2) or "")
-        parsed = urlsplit(raw)
-        if not parsed.path or parsed.scheme or parsed.netloc or raw.startswith(("#", "/")):
-            continue
-        targets.append(parsed.path)
-    return tuple(targets)
-
-
-def _relative_path(source_path: str, link: str) -> PurePosixPath | None:
-    parts = list(PurePosixPath(source_path).parent.parts)
-    for part in PurePosixPath(link).parts:
-        if part in ("", "."):
-            continue
-        if part == "..":
-            if not parts:
-                return None
-            parts.pop()
-        else:
-            parts.append(part)
-    return PurePosixPath(*parts)
-
-
-def _validate_markdown_resources(files: list[SourceFile], names: set[str], selected_root: str) -> None:
-    selected = PurePosixPath(selected_root)
-    for item in files:
-        if not item.path.lower().endswith(".md"):
-            continue
-        source_path = f"{selected_root}/{item.path}"
-        for link in _markdown_targets(item.data):
-            resolved = _relative_path(source_path, link)
-            if resolved is None or not resolved.is_relative_to(selected) or resolved.as_posix() not in names:
-                raise SkillError(f"{source_path}: missing explicit resource {link!r}; select it explicitly")
-
-
 def prepare(selection: Selection) -> PreparedSelection:
     selection = validate_selection(selection)
     with tempfile.TemporaryDirectory(prefix="sum-skill-source-") as directory:
@@ -314,7 +185,7 @@ def prepare(selection: Selection) -> PreparedSelection:
         skill_path = f"{selection.path}/SKILL.md"
         if skill_path not in names:
             raise SkillError(f"selected skill is missing {skill_path}")
-        name, unsupported_capabilities = _frontmatter(_blob(repo, commit, skill_path), skill_path)
+        name, unsupported_capabilities = frontmatter(_blob(repo, commit, skill_path), skill_path)
         if name != PurePosixPath(selection.path).name:
             raise SkillError(f"{skill_path}: native name {name!r} does not match its selected directory")
         files = []
@@ -322,17 +193,20 @@ def prepare(selection: Selection) -> PreparedSelection:
             if kind == "commit":
                 raise SkillError(f"{path}: submodules are not imported")
             data = _blob(repo, commit, path)
+            relative = path.removeprefix(selection.path + "/")
+            snapshot_path = f"skill/{name}/{relative}"
             link_target = None
             if mode == 0o120000:
                 link_target = data.decode("utf-8")
-                resolved = _normal_target(link_target, path)
+                resolved = normal_target(link_target, path)
                 if resolved not in names:
                     raise SkillError(f"{path}: external or missing shared resource {link_target!r}; select it explicitly")
+                link_target = snapshot_link_target(path, resolved, selection.path)
+                data = link_target.encode("utf-8")
             elif mode not in (0o100644, 0o100755):
                 raise SkillError(f"{path}: unsupported Git file mode {mode:o}")
-            relative = path.removeprefix(selection.path + "/")
-            files.append(SourceFile(relative, f"skill/{name}/{relative}", mode & 0o777, data, hashlib.sha256(data).hexdigest(), link_target))
-        _validate_markdown_resources(files, names, selection.path)
+            files.append(SourceFile(relative, snapshot_path, mode & 0o777, data, hashlib.sha256(data).hexdigest(), link_target))
+        validate_markdown_resources(files, names, selection.path)
         root_rows = _git(repo, "ls-tree", "-r", "-z", "--full-tree", commit, binary=True)
         assert isinstance(root_rows, bytes)
         licenses = []
@@ -353,8 +227,8 @@ def prepare(selection: Selection) -> PreparedSelection:
             raise SkillError("source has no license, notice, or copying file")
         all_files = files + [item for item in licenses if item.snapshot_path not in {file.snapshot_path for file in files}]
         all_files = [SourceFile(item.path, item.snapshot_path, item.mode, item.data, hashlib.sha256(item.data).hexdigest(), item.link_target) for item in all_files]
-        digest_input = "\n".join(f"{item.path}\0{item.snapshot_path}\0{item.mode:o}\0{item.digest}" for item in sorted(all_files, key=lambda value: value.snapshot_path)).encode()
-        return PreparedSelection(selection, origin, commit, name, tuple(all_files), hashlib.sha256(digest_input).hexdigest(), unsupported_capabilities)
+        digest_fields = ((item.path, item.snapshot_path, item.mode, item.digest) for item in all_files)
+        return PreparedSelection(selection, origin, commit, name, tuple(all_files), content_digest(digest_fields), unsupported_capabilities)
 
 
 def inspect(selection: Selection) -> JsonObject:

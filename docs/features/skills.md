@@ -2,8 +2,8 @@
 
 Selected upstream skills remain pinned, hash-checked, and separate from Sum-owned wrappers.
 
-Implementation entry points are `lib/skill_source.py`, `lib/skill_install.py`, and the `skills` dispatch in `lib/sumctl.py`.
-Regression coverage is in `tests/test_skill_install.py`, `tests/test_skill_install_review.py`, and `tests/test_setup.py`.
+Implementation entry points are `lib/skill_content.py`, `lib/skill_source.py`, `lib/skill_snapshot.py`, `lib/skill_install.py`, and the `skills` dispatch in `lib/sumctl.py`.
+Regression coverage is in `tests/test_skill_install.py`, `tests/test_skill_install_review.py`, `tests/test_skill_install_regressions.py`, and `tests/test_setup.py`.
 
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
