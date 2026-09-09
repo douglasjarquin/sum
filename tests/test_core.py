@@ -1264,6 +1264,7 @@ class ReleaseLab(unittest.TestCase):
         self.git("init", "-b", "main", cwd=real)
         self.git("config", "user.name", "sum test", cwd=real)
         self.git("config", "user.email", "test@example.invalid", cwd=real)
+        self.git("config", "gc.auto", "0", cwd=real)
         self.git("add", ".", cwd=real)
         self.git("commit", "-q", "-m", "installation", cwd=real)
         root = real
