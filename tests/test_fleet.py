@@ -252,7 +252,8 @@ class FleetTest(FleetLab):
         self.assertIn("12 of 12 global execution slots", refused["error"])
         pending = store.read(tasks["pending-report"]["id"])
         self.pane_state(tasks["pending-report"]["pane"], agent=None, agent_status="done")
-        self.ctl(root, store, "execution", "park", tasks["pending-report"]["id"], "--attempt", pending["execution"]["worker"]["id"], env=env)
+        self.ctl(root, store, "execution", "park", tasks["pending-report"]["id"], "--attempt", pending["execution"]["worker"]["id"],
+                 env={**env, "SUM_LSOF_BIN": str(Path(__file__).parent / "fixtures/lsof.py"), "FAKE_LSOF_ROOT": str(self.root / "fake-lsof")})
         self.ctl(root, store, "archive", tasks["pending-report"]["id"], "--acknowledge", env=env)
         late = self.ctl(root, store, "prepare", "--repo", self.root / "projects" / "late", "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
         self.assertEqual((self.versions(store, late["id"])["runtime"]["sha"], late["admission"]["occupied_before"]["global"]), (sha1, 11))

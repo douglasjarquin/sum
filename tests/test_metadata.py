@@ -407,7 +407,12 @@ class MetadataTest(test_cleanup.CleanupTest):
         state = self.fake_state()
         state["panes"][second["pane"]]["tokens"]["mine"] = "kept"
         self.write_fake_state(state)
-        self.cli("archive", second["id"], "--acknowledge")
+        self.set_pane(second["pane"], agent=None, processes=[])
+        attempt = self.store.read(second["id"])["execution"]["worker"]["id"]
+        parked = self.cli("execution", "park", second["id"], "--attempt", attempt)
+        self.assertEqual(parked.returncode, 0, parked.stderr)
+        archived = self.cli("archive", second["id"], "--acknowledge")
+        self.assertEqual(archived.returncode, 0, archived.stderr)
         self.assertEqual(self.tokens(second["pane"]), {"mine": "kept"})
         self.assertEqual(self.tokens(second["workspace"]), {})
         self.assertNotIn(second["id"], self.meta()["resources"])

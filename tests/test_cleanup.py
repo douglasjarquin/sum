@@ -108,6 +108,7 @@ class CleanupTest(core.CoreTest):
     def test_merged_clean_pr_removes_only_the_workspace_and_keeps_branch_and_records(self):
         task, sha = self.merged_task()
         records = self.records(task)
+        records[str((self.store.path(task["id"]) / ".cleanup.lock").relative_to(self.store.home))] = b""
         plan = self.cleanup(task)
         self.assertEqual((plan["state"], plan["blockers"], plan["apply"]), ("ready", [], False))
         self.assertEqual(plan["resources"], {"workspace": "present", "pane": "present", "worktree": "present", "branch": "present", "reviewer_pane": None})

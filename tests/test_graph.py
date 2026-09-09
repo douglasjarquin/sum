@@ -381,7 +381,8 @@ class GraphRootVerificationTest(GraphLab):
         self.bin.mkdir()
         (self.bin / "mise").symlink_to(ROOT / "tests/fixtures/mise.py")
         patch = mock.patch.dict(os.environ, {"PATH": os.pathsep.join([str(self.bin), str(Path(sys.executable).resolve().parent), "/usr/bin", "/bin"]),
-                                             "SUM_GH_BIN": str(ROOT / "tests/fixtures/gh.py"), "FAKE_GH_ROOT": str(self.root / "fake-gh")})
+                                             "SUM_GH_BIN": str(ROOT / "tests/fixtures/gh.py"), "FAKE_GH_ROOT": str(self.root / "fake-gh"),
+                                             "SUM_LSOF_BIN": str(ROOT / "tests/fixtures/lsof.py"), "FAKE_LSOF_ROOT": str(self.root / "fake-lsof")})
         patch.start()
         self.addCleanup(patch.stop)
 
