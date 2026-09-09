@@ -31,10 +31,10 @@ jobs:
           install_args: go python node
           cache: false
 
-      - name: Diagnose browser startup (temporary)
+      - name: Run canonical verification
         env:
           VERIFY_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python .github/diagnostics/browser.py
+        run: python .agents/skills/verify/scripts/verify_run.py --base "$VERIFY_BASE_SHA"
 
       - name: Upload verification record
         if: ${{ always() }}

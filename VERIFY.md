@@ -22,6 +22,7 @@ commands = ["git", "mise", "go", "python3", "node"]
 Run `mise install go python node` once so the pinned Go, Python, and Node tools required by the aggregate are available.
 Git must also be available from the host.
 CI enables only these three tools.
+Browser evidence uses the runner's preinstalled Google Chrome through `EVIDENCE_BROWSER`, retaining its sandbox.
 For local verification, prefix the runner command with `MISE_ENABLE_TOOLS=go,python,node` so mise does not automatically install unrelated repository tools.
 
 ## Readiness
