@@ -88,7 +88,7 @@ def snapshot_errors(record: dict, target: Path) -> list[str]:
                 errors.append(f"selected skill resource hash mismatch: {member}")
             if not mode_matches(item["mode"], actual_mode):
                 errors.append(f"selected skill resource mode mismatch: {member}")
-        except OSError as exc:
+        except (OSError, RuntimeError) as exc:
             errors.append(f"missing selected skill resource {member}: {exc}")
     actual = {path.relative_to(snapshot_root).as_posix() for path in snapshot_root.rglob("*") if path.is_file() or path.is_symlink()}
     if actual != expected:

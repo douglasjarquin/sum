@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
@@ -63,11 +65,12 @@ class SkillInstallRegressionTest(unittest.TestCase):
         )
         return directory
 
-    def cli(self, *args: str) -> subprocess.CompletedProcess[str]:
+    def cli(self, *args: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(SUMCTL), "--home", str(self.root / "home"), *args],
             capture_output=True,
             text=True,
+            env=env,
         )
 
     def install(self, ref: str, path: str = "skills/alpha") -> subprocess.CompletedProcess[str]:
@@ -108,6 +111,17 @@ class SkillInstallRegressionTest(unittest.TestCase):
         self.assertNotEqual(installed.returncode, 0)
         self.assertIn("missing explicit resource", installed.stderr)
         self.assertFalse((self.target / ".agents/skills/alpha").exists())
+
+    def test_markdown_code_examples_do_not_require_resources(self) -> None:
+        self.skill(
+            "Use `[guide](references/example.md)` as a literal.\n\n"
+            "```markdown\n![preview](assets/example.png)\n```\n"
+        )
+        ref = self.commit()
+
+        installed = self.install(ref)
+
+        self.assertEqual(installed.returncode, 0, installed.stderr)
 
     def test_check_rejects_tampered_aggregate_content_hash(self) -> None:
         self.skill("alpha\n")
@@ -224,6 +238,57 @@ class SkillInstallRegressionTest(unittest.TestCase):
 
         self.assertEqual(installed.returncode, 0, installed.stderr)
         self.assertEqual((self.target / ".agents/skills/alpha/SKILL.md").read_text(), original_text)
+
+    def test_ref_change_after_resolution_keeps_original_commit_bytes(self) -> None:
+        directory = self.skill("original\n")
+        original_text = (directory / "SKILL.md").read_text()
+        original = self.commit()
+        (directory / "SKILL.md").write_text(original_text.replace("original", "replacement"))
+        replacement = self.commit()
+        self.git("update-ref", "refs/heads/main", original)
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git)
+        wrapper_dir = self.root / "bin"
+        wrapper_dir.mkdir()
+        wrapper = wrapper_dir / "git"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f"real_git={real_git!s}\n"
+            f"replacement={replacement}\n"
+            'if [ "$3" = "rev-parse" ] && [ "$6" = "main^{commit}" ]; then\n'
+            '  output=$("$real_git" "$@") || exit $?\n'
+            '  "$real_git" -C "$2" update-ref refs/heads/main "$replacement" || exit $?\n'
+            "  printf '%s\\n' \"$output\"\n"
+            "else\n"
+            '  exec "$real_git" "$@"\n'
+            "fi\n"
+        )
+        wrapper.chmod(0o755)
+        environment = {**os.environ, "PATH": f"{wrapper_dir}:{os.environ['PATH']}"}
+
+        installed = self.cli(
+            "skills", "install", "--target", str(self.target), "--selection",
+            str(self.source), "main", "skills/alpha", env=environment,
+        )
+
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        self.assertEqual(self.git("rev-parse", "main"), replacement)
+        self.assertEqual((self.target / ".agents/skills/alpha/SKILL.md").read_text(), original_text)
+
+    def test_governing_license_symlink_is_preserved(self) -> None:
+        (self.source / "LICENSE").unlink()
+        (self.source / "LICENSE.txt").write_text("license target\n")
+        (self.source / "LICENSE").symlink_to("LICENSE.txt")
+        self.skill("alpha\n")
+        ref = self.commit()
+
+        installed = self.install(ref)
+
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        snapshot = next((self.target / ".sum-skills/snapshots").iterdir())
+        license_link = snapshot / "licenses/LICENSE"
+        self.assertTrue(license_link.is_symlink())
+        self.assertEqual(license_link.read_text(), "license target\n")
 
 
 if __name__ == "__main__":

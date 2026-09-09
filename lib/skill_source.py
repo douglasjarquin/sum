@@ -17,6 +17,7 @@ from skill_content import (
     SourceFile,
     content_digest,
     frontmatter,
+    governing_licenses,
     normal_target,
     snapshot_link_target,
     validate_markdown_resources,
@@ -234,10 +235,10 @@ def prepare(selection: Selection) -> PreparedSelection:
         validate_markdown_resources(files, names, selection.path)
         root_rows = _git(repo, "ls-tree", "-r", "-z", "--full-tree", commit, binary=True)
         assert isinstance(root_rows, bytes)
-        licenses = []
         ancestor_paths = {PurePosixPath(".")}
         selected_parts = PurePosixPath(selection.path).parts
         ancestor_paths.update(PurePosixPath(*selected_parts[:index]) for index in range(1, len(selected_parts)))
+        root_files = {}
         for record in root_rows.split(b"\0"):
             if not record:
                 continue
@@ -250,10 +251,9 @@ def prepare(selection: Selection) -> PreparedSelection:
                 raise SkillError("unsafe Git tree path or object identifier encoding") from exc
             if re.fullmatch(r"[0-9a-f]{40}", oid) is None:
                 raise SkillError(f"Git tree contains an invalid object identifier: {path}")
-            path_object = PurePosixPath(path)
-            if kind.decode() != "blob" or path_object.parent not in ancestor_paths or not path_object.name.lower().startswith(("license", "notice", "copying")):
-                continue
-            licenses.append(SourceFile(f"licenses/{path}", f"licenses/{path}", int(mode_bytes, 8) & 0o777, _blob(repo, oid, path), "", None))
+            if kind.decode() == "blob":
+                root_files[path] = (int(mode_bytes, 8), oid)
+        licenses = governing_licenses(root_files, ancestor_paths, lambda oid, path: _blob(repo, oid, path))
         if not licenses and not any(Path(item.path).name.lower().startswith(("license", "notice", "copying")) for item in files):
             raise SkillError("source has no license, notice, or copying file")
         all_files = files + [item for item in licenses if item.snapshot_path not in {file.snapshot_path for file in files}]
