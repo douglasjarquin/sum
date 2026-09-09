@@ -288,6 +288,8 @@ class RootVerificationTest(core.CoreTest):
         # A contract edited after dispatch is flagged even when the runner had no base to compare (unchecked policy is unreviewed).
         clone = self.root / "clone"
         subprocess.run(["git", "clone", "-q", str(self.repo), str(clone)], check=True)
+        self.git("config", "user.name", "sum test", cwd=clone)
+        self.git("config", "user.email", "test@example.invalid", cwd=clone)
         other = self.prepare(repo=str(clone))
         sha2 = self.commit(other, "VERIFY.md", (self.repo / "VERIFY.md").read_text().replace("Small CLI fixture.", "Edited contract."))
         loose = subprocess.run([sys.executable, str(Path(other["worktree"]) / RUNNER), "--json"], cwd=other["worktree"], text=True, capture_output=True)

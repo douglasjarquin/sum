@@ -25,6 +25,7 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 | `verify.external-clone-skills` | An ordinary clone with the generating toolkit gone follows every generated instruction: check, audit, run, capture, teardown | automated: `tests/test_verify_skills.py` | offline suite |
 | `verify.sum-self-audit` | sum's own contract and maps pass the maintenance audit | automated: `tests/test_verify_skills.py` | offline suite |
 | `verify.sum-self` | sum's own `mise run verify` runs the suites and demo from a task checkout | manual: `python3 .agents/skills/verify/scripts/verify_run.py` in a sum checkout | run record path in the task report |
+| `ci.hosted-verification` | A seeded fixture failure produces a failed hosted run with retained logs; restoring the fixture passes the same aggregate, with candidate/base identity and no merge authority | manual: GitHub Actions through `.github/workflows/verify.yml`, following `CONTRIBUTING.md` | hosted run URLs and downloaded verification records |
 
 ## Worker run, root run, review
 
