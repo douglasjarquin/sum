@@ -3,7 +3,7 @@
 import argparse, sys
 
 def greet(name, shout=False):
-    text = f"CI fault seed, {name}!"
+    text = f"Hello, {name}!"
     return text.upper() if shout else text
 
 def main(argv=None):
