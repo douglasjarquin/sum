@@ -33,6 +33,8 @@ The native discovery entry is a symlink to that immutable snapshot, so Sum-owned
 
 The installer preserves relative resources and executable modes, copies root license or notice files into the snapshot, and refuses missing resources, unsafe symlinks, unsupported file types, malformed frontmatter, denied transports, duplicate names, reserved `sum-` names, and destination overwrites.
 
+One install invocation accepts at most 32 MiB of selected resources, with an 8 MiB per-file limit and a 64 MiB temporary-repository limit for remote sources.
+
 The installer never invokes a skill, grants permissions, enables MCP or model settings, changes global Cursor or Claude configuration, follows submodules, or runs upstream hooks and scripts.
 
 Use `bin/sumctl skills check --root /path/to/worktree` to validate installed hashes without network access.

@@ -10,6 +10,7 @@ import tempfile
 from contextlib import contextmanager
 
 from skill_source import JsonObject, PreparedSelection, Selection, SkillError, prepare, validate_selection
+from skill_git import ResourceBudget
 from skill_snapshot import LOCK_SCHEMA, reused as snapshot_reused, selection_key, snapshot_errors, snapshot_id, symlink_ancestor, valid_record
 
 
@@ -110,12 +111,13 @@ def install(target: str | Path, selections: tuple[Selection, ...] | list[Selecti
         by_key = {selection_key(record): record for record in records}
         reused = []
         prepared = []
+        resource_budget = ResourceBudget()
         for selection in parsed:
             prior = by_key.get((selection.repository, selection.ref, selection.path, selection.route))
             if prior and re.fullmatch(r"[0-9a-f]{40}", selection.ref) and snapshot_reused(target, prior):
                 reused.append(prior["name"])
                 continue
-            candidate = prepare(selection)
+            candidate = prepare(selection, resource_budget)
             if (prior and candidate.commit == prior.get("commit") and candidate.name == prior.get("name")
                     and candidate.content_sha256 == prior.get("content_sha256") and snapshot_reused(target, prior)):
                 reused.append(prior["name"])
@@ -221,6 +223,14 @@ def check(target: str | Path) -> JsonObject:
         ancestor = symlink_ancestor(projection.parent, target)
         if ancestor:
             errors.append(f"selected skill projection has a symlinked destination ancestor: {ancestor}")
-        if not projection.is_symlink() or projection.resolve() != expected_projection.resolve():
+        if not projection.is_symlink():
+            errors.append(f"selected skill projection changed: {projection}")
+            continue
+        try:
+            projection_matches = projection.resolve() == expected_projection.resolve()
+        except (OSError, RuntimeError) as exc:
+            errors.append(f"selected skill projection is corrupt: {projection}: {exc}")
+            continue
+        if not projection_matches:
             errors.append(f"selected skill projection changed: {projection}")
     return {"ok": not errors, "target": str(target), "selections": sorted(seen), "errors": errors}

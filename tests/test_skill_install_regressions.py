@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# noqa: SIZE_OK - one shared Git/CLI adversarial fixture keeps all skill-ingestion regressions deterministic.
+
 import json
 import os
 from pathlib import Path
@@ -83,6 +85,57 @@ class SkillInstallRegressionTest(unittest.TestCase):
             str(self.source),
             ref,
             path,
+        )
+
+    def git_environment(self, mode: str) -> tuple[dict[str, str], Path, Path]:
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git)
+        wrapper_dir = self.root / f"git-{mode}"
+        wrapper_dir.mkdir()
+        log = wrapper_dir / "calls.log"
+        marker = wrapper_dir / "blob-read"
+        extra = {
+            "blob": f'if [ "$3" = "cat-file" ] && [ "$4" = "blob" ] && [ "$5" = "$OVERSIZED_OID" ]; then touch {marker!s}; fi\n',
+            "footprint": (
+                'if [ "$1" = "clone" ]; then\n'
+                '  for destination do :; done\n'
+                '  truncate -s 70m "$destination/.git/untrusted-footprint"\n'
+                'elif [ "$3" = "fetch" ]; then\n'
+                '  truncate -s 70m "$2/.git/untrusted-footprint"\n'
+                'fi\n'
+            ),
+            "stderr": (
+                'if [ "$3" = "rev-parse" ]; then\n'
+                "  awk 'BEGIN { for (i = 0; i < 70000; i++) printf \"x\" }' >&2\n"
+                'fi\n'
+            ),
+            "log": "",
+        }[mode]
+        wrapper = wrapper_dir / "git"
+        wrapper.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$*\" >> {log!s}\n"
+            f"{real_git!s} \"$@\"\n"
+            "status=$?\n"
+            f"{extra}"
+            "exit $status\n"
+        )
+        wrapper.chmod(0o755)
+        fake_remote = "https://fixture.invalid/repository.git"
+        environment = {
+            **os.environ,
+            "PATH": f"{wrapper_dir}:{os.environ['PATH']}",
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": f"url.file://{self.source}/.insteadOf",
+            "GIT_CONFIG_VALUE_0": fake_remote,
+        }
+        return environment, log, marker
+
+    def remote_install(self, environment: dict[str, str], ref: str = "main") -> subprocess.CompletedProcess[str]:
+        return self.cli(
+            "skills", "install", "--target", str(self.target), "--selection",
+            "https://fixture.invalid/repository.git", ref, "skills/alpha",
+            env=environment,
         )
 
     def test_source_contained_symlink_remains_within_installed_snapshot(self) -> None:
@@ -289,6 +342,173 @@ class SkillInstallRegressionTest(unittest.TestCase):
         license_link = snapshot / "licenses/LICENSE"
         self.assertTrue(license_link.is_symlink())
         self.assertEqual(license_link.read_text(), "license target\n")
+
+    def test_blob_size_is_checked_before_payload_read(self) -> None:
+        directory = self.skill("alpha\n")
+        (directory / "oversized.bin").write_bytes(b"x" * (8 * 1024 * 1024 + 1))
+        ref = self.commit()
+        environment, _, marker = self.git_environment("blob")
+        environment["OVERSIZED_OID"] = self.git("rev-parse", f"{ref}:skills/alpha/oversized.bin")
+
+        installed = self.cli(
+            "skills", "install", "--target", str(self.target), "--selection",
+            str(self.source), ref, "skills/alpha", env=environment,
+        )
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("larger than", installed.stderr)
+        self.assertFalse(marker.exists(), "oversized blob payload was read before rejection")
+
+    def test_selected_resources_have_an_aggregate_byte_cap(self) -> None:
+        directory = self.skill("alpha\n")
+        for index in range(5):
+            (directory / f"resource-{index}.bin").write_bytes(bytes([index]) * (7 * 1024 * 1024))
+        ref = self.commit()
+
+        installed = self.install(ref)
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("aggregate resource limit", installed.stderr)
+        self.assertFalse((self.target / ".agents/skills/alpha").exists())
+
+    def test_multiple_selections_share_the_aggregate_byte_cap(self) -> None:
+        alpha = self.skill("alpha\n")
+        beta = self.source / "skills/beta"
+        beta.mkdir(parents=True)
+        (beta / "SKILL.md").write_text("---\nname: beta\ndescription: beta\n---\n\nbeta\n")
+        for directory in (alpha, beta):
+            for index in range(3):
+                (directory / f"resource-{index}.bin").write_bytes(bytes([index]) * (6 * 1024 * 1024))
+        ref = self.commit()
+
+        installed = self.cli(
+            "skills", "install", "--target", str(self.target),
+            "--selection", str(self.source), ref, "skills/alpha",
+            "--selection", str(self.source), ref, "skills/beta",
+        )
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("aggregate resource limit", installed.stderr)
+        self.assertFalse((self.target / ".agents/skills/alpha").exists())
+
+    def test_refspec_syntax_is_refused_before_git_access(self) -> None:
+        self.skill("alpha\n")
+        self.commit()
+
+        inspected = self.cli(
+            "skills", "inspect", "--repository", str(self.source),
+            "--ref", "main:refs/heads/injected", "--path", "skills/alpha",
+        )
+
+        self.assertNotEqual(inspected.returncode, 0)
+        self.assertIn("refspec syntax", inspected.stderr)
+
+    def test_git_stderr_is_hard_capped(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        environment, _, _ = self.git_environment("stderr")
+
+        installed = self.cli(
+            "skills", "install", "--target", str(self.target), "--selection",
+            str(self.source), ref, "skills/alpha", env=environment,
+        )
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("stderr limit", installed.stderr)
+        self.assertLess(len(installed.stderr), 4096)
+
+    def test_remote_source_uses_partial_exact_ref_fetch(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        environment, log, _ = self.git_environment("log")
+
+        installed = self.remote_install(environment, ref)
+
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        calls = log.read_text().splitlines()
+        self.assertFalse(any(" clone " in f" {line} " for line in calls), calls)
+        fetch = next(line for line in calls if " fetch " in f" {line} ")
+        self.assertIn("--depth=1", fetch)
+        self.assertIn("--filter=blob:none", fetch)
+        self.assertIn("--no-tags", fetch)
+        self.assertIn(ref, fetch)
+
+    def test_remote_repository_footprint_is_bounded(self) -> None:
+        self.skill("alpha\n")
+        self.commit()
+        environment, _, _ = self.git_environment("footprint")
+
+        installed = self.remote_install(environment)
+
+        self.assertNotEqual(installed.returncode, 0)
+        self.assertIn("temporary repository footprint", installed.stderr)
+        self.assertFalse((self.target / ".agents/skills/alpha").exists())
+
+    def test_license_discovery_only_inspects_governing_ancestors(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        environment, log, _ = self.git_environment("log")
+
+        installed = self.cli(
+            "skills", "install", "--target", str(self.target), "--selection",
+            str(self.source), ref, "skills/alpha", env=environment,
+        )
+
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        recursive = [line for line in log.read_text().splitlines() if " ls-tree -r " in f" {line} "]
+        self.assertTrue(recursive)
+        self.assertTrue(all(" -- skills/alpha" in line for line in recursive), recursive)
+
+    def test_governing_license_symlink_target_is_loaded_exactly(self) -> None:
+        (self.source / "LICENSE").unlink()
+        legal = self.source / "legal"
+        legal.mkdir()
+        (legal / "NOTICE.txt").write_text("license target\n")
+        (self.source / "LICENSE").symlink_to("legal/NOTICE.txt")
+        self.skill("alpha\n")
+        ref = self.commit()
+        environment, log, _ = self.git_environment("log")
+
+        installed = self.cli(
+            "skills", "install", "--target", str(self.target), "--selection",
+            str(self.source), ref, "skills/alpha", env=environment,
+        )
+
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        self.assertTrue(any(" -- legal/NOTICE.txt" in line for line in log.read_text().splitlines()))
+        snapshot = next((self.target / ".sum-skills/snapshots").iterdir())
+        self.assertEqual((snapshot / "licenses/LICENSE").read_text(), "license target\n")
+
+    def test_cyclic_projection_runtime_error_is_structured_corruption(self) -> None:
+        self.skill("alpha\n")
+        ref = self.commit()
+        installed = self.install(ref)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
+        projection = self.target / ".agents/skills/alpha"
+        projection.unlink()
+        projection.symlink_to("alpha-cycle")
+        projection.with_name("alpha-cycle").symlink_to("alpha")
+        custom = self.root / "sitecustomize"
+        custom.mkdir()
+        (custom / "sitecustomize.py").write_text(
+            "from pathlib import Path\n"
+            "original_resolve = Path.resolve\n"
+            "def raising_resolve(self, *args, **kwargs):\n"
+            "    if self.as_posix().endswith('/.agents/skills/alpha'):\n"
+            "        raise RuntimeError('forced cyclic projection')\n"
+            "    return original_resolve(self, *args, **kwargs)\n"
+            "Path.resolve = raising_resolve\n"
+        )
+        environment = {**os.environ, "PYTHONPATH": str(custom)}
+
+        checked = self.cli("skills", "check", "--root", str(self.target), env=environment)
+
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertNotIn("Traceback", checked.stderr)
+        self.assertTrue(checked.stdout, checked.stderr)
+        value = json.loads(checked.stdout)
+        self.assertFalse(value["ok"])
+        self.assertTrue(any("projection" in error for error in value["selected"]["errors"]))
 
 
 if __name__ == "__main__":

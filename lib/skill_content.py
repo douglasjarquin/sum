@@ -141,11 +141,10 @@ def snapshot_link_target(source_path: str, resolved_target: str, selected_root: 
 
 def governing_licenses(
     root_files: dict[str, tuple[int, str]],
-    ancestor_paths: set[PurePosixPath],
     read_blob: Callable[[str, str], bytes],
+    read_entry: Callable[[str], tuple[int, str] | None],
 ) -> list[SourceFile]:
-    paths = {path for path in root_files if PurePosixPath(path).parent in ancestor_paths
-             and PurePosixPath(path).name.lower().startswith(("license", "notice", "copying"))}
+    paths = set(root_files)
     data_by_path = {}
     pending = list(paths)
     while pending:
@@ -159,7 +158,10 @@ def governing_licenses(
             except UnicodeDecodeError as exc:
                 raise SkillError(f"{path}: symlink target is not UTF-8") from exc
             if target not in root_files:
-                raise SkillError(f"{path}: external or missing governing license target {target!r}")
+                entry = read_entry(target)
+                if entry is None:
+                    raise SkillError(f"{path}: external or missing governing license target {target!r}")
+                root_files[target] = entry
             if target not in paths:
                 paths.add(target)
                 pending.append(target)
