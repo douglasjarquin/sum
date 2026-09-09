@@ -74,6 +74,10 @@ Dispatch a real task with `--project`, open its brief, and confirm the `## Deliv
 Start a harness by hand inside the managed clone and run the installation's `bin/sumctl init` from there; it must refuse with "A project session is not a sum session" and leave `.sum/context.json` unchanged. Then, in that clone, run `mise tasks ls` and confirm sum's `test`/`demo` tasks resolve from the parent; run `sumctl env discover` for a task and confirm `task_origins` flags them as inherited rather than as project verification.
 Enroll `douglasjarquin/sum` itself and confirm the registration points at the installation with nothing cloned. Stage a release and confirm the bundle contains no `projects/` entry; take a records backup and confirm `state/projects.json` is present and no clone file is.
 
+In a throwaway Git project and temporary `HOME`, run `sumctl skills install` against a local fixture with one explicitly selected skill and agent.
+Confirm the pinned Vercel Skills CLI copies the selected directory into the project, creates no skill symlink, and writes no user-level skill directory.
+Request a missing skill and confirm the command fails without reporting success, then request a `sum-*` name and confirm Sum refuses it before the upstream CLI runs.
+
 ## 12. Code graph per checkout with a real harness
 
 After `mise run setup` (or a staged release) on the pinned tools, confirm `./bin/sumctl doctor` lists `codegraph` as available at version 1.5.0 under the runtime's `.local/bin`, and that no global `codegraph install` was run (`~/.claude.json`, `~/.codex/config.toml`, `~/.cursor/mcp.json` unchanged).

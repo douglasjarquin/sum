@@ -87,10 +87,6 @@ def designate(root):
 
 
 def configure(root=ROOT):
-    if (root / ".sum-skills").exists() or (root / ".sum-skills").is_symlink():
-        inventory = sumctl.skill_inventory(root)
-        if not inventory["ok"]:
-            raise RuntimeError("Installed skill validation failed: " + "; ".join(inventory["errors"]))
     designate(root)
     command = str(root / "bin/herdr-mesh")
     entry = {"command": command, "args": []}

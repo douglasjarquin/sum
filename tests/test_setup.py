@@ -26,16 +26,6 @@ class SetupTest(unittest.TestCase):
         opencode = json.loads((self.root / 'opencode.json').read_text())
         self.assertEqual(opencode['mcp']['sum-herdr']['type'], 'local')
 
-    def test_setup_refuses_a_malformed_installed_skill_lock_before_writing(self):
-        store = self.root / '.sum-skills'
-        store.mkdir()
-        (store / 'selection-lock.json').write_text('[]\n')
-
-        with self.assertRaisesRegex(RuntimeError, 'Installed skill validation failed'):
-            setup.configure(self.root)
-
-        self.assertFalse((self.root / '.mcp.json').exists())
-
     def test_setup_designates_installation_without_claiming_a_coordinator(self):
         setup.configure(self.root)
         state = json.loads((self.root / '.sum/state.json').read_text())

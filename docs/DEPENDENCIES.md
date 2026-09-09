@@ -5,7 +5,9 @@ Release manifests copy that inventory and add the platform-specific SHA-256 of e
 
 ## Installation contract
 
-`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.19.0, GitHub CLI 2.100.0, Herdr 0.9.0, quota-axi 0.1.37, and codegraph 1.5.0 (`npm:@colbymchenry/codegraph`). Git and mise are host prerequisites. No global Node package installation is required.
+`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.20.0, GitHub CLI 2.100.0, Herdr 0.9.0, quota-axi 0.1.37, codegraph 1.5.0 (`npm:@colbymchenry/codegraph`), and Vercel Skills 1.5.25 (`npm:skills`).
+Git and mise are host prerequisites.
+No global Node package installation is required.
 
 The `go/` module pins Cobra v1.9.1 and the official Model Context Protocol Go SDK v1.6.1 in ordinary `go.mod`/`go.sum` files.
 The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, generator, provider SDK, or configuration framework is installed.
@@ -35,6 +37,19 @@ The new version reaches an installation the way every dependency does: `release 
 `update apply` activates it with the usual checks and `update rollback` returns to the previous release; no running tool, harness, or MCP server is retargeted or restarted.
 Until a capable gh is the runtime's, the publisher reads the installed binary (`capabilities`: version and `pr edit --help`), reports `deferred`, and leaves local evidence and the PR body untouched; capture never depends on it.
 Nothing is installed per publication.
+
+## Vercel Skills CLI 1.5.25
+
+`npm:skills` 1.5.25 is pinned in `mise.toml`, requires Node 22.20.0 or newer, and is linked into each runtime as `.local/bin/skills` by setup or release staging.
+`sumctl skills install` accepts one target Git project, one source, and explicit repeated skill and agent names.
+It invokes only `skills add SOURCE --skill ... --agent ... --copy --yes` with the target as the working directory.
+Project scope is the upstream default; Sum never passes `--global`, and a target that is not the Git project root is refused so non-interactive scope detection cannot choose a user-level install.
+Sum rejects wildcard and option-looking selections plus the reserved `sum-*` namespace before invocation.
+The subprocess disables upstream telemetry with both documented environment variables.
+
+Vercel Skills owns repository discovery, copying, and `skills-lock.json`.
+Its `--yes` path may overwrite an existing same-named third-party skill, so the operator reviews the Git diff after installation.
+Sum's own `skills check` remains limited to its bundled names, projections, portable imports, and compatibility references; it does not claim third-party content integrity.
 
 ## codegraph 1.5.0 per checkout
 
@@ -183,6 +198,7 @@ The contract is harness-neutral. The matrix describes installation surfaces, **n
 - GitHub CLI 2.99.0 (`--attach`): https://github.com/cli/cli/releases/tag/v2.99.0 and 2.100.0: https://github.com/cli/cli/releases/tag/v2.100.0 (2026-09-06)
 - before-and-after skill (PR block markup): https://github.com/vercel-labs/before-and-after at 8306d34f459b6704e08e6adb5829fcddb0dc3557
 - codegraph 1.5.0: https://github.com/colbymchenry/codegraph/releases/tag/v1.5.0 and https://www.npmjs.com/package/@colbymchenry/codegraph/v/1.5.0 (2026-09-06)
+- Vercel Skills 1.5.25: https://github.com/vercel-labs/skills and https://www.npmjs.com/package/skills/v/1.5.25 (2026-09-09)
 - Codex release: https://github.com/openai/codex/releases/tag/rust-v0.153.4
 - Codex MCP configuration: https://developers.openai.com/codex/mcp/
 - Claude MCP configuration: https://code.claude.com/docs/en/mcp
