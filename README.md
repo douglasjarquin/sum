@@ -196,14 +196,31 @@ Admission is unlimited until a capacity block is configured; see [capacity](#cap
 
 ### Capacity
 
-An execution slot is held by every recorded task that is not archived.
-A worker's report, an idle or `done` pane, a closed parent, or a pane Herdr cannot see never releases a slot; only `sumctl archive TASK_ID --acknowledge`, the boss's explicit statement that the work was inspected and preserved, does.
-Admission is decided atomically under the local record lock from the records alone, and Herdr is called only after the record is saved, so twelve concurrent dispatches admit exactly what the limits allow and a refused one makes no Herdr call.
+An execution slot belongs to a recorded worker attempt or an independent verification run, not to the unfinished task itself.
+`prepare` reserves a worker slot before creating its checkout, and `verify --execute` reserves a separate slot before creating its verification checkout.
+Admission uses the same global and per-repository limits under the local record lock.
+A refused admission launches nothing.
+
+Use `execution show TASK_ID` to read the current attempt IDs.
+After a worker exits, `execution park TASK_ID --attempt ATTEMPT_ID` checks its recorded pane, checkout, processes, and owned services before releasing the slot.
+The command stops nothing and preserves questions, reports, evidence, and the checkout.
+A report, an idle or `done` pane, a missing pane, or an uncertain observation cannot release capacity.
+Owned services keep the worker reservation held until their shutdown is proven.
+
+To continue approved work, use `execution resume TASK_ID --attempt ATTEMPT_ID` with the released worker attempt ID.
+Resume checks capacity again, saves the previous attempt in the task's evidence history, and records a new attempt before launching.
+An old attempt ID cannot release or resume its successor.
+Use the current verifier attempt ID with `execution park` to reconcile an interrupted verification only after its operation and checkout processes are conclusively stopped.
+Parking does not remove a leftover verification checkout.
+`archive --acknowledge` refuses held reservations and never substitutes for stop inspection.
 
 ```sh
 ./bin/sumctl settings show                                   # limits, their source, and the held slots per repository
 ./bin/sumctl settings set --global 12 --per-repository 1     # coordinator only; validated and written atomically
 ./bin/sumctl settings set --clear-capacity                   # return to unlimited without changing worker or preset settings
+./bin/sumctl execution show TASK_ID                         # read current attempt IDs and state
+./bin/sumctl execution park TASK_ID --attempt ATTEMPT_ID     # inspect stopped execution; preserve unfinished work
+./bin/sumctl execution resume TASK_ID --attempt ATTEMPT_ID   # reacquire capacity and launch approved work
 ```
 
 `.sum/settings.json` is the one owner of executable admission values, worker launch defaults, and named presets (`{"schema": 1, "capacity": {"global": N, "per_repository": M}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."} | {"preset": "deep"}, "presets": {"deep": {"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1}}, "reviewer": {"preset": "review"}}`); capacity integers from 1 to 64, `per_repository` at most `global`; `capacity`, `worker`, `presets`, and `reviewer` are optional, a model/reasoning needs a verified adapter for its harness, and a referenced preset must exist.
@@ -214,6 +231,9 @@ Lowering a limit affects future admission only; tasks above the new limit keep t
 Raising `global` never raises `per_repository`: one checkout gets one writer unless you say otherwise.
 Nothing schedules or dispatches work because a slot is free; a dispatch is always an explicit approved instruction.
 The settings file travels with `sumctl backup`.
+Legacy non-archived tasks without reservation metadata count as held until explicit stop inspection adopts them.
+Malformed reservation metadata refuses admission and release rather than counting as free capacity.
+Older helpers may preserve these records, but an old coordinator does not enforce the new reservation policy.
 
 Rundown and refresh over a fleet are one bounded pass: one `herdr agent list` snapshot per session replaces a per-worker observation call, each delivery gets its own timeout, no transcript is read, and one unobservable worker delays nobody else.
 `inbox --live`, `status --live`, and `refresh request` report `fanout` with the number of Herdr calls and the local elapsed time of that pass.
@@ -242,7 +262,11 @@ Services the worker launched with `env start` (#17) are judged by identity: when
 If sum is interrupted between the removal and the archive, the next `cleanup TASK_ID` or `inbox --live` reconciles from records and observation: verifiably absent resources complete the archive, a still-present workspace returns the task to pending, anything else blocks with the observed state.
 Already-absent resources are accepted only after that identity inspection; nothing is recreated.
 The task branch, `brief.md`, brief revisions, decisions, reports, handoffs, reviewer findings, and PR evidence always stay.
-`archive --acknowledge` keeps its records-only meaning and never removes anything.
+Cleanup records the released reservation before archiving.
+Once cleanup saves destructive intent, worker, verifier, and service launches are refused until cleanup finishes or conclusively refuses removal.
+An uncertain removal keeps that exclusion until reconciliation.
+Competing cleanup commands for the same task refuse while one owns the operation; live-inbox reconciliation cannot rewrite an active cleanup.
+`archive --acknowledge` remains records-only, refuses any held reservation, and never removes anything.
 Other workers keep running; there is no global stop, restart, or merge poll daemon.
 
 ### Brief revisions

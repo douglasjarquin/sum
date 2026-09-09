@@ -36,8 +36,10 @@ class RootVerificationTest(core.CoreTest):
         self.bin.mkdir()
         (self.bin / "mise").symlink_to(ROOT / "tests/fixtures/mise.py")
         self.gh_root = self.root / "fake-gh"
+        self.lsof_root = self.root / "fake-lsof"
         env = {"PATH": os.pathsep.join([str(self.bin), str(Path(sys.executable).resolve().parent), "/usr/bin", "/bin"]),
-               "SUM_GH_BIN": str(ROOT / "tests/fixtures/gh.py"), "FAKE_GH_ROOT": str(self.gh_root)}
+               "SUM_GH_BIN": str(ROOT / "tests/fixtures/gh.py"), "FAKE_GH_ROOT": str(self.gh_root),
+               "SUM_LSOF_BIN": str(ROOT / "tests/fixtures/lsof.py"), "FAKE_LSOF_ROOT": str(self.lsof_root)}
         patch = mock.patch.dict(os.environ, env)
         patch.start()
         self.addCleanup(patch.stop)
@@ -375,6 +377,20 @@ class RootVerificationTest(core.CoreTest):
         self.assertEqual(self.git("worktree", "list", "--porcelain").count("worktree "), 2)
         self.assertFalse(any((self.store.path(task["id"]) / "verification").rglob("checkout")))
         self.assertEqual(self.store.read(task["id"])["evidence"], [])
+        verifier = self.store.read(task["id"])["execution"]["verifiers"][-1]
+        self.assertEqual((verifier["state"], sumctl.occupancy(self.store.all())["global"]), ("uncertain", 2))
+        parked = sumctl.execution_park(self.store, task["id"], verifier["id"])
+        self.assertEqual((parked["attempt"]["state"], sumctl.occupancy(self.store.all())["global"]), ("released", 1))
+
+    def test_root_execution_reserves_capacity_before_creating_a_checkout(self):
+        task = self.prepare()
+        sha = self.commit(task, "capacity.py")
+        sumctl.write_settings(self.store, {"global": 1, "per_repository": 1})
+        before = self.git("worktree", "list", "--porcelain").count("worktree ")
+        with self.assertRaisesRegex(sumctl.SumError, "1 of 1 global execution slots"):
+            self.verify(task, sha, execute=True)
+        self.assertEqual(self.git("worktree", "list", "--porcelain").count("worktree "), before)
+        self.assertEqual(self.store.read(task["id"])["execution"]["verifiers"], [])
 
 
 for _name in dir(core.CoreTest):

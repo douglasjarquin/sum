@@ -247,9 +247,12 @@ class FleetTest(FleetLab):
         self.ctl(root, store, "report", tasks["cooperative-b"]["id"], "--text", "Reported during the failed update.", env=env)
         live, delta = self.measure("inbox --live after failed update (12 workers)", root, store, "inbox", "--live", env=env)
         self.assertEqual(live["fanout"]["herdr_calls"], 1)
-        # New work selects the rolled-back default; a reported task still holds its slot until the boss archives it.
+        # New work selects the rolled-back default after explicit stop inspection releases the reported task's slot.
         refused = self.ctl(root, store, "prepare", "--repo", self.project("late"), "--brief", self.brief(), "--harness", "codex", "--approved", env=env, ok=False)
         self.assertIn("12 of 12 global execution slots", refused["error"])
+        pending = store.read(tasks["pending-report"]["id"])
+        self.pane_state(tasks["pending-report"]["pane"], agent=None, agent_status="done")
+        self.ctl(root, store, "execution", "park", tasks["pending-report"]["id"], "--attempt", pending["execution"]["worker"]["id"], env=env)
         self.ctl(root, store, "archive", tasks["pending-report"]["id"], "--acknowledge", env=env)
         late = self.ctl(root, store, "prepare", "--repo", self.root / "projects" / "late", "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
         self.assertEqual((self.versions(store, late["id"])["runtime"]["sha"], late["admission"]["occupied_before"]["global"]), (sha1, 11))
@@ -311,7 +314,7 @@ class FleetTest(FleetLab):
         second = self.ctl(root, store, "dispatch", "--repo", self.project("two"), "--brief", self.brief(), "--harness", "codex", "--approved", env=env)
         third_repo = self.project("three")
         self.assertIn("2 of 2 global execution slots", self.ctl(root, store, "prepare", "--repo", third_repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env, ok=False)["error"])
-        # A reported or idle worker keeps its slot; only the boss's archive acknowledgement releases it.
+        # A reported or idle worker keeps its slot until conclusive stop inspection.
         self.ctl(root, store, "report", first["id"], "--text", "Done, says the worker.", env=env)
         self.pane_state(first["pane"], agent_status="done")
         self.assertIn("2 of 2 global execution slots", self.ctl(root, store, "prepare", "--repo", third_repo, "--brief", self.brief(), "--harness", "codex", "--approved", env=env, ok=False)["error"])

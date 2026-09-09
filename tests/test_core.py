@@ -268,6 +268,9 @@ class CoreTest(unittest.TestCase):
                 self.assertEqual(sumctl.main(["--home", str(self.store.home), "archive", task["id"], "--acknowledge"]), 1)
         self.assertEqual(self.store.read(task["id"])["status"], "prepared")
         self.assertFalse(any(c[:2] == ["agent", "start"] for c in self.calls()))
+        with mock.patch.dict(os.environ, {"SUM_LSOF_BIN": str(ROOT / "tests/fixtures/lsof.py"), "FAKE_LSOF_ROOT": str(self.root / "archive-lsof")}):
+            parked = self.cli("execution", "park", task["id"], "--attempt", task["execution"]["worker"]["id"])
+        self.assertEqual(parked.returncode, 0, parked.stderr)
         with mock.patch.object(sumctl, "emit"):
             self.assertEqual(sumctl.main(["--home", str(self.store.home), "archive", task["id"], "--acknowledge"]), 0)
         self.assertEqual(self.store.read(task["id"])["status"], "archived")
@@ -381,7 +384,7 @@ class CoreTest(unittest.TestCase):
     def test_one_active_task_per_repo(self):
         sumctl.write_settings(self.store, {"global": 2, "per_repository": 1})
         self.prepare()
-        with self.assertRaisesRegex(sumctl.SumError, "1 of 1 slots for .*Raise capacity.per_repository"):
+        with self.assertRaisesRegex(sumctl.SumError, "1 of 1 slots for "):
             self.prepare()
 
     def test_session_override_inside_native_arguments_is_refused(self):

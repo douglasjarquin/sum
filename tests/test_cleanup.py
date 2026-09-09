@@ -473,6 +473,9 @@ class CleanupTest(core.CoreTest):
 
     def test_archive_acknowledge_stays_records_only(self):
         task, sha = self.merged_task()
+        attempt = task["execution"]["worker"]["id"]
+        parked = self.cli("execution", "park", task["id"], "--attempt", attempt)
+        self.assertEqual(parked.returncode, 0, parked.stderr)
         self.assertEqual(sumctl.main(["--home", str(self.store.home), "archive", task["id"], "--acknowledge"]), 0)
         saved = self.store.read(task["id"])
         self.assertEqual(saved["status"], "archived")
