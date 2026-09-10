@@ -8265,6 +8265,10 @@ def verify_release(path, expected_sha=None):
             raise SumError(f"{path}: pinned tool {name} is missing or does not resolve")
     native = manifest.get("dependencies", {}).get("native", {})
     inventory = manifest.get("dependencies", {}).get("inventory")
+    inventory_file = "docs/dependency-inventory.json"
+    if inventory is not None or (path / inventory_file).exists():
+        if inventory_file not in files or inventory != dependency_inventory(path):
+            raise SumError(f"{path}: dependency inventory does not match the hash-verified bundled inventory")
     if inventory is not None:
         validate_dependency_inventory(inventory)
     if not isinstance(native, dict):
@@ -8278,6 +8282,8 @@ def verify_release(path, expected_sha=None):
             relative = artifact.get("path") if isinstance(artifact, dict) else None
             if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or ".." in PurePosixPath(relative).parts:
                 raise SumError(f"{path}: native artifact {name} has an invalid path")
+            if relative != f".local/bin/{name}":
+                raise SumError(f"{path}: native artifact {name} does not use its canonical path")
             member = path / relative
             if member.is_symlink() or not member.is_file() or not os.access(member, os.X_OK):
                 raise SumError(f"{path}: native artifact {name} is missing or not executable")
@@ -8286,9 +8292,13 @@ def verify_release(path, expected_sha=None):
             target = artifact.get("platform")
             if not isinstance(target, str) or not re.fullmatch(r"[a-z0-9]+-[a-z0-9]+", target):
                 raise SumError(f"{path}: native artifact {name} lacks a valid GOOS-GOARCH target")
-            catalog = next((entry for entry in (inventory or {}).get("dependencies", []) if entry.get("id") == name), None)
+            catalog = required_native.get(name)
             if catalog is None or target not in catalog.get("platforms", []):
                 raise SumError(f"{path}: native artifact {name} target {target} is not in the dependency inventory")
+            if any(artifact.get(key) != catalog.get(key) for key in ("source", "version")):
+                raise SumError(f"{path}: native artifact {name} identity does not match its inventory")
+            if target != native_platform():
+                raise SumError(f"{path}: native artifact {name} targets {target}, not this host's {native_platform()}")
     return manifest
 
 

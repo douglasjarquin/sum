@@ -28,6 +28,7 @@ The staged binary's source, build requirements, runtime requirements, and SHA-25
 Running it requires no Go toolchain, module download, Node, Python, or Cobra generator.
 The unused Go helper experiment is [not adopted](go-helper-prototype.md); `bin/sumctl` remains the Python entrypoint.
 Native artifact requirements come from each release's own dependency inventory, so a missing or corrupt declared artifact is refused without making a retired experiment mandatory for new bundles.
+Verification compares the manifest's inventory with the hash-checked bundled inventory and requires each native artifact's canonical path, source identity, version, and current-host platform to agree.
 
 The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
 
