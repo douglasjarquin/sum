@@ -567,6 +567,8 @@ class MetadataFleetTest(test_core.UpdateLab):
             state["panes"][task["pane"]]["agent_status"] = "working"  # Every worker is mid-turn: the refresh cannot be delivered yet.
             (self.root / "fake/state.json").write_text(json.dumps(state))
         sha = self.commit_upstream(root, "skills/sum-worker/SKILL.md", (root / "skills/sum-worker/SKILL.md").read_text() + "\nUpdate: reread decisions.\n")
+        staged = sumctl.stage(store, sha, installer=test_core.fake_installer)
+        self.assertTrue(staged["staged"])
         applied = self.ctl(root, store, "update", "apply", env=env)
         self.assertEqual(applied["default"]["sha"], sha)
         before = len(self.calls())

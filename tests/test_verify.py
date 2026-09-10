@@ -348,7 +348,9 @@ class VerifyLab(unittest.TestCase):
         # sum's own VERIFY.md, maps, and `mise-tasks/verify` validate through the same runner (--check runs nothing).
         node = shutil.which("node")
         self.assertTrue(node, "node is required by sum's own contract")
-        path = os.pathsep.join([str(Path(node).resolve().parent), self.env["PATH"]])
+        go = shutil.which("go")
+        self.assertTrue(go, "go is required by sum's own contract")
+        path = os.pathsep.join([str(Path(go).resolve().parent), str(Path(node).resolve().parent), self.env["PATH"]])
         code, record, result = self.run_verify(ROOT, "--check", cwd=ROOT, env={"FAKE_MISE_STOP": str(ROOT), "PATH": path})
         self.assertEqual((code, record["outcome"]), (0, "checked"), (record, result.stderr))
         self.assertEqual(Path(record["task"]["source"]).resolve(), (ROOT / "mise-tasks/verify").resolve())
@@ -357,7 +359,7 @@ class VerifyLab(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         drivers = {s["id"]: s["driver"] for s in record["scenarios"]}
         self.assertEqual(drivers["verify.skipped-scenario"], "automated")  # Its description starts with "Manual"; only the Driver column decides.
-        self.assertEqual([i for i, d in drivers.items() if d == "manual"], ["live.herdr-smoke", "live.harness-canary", "verify.sum-self", "root.real-harness-canary", "evidence.publish-rendered", "evidence.sum-self", "graph.real-binary", "graph.harness-mcp"])
+        self.assertEqual([i for i, d in drivers.items() if d == "manual"], ["live.herdr-smoke", "live.harness-canary", "verify.sum-self", "ci.hosted-verification", "root.real-harness-canary", "evidence.publish-rendered", "evidence.sum-self", "graph.real-binary", "graph.harness-mcp"])
         self.assertEqual(record["contract"]["entrypoint"], "mise run verify")
         self.assertTrue(record["artifacts"]["git_ignored"])
 

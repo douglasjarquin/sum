@@ -14,13 +14,16 @@ task_owner = "."
 timeout_seconds = 3600
 
 [requires]
-commands = ["git", "mise", "python3", "node"]
+commands = ["git", "mise", "go", "python3", "node"]
 ```
 
 ## Setup
 
-Run `mise install` once so the pinned Python, Node, GitHub CLI, and Herdr binaries are available.
-Nothing else is installed; the suites use only the standard libraries of Python and Node.
+Run `mise install go python node` once so the pinned Go, Python, and Node tools required by the aggregate are available.
+Git must also be available from the host.
+CI enables only these three tools.
+Browser evidence uses the runner's preinstalled Google Chrome through `EVIDENCE_BROWSER`, retaining its sandbox.
+For local verification, prefix the runner command with `MISE_ENABLE_TOOLS=go,python,node` so mise does not automatically install unrelated repository tools.
 
 ## Readiness
 
@@ -31,6 +34,7 @@ Nothing else is installed; the suites use only the standard libraries of Python 
 ## Automated checks
 
 `mise run verify` is the canonical aggregate entrypoint.
+Each verification role runs that aggregate once for its final candidate; targeted iteration does not require repeating every subcommand before the aggregate.
 It runs, in order, the existing commands and stops at the first failure:
 
 | Check | Command | Proves |
@@ -73,5 +77,6 @@ Remove `.artifacts/verification/` and `.artifacts/evidence/` when you no longer 
 Edits to this file, `mise.toml`, `mise-tasks/`, `docs/features/`, or the skills under `.agents/skills/verify/`, `.agents/skills/evidence/`, `.agents/skills/create-verification/`, and `.agents/skills/maintain-verification/` are policy changes.
 Run the runner with `--base <merge-base>` so such a candidate is flagged `requires_root_review`; it cannot certify its own new standard.
 Without `--base` a run never certifies a SHA, and the contract's optional `policy_files` list can only add paths to that default set.
-The coordinator's separate verification and review (`skills/delivery/SKILL.md`) remain in place and are not replaced by this contract.
-CI: this repository has no hosted CI workflow at the moment; the entrypoint runs locally and in sum's own task checkouts.
+The coordinator's separate verification and review (`skills/sum-delivery/SKILL.md`) remain in place and are not replaced by this contract.
+GitHub Actions runs this same runner once for pull requests targeting `main` and pushes to `main`, comparing the checked-out candidate to the event base revision and retaining `.artifacts/verification/` on success or failure.
+CI is an additional gate, not a replacement for worker verification, a fresh root pass, independent review, or human merge.
