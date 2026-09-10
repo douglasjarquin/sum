@@ -9,11 +9,11 @@ import (
 func ReadFile(path string) (any, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read %s: %w", path, err)
+		return nil, fmt.Errorf("Cannot read %s: %w", path, err)
 	}
 	value, err := Decode(data)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read %s: %w", path, err)
+		return nil, fmt.Errorf("Cannot read %s: %w", path, err)
 	}
 	return value, nil
 }
