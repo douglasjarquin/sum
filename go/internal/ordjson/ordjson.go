@@ -128,6 +128,64 @@ func MarshalIndent(value any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func MarshalCompact(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := encodeCompact(&buf, value); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func encodeCompact(buf *bytes.Buffer, value any) error {
+	switch v := value.(type) {
+	case *Object:
+		buf.WriteByte('{')
+		for i, k := range v.keys {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			encodeString(buf, k)
+			buf.WriteString(": ")
+			if err := encodeCompact(buf, v.values[k]); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte('}')
+	case []any:
+		buf.WriteByte('[')
+		for i, item := range v {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := encodeCompact(buf, item); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+	case string:
+		encodeString(buf, v)
+	case json.Number:
+		buf.WriteString(string(v))
+	case bool:
+		if v {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
+	case nil:
+		buf.WriteString("null")
+	case int:
+		buf.WriteString(strconv.Itoa(v))
+	case int64:
+		buf.WriteString(strconv.FormatInt(v, 10))
+	case float64:
+		buf.WriteString(strconv.FormatFloat(v, 'g', -1, 64))
+	default:
+		return fmt.Errorf("ordjson: unsupported type %T", value)
+	}
+	return nil
+}
+
 func writeIndent(buf *bytes.Buffer, level int) {
 	for range level {
 		buf.WriteString(indentUnit)

@@ -53,7 +53,7 @@ func TestCompiledEntrypointCancellationExitsOnce(t *testing.T) {
 	if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
 		t.Fatalf("compiled exit = %v, want status 1", err)
 	}
-	if stdout.Len() != 0 || !strings.Contains(stderr.String(), `"error":"context canceled"`) {
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), `"error": "context canceled"`) {
 		t.Fatalf("compiled cancellation output stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }

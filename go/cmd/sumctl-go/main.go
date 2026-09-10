@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/douglasjarquin/sum/go/internal/cli"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
 func main() {
@@ -23,9 +23,11 @@ func main() {
 		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.Code)
 		}
-		payload, marshalErr := json.Marshal(map[string]string{"error": err.Error()})
+		errorValue := ordjson.NewObject()
+		errorValue.Set("error", err.Error())
+		payload, marshalErr := ordjson.MarshalCompact(errorValue)
 		if marshalErr != nil {
-			fmt.Fprintln(os.Stderr, `{"error":"sumctl-go failed"}`)
+			fmt.Fprintln(os.Stderr, `{"error": "sumctl-go failed"}`)
 		} else {
 			fmt.Fprintln(os.Stderr, string(payload))
 		}
