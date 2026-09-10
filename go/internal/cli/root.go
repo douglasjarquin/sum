@@ -2,11 +2,13 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/spf13/cobra"
 )
 
@@ -71,6 +73,14 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		_, _ = io.WriteString(cmd.OutOrStdout(), cmd.UsageString())
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:  "release-contract",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitJSON(cmd.OutOrStdout(), contract.BuildRelease())
+		},
+	})
+
 	for _, name := range compatibilityCommands {
 		command := &cobra.Command{
 			Use:                name,
@@ -109,6 +119,15 @@ func (o *rootOptions) compat(ctx context.Context, args []string) error {
 		return err
 	}
 	return nil
+}
+
+func emitJSON(out io.Writer, value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, string(encoded))
+	return err
 }
 
 func normalizeHome(args []string, home string, homeSet bool) []string {
