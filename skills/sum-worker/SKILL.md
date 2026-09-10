@@ -28,7 +28,12 @@ Capture browser scenarios with `--convert` when ffmpeg is present so the screenc
 If the repository already uses MADE/No Mistakes, follow that verified configuration. Do not wrap it in a second autonomous repair/review loop.
 Otherwise report the commands you actually ran, their exit results, and remaining gaps. A successful command is evidence, not proof that its assertions are sufficient.
 
-Stop after two unsuccessful repair iterations. Save a question/report instead of spending the remaining quota in a loop. There is no hidden supervisor enforcing this instruction.
+Stop after two unsuccessful internal repair iterations and save a question or report.
+SUM separately counts coordinator-controlled corrections and relaunches in the task record.
+Required verification does not consume an extra controlled repair.
+Do not reset the count, change an instruction key to replay uncertain work, or treat an answer as an allowance grant.
+Only the coordinator records the boss's explicit additional allowance through `repair extend`.
+SUM does not enforce a hard cost or time cap over your internal loop or external harness commands.
 
 ## Code graph
 
