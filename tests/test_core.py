@@ -340,8 +340,16 @@ class CoreTest(unittest.TestCase):
     def test_session_can_be_derived_from_socket(self):
         with mock.patch.dict(os.environ, {"HERDR_SESSION": "", "SUM_SESSION": "", "HERDR_SOCKET_PATH": "/tmp/config/sessions/explicit/herdr.sock"}):
             self.assertEqual(sumctl.session_from_env(), "explicit")
+
+    def test_session_falls_back_to_default(self):
         with mock.patch.dict(os.environ, {"HERDR_SESSION": "", "SUM_SESSION": "", "HERDR_SOCKET_PATH": "/tmp/unknown.sock"}):
-            with self.assertRaises(sumctl.SumError):
+            self.assertEqual(sumctl.session_from_env(), "default")
+        with mock.patch.dict(os.environ, {"HERDR_SESSION": "", "SUM_SESSION": "", "HERDR_SOCKET_PATH": ""}):
+            self.assertEqual(sumctl.session_from_env(), "default")
+
+    def test_session_still_rejects_invalid_explicit_value(self):
+        with mock.patch.dict(os.environ, {"SUM_SESSION": "not a valid name!"}):
+            with self.assertRaisesRegex(sumctl.SumError, "Cannot identify"):
                 sumctl.session_from_env()
 
     def test_version_drift_is_rejected_before_mutation(self):
