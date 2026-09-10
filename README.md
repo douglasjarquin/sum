@@ -395,4 +395,4 @@ The optional Git bundle preserves the bootstrap commit. To use it instead: `git 
 
 ## License and inspiration
 
-MIT. Inspired by Firstmate and Consigliere. Uses [Herdr](https://github.com/herdrdev/herdr), [Herdr Mesh](https://github.com/runchr-works/herdr-mesh), and [quota-axi](https://github.com/kunchenguid/quota-axi) rather than replacing them.
+MIT. sum stands on projects it did not write — Firstmate, Herdr, Oh My Pi, Solo, Unpeel, and others. See [ATTRIBUTIONS.md](ATTRIBUTIONS.md) for the complete credit and what each one shaped.
