@@ -12,6 +12,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/graph"
+	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -168,6 +169,32 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:                "metadata",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" {
+				raw := len(args) == 2 && args[0] == "snippet" && args[1] == "--raw"
+				plain := len(args) == 1 && args[0] == "snippet"
+				if raw || plain {
+					if _, err := store.Open(opts.home); err != nil {
+						return err
+					}
+					view := metadata.Snippet(opts.reference, opts.home)
+					if raw {
+						tomlValue, _ := view.Get("toml")
+						toml, _ := tomlValue.(string)
+						_, writeErr := io.WriteString(cmd.OutOrStdout(), toml)
+						return writeErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"metadata"}, args...))
+		},
+	})
+
 	for _, name := range compatibilityCommands {
 		command := &cobra.Command{
 			Use:                name,
@@ -183,7 +210,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"doctor", "init", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "metadata", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
+	"doctor", "init", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
 }
 
 func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
