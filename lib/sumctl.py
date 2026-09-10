@@ -205,8 +205,10 @@ def session_from_env():
     if not value:
         match = re.search(r"/sessions/([^/]+)/herdr\.sock$", os.environ.get("HERDR_SOCKET_PATH", ""))
         value = match.group(1) if match else None
-    if not value or not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
-        raise SumError("Cannot identify the Herdr session. Set SUM_SESSION to its explicit name; no default-session fallback.")
+    if not value:
+        value = "default"  # Herdr's own convention for its one unnamed session; see `herdr session list`.
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+        raise SumError("Cannot identify the Herdr session. Set SUM_SESSION to its explicit name.")
     return value
 
 
