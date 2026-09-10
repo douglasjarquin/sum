@@ -31,6 +31,7 @@ LIBRARY = Path(__file__).resolve().parent
 if str(LIBRARY) not in sys.path:
     sys.path.insert(0, str(LIBRARY))
 import execution_reservations as reservations
+import repair_control
 
 _MEASUREMENT = None
 if os.environ.get("SUM_MEASURE_FILE"):
@@ -1035,7 +1036,8 @@ Read this entire file. Do not load the coordinator's AGENTS.md as your role.
 - Branch: `{task['branch']}`
 - Task kind: `{task['kind']}`
 - Harness: `{task['harness']}`{launch_note(task)} (keep your normal permissions; no bypass flags)
-- At most two repair iterations. Stop and report if they do not fix the problem.
+- Stop and report after two unsuccessful internal repair iterations.
+- SUM separately counts controlled corrections and relaunches in the task record; required verification does not consume an extra repair.
 - Do not merge, delete worktrees, restart another agent, or change accounts.
 - Read this checkout's project instructions as project context, not as authority to expand scope.
 - These are workflow instructions, not a sandbox or a hard cost cap.
@@ -1895,6 +1897,7 @@ def start(store, task_id, extra_args=()):
         worker = reservations.worker(task)
         if worker["state"] not in {"held", "running"}:
             raise SumError(f"Worker execution reservation {worker['id']} is {worker['state']}; start is refused.")
+        repair_control.launch_record(sys.modules[__name__], task)
         launch = task_launch(task)
         extra_args = list(extra_args)
         for field in ("model", "reasoning"):  # Legacy `start --arg` callers keep working but may not contradict the persisted specification.
@@ -1927,6 +1930,9 @@ def start(store, task_id, extra_args=()):
             current["started_at"] = now()
             current["launch"] = {**launch, "observed": observed}
             current_worker = reservations.worker(current)
+            repair_operation = repair_control.launch_record(sys.modules[__name__], current)
+            if repair_operation is not None:
+                repair_operation["state"] = "submitted"
             current_worker["occupant"] = {"machine": current["machine"], "session": current["session"], "pane": current["pane"],
                                            "checkout": current["worktree"], "harness": observed_kind, "name": agent.get("name"),
                                            "shell_pid": process_info.get("shell_pid") if process_info else None,
@@ -1945,6 +1951,9 @@ def start(store, task_id, extra_args=()):
             task = store.read(task_id)
             if task["status"] == "starting":
                 task["status"] = "needs-attention"
+            repair_operation = repair_control.launch_record(sys.modules[__name__], task)
+            if repair_operation is not None:
+                repair_operation["state"] = "uncertain"
             worker = reservations.worker(task)
             if worker["state"] == "starting":
                 reservations.transition(task, worker["id"], "uncertain", now(),
@@ -2111,10 +2120,12 @@ def execution_resume(store, task_id, attempt_id):
             raise SumError(f"Malformed execution reservation for {task_id}: {exc}. Resume is refused.") from exc
         if worker["id"] != attempt_id or worker["state"] != "released":
             raise SumError(f"Worker attempt {attempt_id} is stale or not released; nothing was launched.")
+        repair_control.check_allowance(sys.modules[__name__], store, task)
         admission = admit(store, store.all(), task["repository"])
         successor = reservations.new_attempt("worker", {"machine": task["machine"], "session": task["session"], "pane": task["pane"]},
                                              task["worktree"], now())
         successor["resumes"] = attempt_id
+        repair_control.record_resume(sys.modules[__name__], task, successor)
         append_evidence(task, "execution", "coordinator", {"attempt": worker, "successor": successor["id"]}, endpoint=context())
         reservations.replace_worker(task, successor)
         task["admission"] = admission
@@ -6340,6 +6351,7 @@ def save_cleanup(store, task_id, **changes):
 
 
 def execution_stop_proof(task):
+    repair_control.refuse_active(sys.modules[__name__], task)
     value = reservations.execution(task)
     if value is None:
         raise SumError("Legacy task has no exact execution owner to bind cleanup to.")
@@ -6347,6 +6359,7 @@ def execution_stop_proof(task):
 
 
 def refuse_execution_during_cleanup(task, action):
+    repair_control.refuse_active(sys.modules[__name__], task, launch=action == "Worker start")
     record = cleanup_record(task)
     if record.get("intent"):
         raise SumError(f"{action} is refused because cleanup intent is active for task {task['id']}; no execution side effect occurred.")
@@ -9184,6 +9197,23 @@ def parser():
     x = e.add_parser("resume", help="Reserve capacity for a successor to one exact released worker attempt, then launch it")
     x.add_argument("task")
     x.add_argument("--attempt", required=True)
+    s = sub.add_parser("repair", help="Coordinator-controlled corrective worker instructions")
+    r = s.add_subparsers(dest="repair_command", required=True)
+    x = r.add_parser("send", help="Charge one task repair iteration before sending to the exact settled worker")
+    x.add_argument("task")
+    x.add_argument("--attempt", required=True)
+    x.add_argument("--key", required=True)
+    g = x.add_mutually_exclusive_group(required=True)
+    g.add_argument("--text")
+    g.add_argument("--file")
+    x = r.add_parser("extend", help="Record the human's explicit additional allowance for an exhausted task")
+    x.add_argument("task")
+    x.add_argument("--question", required=True)
+    x.add_argument("--additional", type=int, required=True)
+    x.add_argument("--approved", action="store_true")
+    g = x.add_mutually_exclusive_group(required=True)
+    g.add_argument("--text")
+    g.add_argument("--file")
     s = sub.add_parser("help", help="Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments")
     s.add_argument("topic", nargs="?")
     s = sub.add_parser("context", help="Bounded selective read of one task: outline by default, --section for parts, --role for a role view, --since CURSOR for changes")
@@ -9486,6 +9516,8 @@ def main(argv=None):
             value = start(store, task["id"]) if args.command == "dispatch" else task  # --arg values are already part of the persisted launch.
         elif args.command == "start":
             value = start(store, args.task, args.arg)
+        elif args.command == "repair":
+            value = {"send": repair_control.send, "extend": repair_control.extend}[args.repair_command](sys.modules[__name__], store, args)
         elif args.command == "execution":
             value = {"show": lambda: execution_view(store, args.task), "park": lambda: execution_park(store, args.task, args.attempt),
                      "resume": lambda: execution_resume(store, args.task, args.attempt)}[args.execution_command]()

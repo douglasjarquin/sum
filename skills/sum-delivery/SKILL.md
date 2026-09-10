@@ -33,6 +33,11 @@ If a separate reviewer is unavailable, say independent review was not performed;
 Check `sumctl brief list TASK_ID`: the report is bound to a brief revision, and `verification_policy_changed_since` means a later revision changed the worker procedure or brief schema. Review under the current policy before accepting that evidence.
 Tie the review to the exact candidate SHA. Re-run required checks for later candidates; review the intervening changes rather than treating the previous SHA's approval as current.
 A nit is not automatically a blocker. Limit repair cycles; escalate repeated failure rather than opening an endless review/fix loop.
+Use `repair send TASK_ID --attempt ID --key KEY --file FILE` for a controlled corrective instruction to a settled worker.
+Corrections and execution resumes consume the task's persisted allowance; mandatory worker verification, root verification, and independent review remain separate requirements.
+An uncertain send stays charged and its key is never automatically replayed.
+At exhaustion, present the saved budget decision instead of launching another repair.
+Record additional iterations only after the boss's explicit approval, using `repair extend` with that question ID and the actual decision text.
 A reviewer pane saves its findings with `sumctl review TASK_ID --verdict approve|changes-requested|blocked|comment --candidate SHA --file findings.md`; the first such pane becomes the task's recorded reviewer endpoint, and saved findings are the prerequisite for closing that pane later. The worker pane cannot review its own candidate.
 Record what you verified yourself with `sumctl verify TASK_ID --candidate SHA --result pass|fail|inconclusive --text '...'`, or with `--run`/`--execute` as above. A newer candidate marks earlier records as not current; it deletes nothing and restarts nothing.
 When the repository's configured MADE/No Mistakes route owns the review, record its result yourself from your pane with `sumctl review TASK_ID --verdict ... --candidate SHA --tool made --text '...'`: it binds no reviewer pane and starts no second reviewer loop. A worker handoff saying `review: performed` is a claim, not that record.

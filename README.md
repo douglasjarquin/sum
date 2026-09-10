@@ -192,7 +192,8 @@ Precedence stays fixed: an explicit `--harness`/`--model`/`--reasoning` refines 
 The preset is expanded at `prepare` and the resolved specification is persisted with the task together with the preset's name and revision (`launch.preset`); `preset set` bumps the revision and, like `preset delete`, changes future dispatches only, so a prepared or running task keeps exactly what it was prepared with.
 A model in a preset is CLI-requested, never runtime-verified, and presets change nothing about authorization, accounts, or the advisory quota checks.
 
-Admission is unlimited until a capacity block is configured; see [capacity](#capacity) for the optional settings file. Repair limits in worker instructions are **soft**, not enforced spending or wall-clock limits.
+Admission is unlimited until a capacity block is configured; see [capacity](#capacity) for the optional settings file.
+SUM enforces a task allowance for controlled corrections and relaunches, not spending or wall-clock limits.
 
 ### Capacity
 
@@ -237,6 +238,39 @@ Older helpers may preserve these records, but an old coordinator does not enforc
 
 Rundown and refresh over a fleet are one bounded pass: one `herdr agent list` snapshot per session replaces a per-worker observation call, each delivery gets its own timeout, no transcript is read, and one unobservable worker delays nobody else.
 `inbox --live`, `status --live`, and `refresh request` report `fanout` with the number of Herdr calls and the local elapsed time of that pass.
+
+### Controlled repairs
+
+Each task starts with an allowance of two SUM-controlled repair iterations.
+Send a correction to its settled worker with the current attempt ID and a stable instruction key:
+
+```sh
+./bin/sumctl repair send TASK_ID --attempt ATTEMPT_ID --key correction-1 --file /absolute/path/to/correction.md
+```
+
+The command records the iteration before delivery and refuses a busy worker or a changed attempt.
+Repeating the same key and instruction reads the saved outcome without sending or charging again.
+An uncertain delivery stays charged, including when the helper exits after saving its intent.
+Use a new key only for an explicitly requested new iteration.
+
+Every `execution resume` also consumes one iteration, including an infrastructure relaunch.
+Initial dispatch, observations, notifications, required worker and root verification, and brief refresh do not consume extra iterations.
+Candidate, harness, and runtime changes do not reset the task record.
+Read the `repairs` field in `sumctl show TASK_ID` for consumed operations and grants.
+
+Exhaustion refuses another correction or relaunch and saves one budget decision in the task's questions.
+It stops no worker, frees no slot, and preserves other obligations.
+Only after the user approves an additional allowance, record that decision from the coordinator pane:
+
+```sh
+./bin/sumctl repair extend TASK_ID --question QUESTION_ID --additional 1 --approved --file /absolute/path/to/user-decision.md
+```
+
+The grant is tied to that exhaustion decision; repeating an identical grant adds nothing.
+An ordinary answer or worker report does not grant more iterations.
+If the decision is already answered, explicit confirmation must preserve its exact text.
+Worker-internal loops and commands issued directly to an external harness remain outside this mechanism.
+Older helpers can preserve the records without enforcing this policy.
 
 ### Cleanup after a merge
 
