@@ -27,6 +27,12 @@ import time
 import tomllib
 import uuid
 
+LIBRARY = Path(__file__).resolve().parent
+if str(LIBRARY) not in sys.path:
+    sys.path.insert(0, str(LIBRARY))
+import execution_reservations as reservations
+import repair_control
+
 _MEASUREMENT = None
 if os.environ.get("SUM_MEASURE_FILE"):
     from sum_measure import Recorder
@@ -79,7 +85,7 @@ ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
 READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "release-contract", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show", "skills-check",
-                      "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet", "project-list", "project-show", "graph-status", "graph-config"}
+                      "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet", "project-list", "project-show", "graph-status", "graph-config", "execution-show"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
              ("pane", "read"), ("pane", "list"), ("workspace", "list"), ("integration", "status"), ("session", "list")}
@@ -371,12 +377,14 @@ class Store:
 
 # --- fleet capacity: validated optional settings and execution-slot ownership --------------------
 #
-# An execution slot is held by every recorded task that is not archived. A report, an idle pane, a closed
-# worker, or a pane Herdr cannot see never releases it: only `archive --acknowledge`, the boss's explicit
-# acknowledgement that the work was inspected and preserved, does. Lowering a limit affects future admission only.
+# Each held execution reservation owns one slot. Reports and lifecycle labels release nothing; only a conclusive,
+# attempt-bound stop observation or guarded cleanup does. Lowering a limit affects future admission only.
 
 def holds_slot(task):
-    return task["status"] != "archived"
+    try:
+        return bool(reservations.held(task))
+    except reservations.ReservationFormatError as exc:
+        raise SumError(f"Malformed execution reservation for {task.get('id')}: {exc}. Admission and release are refused.") from exc
 
 
 def validate_capacity(value):
@@ -518,11 +526,16 @@ def load_settings(store):
 
 
 def occupancy(tasks):
-    holders = [t for t in tasks if holds_slot(t)]
     by_repository = {}
-    for task in holders:
-        by_repository.setdefault(task["repository"], []).append(task["id"])
-    return {"global": len(holders), "by_repository": by_repository}
+    count = 0
+    for task in tasks:
+        try:
+            held = reservations.held(task)
+        except reservations.ReservationFormatError as exc:
+            raise SumError(f"Malformed execution reservation for {task.get('id')}: {exc}. Admission and release are refused.") from exc
+        count += len(held)
+        by_repository.setdefault(task["repository"], []).extend(task["id"] for _ in held)
+    return {"global": count, "by_repository": {repo: ids for repo, ids in by_repository.items() if ids}}
 
 
 def capacity_view(store, tasks=None):
@@ -532,10 +545,15 @@ def capacity_view(store, tasks=None):
     except SumError as exc:
         return {"limits": None, "worker": None, "source": "invalid", "error": str(exc), "occupied": occupancy(tasks),
                 "note": "Admission is refused until settings.json is fixed; every recorded task keeps its slot and callbacks."}
-    return {"limits": settings["capacity"], "worker": settings["worker"], "source": settings["source"], "occupied": occupancy(tasks),
+    try:
+        occupied = occupancy(tasks)
+    except SumError as exc:
+        return {"limits": settings["capacity"], "worker": settings["worker"], "source": "invalid", "error": str(exc), "occupied": None,
+                "note": "Admission and release are refused until the malformed execution record is repaired from exact ownership evidence."}
+    return {"limits": settings["capacity"], "worker": settings["worker"], "source": settings["source"], "occupied": occupied,
             "presets": preset_summary(settings["presets"]), "reviewer": settings["reviewer"],
             "worker_note": "Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.",
-            "note": "A slot is held by every non-archived task and released only by `archive --acknowledge`; idle, reported, or unobservable workers keep theirs."}
+            "note": "Each recorded execution reservation holds a slot until a conclusive stop observation releases it; legacy non-archived tasks remain conservatively held."}
 
 
 def admit(store, tasks, repository):
@@ -546,10 +564,10 @@ def admit(store, tasks, repository):
     same_repository = occupied["by_repository"].get(str(repository), [])
     if limits is not None and occupied["global"] >= limits["global"]:
         raise SumError(f"Capacity: {occupied['global']} of {limits['global']} global execution slots are held ({settings['source']}). "
-                       "Archive inspected work with `archive --acknowledge` or raise capacity.global in .sum/settings.json; nothing was dispatched.")
+                       "Park a conclusively stopped attempt with `execution park`, or raise capacity.global in .sum/settings.json; nothing was dispatched.")
     if limits is not None and len(same_repository) >= limits["per_repository"]:
         raise SumError(f"Capacity: {len(same_repository)} of {limits['per_repository']} slots for {repository} are held by {same_repository} ({settings['source']}). "
-                       "Raise capacity.per_repository in .sum/settings.json if this checkout needs another writer.")
+                       "Park a conclusively stopped attempt, or raise capacity.per_repository in .sum/settings.json if this checkout needs another writer.")
     return {"at": now(), "limits": limits, "source": settings["source"],
             "occupied_before": {"global": occupied["global"], "repository": len(same_repository)}}
 
@@ -1020,7 +1038,8 @@ Read this entire file. Do not load the coordinator's AGENTS.md as your role.
 - Branch: `{task['branch']}`
 - Task kind: `{task['kind']}`
 - Harness: `{task['harness']}`{launch_note(task)} (keep your normal permissions; no bypass flags)
-- At most two repair iterations. Stop and report if they do not fix the problem.
+- Stop and report after two unsuccessful internal repair iterations.
+- SUM separately counts controlled corrections and relaunches in the task record; required verification does not consume an extra repair.
 - Do not merge, delete worktrees, restart another agent, or change accounts.
 - Read this checkout's project instructions as project context, not as authority to expand scope.
 - These are workflow instructions, not a sandbox or a hard cost cap.
@@ -1826,6 +1845,8 @@ def prepare(store, args):
                 "brief": brief, "parent": ctx, "session": ctx["session"], "pane": None,
                 "workspace": None, "worktree": None, "questions": [], "report": None, "evidence": [],
                 "reviewer": None, "pr": None, "notice": None, "error": None, "admission": admission}
+        task["execution"] = reservations.new_execution(reservations.new_attempt(
+            "worker", {"machine": machine(), "session": ctx["session"], "pane": None}, None, now()))
         store.save(task)  # Persist intent before an external effect.
     try:
         created = herdr(["worktree", "create", "--cwd", str(repo), "--branch", task["branch"],
@@ -1846,14 +1867,24 @@ def prepare(store, args):
         task["brief_path"] = str(write_brief(store, task))
         task["status"] = "prepared"
     except (SumError, KeyError, TypeError) as exc:
-        task["status"] = "needs-attention"
-        task["error"] = f"Prepare failed or became uncertain: {exc}. Do not blindly create a replacement; inspect Herdr first."
+        error = f"Prepare failed or became uncertain: {exc}. Do not blindly create a replacement; inspect Herdr first."
         with store.lock():
-            store.save(task)
-        raise SumError(f"{task['id']}: {task['error']}") from exc
+            current = store.read(task["id"])
+            current["status"] = "needs-attention"
+            current["error"] = error
+            worker = reservations.worker(current)
+            reservations.transition(current, worker["id"], "uncertain", now(),
+                                    observation={"at": now(), "outcome": "prepare-uncertain", "reason": str(exc)[:500]})
+            store.save(current)
+        raise SumError(f"{task['id']}: {error}") from exc
     with store.lock():
-        store.save(task)
-    return {**task, "confirmation": launch_confirmation(launch)}
+        current = store.read(task["id"])
+        for key in ("pane", "workspace", "worktree", "verification_policy", "brief_path", "status", "graph"):
+            current[key] = task[key]
+        worker = reservations.worker(current)
+        worker["checkout"] = task["worktree"]
+        store.save(current)
+    return {**current, "confirmation": launch_confirmation(launch)}
 
 
 def start(store, task_id, extra_args=()):
@@ -1862,8 +1893,13 @@ def start(store, task_id, extra_args=()):
     with store.lock():
         task = store.read(task_id)
         store.check_machine(task)
+        refuse_execution_during_cleanup(task, "Worker start")
         if task["status"] != "prepared":
             raise SumError("Only a prepared task can be started. sum never retries an uncertain launch automatically.")
+        worker = reservations.worker(task)
+        if worker["state"] not in {"held", "running"}:
+            raise SumError(f"Worker execution reservation {worker['id']} is {worker['state']}; start is refused.")
+        repair_control.launch_record(sys.modules[__name__], task)
         launch = task_launch(task)
         extra_args = list(extra_args)
         for field in ("model", "reasoning"):  # Legacy `start --arg` callers keep working but may not contradict the persisted specification.
@@ -1873,6 +1909,7 @@ def start(store, task_id, extra_args=()):
         launch = {**launch, "argv": argv, "explicit_args": [*launch.get("explicit_args", []), *extra_args], "started_argv": argv}
         task["launch"] = launch
         task["status"] = "starting"
+        reservations.transition(task, worker["id"], "starting", now())
         store.save(task)
     try:
         started = herdr(["agent", "start", task_id, "--kind", launch["harness"], "--pane", task["pane"],
@@ -1885,12 +1922,27 @@ def start(store, task_id, extra_args=()):
         # No long blocking handoff: submit the explicit worker brief and return.
         prompt = f"You are the sum worker for {task_id}, not the coordinator. Read the complete file {json.dumps(task['brief_path'])}, then execute only that approved task. Questions and results must be saved using the commands in that brief."
         herdr(["agent", "prompt", task["pane"], prompt], session=task["session"], timeout=10)
+        process_info, process_error = pane_processes(task["session"], task["pane"])
+        processes = process_info["processes"] if process_info else []
+        occupant_process = processes[0] if len(processes) == 1 else None
         with store.lock():
             current = store.read(task_id)
             if current["status"] == "starting":
                 current["status"] = "running"
             current["started_at"] = now()
             current["launch"] = {**launch, "observed": observed}
+            current_worker = reservations.worker(current)
+            repair_operation = repair_control.launch_record(sys.modules[__name__], current)
+            if repair_operation is not None:
+                repair_operation["state"] = "submitted"
+            current_worker["occupant"] = {"machine": current["machine"], "session": current["session"], "pane": current["pane"],
+                                           "checkout": current["worktree"], "harness": observed_kind, "name": agent.get("name"),
+                                           "shell_pid": process_info.get("shell_pid") if process_info else None,
+                                           "pid": occupant_process.get("pid") if occupant_process else None,
+                                           "argv": occupant_process.get("argv") if occupant_process else None}
+            next_state = "running" if occupant_process is not None else "uncertain"
+            reservations.transition(current, current_worker["id"], next_state, now(),
+                                    observation=None if occupant_process is not None else {"at": now(), "outcome": "occupant-uncertain", "reason": process_error or "not exactly one foreground process"})
             store.save(current)
             # The dispatched pane keeps its task role even if it later runs `sumctl init` itself.
             store.register({"machine": current["machine"], "session": current["session"], "pane": current["pane"],
@@ -1901,9 +1953,189 @@ def start(store, task_id, extra_args=()):
             task = store.read(task_id)
             if task["status"] == "starting":
                 task["status"] = "needs-attention"
+            repair_operation = repair_control.launch_record(sys.modules[__name__], task)
+            if repair_operation is not None:
+                repair_operation["state"] = "uncertain"
+            worker = reservations.worker(task)
+            if worker["state"] == "starting":
+                reservations.transition(task, worker["id"], "uncertain", now(),
+                                        observation={"at": now(), "outcome": "launch-uncertain", "reason": str(exc)[:500]})
             task["error"] = f"Launch/prompt uncertain: {exc}. Inspect the saved pane; do not relaunch. Trust/auth prompts need your action."
             store.save(task)
         raise SumError(f"{task_id}: {task['error']}") from exc
+
+
+def execution_view(store, task_id):
+    task = store.read(task_id)
+    try:
+        value = reservations.execution(task)
+    except reservations.ReservationFormatError as exc:
+        raise SumError(f"Malformed execution reservation for {task_id}: {exc}. Admission and release are refused.") from exc
+    if value is None:
+        return {"task": task_id, "execution": {"schema": 1, "worker": {"id": f"legacy:{task_id}", "kind": "worker", "state": "held"}, "verifiers": []}, "legacy": True,
+                "note": "This legacy task has no execution metadata and remains held while non-archived."}
+    return {"task": task_id, "execution": value, "legacy": False}
+
+
+def _park_observation(store, task):
+    if task["session"] != session_from_env():
+        raise SumError(f"Task lives in Herdr session {task['session']}; observation from another session cannot release it.")
+    pane, code = herdr_observe(["pane", "get", task["pane"]], session=task["session"], timeout=5)
+    if pane is None:
+        raise SumError(f"Worker pane cannot prove exit ({code}); a missing or unobservable pane does not release capacity.")
+    pane = pane.get("pane", pane)
+    if pane.get("workspace_id") != task["workspace"] or Path(pane.get("cwd") or "").resolve() != Path(task["worktree"]).resolve():
+        raise SumError("Worker pane identity changed; reservation remains held.")
+    agent, agent_code = herdr_observe(["agent", "get", task["pane"]], session=task["session"], timeout=5)
+    if agent is not None:
+        agent = agent.get("agent", agent)
+        raise SumError(f"Worker is still observable ({agent.get('agent_status')}); idle or done status is not exit proof.")
+    if agent_code != "agent_not_found":
+        raise SumError(f"Worker agent cannot be observed conclusively ({agent_code}); reservation remains held.")
+    info, process_code = pane_processes(task["session"], task["pane"])
+    if info is None:
+        raise SumError(f"Worker process state cannot be observed ({process_code}); reservation remains held.")
+    if info["processes"]:
+        raise SumError(f"Worker pane still has foreground processes {[(p.get('pid'), p.get('name')) for p in info['processes']]}; reservation remains held.")
+    inside, error = processes_in(task["worktree"], exclude=(info["shell_pid"],))
+    if inside is None:
+        raise SumError(f"Checkout process state cannot be established ({error}); reservation remains held.")
+    if inside:
+        raise SumError(f"Processes still run inside the checkout: {[(p.get('pid'), p.get('cwd')) for p in inside[:10]]}; reservation remains held.")
+    environment = read_environment(store, task["id"])
+    active_services = [row["id"] for row in (environment or {}).get("services", []) if row["state"] in SERVICE_ACTIVE + ("failed",)]
+    if active_services:
+        raise SumError(f"Owned service reservations remain unresolved: {active_services}; stop or reconcile them before parking the worker.")
+    return {"at": now(), "outcome": "stopped", "pane": task["pane"], "workspace": task["workspace"], "checkout": task["worktree"]}
+
+
+def _reservation_process_running(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError as exc:
+        raise SumError("Reservation operation cannot be inspected; reservation remains held.") from exc
+    return True
+
+
+def _verifier_park_observation(attempt):
+    operation_pid = attempt.get("operation_pid")
+    if operation_pid is not None and _reservation_process_running(operation_pid):
+        raise SumError("Verifier operation is still in progress; reservation remains held.")
+    occupant = attempt.get("occupant") or {}
+    pid = occupant.get("pid")
+    if isinstance(pid, int):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            pass
+        except PermissionError as exc:
+            raise SumError(f"Verifier pid {pid} cannot be inspected; reservation remains held.") from exc
+        else:
+            raise SumError(f"Verifier pid {pid} still exists; reservation remains held.")
+    checkout = attempt.get("checkout")
+    if checkout and Path(checkout).exists():
+        inside, error = processes_in(checkout)
+        if inside is None:
+            raise SumError(f"Verifier checkout process state cannot be established ({error}); reservation remains held.")
+        if inside:
+            raise SumError(f"Processes still run inside verifier checkout: {[(p.get('pid'), p.get('cwd')) for p in inside[:10]]}; reservation remains held.")
+    return {"at": now(), "outcome": "stopped", "pid": pid, "checkout": checkout, "checkout_present": bool(checkout and Path(checkout).exists())}
+
+
+def execution_park(store, task_id, attempt_id):
+    require_coordinator(store, context())
+    with store.lock():
+        task = store.read(task_id)
+        store.check_machine(task)
+        refuse_execution_during_cleanup(task, "Execution park")
+        try:
+            value = reservations.execution(task)
+            if value is None:
+                if attempt_id != f"legacy:{task_id}":
+                    raise SumError(f"Legacy task requires attempt legacy:{task_id}; no reservation changed.")
+                attempt = reservations.new_attempt("worker", {"machine": task["machine"], "session": task["session"], "pane": task.get("pane")},
+                                                   task.get("worktree"), now())
+                task["execution"] = reservations.new_execution(attempt)
+                value = task["execution"]
+            else:
+                matches = [row for row in [value["worker"], *value["verifiers"]] if row["id"] == attempt_id]
+                if len(matches) != 1:
+                    raise SumError(f"Execution attempt {attempt_id} is stale or unknown; no reservation changed.")
+                attempt = matches[0]
+        except reservations.ReservationFormatError as exc:
+            raise SumError(f"Malformed execution reservation for {task_id}: {exc}. Release is refused.") from exc
+        if attempt["state"] == "observing":
+            observer_pid = attempt.get("observer_pid")
+            if observer_pid is None or _reservation_process_running(observer_pid):
+                raise SumError("Reservation observation is active or its owner is unknown; reservation remains held.")
+        allowed = {"held", "running", "uncertain", "observing"} if attempt["kind"] == "worker" else {"starting", "running", "uncertain", "observing"}
+        if attempt["kind"] == "verifier" and attempt["state"] == "starting" and "operation_pid" not in attempt:
+            raise SumError("Verifier launch ownership is unknown; reservation remains held.")
+        if attempt["state"] not in allowed:
+            raise SumError(f"Execution attempt {attempt_id} is {attempt['state']} and not parkable; no reservation changed.")
+        recorded_attempt_id = attempt["id"]
+        reservations.transition(task, recorded_attempt_id, "observing", now())
+        attempt["observer_pid"] = os.getpid()
+        generation = attempt["generation"]
+        kind = attempt["kind"]
+        store.save(task)
+    try:
+        observation = _park_observation(store, task) if kind == "worker" else _verifier_park_observation(attempt)
+    except SumError as exc:
+        with store.lock():
+            current = store.read(task_id)
+            try:
+                value = reservations.execution(current)
+                row = next((candidate for candidate in [value["worker"], *value["verifiers"]] if candidate["id"] == recorded_attempt_id), None)
+                if row is not None and row["state"] == "observing" and row["generation"] == generation:
+                    reservations.transition(current, recorded_attempt_id, "uncertain", now(), expected_generation=generation,
+                                            observation={"at": now(), "outcome": "uncertain", "reason": str(exc)[:500]})
+                    row.pop("observer_pid", None)
+                    store.save(current)
+            except reservations.ReservationFormatError:
+                pass
+        raise
+    with store.lock():
+        current = store.read(task_id)
+        try:
+            row = reservations.transition(current, recorded_attempt_id, "released", now(), expected_generation=generation, observation=observation)
+            row.pop("observer_pid", None)
+        except reservations.ReservationFormatError as exc:
+            raise SumError(f"Worker attempt {attempt_id} changed during stop observation; reservation remains held.") from exc
+        if kind == "worker":
+            current["status"] = "reported" if current.get("report") else "waiting"
+        store.save(current)
+    return {"task": task_id, "attempt": row, "released": True, "observation": observation}
+
+
+def execution_resume(store, task_id, attempt_id):
+    require_coordinator(store, context())
+    with store.lock():
+        task = store.read(task_id)
+        store.check_machine(task)
+        refuse_execution_during_cleanup(task, "Worker resume")
+        try:
+            worker = reservations.worker(task)
+        except reservations.ReservationFormatError as exc:
+            raise SumError(f"Malformed execution reservation for {task_id}: {exc}. Resume is refused.") from exc
+        if worker["id"] != attempt_id or worker["state"] != "released":
+            raise SumError(f"Worker attempt {attempt_id} is stale or not released; nothing was launched.")
+        repair_control.check_allowance(sys.modules[__name__], store, task)
+        admission = admit(store, store.all(), task["repository"])
+        successor = reservations.new_attempt("worker", {"machine": task["machine"], "session": task["session"], "pane": task["pane"]},
+                                             task["worktree"], now())
+        successor["resumes"] = attempt_id
+        repair_control.record_resume(sys.modules[__name__], task, successor)
+        append_evidence(task, "execution", "coordinator", {"attempt": worker, "successor": successor["id"]}, endpoint=context())
+        reservations.replace_worker(task, successor)
+        task["admission"] = admission
+        task["status"] = "prepared"
+        task["error"] = None
+        store.save(task)
+    started = start(store, task_id)
+    return {**started, "task": task_id}
 
 
 class Unreachable(SumError):
@@ -3724,7 +3956,7 @@ def verify(store, args):
     task = store.read(args.task)
     body = {"result": args.result, "text": text}
     if execute:
-        run_record, copied = execute_root_verification(store, task, args.candidate, getattr(args, "base", None))
+        run_record, copied = execute_root_verification(store, task, args.candidate, getattr(args, "base", None), ctx)
         body.update(run_evidence(run_record, args.candidate, task, record_path=str(copied), isolation="separate-checkout"))
         body["graph"] = run_record.get("graph")
     elif run_path:
@@ -3793,7 +4025,7 @@ def run_evidence(record, candidate, task, *, record_path, isolation):
             "blocked_reason": (record.get("blocked_reason") or None) and str(record["blocked_reason"])[:500]}
 
 
-def execute_root_verification(store, task, candidate, base):
+def execute_root_verification(store, task, candidate, base, ctx):
     """Run the candidate's own VERIFY.md contract in a fresh detached checkout of exactly that SHA, then keep run.json and verify.log
     beside the task record. The worker's checkout is never written to and its artifacts are never read as the result."""
     worktree = task.get("worktree")
@@ -3804,23 +4036,47 @@ def execute_root_verification(store, task, candidate, base):
     base = base or task.get("base_sha")
     stamp = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:6]}"
     checkout = store.path(task["id"]) / VERIFICATION_DIR / stamp / "checkout"
+    with store.lock():
+        current = store.read(task["id"])
+        refuse_execution_during_cleanup(current, "Root verification")
+        admission = admit(store, store.all(), current["repository"])
+        attempt = reservations.new_attempt("verifier", {"machine": ctx["machine"], "session": ctx["session"], "pane": ctx["pane"]},
+                                           str(checkout), now(), state="starting", candidate=candidate)
+        attempt["admission"] = admission
+        attempt["operation_pid"] = os.getpid()
+        try:
+            reservations.add_verifier(current, attempt)
+        except reservations.ReservationFormatError as exc:
+            raise SumError(f"Malformed execution reservation for {task['id']}: {exc}. Root verification is refused.") from exc
+        store.save(current)
     checkout.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    run(["git", "-C", worktree, "worktree", "add", "--detach", str(checkout), candidate], timeout=120)
+    completed = False
+    proc = None
     try:
+        run(["git", "-C", worktree, "worktree", "add", "--detach", str(checkout), candidate], timeout=120)
         graph = graph_summary(graph_init(store, checkout, "verification"))  # This checkout's own index; removed with it below, never shared with the worker's.
         runner = checkout / VERIFICATION_RUNNER
         if not runner.is_file():
             raise SumError(f"Candidate {candidate} carries no {VERIFICATION_RUNNER}; the project is not standardized at this SHA. Run its documented commands and record them with --result.")
         env = {k: v for k, v in os.environ.items() if not (k.startswith("HERDR_") or k in ("SUM_HOME", "SUM_SESSION", "SUM_INSTALL_ROOT"))}
         argv = [sys.executable, str(runner), "--json", *(["--base", base] if base else [])]
+        proc = subprocess.Popen(argv, cwd=str(checkout), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        with store.lock():
+            current = store.read(task["id"])
+            row = reservations.transition(current, attempt["id"], "running", now(),
+                                          observation={"at": now(), "outcome": "started", "pid": proc.pid, "argv": argv, "checkout": str(checkout)})
+            row["occupant"] = {"machine": machine(), "pid": proc.pid, "argv": argv, "checkout": str(checkout)}
+            store.save(current)
         try:
-            proc = subprocess.run(argv, cwd=str(checkout), text=True, capture_output=True, env=env, timeout=4000)
+            stdout, stderr = proc.communicate(timeout=4000)
         except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            proc.communicate()
             raise CommandTimeout("verify_run.py did not finish within 4000s; the run is inconclusive and nothing was recorded") from exc
         try:
-            record = json.loads(proc.stdout)
+            record = json.loads(stdout)
         except ValueError as exc:
-            raise SumError(f"verify_run.py exited {proc.returncode} without a JSON record: {(proc.stderr or proc.stdout).strip()[-600:]}") from exc
+            raise SumError(f"verify_run.py exited {proc.returncode} without a JSON record: {(stderr or stdout).strip()[-600:]}") from exc
         if not isinstance(record, dict) or record.get("schema") != RUN_RECORD_SCHEMA or not record.get("run_id"):
             raise SumError("verify_run.py returned an unrecognized record")
         kept = checkout.parent / "run.json"
@@ -3833,12 +4089,34 @@ def execute_root_verification(store, task, candidate, base):
             shutil.rmtree(checkout / artifacts_dir)  # sum's own throwaway checkout; its record was copied out above.
         record["root"] = str(checkout)
         record["graph"] = graph
+        completed = True
         return record, kept
     finally:
-        removed = run(["git", "-C", worktree, "worktree", "remove", str(checkout)], check=False, timeout=60)
+        if checkout.exists() and proc is None:
+            descendants, descendant_error = processes_in(checkout)
+            process_stopped = descendants == []
+        elif checkout.exists() and proc is not None and proc.poll() is not None:
+            descendants, descendant_error = processes_in(checkout, exclude=(proc.pid,))
+            process_stopped = descendants == []
+        else:
+            descendants, descendant_error = None, "verification parent did not exit"
+            process_stopped = False
+        removed = run(["git", "-C", worktree, "worktree", "remove", str(checkout)], check=False, timeout=60) if process_stopped else subprocess.CompletedProcess([], 1, "", descendant_error or "verification descendants remain")
         if removed.returncode and checkout.exists():
             (checkout.parent / "checkout-not-removed.txt").write_text(f"git worktree remove exited {removed.returncode}: {(removed.stderr or removed.stdout).strip()[-1000:]}\n"
                                                                     "The verification checkout was left in place; inspect it, then remove it with `git worktree remove`.\n")
+        with store.lock():
+            current = store.read(task["id"])
+            state = "released" if completed and process_stopped and removed.returncode == 0 and not checkout.exists() else "uncertain"
+            try:
+                finished = reservations.transition(current, attempt["id"], state, now(),
+                                        observation={"at": now(), "outcome": "stopped" if state == "released" else "uncertain",
+                                                     "checkout_present": checkout.exists(), "remove_exit": removed.returncode,
+                                                     "descendants": descendants, "descendant_error": descendant_error})
+                finished.pop("operation_pid", None)
+                store.save(current)
+            except reservations.ReservationFormatError as exc:
+                raise SumError(f"Root verification reservation {attempt['id']} changed during execution; it remains held for inspection.") from exc
 
 
 def gh(args, *, cwd=None, timeout=30):
@@ -5617,6 +5895,12 @@ def env_start(store, args):
     endpoint = optional_context()
     task = store.read(args.task)
     store.check_machine(task)
+    try:
+        worker_reservation = reservations.worker(task)
+    except reservations.ReservationFormatError as exc:
+        raise SumError(f"Malformed execution reservation for {task['id']}: {exc}. Service start is refused.") from exc
+    if worker_reservation["state"] not in {"held", "running"}:
+        raise SumError(f"Worker execution reservation {worker_reservation['id']} is {worker_reservation['state']}; service start is refused before any launch.")
     worktree = require_worktree(task)
     if not task.get("session") or not task.get("pane") or not task.get("workspace"):
         raise SumError("The task has no recorded Herdr session, pane, and workspace; services are launched only beside a dispatched worker pane.")
@@ -5693,6 +5977,14 @@ def env_start(store, args):
                "label": label or None, "url": parsed["url"] if parsed else None, "port": parsed["port"] if parsed else None, "match": match, "readiness_timeout": timeout,
                "state": "intended", "intent_at": now(), "by": role, "pane": None, "workspace": None, "process": None, "readiness": None, "history": []}
     with store.lock():
+        current_task = store.read(task["id"])
+        refuse_execution_during_cleanup(current_task, "Service start")
+        try:
+            current_reservation = reservations.worker(current_task)
+        except reservations.ReservationFormatError as exc:
+            raise SumError(f"Malformed execution reservation for {task['id']}: {exc}. Service start is refused.") from exc
+        if current_reservation["id"] != worker_reservation["id"] or current_reservation["state"] not in {"held", "running"}:
+            raise SumError("Worker execution reservation changed during service inspection; no service was launched.")
         current = ensure_environment(store, task)
         current.setdefault("services", [])
         if len([s for s in current["services"] if s["state"] in SERVICE_ACTIVE]) >= SERVICE_LIMIT:
@@ -6060,6 +6352,73 @@ def save_cleanup(store, task_id, **changes):
     return task
 
 
+def execution_stop_proof(task):
+    repair_control.refuse_active(sys.modules[__name__], task)
+    value = reservations.execution(task)
+    if value is None:
+        raise SumError("Legacy task has no exact execution owner to bind cleanup to.")
+    return [{"id": row["id"], "generation": row["generation"]} for row in [value["worker"], *value["verifiers"]]]
+
+
+def refuse_execution_during_cleanup(task, action):
+    repair_control.refuse_active(sys.modules[__name__], task, launch=action == "Worker start")
+    record = cleanup_record(task)
+    if record.get("intent"):
+        raise SumError(f"{action} is refused because cleanup intent is active for task {task['id']}; no execution side effect occurred.")
+
+
+def save_cleanup_intent(store, task_id, intent, expected_attempts, resources):
+    with store.lock():
+        task = store.read(task_id)
+        try:
+            attempts = execution_stop_proof(task)
+        except reservations.ReservationFormatError as exc:
+            raise SumError(f"Malformed execution reservation for {task_id}: {exc}. Cleanup intent is refused.") from exc
+        record = cleanup_record(task)
+        if attempts != expected_attempts:
+            record.update(schema=CLEANUP_SCHEMA, at=now(), state="blocked", step="intent-raced", blockers=[{
+                "code": "execution", "detail": "execution attempts changed after inspection; inspect cleanup again",
+            }], resources=resources)
+            record.pop("intent", None)
+            record.setdefault("history", []).append({"at": record["at"], "state": record["state"], "step": record["step"]})
+            record["history"] = record["history"][-40:]
+            task["cleanup"] = record
+            store.save(task)
+            raise SumError(f"Cleanup of {task_id} refused before intent because execution attempts changed after inspection; no native cleanup side effect occurred.")
+        record.update(schema=CLEANUP_SCHEMA, at=now(), state="ready", step="intent", intent={**intent, "attempts": attempts}, blockers=[], resources=resources)
+        record.setdefault("history", []).append({"at": record["at"], "state": record["state"], "step": record["step"]})
+        record["history"] = record["history"][-40:]
+        task["cleanup"] = record
+        store.save(task)
+    return task
+
+
+def release_cleanup_reservations(store, task_id, detail):
+    with store.lock():
+        task = store.read(task_id)
+        try:
+            value = reservations.execution(task)
+            if value is None:
+                raise SumError("Legacy task has no exact execution owner to release during cleanup.")
+            intent = cleanup_record(task).get("intent") or {}
+            expected = intent.get("attempts")
+            released = intent.get("released_attempts")
+            current = execution_stop_proof(task)
+            if released is not None and current == released:
+                return task
+            if expected is None or current != expected:
+                raise SumError("Cleanup stop proof no longer matches the exact execution attempts and generations; archiving is refused.")
+            for row in [value["worker"], *value["verifiers"]]:
+                if row["state"] in reservations.HELD_STATES:
+                    reservations.transition(task, row["id"], "released", now(),
+                                            observation={"at": now(), "outcome": "cleanup-stopped", "resources": detail})
+            intent["released_attempts"] = execution_stop_proof(task)
+        except reservations.ReservationFormatError as exc:
+            raise SumError(f"Malformed execution reservation for {task_id}: {exc}. Cleanup cannot archive it.") from exc
+        store.save(task)
+    return task
+
+
 class Inspection:
     """One bounded pass over records, Git, GitHub, and Herdr for one task; every problem becomes a named blocker."""
 
@@ -6347,6 +6706,19 @@ def inspect_task(store, task, ctx, number=None, scope="task"):
     if scope == "reviewer":
         inspection.reviewer()
         return inspection.plan()
+    try:
+        value = reservations.execution(task)
+        if value is None:
+            inspection.block("execution", "legacy task has no exact execution owner; adopt it through explicit stop inspection before cleanup")
+        else:
+            inspection.view["execution"] = {"attempts": execution_stop_proof(task)}
+            if value["worker"]["state"] == "starting":
+                inspection.block("execution", "worker launch is in progress; its checkout cannot be removed")
+            active_verifiers = [row["id"] for row in value["verifiers"] if row["state"] in reservations.HELD_STATES]
+            if active_verifiers:
+                inspection.block("execution", f"independent verification reservations remain held: {active_verifiers}")
+    except reservations.ReservationFormatError as exc:
+        inspection.block("execution", f"malformed execution reservation: {exc}")
     inspection.herdr()
     inspection.git()
     inspection.obligations()
@@ -6387,6 +6759,7 @@ def cleanup_reconcile(store, task, ctx):
         return None
     gone, detail = resources_absent(task, ctx["session"])
     if gone:
+        release_cleanup_reservations(store, task["id"], detail)
         task = save_cleanup(store, task["id"], state="complete", step="reconciled-after-interruption", removed=detail, blockers=[])
         return {"task": task["id"], "state": "complete", "reconciled": True, "resources": detail}
     if detail["workspace"] == "present":
@@ -6409,10 +6782,30 @@ def close_reviewer_pane(store, task, ctx, plan):
     return {"closed": True, "pane": task["reviewer"]["pane"], "already_absent": result is None}
 
 
+@contextmanager
+def cleanup_lock(store, task_id, ctx):
+    require_coordinator(store, ctx)
+    store.check_machine(store.read(task_id))
+    path = store.path(task_id) / ".cleanup.lock"
+    with path.open("a") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SumError(f"Cleanup for {task_id} is already in progress; its intent is unchanged.") from exc
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def cleanup(store, args):
     ctx = context()
-    require_coordinator(store, ctx)
     ensure_version()
+    with cleanup_lock(store, args.task, ctx):
+        return cleanup_owned(store, args, ctx)
+
+
+def cleanup_owned(store, args, ctx):
     task = store.read(args.task)
     store.check_machine(task)
     record = cleanup_record(task)
@@ -6451,12 +6844,12 @@ def cleanup(store, args):
     merged_head = plan["pr"]["head_sha"]
     intent = {"workspace": task["workspace"], "pane": task["pane"], "worktree": task["worktree"], "branch": task["branch"], "repository": task["repository"],
               "head": plan.get("head"), "merged_head": merged_head, "merge_commit": plan["pr"]["merge_commit"], "pr": plan["pr"]["number"], "at": now()}
-    save_cleanup(store, task["id"], step="intent", state="ready", intent=intent, blockers=[], resources=plan["resources"])
+    task = save_cleanup_intent(store, task["id"], intent, plan["execution"]["attempts"], plan["resources"])
     removed = {"performed": False}
     if plan["resources"].get("workspace") == "present":
         again = recheck(store, task, ctx, merged_head)  # Writers may have appeared or files changed since the inspection.
         if again["blockers"]:
-            save_cleanup(store, task["id"], step="recheck-refused", state="blocked", blockers=again["blockers"], resources=again["resources"])
+            save_cleanup(store, task["id"], step="recheck-refused", state="blocked", intent=None, blockers=again["blockers"], resources=again["resources"])
             raise SumError(f"Cleanup of {task['id']} refused at the recheck before removal: " + "; ".join(f"[{b['code']}] {b['detail']}" for b in again["blockers"]))
         save_cleanup(store, task["id"], step="removing", state="removing")  # Persisted before the one native, non-forced removal.
         result, code = herdr_observe(["worktree", "remove", "--workspace", task["workspace"]], session=ctx["session"], timeout=60)
@@ -6465,6 +6858,7 @@ def cleanup(store, args):
                 pass  # Verified below by identity; already-absent is acceptable only after that inspection.
             elif code in {"dirty_worktree_requires_force", "worktree_requires_force"}:
                 save_cleanup(store, task["id"], step="removal-refused-by-herdr", state="blocked",
+                             intent=None,
                              blockers=[{"code": "artifacts", "detail": f"Herdr refused the non-forced removal ({code}); the checkout changed under us and is preserved"}])
                 raise SumError(f"Herdr refused the non-forced removal ({code}); nothing was removed and the task stays cleanup-pending.")
             else:
@@ -6475,7 +6869,7 @@ def cleanup(store, args):
             if removed["forced"]:
                 raise SumError("Herdr reports a forced removal; sum never requested force. Inspect the Herdr build before trusting this cleanup.")
     elif plan["resources"].get("worktree") == "present":
-        save_cleanup(store, task["id"], step="apply-refused", state="blocked",
+        save_cleanup(store, task["id"], step="apply-refused", state="blocked", intent=None,
                      blockers=[{"code": "workspace", "detail": "the Herdr workspace is gone but the checkout remains; reopen it with `herdr worktree open` or remove it yourself, sum removes checkouts only through the native workspace operation"}])
         raise SumError(f"Cleanup of {task['id']} refused: no Herdr workspace owns the remaining checkout {task['worktree']}.")
     gone, detail = resources_absent(task, ctx["session"])
@@ -6485,6 +6879,7 @@ def cleanup(store, args):
     if detail["branch"] != "present":
         detail["warning"] = f"branch {task['branch']} is missing; sum never deletes branches, inspect the repository"
     reviewer = close_reviewer_pane(store, task, ctx, plan) if task.get("reviewer") else None
+    release_cleanup_reservations(store, task["id"], detail)
     task = save_cleanup(store, task["id"], state="complete", step="archived", removed={**detail, **removed}, blockers=[], reviewer_pane=reviewer)
     return {"task": task["id"], "state": "complete", "archived": True, "removed": {**detail, **removed}, "kept": {"branch": task["branch"], "records": str(store.path(task["id"]))},
             "reviewer": reviewer, "graph": {"index_cache": "regenerable; removed with the checkout" if task.get("graph") else None, "watchers_stopped": 0, "record_kept": str(graph_path(store, task["id"])) if task.get("graph") else None},
@@ -6526,7 +6921,9 @@ def status(store, live=False, inbox=False):
                 row["attention"] = f"Cannot observe worker: {exc}"
         if live and (task.get("cleanup") or {}).get("state") == "removing":  # An interrupted cleanup reconciles at the next bounded pass, never in a loop.
             try:
-                row["cleanup_reconciled"] = cleanup_reconcile(store, task, context())
+                ctx = context()
+                with cleanup_lock(store, task["id"], ctx):
+                    row["cleanup_reconciled"] = cleanup_reconcile(store, store.read(task["id"]), ctx)
                 row["cleanup"] = cleanup_pending(store.read(task["id"]))
             except SumError as exc:
                 row["attention"] = f"Interrupted cleanup could not be reconciled: {exc}"
@@ -9166,6 +9563,33 @@ def parser():
     s = sub.add_parser("start", help="Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch")
     s.add_argument("task")
     s.add_argument("--arg", action="append", default=[])
+    s = sub.add_parser("execution", help="Show, park, or explicitly resume task-local execution reservations")
+    e = s.add_subparsers(dest="execution_command", required=True)
+    x = e.add_parser("show", help="Show worker and independent verifier attempts without observing or launching anything")
+    x.add_argument("task")
+    x = e.add_parser("park", help="Release one exact worker or verifier attempt only after bounded conclusive stop observation; stops nothing")
+    x.add_argument("task")
+    x.add_argument("--attempt", required=True)
+    x = e.add_parser("resume", help="Reserve capacity for a successor to one exact released worker attempt, then launch it")
+    x.add_argument("task")
+    x.add_argument("--attempt", required=True)
+    s = sub.add_parser("repair", help="Coordinator-controlled corrective worker instructions")
+    r = s.add_subparsers(dest="repair_command", required=True)
+    x = r.add_parser("send", help="Charge one task repair iteration before sending to the exact settled worker")
+    x.add_argument("task")
+    x.add_argument("--attempt", required=True)
+    x.add_argument("--key", required=True)
+    g = x.add_mutually_exclusive_group(required=True)
+    g.add_argument("--text")
+    g.add_argument("--file")
+    x = r.add_parser("extend", help="Record the human's explicit additional allowance for an exhausted task")
+    x.add_argument("task")
+    x.add_argument("--question", required=True)
+    x.add_argument("--additional", type=int, required=True)
+    x.add_argument("--approved", action="store_true")
+    g = x.add_mutually_exclusive_group(required=True)
+    g.add_argument("--text")
+    g.add_argument("--file")
     s = sub.add_parser("help", help="Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments")
     s.add_argument("topic", nargs="?")
     s = sub.add_parser("context", help="Bounded selective read of one task: outline by default, --section for parts, --role for a role view, --since CURSOR for changes")
@@ -9216,7 +9640,7 @@ def parser():
     for name in ("show", "notice", "archive"):
         s = sub.add_parser(name, help={"show": "Full task record plus versions, evidence_view, and returns (unchanged shape; use `context` for a bounded read)",
                                        "notice": "Explicit single retry of the pending notice toward one recipient",
-                                       "archive": "Coordinator only: release the task's slot after inspecting and preserving the work"}[name])
+                                       "archive": "Coordinator only: archive a task after every execution reservation was separately released"}[name])
         s.add_argument("task")
         if name == "notice":
             s.add_argument("--to", choices=["parent", "worker"], default="parent")
@@ -9436,7 +9860,8 @@ def main(argv=None):
                                 "update": lambda: f"update-{args.update_command}", "refresh": lambda: f"refresh-{args.refresh_command}", "hook": lambda: f"hook-{args.hook_command}",
                                 "pr": lambda: f"pr-{args.pr_command}", "env": lambda: f"env-{args.env_command}",
                                 "metadata": lambda: f"metadata-{args.metadata_command}", "project": lambda: f"project-{args.project_command}",
-                                "graph": lambda: f"graph-{args.graph_command}", "skills": lambda: f"skills-{args.skills_command}"}.get(args.command, lambda: args.command)())
+                                "graph": lambda: f"graph-{args.graph_command}", "skills": lambda: f"skills-{args.skills_command}",
+                                "execution": lambda: f"execution-{args.execution_command}"}.get(args.command, lambda: args.command)())
         if args.command == "doctor":
             value = doctor(store)
             emit(value)
@@ -9469,6 +9894,11 @@ def main(argv=None):
             value = start(store, task["id"]) if args.command == "dispatch" else task  # --arg values are already part of the persisted launch.
         elif args.command == "start":
             value = start(store, args.task, args.arg)
+        elif args.command == "repair":
+            value = {"send": repair_control.send, "extend": repair_control.extend}[args.repair_command](sys.modules[__name__], store, args)
+        elif args.command == "execution":
+            value = {"show": lambda: execution_view(store, args.task), "park": lambda: execution_park(store, args.task, args.attempt),
+                     "resume": lambda: execution_resume(store, args.task, args.attempt)}[args.execution_command]()
         elif args.command == "show":
             task = store.read(args.task)
             try:
@@ -9549,6 +9979,8 @@ def main(argv=None):
                 task = store.read(args.task)
                 if any(q["status"] != "applied" for q in task["questions"]):
                     raise SumError("Outstanding questions must be answered and applied before archiving.")
+                if holds_slot(task):
+                    raise SumError("Task has a held execution reservation. Use `execution park TASK --attempt ID` after proving the worker stopped; archive never releases capacity.")
                 task["status"] = "archived"
                 store.save(task)
             value = {"archived": args.task, "worktree_preserved": task["worktree"], "processes_untouched": True}

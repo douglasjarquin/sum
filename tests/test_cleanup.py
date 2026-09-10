@@ -108,6 +108,7 @@ class CleanupTest(core.CoreTest):
     def test_merged_clean_pr_removes_only_the_workspace_and_keeps_branch_and_records(self):
         task, sha = self.merged_task()
         records = self.records(task)
+        records[str((self.store.path(task["id"]) / ".cleanup.lock").relative_to(self.store.home))] = b""
         plan = self.cleanup(task)
         self.assertEqual((plan["state"], plan["blockers"], plan["apply"]), ("ready", [], False))
         self.assertEqual(plan["resources"], {"workspace": "present", "pane": "present", "worktree": "present", "branch": "present", "reviewer_pane": None})
@@ -473,6 +474,9 @@ class CleanupTest(core.CoreTest):
 
     def test_archive_acknowledge_stays_records_only(self):
         task, sha = self.merged_task()
+        attempt = task["execution"]["worker"]["id"]
+        parked = self.cli("execution", "park", task["id"], "--attempt", attempt)
+        self.assertEqual(parked.returncode, 0, parked.stderr)
         self.assertEqual(sumctl.main(["--home", str(self.store.home), "archive", task["id"], "--acknowledge"]), 0)
         saved = self.store.read(task["id"])
         self.assertEqual(saved["status"], "archived")

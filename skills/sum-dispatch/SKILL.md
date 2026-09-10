@@ -9,8 +9,20 @@ Use this only from the pane registered as coordinator by `sumctl init`; the help
 ## Capacity
 
 `./bin/sumctl settings show` gives the configured limits, their source, and who holds them; absent capacity is unlimited.
-Every non-archived task holds a slot; a report or an idle pane frees nothing, only `archive --acknowledge` after you inspected and preserved the work.
-A refused dispatch names the held slots. Do not archive to make room unless the work was actually inspected, and do not set capacity yourself: `settings set --global N` is the boss's decision, and per-repository isolation is enforced only when a capacity block is configured.
+Worker attempts and independent root verification runs hold separate reservations under the same limits.
+Read the current IDs with `execution show TASK_ID`.
+Use `execution park TASK_ID --attempt ID` to inspect stopped execution and release its reservation without losing unfinished questions, reports, or work.
+A report, an idle or missing pane, and unresolved owned services release nothing.
+To resume approved work, use `execution resume TASK_ID --attempt ID` with the released worker attempt ID; it checks capacity before launching a successor.
+Every resume consumes a task repair iteration, including an infrastructure relaunch.
+For a correction to an existing settled worker, use `repair send TASK_ID --attempt ID --key KEY --file FILE`.
+Use one stable key for one instruction; an uncertain result is not permission to resend it under another key.
+The default allowance is two controlled iterations, shared across attempts and candidates.
+Exhaustion saves one question for the boss and starts nothing.
+Only an explicit human decision permits a coordinator-recorded `repair extend` grant tied to that question.
+A refused dispatch names the held slots.
+Do not archive to make room: archive refuses held reservations.
+Do not set capacity yourself: `settings set --global N` is the boss's decision, and per-repository isolation is enforced only when a capacity block is configured.
 A free slot is never a reason to dispatch; work starts only from an explicit approved instruction.
 
 ## Intake

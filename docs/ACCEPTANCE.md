@@ -44,10 +44,23 @@ Create a records backup. Inspect its manifest: worktree code is explicitly exclu
 ## 8. Fleet capacity and rolling update
 
 Raise the lab installation to ten or more slots with `sumctl settings set --global 12 --per-repository 1` and dispatch that many tiny approved tasks across throwaway repositories with the authenticated harnesses in use.
-Confirm a dispatch beyond the limit is refused without creating a worktree, that a second task into an occupied repository is refused even with global room, and that a reported task still holds its slot until `archive --acknowledge`.
+Confirm a dispatch beyond the limit creates no worktree and a second task into an occupied repository is refused even with global room.
+A reported task must still hold its slot while the worker or an owned service remains active.
+Read its attempt ID with `execution show TASK_ID`, wait for the worker to exit, then run `execution park TASK_ID --attempt ID`.
+Confirm its slot is free while its questions, report, and checkout remain available.
+Resume approved work with `execution resume TASK_ID --attempt ID`, and confirm the old ID cannot release the successor.
+With all slots occupied, confirm resume and `verify --execute` refuse before launching anything.
+Confirm idle, missing, and unobservable workers remain reserved rather than permitting duplicate execution.
 Then follow the fleet canary in `skills/sum-update/SKILL.md`: update, refresh, answer and report through old callbacks, roll back, refresh again.
 Record each worker's observed state, the `fanout` counts and wall time of every pass, the receipts that appeared and when, and every worker that kept its process, checkout, and partial work.
 Scripted workers in `tests/test_fleet.py` establish the bookkeeping; only this step says anything about a model acting on a refresh.
+
+For controlled repairs, send two approved corrections to a settled lab worker with `repair send TASK_ID --attempt ID --key KEY --file FILE`, using distinct keys.
+Confirm the third correction and an execution resume are refused with one budget question and no native launch or prompt.
+Change the candidate, refresh the brief, and update or roll back the lab runtime; confirm the allowance remains exhausted.
+Only after an actual human decision, record `repair extend TASK_ID --question ID --additional 1 --approved --file FILE` and confirm exactly one additional correction is permitted.
+Confirm an ordinary answer, worker report, and repeated grant do not add iterations.
+These steps require a real authorized lab and remain unrun until an operator records them; offline fixtures do not certify a model's internal loop.
 
 ## 9. Task-owned development services
 
