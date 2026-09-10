@@ -43,6 +43,15 @@ Executed on the development host for issue #6 from a task checkout: the Python s
 The new tests use a bare Git repository as `origin` and cover: resolving only revisions merged on `origin/main` (a local unmerged commit and a dirty checkout are refused or reported, never reset); an atomic apply while a helper call from the old runtime is paused and while a task's absolute callbacks run before and after the switch; injected failures before the rename, at the rename, and after it (the entrypoint post-check), each leaving a complete selection; a failing installer, a mismatched manifest, a candidate needing another Herdr version, a candidate not supporting a task's brief schema, a candidate helper that cannot read the records, and a concurrent update holding the lock, each leaving the current default and records intact; rollback after a new question and report were saved, with both helper generations reading the same records, rollback to the checkout, an explicit target, and an unknown target; a simulated MCP server keeping its start tree across an apply while a new entrypoint call uses the new default; and gating of `apply`/`rollback` to the coordinator pane and of every update write to the installation's own helper.
 No model, GitHub write, live installation state, or user `default` session was involved; `mise run setup` and `mise run test-live` were not re-run for this slice.
 
+## Known-good recovery focused checks (2026-09-09, macOS)
+
+Issue #65 was exercised in temporary installations with real Git, the stable installation CLI, a fake dependency installer, and strict fake Herdr.
+The focused root run passed 31 updater and recovery tests; the separate twelve-worker scenario also passed.
+Faults covered post-selection failure, interruption before and after pointer replacement, an unimportable candidate, a pre-recovery prior helper, unauthorized recovery, stale generations, changed checkout revisions, mismatched checkout approval, recovery-file flush failure, and an unusable initial stable fallback.
+The fleet scenario sent question and report callbacks while the failed candidate was selected, then verified their records after recovery together with the existing worktree and no-restart assertions.
+These focused results do not certify the full repository, hosted CI, authenticated harness behavior, or deployment.
+The original reproduction's first case accidentally reached the real dependency installer; its preserved correction note distinguishes that capture from the later fake-installer verification.
+
 ## Rolling refresh slice (2026-09-05, macOS)
 
 Executed on the development host for issue #7 from a task checkout: the Python suites, the Node Mesh tests, and the offline demo including its new refresh section.
