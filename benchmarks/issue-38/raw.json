@@ -1,0 +1,227 @@
+{
+  "schema": 1,
+  "binary": "/Users/douglasjarquin/github/sum/.sum/dev/issue38-audit/.artifacts/issue38/sumctl-go",
+  "binary_bytes": 6109458,
+  "reference_revision": "b03b8020621e0d417906402a5c7ecc5d63192541",
+  "reference_helper": "/var/folders/5j/n805d0vn43g2bjt7ykqmyxmm0000gn/T/sum-go-benchmark-1a1wn4kb/reference/bin/sumctl",
+  "samples": 15,
+  "scenarios": [
+    {
+      "command": [
+        "/Users/douglasjarquin/github/sum/.sum/dev/issue38-audit/.artifacts/issue38/sumctl-go",
+        "--version"
+      ],
+      "samples": 15,
+      "p50_ms": 5.919,
+      "p95_ms": 16.432,
+      "min_ms": 5.293,
+      "max_ms": 16.432,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "peak_memory_bytes": 3490224,
+      "subprocesses": 0,
+      "id": "startup.version.cold"
+    },
+    {
+      "command": [
+        "/Users/douglasjarquin/github/sum/.sum/dev/issue38-audit/.artifacts/issue38/sumctl-go",
+        "--help"
+      ],
+      "samples": 15,
+      "p50_ms": 5.801,
+      "p95_ms": 6.585,
+      "min_ms": 5.251,
+      "max_ms": 6.585,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "peak_memory_bytes": 3523016,
+      "subprocesses": 0,
+      "id": "startup.help.cobra"
+    },
+    {
+      "command": [
+        "/Users/douglasjarquin/github/sum/.sum/dev/issue38-audit/.artifacts/issue38/sumctl-go",
+        "--home",
+        "/var/folders/5j/n805d0vn43g2bjt7ykqmyxmm0000gn/T/sum-go-benchmark-1a1wn4kb/state",
+        "status"
+      ],
+      "samples": 15,
+      "p50_ms": 133.056,
+      "p95_ms": 156.934,
+      "min_ms": 126.481,
+      "max_ms": 156.934,
+      "exit_codes": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "peak_memory_bytes": 3555784,
+      "subprocesses": 1,
+      "id": "read.status.fixture"
+    },
+    {
+      "command": [
+        "/Users/douglasjarquin/github/sum/.sum/dev/issue38-audit/.artifacts/issue38/sumctl-go",
+        "--home",
+        "/var/folders/5j/n805d0vn43g2bjt7ykqmyxmm0000gn/T/sum-go-benchmark-1a1wn4kb/state",
+        "show",
+        "t-000000000000"
+      ],
+      "samples": 15,
+      "p50_ms": 132.928,
+      "p95_ms": 164.723,
+      "min_ms": 127.212,
+      "max_ms": 164.723,
+      "exit_codes": [
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1
+      ],
+      "peak_memory_bytes": 3572168,
+      "subprocesses": 1,
+      "id": "failure.show-missing",
+      "expected_exit": 1
+    }
+  ],
+  "scope": "compiled Cobra entrypoint; status and missing-show use the explicit Python compatibility boundary",
+  "allocations": {
+    "command": [
+      "go",
+      "test",
+      "-run",
+      "^$",
+      "-bench",
+      "BenchmarkNewRoot",
+      "-benchmem",
+      "./internal/cli"
+    ],
+    "exit": 0,
+    "ns_per_op": 6299.0,
+    "bytes_per_op": 33080.0,
+    "allocs_per_op": 133.0
+  },
+  "gate": {
+    "outcome": "defer",
+    "pass": false,
+    "comparisons": {
+      "startup.version.cold": {
+        "baseline_p50_ms": 136.568,
+        "candidate_p50_ms": 5.919,
+        "absolute_improvement_ms": 130.649,
+        "relative_improvement_percent": 95.67
+      },
+      "startup.help.cobra": {
+        "baseline_p50_ms": 138.56,
+        "candidate_p50_ms": 5.801,
+        "absolute_improvement_ms": 132.759,
+        "relative_improvement_percent": 95.81
+      }
+    },
+    "interactive_hot_path": {
+      "required_absolute_ms": 50,
+      "required_relative_percent": 35,
+      "observed_absolute_improvement_ms": 132.759,
+      "observed_relative_improvement_percent": 95.81,
+      "pass": true
+    },
+    "frequency_weighted": {
+      "required_ms": 500,
+      "observed_ms": 0,
+      "pass": false,
+      "reason": "No stateful command is native; status remains a compatibility subprocess."
+    },
+    "behavior": {
+      "required_regressions": 0,
+      "observed_regressions": null,
+      "pass": false,
+      "status": "not-evaluated",
+      "basis": "Expected exit codes are smoke checks, not differential output or effect parity."
+    },
+    "memory": {
+      "required_regression_percent": 10,
+      "pass": false,
+      "status": "not-comparable",
+      "reason": "The compatibility child is outside the compiled parent's /usr/bin/time memory sample."
+    },
+    "allocations": {
+      "command": [
+        "go",
+        "test",
+        "-run",
+        "^$",
+        "-bench",
+        "BenchmarkNewRoot",
+        "-benchmem",
+        "./internal/cli"
+      ],
+      "exit": 0,
+      "ns_per_op": 6299.0,
+      "bytes_per_op": 33080.0,
+      "allocs_per_op": 133.0
+    },
+    "binary_and_entrypoint": {
+      "version": "startup.version.cold",
+      "help": "startup.help.cobra"
+    },
+    "reasons": [
+      "The native startup/help path crosses the latency gate.",
+      "No stateful command is native, so the 500 ms frequency-weighted gate is not established.",
+      "Behavior parity has not been evaluated.",
+      "Compatibility memory is not comparable to the Python child process."
+    ]
+  }
+}

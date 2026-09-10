@@ -5164,10 +5164,10 @@ def build_log(validated, observed, claimed, label, role, stamp):
 
 
 def upsert_log(record, row):
-    exists = any(l["id"] == row["id"] for l in record["logs"])
+    exists = any(log["id"] == row["id"] for log in record["logs"])
     if not exists and len(record["logs"]) >= ENVIRONMENT_LIMITS["logs"]:
         raise SumError(f"At most {ENVIRONMENT_LIMITS['logs']} log references per task.")
-    record["logs"] = [row if l["id"] == row["id"] else l for l in record["logs"]] if exists else record["logs"] + [row]
+    record["logs"] = [row if log["id"] == row["id"] else log for log in record["logs"]] if exists else record["logs"] + [row]
     return row
 
 
@@ -5276,8 +5276,8 @@ def env_inspect(store, args):
             history_item = {"at": row["observed_at"], "state": row["state"], "ownership": row["ownership"]}
             if row.get("local"):
                 observation = port_observations[row["id"]]
-                previous_pids = {l["pid"] for l in (row.get("observation") or {}).get("listeners", [])}
-                current_pids = {l["pid"] for l in observation["listeners"]}
+                previous_pids = {listener["pid"] for listener in (row.get("observation") or {}).get("listeners", [])}
+                current_pids = {listener["pid"] for listener in observation["listeners"]}
                 if observation["state"] == "not-listening" and before[0] in ("observed", "stale"):
                     row["state"], row["stale_reason"] = "stale", f"nothing listens on port {row['port']} any more"
                 elif observation["state"] == "observed" and previous_pids and previous_pids != current_pids:
@@ -5311,7 +5311,7 @@ def env_inspect(store, args):
     return {"task": task["id"], "path": str(environment_path(store, task["id"])), "inspected_at": stamp, "changes": changes,
             "discovery": {k: discovery.get(k) for k in ("config_revision", "current_revision", "stale", "stale_reason")} if discovery else None,
             "endpoints": [{k: e.get(k) for k in ("id", "url", "state", "ownership", "stale_reason", "config_stale")} for e in record["endpoints"]],
-            "logs": [{k: l.get(k) for k in ("id", "path", "state", "bytes")} for l in record["logs"]],
+            "logs": [{k: log.get(k) for k in ("id", "path", "state", "bytes")} for log in record["logs"]],
             "by": role, "touched": "nothing was started, stopped, or reconfigured", "note": ENVIRONMENT_NOTE}
 
 
@@ -5335,15 +5335,15 @@ def environment_view(store, task, limit=CONTEXT_CHARS):
         return {**{k: row.get(k) for k in ("name", "kind", "source", "description", "image", "declared_ports")}, "command": bounded_view(text, limit) if limit else text,
                 "redactions": row.get("redactions", 0) + redactions}
     stale = bool(discovery and discovery.get("stale")) or any(e["state"] in ("stale", "unverified") or e.get("config_stale") for e in record["endpoints"]) \
-        or any(l["state"] != "present" for l in record["logs"]) or any(s["state"] in ("unknown", "stopping", "conflict", "failed") for s in record.get("services", []))
+        or any(log["state"] != "present" for log in record["logs"]) or any(s["state"] in ("unknown", "stopping", "conflict", "failed") for s in record.get("services", []))
     return {"present": True, "ok": True, "path": str(environment_path(store, task["id"])), "updated_at": record.get("updated_at"), "stale": stale,
             "discovery": {**{k: discovery.get(k) for k in ("observed_at", "head", "config_revision", "current_revision", "stale", "stale_reason", "checked_at", "summary", "problems", "task_origins", "verification_contract")},
                           "sources": [{k: s.get(k) for k in ("path", "bytes", "sha256", "skipped")} for s in discovery.get("sources", [])],
                           "commands": [command_view(c) for c in discovery.get("commands", [])]} if discovery else None,
             "endpoints": [{**{k: e.get(k) for k in ("id", "url", "port", "local", "label", "ownership", "claimed_ownership", "state", "stale_reason", "config_stale", "observed_at", "recorded_by")},
-                           "listeners": [{k: l.get(k) for k in ("pid", "owner")} for l in (e.get("observation") or {}).get("listeners", [])],
+                           "listeners": [{k: listener.get(k) for k in ("pid", "owner")} for listener in (e.get("observation") or {}).get("listeners", [])],
                            "conflicts": [c["task"] for c in e.get("conflicts", [])]} for e in record["endpoints"]],
-            "logs": [{k: l.get(k) for k in ("id", "path", "scope", "label", "ownership", "state", "bytes", "modified_at", "observed_at")} for l in record["logs"]],
+            "logs": [{k: log.get(k) for k in ("id", "path", "scope", "label", "ownership", "state", "bytes", "modified_at", "observed_at")} for log in record["logs"]],
             "resources": [{k: r.get(k) for k in ("kind", "id", "session", "label", "ownership", "state", "cwd", "note", "service", "observed_at")} for r in record["resources"]],
             "services": services_view(record),
             "history": record.get("history", [])[-5:], "commands": commands, "authority": CLAIM_NOTE, "note": ENVIRONMENT_NOTE}
@@ -5359,7 +5359,7 @@ def environment_outline(store, task):
     discovery = record.get("discovery") or {}
     return {"present": True, "updated_at": record.get("updated_at"), "config_stale": bool(discovery.get("stale")),
             "endpoints": {state: sum(1 for e in record["endpoints"] if e["state"] == state) for state in ENDPOINT_STATES if any(e["state"] == state for e in record["endpoints"])},
-            "logs_missing": sum(1 for l in record["logs"] if l["state"] != "present"), "resources": len(record["resources"]),
+            "logs_missing": sum(1 for log in record["logs"] if log["state"] != "present"), "resources": len(record["resources"]),
             "services": {state: sum(1 for s in record.get("services", []) if s["state"] == state) for state in SERVICE_STATES if any(s["state"] == state for s in record.get("services", []))}}
 
 
@@ -5568,16 +5568,17 @@ def wait_for_listener(store, task, parsed, session, pane_id, process, timeout):
         if misses:
             if time.monotonic() >= deadline:  # Every path reaches the deadline.
                 return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "changed": True, "processes": info["processes"], "reason": f"the recorded instance was not the pane foreground at the deadline ({timeout}s); the launch is unknown"}
-            time.sleep(SERVICE_POLL); waited += SERVICE_POLL
+            time.sleep(SERVICE_POLL)
+            waited += SERVICE_POLL
             continue
         pane_pids = {p["pid"] for p in info["processes"] if p.get("pid") is not None}
         observation = observe_port(store, task, parsed["port"])
         if observation["state"] == "observed":
-            mine = [l for l in observation["listeners"] if l["pid"] in pane_pids]
+            mine = [listener for listener in observation["listeners"] if listener["pid"] in pane_pids]
             if mine:
                 return {"ready": True, "checked": "listener", "waited_s": round(waited, 2), "observation": observation, "listener": mine[0]}
             return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "observation": observation,
-                    "reason": f"port {parsed['port']} is taken by a process that is not in the service pane ({[(l['pid'], l.get('owner')) for l in observation['listeners']]}); a checkout cwd alone is not ownership, reported and not terminated"}
+                    "reason": f"port {parsed['port']} is taken by a process that is not in the service pane ({[(listener['pid'], listener.get('owner')) for listener in observation['listeners']]}); a checkout cwd alone is not ownership, reported and not terminated"}
         if observation["state"] == "unverified":
             return {"ready": False, "checked": "listener", "waited_s": round(waited, 2), "observation": observation, "reason": f"listeners cannot be observed: {observation.get('error')}"}
         if time.monotonic() >= deadline:
@@ -5684,7 +5685,7 @@ def env_start(store, args):
                 current = ensure_environment(store, task)
                 current["services"] = (current.get("services") or [])[-(SERVICE_LIMIT - 1):] + [service]
                 write_environment(store, current, {"event": "start-conflict", "service": service["id"], "port": parsed["port"]})
-            raise SumError(f"Port {parsed['port']} is already taken by {[(l['pid'], l.get('owner'), l.get('cwd')) for l in busy['listeners']]}; recorded as a conflict ({service['id']}). "
+            raise SumError(f"Port {parsed['port']} is already taken by {[(listener['pid'], listener.get('owner'), listener.get('cwd')) for listener in busy['listeners']]}; recorded as a conflict ({service['id']}). "
                            f"sum never terminates the occupant; pick the port the repository's configuration reports or stop that service yourself.")
     # Intent is durable before any pane exists.
     service = {"id": "s-" + uuid.uuid4().hex[:10], "name": row["name"], "source": row["source"], "kind": row["kind"], "command": command, "launch": {**launch, "cwd": worktree, "pane_created": False},
@@ -5812,7 +5813,7 @@ def stop_service(store, task, service, timeout=STOP_TIMEOUT):
         port_check = observe_port(store, task, service["port"])
         if port_check["state"] == "observed":
             row = update_service(store, task["id"], service["id"], "stop-port-still-taken", state="unknown",
-                                 stop={"action": "interrupt" if sent else "none", "result": f"process exited but port {service['port']} is still taken by {[(l['pid'], l.get('owner')) for l in port_check['listeners']]}"})
+                                 stop={"action": "interrupt" if sent else "none", "result": f"process exited but port {service['port']} is still taken by {[(listener['pid'], listener.get('owner')) for listener in port_check['listeners']]}"})
             return {**outcome, "action": "interrupt" if sent else "none", "state": "unknown", "closed_pane": False,
                     "reason": f"port {service['port']} is still taken after the exit; a detached child or another process holds it, nothing is terminated"}
     closed = False
@@ -8008,7 +8009,7 @@ def build_native_artifact(target):
     source = target / "go"
     if not (source / "go.mod").is_file():
         raise SumError(f"Native Go source is missing from {source}")
-    outputs = {"sumctl-go": "./cmd/sumctl-go", "herdr-mesh-go": "./cmd/herdr-mesh"}
+    outputs = {"herdr-mesh-go": "./cmd/herdr-mesh"}
     output_dir = target / ".local" / "bin"
     output_dir.mkdir(parents=True, exist_ok=True)
     pending = []
@@ -8020,7 +8021,7 @@ def build_native_artifact(target):
         else:
             pending.append((name, package))
     if not pending:
-        return output_dir / "sumctl-go"
+        return output_dir / "herdr-mesh-go"
     go = os.environ.get("SUM_GO_BIN")
     if not go:
         mise = shutil.which("mise")
@@ -8034,7 +8035,7 @@ def build_native_artifact(target):
     platform_name = native_platform()
     goos, goarch = platform_name.split("-", 1)
     build_env = {**os.environ, "CGO_ENABLED": "0", "GOENV": "off", "GOOS": goos, "GOARCH": goarch}
-    for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN"):
+    for variable in ("GOROOT", "GOBIN", "GOTOOLDIR", "GOTOOLCHAIN"):
         build_env.pop(variable, None)
     for name, package in pending:
         output = output_dir / name
@@ -8051,7 +8052,7 @@ def build_native_artifact(target):
         finally:
             if temporary.exists():
                 temporary.unlink()
-    return output_dir / "sumctl-go"
+    return output_dir / "herdr-mesh-go"
 
 
 def native_platform():
@@ -8173,6 +8174,11 @@ def validate_dependency_inventory(value):
         seen.add(entry["id"])
 
 
+def native_inventory_entries(inventory):
+    return {entry["id"]: entry for entry in inventory["dependencies"]
+            if entry["checksum"] == f"release.json#dependencies.native.{entry['id']}.sha256"}
+
+
 def build_manifest(store, root, sha, target):
     target = Path(target)
     contract = candidate_contract(target)
@@ -8186,20 +8192,14 @@ def build_manifest(store, root, sha, target):
     mesh = target / ".deps" / "herdr-mesh"
     patched = read_json(mesh / ".sum-patched")
     inventory = dependency_inventory(target)
-    native = next((entry for entry in inventory["dependencies"] if entry["id"] == "sumctl-go"), None)
-    native_path = target / ".local" / "bin" / "sumctl-go"
-    if native is None or not native_path.is_file() or not os.access(native_path, os.X_OK):
-        raise SumError("Release is missing the staged native sumctl-go artifact")
-    native = {**native, "path": ".local/bin/sumctl-go", "sha256": sha256_file(native_path),
-              "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
-              "runtime": {"requires": []}}
-    native_artifacts = {"sumctl-go": native}
-    mesh_path = target / ".local" / "bin" / "herdr-mesh-go"
-    if mesh_path.is_file() and os.access(mesh_path, os.X_OK):
-        native_artifacts["herdr-mesh-go"] = {"source": "go/cmd/herdr-mesh", "version": "0.1.0",
-                                              "path": ".local/bin/herdr-mesh-go", "sha256": sha256_file(mesh_path),
-                                              "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
-                                              "runtime": {"requires": []}}
+    native_artifacts = {}
+    for name, entry in native_inventory_entries(inventory).items():
+        native_path = target / ".local" / "bin" / name
+        if native_path.is_symlink() or not native_path.is_file() or not os.access(native_path, os.X_OK):
+            raise SumError(f"Release is missing the staged native artifact {name}")
+        native_artifacts[name] = {**entry, "path": f".local/bin/{name}", "sha256": sha256_file(native_path),
+                                  "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
+                                  "runtime": {"requires": []}}
     state = read_json(store.home / "state.json") if (store.home / "state.json").is_file() else {}
     return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": contract["sum_version"],
             "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
@@ -8267,9 +8267,13 @@ def verify_release(path, expected_sha=None):
     inventory = manifest.get("dependencies", {}).get("inventory")
     if inventory is not None:
         validate_dependency_inventory(inventory)
+    if not isinstance(native, dict):
+        raise SumError(f"{path}: native dependency metadata is incomplete")
+    required_native = native_inventory_entries(inventory) if inventory is not None else {}
+    missing_native = sorted(set(required_native) - set(native))
+    if missing_native:
+        raise SumError(f"{path}: native artifact {missing_native[0]} is missing from the manifest")
     if native:
-        if not isinstance(native, dict) or "sumctl-go" not in native:
-            raise SumError(f"{path}: native dependency metadata is incomplete")
         for name, artifact in native.items():
             relative = artifact.get("path") if isinstance(artifact, dict) else None
             if not isinstance(relative, str) or not relative or Path(relative).is_absolute() or ".." in PurePosixPath(relative).parts:

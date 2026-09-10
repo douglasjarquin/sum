@@ -1222,8 +1222,8 @@ def fake_installer(target, local_mesh=None):
     for name in sumctl.TOOLS:
         real = {"python3": sys.executable, "node": shutil.which("node") or sys.executable}.get(name, str(ROOT / "tests/fixtures/herdr.py"))
         sumctl.link_tool(target / ".local" / "bin" / name, real)
-    native = target / ".local" / "bin" / "sumctl-go"
-    native.write_text("#!/bin/sh\nprintf '%s\\n' 'sum 0.1.0'\n")
+    native = target / ".local" / "bin" / "herdr-mesh-go"
+    native.write_text("#!/bin/sh\nprintf '%s\\n' 'herdr-mesh 0.1.0'\n")
     native.chmod(0o755)
     (target / ".local" / "skills" / "herdr").mkdir(parents=True)
     (target / ".local" / "skills" / "herdr" / "SKILL.md").write_text("fake herdr skill\n")
@@ -1261,6 +1261,8 @@ class ReleaseLab(unittest.TestCase):
         listing = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z"], capture_output=True, check=True).stdout
         for relative in filter(None, listing.decode().split("\0")):
             source, target = ROOT / relative, real / relative
+            if not source.exists() and not source.is_symlink():
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target, follow_symlinks=False)
         self.git("init", "-b", "main", cwd=real)
@@ -1314,6 +1316,9 @@ class ReleaseTest(ReleaseLab):
         historical = self.root / "historical-release"
         sumctl.archive_source(ROOT, "de92361b87181837c58308acf2521fdae2677cec", historical)
         fake_installer(historical)
+        historical_native = historical / ".local" / "bin" / "sumctl-go"
+        historical_native.write_text("#!/bin/sh\nprintf '%s\\n' 'sum 0.1.0'\n")
+        historical_native.chmod(0o755)
         manifest = sumctl.build_manifest(store, ROOT, "de92361b87181837c58308acf2521fdae2677cec", historical)
         sumctl.atomic_json(historical / sumctl.RELEASE_MANIFEST, manifest)
 
@@ -1353,24 +1358,64 @@ class ReleaseTest(ReleaseLab):
         self.assertEqual([(r["sha"], r["ok"]) for r in listing["releases"]], [(head, True)])
         self.assertEqual(sumctl.release_show(store, head[:8])["sha"], head)
 
-    def test_stage_packages_native_bridge_with_runtime_provenance(self):
+    def test_stage_packages_required_mesh_with_runtime_provenance(self):
         root, store = self.installation()
         release = Path(self.stage(store)["release"])
-        native = json.loads((release / "release.json").read_text())["dependencies"]["native"]["sumctl-go"]
+        native_dependencies = json.loads((release / "release.json").read_text())["dependencies"]["native"]
+        self.assertEqual(set(native_dependencies), {"herdr-mesh-go"})
+        native = native_dependencies["herdr-mesh-go"]
         binary = release / native["path"]
-        self.assertEqual(native["source"], "go/cmd/sumctl-go")
-        self.assertEqual(native["version"], "sum 0.1.0")
+        self.assertEqual(native["source"], "go/cmd/herdr-mesh")
+        self.assertEqual(native["version"], "0.1.0")
         self.assertEqual(native["platform"], sumctl.native_platform())
         self.assertEqual(native["build"], {"cgo": False, "requires": ["go >= 1.25"]})
         self.assertEqual(native["runtime"], {"requires": []})
         self.assertTrue(binary.is_file() and os.access(binary, os.X_OK))
         self.assertEqual(native["sha256"], hashlib_sha(binary))
-        self.assertEqual(self.cli([binary, "--version"]).stdout, "sum 0.1.0\n")
+        self.assertEqual(self.cli([binary, "--version"]).stdout, "herdr-mesh 0.1.0\n")
 
         sumctl.set_read_only(release, read_only=False)
         binary.write_text("corrupt\n")
-        with self.assertRaisesRegex(sumctl.SumError, "native artifact sumctl-go"):
+        with self.assertRaisesRegex(sumctl.SumError, "native artifact herdr-mesh-go"):
             sumctl.verify_release(release, release.name)
+
+    def test_verify_release_requires_every_native_artifact_declared_by_its_inventory(self):
+        root, store = self.installation()
+        release = Path(self.stage(store)["release"])
+        sumctl.set_read_only(release, read_only=False)
+        (release / ".local" / "bin" / "herdr-mesh-go").unlink()
+
+        with self.assertRaisesRegex(sumctl.SumError, "native artifact herdr-mesh-go"):
+            sumctl.verify_release(release, release.name)
+
+    def test_verify_release_keeps_historical_native_inventory_contract(self):
+        root, store = self.installation()
+        release = Path(self.stage(store)["release"])
+        sumctl.set_read_only(release, read_only=False)
+        manifest_path = release / "release.json"
+        manifest = json.loads(manifest_path.read_text())
+        mesh = manifest["dependencies"]["native"].pop("herdr-mesh-go")
+        historical_binary = release / ".local" / "bin" / "sumctl-go"
+        historical_binary.write_text("#!/bin/sh\nprintf '%s\\n' 'sum 0.1.0'\n")
+        historical_binary.chmod(0o755)
+        historical_entry = {
+            **mesh,
+            "id": "sumctl-go",
+            "source": "go/cmd/sumctl-go",
+            "version": "sum 0.1.0",
+            "checksum": "release.json#dependencies.native.sumctl-go.sha256",
+            "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []},
+            "path": ".local/bin/sumctl-go",
+            "sha256": hashlib_sha(historical_binary),
+        }
+        manifest["dependencies"]["native"]["sumctl-go"] = historical_entry
+        inventory = manifest["dependencies"]["inventory"]["dependencies"]
+        inventory[:] = [entry for entry in inventory if entry["id"] != "herdr-mesh-go"]
+        inventory.append({key: value for key, value in historical_entry.items() if key not in {"path", "sha256", "platform", "build", "runtime"}})
+        sumctl.atomic_json(manifest_path, manifest)
+
+        verified = sumctl.verify_release(release, release.name)
+        self.assertEqual(set(verified["dependencies"]["native"]), {"sumctl-go"})
 
     def test_release_tree_never_owns_state_and_runs_only_for_its_installation(self):
         root, store = self.installation()

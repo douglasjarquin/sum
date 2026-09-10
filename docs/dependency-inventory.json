@@ -135,18 +135,6 @@
       "contracts": {"cli": [], "mcp": ["MCP 2025-11-25 compatibility"]}
     },
     {
-      "id": "sumctl-go",
-      "source": "go/cmd/sumctl-go",
-      "version": "sum 0.1.0",
-      "checksum": "release.json#dependencies.native.sumctl-go.sha256",
-      "license": "MIT",
-      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
-      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
-      "role": "runtime",
-      "owner": "sum",
-      "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []}
-    },
-    {
       "id": "herdr-mesh-go",
       "source": "go/cmd/herdr-mesh",
       "version": "0.1.0",

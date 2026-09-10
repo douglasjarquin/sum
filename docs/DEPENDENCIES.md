@@ -17,15 +17,17 @@ The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, gener
 1. Creates local runtime symlinks under `.local/bin`, once. An existing link is never retargeted, because a running process may depend on it; setup reports a differing pin instead.
 2. Clones Herdr Mesh at **54adef519aa6af4dcd0bbd72586d414abab90046** into a private staging directory, runs `npm ci --omit=dev --ignore-scripts` against the upstream committed lockfile there, applies the documented runtime overlay below, and renames the finished tree to `.deps/herdr-mesh`. An existing `.deps/herdr-mesh` is never rewritten, reinstalled, or re-patched; drift between its overlay and the current `patches/` is only reported.
 3. Copies the release-matched Herdr skill from `herdr --skill`.
-4. Builds the cgo-free `go/cmd/sumctl-go` companion as `.local/bin/sumctl-go`; it is not selected by `bin/sumctl` and does not replace the Python helper.
+4. Builds the cgo-free `go/cmd/herdr-mesh` companion as `.local/bin/herdr-mesh-go`; its opt-in launcher is `bin/herdr-mesh-go`, and the existing Node Mesh entrypoint remains available.
 5. Generates repository-local MCP settings and tests MCP initialization/discovery.
 
 Re-running setup is therefore safe while a coordinator, workers, or an MCP server are using the checkout; it changes nothing they hold open.
 Newer code or dependencies go into a staged release instead (below).
 
 The native companion is also built in a release staging directory with `CGO_ENABLED=0`.
-The staged binary's source, build requirements, runtime requirements, and SHA-256 are recorded in `release.json` under `dependencies.native.sumctl-go`.
+The staged binary's source, build requirements, runtime requirements, and SHA-256 are recorded in `release.json` under `dependencies.native.herdr-mesh-go`.
 Running it requires no Go toolchain, module download, Node, Python, or Cobra generator.
+The unused Go helper experiment is [not adopted](go-helper-prototype.md); `bin/sumctl` remains the Python entrypoint.
+Native artifact requirements come from each release's own dependency inventory, so a missing or corrupt declared artifact is refused without making a retired experiment mandatory for new bundles.
 
 The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
 
