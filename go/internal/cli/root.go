@@ -14,6 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -195,6 +196,32 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:                "init",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" {
+				if role, task, ok := parseInitArgs(args); ok {
+					st, err := store.Open(opts.home)
+					if err == nil && !st.Designated() {
+						root := runtimeRootFromReference(opts.reference)
+						ctx, ctxErr := store.Context(root)
+						if ctxErr != nil {
+							return ctxErr
+						}
+						view, initErr := roleinit.Init(root, st, ctx, role, task)
+						if initErr != nil {
+							return initErr
+						}
+						return emitOrdjson(cmd.OutOrStdout(), view)
+					}
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"init"}, args...))
+		},
+	})
+
 	for _, name := range compatibilityCommands {
 		command := &cobra.Command{
 			Use:                name,
@@ -210,7 +237,50 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"doctor", "init", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
+	"doctor", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
+}
+
+func parseInitArgs(tokens []string) (role, task string, ok bool) {
+	roles := map[string]bool{"coordinator": true, "worker": true, "developer": true}
+	reclaimSeen := false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--role":
+			if role != "" || i+1 >= len(tokens) {
+				return "", "", false
+			}
+			i++
+			role = tokens[i]
+		case strings.HasPrefix(token, "--role="):
+			if role != "" {
+				return "", "", false
+			}
+			role = strings.TrimPrefix(token, "--role=")
+		case token == "--task":
+			if task != "" || i+1 >= len(tokens) {
+				return "", "", false
+			}
+			i++
+			task = tokens[i]
+		case strings.HasPrefix(token, "--task="):
+			if task != "" {
+				return "", "", false
+			}
+			task = strings.TrimPrefix(token, "--task=")
+		case token == "--reclaim":
+			if reclaimSeen {
+				return "", "", false
+			}
+			reclaimSeen = true
+		default:
+			return "", "", false
+		}
+	}
+	if role != "" && !roles[role] {
+		return "", "", false
+	}
+	return role, task, true
 }
 
 func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
