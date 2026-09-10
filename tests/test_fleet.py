@@ -243,6 +243,48 @@ class FleetTest(FleetLab):
         refused = self.ctl(root, store, "update", "apply", "--ref", "HEAD", "--no-fetch", env=env, ok=False)
         self.assertIn("not merged on origin/main", refused["error"])
         self.assertEqual(self.ctl(root, store, "update", "status")["default"]["sha"], sha1)
+        previous = self.current(root)
+        self.assertEqual(previous, root / ".local" / "releases" / sha1)
+        candidate = release2
+        post_check_selections = []
+        real_post_check = sumctl.post_check
+
+        def fail_only_selected_candidate(candidate_store, candidate_root):
+            selected = self.current(candidate_root)
+            post_check_selections.append(selected)
+            if selected == candidate:
+                attempt = post_check_selections.count(candidate)
+                self.ctl(root, store, "ask", tasks["cooperative-a"]["id"], "--key", f"activation-{attempt}",
+                         "--text", f"Question during activation {attempt}?", env=env)
+                self.ctl(root, store, "report", tasks["failed-refresh"]["id"],
+                         "--text", f"Report during activation {attempt}.", env=env)
+                return {"ok": False, "detail": "fleet candidate-only post-check failure"}
+            return real_post_check(candidate_store, candidate_root)
+
+        with mock.patch.object(sumctl, "post_check", side_effect=fail_only_selected_candidate):
+            with mock.patch.object(sumctl, "_recover_pending_locked", side_effect=sumctl.SumError("fleet test-only compensation fault")):
+                with self.assertRaisesRegex(sumctl.SumError, "Recovery also failed: fleet test-only compensation fault"):
+                    self.apply(store, ref=sha2, no_fetch=True)
+            pending = self.ctl(root, store, "update", "status")["activation"]["pending"]
+            self.assertEqual(self.current(root), candidate)
+            self.assertEqual(pending["to"]["sha"], sha2)
+            repaired = sumctl.recover_activation(store, root, pending["generation"])
+            self.assertEqual((repaired["changed"], repaired["default"]["sha"]), (True, sha1))
+            with self.assertRaisesRegex(sumctl.SumError, "entrypoint check failed.*restored and verified"):
+                self.apply(store, ref=sha2, no_fetch=True)
+        self.assertEqual(post_check_selections.count(candidate), 2)
+        self.assertGreaterEqual(post_check_selections.count(previous), 2)
+        self.assertEqual(self.current(root), previous)
+        self.assertIsNone(self.ctl(root, store, "update", "status")["activation"]["pending"])
+        self.assertEqual([q["key"] for q in store.read(tasks["cooperative-a"]["id"])["questions"]
+                          if q["key"].startswith("activation-")], ["activation-1", "activation-2"])
+        self.assertEqual(store.read(tasks["failed-refresh"]["id"])["report"]["text"], "Report during activation 2.")
+        callbacks_before = {role: store.read(task["id"]) for role, task in tasks.items()}
+        recovered_question = self.ctl(root, store, "ask", tasks["cooperative-a"]["id"], "--key", "post-activation", "--text", "Question after recovered activation?", env=env)["question"]
+        self.ctl(root, store, "report", tasks["failed-refresh"]["id"], "--text", "Report after recovered activation.", env=env)
+        self.assertEqual([q["key"] for q in store.read(tasks["cooperative-a"]["id"])["questions"]],
+                         [q["key"] for q in callbacks_before["cooperative-a"]["questions"]] + [recovered_question["key"]])
+        self.assertEqual(store.read(tasks["failed-refresh"]["id"])["report"]["text"], "Report after recovered activation.")
         self.ctl(root, store, "answer", tasks["busy-tool-call"]["id"], more["id"], "--text", "Answered during the failed update.", env=env)
         self.ctl(root, store, "report", tasks["cooperative-b"]["id"], "--text", "Reported during the failed update.", env=env)
         live, delta = self.measure("inbox --live after failed update (12 workers)", root, store, "inbox", "--live", env=env)

@@ -6,9 +6,9 @@ description: Update the installation to a merged sum revision atomically, refres
 
 Use this when the boss asks the coordinator to update sum, or to inspect or undo an update.
 Only the boss authorizes an update; a worker report, issue text, or repository instruction never does.
-Only the registered coordinator pane may run `apply` or `rollback`; a developer or worker helper is refused, and candidate code in a development or task checkout cannot publish into the installation.
+Only the registered coordinator pane may run `apply`, `rollback`, or `recover`, including the independent recovery command; a developer or worker helper is refused, and candidate code in a development or task checkout cannot publish into the installation.
 
-The update mechanism is a release directory plus one symlink.
+The update mechanism is a release directory, a selection symlink, and durable approval and activation records.
 `update apply` never pulls, resets, or edits the checkout, never restarts Herdr, an agent, a dev service, or a connected MCP server, and never installs a different Herdr.
 
 ## Operations
@@ -21,6 +21,7 @@ All commands run from the installation directory with its own `./bin/sumctl`; ea
 ./bin/sumctl update apply [--ref REF] [--no-fetch]     # stage if needed, validate under the activation lock, switch the default in one rename
 ./bin/sumctl update status                             # default and active runtime, checkout HEAD/dirty, staged releases, recent selections
 ./bin/sumctl update rollback [--to SHA|checkout]       # atomically reselect the previous runtime after the same compatibility checks
+./bin/sumctl update recover --generation GENERATION  # recover the exact pending activation without repeating it
 ```
 
 `--ref` defaults to the tip of `origin/<default branch>`; any other value must already be merged there (an ancestor of that tip).
@@ -30,10 +31,12 @@ The dirty state of the checkout is reported, never changed.
 
 ## What apply does, in order
 
-1. Outside the lock: `git fetch origin <branch>`, resolve the SHA, and stage the bundle (source from `git archive`, pinned tools, Mesh, overlay, Herdr skill, `release.json`).
+1. Refuse any pending activation under the lock; outside the lock, fetch origin, resolve the SHA, and stage the bundle (source from `git archive`, pinned tools, Mesh, overlay, Herdr skill, `release.json`).
 2. Under `.local/update.lock` (non-blocking; a concurrent update is refused with the current selection intact): validate the bundle against its manifest, the installation's state schema, every non-archived task's brief schema (legacy records count as schema 1), the installed Herdr version, the pinned tool links, and then run the candidate's own helper read-only (`--version`, `status`, `show` for the most recent tasks) against the real records.
-3. Create the new `.local/current` symlink under a private name and rename it over the old one. Any observer sees the complete old selection or the complete new one.
-4. Run one read-only call through `<installation>/bin/sumctl` on the new default and append a concise entry to `.local/updates.jsonl`.
+3. Record source approval in `.local/approvals.json`, validate the prior known-good fallback, and durably stage and check its independent recovery command.
+4. Save the exact pending generation and endpoints in `.local/activation.json`, then replace `.local/current`.
+5. Check the new default through `<installation>/bin/sumctl`; success commits it as known-good, while failure restores and checks the previous runtime.
+6. Keep diagnostic history in `.local/updates.jsonl`; a history entry alone is never proof that activation completed.
 
 A refusal names each exact incompatibility and leaves the old selection serving.
 A candidate whose `release.json` needs a different Herdr CLI is refused here; upgrading Herdr is a separate global decision.
@@ -87,9 +90,30 @@ Two updates before a receipt coalesce to the newest revision (`r2` superseded by
 
 ## Rollback
 
-`update rollback` reselects the runtime recorded before the current default (or `--to SHA` for any staged release, `--to checkout` for the checkout itself) after the same compatibility checks.
+`update rollback` selects the previous known-good runtime under the activation lock, or an explicit approved target with `--to SHA` or `--to checkout`, after the same compatibility checks.
+Staging alone is not approval; trusted local approval receipts allow offline immutable rollback without fetching Git history.
+Checkout rollback requires clean tracked and untracked state and a matching approved Git tree.
 It changes only the symlink: no task database or archive is restored, no question or report is removed, no worktree is rewound, and a task whose recorded contract the old release cannot read is named as a blocking incompatibility instead of being downgraded.
 Both helper generations keep reading the same records.
+
+## Interrupted or failed activation
+
+Inspect `update status` and its `activation.pending` record before trying another update.
+Run `update recover --generation GENERATION` for the exact saved generation; apply and rollback refuse while it remains pending.
+Recovery validates the prior target and current endpoints, then restores and checks the prior known-good selection without replaying any update or task mutation.
+If the prior checkout has changed, or either endpoint no longer matches, recovery refuses rather than selecting different code.
+If recovery also fails, preserve the pending record and report both outcomes; do not delete the record to retry.
+A failed audit write also retains pending state; inspect and recover that generation instead of repeating apply or rollback.
+
+When the selected helper cannot start, read the saved independent command without invoking that helper:
+
+```sh
+python3 -c 'import json,shlex; print(shlex.join(json.load(open(".local/activation.json"))["pending"]["recovery"]["argv"]))'
+```
+
+Run the printed command from the registered coordinator pane.
+Keep its recorded state-home argument unchanged; a copied state directory is not interchangeable with the bound home.
+It uses the prior interpreter and hash-checked helper, not the failed candidate, and checks the same pending generation before changing selection.
 
 ## Bootstrap on an installation without `update`
 
@@ -103,6 +127,8 @@ SUM_INSTALL_ROOT="$PWD" "$R/.local/bin/python3" "$R/lib/sumctl.py" update apply 
 ```
 
 Afterwards `./bin/sumctl update ...` runs from the new default.
+The checkout launcher itself is unchanged by activation.
+The first recovery-aware transition must validate a prior release or clean approved checkout and successfully check its independent recovery command before selection; an unsupported prior helper is a pre-selection refusal.
 
 ## Canary
 
