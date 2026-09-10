@@ -25,7 +25,7 @@ class BenchmarkError(Exception):
         return self.detail
 
 
-def clean_environment(base: Path) -> dict[str, str]:
+def clean_environment(base: Path, source_root: Path = ROOT) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if not key.startswith(("SUM_", "HERDR_"))}
     env.update({
         "HOME": str(base / "home"),
@@ -34,9 +34,9 @@ def clean_environment(base: Path) -> dict[str, str]:
         "HERDR_PANE_ID": "w-parent:p1",
         "HERDR_SESSION": "sum-benchmark",
         "SUM_SESSION": "sum-benchmark",
-        "SUM_HERDR_BIN": str(FAKE_HERDR),
+        "SUM_HERDR_BIN": str(source_root / "tests" / "fixtures" / "herdr.py"),
         "FAKE_HERDR_ROOT": str(base / "fake"),
-        "FAKE_PARENT_CWD": str(ROOT),
+        "FAKE_PARENT_CWD": str(source_root),
         "FAKE_SESSION": "sum-benchmark",
     })
     Path(env["HOME"]).mkdir(parents=True, exist_ok=True)
@@ -106,8 +106,8 @@ def git_repo(path: Path) -> None:
     subprocess.run(["git", "-C", str(path), "commit", "-q", "-m", "fixture"], check=True)
 
 
-def fixture(base: Path):
-    env = clean_environment(base)
+def fixture(base: Path, source_root: Path = ROOT):
+    env = clean_environment(base, source_root)
     repo = base / "repo"
     git_repo(repo)
     brief = base / "brief.md"
@@ -115,7 +115,7 @@ def fixture(base: Path):
     home = base / "state"
     home.mkdir(mode=0o700)
     (home / "state.json").write_text('{"schema":1,"sum_version":"0.1.0","created_at":"2026-09-07T00:00:00+00:00"}\n', encoding="utf-8")
-    prefix = [SUMCTL, "--home", home]
+    prefix = [source_root / "bin" / "sumctl", "--home", home]
     run_plain([*prefix, "init"], env)
     run_plain([*prefix, "settings", "set", "--global", "64", "--per-repository", "64"], env)
     task = run_plain([*prefix, "dispatch", "--repo", repo, "--brief", brief, "--harness", "codex", "--approved"], env)

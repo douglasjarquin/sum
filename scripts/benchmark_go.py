@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import statistics
 import subprocess
 import tempfile
+import tarfile
 import time
 import re
 
@@ -13,12 +15,25 @@ from benchmark_fixture import fixture
 
 
 ROOT = Path(__file__).resolve().parents[1]
+REFERENCE_REVISION = "b03b8020621e0d417906402a5c7ecc5d63192541"
 BASELINE = {
     "startup.version.cold": 136.568,
     "startup.help.warm-fs": 138.560,
     "read.status.empty": 145.848,
     "failure.show-missing": 146.063,
 }
+
+
+def reference_snapshot(destination: Path) -> Path:
+    destination.mkdir()
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    with tempfile.TemporaryFile() as archive:
+        subprocess.run(["git", "--no-replace-objects", "-C", str(ROOT), "archive", "--format=tar", REFERENCE_REVISION],
+                       env=env, stdout=archive, check=True)
+        archive.seek(0)
+        with tarfile.open(fileobj=archive) as source:
+            source.extractall(destination, filter="data")
+    return destination
 
 
 def allocations() -> dict[str, object]:
@@ -58,7 +73,7 @@ def gate(scenarios: list[dict[str, object]], allocation: dict[str, object]) -> d
         "pass": any(row["absolute_improvement_ms"] >= 50 and row["relative_improvement_percent"] >= 35 for row in comparisons.values()),
     }
     frequency = {"required_ms": 500, "observed_ms": 0, "pass": False, "reason": "No stateful command is native; status remains a compatibility subprocess."}
-    behavior = {"required_regressions": 0, "observed_regressions": 0, "pass": True, "basis": "all compiled scenarios returned their declared exit codes"}
+    behavior = {"required_regressions": 0, "observed_regressions": None, "pass": False, "status": "not-evaluated", "basis": "Expected exit codes are smoke checks, not differential output or effect parity."}
     memory = {"required_regression_percent": 10, "pass": False, "status": "not-comparable", "reason": "The compatibility child is outside the compiled parent's /usr/bin/time memory sample."}
     return {
         "outcome": "defer",
@@ -70,7 +85,7 @@ def gate(scenarios: list[dict[str, object]], allocation: dict[str, object]) -> d
         "memory": memory,
         "allocations": allocation,
         "binary_and_entrypoint": {"version": version["id"], "help": help_row["id"]},
-        "reasons": ["The native startup/help path crosses the latency gate.", "No stateful command is native, so the 500 ms frequency-weighted gate is not established.", "Compatibility memory is not comparable to the Python child process."],
+        "reasons": ["The native startup/help path crosses the latency gate." if interactive["pass"] else "The native startup/help path does not cross the latency gate.", "No stateful command is native, so the 500 ms frequency-weighted gate is not established.", "Behavior parity has not been evaluated.", "Compatibility memory is not comparable to the Python child process."],
     }
 
 
@@ -117,9 +132,10 @@ def main() -> int:
         raise SystemExit(f"binary does not exist: {binary}")
     with tempfile.TemporaryDirectory(prefix="sum-go-benchmark-") as temporary:
         base = Path(temporary)
-        case = fixture(base)
+        reference = reference_snapshot(base / "reference")
+        case = fixture(base, source_root=reference)
         env = dict(case["env"])
-        env["SUM_PYTHON_HELPER"] = str(ROOT / "bin" / "sumctl")
+        env["SUM_PYTHON_HELPER"] = str(reference / "bin" / "sumctl")
         commands = [
             ("startup.version.cold", [str(binary), "--version"], dict(env)),
             ("startup.help.cobra", [str(binary), "--help"], {**env, "SUM_PYTHON_HELPER": str(base / "missing-reference")}),
@@ -139,7 +155,8 @@ def main() -> int:
             "schema": 1,
             "binary": str(binary),
             "binary_bytes": binary.stat().st_size,
-            "reference_revision": "b03b8020621e0d417906402a5c7ecc5d63192541",
+            "reference_revision": REFERENCE_REVISION,
+            "reference_helper": str(reference / "bin" / "sumctl"),
             "samples": args.samples,
             "scenarios": results,
             "scope": "compiled Cobra entrypoint; status and missing-show use the explicit Python compatibility boundary",
