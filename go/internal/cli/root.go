@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/doctor"
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -197,6 +198,27 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:                "doctor",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" && len(args) == 0 {
+				if st, err := store.Open(opts.home); err == nil {
+					view := doctor.Doctor(runtimeRootFromReference(opts.reference), st)
+					if emitErr := emitOrdjson(cmd.OutOrStdout(), view); emitErr != nil {
+						return emitErr
+					}
+					if okValue, _ := view.Get("ok"); okValue != true {
+						return &ExitError{Code: 1}
+					}
+					return nil
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"doctor"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:                "init",
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
@@ -237,7 +259,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"doctor", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
+	"status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, ok bool) {
