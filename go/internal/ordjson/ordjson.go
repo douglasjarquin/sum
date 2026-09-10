@@ -52,6 +52,12 @@ func (o *Object) Len() int {
 	return len(o.keys)
 }
 
+func QuoteString(s string) string {
+	var buf bytes.Buffer
+	encodeString(&buf, s)
+	return buf.String()
+}
+
 func Decode(data []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()

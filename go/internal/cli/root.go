@@ -7,8 +7,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -133,6 +136,38 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:                "graph",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && len(args) >= 1 && args[0] == "config" {
+				if harness, raw, ok := parseGraphConfigArgs(args[1:]); ok && graph.IsValidHarness(harness) {
+					if runtimeRoot := runtimeRootFromReference(opts.reference); runtimeRoot != "" {
+						if _, err := store.Open(opts.home); err != nil {
+							return err
+						}
+						view, err := graph.Config(runtimeRoot, harness)
+						if err != nil {
+							return err
+						}
+						if raw {
+							snippetValue, _ := view.Get("snippet")
+							snippet, _ := snippetValue.(string)
+							if !strings.HasSuffix(snippet, "\n") {
+								snippet += "\n"
+							}
+							_, writeErr := io.WriteString(cmd.OutOrStdout(), snippet)
+							return writeErr
+						}
+						return emitOrdjson(cmd.OutOrStdout(), view)
+					}
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"graph"}, args...))
+		},
+	})
+
 	for _, name := range compatibilityCommands {
 		command := &cobra.Command{
 			Use:                name,
@@ -148,7 +183,44 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"doctor", "init", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "metadata", "attention", "bind", "backup", "project", "herdr", "graph", "dev", "brief", "refresh", "release", "update",
+	"doctor", "init", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "metadata", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
+}
+
+func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--harness":
+			if harness != "" || i+1 >= len(tokens) {
+				return "", false, false
+			}
+			i++
+			harness = tokens[i]
+		case strings.HasPrefix(token, "--harness="):
+			if harness != "" {
+				return "", false, false
+			}
+			harness = strings.TrimPrefix(token, "--harness=")
+		case token == "--raw":
+			if raw {
+				return "", false, false
+			}
+			raw = true
+		default:
+			return "", false, false
+		}
+	}
+	if harness == "" {
+		return "", false, false
+	}
+	return harness, raw, true
+}
+
+func runtimeRootFromReference(reference string) string {
+	if reference == "" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(reference))
 }
 
 func (o *rootOptions) compat(ctx context.Context, args []string) error {
