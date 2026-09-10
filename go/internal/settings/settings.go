@@ -523,3 +523,111 @@ func CapacityView(s *store.Store) (*ordjson.Object, error) {
 	result.Set("note", "A slot is held by every non-archived task and released only by `archive --acknowledge`; idle, reported, or unobservable workers keep theirs.")
 	return result, nil
 }
+
+func adapterArgv(harness, field string, value string) []string {
+	prefix, _ := adapterPrefix(harness, field)
+	if len(prefix) == 0 {
+		return nil
+	}
+	last := prefix[len(prefix)-1]
+	if strings.HasSuffix(last, "=") {
+		argv := append([]string{}, prefix[:len(prefix)-1]...)
+		return append(argv, last+value)
+	}
+	return append(append([]string{}, prefix...), value)
+}
+
+func presetLaunch(spec *ordjson.Object) *ordjson.Object {
+	harnessValue, _ := spec.Get("harness")
+	harness, _ := harnessValue.(string)
+	var argv []string
+	for _, field := range []string{"model", "reasoning"} {
+		if value, has := spec.Get(field); has {
+			if s, ok := value.(string); ok {
+				argv = append(argv, adapterArgv(harness, field, s)...)
+			}
+		}
+	}
+	if rawArgs, has := spec.Get("args"); has {
+		if list, ok := rawArgs.([]any); ok {
+			for _, a := range list {
+				if s, ok := a.(string); ok {
+					argv = append(argv, s)
+				}
+			}
+		}
+	}
+	result := ordjson.NewObject()
+	result.Set("harness", harness)
+	model, hasModel := spec.Get("model")
+	if !hasModel {
+		model = nil
+	}
+	result.Set("model", model)
+	reasoning, hasReasoning := spec.Get("reasoning")
+	if !hasReasoning {
+		reasoning = nil
+	}
+	result.Set("reasoning", reasoning)
+	argvAny := make([]any, len(argv))
+	for i, a := range argv {
+		argvAny[i] = a
+	}
+	result.Set("argv", argvAny)
+	return result
+}
+
+func presetReferences(worker, reviewer *ordjson.Object, name string) []string {
+	var refs []string
+	if worker != nil {
+		if presetValue, has := worker.Get("preset"); has && presetValue == name {
+			refs = append(refs, "worker default")
+		}
+	}
+	if reviewer != nil {
+		if presetValue, has := reviewer.Get("preset"); has && presetValue == name {
+			refs = append(refs, "reviewer default")
+		}
+	}
+	return refs
+}
+
+func PresetList(s *store.Store) (*ordjson.Object, error) {
+	loaded, err := LoadSettings(s)
+	if err != nil {
+		return nil, err
+	}
+	result := ordjson.NewObject()
+	result.Set("presets", presetSummary(loaded.Presets))
+	result.Set("worker", orNil(loaded.Worker))
+	result.Set("reviewer", orNil(loaded.Reviewer))
+	result.Set("source", loaded.Source)
+	result.Set("path", loaded.Path)
+	result.Set("note", "Presets are dispatch shortcuts expanded at prepare; each task keeps the specification it was prepared with. Nothing here is a running agent, a role, or a default until you say so.")
+	return result, nil
+}
+
+func PresetShow(s *store.Store, name string) (*ordjson.Object, error) {
+	loaded, err := LoadSettings(s)
+	if err != nil {
+		return nil, err
+	}
+	if err := validatePresetReference("preset", name, loaded.Presets); err != nil {
+		return nil, err
+	}
+	spec := loaded.Presets[name]
+	revision, _ := spec.Get("revision")
+	usedBy := presetReferences(loaded.Worker, loaded.Reviewer, name)
+	usedByAny := make([]any, len(usedBy))
+	for i, u := range usedBy {
+		usedByAny[i] = u
+	}
+	result := ordjson.NewObject()
+	result.Set("name", name)
+	result.Set("revision", revision)
+	result.Set("preset", spec)
+	result.Set("launch", presetLaunch(spec))
+	result.Set("used_by", usedByAny)
+	result.Set("note", "`launch.argv` is exactly what `dispatch --preset` appends after the harness executable; a model here is CLI-requested, never runtime-verified.")
+	return result, nil
+}

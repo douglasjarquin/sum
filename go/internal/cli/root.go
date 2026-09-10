@@ -104,6 +104,35 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:                "preset",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				switch {
+				case len(args) == 1 && args[0] == "list":
+					view, err := settings.PresetList(st)
+					if err != nil {
+						return err
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				case len(args) == 2 && args[0] == "show":
+					view, err := settings.PresetShow(st, args[1])
+					if err != nil {
+						return err
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"preset"}, args...))
+		},
+	})
+
 	for _, name := range compatibilityCommands {
 		command := &cobra.Command{
 			Use:                name,
@@ -119,7 +148,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"doctor", "init", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "metadata", "attention", "bind", "backup", "preset", "project", "herdr", "graph", "dev", "brief", "refresh", "release", "update",
+	"doctor", "init", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "metadata", "attention", "bind", "backup", "project", "herdr", "graph", "dev", "brief", "refresh", "release", "update",
 }
 
 func (o *rootOptions) compat(ctx context.Context, args []string) error {
