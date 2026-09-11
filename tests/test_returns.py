@@ -158,6 +158,37 @@ class ReturnsTest(unittest.TestCase):
         self.assertIn(rows["w-gone:p1"]["state"], ("not-delivered", "stalled"))
         self.assertEqual(len(self.prompts()), 0)
 
+    def test_init_and_bind_catch_up_omit_a_foreign_machine_question(self):
+        local = self.prepare()
+        foreign = self.prepare(repo=str(self.second_repo()))
+        with mock.patch.dict(os.environ, {"FAKE_PARENT_STATUS": "working"}):
+            local_q = self.question(local, key="local", text="Should the local greeting stay?")["question"]
+            remote_q = self.question(foreign, key="remote", text="Remote host needs a decision?")["question"]
+            record = self.store.read(foreign["id"])
+            record["machine"] = "another-host"
+            self.store.save(record)
+            foreign = record
+        rebound = self.cli("bind", local["id"], "--parent-only")
+        self.assertEqual(rebound.returncode, 0, rebound.stderr)
+        catch_up = json.loads(rebound.stdout)["returns"]["recipients"]
+        self.assertEqual([r["state"] for r in catch_up], ["submitted"])
+        self.assertEqual(catch_up[0]["via"], "inline")
+        self.assertIn(local_q["id"], catch_up[0]["message"])
+        self.assertNotIn(foreign["id"], catch_up[0]["message"])
+        self.assertNotIn(remote_q["id"], catch_up[0]["message"])
+        startup = self.init()
+        self.assertEqual(startup["role"], "coordinator")
+        for row in startup["returns"]["recipients"]:
+            blob = json.dumps(row)
+            self.assertNotIn(foreign["id"], blob)
+            self.assertNotIn(remote_q["id"], blob)
+        inbox = self.cli("inbox")
+        self.assertEqual(inbox.returncode, 0, inbox.stderr)
+        listing = json.loads(inbox.stdout)
+        self.assertIn("Should the local greeting stay?", inbox.stdout)
+        self.assertNotIn("quota", listing)
+        self.assertNotIn("remainder", listing)
+
     def test_receiver_replaced_between_lookup_and_send_gets_nothing_typed(self):
         task = self.prepare()
         real = sumctl.observe_recipient

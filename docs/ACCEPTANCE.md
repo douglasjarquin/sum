@@ -140,6 +140,23 @@ Confirm `sumctl quota --provider claude` still runs quota-axi and does not invok
 Do not switch accounts, stop workers, or rank providers from this output.
 Record the Remainder version, platform archive, and whether remaining, exhausted, or unavailable was observed.
 
+## 15. Remote machine returns
+
+This section is unrun until an operator records it.
+Offline fixtures do not certify a real SSH host.
+
+Sum does not enroll SSH hosts.
+Herdr `machine add` does.
+Follow [Connecting machines](https://herdr.dev/docs/connecting-machines/).
+Do not add `sumctl machine` or a Sum SSH daemon.
+
+On a host with Herdr 0.9.0 and SSH to a second machine, run `herdr machine add` for that host.
+Keep the coordinator on Local.
+Confirm a task whose recorded `machine` is the remote hostname is ignored by the local `hook event` pump.
+Confirm a local task can still `sumctl ask` and appear in records-only `sumctl inbox`.
+Confirm local rundown (`inbox --live`, `init`, and `bind --parent-only`) remains the degrade path when the remote Herdr session is disconnected.
+A real SSH canary is unrun if no second host is available.
+
 ## Record results
 
 For each real task, record all human-labeled questions, which were saved by workers, which were found during rundown, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.
