@@ -17,6 +17,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/statuscmd"
@@ -269,6 +270,39 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:                "release",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet {
+				switch {
+				case len(args) == 1 && args[0] == "list":
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := release.List(st)
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				case len(args) == 2 && args[0] == "show":
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := release.Show(st, args[1])
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"release"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:                "doctor",
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
@@ -330,7 +364,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"prepare", "dispatch", "start", "help", "context", "notes", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "refresh", "release", "update",
+	"prepare", "dispatch", "start", "help", "context", "notes", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "refresh", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, ok bool) {
