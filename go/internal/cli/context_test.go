@@ -270,6 +270,87 @@ func assertContextSectionsMatch(t *testing.T, reference, home, taskID string, se
 	}
 }
 
+func TestContextRole_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := filepath.Join(repoRoot, "bin", "sumctl")
+	if _, statErr := os.Stat(reference); statErr != nil {
+		t.Skipf("reference bin/sumctl not found: %v", statErr)
+	}
+	baseSha := "0123456789abcdef0123456789abcdef01234567"
+
+	t.Run("worker role, default sections, decisions filtered to answered", func(t *testing.T) {
+		home := t.TempDir()
+		taskJSON := fmt.Sprintf(`{"schema": 1, "id": "t-1b1b1b1b1b1b", "status": "running", "repository": "owner/repoN",
+"notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md", "report": null, "evidence": [],
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:02:00+00:00",
+"questions": [
+  {"id": "q1", "key": "approach", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "which way?", "answer": null},
+  {"id": "q2", "key": "scope", "status": "answered", "created_at": "2026-01-01T00:00:10+00:00", "answered_at": "2026-01-01T00:00:20+00:00", "text": "in scope?", "answer": "yes"}
+]}`, baseSha)
+		writeTaskFixture(t, home, "t-1b1b1b1b1b1b", taskJSON)
+		assertContextRoleMatches(t, reference, home, "t-1b1b1b1b1b1b", "worker", nil)
+	})
+
+	t.Run("coordinator role, default sections, decisions filtered to open", func(t *testing.T) {
+		home := t.TempDir()
+		taskJSON := fmt.Sprintf(`{"schema": 1, "id": "t-1c1c1c1c1c1c", "status": "running", "repository": "owner/repoO",
+"notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md", "report": null, "evidence": [],
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:02:00+00:00",
+"questions": [
+  {"id": "q1", "key": "approach", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "which way?", "answer": null},
+  {"id": "q2", "key": "scope", "status": "answered", "created_at": "2026-01-01T00:00:10+00:00", "answered_at": "2026-01-01T00:00:20+00:00", "text": "in scope?", "answer": "yes"}
+]}`, baseSha)
+		writeTaskFixture(t, home, "t-1c1c1c1c1c1c", taskJSON)
+		assertContextRoleMatches(t, reference, home, "t-1c1c1c1c1c1c", "coordinator", nil)
+	})
+
+	t.Run("reviewer role, explicit environment section, adds artifact references", func(t *testing.T) {
+		home := t.TempDir()
+		root := t.TempDir()
+		checkout := filepath.Join(root, "checkout")
+		head := initGitRepoWithCommit(t, checkout)
+		taskJSON := fmt.Sprintf(`{"schema": 1, "id": "t-1d1d1d1d1d1d", "status": "reported", "repository": "owner/repoP",
+"questions": [], "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"report": null, "worktree": %q, "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:10:00+00:00",
+"evidence": [
+  {"schema": 1, "id": "e-0000000001", "kind": "handoff", "source": "worker", "at": "2026-01-01T00:05:00+00:00",
+   "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null,
+   "handoff": {"outcome": "done", "next_action": null, "artifacts": ["README.md", "../outside.md", "/etc/passwd", "~/secret"]}}
+]}`, baseSha, checkout, head)
+		writeTaskFixture(t, home, "t-1d1d1d1d1d1d", taskJSON)
+		assertContextRoleMatches(t, reference, home, "t-1d1d1d1d1d1d", "reviewer", []string{"environment"})
+	})
+}
+
+func assertContextRoleMatches(t *testing.T, reference, home, taskID, role string, sections []string) {
+	t.Helper()
+	args := []string{"--home", home, "context", taskID, "--role", role}
+	for _, sec := range sections {
+		args = append(args, "--section", sec)
+	}
+	want, err := exec.Command(reference, args...).Output()
+	if err != nil {
+		t.Fatalf("python reference failed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	root := NewRoot(reference, &stdout, &stderr)
+	root.SetArgs(args)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
+	}
+	gotNorm := normalizeReadAt(stdout.String())
+	wantNorm := normalizeReadAt(string(want))
+	if gotNorm != wantNorm {
+		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", gotNorm, wantNorm)
+	}
+}
+
 func assertContextMatches(t *testing.T, reference, home, taskID string) {
 	t.Helper()
 	args := []string{"--home", home, "context", taskID}
@@ -301,10 +382,10 @@ func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
 
 	home := filepath.Join(dir, "state")
 
-	t.Run("--role is not yet supported", func(t *testing.T) {
+	t.Run("--since is not yet supported", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		root := NewRoot(reference, &stdout, &stderr)
-		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--role", "worker"})
+		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--since", "c0.0.0.0.0.0.0.deadbeefcafe.2026-01-01T00:00:00+00:00"})
 		if err := root.ExecuteContext(context.Background()); err != nil {
 			t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
 		}
@@ -312,7 +393,24 @@ func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--role\nworker\n"
+		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--since\nc0.0.0.0.0.0.0.deadbeefcafe.2026-01-01T00:00:00+00:00\n"
+		if string(got) != want {
+			t.Fatalf("reference argv = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("an unrecognized role is not yet supported", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		root := NewRoot(reference, &stdout, &stderr)
+		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--role", "not-a-real-role"})
+		if err := root.ExecuteContext(context.Background()); err != nil {
+			t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
+		}
+		got, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--role\nnot-a-real-role\n"
 		if string(got) != want {
 			t.Fatalf("reference argv = %q, want %q", got, want)
 		}
