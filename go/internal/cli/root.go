@@ -17,6 +17,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/settings"
+	"github.com/douglasjarquin/sum/go/internal/statuscmd"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -197,6 +198,33 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
+	statusHandler := func(name string, inboxMode bool) func(cmd *cobra.Command, args []string) error {
+		return func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && len(args) == 0 {
+				if st, err := store.Open(opts.home); err == nil {
+					view, viewErr := statuscmd.Status(st, inboxMode)
+					if viewErr == nil {
+						return emitOrdjson(cmd.OutOrStdout(), view)
+					}
+					return viewErr
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{name}, args...))
+		}
+	}
+	root.AddCommand(&cobra.Command{
+		Use:                "status",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               statusHandler("status", false),
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "inbox",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               statusHandler("inbox", true),
+	})
+
 	root.AddCommand(&cobra.Command{
 		Use:                "doctor",
 		DisableFlagParsing: true,
@@ -259,7 +287,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
+	"prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, ok bool) {
