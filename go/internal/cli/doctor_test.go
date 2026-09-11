@@ -6,8 +6,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
+
+var isoTimestamp = regexp.MustCompile(`"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00"`)
+
+func normalizeTimestamps(s string) string {
+	return isoTimestamp.ReplaceAllString(s, `"<at>"`)
+}
 
 // Safe against the live installation: doctor is documented "never binds" and
 // this port only reads (tool lookups, a herdr pane-get, file existence
@@ -54,7 +61,9 @@ func TestDoctor_matchesThePythonReferenceInThisDevCheckout(t *testing.T) {
 		}
 	}
 
-	if stdout.String() != string(want) {
+	gotNormalized := normalizeTimestamps(stdout.String())
+	wantNormalized := normalizeTimestamps(string(want))
+	if gotNormalized != wantNormalized {
 		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
 	}
 	if goExit != pythonExit {
