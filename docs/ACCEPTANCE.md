@@ -105,6 +105,28 @@ Run `./bin/sumctl verify TASK_ID --candidate SHA --execute` and confirm the evid
 Optionally print `./bin/sumctl graph config --harness <yours>`, merge it by hand into the task checkout's local MCP file, restart the harness in that pane, and confirm the graph tools answer for that checkout; confirm cleanup after the merge reports the `codegraph serve` process as an occupant until the session exits, and that the archived task's records keep `graph.json` while the removed checkout took its index with it.
 Record init and query wall times from `graph.json` attempts and your shell; upstream's published speedups are not evidence for this host.
 
+## 13. Grok Bot live canary
+
+This section is unrun until an operator records it.
+The files under `templates/grok-bot/` are the source-controlled static half.
+They are not this canary.
+
+Install from the real native template at https://x.ai/bot/__4FfrkUdvpdMk6-LKg5r.
+Do not publish a Bot from this repository.
+Fill placeholders for instance, Bot IDs, project, and task from the live install.
+Record the installed helper SHA in the operator report.
+The source-controlled pin `0.1.0` is not that SHA.
+
+Enroll one scratch project with `./bin/sumctl project enroll owner/repo` for a repository you control.
+Dispatch one approved task.
+Save a question with `sumctl ask` using a stable key.
+Record the human's answer with `sumctl answer` by question ID.
+Confirm the worker submits with `sumctl report`.
+Run worker verification, then a distinct coordinator `sumctl verify --execute` or `sumctl verify --run`.
+Reading worker logs is not the second run.
+The human merges if anything is published.
+The Bot never merges.
+
 ## Record results
 
 For each real task, record all human-labeled questions, which were saved by workers, which were found during rundown, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.
