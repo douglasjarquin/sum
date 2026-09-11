@@ -304,6 +304,42 @@ class HookTest(unittest.TestCase):
         saved = self.store.read(task["id"])["attention"]
         self.assertEqual([a["id"] for a in saved], [record["id"]])
 
+    def test_prose_only_question_is_listed_in_records_inbox_with_excerpt_and_source(self):
+        task = self.started_task()
+        self.enable()
+        question = "Should I keep the exclamation mark?"
+        self.pane_state(task["pane"], agent_status="idle", screen=f"{question} I will wait for your answer.")
+        row = self.event("pane.agent_status_changed", task["pane"], "idle")
+        worker = [o for o in row["outcomes"] if o.get("task") == task["id"]][0]
+        self.assertEqual(worker["kind"], "idle-without-report")
+        [record] = self.attention(task)
+        self.assertIn(question, record["excerpt"])
+        [prompt] = self.parent_prompts()
+        self.assertIn(f"attention {record['id']}", prompt)
+        self.assertNotIn("exclamation", prompt)
+        result = self.cli("inbox")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        inbox = json.loads(result.stdout)
+        listed = [r for r in inbox["tasks"] if r["id"] == task["id"]]
+        self.assertEqual(len(listed), 1, result.stdout)
+        [inbox_row] = listed
+        self.assertEqual(inbox_row["questions"], [])
+        self.assertEqual(len(inbox_row["attention_records"]), 1)
+        shown = inbox_row["attention_records"][0]
+        self.assertEqual(shown["id"], record["id"])
+        self.assertIn(question, shown["excerpt"])
+        self.assertIn("agent read", shown["source"]["pointer"])
+        self.assertNotIn("require a rundown", inbox["guarantee"])
+        self.pane_state(task["pane"], screen="Formatting done. 3 files changed.")
+        duplicate = self.event("pane.agent_status_changed", task["pane"], "idle")
+        self.assertTrue([o for o in duplicate["outcomes"] if o.get("task") == task["id"]][0]["duplicate"])
+        again = json.loads(self.cli("inbox").stdout)
+        [again_row] = [r for r in again["tasks"] if r["id"] == task["id"]]
+        self.assertEqual(len(again_row["attention_records"]), 1)
+        self.assertEqual(again_row["attention_records"][0]["excerpt"], shown["excerpt"])
+        self.assertIn(question, again_row["attention_records"][0]["excerpt"])
+        self.assertEqual(again_row["questions"], [])
+
     def test_open_question_is_preserved_when_newer_output_and_edges_arrive(self):
         task = self.started_task()
         self.enable()

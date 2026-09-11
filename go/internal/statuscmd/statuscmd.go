@@ -32,8 +32,10 @@ func Status(s *store.Store, inbox bool) (*ordjson.Object, error) {
 		reportAvailable, _ := row.Get("report_available")
 		cleanupValue, _ := row.Get("cleanup")
 		_, hasAttention := row.Get("attention")
+		attentionRecords, _ := row.Get("attention_records")
+		attentionList, _ := attentionRecords.([]any)
 
-		include := !inbox || len(questionList) > 0 || errorValue != nil || hasAttention || reportAvailable == true || cleanupValue != nil
+		include := !inbox || len(questionList) > 0 || errorValue != nil || hasAttention || reportAvailable == true || cleanupValue != nil || len(attentionList) > 0
 		if !include {
 			continue
 		}
@@ -79,7 +81,7 @@ func Status(s *store.Store, inbox bool) (*ordjson.Object, error) {
 	result.Set("tasks", rowsAny)
 	result.Set("live", false)
 	result.Set("capacity", capacityView)
-	result.Set("guarantee", "Saved records only; prose-only questions require a rundown. No background monitoring.")
+	result.Set("guarantee", "Saved records only. Open attention includes the recorded excerpt. No background monitoring.")
 	result.Set("metadata", metadata.Summary(s))
 	return result, nil
 }
@@ -154,7 +156,7 @@ func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 	var attentionRows []any
 	for _, a := range returns.OpenAttention(task) {
 		entry := ordjson.NewObject()
-		for _, key := range []string{"id", "kind", "at", "observed"} {
+		for _, key := range []string{"id", "kind", "at", "observed", "excerpt", "source"} {
 			v, _ := a.Get(key)
 			entry.Set(key, v)
 		}
