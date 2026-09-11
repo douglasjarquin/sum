@@ -10,6 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
+	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -476,6 +477,40 @@ func sectionBrief(task *ordjson.Object, versionsObj *ordjson.Object, maxChars in
 	return result
 }
 
+var (
+	executionTaskKeys     = []string{"repository", "worktree", "branch", "base_sha", "kind", "harness", "status", "created_at", "started_at"}
+	executionLaunchKeys   = []string{"harness", "model", "reasoning", "preset", "argv", "observed"}
+	executionEndpointKeys = []string{"machine", "session", "pane"}
+)
+
+// sectionExecution ports `section_execution`.
+func sectionExecution(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
+	result := pick(task, executionTaskKeys)
+	launch := asObject(getField(task, "launch"))
+	result.Set("launch", pick(launch, executionLaunchKeys))
+	result.Set("admission", getField(task, "admission"))
+	graphV, err := graphview.View(s, task)
+	if err != nil {
+		return nil, err
+	}
+	result.Set("graph", graphV)
+
+	endpoints := ordjson.NewObject()
+	endpoints.Set("worker", pick(task, executionEndpointKeys))
+	if parentValue := getField(task, "parent"); truthy(parentValue) {
+		endpoints.Set("parent", pick(asObject(parentValue), executionEndpointKeys))
+	} else {
+		endpoints.Set("parent", nil)
+	}
+	if reviewerValue := getField(task, "reviewer"); truthy(reviewerValue) {
+		endpoints.Set("reviewer", pick(asObject(reviewerValue), executionEndpointKeys))
+	} else {
+		endpoints.Set("reviewer", nil)
+	}
+	result.Set("endpoints", endpoints)
+	return result, nil
+}
+
 func sectionOutline(s *store.Store, task *ordjson.Object, taskID, sumctlPath string, versionsObj *ordjson.Object, versionsErrorText any, view *ordjson.Object, head string) (*ordjson.Object, error) {
 	outlineObj := ordjson.NewObject()
 	for _, k := range outlineTaskKeys {
@@ -651,6 +686,12 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string) (*ordjso
 			result.Set("evidence", sectionEvidence(view, DefaultAfter, DefaultLimit, DefaultMaxChars))
 		case "returns":
 			result.Set("returns", sectionReturns(s, task))
+		case "execution":
+			executionObj, err := sectionExecution(s, task)
+			if err != nil {
+				return nil, err
+			}
+			result.Set("execution", executionObj)
 		case "notes":
 			notesState, notesErr := notes.State(s, taskID, DefaultMaxChars)
 			if notesErr != nil {

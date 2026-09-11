@@ -549,9 +549,12 @@ func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
 	return harness, raw, true
 }
 
+// validContextSections lists only the sections contextview.View actually implements. A name from
+// CONTEXT_SECTIONS that isn't here yet (environment, update) MUST NOT be added until contextview.View grows a
+// matching case — otherwise the native path would silently omit that key instead of falling back to Python.
 var validContextSections = map[string]bool{
 	"outline": true, "brief": true, "decisions": true, "handoff": true, "evidence": true,
-	"execution": true, "environment": true, "update": true, "returns": true, "notes": true,
+	"execution": true, "returns": true, "notes": true,
 }
 
 // parseContextSectionArgs recognizes only repeated `--section NAME`/`--section=NAME` flags (no other flag), one

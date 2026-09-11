@@ -167,6 +167,71 @@ func TestContextSections_matchThePythonReferenceAcrossScenarios(t *testing.T) {
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextSectionsMatch(t, reference, home, "t-0b0b0b0b0b0b", "notes")
 	})
+
+	t.Run("execution section, no graph record, no launch/parent/reviewer", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-0c0c0c0c0c0c", fmt.Sprintf(`{"schema": 1, "id": "t-0c0c0c0c0c0c", "status": "running", "repository": "owner/repoI",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "branch": "task-branch", "harness": "claude",
+"machine": "m1", "session": "s1", "pane": "p1"}`, baseSha))
+		assertContextSectionsMatch(t, reference, home, "t-0c0c0c0c0c0c", "execution")
+	})
+
+	t.Run("execution section, a ready graph record, launch, parent, and reviewer", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-0d0d0d0d0d0d", fmt.Sprintf(`{"schema": 1, "id": "t-0d0d0d0d0d0d", "status": "running", "repository": "owner/repoJ",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "branch": "task-branch", "harness": "claude", "started_at": "2026-01-01T00:01:00+00:00",
+"machine": "m1", "session": "s1", "pane": "p1",
+"launch": {"harness": "claude", "model": "opus", "reasoning": "high", "preset": null, "argv": ["claude"], "observed": {"status": "running"}},
+"admission": {"decision": "admitted", "at": "2026-01-01T00:00:30+00:00"},
+"parent": {"machine": "m1", "session": "s1", "pane": "p0"},
+"reviewer": {"machine": "m1", "session": "s1", "pane": "p2"}}`, baseSha))
+		graphJSON := `{"schema": 1, "state": "ready", "index_path": "/tmp/checkout/.codegraph", "indexed_head": "abc123",
+"tool": {"version": "1.5.0"}, "index": {"fileCount": 42, "nodeCount": 1000, "edgeCount": 2000},
+"attempts": [{"action": "init", "ok": true, "seconds": 3.5}], "commands": {"explore": "codegraph explore", "sync": "codegraph sync"},
+"freshness": {"pendingChanges": false}, "updated_at": "2026-01-01T00:00:45+00:00"}`
+		if err := os.MkdirAll(filepath.Join(home, "tasks", "t-0d0d0d0d0d0d"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, "tasks", "t-0d0d0d0d0d0d", "graph.json"), []byte(graphJSON), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertContextSectionsMatch(t, reference, home, "t-0d0d0d0d0d0d", "execution")
+	})
+}
+
+// TestContext_environmentAndUpdateSectionsStillFallBack guards against the exact bug this session hit: a
+// CONTEXT_SECTIONS name accepted by parseContextSectionArgs before contextview.View grows a matching case,
+// silently omitting that section's key instead of falling back to the Python reference.
+func TestContext_environmentAndUpdateSectionsStillFallBack(t *testing.T) {
+	dir := t.TempDir()
+	argsFile := filepath.Join(dir, "args")
+	reference := filepath.Join(dir, "reference.sh")
+	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
+	home := filepath.Join(dir, "state")
+
+	for _, section := range []string{"environment", "update"} {
+		t.Run(section, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			root := NewRoot(reference, &stdout, &stderr)
+			root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--section", section})
+			if err := root.ExecuteContext(context.Background()); err != nil {
+				t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
+			}
+			got, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--section\n" + section + "\n"
+			if string(got) != want {
+				t.Fatalf("reference argv = %q, want %q (section %s did not fall back — check validContextSections)", got, want, section)
+			}
+		})
+	}
 }
 
 func assertContextSectionsMatch(t *testing.T, reference, home, taskID string, sections ...string) {
