@@ -662,6 +662,68 @@ class HookTest(unittest.TestCase):
         self.assertEqual((recipient["state"], recipient["via"]), ("submitted", "inline"))
         self.assertTrue(recipient["message"].startswith("sum returns for the coordinator: 15 pending across 12 task(s)."))  # Three new attention items coalesced with the twelve open questions.
 
+    def test_foreign_machine_task_is_ignored_by_local_hook_and_does_not_block_local_ask(self):
+        local = self.started_task()
+        foreign = self.started_task()
+        self.enable()
+        remote_text = "Remote host needs a decision?"
+        local_text = "Should the local greeting stay?"
+        with mock.patch.dict(os.environ, {"FAKE_PARENT_STATUS": "working"}):
+            remote_q = self.question(foreign, key="remote", text=remote_text)["question"]
+            record = self.store.read(foreign["id"])
+            record["machine"] = "another-host"
+            self.store.save(record)
+            foreign = record
+            after_foreign = len(self.calls())
+            asked = self.cli("ask", local["id"], "--key", "local", "--text", local_text)
+            self.assertEqual(asked.returncode, 0, asked.stderr)
+            asked_row = json.loads(asked.stdout)
+            local_q = asked_row["question"]
+            self.assertEqual(local_q["text"], local_text)
+            self.assertNotIn("quota", asked_row)
+            self.assertNotIn("remainder", asked_row)
+            inbox = self.cli("inbox")
+            self.assertEqual(inbox.returncode, 0, inbox.stderr)
+            listing = json.loads(inbox.stdout)
+            self.assertIn(local_text, inbox.stdout)
+            self.assertNotIn("quota", listing)
+            self.assertNotIn("remainder", listing)
+            self.assertFalse((self.root / "remainder/calls.jsonl").exists())
+            ignored = self.event("pane.agent_status_changed", foreign["pane"], "idle")
+            self.assertEqual(ignored["outcome"], "ignored")
+            first = self.event("pane.agent_status_changed", "w-parent:p1", "idle")
+            duplicate = self.event("pane.agent_status_changed", "w-parent:p1", "idle")
+            self.assertEqual(first["outcomes"][0]["recipients"][0][0], "not-delivered")
+            self.assertEqual(duplicate["outcomes"][0]["prompts"], 0)
+            self.assertEqual(list(self.open_returns(local)), [f"question:{local_q['id']}"])
+            self.assertEqual(len(self.parent_prompts()), 0)
+        for call in self.calls()[after_foreign:]:
+            if call[:2] == ["agent", "prompt"]:
+                self.assertNotEqual(call[2], foreign["pane"])
+                self.assertNotIn(foreign["id"], call[3])
+                self.assertNotIn(remote_q["id"], call[3])
+        idle = self.event("pane.agent_status_changed", "w-parent:p1", "idle")
+        self.assertEqual(idle["outcome"], "handled")
+        self.assertEqual(idle["outcomes"][0]["prompts"], 1)
+        [prompt] = self.parent_prompts()
+        self.assertIn(local["id"], prompt)
+        self.assertIn(local_q["id"], prompt)
+        self.assertNotIn(foreign["id"], prompt)
+        self.assertNotIn(remote_q["id"], prompt)
+        startup = self.init()
+        self.assertEqual(startup["role"], "coordinator")
+        for row in startup["returns"]["recipients"]:
+            blob = json.dumps(row)
+            self.assertNotIn(foreign["id"], blob)
+            self.assertNotIn(remote_q["id"], blob)
+        bound = self.cli("bind", local["id"], "--parent-only")
+        self.assertEqual(bound.returncode, 0, bound.stderr)
+        for row in json.loads(bound.stdout)["returns"]["recipients"]:
+            blob = json.dumps(row)
+            self.assertNotIn(foreign["id"], blob)
+            self.assertNotIn(remote_q["id"], blob)
+        self.assertEqual(list(self.open_returns(local)), [f"question:{local_q['id']}"])
+
 
 if __name__ == "__main__":
     unittest.main()

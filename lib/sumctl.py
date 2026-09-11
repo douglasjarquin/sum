@@ -2585,13 +2585,14 @@ def pump(store, ctx, *, tasks=None, recipient=None, snapshots=None, force=False,
     or model call. A pending item is sent once; a known failure is retried up to RETURN_ATTEMPTS times across passes; an uncertain
     or submitted item stays as it is until a new record or an explicit `notice`. A native status edge (`retry_stalled`) may try a
     stalled item again, because every earlier failure was a known non-delivery; an uncertain item is never re-sent by an edge.
+    Tasks recorded on another host are skipped. Local rundown still lists them.
     """
     buckets = {}
     scope = None
     if tasks and recipient:
         scope = {identity(return_route(store.read(t), recipient)) for t in tasks}  # A task write coalesces with everything else routed to that same recipient.
     for task in store.all():
-        if task["status"] == "archived" or (tasks and not scope and task["id"] not in tasks):
+        if task["status"] == "archived" or task["machine"] != machine() or (tasks and not scope and task["id"] not in tasks):
             continue
         for obligation in open_obligations(store, task):
             if recipient and obligation["recipient"] != recipient:
