@@ -275,6 +275,26 @@ func RefreshState(versionsObj *ordjson.Object) *ordjson.Object {
 	return row
 }
 
+func BriefList(s *store.Store, taskID string) (*ordjson.Object, error) {
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	view, err := View(s, task)
+	if err != nil {
+		return nil, err
+	}
+	briefPathValue, _ := task.Get("brief_path")
+	result := ordjson.NewObject()
+	result.Set("task", taskID)
+	result.Set("brief_path", briefPathValue)
+	for _, key := range view.Keys() {
+		v, _ := view.Get(key)
+		result.Set(key, v)
+	}
+	return result, nil
+}
+
 func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 	versionsObj, err := ReadVersions(s, task)
 	if err != nil {
