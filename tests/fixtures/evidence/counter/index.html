@@ -10,7 +10,7 @@
   let n = 0;
   document.getElementById("add").addEventListener("click", () => {
     n += 1;
-    document.getElementById("count").textContent = "Count: " + (n - 1); // BUG: off by one; the fix replaces (n - 1) with n
+    document.getElementById("count").textContent = "Count: " + n;
   });
 </script>
 </body>
