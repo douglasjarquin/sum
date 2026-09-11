@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -371,6 +372,144 @@ func assertContextMatches(t *testing.T, reference, home, taskID string) {
 	}
 }
 
+func extractCursor(t *testing.T, output []byte) string {
+	t.Helper()
+	var parsed struct {
+		Cursor string `json:"cursor"`
+	}
+	if err := json.Unmarshal(output, &parsed); err != nil {
+		t.Fatalf("failed to parse cursor from output: %v (output=%s)", err, output)
+	}
+	if parsed.Cursor == "" {
+		t.Fatalf("no cursor found in output: %s", output)
+	}
+	return parsed.Cursor
+}
+
+func TestContextSince_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := filepath.Join(repoRoot, "bin", "sumctl")
+	if _, statErr := os.Stat(reference); statErr != nil {
+		t.Skipf("reference bin/sumctl not found: %v", statErr)
+	}
+	baseSha := "0123456789abcdef0123456789abcdef01234567"
+
+	t.Run("unchanged cursor: early return with just a note, no sections", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-1e1e1e1e1e1e", fmt.Sprintf(`{"schema": 1, "id": "t-1e1e1e1e1e1e", "status": "running", "repository": "owner/repoQ",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		initial, err := exec.Command(reference, "--home", home, "context", "t-1e1e1e1e1e1e").Output()
+		if err != nil {
+			t.Fatalf("python reference failed: %v", err)
+		}
+		cursor := extractCursor(t, initial)
+		assertContextSinceMatches(t, reference, home, "t-1e1e1e1e1e1e", cursor, nil, "")
+	})
+
+	t.Run("changed since cursor: a new question, no section requested", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-1f1f1f1f1f1f", fmt.Sprintf(`{"schema": 1, "id": "t-1f1f1f1f1f1f", "status": "running", "repository": "owner/repoR",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		initial, err := exec.Command(reference, "--home", home, "context", "t-1f1f1f1f1f1f").Output()
+		if err != nil {
+			t.Fatalf("python reference failed: %v", err)
+		}
+		cursor := extractCursor(t, initial)
+		writeTaskFixture(t, home, "t-1f1f1f1f1f1f", fmt.Sprintf(`{"schema": 1, "id": "t-1f1f1f1f1f1f", "status": "running", "repository": "owner/repoR",
+"questions": [{"id": "q1", "key": "approach", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "which way?", "answer": null}],
+"evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:01:00+00:00"}`, baseSha))
+		assertContextSinceMatches(t, reference, home, "t-1f1f1f1f1f1f", cursor, nil, "")
+	})
+
+	t.Run("changed since cursor, with an explicit --section: changes and the section both render", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-2a2a2a2a2a2a", fmt.Sprintf(`{"schema": 1, "id": "t-2a2a2a2a2a2a", "status": "running", "repository": "owner/repoS",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		initial, err := exec.Command(reference, "--home", home, "context", "t-2a2a2a2a2a2a").Output()
+		if err != nil {
+			t.Fatalf("python reference failed: %v", err)
+		}
+		cursor := extractCursor(t, initial)
+		writeTaskFixture(t, home, "t-2a2a2a2a2a2a", fmt.Sprintf(`{"schema": 1, "id": "t-2a2a2a2a2a2a", "status": "running", "repository": "owner/repoS",
+"questions": [{"id": "q1", "key": "approach", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "which way?", "answer": null}],
+"evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:01:00+00:00"}`, baseSha))
+		assertContextSinceMatches(t, reference, home, "t-2a2a2a2a2a2a", cursor, []string{"decisions"}, "")
+	})
+
+	t.Run("malformed cursor is a command-level failure", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-2b2b2b2b2b2b", fmt.Sprintf(`{"schema": 1, "id": "t-2b2b2b2b2b2b", "status": "running", "repository": "owner/repoT",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		assertContextSinceFailureMatches(t, reference, home, "t-2b2b2b2b2b2b", "not-a-real-cursor")
+	})
+}
+
+func assertContextSinceMatches(t *testing.T, reference, home, taskID, cursor string, sections []string, role string) {
+	t.Helper()
+	args := []string{"--home", home, "context", taskID, "--since", cursor}
+	for _, sec := range sections {
+		args = append(args, "--section", sec)
+	}
+	if role != "" {
+		args = append(args, "--role", role)
+	}
+	want, err := exec.Command(reference, args...).Output()
+	if err != nil {
+		t.Fatalf("python reference failed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	root := NewRoot(reference, &stdout, &stderr)
+	root.SetArgs(args)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
+	}
+	gotNorm := normalizeReadAt(stdout.String())
+	wantNorm := normalizeReadAt(string(want))
+	if gotNorm != wantNorm {
+		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", gotNorm, wantNorm)
+	}
+}
+
+func assertContextSinceFailureMatches(t *testing.T, reference, home, taskID, cursor string) {
+	t.Helper()
+	args := []string{"--home", home, "context", taskID, "--since", cursor}
+	cmd := exec.Command(reference, args...)
+	var pyStderr bytes.Buffer
+	cmd.Stderr = &pyStderr
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("expected python reference to fail, got success with stderr=%s", pyStderr.String())
+	}
+	var pyPayload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(pyStderr.Bytes(), &pyPayload); err != nil {
+		t.Fatalf("python stderr is not the expected error JSON: %v (stderr=%s)", err, pyStderr.String())
+	}
+
+	var stdout, stderr bytes.Buffer
+	root := NewRoot(reference, &stdout, &stderr)
+	root.SetArgs(args)
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatalf("expected go command to fail, got success with stdout=%s", stdout.String())
+	}
+	if err.Error() != pyPayload.Error {
+		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), pyPayload.Error)
+	}
+}
+
 func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
@@ -382,10 +521,10 @@ func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
 
 	home := filepath.Join(dir, "state")
 
-	t.Run("--since is not yet supported", func(t *testing.T) {
+	t.Run("--max-chars is not yet supported", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		root := NewRoot(reference, &stdout, &stderr)
-		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--since", "c0.0.0.0.0.0.0.deadbeefcafe.2026-01-01T00:00:00+00:00"})
+		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--max-chars", "100"})
 		if err := root.ExecuteContext(context.Background()); err != nil {
 			t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
 		}
@@ -393,7 +532,7 @@ func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--since\nc0.0.0.0.0.0.0.deadbeefcafe.2026-01-01T00:00:00+00:00\n"
+		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--max-chars\n100\n"
 		if string(got) != want {
 			t.Fatalf("reference argv = %q, want %q", got, want)
 		}

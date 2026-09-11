@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
@@ -94,6 +95,15 @@ func nilIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+func asInt(v any) int {
+	n, ok := v.(json.Number)
+	if !ok {
+		return 0
+	}
+	i, _ := n.Int64()
+	return int(i)
 }
 
 func pick(o *ordjson.Object, keys []string) *ordjson.Object {
@@ -265,6 +275,145 @@ func cursorOf(s *store.Store, task *ordjson.Object, versionsObj *ordjson.Object)
 		parts[i] = fmt.Sprint(counters[k])
 	}
 	return "c" + strings.Join(parts, ".") + "." + digest + "." + updatedAt, nil
+}
+
+var cursorPattern = regexp.MustCompile(`^c(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.(\d+)\.([0-9a-f]{12})\.(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}|Z))\z`)
+
+// parseCursor ports `parse_cursor`. Returns the cursor as an *ordjson.Object shaped exactly like Python's dict:
+// CURSOR_FIELDS counters, then "state", then "at" — the same object is embedded verbatim as `changes.since`.
+func parseCursor(text string) (*ordjson.Object, error) {
+	m := cursorPattern.FindStringSubmatch(text)
+	if m == nil {
+		return nil, fmt.Errorf("--since takes the `cursor` value of an earlier context read; it is an opaque token, not a time.")
+	}
+	cursor := ordjson.NewObject()
+	for i, k := range cursorFields {
+		n, err := strconv.Atoi(m[i+1])
+		if err != nil {
+			return nil, fmt.Errorf("--since takes the `cursor` value of an earlier context read; it is an opaque token, not a time.")
+		}
+		cursor.Set(k, jsonInt(n))
+	}
+	cursor.Set("state", m[len(cursorFields)+1])
+	cursor.Set("at", m[len(cursorFields)+2])
+	return cursor, nil
+}
+
+func sliceUpTo(items []any, n int) []any {
+	if n < 0 {
+		n = 0
+	}
+	if n > len(items) {
+		n = len(items)
+	}
+	return items[:n]
+}
+
+func sliceFrom(items []any, n int) []any {
+	if n < 0 {
+		n = 0
+	}
+	if n > len(items) {
+		n = len(items)
+	}
+	return items[n:]
+}
+
+// changesSince ports `changes_since`: what the records gained since a cursor.
+func changesSince(s *store.Store, task *ordjson.Object, cursor *ordjson.Object, versionsObj *ordjson.Object) (*ordjson.Object, error) {
+	since := asString(getField(cursor, "at"))
+	counters, err := cursorCounters(s, task, versionsObj)
+	if err != nil {
+		return nil, err
+	}
+	questions := listField(task, "questions")
+	evidence := listField(task, "evidence")
+
+	statusMoved := counters["answered"] != asInt(getField(cursor, "answered")) || counters["applied"] != asInt(getField(cursor, "applied"))
+	changed := make([]any, 0)
+	if statusMoved {
+		for _, qv := range sliceUpTo(questions, asInt(getField(cursor, "questions"))) {
+			q := asObject(qv)
+			if asString(getField(q, "answered_at")) >= since || asString(getField(q, "applied_at")) >= since {
+				entry := ordjson.NewObject()
+				entry.Set("id", getField(q, "id"))
+				entry.Set("status", getField(q, "status"))
+				changed = append(changed, entry)
+			}
+		}
+	}
+
+	newEvidenceRecords := sliceFrom(evidence, asInt(getField(cursor, "evidence")))
+	newEvidence := make([]any, 0, len(newEvidenceRecords))
+	reportChanged, prChanged := false, false
+	for _, rv := range newEvidenceRecords {
+		r := asObject(rv)
+		entry := ordjson.NewObject()
+		entry.Set("id", getField(r, "id"))
+		entry.Set("kind", getField(r, "kind"))
+		entry.Set("source", getField(r, "source"))
+		newEvidence = append(newEvidence, entry)
+		switch asString(getField(r, "kind")) {
+		case "report":
+			reportChanged = true
+		case "publication":
+			prChanged = true
+		}
+	}
+
+	newQuestions := make([]any, 0)
+	for _, qv := range sliceFrom(questions, asInt(getField(cursor, "questions"))) {
+		newQuestions = append(newQuestions, getField(asObject(qv), "id"))
+	}
+
+	var refreshList []any
+	if versionsObj != nil {
+		refreshList = listField(versionsObj, "refresh")
+	}
+	refreshEvents := append([]any(nil), sliceFrom(refreshList, asInt(getField(cursor, "refresh")))...)
+	if refreshEvents == nil {
+		refreshEvents = []any{}
+	}
+
+	attentionIDs := make([]any, 0)
+	for _, av := range sliceFrom(listField(task, "attention"), asInt(getField(cursor, "attention"))) {
+		attentionIDs = append(attentionIDs, getField(asObject(av), "id"))
+	}
+
+	taskID := asString(getField(task, "id"))
+	stateDig, err := stateDigest(task, environment.Stamp(s, taskID))
+	if err != nil {
+		return nil, err
+	}
+	stateChanged := stateDig != asString(getField(cursor, "state"))
+
+	result := ordjson.NewObject()
+	result.Set("since", cursor)
+	nowObj := ordjson.NewObject()
+	for _, k := range cursorFields {
+		nowObj.Set(k, jsonInt(counters[k]))
+	}
+	result.Set("now", nowObj)
+	result.Set("new_questions", newQuestions)
+	result.Set("changed_questions", changed)
+	result.Set("new_evidence", newEvidence)
+	result.Set("report_changed", reportChanged)
+	result.Set("pr_changed", prChanged)
+	result.Set("refresh_events", refreshEvents)
+	result.Set("attention", attentionIDs)
+	result.Set("notes_entries_since", jsonInt(counters["notes"]-asInt(getField(cursor, "notes"))))
+	result.Set("status", getField(task, "status"))
+	result.Set("outstanding_decisions", outstanding(task))
+	result.Set("state_changed", stateChanged)
+
+	unchanged := !stateChanged
+	for _, k := range cursorFields {
+		if counters[k] != asInt(getField(cursor, k)) {
+			unchanged = false
+		}
+	}
+	result.Set("unchanged", unchanged)
+	return result, nil
 }
 
 // latestHandoff ports `latest_handoff`: the most recent handoff-kind evidence record, from the raw task record.
@@ -986,11 +1135,14 @@ func needsEvidenceView(sections []string) bool {
 }
 
 // View ports `context_view` for the shapes this checkpoint supports: no flags (resolves to the single "outline"
-// section, per `context_view`'s own default-section rule), one or more `--section NAME` values, and `--role
+// section, per `context_view`'s own default-section rule), one or more `--section NAME` values, `--role
 // worker|reviewer|coordinator` (defaults the section list per ROLE_SECTIONS when no `--section` is given, filters
 // `decisions`, adds the `contract`/`authority` envelope, and — for reviewer/coordinator — adds `environment`'s
-// `artifacts`). `--since` is not yet supported by this native path.
-func View(s *store.Store, taskID, sumctlPath string, sections []string, role string) (*ordjson.Object, error) {
+// `artifacts`), and `--since CURSOR` (cursor-based diffing; when nothing changed and neither --section nor --role
+// was also given, returns early with just the envelope, `changes`, and a `note` — no section is rendered, exactly
+// like Python).
+func View(s *store.Store, taskID, sumctlPath string, sections []string, role, since string) (*ordjson.Object, error) {
+	explicitSections := len(sections) > 0
 	var roles []string
 	if role != "" {
 		roles = []string{role}
@@ -998,7 +1150,7 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string, role str
 	if len(sections) == 0 {
 		if role != "" {
 			sections = append([]string(nil), roleSectionsMap[role]...)
-		} else {
+		} else if since == "" {
 			sections = []string{"outline"}
 		}
 	}
@@ -1021,7 +1173,7 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string, role str
 		head = asString(getField(view, "current_candidate"))
 	}
 
-	cursor, err := cursorOf(s, task, versionsObj)
+	cursorStr, err := cursorOf(s, task, versionsObj)
 	if err != nil {
 		return nil, err
 	}
@@ -1029,7 +1181,7 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string, role str
 	result := ordjson.NewObject()
 	result.Set("task", taskID)
 	result.Set("status", getField(task, "status"))
-	result.Set("cursor", cursor)
+	result.Set("cursor", cursorStr)
 	result.Set("read_at", store.Now())
 	sectionsAny := make([]any, len(sections))
 	for i, sec := range sections {
@@ -1038,6 +1190,23 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string, role str
 	result.Set("sections", sectionsAny)
 	result.Set("role", nilIfEmpty(role))
 	result.Set("versions_error", versionsErrorText)
+
+	if since != "" {
+		sinceCursor, parseErr := parseCursor(since)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		changes, changesErr := changesSince(s, task, sinceCursor, versionsObj)
+		if changesErr != nil {
+			return nil, changesErr
+		}
+		result.Set("changes", changes)
+		unchanged, _ := changes.Get("unchanged")
+		if unchanged == true && !explicitSections && role == "" {
+			result.Set("note", "Nothing changed since that cursor; no sections were rendered. Pass --section to read one anyway.")
+			return result, nil
+		}
+	}
 
 	if role != "" {
 		contractAny := make([]any, len(roleContract[role]))
