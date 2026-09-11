@@ -1,6 +1,8 @@
 package environment
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,8 +28,9 @@ const (
 )
 
 var (
-	ServiceActive = []string{"intended", "starting", "running", "ready", "unknown", "stopping"}
-	ServiceStates = append(append([]string{}, ServiceActive...), "failed", "conflict", "stopped", "lost")
+	ServiceActive  = []string{"intended", "starting", "running", "ready", "unknown", "stopping"}
+	ServiceStates  = append(append([]string{}, ServiceActive...), "failed", "conflict", "stopped", "lost")
+	EndpointStates = []string{"observed", "not-listening", "stale", "unverified"}
 )
 
 var secretPatterns = []*regexp.Regexp{
@@ -417,4 +420,95 @@ func Show(s *store.Store, taskID, sumctlPath string, maxChars int) (*ordjson.Obj
 	result.Set("task", taskID)
 	result.Set("environment", view)
 	return result, nil
+}
+
+// Outline ports `environment_outline`: the compact per-state counts used by `context`'s outline section.
+func Outline(s *store.Store, taskID string) *ordjson.Object {
+	record, err := Read(s, taskID)
+	if err != nil {
+		result := ordjson.NewObject()
+		result.Set("present", false)
+		result.Set("error", err.Error())
+		return result
+	}
+	if record == nil {
+		result := ordjson.NewObject()
+		result.Set("present", false)
+		return result
+	}
+	discovery := objectField(record, "discovery")
+
+	result := ordjson.NewObject()
+	result.Set("present", true)
+	updatedAt, _ := record.Get("updated_at")
+	result.Set("updated_at", updatedAt)
+	var staleValue any
+	if discovery != nil {
+		staleValue, _ = discovery.Get("stale")
+	}
+	result.Set("config_stale", truthy(staleValue))
+
+	endpoints := ordjson.NewObject()
+	for _, state := range EndpointStates {
+		count := 0
+		for _, ev := range listField(record, "endpoints") {
+			e, _ := ev.(*ordjson.Object)
+			if stringField(e, "state") == state {
+				count++
+			}
+		}
+		if count > 0 {
+			endpoints.Set(state, jsonInt(count))
+		}
+	}
+	result.Set("endpoints", endpoints)
+
+	logsMissing := 0
+	for _, lv := range listField(record, "logs") {
+		l, _ := lv.(*ordjson.Object)
+		if stringField(l, "state") != "present" {
+			logsMissing++
+		}
+	}
+	result.Set("logs_missing", jsonInt(logsMissing))
+	result.Set("resources", jsonInt(len(listField(record, "resources"))))
+
+	services := ordjson.NewObject()
+	for _, state := range ServiceStates {
+		count := 0
+		for _, sv := range listField(record, "services") {
+			s, _ := sv.(*ordjson.Object)
+			if stringField(s, "state") == state {
+				count++
+			}
+		}
+		if count > 0 {
+			services.Set(state, jsonInt(count))
+		}
+	}
+	result.Set("services", services)
+	return result
+}
+
+// Stamp ports `environment_stamp`: a short digest of the environment sidecar so a context cursor notices
+// environment changes without reading the checkout.
+func Stamp(s *store.Store, taskID string) string {
+	record, err := Read(s, taskID)
+	if err != nil {
+		return "err"
+	}
+	if record == nil {
+		return "none"
+	}
+	picked := ordjson.NewObject()
+	for _, k := range []string{"updated_at", "discovery", "endpoints", "logs", "resources"} {
+		v, _ := record.Get(k)
+		picked.Set(k, v)
+	}
+	data, marshalErr := ordjson.MarshalSortedCompact(picked)
+	if marshalErr != nil {
+		return "err"
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])[:8]
 }

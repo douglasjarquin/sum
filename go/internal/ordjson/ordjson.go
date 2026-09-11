@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 )
 
@@ -142,9 +143,61 @@ func MarshalCompact(value any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// MarshalSortedCompact matches Python's `json.dumps(value, sort_keys=True)` (default `(', ', ': ')` separators):
+// object keys are sorted alphabetically at every level; array order is left as-is, exactly like Python's sort_keys.
+func MarshalSortedCompact(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := encodeSortedCompact(&buf, value); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+func encodeSortedCompact(buf *bytes.Buffer, value any) error {
+	switch v := value.(type) {
+	case *Object:
+		if v == nil {
+			buf.WriteString("null")
+			return nil
+		}
+		keys := append([]string(nil), v.keys...)
+		sort.Strings(keys)
+		buf.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			encodeString(buf, k)
+			buf.WriteString(": ")
+			if err := encodeSortedCompact(buf, v.values[k]); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte('}')
+	case []any:
+		buf.WriteByte('[')
+		for i, item := range v {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := encodeSortedCompact(buf, item); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+	default:
+		return encodeCompact(buf, value)
+	}
+	return nil
+}
+
 func encodeCompact(buf *bytes.Buffer, value any) error {
 	switch v := value.(type) {
 	case *Object:
+		if v == nil {
+			buf.WriteString("null")
+			return nil
+		}
 		buf.WriteByte('{')
 		for i, k := range v.keys {
 			if i > 0 {
@@ -201,6 +254,10 @@ func writeIndent(buf *bytes.Buffer, level int) {
 func encodeIndent(buf *bytes.Buffer, value any, level int) error {
 	switch v := value.(type) {
 	case *Object:
+		if v == nil {
+			buf.WriteString("null")
+			return nil
+		}
 		if v.Len() == 0 {
 			buf.WriteString("{}")
 			return nil
