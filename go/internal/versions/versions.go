@@ -141,7 +141,7 @@ func revisionFile(base string, revision *ordjson.Object) (string, error) {
 	return filepath.Join(base, filepath.FromSlash(relative)), nil
 }
 
-func revisionView(base string, revision *ordjson.Object) *ordjson.Object {
+func RevisionView(base string, revision *ordjson.Object) *ordjson.Object {
 	row := ordjson.NewObject()
 	for _, key := range []string{"id", "status", "created_at", "policy", "summary", "verification_affected", "legacy"} {
 		value, _ := revision.Get(key)
@@ -313,7 +313,7 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 	ids := make([]string, 0, len(revisionList))
 	for _, r := range revisionList {
 		rev, _ := r.(*ordjson.Object)
-		revisionViews = append(revisionViews, revisionView(taskPath, rev))
+		revisionViews = append(revisionViews, RevisionView(taskPath, rev))
 		revID, _ := rev.Get("id")
 		revIDStr, _ := revID.(string)
 		ids = append(ids, revIDStr)

@@ -510,6 +510,154 @@ func assertContextSinceFailureMatches(t *testing.T, reference, home, taskID, cur
 	}
 }
 
+func TestContextPagingAndRevisionFlags_matchThePythonReferenceAcrossScenarios(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := filepath.Join(repoRoot, "bin", "sumctl")
+	if _, statErr := os.Stat(reference); statErr != nil {
+		t.Skipf("reference bin/sumctl not found: %v", statErr)
+	}
+	baseSha := "0123456789abcdef0123456789abcdef01234567"
+
+	t.Run("--after and --limit page the decisions section", func(t *testing.T) {
+		home := t.TempDir()
+		taskJSON := fmt.Sprintf(`{"schema": 1, "id": "t-2c2c2c2c2c2c", "status": "running", "repository": "owner/repoU",
+"notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md", "report": null, "evidence": [],
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:02:00+00:00",
+"questions": [
+  {"id": "q1", "key": "a", "status": "open", "created_at": "2026-01-01T00:00:10+00:00", "text": "one?", "answer": null},
+  {"id": "q2", "key": "b", "status": "open", "created_at": "2026-01-01T00:00:20+00:00", "text": "two?", "answer": null},
+  {"id": "q3", "key": "c", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "three?", "answer": null}
+]}`, baseSha)
+		writeTaskFixture(t, home, "t-2c2c2c2c2c2c", taskJSON)
+		assertContextArgsMatch(t, reference, home, "t-2c2c2c2c2c2c", "--section", "decisions", "--after", "1", "--limit", "1")
+	})
+
+	t.Run("--kind filters the evidence section", func(t *testing.T) {
+		home := t.TempDir()
+		root := t.TempDir()
+		head := initGitRepoWithCommit(t, filepath.Join(root, "checkout"))
+		taskJSON := fmt.Sprintf(`{"schema": 1, "id": "t-2d2d2d2d2d2d", "status": "reported", "repository": "owner/repoV",
+"questions": [], "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"report": null, "worktree": %q, "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:10:00+00:00",
+"evidence": [
+  {"schema": 1, "id": "e-0000000001", "kind": "handoff", "source": "worker", "at": "2026-01-01T00:05:00+00:00",
+   "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null, "handoff": {"outcome": "done", "next_action": null}},
+  {"schema": 1, "id": "e-0000000002", "kind": "verification", "source": "coordinator", "at": "2026-01-01T00:08:00+00:00",
+   "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null, "run_id": "run-root-1", "result": "pass", "outcome": "all green"},
+  {"schema": 1, "id": "e-0000000003", "kind": "review", "source": "reviewer", "at": "2026-01-01T00:09:00+00:00",
+   "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null, "verdict": "approve", "tool": "made"}
+]}`, baseSha, filepath.Join(root, "checkout"), head, head, head)
+		writeTaskFixture(t, home, "t-2d2d2d2d2d2d", taskJSON)
+		assertContextArgsMatch(t, reference, home, "t-2d2d2d2d2d2d", "--section", "evidence", "--kind", "verification")
+	})
+
+	t.Run("--max-chars truncates the brief section's approved text", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-2e2e2e2e2e2e", fmt.Sprintf(`{"schema": 1, "id": "t-2e2e2e2e2e2e", "status": "running", "repository": "owner/repoW",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "a brief that is longer than ten characters", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		assertContextArgsMatch(t, reference, home, "t-2e2e2e2e2e2e", "--section", "brief", "--max-chars", "10")
+	})
+
+	t.Run("--revision looks up a recorded brief revision by ID", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-2f2f2f2f2f2f", fmt.Sprintf(`{"schema": 1, "id": "t-2f2f2f2f2f2f", "status": "running", "repository": "owner/repoX", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		sha := writeRevisionFile(t, home, "t-2f2f2f2f2f2f", "contracts/r1.md", "revision content")
+		versionsJSON := fmt.Sprintf(`{"schema": 1, "task": "t-2f2f2f2f2f2f", "legacy": false, "runtime": {"sum_version": "0.1.0"}, "brief_schema": 1,
+ "approved": {"sha256": "abc", "base_sha": %q, "repository": "owner/repoX", "kind": "task"},
+ "revisions": [{"id": "r1", "path": "contracts/r1.md", "status": "active", "created_at": "2026-01-01T00:00:00+00:00", "sha256": %q, "policy": {"sum_version": "0.1.0", "brief_schema": 1}, "summary": ["initial brief"], "verification_affected": false}],
+ "active": "r1", "requested": null, "refresh": []}`, baseSha, sha)
+		if err := os.WriteFile(filepath.Join(home, "tasks", "t-2f2f2f2f2f2f", "versions.json"), []byte(versionsJSON), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertContextArgsMatch(t, reference, home, "t-2f2f2f2f2f2f", "--section", "brief", "--revision", "r1")
+	})
+
+	t.Run("--revision with an unknown ID is a command-level failure", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-3a3a3a3a3a3a", fmt.Sprintf(`{"schema": 1, "id": "t-3a3a3a3a3a3a", "status": "running", "repository": "owner/repoY", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		sha := writeRevisionFile(t, home, "t-3a3a3a3a3a3a", "contracts/r1.md", "revision content")
+		versionsJSON := fmt.Sprintf(`{"schema": 1, "task": "t-3a3a3a3a3a3a", "legacy": false, "runtime": {"sum_version": "0.1.0"}, "brief_schema": 1,
+ "approved": {"sha256": "abc", "base_sha": %q, "repository": "owner/repoY", "kind": "task"},
+ "revisions": [{"id": "r1", "path": "contracts/r1.md", "status": "active", "created_at": "2026-01-01T00:00:00+00:00", "sha256": %q, "policy": {"sum_version": "0.1.0", "brief_schema": 1}, "summary": ["initial brief"], "verification_affected": false}],
+ "active": "r1", "requested": null, "refresh": []}`, baseSha, sha)
+		if err := os.WriteFile(filepath.Join(home, "tasks", "t-3a3a3a3a3a3a", "versions.json"), []byte(versionsJSON), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertContextArgsFailureMatches(t, reference, home, "t-3a3a3a3a3a3a", "--section", "brief", "--revision", "no-such-id")
+	})
+
+	t.Run("--limit out of range is a command-level failure", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-3b3b3b3b3b3b", fmt.Sprintf(`{"schema": 1, "id": "t-3b3b3b3b3b3b", "status": "running", "repository": "owner/repoZ", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
+		assertContextArgsFailureMatches(t, reference, home, "t-3b3b3b3b3b3b", "--limit", "0")
+		assertContextArgsFailureMatches(t, reference, home, "t-3b3b3b3b3b3b", "--limit", "201")
+	})
+
+	t.Run("negative --after or --max-chars is a command-level failure", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-3c3c3c3c3c3c", fmt.Sprintf(`{"schema": 1, "id": "t-3c3c3c3c3c3c", "status": "running", "repository": "owner/repoAA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
+		assertContextArgsFailureMatches(t, reference, home, "t-3c3c3c3c3c3c", "--after", "-1")
+		assertContextArgsFailureMatches(t, reference, home, "t-3c3c3c3c3c3c", "--max-chars", "-1")
+	})
+}
+
+func assertContextArgsMatch(t *testing.T, reference, home, taskID string, extra ...string) {
+	t.Helper()
+	args := append([]string{"--home", home, "context", taskID}, extra...)
+	want, err := exec.Command(reference, args...).Output()
+	if err != nil {
+		t.Fatalf("python reference failed: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	root := NewRoot(reference, &stdout, &stderr)
+	root.SetArgs(args)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
+	}
+	gotNorm := normalizeReadAt(stdout.String())
+	wantNorm := normalizeReadAt(string(want))
+	if gotNorm != wantNorm {
+		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", gotNorm, wantNorm)
+	}
+}
+
+func assertContextArgsFailureMatches(t *testing.T, reference, home, taskID string, extra ...string) {
+	t.Helper()
+	args := append([]string{"--home", home, "context", taskID}, extra...)
+	cmd := exec.Command(reference, args...)
+	var pyStderr bytes.Buffer
+	cmd.Stderr = &pyStderr
+	if err := cmd.Run(); err == nil {
+		t.Fatalf("expected python reference to fail, got success with stderr=%s", pyStderr.String())
+	}
+	var pyPayload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(pyStderr.Bytes(), &pyPayload); err != nil {
+		t.Fatalf("python stderr is not the expected error JSON: %v (stderr=%s)", err, pyStderr.String())
+	}
+
+	var stdout, stderr bytes.Buffer
+	root := NewRoot(reference, &stdout, &stderr)
+	root.SetArgs(args)
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatalf("expected go command to fail, got success with stdout=%s", stdout.String())
+	}
+	if err.Error() != pyPayload.Error {
+		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), pyPayload.Error)
+	}
+}
+
 func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
@@ -521,10 +669,10 @@ func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
 
 	home := filepath.Join(dir, "state")
 
-	t.Run("--max-chars is not yet supported", func(t *testing.T) {
+	t.Run("a non-integer --max-chars is not yet supported (mirrors argparse's own type=int error)", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 		root := NewRoot(reference, &stdout, &stderr)
-		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--max-chars", "100"})
+		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--max-chars", "not-a-number"})
 		if err := root.ExecuteContext(context.Background()); err != nil {
 			t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
 		}
@@ -532,7 +680,7 @@ func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--max-chars\n100\n"
+		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--max-chars\nnot-a-number\n"
 		if string(got) != want {
 			t.Fatalf("reference argv = %q, want %q", got, want)
 		}

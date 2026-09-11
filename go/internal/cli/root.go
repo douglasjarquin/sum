@@ -391,16 +391,20 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.homeSet && opts.reference != "" && len(args) >= 1 {
 				taskID := args[0]
-				sections, role, since, ok := []string(nil), "", "", true
+				contextOpts, ok := contextview.Options{
+					After:    contextview.DefaultAfter,
+					Limit:    contextview.DefaultLimit,
+					MaxChars: contextview.DefaultMaxChars,
+				}, true
 				if len(args) > 1 {
-					sections, role, since, ok = parseContextArgs(args[1:])
+					contextOpts, ok = parseContextArgs(args[1:])
 				}
 				if ok {
 					st, err := store.Open(opts.home)
 					if err != nil {
 						return err
 					}
-					view, viewErr := contextview.View(st, taskID, opts.reference, sections, role, since)
+					view, viewErr := contextview.View(st, taskID, opts.reference, contextOpts)
 					if viewErr != nil {
 						return viewErr
 					}
@@ -560,70 +564,152 @@ var validContextSections = map[string]bool{
 
 var validContextRoles = map[string]bool{"worker": true, "reviewer": true, "coordinator": true}
 
-// parseContextArgs recognizes only repeated `--section NAME`/`--section=NAME` flags (deduplicated in
-// first-occurrence order, mirroring `list(dict.fromkeys(args.section or []))`), at most one
-// `--role NAME`/`--role=NAME` flag, and at most one `--since VALUE`/`--since=VALUE` flag (its format is not
-// validated here — an opaque token, validated deep inside contextview's parseCursor, matching Python raising
-// SumError from parse_cursor rather than argparse rejecting the shape), in any combination including none. Any
-// other shape (an unrecognized flag, an unknown section or role, or a repeated --role/--since) falls back to the
-// Python reference.
-func parseContextArgs(tokens []string) (sections []string, role, since string, ok bool) {
+// parseContextArgs recognizes repeated `--section NAME`/`--section=NAME` flags (deduplicated in
+// first-occurrence order, mirroring `list(dict.fromkeys(args.section or []))`); at most one each of
+// `--role`, `--since`, and `--revision` (single-value flags — a repeat falls back rather than mirroring
+// argparse's last-value-wins, matching this port's existing --role/--since convention); repeated `--kind`
+// flags (empty values dropped, mirroring `[k for k in (args.kind or []) if k]`); and `--after`/`--limit`/
+// `--max-chars`, each accepting only a valid base-10 integer (a malformed value falls back to the Python
+// reference so argparse's own type=int error text applies, rather than replicating it here). Range validation
+// for --after/--limit/--max-chars happens natively inside contextview.View, matching context_view's exact
+// error text and code position. `--since`'s format is not validated here — an opaque token, checked deep
+// inside contextview's parseCursor. Any other shape (an unrecognized flag, an unknown section or role, or a
+// repeated single-value flag) falls back to the Python reference.
+func parseContextArgs(tokens []string) (contextview.Options, bool) {
+	result := contextview.Options{
+		After:    contextview.DefaultAfter,
+		Limit:    contextview.DefaultLimit,
+		MaxChars: contextview.DefaultMaxChars,
+	}
 	var raw []string
-	sinceSet := false
+	sinceSet, revisionSet := false, false
 	for i := 0; i < len(tokens); i++ {
 		token := tokens[i]
 		switch {
 		case token == "--section":
 			if i+1 >= len(tokens) {
-				return nil, "", "", false
+				return contextview.Options{}, false
 			}
 			i++
 			raw = append(raw, tokens[i])
 		case strings.HasPrefix(token, "--section="):
 			raw = append(raw, strings.TrimPrefix(token, "--section="))
 		case token == "--role":
-			if role != "" || i+1 >= len(tokens) {
-				return nil, "", "", false
+			if result.Role != "" || i+1 >= len(tokens) {
+				return contextview.Options{}, false
 			}
 			i++
-			role = tokens[i]
+			result.Role = tokens[i]
 		case strings.HasPrefix(token, "--role="):
-			if role != "" {
-				return nil, "", "", false
+			if result.Role != "" {
+				return contextview.Options{}, false
 			}
-			role = strings.TrimPrefix(token, "--role=")
+			result.Role = strings.TrimPrefix(token, "--role=")
 		case token == "--since":
 			if sinceSet || i+1 >= len(tokens) {
-				return nil, "", "", false
+				return contextview.Options{}, false
 			}
 			i++
-			since = tokens[i]
+			result.Since = tokens[i]
 			sinceSet = true
 		case strings.HasPrefix(token, "--since="):
 			if sinceSet {
-				return nil, "", "", false
+				return contextview.Options{}, false
 			}
-			since = strings.TrimPrefix(token, "--since=")
+			result.Since = strings.TrimPrefix(token, "--since=")
 			sinceSet = true
+		case token == "--revision":
+			if revisionSet || i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			result.Revision = tokens[i]
+			revisionSet = true
+		case strings.HasPrefix(token, "--revision="):
+			if revisionSet {
+				return contextview.Options{}, false
+			}
+			result.Revision = strings.TrimPrefix(token, "--revision=")
+			revisionSet = true
+		case token == "--kind":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			if tokens[i] != "" {
+				result.Kinds = append(result.Kinds, tokens[i])
+			}
+		case strings.HasPrefix(token, "--kind="):
+			if value := strings.TrimPrefix(token, "--kind="); value != "" {
+				result.Kinds = append(result.Kinds, value)
+			}
+		case token == "--after":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.After = n
+		case strings.HasPrefix(token, "--after="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--after="))
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.After = n
+		case token == "--limit":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.Limit = n
+		case strings.HasPrefix(token, "--limit="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--limit="))
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.Limit = n
+		case token == "--max-chars":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.MaxChars = n
+		case strings.HasPrefix(token, "--max-chars="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--max-chars="))
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.MaxChars = n
 		default:
-			return nil, "", "", false
+			return contextview.Options{}, false
 		}
 	}
-	if role != "" && !validContextRoles[role] {
-		return nil, "", "", false
+	if result.Role != "" && !validContextRoles[result.Role] {
+		return contextview.Options{}, false
 	}
 	seen := map[string]bool{}
 	for _, sec := range raw {
 		if !validContextSections[sec] {
-			return nil, "", "", false
+			return contextview.Options{}, false
 		}
 		if seen[sec] {
 			continue
 		}
 		seen[sec] = true
-		sections = append(sections, sec)
+		result.Sections = append(result.Sections, sec)
 	}
-	return sections, role, since, true
+	return result, true
 }
 
 func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {

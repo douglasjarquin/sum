@@ -20,6 +20,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pyrepr"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
@@ -641,9 +642,23 @@ func sectionHandoff(task *ordjson.Object, head string, maxChars int) *ordjson.Ob
 
 var evidenceRowKeys = []string{"id", "kind", "source", "at", "candidate", "current", "brief_revision", "verdict", "result", "outcome"}
 
-// sectionEvidence ports `section_evidence` (without `--kind` filtering, not yet supported).
-func sectionEvidence(view *ordjson.Object, after, limit, maxChars int) *ordjson.Object {
-	records := listField(view, "records")
+// sectionEvidence ports `section_evidence`, including `--kind` filtering.
+func sectionEvidence(view *ordjson.Object, after, limit, maxChars int, kinds []string) *ordjson.Object {
+	allRecords := listField(view, "records")
+	records := allRecords
+	if len(kinds) > 0 {
+		kindSet := map[string]bool{}
+		for _, k := range kinds {
+			kindSet[k] = true
+		}
+		filtered := make([]any, 0, len(records))
+		for _, rv := range records {
+			if kindSet[asString(getField(asObject(rv), "kind"))] {
+				filtered = append(filtered, rv)
+			}
+		}
+		records = filtered
+	}
 	page := paged(records, after, limit)
 	items, _ := getField(page, "items").([]any)
 	rows := make([]any, 0, len(items))
@@ -667,7 +682,7 @@ func sectionEvidence(view *ordjson.Object, after, limit, maxChars int) *ordjson.
 
 	byKind := ordjson.NewObject()
 	counts := map[string]int{}
-	for _, rv := range records {
+	for _, rv := range allRecords {
 		kind := asString(getField(asObject(rv), "kind"))
 		if _, has := counts[kind]; !has {
 			byKind.Set(kind, jsonInt(0))
@@ -690,8 +705,8 @@ func sectionEvidence(view *ordjson.Object, after, limit, maxChars int) *ordjson.
 	return result
 }
 
-// sectionBrief ports `section_brief` (without `--revision`, not yet supported).
-func sectionBrief(task *ordjson.Object, versionsObj *ordjson.Object, maxChars int) *ordjson.Object {
+// sectionBrief ports `section_brief`, including `--revision`.
+func sectionBrief(s *store.Store, task *ordjson.Object, versionsObj *ordjson.Object, maxChars int, revision string) (*ordjson.Object, error) {
 	result := ordjson.NewObject()
 	result.Set("approved", environment.BoundedView(asString(getField(task, "brief")), maxChars))
 	result.Set("fingerprint", versions.ApprovedFingerprint(task))
@@ -703,7 +718,42 @@ func sectionBrief(task *ordjson.Object, versionsObj *ordjson.Object, maxChars in
 		result.Set("active_revision", nil)
 		result.Set("requested_revision", nil)
 	}
-	return result
+	if revision == "" {
+		return result, nil
+	}
+	recordedVersions, err := versions.ReadVersions(s, task)
+	if err != nil {
+		return nil, err
+	}
+	var target *ordjson.Object
+	var ids []string
+	for _, rv := range listField(recordedVersions, "revisions") {
+		r := asObject(rv)
+		id := asString(getField(r, "id"))
+		ids = append(ids, id)
+		if id == revision {
+			target = r
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("Unknown revision %s. Recorded: %s.", revision, pyrepr.StrList(ids))
+	}
+	taskPath, err := s.TaskPath(asString(getField(task, "id")))
+	if err != nil {
+		return nil, err
+	}
+	state := versions.RevisionView(taskPath, target)
+	if ok, _ := state.Get("ok"); ok == true {
+		pathValue, _ := state.Get("path")
+		pathStr, _ := pathValue.(string)
+		content, readErr := os.ReadFile(pathStr)
+		if readErr != nil {
+			return nil, readErr
+		}
+		state.Set("content", environment.BoundedView(string(content), maxChars))
+	}
+	result.Set("revision", state)
+	return result, nil
 }
 
 var (
@@ -1134,14 +1184,30 @@ func needsEvidenceView(sections []string) bool {
 	return false
 }
 
+// Options bundles the context_view flags this port supports, beyond the task ID and reference helper path.
+type Options struct {
+	Sections []string
+	Role     string
+	Since    string
+	Revision string
+	Kinds    []string
+	After    int
+	Limit    int
+	MaxChars int
+}
+
+// ContextMaxLimit mirrors CONTEXT_MAX_LIMIT: the upper bound context_view enforces on --limit.
+const ContextMaxLimit = 200
+
 // View ports `context_view` for the shapes this checkpoint supports: no flags (resolves to the single "outline"
 // section, per `context_view`'s own default-section rule), one or more `--section NAME` values, `--role
 // worker|reviewer|coordinator` (defaults the section list per ROLE_SECTIONS when no `--section` is given, filters
 // `decisions`, adds the `contract`/`authority` envelope, and — for reviewer/coordinator — adds `environment`'s
-// `artifacts`), and `--since CURSOR` (cursor-based diffing; when nothing changed and neither --section nor --role
-// was also given, returns early with just the envelope, `changes`, and a `note` — no section is rendered, exactly
-// like Python).
-func View(s *store.Store, taskID, sumctlPath string, sections []string, role, since string) (*ordjson.Object, error) {
+// `artifacts`), `--since CURSOR` (cursor-based diffing; when nothing changed and neither --section nor --role was
+// also given, returns early with just the envelope, `changes`, and a `note` — no section is rendered, exactly
+// like Python), and `--after`/`--limit`/`--max-chars`/`--revision`/`--kind`.
+func View(s *store.Store, taskID, sumctlPath string, opts Options) (*ordjson.Object, error) {
+	sections, role, since := opts.Sections, opts.Role, opts.Since
 	explicitSections := len(sections) > 0
 	var roles []string
 	if role != "" {
@@ -1153,6 +1219,12 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string, role, si
 		} else if since == "" {
 			sections = []string{"outline"}
 		}
+	}
+	if opts.Limit < 1 || opts.Limit > ContextMaxLimit {
+		return nil, fmt.Errorf("--limit must be 1..%d", ContextMaxLimit)
+	}
+	if opts.After < 0 || opts.MaxChars < 0 {
+		return nil, fmt.Errorf("--after and --max-chars must not be negative")
 	}
 	task, err := s.ReadTask(taskID)
 	if err != nil {
@@ -1226,13 +1298,17 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string, role, si
 			}
 			result.Set("outline", outlineObj)
 		case "brief":
-			result.Set("brief", sectionBrief(task, versionsObj, DefaultMaxChars))
+			briefObj, err := sectionBrief(s, task, versionsObj, opts.MaxChars, opts.Revision)
+			if err != nil {
+				return nil, err
+			}
+			result.Set("brief", briefObj)
 		case "decisions":
-			result.Set("decisions", sectionDecisions(task, role, DefaultAfter, DefaultLimit, DefaultMaxChars))
+			result.Set("decisions", sectionDecisions(task, role, opts.After, opts.Limit, opts.MaxChars))
 		case "handoff":
-			result.Set("handoff", sectionHandoff(task, head, DefaultMaxChars))
+			result.Set("handoff", sectionHandoff(task, head, opts.MaxChars))
 		case "evidence":
-			result.Set("evidence", sectionEvidence(view, DefaultAfter, DefaultLimit, DefaultMaxChars))
+			result.Set("evidence", sectionEvidence(view, opts.After, opts.Limit, opts.MaxChars, opts.Kinds))
 		case "returns":
 			result.Set("returns", sectionReturns(s, task))
 		case "execution":
@@ -1253,7 +1329,7 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string, role, si
 		case "update":
 			result.Set("update", sectionUpdate(s, versionsObj, runtimeRootFrom(sumctlPath)))
 		case "notes":
-			notesState, notesErr := notes.State(s, taskID, DefaultMaxChars)
+			notesState, notesErr := notes.State(s, taskID, opts.MaxChars)
 			if notesErr != nil {
 				return nil, notesErr
 			}
