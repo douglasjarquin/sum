@@ -91,6 +91,7 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
 - [ ] Run the [VERIFY.md](VERIFY.md) entrypoint (or the runner with `--base`) and keep the candidate-bound record.
 - [ ] Run `mise run test-live` only when that live scenario applies; otherwise say it was not run.
 - [ ] Note deployment or release impact when it exists.
+- [ ] Assess Grok Bot deployment impact for every new feature or changed contract, and update `templates/grok-bot/` references and tests or record an explicit no-impact or deferred rationale.
 - [ ] Update [ATTRIBUTIONS.md](ATTRIBUTIONS.md) when credit is due.
 
 ## Questions
