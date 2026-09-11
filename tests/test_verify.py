@@ -359,7 +359,7 @@ class VerifyLab(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         drivers = {s["id"]: s["driver"] for s in record["scenarios"]}
         self.assertEqual(drivers["verify.skipped-scenario"], "automated")  # Its description starts with "Manual"; only the Driver column decides.
-        self.assertEqual([i for i, d in drivers.items() if d == "manual"], ["live.herdr-smoke", "live.harness-canary", "verify.sum-self", "ci.hosted-verification", "root.real-harness-canary", "evidence.publish-rendered", "evidence.sum-self", "graph.real-binary", "graph.harness-mcp"])
+        self.assertEqual([i for i, d in drivers.items() if d == "manual"], ["live.herdr-smoke", "live.harness-canary", "verify.sum-self", "ci.hosted-verification", "root.real-harness-canary", "evidence.publish-rendered", "evidence.sum-self", "graph.real-binary", "graph.harness-mcp", "skills.review-workflow"])
         self.assertEqual(record["contract"]["entrypoint"], "mise run verify")
         self.assertTrue(record["artifacts"]["git_ignored"])
 
