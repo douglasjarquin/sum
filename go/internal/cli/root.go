@@ -14,6 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/doctor"
 	"github.com/douglasjarquin/sum/go/internal/environment"
+	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
@@ -363,6 +364,26 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:                "show",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && len(args) == 1 {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				view, viewErr := evidenceview.Show(st, args[0])
+				if viewErr != nil {
+					return viewErr
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			return opts.compat(cmd.Context(), append([]string{"show"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:                "doctor",
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
@@ -424,7 +445,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"prepare", "dispatch", "start", "help", "context", "notes", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "attention", "bind", "backup", "herdr", "dev", "refresh", "update",
+	"prepare", "dispatch", "start", "help", "context", "notes", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "attention", "bind", "backup", "herdr", "dev", "refresh", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, ok bool) {
