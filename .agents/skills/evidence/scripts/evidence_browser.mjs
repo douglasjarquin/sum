@@ -21,9 +21,12 @@ if (typeof WebSocket !== "function") {
 }
 
 const profile = await mkdtemp(path.join(tmpdir(), "evidence-profile-"));
+// Headless Chrome in GitHub-hosted ubuntu containers often never writes DevToolsActivePort unless the sandbox
+// and tiny /dev/shm are disabled. The profile is still a fresh mkdtemp and is removed afterwards; never a user profile.
 const args = [
   "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check",
   "--disable-extensions", "--disable-sync", "--disable-background-networking", "--mute-audio", "--hide-scrollbars",
+  "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
   `--window-size=${job.viewport.width},${job.viewport.height}`, `--lang=${job.locale}`, "--force-device-scale-factor=1", "about:blank",
 ];
 let browser;
@@ -75,6 +78,7 @@ try {
   const portFile = path.join(profile, "DevToolsActivePort");
   let endpoint;
   await Promise.race([spawnError, waitFor(async () => {
+    if (browser.exitCode !== null) throw new Error(`browser exited ${browser.exitCode} before DevToolsActivePort appeared`);
     try { endpoint = (await readFile(portFile, "utf8")).split("\n"); return endpoint.length >= 2 && endpoint[0].trim() !== ""; } catch { return false; }
   }, "the browser's DevToolsActivePort file")]);
   const port = endpoint[0].trim();
