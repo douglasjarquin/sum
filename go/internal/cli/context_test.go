@@ -201,37 +201,50 @@ func TestContextSections_matchThePythonReferenceAcrossScenarios(t *testing.T) {
 	})
 }
 
-// TestContext_environmentAndUpdateSectionsStillFallBack guards against the exact bug this session hit: a
-// CONTEXT_SECTIONS name accepted by parseContextSectionArgs before contextview.View grows a matching case,
-// silently omitting that section's key instead of falling back to the Python reference.
-func TestContext_environmentAndUpdateSectionsStillFallBack(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
+func TestContextEnvironmentAndUpdateSections_matchThePythonReferenceAcrossScenarios(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
-	home := filepath.Join(dir, "state")
-
-	for _, section := range []string{"environment", "update"} {
-		t.Run(section, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			root := NewRoot(reference, &stdout, &stderr)
-			root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--section", section})
-			if err := root.ExecuteContext(context.Background()); err != nil {
-				t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
-			}
-			got, err := os.ReadFile(argsFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--section\n" + section + "\n"
-			if string(got) != want {
-				t.Fatalf("reference argv = %q, want %q (section %s did not fall back — check validContextSections)", got, want, section)
-			}
-		})
+	reference := filepath.Join(repoRoot, "bin", "sumctl")
+	if _, statErr := os.Stat(reference); statErr != nil {
+		t.Skipf("reference bin/sumctl not found: %v", statErr)
 	}
+	baseSha := "0123456789abcdef0123456789abcdef01234567"
+
+	t.Run("environment section, legacy task, no environment.json", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-0e0e0e0e0e0e", fmt.Sprintf(`{"schema": 1, "id": "t-0e0e0e0e0e0e", "status": "running", "repository": "owner/repoK",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		assertContextSectionsMatch(t, reference, home, "t-0e0e0e0e0e0e", "environment")
+	})
+
+	t.Run("environment section, a present environment.json record", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-0f0f0f0f0f0f", fmt.Sprintf(`{"schema": 1, "id": "t-0f0f0f0f0f0f", "status": "running", "repository": "owner/repoL",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		writeEnvironmentFixture(t, home, "t-0f0f0f0f0f0f", `{
+  "schema": 1, "task": "t-0f0f0f0f0f0f", "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:01:00+00:00",
+  "discovery": {"observed_at": "2026-01-01T00:00:00+00:00", "head": "abc", "config_revision": "r1", "current_revision": "r1",
+    "stale": false, "stale_reason": null, "checked_at": "2026-01-01T00:00:00+00:00", "summary": [], "problems": [],
+    "task_origins": [], "verification_contract": null, "sources": [], "commands": []},
+  "endpoints": [], "logs": [], "resources": [], "services": [], "history": []
+}`)
+		assertContextSectionsMatch(t, reference, home, "t-0f0f0f0f0f0f", "environment")
+	})
+
+	t.Run("update section, legacy task with no versions.json, outside an installation", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-1a1a1a1a1a1a", fmt.Sprintf(`{"schema": 1, "id": "t-1a1a1a1a1a1a", "status": "running", "repository": "owner/repoM",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		assertContextSectionsMatch(t, reference, home, "t-1a1a1a1a1a1a", "update")
+	})
 }
 
 func assertContextSectionsMatch(t *testing.T, reference, home, taskID string, sections ...string) {

@@ -1,10 +1,15 @@
 package contextview
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
@@ -13,6 +18,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -511,6 +517,281 @@ func sectionExecution(s *store.Store, task *ordjson.Object) (*ordjson.Object, er
 	return result, nil
 }
 
+// BriefSchema mirrors BRIEF_SCHEMA: the worker brief format written by write_brief.
+const BriefSchema = 1
+
+// ContextRoles mirrors CONTEXT_ROLES.
+var ContextRoles = []string{"worker", "reviewer", "coordinator"}
+
+var roleSkills = map[string][]string{
+	"worker":      {"sum-worker"},
+	"reviewer":    {"sum-delivery"},
+	"coordinator": {"sum-rundown", "sum-delivery", "sum-dispatch"},
+}
+
+func pickPresent(o *ordjson.Object, keys []string) *ordjson.Object {
+	result := ordjson.NewObject()
+	if o == nil {
+		return result
+	}
+	for _, k := range keys {
+		if v, has := o.Get(k); has {
+			result.Set(k, v)
+		}
+	}
+	return result
+}
+
+func runtimeRootFrom(sumctlPath string) string {
+	return filepath.Dir(filepath.Dir(sumctlPath))
+}
+
+// skillReferences ports `skill_references`. `roles` is always `ContextRoles` until `--role` is supported (Python:
+// `skill_references(roles or CONTEXT_ROLES)`, and `roles` is always `[]` here since `--role` is unimplemented).
+func skillReferences(runtimeRoot, sumctlPath string, roles []string) *ordjson.Object {
+	var names []string
+	seen := map[string]bool{}
+	for _, role := range roles {
+		for _, n := range roleSkills[role] {
+			if !seen[n] {
+				seen[n] = true
+				names = append(names, n)
+			}
+		}
+	}
+	rows := make([]any, 0, len(names))
+	for _, name := range names {
+		path := filepath.Join(runtimeRoot, "skills", name, "SKILL.md")
+		row := ordjson.NewObject()
+		info, statErr := os.Lstat(path)
+		isSymlink := statErr == nil && info.Mode()&os.ModeSymlink != 0
+		var data []byte
+		var readErr error
+		if statErr == nil && !isSymlink && info.Mode().IsRegular() {
+			data, readErr = os.ReadFile(path)
+		}
+		if readErr == nil && data != nil {
+			row.Set("skill", name)
+			row.Set("path", path)
+			row.Set("bytes", jsonInt(len(data)))
+			row.Set("sha256", sha256Text(string(data))[:16])
+		} else {
+			row.Set("skill", name)
+			row.Set("path", path)
+			row.Set("missing", true)
+		}
+		rows = append(rows, row)
+	}
+	result := ordjson.NewObject()
+	result.Set("files", rows)
+	result.Set("helper", filepath.Join(runtimeRoot, "bin", "sumctl"))
+	result.Set("instruction", "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout.")
+	return result
+}
+
+func returnCommands(sumctlPath, home, taskID string) *ordjson.Object {
+	result := ordjson.NewObject()
+	result.Set("ask", shquote.CommandFor(sumctlPath, home, "ask", taskID, "--key", "short-question-name", "--text", "Your exact question and recommendation"))
+	result.Set("show", shquote.CommandFor(sumctlPath, home, "show", taskID))
+	result.Set("resolve", shquote.CommandFor(sumctlPath, home, "resolve", taskID, "QUESTION_ID"))
+	result.Set("report", shquote.CommandFor(sumctlPath, home, "report", taskID, "--file", "/absolute/path/to/report.md"))
+	result.Set("brief", shquote.CommandFor(sumctlPath, home, "brief", "list", taskID))
+	result.Set("context", shquote.CommandFor(sumctlPath, home, "context", taskID, "--role", "worker"))
+	return result
+}
+
+// sectionEnvironment ports `section_environment`. The `--role reviewer/coordinator` `artifacts` addition is
+// unreachable until `--role` is supported, so it's not implemented yet.
+func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjson.Object, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
+	taskID := asString(getField(task, "id"))
+
+	var active *ordjson.Object
+	if versionsObj != nil {
+		activeID := asString(getField(versionsObj, "active"))
+		for _, rv := range listField(versionsObj, "revisions") {
+			r := asObject(rv)
+			if asString(getField(r, "id")) == activeID {
+				active = r
+				break
+			}
+		}
+	}
+	var commands any
+	if active != nil {
+		if c := getField(active, "commands"); truthy(c) {
+			commands = c
+		}
+	}
+	if commands == nil {
+		commands = returnCommands(sumctlPath, s.Home, taskID)
+	}
+
+	revisions := make([]any, 0)
+	if versionsObj != nil {
+		for _, rv := range listField(versionsObj, "revisions") {
+			revisions = append(revisions, pick(asObject(rv), []string{"id", "status", "path", "ok"}))
+		}
+	}
+
+	notesState, err := notes.State(s, taskID, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	envView, err := environment.View(s, taskID, sumctlPath, environment.DefaultMaxChars)
+	if err != nil {
+		return nil, err
+	}
+
+	result := ordjson.NewObject()
+	result.Set("commands", commands)
+	result.Set("brief_path", getField(task, "brief_path"))
+	result.Set("revisions", revisions)
+	result.Set("notes", pickPresent(notesState, []string{"path", "present", "ok", "error"}))
+	result.Set("skills", skillReferences(runtimeRoot, sumctlPath, ContextRoles))
+	runtimeObj := ordjson.NewObject()
+	runtimeObj.Set("path", runtimeRoot)
+	runtimeObj.Set("sum_version", store.SumVersion)
+	result.Set("runtime", runtimeObj)
+	result.Set("help", shquote.CommandFor(sumctlPath, s.Home, "help", "TOPIC"))
+	result.Set("dev", envView)
+	result.Set("note", "Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout. `dev` is the task-local environment record as last observed.")
+	return result, nil
+}
+
+var sha40Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+func runGit(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return stdout.String(), nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = strings.TrimSpace(stdout.String())
+		}
+		if len(detail) > 4000 {
+			detail = detail[len(detail)-4000:]
+		}
+		return "", fmt.Errorf("git exited %d: %s", exitErr.ExitCode(), detail)
+	}
+	return "", fmt.Errorf("git: %s", err)
+}
+
+func resolvePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	}
+	return abs, nil
+}
+
+// defaultRuntime ports `default_runtime`: what a new entrypoint invocation would run right now.
+func defaultRuntime(root string) (*ordjson.Object, error) {
+	link := filepath.Join(root, ".local", "current")
+	info, statErr := os.Lstat(link)
+	isSymlink := statErr == nil && info.Mode()&os.ModeSymlink != 0
+	if !isSymlink {
+		out, gitErr := runGit("-C", root, "rev-parse", "HEAD")
+		if gitErr != nil {
+			return nil, gitErr
+		}
+		result := ordjson.NewObject()
+		result.Set("kind", "checkout")
+		result.Set("path", root)
+		result.Set("sha", strings.TrimSpace(out))
+		result.Set("manifest", nil)
+		result.Set("ok", true)
+		return result, nil
+	}
+	target, readErr := os.Readlink(link)
+	if readErr != nil {
+		return nil, readErr
+	}
+	var path string
+	if filepath.IsAbs(target) {
+		path = target
+	} else {
+		path = filepath.Join(filepath.Dir(link), target)
+	}
+	resolvedPath, err := resolvePath(path)
+	if err != nil {
+		return nil, err
+	}
+	result := ordjson.NewObject()
+	result.Set("kind", "release")
+	result.Set("path", resolvedPath)
+	result.Set("link", target)
+	result.Set("sha", filepath.Base(resolvedPath))
+	result.Set("manifest", nil)
+	result.Set("ok", false)
+	var expectedSHA string
+	if sha40Pattern.MatchString(filepath.Base(resolvedPath)) {
+		expectedSHA = filepath.Base(resolvedPath)
+	}
+	manifest, verifyErr := release.VerifyRelease(resolvedPath, expectedSHA)
+	if verifyErr == nil {
+		result.Set("manifest", manifest)
+		result.Set("ok", true)
+	} else if _, isVerifyError := verifyErr.(*release.VerifyError); isVerifyError {
+		result.Set("error", verifyErr.Error())
+	} else {
+		return nil, verifyErr
+	}
+	return result, nil
+}
+
+// sectionUpdate ports `section_update`.
+func sectionUpdate(s *store.Store, versionsObj *ordjson.Object, runtimeRoot string) *ordjson.Object {
+	recorded := asObject(getField(versionsObj, "runtime"))
+	result := ordjson.NewObject()
+	result.Set("recorded_runtime", pick(recorded, []string{"sum_version", "brief_schema", "sha", "assumed"}))
+	activeRuntime := ordjson.NewObject()
+	activeRuntime.Set("sum_version", store.SumVersion)
+	activeRuntime.Set("brief_schema", jsonInt(BriefSchema))
+	activeRuntime.Set("path", runtimeRoot)
+	result.Set("active_runtime", activeRuntime)
+	briefObj := ordjson.NewObject()
+	briefObj.Set("active", getField(versionsObj, "active"))
+	briefObj.Set("requested", getField(versionsObj, "requested"))
+	result.Set("brief", briefObj)
+	var refreshValue any
+	if versionsObj != nil && truthy(getField(versionsObj, "requested")) {
+		refreshValue = versions.RefreshState(versionsObj)
+	}
+	result.Set("refresh", refreshValue)
+	var reportEvidence any
+	if versionsObj != nil {
+		reportEvidence = getField(versionsObj, "report_evidence")
+	}
+	result.Set("report_evidence", reportEvidence)
+
+	installationRoot, rootErr := release.InstallationRoot(s)
+	if rootErr != nil {
+		errObj := ordjson.NewObject()
+		errObj.Set("unavailable", rootErr.Error())
+		result.Set("installation_default", errObj)
+		return result
+	}
+	defaultRuntimeObj, defErr := defaultRuntime(installationRoot)
+	if defErr != nil {
+		errObj := ordjson.NewObject()
+		errObj.Set("unavailable", defErr.Error())
+		result.Set("installation_default", errObj)
+		return result
+	}
+	result.Set("installation_default", defaultRuntimeObj)
+	return result
+}
+
 func sectionOutline(s *store.Store, task *ordjson.Object, taskID, sumctlPath string, versionsObj *ordjson.Object, versionsErrorText any, view *ordjson.Object, head string) (*ordjson.Object, error) {
 	outlineObj := ordjson.NewObject()
 	for _, k := range outlineTaskKeys {
@@ -692,6 +973,14 @@ func View(s *store.Store, taskID, sumctlPath string, sections []string) (*ordjso
 				return nil, err
 			}
 			result.Set("execution", executionObj)
+		case "environment":
+			environmentObj, err := sectionEnvironment(s, task, versionsObj, runtimeRootFrom(sumctlPath), sumctlPath)
+			if err != nil {
+				return nil, err
+			}
+			result.Set("environment", environmentObj)
+		case "update":
+			result.Set("update", sectionUpdate(s, versionsObj, runtimeRootFrom(sumctlPath)))
 		case "notes":
 			notesState, notesErr := notes.State(s, taskID, DefaultMaxChars)
 			if notesErr != nil {
