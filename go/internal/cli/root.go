@@ -8,10 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/doctor"
+	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -245,6 +247,28 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:                "env",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" && len(args) >= 2 && args[0] == "show" {
+				if taskID, maxChars, ok := parseEnvShowArgs(args[1:]); ok {
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := environment.Show(st, taskID, opts.reference, maxChars)
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"env"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:                "doctor",
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
@@ -306,7 +330,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "refresh", "release", "update",
+	"prepare", "dispatch", "start", "help", "context", "notes", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "refresh", "release", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, ok bool) {
@@ -380,6 +404,47 @@ func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
 		return "", false, false
 	}
 	return harness, raw, true
+}
+
+func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
+	maxChars = environment.DefaultMaxChars
+	maxCharsSet := false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--max-chars":
+			if maxCharsSet || i+1 >= len(tokens) {
+				return "", 0, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return "", 0, false
+			}
+			maxChars = n
+			maxCharsSet = true
+		case strings.HasPrefix(token, "--max-chars="):
+			if maxCharsSet {
+				return "", 0, false
+			}
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--max-chars="))
+			if err != nil {
+				return "", 0, false
+			}
+			maxChars = n
+			maxCharsSet = true
+		case strings.HasPrefix(token, "-"):
+			return "", 0, false
+		case task == "":
+			task = token
+		default:
+			return "", 0, false
+		}
+	}
+	if task == "" {
+		return "", 0, false
+	}
+	return task, maxChars, true
 }
 
 func runtimeRootFromReference(reference string) string {
