@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pyrepr"
+	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -464,15 +465,19 @@ func presetSummary(presets map[string]*ordjson.Object) *ordjson.Object {
 	return result
 }
 
-func occupancy(tasks []*ordjson.Object) *ordjson.Object {
+func occupancy(tasks []*ordjson.Object) (*ordjson.Object, error) {
 	byRepo := ordjson.NewObject()
-	holderCount := 0
+	count := 0
 	for _, t := range tasks {
-		status, _ := t.Get("status")
-		if status == "archived" {
+		held, err := reservations.Held(t)
+		if err != nil {
+			idValue, _ := t.Get("id")
+			return nil, fmt.Errorf("Malformed execution reservation for %v: %s. Admission and release are refused.", idValue, err)
+		}
+		count += len(held)
+		if len(held) == 0 {
 			continue
 		}
-		holderCount++
 		repoValue, _ := t.Get("repository")
 		repo, _ := repoValue.(string)
 		idValue, _ := t.Get("id")
@@ -480,13 +485,15 @@ func occupancy(tasks []*ordjson.Object) *ordjson.Object {
 		if existing, has := byRepo.Get(repo); has {
 			list, _ = existing.([]any)
 		}
-		list = append(list, idValue)
+		for range held {
+			list = append(list, idValue)
+		}
 		byRepo.Set(repo, list)
 	}
 	result := ordjson.NewObject()
-	result.Set("global", json.Number(fmt.Sprint(holderCount)))
+	result.Set("global", json.Number(fmt.Sprint(count)))
 	result.Set("by_repository", byRepo)
-	return result
+	return result, nil
 }
 
 func orNil(obj *ordjson.Object) any {
@@ -503,24 +510,39 @@ func CapacityView(s *store.Store) (*ordjson.Object, error) {
 	}
 	loaded, err := LoadSettings(s)
 	if err != nil {
+		occupied, occErr := occupancy(tasks)
+		if occErr != nil {
+			return nil, occErr
+		}
 		result := ordjson.NewObject()
 		result.Set("limits", nil)
 		result.Set("worker", nil)
 		result.Set("source", "invalid")
 		result.Set("error", err.Error())
-		result.Set("occupied", occupancy(tasks))
+		result.Set("occupied", occupied)
 		result.Set("note", "Admission is refused until settings.json is fixed; every recorded task keeps its slot and callbacks.")
+		return result, nil
+	}
+	occupied, occErr := occupancy(tasks)
+	if occErr != nil {
+		result := ordjson.NewObject()
+		result.Set("limits", orNil(loaded.Capacity))
+		result.Set("worker", orNil(loaded.Worker))
+		result.Set("source", "invalid")
+		result.Set("error", occErr.Error())
+		result.Set("occupied", nil)
+		result.Set("note", "Admission and release are refused until the malformed execution record is repaired from exact ownership evidence.")
 		return result, nil
 	}
 	result := ordjson.NewObject()
 	result.Set("limits", orNil(loaded.Capacity))
 	result.Set("worker", orNil(loaded.Worker))
 	result.Set("source", loaded.Source)
-	result.Set("occupied", occupancy(tasks))
+	result.Set("occupied", occupied)
 	result.Set("presets", presetSummary(loaded.Presets))
 	result.Set("reviewer", orNil(loaded.Reviewer))
 	result.Set("worker_note", "Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.")
-	result.Set("note", "A slot is held by every non-archived task and released only by `archive --acknowledge`; idle, reported, or unobservable workers keep theirs.")
+	result.Set("note", "Each recorded execution reservation holds a slot until a conclusive stop observation releases it; legacy non-archived tasks remain conservatively held.")
 	return result, nil
 }
 
