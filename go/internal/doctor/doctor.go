@@ -17,7 +17,7 @@ import (
 
 const herdrVersionPin = "0.9.0"
 
-var toolNames = []string{"python3", "node", "git", "gh", "herdr", "quota-axi", "lsof"}
+var toolNames = []string{"python3", "node", "git", "gh", "herdr", "quota-axi", "remainder", "lsof"}
 
 var harnessExecutables = []struct {
 	Kind string

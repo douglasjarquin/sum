@@ -18,7 +18,7 @@ class PackagingInventoryTest(unittest.TestCase):
             self.assertTrue(entry["checksum"], entry["id"])
             self.assertIn(entry["role"], ("build", "runtime", "build-and-runtime"), entry["id"])
         ids = {entry["id"] for entry in entries}
-        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl-go", "herdr-mesh", "quota-axi"} <= ids)
+        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl-go", "herdr-mesh", "quota-axi", "remainder"} <= ids)
 
     def test_go_module_uses_the_reviewed_official_mcp_sdk(self):
         go_mod = (ROOT / "go/go.mod").read_text()

@@ -92,6 +92,7 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
 - [ ] Run `mise run test-live` only when that live scenario applies; otherwise say it was not run.
 - [ ] Note deployment or release impact when it exists.
 - [ ] Assess Grok Bot deployment impact for every new feature or changed contract, and update `templates/grok-bot/` references and tests or record an explicit no-impact or deferred rationale.
+  Remainder integration is advisory quota only (`sumctl quota`). It does not bind Grok Bot, change `templates/grok-bot/`, or alter Bot commands.
 - [ ] Update [ATTRIBUTIONS.md](ATTRIBUTIONS.md) when credit is due.
 
 ## Questions

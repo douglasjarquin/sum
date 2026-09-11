@@ -25,6 +25,8 @@ import tarfile
 import tempfile
 import time
 import tomllib
+import urllib.error
+import urllib.request
 import uuid
 
 LIBRARY = Path(__file__).resolve().parent
@@ -84,7 +86,7 @@ SNAPSHOT_TIMEOUT = 10              # Seconds for the single per-session `agent l
 ROLES = ("coordinator", "worker", "developer")
 DEV_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,39}\Z")
 # Commands a candidate helper (running from a development or task checkout) may aim at the installation's state.
-READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "release-contract", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show", "skills-check",
+READ_ONLY_COMMANDS = {"doctor", "status", "inbox", "show", "context", "help", "quota", "release-contract", "env-show", "release-list", "release-show", "brief-list", "update-status", "refresh-status", "settings-show", "skills-check",
                       "preset-list", "preset-show", "hook-status", "metadata-status", "metadata-snippet", "project-list", "project-show", "graph-status", "graph-config", "execution-show"}
 # Herdr subcommands a developer registration may run through the bridge: observation only.
 READ_ONLY = {("agent", "list"), ("agent", "get"), ("agent", "read"), ("agent", "wait"), ("pane", "get"),
@@ -7073,10 +7075,35 @@ def init(store, args):
     return result
 
 
+def quota(args):
+    """Advisory provider quota. Codex uses Remainder. Every other provider uses quota-axi."""
+    fmt = getattr(args, "format", None) or "compact"
+    if args.provider == "codex":
+        try:
+            binary = tool("remainder")
+        except SumError:
+            binary = None
+        if not binary or not Path(binary).is_file():
+            # tool() trusts SUM_REMAINDER_BIN even when the path is absent; Codex still must not fall back to quota-axi.
+            raise SumError("Missing remainder for Codex quota. Run mise run setup. quota-axi is not used for this provider.")
+        argv = [binary, "--provider", "codex", "--profile", "default"]
+        if fmt == "json":
+            argv.extend(["--format", "json"])
+    else:
+        argv = [tool("quota-axi"), "--provider", args.provider]
+    result = run(argv, check=False)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    code = result.returncode
+    if code < 0:
+        return 128 + (-code)
+    return code
+
+
 def doctor(store):
     """Observational only: no state, context, or registration is written."""
     checks = []
-    for name in ("python3", "node", "git", "gh", "herdr", "quota-axi", "lsof"):
+    for name in ("python3", "node", "git", "gh", "herdr", "quota-axi", "remainder", "lsof"):
         try:
             path = tool(name)
             checks.append({"tool": name, "path": path, "ok": True})
@@ -8506,6 +8533,91 @@ def mesh_state(source_root, mesh):
             "matches_source": value.get("upstream") == MESH_REV and {k: value.get(k) for k in ("server_sha256", "commands_sha256")} == overlay_hashes(source_root)}
 
 
+REMAINDER_REMOTE = "https://github.com/douglasjarquin/remainder/releases/download"
+
+
+def remainder_pin(root, platform_name=None):
+    """Return the inventory pin for this platform, or None when Remainder is not published for it."""
+    platform_name = platform_name or native_platform()
+    inventory = read_json(Path(root) / "docs" / "dependency-inventory.json")
+    entry = next((item for item in inventory.get("dependencies", []) if isinstance(item, dict) and item.get("id") == "remainder"), None)
+    if entry is None:
+        raise SumError("Dependency inventory lacks remainder")
+    pins = entry.get("pins")
+    if not isinstance(pins, dict):
+        raise SumError("Remainder inventory pins are missing")
+    pin = pins.get(platform_name)
+    if pin is None:
+        return None
+    if not all(pin.get(key) for key in ("version", "sha256", "asset")):
+        raise SumError(f"Remainder pin for {platform_name} is incomplete")
+    return pin
+
+
+def remainder_binary(root):
+    matches = [path for path in Path(root).rglob("remainder") if path.is_file() and path.name == "remainder"]
+    if len(matches) != 1:
+        raise SumError(f"Remainder archive did not contain exactly one remainder executable under {root}")
+    return matches[0]
+
+
+def fetch_url(url, destination, timeout=120):
+    if os.environ.get("SUM_REMAINDER_NO_DOWNLOAD"):
+        raise SumError("Remainder download is disabled in this environment.")
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            data = response.read()
+    except (OSError, urllib.error.URLError) as exc:
+        raise SumError(f"Cannot download {url}: {exc}") from exc
+    Path(destination).write_bytes(data)
+
+
+def install_remainder(target, *, fetch=None, pin=None, platform_name=None):
+    """Checksum-verified extract of the pinned Remainder archive. An existing dest is never rewritten."""
+    # Remainder ships as GitHub tar.gz assets, not a mise tool mise can `which`.
+    target = Path(target)
+    platform_name = platform_name or native_platform()
+    inventory_root = target if (target / "docs" / "dependency-inventory.json").is_file() else RUNTIME
+    pin = pin or remainder_pin(inventory_root, platform_name)
+    if pin is None:
+        return {"installed": False, "rewritten": False, "reason": f"No Remainder pin for {platform_name}"}
+    dest = target / ".deps" / "remainder" / f"{pin['version']}-{platform_name}"
+    link = target / ".local" / "bin" / "remainder"
+    if dest.exists():
+        binary = remainder_binary(dest)
+        linked = link_tool(link, binary)
+        return {**linked, "path": str(dest), "installed": True, "rewritten": False}
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".remainder-", dir=dest.parent))
+    try:
+        archive = staging / pin["asset"]
+        (fetch or fetch_url)(f"{REMAINDER_REMOTE}/v{pin['version']}/{pin['asset']}", archive)
+        digest = sha256_file(archive)
+        if digest != pin["sha256"]:
+            raise SumError(f"Remainder checksum mismatch for {pin['asset']}: got {digest}, want {pin['sha256']}")
+        extract = staging / "extract"
+        extract.mkdir()
+        with tarfile.open(archive, "r:gz") as bundle:
+            bundle.extractall(extract, filter="data")
+        binary = remainder_binary(extract)
+        if not os.access(binary, os.X_OK):
+            binary.chmod(binary.stat().st_mode | 0o111)
+        relative = binary.relative_to(extract)
+        try:
+            os.rename(extract, dest)
+        except OSError:
+            if dest.exists():
+                binary = remainder_binary(dest)
+                linked = link_tool(link, binary)
+                return {**linked, "path": str(dest), "installed": True, "rewritten": False}
+            raise
+        linked = dest / relative
+        result = link_tool(link, linked)
+        return {**result, "path": str(dest), "installed": True, "rewritten": False}
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def write_herdr_skill(target):
     """Copy the release-matched Herdr skill beside the pinned binary."""
     target = Path(target)
@@ -8525,6 +8637,7 @@ def install_runtime(target, local_mesh=None):
     resolve_tools(target)
     build_native_artifact(target)
     install_mesh(target / ".deps" / "herdr-mesh", target, local_mesh=local_mesh)
+    install_remainder(target)
     write_herdr_skill(target)
     run([target / ".local" / "bin" / "node", target / "scripts" / "mcp_smoke.mjs"], timeout=60)
 
@@ -8582,6 +8695,9 @@ def build_manifest(store, root, sha, target):
         if not link.is_symlink():
             raise SumError(f"Release is missing the pinned tool link {link}")
         tools[name] = os.readlink(link)
+    remainder_link = target / ".local" / "bin" / "remainder"
+    if remainder_link.is_symlink():
+        tools["remainder"] = os.readlink(remainder_link)
     mesh = target / ".deps" / "herdr-mesh"
     patched = read_json(mesh / ".sum-patched")
     inventory = dependency_inventory(target)
@@ -9529,6 +9645,9 @@ def parser():
     p.add_argument("--version", action="version", version=f"sum {VERSION}")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("doctor", help="Observe setup, Herdr context, and this pane's registered role; writes nothing")
+    s = sub.add_parser("quota", help="Advisory provider quota. Codex uses Remainder. Other providers use quota-axi. Never switches accounts")
+    s.add_argument("--provider", required=True, help="Provider name (codex uses Remainder; any other name uses quota-axi)")
+    s.add_argument("--format", choices=("json", "compact"), default="compact", help="compact (default, for model context) or json (for code)")
     sub.add_parser("release-contract", help="Print this runtime's release contract; writes nothing")
     s = sub.add_parser("init", help="Explicitly register this pane's role in this instance; the first eligible pane claims coordinator")
     s.add_argument("--role", choices=ROLES, help="Requested role; omitted means coordinator if unowned, worker if dispatched, else developer")
@@ -9866,6 +9985,8 @@ def main(argv=None):
             value = doctor(store)
             emit(value)
             return 0 if value["ok"] else 1
+        if args.command == "quota":
+            return quota(args)  # Remainder/quota-axi already rendered stdout; wrapping would hide compact output.
         if args.command == "release-contract":
             value = release_contract()
             emit(value)

@@ -110,6 +110,11 @@ def main():
             if link["differs"]:
                 notes.append(f"{link['link']} still points at {link['target']}; a running process may use it. Stage a release to pick up the new pin.")
         sumctl.build_native_artifact(ROOT)
+        remainder = sumctl.install_remainder(ROOT)
+        if remainder.get("differs"):
+            notes.append(f"{remainder['link']} still points at {remainder['target']}; a running process may use it. Stage a release to pick up the new pin.")
+        if remainder.get("reason"):
+            notes.append(remainder["reason"])
         mesh = ROOT / ".deps" / "herdr-mesh"
         state = sumctl.mesh_state(ROOT, mesh)
         if not state["installed"]:
