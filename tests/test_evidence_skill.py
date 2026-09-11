@@ -137,6 +137,14 @@ class EvidenceLab(unittest.TestCase):
         self.assertFalse(caps["browser"]["supported"])
         self.assertIn("no Chromium-family browser", caps["browser"]["reason"])
 
+    def test_browser_driver_launches_with_container_safe_flags_and_an_ephemeral_profile(self):
+        source = (ROOT / ".agents/skills/evidence/scripts/evidence_browser.mjs").read_text()
+        for flag in ("--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"):
+            self.assertIn(flag, source)
+        self.assertIn("mkdtemp", source)
+        self.assertIn("evidence-profile-", source)
+        self.assertIn("--user-data-dir=${profile}", source)
+
     # -- the real browser path --------------------------------------------------------------------
     @unittest.skipUnless(BROWSER and NODE_OK, BROWSER_REASON)
     def test_seeded_browser_bug_is_red_at_base_and_green_at_candidate_with_screenshots_and_playable_video(self):

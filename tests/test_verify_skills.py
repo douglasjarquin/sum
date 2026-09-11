@@ -359,8 +359,16 @@ class SkillLab(unittest.TestCase):
         self.assertIn("docs/features/service.health.md", record["policy"]["changed"])
         # A deliberately failing branch: the test contradicts the code. The runner fails; the audit does not paper over it.
         self.git(repo, "checkout", "-q", "-b", "failing")
-        test.write_text(test.read_text().replace('"version": 2})', '"version": 3})'))
+        source = test.read_text()
+        self.assertIn('"version": 2})', source)
+        test.write_text(source.replace('"version": 2})', '"version": 3})'))
+        self.assertIn('"version": 3})', test.read_text())
         self.git(repo, "commit", "-qam", "wrong expectation")
+        # The earlier runner in this method compiled tests/test_app.py. A same-second rewrite can leave a timestamp-valid
+        # .pyc of the passing tests, so the next discover run would not see the wrong expectation.
+        cache = repo / "tests/__pycache__"
+        if cache.is_dir():
+            shutil.rmtree(cache)
         code, record, _ = self.runner(repo, "--base", base)
         self.assertEqual((code, record["outcome"]), (1, "fail"))
         self.assertEqual({s["status"] for s in record["scenarios"] if s["driver"] == "automated"}, {"fail"})
