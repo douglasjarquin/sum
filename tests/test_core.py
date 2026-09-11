@@ -18,6 +18,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("sumctl", ROOT / "lib/sumctl.py")
 sumctl = importlib.util.module_from_spec(spec)
+sys.modules["sumctl"] = sumctl
 spec.loader.exec_module(sumctl)
 
 

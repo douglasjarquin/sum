@@ -6901,7 +6901,7 @@ def status(store, live=False, inbox=False):
         row["evidence"] = {"records": len(task.get("evidence", [])), "pr": (task.get("pr") or {}).get("identity", {}).get("number") if task.get("pr") else None,
                            "merged_for_task": bool((task.get("pr") or {}).get("merged_for_task"))}
         row["notice"] = task["notice"]
-        row["attention_records"] = [{k: a[k] for k in ("id", "kind", "at", "observed")} for a in open_attention(task)]
+        row["attention_records"] = [{k: a[k] for k in ("id", "kind", "at", "observed", "excerpt", "source") if k in a} for a in open_attention(task)]
         row["cleanup"] = cleanup_pending(task)
         try:
             versions = read_versions(store, task)
@@ -6927,7 +6927,7 @@ def status(store, live=False, inbox=False):
                 row["cleanup"] = cleanup_pending(store.read(task["id"]))
             except SumError as exc:
                 row["attention"] = f"Interrupted cleanup could not be reconciled: {exc}"
-        if not inbox or row["questions"] or row["error"] or row.get("attention") or row["report_available"] or row["cleanup"]:
+        if not inbox or row["questions"] or row["error"] or row.get("attention") or row["attention_records"] or row["report_available"] or row["cleanup"]:
             if task["status"] != "archived" or row["questions"]:
                 rows.append(row)
     for row in rows:
@@ -6936,7 +6936,7 @@ def status(store, live=False, inbox=False):
         except SumError as exc:
             row["returns"] = {"error": str(exc)}
     value = {"tasks": rows, "live": live, "capacity": capacity_view(store, tasks),
-             "guarantee": "Saved records only; prose-only questions require a rundown. No background monitoring."}
+             "guarantee": "Saved records only. Open attention includes the recorded excerpt. No background monitoring."}
     value["metadata"] = metadata_summary(store)  # Records only: whether native visibility is projected and how it degraded.
     if live:
         value["hook"] = hook
