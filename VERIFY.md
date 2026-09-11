@@ -22,7 +22,9 @@ commands = ["git", "mise", "go", "python3", "node"]
 Run `mise install go python node` once so the pinned Go, Python, and Node tools required by the aggregate are available.
 Git must also be available from the host.
 CI enables only these three tools.
-Browser evidence uses the runner's preinstalled Google Chrome through `EVIDENCE_BROWSER`, retaining its sandbox.
+Browser evidence uses the runner's preinstalled Google Chrome through `EVIDENCE_BROWSER`.
+The driver launches headless Chrome with container-safe flags (`--no-sandbox`, `--disable-setuid-sandbox`, `--disable-dev-shm-usage`, `--disable-gpu`) so `DevToolsActivePort` works on GitHub-hosted runners and similar environments.
+Each capture still uses a fresh ephemeral user-data-dir (`mkdtemp`), never the operator's real browser profile; the profile is removed after the job.
 For local verification, prefix the runner command with `MISE_ENABLE_TOOLS=go,python,node` so mise does not automatically install unrelated repository tools.
 
 ## Readiness
