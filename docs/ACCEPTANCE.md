@@ -90,6 +90,10 @@ Enroll `douglasjarquin/sum` itself and confirm the registration points at the in
 In a throwaway Git project and temporary `HOME`, run `sumctl skills install` against a local fixture with one explicitly selected skill and agent.
 Confirm the pinned Vercel Skills CLI copies the selected directory into the project, creates no skill symlink, and writes no user-level skill directory.
 Request a missing skill and confirm the command fails without reporting success, then request a `sum-*` name and confirm Sum refuses it before the upstream CLI runs.
+List a real source's skills read-only (`.local/bin/skills add michael-denyer/pstack-claude --list`) and confirm nothing is copied and no selection is made; listing is inspection, not an install decision.
+Copy one real skill from a real public source (`vercel-labs/agent-skills`, skill `writing-guidelines`, agent `claude-code`) into a throwaway Git project with `sumctl skills install`; confirm the resulting Git diff is exactly one project-local `SKILL.md` plus `skills-lock.json`, review it as untrusted content per `docs/sum-skills.md`, commit it, and open an ordinary PR for it.
+Re-run the identical `sumctl skills install` command and confirm the diff is empty (an unchanged selection); then copy a second explicit skill into the same project and confirm the diff adds only that skill's files and a `skills-lock.json` entry, leaving the first skill's files untouched.
+Run the pinned Vercel Skills CLI's own `update -p -y` directly (not through `sumctl`) against that project and confirm it does not preserve the `--agent claude-code` copy made above; do not rely on `update` for a refresh, and re-run the explicit `sumctl skills install` command instead.
 
 ## 12. Code graph per checkout with a real harness
 
