@@ -2,11 +2,22 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/doctor"
+	"github.com/douglasjarquin/sum/go/internal/graph"
+	"github.com/douglasjarquin/sum/go/internal/metadata"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/roleinit"
+	"github.com/douglasjarquin/sum/go/internal/settings"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -71,6 +82,168 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		_, _ = io.WriteString(cmd.OutOrStdout(), cmd.UsageString())
 	})
 
+	root.AddCommand(&cobra.Command{
+		Use:  "release-contract",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return emitJSON(cmd.OutOrStdout(), contract.BuildRelease())
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "settings",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && args[0] == "show" && opts.homeSet {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				view, err := settings.CapacityView(st)
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			return opts.compat(cmd.Context(), append([]string{"settings"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "preset",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				switch {
+				case len(args) == 1 && args[0] == "list":
+					view, err := settings.PresetList(st)
+					if err != nil {
+						return err
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				case len(args) == 2 && args[0] == "show":
+					view, err := settings.PresetShow(st, args[1])
+					if err != nil {
+						return err
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"preset"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "graph",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && len(args) >= 1 && args[0] == "config" {
+				if harness, raw, ok := parseGraphConfigArgs(args[1:]); ok && graph.IsValidHarness(harness) {
+					if runtimeRoot := runtimeRootFromReference(opts.reference); runtimeRoot != "" {
+						if _, err := store.Open(opts.home); err != nil {
+							return err
+						}
+						view, err := graph.Config(runtimeRoot, harness)
+						if err != nil {
+							return err
+						}
+						if raw {
+							snippetValue, _ := view.Get("snippet")
+							snippet, _ := snippetValue.(string)
+							if !strings.HasSuffix(snippet, "\n") {
+								snippet += "\n"
+							}
+							_, writeErr := io.WriteString(cmd.OutOrStdout(), snippet)
+							return writeErr
+						}
+						return emitOrdjson(cmd.OutOrStdout(), view)
+					}
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"graph"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "metadata",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" {
+				raw := len(args) == 2 && args[0] == "snippet" && args[1] == "--raw"
+				plain := len(args) == 1 && args[0] == "snippet"
+				if raw || plain {
+					if _, err := store.Open(opts.home); err != nil {
+						return err
+					}
+					view := metadata.Snippet(opts.reference, opts.home)
+					if raw {
+						tomlValue, _ := view.Get("toml")
+						toml, _ := tomlValue.(string)
+						_, writeErr := io.WriteString(cmd.OutOrStdout(), toml)
+						return writeErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"metadata"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "doctor",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" && len(args) == 0 {
+				if st, err := store.Open(opts.home); err == nil {
+					view := doctor.Doctor(runtimeRootFromReference(opts.reference), st)
+					if emitErr := emitOrdjson(cmd.OutOrStdout(), view); emitErr != nil {
+						return emitErr
+					}
+					if okValue, _ := view.Get("ok"); okValue != true {
+						return &ExitError{Code: 1}
+					}
+					return nil
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"doctor"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "init",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" {
+				if role, task, ok := parseInitArgs(args); ok {
+					st, err := store.Open(opts.home)
+					if err == nil && !st.Designated() {
+						root := runtimeRootFromReference(opts.reference)
+						ctx, ctxErr := store.Context(root)
+						if ctxErr != nil {
+							return ctxErr
+						}
+						view, initErr := roleinit.Init(root, st, ctx, role, task)
+						if initErr != nil {
+							return initErr
+						}
+						return emitOrdjson(cmd.OutOrStdout(), view)
+					}
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"init"}, args...))
+		},
+	})
+
 	for _, name := range compatibilityCommands {
 		command := &cobra.Command{
 			Use:                name,
@@ -86,7 +259,87 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"doctor", "init", "status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "metadata", "attention", "bind", "backup", "settings", "preset", "project", "herdr", "graph", "dev", "brief", "refresh", "release", "update",
+	"status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
+}
+
+func parseInitArgs(tokens []string) (role, task string, ok bool) {
+	roles := map[string]bool{"coordinator": true, "worker": true, "developer": true}
+	reclaimSeen := false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--role":
+			if role != "" || i+1 >= len(tokens) {
+				return "", "", false
+			}
+			i++
+			role = tokens[i]
+		case strings.HasPrefix(token, "--role="):
+			if role != "" {
+				return "", "", false
+			}
+			role = strings.TrimPrefix(token, "--role=")
+		case token == "--task":
+			if task != "" || i+1 >= len(tokens) {
+				return "", "", false
+			}
+			i++
+			task = tokens[i]
+		case strings.HasPrefix(token, "--task="):
+			if task != "" {
+				return "", "", false
+			}
+			task = strings.TrimPrefix(token, "--task=")
+		case token == "--reclaim":
+			if reclaimSeen {
+				return "", "", false
+			}
+			reclaimSeen = true
+		default:
+			return "", "", false
+		}
+	}
+	if role != "" && !roles[role] {
+		return "", "", false
+	}
+	return role, task, true
+}
+
+func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--harness":
+			if harness != "" || i+1 >= len(tokens) {
+				return "", false, false
+			}
+			i++
+			harness = tokens[i]
+		case strings.HasPrefix(token, "--harness="):
+			if harness != "" {
+				return "", false, false
+			}
+			harness = strings.TrimPrefix(token, "--harness=")
+		case token == "--raw":
+			if raw {
+				return "", false, false
+			}
+			raw = true
+		default:
+			return "", false, false
+		}
+	}
+	if harness == "" {
+		return "", false, false
+	}
+	return harness, raw, true
+}
+
+func runtimeRootFromReference(reference string) string {
+	if reference == "" {
+		return ""
+	}
+	return filepath.Dir(filepath.Dir(reference))
 }
 
 func (o *rootOptions) compat(ctx context.Context, args []string) error {
@@ -109,6 +362,24 @@ func (o *rootOptions) compat(ctx context.Context, args []string) error {
 		return err
 	}
 	return nil
+}
+
+func emitJSON(out io.Writer, value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, string(encoded))
+	return err
+}
+
+func emitOrdjson(out io.Writer, value any) error {
+	encoded, err := ordjson.MarshalIndent(value)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, string(encoded))
+	return err
 }
 
 func normalizeHome(args []string, home string, homeSet bool) []string {
