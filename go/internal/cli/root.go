@@ -389,16 +389,23 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && opts.reference != "" && len(args) == 1 {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
+			if opts.homeSet && opts.reference != "" && len(args) >= 1 {
+				taskID := args[0]
+				sections, sectionsOK := []string(nil), true
+				if len(args) > 1 {
+					sections, sectionsOK = parseContextSectionArgs(args[1:])
 				}
-				view, viewErr := contextview.View(st, args[0], opts.reference)
-				if viewErr != nil {
-					return viewErr
+				if sectionsOK {
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := contextview.View(st, taskID, opts.reference, sections)
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
 				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
 			return opts.compat(cmd.Context(), append([]string{"context"}, args...))
 		},
@@ -540,6 +547,49 @@ func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
 		return "", false, false
 	}
 	return harness, raw, true
+}
+
+var validContextSections = map[string]bool{
+	"outline": true, "brief": true, "decisions": true, "handoff": true, "evidence": true,
+	"execution": true, "environment": true, "update": true, "returns": true, "notes": true,
+}
+
+// parseContextSectionArgs recognizes only repeated `--section NAME`/`--section=NAME` flags (no other flag), one
+// or more of the recognized CONTEXT_SECTIONS names, deduplicated in first-occurrence order — mirroring
+// `list(dict.fromkeys(args.section or []))`. Any other shape (an unrecognized flag, an unknown section, or zero
+// --section flags) falls back to the Python reference.
+func parseContextSectionArgs(tokens []string) (sections []string, ok bool) {
+	var raw []string
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--section":
+			if i+1 >= len(tokens) {
+				return nil, false
+			}
+			i++
+			raw = append(raw, tokens[i])
+		case strings.HasPrefix(token, "--section="):
+			raw = append(raw, strings.TrimPrefix(token, "--section="))
+		default:
+			return nil, false
+		}
+	}
+	if len(raw) == 0 {
+		return nil, false
+	}
+	seen := map[string]bool{}
+	for _, sec := range raw {
+		if !validContextSections[sec] {
+			return nil, false
+		}
+		if seen[sec] {
+			continue
+		}
+		seen[sec] = true
+		sections = append(sections, sec)
+	}
+	return sections, true
 }
 
 func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
