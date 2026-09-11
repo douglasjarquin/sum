@@ -219,7 +219,7 @@ type Endpoint struct {
 	Cwd     string
 }
 
-func registrationKey(e Endpoint) string {
+func RegistrationKey(e Endpoint) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{e.Machine, e.Session, e.Pane}, "\n")))
 	return hex.EncodeToString(sum[:])[:16]
 }
@@ -258,7 +258,7 @@ func (s *Store) Owner() (*ordjson.Object, error) {
 }
 
 func (s *Store) Registration(endpoint Endpoint) (*ordjson.Object, error) {
-	path := filepath.Join(s.Sessions, registrationKey(endpoint)+".json")
+	path := filepath.Join(s.Sessions, RegistrationKey(endpoint)+".json")
 	if info, err := os.Stat(path); err != nil || info.IsDir() {
 		return nil, nil
 	}
@@ -299,7 +299,7 @@ func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Obj
 		}
 	}
 
-	key := registrationKey(endpoint)
+	key := RegistrationKey(endpoint)
 	value := ordjson.NewObject()
 	value.Set("schema", json.Number(fmt.Sprint(Schema)))
 	value.Set("key", key)

@@ -43,7 +43,7 @@ func TestInit_matchesThePythonReferenceInThisDevCheckout(t *testing.T) {
 		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
 	}
 
-	if stdout.String() != string(want) {
+	if normalizeTimestamps(stdout.String()) != normalizeTimestamps(string(want)) {
 		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
 	}
 }

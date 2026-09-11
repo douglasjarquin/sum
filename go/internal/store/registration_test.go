@@ -6,10 +6,10 @@ import (
 )
 
 func TestRegistrationKey_matchesThePythonReferenceHash(t *testing.T) {
-	got := registrationKey(Endpoint{Machine: "m1", Session: "s1", Pane: "p1"})
+	got := RegistrationKey(Endpoint{Machine: "m1", Session: "s1", Pane: "p1"})
 	want := "293c980b4e6c2341"
 	if got != want {
-		t.Fatalf("registrationKey = %q, want %q", got, want)
+		t.Fatalf("RegistrationKey = %q, want %q", got, want)
 	}
 }
 
@@ -105,7 +105,7 @@ func TestRegistration_rejectsIdentityMismatch(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 
-	path := s.Sessions + "/" + registrationKey(endpoint) + ".json"
+	path := s.Sessions + "/" + RegistrationKey(endpoint) + ".json"
 	corrupted := `{"schema":1,"key":"x","role":"developer","task":null,"machine":"other","session":"s1","pane":"p1"}`
 	if err := os.WriteFile(path, []byte(corrupted), 0o600); err != nil {
 		t.Fatal(err)

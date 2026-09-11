@@ -8,16 +8,25 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/contextview"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/doctor"
+	"github.com/douglasjarquin/sum/go/internal/environment"
+	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/graph"
+	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/project"
+	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/settings"
+	"github.com/douglasjarquin/sum/go/internal/statuscmd"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/versions"
 	"github.com/spf13/cobra"
 )
 
@@ -197,6 +206,215 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
+	statusHandler := func(name string, inboxMode bool) func(cmd *cobra.Command, args []string) error {
+		return func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && len(args) == 0 {
+				if st, err := store.Open(opts.home); err == nil {
+					view, viewErr := statuscmd.Status(st, inboxMode)
+					if viewErr == nil {
+						return emitOrdjson(cmd.OutOrStdout(), view)
+					}
+					return viewErr
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{name}, args...))
+		}
+	}
+	root.AddCommand(&cobra.Command{
+		Use:                "status",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               statusHandler("status", false),
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "inbox",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               statusHandler("inbox", true),
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "brief",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && len(args) == 2 && args[0] == "list" {
+				if st, err := store.Open(opts.home); err == nil {
+					view, viewErr := versions.BriefList(st, args[1])
+					if viewErr == nil {
+						return emitOrdjson(cmd.OutOrStdout(), view)
+					}
+					return viewErr
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"brief"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "env",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" && len(args) >= 2 && args[0] == "show" {
+				if taskID, maxChars, ok := parseEnvShowArgs(args[1:]); ok {
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := environment.Show(st, taskID, opts.reference, maxChars)
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"env"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "release",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet {
+				switch {
+				case len(args) == 1 && args[0] == "list":
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := release.List(st)
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				case len(args) == 2 && args[0] == "show":
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := release.Show(st, args[1])
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"release"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "project",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet {
+				switch {
+				case len(args) == 1 && args[0] == "list":
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := project.List(st, runtimeRootFromReference(opts.reference))
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				case len(args) == 2 && args[0] == "show":
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := project.Show(st, args[1])
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"project"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "hook",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" && len(args) == 1 && args[0] == "status" {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				runtimeRoot := runtimeRootFromReference(opts.reference)
+				ctx, ctxErr := store.Context(runtimeRoot)
+				if ctxErr != nil {
+					ctx = nil
+				}
+				view, viewErr := hookstatus.Status(st, ctx, runtimeRoot, opts.reference)
+				if viewErr != nil {
+					return viewErr
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			return opts.compat(cmd.Context(), append([]string{"hook"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "show",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && len(args) == 1 {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				view, viewErr := evidenceview.Show(st, args[0])
+				if viewErr != nil {
+					return viewErr
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			return opts.compat(cmd.Context(), append([]string{"show"}, args...))
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
+		Use:                "context",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.homeSet && opts.reference != "" && len(args) >= 1 {
+				taskID := args[0]
+				contextOpts, ok := contextview.Options{
+					After:    contextview.DefaultAfter,
+					Limit:    contextview.DefaultLimit,
+					MaxChars: contextview.DefaultMaxChars,
+				}, true
+				if len(args) > 1 {
+					contextOpts, ok = parseContextArgs(args[1:])
+				}
+				if ok {
+					st, err := store.Open(opts.home)
+					if err != nil {
+						return err
+					}
+					view, viewErr := contextview.View(st, taskID, opts.reference, contextOpts)
+					if viewErr != nil {
+						return viewErr
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return opts.compat(cmd.Context(), append([]string{"context"}, args...))
+		},
+	})
+
 	root.AddCommand(&cobra.Command{
 		Use:                "doctor",
 		DisableFlagParsing: true,
@@ -259,7 +477,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"status", "inbox", "prepare", "dispatch", "start", "help", "context", "notes", "env", "show", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "hook", "attention", "bind", "backup", "project", "herdr", "dev", "brief", "refresh", "release", "update",
+	"prepare", "dispatch", "start", "help", "notes", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "attention", "bind", "backup", "herdr", "dev", "refresh", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, ok bool) {
@@ -333,6 +551,206 @@ func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
 		return "", false, false
 	}
 	return harness, raw, true
+}
+
+// validContextSections lists only the sections contextview.View actually implements. A name from
+// CONTEXT_SECTIONS MUST NOT be added here until contextview.View grows a matching case in the SAME commit —
+// otherwise the native path would silently omit that key instead of falling back to Python (a real bug this
+// port hit once already).
+var validContextSections = map[string]bool{
+	"outline": true, "brief": true, "decisions": true, "handoff": true, "evidence": true,
+	"execution": true, "returns": true, "notes": true, "environment": true, "update": true,
+}
+
+var validContextRoles = map[string]bool{"worker": true, "reviewer": true, "coordinator": true}
+
+// parseContextArgs recognizes repeated `--section NAME`/`--section=NAME` flags (deduplicated in
+// first-occurrence order, mirroring `list(dict.fromkeys(args.section or []))`); at most one each of
+// `--role`, `--since`, and `--revision` (single-value flags — a repeat falls back rather than mirroring
+// argparse's last-value-wins, matching this port's existing --role/--since convention); repeated `--kind`
+// flags (empty values dropped, mirroring `[k for k in (args.kind or []) if k]`); and `--after`/`--limit`/
+// `--max-chars`, each accepting only a valid base-10 integer (a malformed value falls back to the Python
+// reference so argparse's own type=int error text applies, rather than replicating it here). Range validation
+// for --after/--limit/--max-chars happens natively inside contextview.View, matching context_view's exact
+// error text and code position. `--since`'s format is not validated here — an opaque token, checked deep
+// inside contextview's parseCursor. Any other shape (an unrecognized flag, an unknown section or role, or a
+// repeated single-value flag) falls back to the Python reference.
+func parseContextArgs(tokens []string) (contextview.Options, bool) {
+	result := contextview.Options{
+		After:    contextview.DefaultAfter,
+		Limit:    contextview.DefaultLimit,
+		MaxChars: contextview.DefaultMaxChars,
+	}
+	var raw []string
+	sinceSet, revisionSet := false, false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--section":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			raw = append(raw, tokens[i])
+		case strings.HasPrefix(token, "--section="):
+			raw = append(raw, strings.TrimPrefix(token, "--section="))
+		case token == "--role":
+			if result.Role != "" || i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			result.Role = tokens[i]
+		case strings.HasPrefix(token, "--role="):
+			if result.Role != "" {
+				return contextview.Options{}, false
+			}
+			result.Role = strings.TrimPrefix(token, "--role=")
+		case token == "--since":
+			if sinceSet || i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			result.Since = tokens[i]
+			sinceSet = true
+		case strings.HasPrefix(token, "--since="):
+			if sinceSet {
+				return contextview.Options{}, false
+			}
+			result.Since = strings.TrimPrefix(token, "--since=")
+			sinceSet = true
+		case token == "--revision":
+			if revisionSet || i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			result.Revision = tokens[i]
+			revisionSet = true
+		case strings.HasPrefix(token, "--revision="):
+			if revisionSet {
+				return contextview.Options{}, false
+			}
+			result.Revision = strings.TrimPrefix(token, "--revision=")
+			revisionSet = true
+		case token == "--kind":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			if tokens[i] != "" {
+				result.Kinds = append(result.Kinds, tokens[i])
+			}
+		case strings.HasPrefix(token, "--kind="):
+			if value := strings.TrimPrefix(token, "--kind="); value != "" {
+				result.Kinds = append(result.Kinds, value)
+			}
+		case token == "--after":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.After = n
+		case strings.HasPrefix(token, "--after="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--after="))
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.After = n
+		case token == "--limit":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.Limit = n
+		case strings.HasPrefix(token, "--limit="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--limit="))
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.Limit = n
+		case token == "--max-chars":
+			if i+1 >= len(tokens) {
+				return contextview.Options{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.MaxChars = n
+		case strings.HasPrefix(token, "--max-chars="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--max-chars="))
+			if err != nil {
+				return contextview.Options{}, false
+			}
+			result.MaxChars = n
+		default:
+			return contextview.Options{}, false
+		}
+	}
+	if result.Role != "" && !validContextRoles[result.Role] {
+		return contextview.Options{}, false
+	}
+	seen := map[string]bool{}
+	for _, sec := range raw {
+		if !validContextSections[sec] {
+			return contextview.Options{}, false
+		}
+		if seen[sec] {
+			continue
+		}
+		seen[sec] = true
+		result.Sections = append(result.Sections, sec)
+	}
+	return result, true
+}
+
+func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
+	maxChars = environment.DefaultMaxChars
+	maxCharsSet := false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--max-chars":
+			if maxCharsSet || i+1 >= len(tokens) {
+				return "", 0, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return "", 0, false
+			}
+			maxChars = n
+			maxCharsSet = true
+		case strings.HasPrefix(token, "--max-chars="):
+			if maxCharsSet {
+				return "", 0, false
+			}
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--max-chars="))
+			if err != nil {
+				return "", 0, false
+			}
+			maxChars = n
+			maxCharsSet = true
+		case strings.HasPrefix(token, "-"):
+			return "", 0, false
+		case task == "":
+			task = token
+		default:
+			return "", 0, false
+		}
+	}
+	if task == "" {
+		return "", 0, false
+	}
+	return task, maxChars, true
 }
 
 func runtimeRootFromReference(reference string) string {
