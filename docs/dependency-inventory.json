@@ -157,18 +157,38 @@
       "role": "runtime",
       "owner": "sum",
       "contracts": {"cli": ["bin/herdr-mesh-go"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
-    }
-  ],
-  "integrations": [
+    },
     {
       "id": "remainder",
       "source": "https://github.com/douglasjarquin/remainder",
-      "version": null,
-      "status": "external-not-consumed",
+      "version": "0.2.2 (linux-amd64), 0.2.1 (darwin-arm64, linux-arm64)",
+      "checksum": "per-platform archive SHA-256 in pins",
+      "license": "MIT",
+      "platforms": ["linux-amd64", "darwin-arm64", "linux-arm64"],
+      "requirements": ["setup/release staging only", "checksum-verified GitHub release tar.gz", "Codex quota; not a mise which tool"],
+      "role": "runtime",
       "owner": "Remainder",
-      "contracts": {"cli": [], "mcp": []},
-      "note": "Sum does not install, copy, or invoke Remainder until its independently released route is approved."
-    },
+      "contracts": {"cli": ["remainder --provider", "remainder --format json"], "mcp": []},
+      "pins": {
+        "linux-amd64": {
+          "version": "0.2.2",
+          "sha256": "7828125a2bdb9b99d1a23d27f9ab1ffd1eaf0dce3763724bbf7604fade4346c7",
+          "asset": "remainder_v0.2.2_linux_amd64.tar.gz"
+        },
+        "darwin-arm64": {
+          "version": "0.2.1",
+          "sha256": "84f3b21f3a0a30068644e4c6f229af1ec7b183744be30f10c379fe514921af95",
+          "asset": "remainder_v0.2.1_darwin_arm64.tar.gz"
+        },
+        "linux-arm64": {
+          "version": "0.2.1",
+          "sha256": "fcd32077532ba917689efda60153a63fcd71a6cf78cd6b6cc76d17c8b309a7e8",
+          "asset": "remainder_v0.2.1_linux_arm64.tar.gz"
+        }
+      }
+    }
+  ],
+  "integrations": [
     {
       "id": "pinchos",
       "source": "https://github.com/douglasjarquin/pinchos",

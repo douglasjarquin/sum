@@ -1,7 +1,10 @@
+import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import tarfile
 import tempfile
 import tomllib
 import unittest
@@ -116,6 +119,68 @@ class SetupTest(unittest.TestCase):
         with self.assertRaisesRegex(setup.sumctl.SumError, 'never rewritten in place'):
             setup.sumctl.install_mesh(mesh, ROOT)
         self.assertEqual((mesh / 'dist/server.js').read_text(), '// older overlay\n')
+
+    def test_remainder_is_not_a_mise_which_tool(self):
+        self.assertNotIn("remainder", setup.sumctl.TOOLS)
+
+    def test_install_remainder_verifies_checksum_extracts_once_and_never_retargets(self):
+        pkg = self.root / "pkg"
+        pkg.mkdir()
+        binary = pkg / "remainder"
+        binary.write_text("#!/bin/sh\necho remainder-fixture\n")
+        binary.chmod(0o755)
+        archive = self.root / "remainder_v0.0.0_test.tar.gz"
+        with tarfile.open(archive, "w:gz") as bundle:
+            bundle.add(binary, arcname="remainder")
+        digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+        pin = {"version": "0.0.0", "sha256": digest, "asset": archive.name}
+        fetched = []
+
+        def fetch(url, dest):
+            fetched.append(url)
+            shutil.copyfile(archive, dest)
+
+        runtime = self.root / "runtime"
+        first = setup.sumctl.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="darwin-arm64")
+        link = runtime / ".local/bin/remainder"
+        dest = runtime / ".deps/remainder/0.0.0-darwin-arm64"
+        self.assertTrue(first["installed"])
+        self.assertTrue(first["created"])
+        self.assertFalse(first["rewritten"])
+        self.assertTrue(dest.is_dir())
+        self.assertEqual(os.readlink(link), str(dest / "remainder"))
+        self.assertEqual(len(fetched), 1)
+        second = setup.sumctl.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="darwin-arm64")
+        self.assertEqual(len(fetched), 1)
+        self.assertFalse(second["created"])
+        self.assertFalse(second["rewritten"])
+        self.assertEqual(os.readlink(link), str(dest / "remainder"))
+        later = {"version": "0.0.1", "sha256": digest, "asset": archive.name}
+        third = setup.sumctl.install_remainder(runtime, fetch=fetch, pin=later, platform_name="darwin-arm64")
+        self.assertEqual(len(fetched), 2)
+        self.assertTrue(third["differs"])
+        self.assertEqual(os.readlink(link), str(dest / "remainder"))
+
+    def test_install_remainder_refuses_checksum_mismatch_without_leaving_dest(self):
+        archive = self.root / "remainder_v0.0.0_test.tar.gz"
+        archive.write_bytes(b"not-a-valid-remainder-archive")
+        pin = {"version": "0.0.0", "sha256": "0" * 64, "asset": archive.name}
+
+        def fetch(url, dest):
+            shutil.copyfile(archive, dest)
+
+        runtime = self.root / "runtime"
+        with self.assertRaisesRegex(setup.sumctl.SumError, "checksum mismatch"):
+            setup.sumctl.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="linux-amd64")
+        self.assertFalse((runtime / ".deps/remainder/0.0.0-linux-amd64").exists())
+        self.assertFalse((runtime / ".local/bin/remainder").exists())
+
+    def test_remainder_default_fetch_honors_no_download(self):
+        os.environ["SUM_REMAINDER_NO_DOWNLOAD"] = "1"
+        self.addCleanup(os.environ.pop, "SUM_REMAINDER_NO_DOWNLOAD", None)
+        pin = {"version": "0.2.1", "sha256": "abc", "asset": "remainder_v0.2.1_darwin_arm64.tar.gz"}
+        with self.assertRaisesRegex(setup.sumctl.SumError, "disabled"):
+            setup.sumctl.install_remainder(self.root / "runtime", pin=pin, platform_name="darwin-arm64")
 
     def test_mise_and_all_python_sources_parse(self):
         tomllib.loads((ROOT / 'mise.toml').read_text())
