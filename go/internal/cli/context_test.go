@@ -146,6 +146,27 @@ func TestContextSections_matchThePythonReferenceAcrossScenarios(t *testing.T) {
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextSectionsMatch(t, reference, home, "t-aaaaaaaaaaaa", "brief")
 	})
+
+	t.Run("notes section, a present notes.md with two entries", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-0a0a0a0a0a0a", fmt.Sprintf(`{"schema": 1, "id": "t-0a0a0a0a0a0a", "status": "running", "repository": "owner/repoG",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		if err := os.WriteFile(filepath.Join(home, "tasks", "t-0a0a0a0a0a0a", "notes.md"),
+			[]byte("# Notes for t-0a0a0a0a0a0a\n\n## 2026-01-01T00:00:15+00:00 worker p1\n\nfound the thing\n\n## 2026-01-01T00:05:00+00:00 coordinator p2\n\nlooks fine\n"),
+			0o600); err != nil {
+			t.Fatal(err)
+		}
+		assertContextSectionsMatch(t, reference, home, "t-0a0a0a0a0a0a", "notes")
+	})
+
+	t.Run("notes section, no notes.md present", func(t *testing.T) {
+		home := t.TempDir()
+		writeTaskFixture(t, home, "t-0b0b0b0b0b0b", fmt.Sprintf(`{"schema": 1, "id": "t-0b0b0b0b0b0b", "status": "running", "repository": "owner/repoH",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
+		assertContextSectionsMatch(t, reference, home, "t-0b0b0b0b0b0b", "notes")
+	})
 }
 
 func assertContextSectionsMatch(t *testing.T, reference, home, taskID string, sections ...string) {
