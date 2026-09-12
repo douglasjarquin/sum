@@ -47,7 +47,7 @@ func TestCompiledEntrypointCancellationExitsOnce(t *testing.T) {
 		_ = command.Process.Kill()
 		t.Fatal("compiled helper did not exit")
 	}
-	if !strings.Contains(stdout.String(), `"commands"`) {
+	if !strings.Contains(stdout.String(), "commands:") && !strings.Contains(stdout.String(), `"commands"`) {
 		t.Fatalf("help output missing commands: %s", stdout.String())
 	}
 }

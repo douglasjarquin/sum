@@ -107,7 +107,7 @@ func TestReleaseList_emptyAndMixedBundles(t *testing.T) {
 	t.Run("no releases directory", func(t *testing.T) {
 		_, home := buildInstallation(t)
 		out := runRelease(t, home, []string{"release", "list"})
-		if !strings.Contains(out, `"releases"`) {
+		if !strings.Contains(out, "releases:") && !strings.Contains(out, `"releases"`) {
 			t.Fatalf("missing releases key: %s", out)
 		}
 	})
@@ -128,7 +128,7 @@ func TestReleaseList_emptyAndMixedBundles(t *testing.T) {
 		if !strings.Contains(out, validSHA) {
 			t.Fatalf("valid SHA missing: %s", out)
 		}
-		if !strings.Contains(out, `"ok": false`) {
+		if !strings.Contains(out, "ok: false") && !strings.Contains(out, `"ok": false`) {
 			t.Fatalf("broken bundle should be ok=false: %s", out)
 		}
 	})

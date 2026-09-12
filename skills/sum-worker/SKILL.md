@@ -18,6 +18,7 @@ Use the repository's existing dev environment. Do not add a competing toolchain 
 
 Your brief's `## Verification contract` section says whether the checkout is `standardized` (a root `VERIFY.md` plus a `verify` task it defines).
 When it is, the project's verification is that contract: commit the candidate, then run `python3 .agents/skills/verify/scripts/verify_run.py --base <base SHA> --json` from your checkout with a clean tree and read the printed `run.json`.
+`sumctl` stdout is TOON. Pass `--format json` when a tool must parse JSON.
 Attach it to your handoff as `verification` (`run_id`, `outcome`, `record`, `candidate`, `certifies`, `requires_root_review`, `contract_sha256`, `policy_changed`, copied from run.json). A `fail`, `blocked`, or provisional run is reported as it is.
 Your run is the worker's claim. The coordinator executes the same contract again under its own run id in a separate checkout and then performs the independent review; a run id is recorded once, so never reuse or edit one, and never carry a run of an earlier SHA over to a repaired candidate: run it again.
 `VERIFY.md`, `mise.toml`, `mise-tasks/`, the feature maps, and `.agents/skills/verify/` are verification policy; changing them is reviewed explicitly, and a candidate must not weaken the gate that certifies it.

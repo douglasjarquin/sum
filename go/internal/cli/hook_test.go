@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -120,13 +119,7 @@ func assertHookFailureMatches(t *testing.T, reference, home string, args []strin
 	if err := cmd.Run(); err == nil {
 		t.Fatalf("expected python reference to fail, got success with stderr=%s", pyStderr.String())
 	}
-	var pyPayload struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(pyStderr.Bytes(), &pyPayload); err != nil {
-		t.Fatalf("python stderr is not the expected error JSON: %v (stderr=%s)", err, pyStderr.String())
-	}
-
+	want := decodeCLIError(t, pyStderr.Bytes())
 	var stdout, stderr bytes.Buffer
 	root := NewRoot(reference, &stdout, &stderr)
 	root.SetArgs(fullArgs)
@@ -134,8 +127,8 @@ func assertHookFailureMatches(t *testing.T, reference, home string, args []strin
 	if err == nil {
 		t.Fatalf("expected go command to fail, got success with stdout=%s", stdout.String())
 	}
-	if err.Error() != pyPayload.Error {
-		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), pyPayload.Error)
+	if err.Error() != want {
+		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), want)
 	}
 }
 

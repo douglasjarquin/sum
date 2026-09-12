@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,10 +12,10 @@ import (
 	"testing"
 )
 
-var readAtPattern = regexp.MustCompile(`"read_at": "[^"]*"`)
+var readAtPattern = regexp.MustCompile(`"?read_at"?: "[^"]*"`)
 
 func normalizeReadAt(s string) string {
-	return readAtPattern.ReplaceAllString(s, `"read_at": "<at>"`)
+	return readAtPattern.ReplaceAllString(s, `read_at: "<at>"`)
 }
 
 func TestContext_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
@@ -375,16 +374,12 @@ func assertContextMatches(t *testing.T, reference, home, taskID string) {
 
 func extractCursor(t *testing.T, output []byte) string {
 	t.Helper()
-	var parsed struct {
-		Cursor string `json:"cursor"`
-	}
-	if err := json.Unmarshal(output, &parsed); err != nil {
-		t.Fatalf("failed to parse cursor from output: %v (output=%s)", err, output)
-	}
-	if parsed.Cursor == "" {
+	parsed := decodeCLIMap(t, string(output))
+	cursor, _ := parsed["cursor"].(string)
+	if cursor == "" {
 		t.Fatalf("no cursor found in output: %s", output)
 	}
-	return parsed.Cursor
+	return cursor
 }
 
 func TestContextSince_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
@@ -492,13 +487,7 @@ func assertContextSinceFailureMatches(t *testing.T, reference, home, taskID, cur
 	if err := cmd.Run(); err == nil {
 		t.Fatalf("expected python reference to fail, got success with stderr=%s", pyStderr.String())
 	}
-	var pyPayload struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(pyStderr.Bytes(), &pyPayload); err != nil {
-		t.Fatalf("python stderr is not the expected error JSON: %v (stderr=%s)", err, pyStderr.String())
-	}
-
+	want := decodeCLIError(t, pyStderr.Bytes())
 	var stdout, stderr bytes.Buffer
 	root := NewRoot(reference, &stdout, &stderr)
 	root.SetArgs(args)
@@ -506,8 +495,8 @@ func assertContextSinceFailureMatches(t *testing.T, reference, home, taskID, cur
 	if err == nil {
 		t.Fatalf("expected go command to fail, got success with stdout=%s", stdout.String())
 	}
-	if err.Error() != pyPayload.Error {
-		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), pyPayload.Error)
+	if err.Error() != want {
+		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), want)
 	}
 }
 
@@ -640,13 +629,7 @@ func assertContextArgsFailureMatches(t *testing.T, reference, home, taskID strin
 	if err := cmd.Run(); err == nil {
 		t.Fatalf("expected python reference to fail, got success with stderr=%s", pyStderr.String())
 	}
-	var pyPayload struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(pyStderr.Bytes(), &pyPayload); err != nil {
-		t.Fatalf("python stderr is not the expected error JSON: %v (stderr=%s)", err, pyStderr.String())
-	}
-
+	want := decodeCLIError(t, pyStderr.Bytes())
 	var stdout, stderr bytes.Buffer
 	root := NewRoot(reference, &stdout, &stderr)
 	root.SetArgs(args)
@@ -654,8 +637,8 @@ func assertContextArgsFailureMatches(t *testing.T, reference, home, taskID strin
 	if err == nil {
 		t.Fatalf("expected go command to fail, got success with stdout=%s", stdout.String())
 	}
-	if err.Error() != pyPayload.Error {
-		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), pyPayload.Error)
+	if err.Error() != want {
+		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), want)
 	}
 }
 

@@ -25,9 +25,9 @@ func main() {
 		}
 		errorValue := ordjson.NewObject()
 		errorValue.Set("error", err.Error())
-		payload, marshalErr := ordjson.MarshalCompact(errorValue)
+		payload, marshalErr := ordjson.MarshalTOON(errorValue)
 		if marshalErr != nil {
-			fmt.Fprintln(os.Stderr, `{"error": "sumctl failed"}`)
+			fmt.Fprintln(os.Stderr, "error: sumctl failed")
 		} else {
 			fmt.Fprintln(os.Stderr, string(payload))
 		}

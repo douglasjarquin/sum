@@ -62,12 +62,7 @@ func herdrEnv(t *testing.T, home string) {
 }
 
 func decodeObject(t *testing.T, raw string) map[string]any {
-	t.Helper()
-	var value map[string]any
-	if err := json.Unmarshal([]byte(raw), &value); err != nil {
-		t.Fatalf("json: %v\n%s", err, raw)
-	}
-	return value
+	return decodeCLIMap(t, raw)
 }
 
 func TestInit_designatedFirstPaneClaimsCoordinator(t *testing.T) {

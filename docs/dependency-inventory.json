@@ -123,6 +123,18 @@
       "contracts": {"cli": ["bin/herdr-mesh-go"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
     },
     {
+      "id": "go-toon",
+      "source": "github.com/douglasjarquin/go-toon",
+      "version": "v0.0.0-20260910175100-a2d441264455",
+      "checksum": "go.sum#github.com/douglasjarquin/go-toon",
+      "license": "MIT",
+      "platforms": ["go-module"],
+      "requirements": ["go get", "LLM-facing sumctl stdout"],
+      "role": "build",
+      "owner": "sum",
+      "contracts": {"cli": ["--format toon"], "mcp": []}
+    },
+    {
       "id": "cobra",
       "source": "https://github.com/spf13/cobra",
       "version": "v1.9.1",

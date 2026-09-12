@@ -9,8 +9,11 @@ Release manifests copy that inventory and add the platform-specific SHA-256 of e
 Git and mise are host prerequisites.
 No global Node package installation is required.
 
-The `go/` module pins Cobra v1.9.1 and the official Model Context Protocol Go SDK v1.6.1 in ordinary `go.mod`/`go.sum` files.
+The `go/` module pins Cobra v1.9.1, the official Model Context Protocol Go SDK v1.6.1, and `github.com/douglasjarquin/go-toon` `v0.0.0-20260910175100-a2d441264455` in ordinary `go.mod`/`go.sum` files.
 The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, generator, provider SDK, or configuration framework is installed.
+Agent-facing sumctl stdout is TOON.
+`--format json` emits JSON for jq and CI.
+On-disk records stay JSON.
 
 `mise-tasks/setup` installs those versions, then `scripts/setup.py` performs the first install:
 
