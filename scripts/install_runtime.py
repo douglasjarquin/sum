@@ -17,7 +17,7 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLS = ("python3", "node", "herdr", "gh", "quota-axi", "codegraph", "skills")
+TOOLS = ("python3", "node", "herdr", "gh", "quota-axi", "codegraph", "skills", "basedpyright-langserver", "gopls")
 REMAINDER_REMOTE = "https://github.com/douglasjarquin/remainder/releases/download"
 
 
@@ -83,11 +83,32 @@ def resolve_tools(target):
     run([mise, "install"], cwd=target, env=env, timeout=900)
     links = {}
     for name in TOOLS:
-        resolved = Path(run([mise, "which", name], cwd=target, env=env, timeout=60).stdout.strip()).resolve()
-        if not resolved.is_file():
-            raise InstallError(f"mise resolved {name} to a missing file {resolved}")
+        resolved = which_tool(mise, env, target, name)
+        if resolved is None:
+            raise InstallError(f"mise resolved {name} to a missing file")
         links[name] = link_tool(target / ".local" / "bin" / name, resolved)
     return links
+
+
+def which_tool(mise, env, target, name):
+    result = run([mise, "which", name], cwd=target, env=env, timeout=60, check=False)
+    path = result.stdout.strip()
+    if result.returncode == 0 and path:
+        resolved = Path(path).resolve()
+        if resolved.is_file():
+            return resolved
+        sibling = resolved.parent / name
+        if sibling.is_file():
+            return sibling
+    if name.endswith("-langserver"):
+        primary = name[: -len("-langserver")]
+        result = run([mise, "which", primary], cwd=target, env=env, timeout=60, check=False)
+        path = result.stdout.strip()
+        if result.returncode == 0 and path:
+            candidate = Path(path).resolve().parent / name
+            if candidate.is_file():
+                return candidate
+    return None
 
 
 def native_platform():

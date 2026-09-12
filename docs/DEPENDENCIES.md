@@ -5,9 +5,15 @@ Release manifests copy that inventory and add the platform-specific SHA-256 of e
 
 ## Installation contract
 
-`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.20.0, GitHub CLI 2.100.0, Herdr 0.9.0, quota-axi 0.1.37, codegraph 1.5.0 (`npm:@colbymchenry/codegraph`), and Vercel Skills 1.5.25 (`npm:skills`).
+`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.20.0, uv 0.12.13, GitHub CLI 2.100.0, Herdr 0.9.0, quota-axi 0.1.37, codegraph 1.5.0 (`npm:@colbymchenry/codegraph`), Vercel Skills 1.5.25 (`npm:skills`), basedpyright 1.40.1 (`pipx:basedpyright`), and gopls 0.23.0 (`go:golang.org/x/tools/gopls`).
 Git and mise are host prerequisites.
 No global Node package installation is required.
+LSP binaries come from those mise pins.
+`mise run setup` links `.local/bin/basedpyright-langserver` and `.local/bin/gopls` once.
+An existing link is never retargeted.
+Project Grok and Cursor PostToolUse hooks run `sumctl lsp ensure`.
+That command installs only allowlisted missing binaries the same way.
+Unknown binaries are refused.
 
 The `go/` module pins Cobra v1.9.1, the official Model Context Protocol Go SDK v1.6.1, and `github.com/douglasjarquin/go-toon` `v0.0.0-20260910175100-a2d441264455` in ordinary `go.mod`/`go.sum` files.
 The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, generator, provider SDK, or configuration framework is installed.

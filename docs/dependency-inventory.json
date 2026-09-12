@@ -87,6 +87,42 @@
       "contracts": {"cli": ["status --json", "init", "sync", "query", "explore"], "mcp": ["stdio optional"]}
     },
     {
+      "id": "uv",
+      "source": "https://github.com/astral-sh/uv",
+      "version": "0.12.13",
+      "checksum": "mise.toml#tools.uv",
+      "license": "Apache-2.0 OR MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["pipx backend for basedpyright"],
+      "role": "setup",
+      "owner": "sum",
+      "contracts": {"cli": ["uv"], "mcp": []}
+    },
+    {
+      "id": "basedpyright",
+      "source": "https://github.com/DetachHead/basedpyright",
+      "version": "1.40.1",
+      "checksum": "mise.toml#tools.pipx:basedpyright",
+      "license": "MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["pipx backend", "python 3.13.5"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["basedpyright-langserver"], "mcp": []}
+    },
+    {
+      "id": "gopls",
+      "source": "https://github.com/golang/tools/tree/master/gopls",
+      "version": "0.23.0",
+      "checksum": "mise.toml#tools.go:golang.org/x/tools/gopls",
+      "license": "BSD-3-Clause",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["go backend", "go 1.25.0"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["gopls"], "mcp": []}
+    },
+    {
       "id": "skills",
       "source": "https://github.com/vercel-labs/skills",
       "version": "1.5.25",
