@@ -315,6 +315,16 @@ func ReadReturns(s *store.Store, taskID string) (*ordjson.Object, error) {
 	return obj, nil
 }
 
+func Write(s *store.Store, value *ordjson.Object) error {
+	taskID, _ := value.Get("task")
+	taskStr, _ := taskID.(string)
+	taskPath, err := s.TaskPath(taskStr)
+	if err != nil {
+		return err
+	}
+	return ordjson.WriteFile(filepath.Join(taskPath, File), value)
+}
+
 func NotificationState(returnsObj *ordjson.Object, obligation *ordjson.Object, key any) *ordjson.Object {
 	obligationID, _ := obligation.Get("id")
 	deliveriesValue, _ := returnsObj.Get("deliveries")

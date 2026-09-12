@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-#MISE description="Canonical aggregate verification: offline Python and Go Mesh suites plus the scripted end-to-end demo (see VERIFY.md)"
+#MISE description="Canonical aggregate verification: Go CLI suite, remaining skill tests, and the scripted demo (see VERIFY.md)"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-python -m unittest discover -s tests -p 'test_*.py'
-(cd go && go test ./internal/mesh ./cmd/herdr-mesh)
+export PATH="$(dirname "$(mise which go)"):${PATH:-}"
+unset GOROOT
+mkdir -p .local/bin
+(cd go && go build -trimpath -buildvcs=false -o ../.local/bin/sumctl ./cmd/sumctl && go test ./...)
+python -m unittest discover -s tests -p 'test_*skill*.py'
 python scripts/demo.py
-

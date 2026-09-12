@@ -9,7 +9,7 @@ Do not use themed role titles.
 Do not copy dispatch, verification, update, quota, or task-storage skills into this file.
 
 The source-controlled Sum pin is `{{PINNED_SUM_REVISION}}`.
-That pin is `0.1.0`, the `VERSION` in `lib/sumctl.py`.
+That pin is `0.1.0`, the `SumVersion` in `go/internal/contract`.
 A live canary must record the installed helper SHA separately.
 
 ## Role

@@ -71,37 +71,15 @@ func TestGraphConfig_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 	}
 }
 
-func TestGraphConfig_missingToolErrorMatchesPythonReference(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
-
+func TestGraphConfig_missingToolIsAGoError(t *testing.T) {
 	home := t.TempDir()
-	args := []string{"--home", home, "graph", "config", "--harness", "claude"}
-
-	pythonCombined, _ := exec.Command(reference, args...).CombinedOutput()
-
-	dir := t.TempDir()
-	binary := filepath.Join(dir, "sumctl-go")
-	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", binary, "../../cmd/sumctl-go")
-	build.Dir = "."
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build failed: %v\n%s", err, output)
-	}
-	goCmd := exec.Command(binary, args...)
-	goCmd.Env = append(os.Environ(), "SUM_PYTHON_HELPER="+reference)
-	goCombined, _ := goCmd.CombinedOutput()
-
-	if string(goCombined) != string(pythonCombined) {
-		t.Fatalf("go combined output = %q, want (python reference) %q", goCombined, pythonCombined)
+	t.Setenv("SUM_CODEGRAPH_BIN", filepath.Join(home, "missing-codegraph"))
+	var stdout, stderr bytes.Buffer
+	root := NewRoot("", &stdout, &stderr)
+	root.SetArgs([]string{"--home", home, "graph", "config", "--harness", "claude"})
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected missing codegraph to fail")
 	}
 }
 

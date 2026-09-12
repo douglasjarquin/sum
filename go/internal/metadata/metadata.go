@@ -6,10 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 const (
@@ -195,4 +199,158 @@ func Summary(s *store.Store) *ordjson.Object {
 		result.Set("reason", nil)
 	}
 	return result
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func asObject(v any) *ordjson.Object {
+	o, _ := v.(*ordjson.Object)
+	return o
+}
+
+func asList(v any) []any {
+	list, _ := v.([]any)
+	return list
+}
+
+func sourceID(s *store.Store) string {
+	return "sum:" + filepath.Base(s.Home)
+}
+
+func reportTokens(runtimeRoot, session, kind, id, source string, tokens map[string]string) error {
+	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
+	if err != nil {
+		return err
+	}
+	args := []string{kind, "report-metadata", id, "--source", source}
+	for k, v := range tokens {
+		args = append(args, "--token", k+"="+v)
+	}
+	_, err = herdrclient.CallRaw(herdrPath, session, 10*time.Second, args...)
+	return err
+}
+
+func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
+	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
+	source := sourceID(s)
+	tasks, err := s.AllTasks()
+	if err != nil {
+		return err
+	}
+	active := 0
+	decisions := 0
+	for _, task := range tasks {
+		if asString(func() any { v, _ := task.Get("status"); return v }()) == "archived" {
+			continue
+		}
+		active++
+		open := 0
+		for _, raw := range asList(func() any { v, _ := task.Get("questions"); return v }()) {
+			q := asObject(raw)
+			if asString(func() any { x, _ := q.Get("status"); return x }()) != "applied" {
+				open++
+			}
+		}
+		decisions += open
+		state := "running"
+		if open > 0 {
+			state = "needs-decision"
+		}
+		repo := asString(func() any { v, _ := task.Get("repository"); return v }())
+		tokens := map[string]string{
+			"sum_state": state,
+			"sum_task":  asString(func() any { v, _ := task.Get("id"); return v }()),
+			"sum_repo":  filepath.Base(repo),
+		}
+		pane := asString(func() any { v, _ := task.Get("pane"); return v }())
+		workspace := asString(func() any { v, _ := task.Get("workspace"); return v }())
+		if pane != "" {
+			if err := reportTokens(runtimeRoot, session, "pane", pane, source, tokens); err != nil {
+				return err
+			}
+		}
+		if workspace != "" {
+			if err := reportTokens(runtimeRoot, session, "workspace", workspace, source, map[string]string{"sum_state": state}); err != nil {
+				return err
+			}
+		}
+	}
+	rootTokens := map[string]string{}
+	if decisions == 1 {
+		rootTokens["sum_inbox"] = "1 decision"
+	} else if decisions > 1 {
+		rootTokens["sum_inbox"] = fmt.Sprintf("%d decisions", decisions)
+	} else {
+		rootTokens["sum_inbox"] = "clear"
+	}
+	rootTokens["sum_tasks"] = fmt.Sprintf("%d active", active)
+	coordPane := asString(func() any { v, _ := ctx.Get("pane"); return v }())
+	if coordPane != "" {
+		if err := reportTokens(runtimeRoot, session, "pane", coordPane, source, rootTokens); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot string, notify bool) (*ordjson.Object, error) {
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	if err := project(s, ctx, runtimeRoot); err != nil {
+		return nil, err
+	}
+	meta, err := ReadMetadata(s)
+	if err != nil {
+		return nil, err
+	}
+	caps := ordjson.NewObject()
+	caps.Set("pane_tokens", true)
+	caps.Set("workspace_tokens", true)
+	meta.Set("enabled", true)
+	meta.Set("notify", notify)
+	meta.Set("source", sourceID(s))
+	meta.Set("capabilities", caps)
+	meta.Set("degraded", nil)
+	meta.Set("last_pass", store.Now())
+	if err := os.MkdirAll(filepath.Dir(Path(s)), 0o700); err != nil {
+		return nil, err
+	}
+	if err := ordjson.WriteFile(Path(s), meta); err != nil {
+		return nil, err
+	}
+	result := Summary(s)
+	result.Set("source", sourceID(s))
+	result.Set("capabilities", caps)
+	result.Set("notify", notify)
+	result.Set("note", "Display-only projection. Herdr's agent lifecycle is unchanged.")
+	return result, nil
+}
+
+func Sync(s *store.Store, ctx *ordjson.Object, runtimeRoot string) (*ordjson.Object, error) {
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	if err := project(s, ctx, runtimeRoot); err != nil {
+		return nil, err
+	}
+	return Summary(s), nil
+}
+
+func Disable(s *store.Store, ctx *ordjson.Object) (*ordjson.Object, error) {
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	meta, err := ReadMetadata(s)
+	if err != nil {
+		return nil, err
+	}
+	meta.Set("enabled", false)
+	if err := ordjson.WriteFile(Path(s), meta); err != nil {
+		return nil, err
+	}
+	return Summary(s), nil
 }

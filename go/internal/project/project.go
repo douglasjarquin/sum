@@ -219,6 +219,72 @@ func projectsRoot(root string) string {
 
 // InstallationOf ports `installation_of`: the installation a designated `.sum` home belongs to; `runtimeRoot`
 // (mirroring Python's `ROOT`) otherwise, i.e. a lab home under another name.
+func PaneInside(s *store.Store, root, cwd string) *ordjson.Object {
+	if cwd == "" {
+		return nil
+	}
+	resolved := resolvePathOrSelf(cwd)
+	base := resolvePathOrSelf(projectsRoot(root))
+	if resolved == base || strings.HasPrefix(resolved, base+string(os.PathSeparator)) {
+		rel, err := filepath.Rel(base, resolved)
+		name := any(nil)
+		if err == nil && rel != "." {
+			parts := strings.Split(rel, string(os.PathSeparator))
+			if len(parts) > 3 {
+				parts = parts[:3]
+			}
+			name = strings.Join(parts, "/")
+		}
+		row := ordjson.NewObject()
+		row.Set("name", name)
+		row.Set("path", resolved)
+		row.Set("why", "under the installation's projects/ directory")
+		return row
+	}
+	registry, err := ReadProjects(s)
+	if err != nil {
+		return nil
+	}
+	projectsValue, _ := registry.Get("projects")
+	projects, _ := projectsValue.(*ordjson.Object)
+	if projects == nil {
+		return nil
+	}
+	for _, key := range projects.Keys() {
+		raw, _ := projects.Get(key)
+		record := asObject(raw)
+		if record == nil {
+			continue
+		}
+		kind, _ := record.Get("kind")
+		if kind == "installation" {
+			continue
+		}
+		pathValue, _ := record.Get("path")
+		cloneBase := resolvePathOrSelf(asString(pathValue))
+		if resolved == cloneBase || strings.HasPrefix(resolved, cloneBase+string(os.PathSeparator)) {
+			row := ordjson.NewObject()
+			name, _ := record.Get("name")
+			row.Set("name", name)
+			row.Set("path", cloneBase)
+			row.Set("why", fmt.Sprintf("inside the enrolled %v clone", kind))
+			return row
+		}
+	}
+	return nil
+}
+
+func resolvePathOrSelf(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
+}
+
 func InstallationOf(s *store.Store, runtimeRoot string) string {
 	if filepath.Base(s.Home) == ".sum" && s.Designated() {
 		return filepath.Dir(s.Home)
@@ -387,6 +453,89 @@ func List(s *store.Store, runtimeRoot string) (*ordjson.Object, error) {
 	result.Set("projects_dir", projectsRoot(InstallationOf(s, runtimeRoot)))
 	result.Set("note", "Registrations and one bounded observation each; nothing was fetched, moved, or cleaned. Task checkouts are separate Herdr worktrees.")
 	return result, nil
+}
+
+func identityOf(record *ordjson.Object) *ordjson.Object {
+	return pick(record, []string{"name", "host", "owner", "repo", "path", "kind", "remote"})
+}
+
+func boolField(o *ordjson.Object, key string) (value bool, present bool) {
+	if o == nil {
+		return false, false
+	}
+	raw, ok := o.Get(key)
+	if !ok {
+		return false, false
+	}
+	b, ok := raw.(bool)
+	if !ok {
+		return false, false
+	}
+	return b, true
+}
+
+// ResolveTaskRepository ports `resolve_task_repository`: exactly one of --repo PATH or --project NAME.
+func ResolveTaskRepository(s *store.Store, repo, name string) (string, *ordjson.Object, error) {
+	if name != "" && repo != "" {
+		return "", nil, fmt.Errorf("Give either --repo PATH or --project NAME, not both.")
+	}
+	if name == "" {
+		if repo == "" {
+			return "", nil, fmt.Errorf("Give --repo PATH or --project NAME.")
+		}
+		return repo, nil, nil
+	}
+	registry, err := ReadProjects(s)
+	if err != nil {
+		return "", nil, err
+	}
+	projectsObj := asObject(getPath(registry, "projects"))
+	var record *ordjson.Object
+	if projectsObj != nil {
+		record = asObject(getPath(projectsObj, name))
+	}
+	if record == nil {
+		return "", nil, fmt.Errorf("No enrolled project %s; `project list` shows the registry and `project enroll owner/repo` adds exactly one repository.", pyrepr.Repr(name))
+	}
+	observed := ObserveProject(record)
+	present, _ := boolField(observed, "present")
+	gitOK, _ := boolField(observed, "git")
+	remoteMatches, remotePresent := boolField(observed, "remote_matches")
+	if !present || !gitOK || (remotePresent && !remoteMatches) {
+		problem, _ := observed.Get("problem")
+		return "", nil, fmt.Errorf("Enrolled project %s at %s is not usable: %v. Nothing was dispatched or re-cloned.", name, asString(getPath(record, "path")), problem)
+	}
+	return asString(getPath(record, "path")), identityOf(record), nil
+}
+
+// ByPath ports `project_by_path`: the registered project whose clone is exactly path, or nil.
+func ByPath(s *store.Store, path string) *ordjson.Object {
+	registry, err := ReadProjects(s)
+	if err != nil {
+		return nil
+	}
+	resolved, err := resolvePath(path)
+	if err != nil {
+		resolved = path
+	}
+	projectsObj := asObject(getPath(registry, "projects"))
+	if projectsObj == nil {
+		return nil
+	}
+	for _, key := range projectsObj.Keys() {
+		record := asObject(getPath(projectsObj, key))
+		if record == nil {
+			continue
+		}
+		recorded, recErr := resolvePath(asString(getPath(record, "path")))
+		if recErr != nil {
+			recorded = asString(getPath(record, "path"))
+		}
+		if recorded == resolved {
+			return identityOf(record)
+		}
+	}
+	return nil
 }
 
 // Show ports `project_show`.

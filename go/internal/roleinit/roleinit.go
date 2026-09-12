@@ -16,14 +16,14 @@ var ErrDesignated = fmt.Errorf("designated installation: init must run through t
 
 func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, requestedTask string) (*ordjson.Object, error) {
 	if requestedRole == "worker" && requestedTask == "" {
-		return nil, fmt.Errorf("--role worker needs --task TASK_ID")
+		return nil, fmt.Errorf("--role worker needs --task TASK_ID.")
 	}
 	if s.Designated() {
 		return nil, ErrDesignated
 	}
 
 	endpoint := store.EndpointFromContext(ctx)
-	hint, err := installationHint(root)
+	hint, err := InstallationHint(root)
 	if err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, reque
 		return nil, fmt.Errorf("%s is not a sum installation (no state.json from setup). A checkout alone grants no coordinator authority; run mise run setup in the designated installation", s.Home)
 	}
 
-	marker, err := developmentMarker(root)
+	marker, err := DevelopmentMarker(root)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func note(task, marker *ordjson.Object) string {
 		filepath.Join(installation, "bin", "sumctl") + " owns any parent-task callbacks."
 }
 
-func installationHint(root string) (string, error) {
+func InstallationHint(root string) (string, error) {
 	out, err := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
 	if err != nil {
 		return "", nil
@@ -143,7 +143,7 @@ func matchingTask(s *store.Store, endpoint store.Endpoint) (*ordjson.Object, err
 	return nil, nil
 }
 
-func developmentMarker(root string) (*ordjson.Object, error) {
+func DevelopmentMarker(root string) (*ordjson.Object, error) {
 	path := filepath.Join(root, ".sum", "dev.json")
 	if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
 		return nil, nil

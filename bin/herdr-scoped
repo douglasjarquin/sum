@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Pinned bridge for a running Mesh: uses the code and Python of the tree it sits in, never a moving pointer.
+# Pinned bridge for a running Mesh: uses the code of the tree it sits in, never a moving pointer.
 set -euo pipefail
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+BINARY="$ROOT/.local/bin/sumctl"
+if [[ ! -x "$BINARY" ]]; then
+  echo "herdr-scoped: staged native binary is missing; run mise run setup or stage a release." >&2
+  exit 1
+fi
 export SUM_INSTALL_ROOT="${SUM_INSTALL_ROOT:-$ROOT}"
-PYTHON="$ROOT/.local/bin/python3"
-[[ -x "$PYTHON" ]] || PYTHON=python3
-exec "$PYTHON" "$ROOT/lib/sumctl.py" herdr -- "$@"
+exec "$BINARY" herdr -- "$@"

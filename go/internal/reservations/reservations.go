@@ -1,6 +1,8 @@
 package reservations
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -345,4 +347,149 @@ func Held(task *ordjson.Object) ([]*ordjson.Object, error) {
 		held = []*ordjson.Object{}
 	}
 	return held, nil
+}
+
+func NewAttempt(kind string, owner *ordjson.Object, checkout any, stamp string, state string, candidate any) (*ordjson.Object, error) {
+	if state == "" {
+		state = "held"
+	}
+	if !kinds[kind] || !allStates[state] {
+		return nil, formatError("invalid new reservation")
+	}
+	id, err := newID("x-")
+	if err != nil {
+		return nil, err
+	}
+	attempt := ordjson.NewObject()
+	attempt.Set("id", id)
+	attempt.Set("kind", kind)
+	attempt.Set("state", state)
+	attempt.Set("generation", json.Number("1"))
+	attempt.Set("owner", cloneObject(owner))
+	attempt.Set("checkout", checkout)
+	attempt.Set("candidate", candidate)
+	attempt.Set("created_at", stamp)
+	attempt.Set("updated_at", stamp)
+	attempt.Set("observations", []any{})
+	return attempt, nil
+}
+
+func NewExecution(worker *ordjson.Object) *ordjson.Object {
+	value := ordjson.NewObject()
+	value.Set("schema", json.Number(fmt.Sprint(Schema)))
+	value.Set("worker", worker)
+	value.Set("verifiers", []any{})
+	return value
+}
+
+func Worker(task *ordjson.Object) (*ordjson.Object, error) {
+	execution, err := GetExecution(task)
+	if err != nil {
+		return nil, err
+	}
+	if execution == nil {
+		return nil, formatError("legacy task has no adoptable worker reservation")
+	}
+	return execution.Worker, nil
+}
+
+func Transition(task *ordjson.Object, attemptID, state, stamp string, observation *ordjson.Object, expectedGeneration *int64) (*ordjson.Object, error) {
+	if !allStates[state] {
+		return nil, formatError("invalid reservation transition state")
+	}
+	execution, err := GetExecution(task)
+	if err != nil {
+		return nil, err
+	}
+	if execution == nil {
+		return nil, formatError("legacy task has no execution reservation")
+	}
+	rows := append([]*ordjson.Object{execution.Worker}, execution.Verifiers...)
+	var matches []*ordjson.Object
+	for _, row := range rows {
+		id, _ := row.Get("id")
+		if id == attemptID {
+			matches = append(matches, row)
+		}
+	}
+	if len(matches) != 1 {
+		return nil, formatError("attempt %s is not current", attemptID)
+	}
+	row := matches[0]
+	if expectedGeneration != nil {
+		genValue, _ := row.Get("generation")
+		gen, ok := genValue.(json.Number)
+		n, convErr := gen.Int64()
+		if !ok || convErr != nil || n != *expectedGeneration {
+			return nil, formatError("attempt %s changed during observation", attemptID)
+		}
+	}
+	row.Set("state", state)
+	genValue, _ := row.Get("generation")
+	gen, _ := genValue.(json.Number)
+	n, _ := gen.Int64()
+	row.Set("generation", json.Number(fmt.Sprint(n+1)))
+	row.Set("updated_at", stamp)
+	if observation != nil {
+		obsValue, _ := row.Get("observations")
+		list, _ := obsValue.([]any)
+		if len(list) > 19 {
+			list = list[len(list)-19:]
+		}
+		list = append(list, cloneObject(observation))
+		row.Set("observations", list)
+	}
+	return row, nil
+}
+
+func ReplaceWorker(task *ordjson.Object, attempt *ordjson.Object) error {
+	execution, err := GetExecution(task)
+	if err != nil {
+		return err
+	}
+	if execution == nil {
+		return formatError("legacy task has no execution reservation")
+	}
+	value, _ := task.Get("execution")
+	obj, _ := value.(*ordjson.Object)
+	obj.Set("worker", attempt)
+	task.Set("execution", obj)
+	return nil
+}
+
+func AddVerifier(task *ordjson.Object, attempt *ordjson.Object) error {
+	execution, err := GetExecution(task)
+	if err != nil {
+		return err
+	}
+	if execution == nil {
+		return formatError("legacy task has no execution reservation")
+	}
+	value, _ := task.Get("execution")
+	obj, _ := value.(*ordjson.Object)
+	verifiersValue, _ := obj.Get("verifiers")
+	list, _ := verifiersValue.([]any)
+	obj.Set("verifiers", append(list, attempt))
+	task.Set("execution", obj)
+	return nil
+}
+
+func newID(prefix string) (string, error) {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return prefix + hex.EncodeToString(buf), nil
+}
+
+func cloneObject(obj *ordjson.Object) *ordjson.Object {
+	if obj == nil {
+		return nil
+	}
+	cloned := ordjson.NewObject()
+	for _, key := range obj.Keys() {
+		value, _ := obj.Get(key)
+		cloned.Set(key, value)
+	}
+	return cloned
 }

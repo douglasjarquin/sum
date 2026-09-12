@@ -8732,7 +8732,7 @@ def verify_release(path, expected_sha=None):
     if inventory is not None:
         validate_dependency_inventory(inventory)
     if native:
-        if not isinstance(native, dict) or "sumctl-go" not in native:
+        if not isinstance(native, dict) or ("sumctl-go" not in native and "sumctl" not in native):
             raise SumError(f"{path}: native dependency metadata is incomplete")
         if "herdr-mesh" not in native and "herdr-mesh-go" not in native:
             raise SumError(f"{path}: native dependency metadata is incomplete")

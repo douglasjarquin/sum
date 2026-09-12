@@ -71,28 +71,18 @@ func TestDoctor_matchesThePythonReferenceInThisDevCheckout(t *testing.T) {
 	}
 }
 
-func TestDoctor_fallsBackToReferenceWithExtraArgs(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
+func TestDoctor_extraArgsAreGoErrors(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
-
-	home := filepath.Join(dir, "state")
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
+	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
 	root.SetArgs([]string{"--home", home, "doctor", "--unexpected"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
-	}
-	got, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "--home\n" + home + "\ndoctor\n--unexpected\n"
-	if string(got) != want {
-		t.Fatalf("reference argv = %q, want %q", got, want)
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected unrecognized arguments")
 	}
 }

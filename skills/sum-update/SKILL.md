@@ -122,7 +122,7 @@ Run this once from the installation directory with the helper it already has; no
 ```sh
 ./bin/sumctl release stage --ref origin/main                    # after `git fetch origin`; the old helper stages the new code
 R=.local/releases/<sha>
-SUM_INSTALL_ROOT="$PWD" "$R/.local/bin/python3" "$R/lib/sumctl.py" update apply --ref <sha> --no-fetch
+SUM_INSTALL_ROOT="$PWD" "$R/bin/sumctl" update apply --ref <sha> --no-fetch
 ./bin/sumctl update status
 ```
 
@@ -144,7 +144,7 @@ Report the old and new SHA, the default and active runtime, the compatibility re
 
 ### Fleet canary with authenticated harnesses
 
-The deterministic twelve-worker regression (`tests/test_fleet.py`) proves the helper's bookkeeping and bounds with scripted workers; it proves nothing about a model reading a refresh instruction.
+The deterministic twelve-worker regression (`scripts/demo.py`) proves the helper's bookkeeping and bounds with scripted workers; it proves nothing about a model reading a refresh instruction.
 When the user wants that evidence, run this once in a named lab Herdr session with a lab `--home`, never the live `default` session or the production `.sum`:
 
 1. `settings set --global 12 --per-repository 1` in the lab home, then dispatch ten or more tiny approved tasks across throwaway repositories with the harnesses actually in use (`--harness claude`, `--harness codex`, ...). Accept each trust dialog by hand; an `agent_not_ready` launch stays `needs-attention` and is never relaunched.

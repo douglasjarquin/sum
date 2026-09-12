@@ -119,10 +119,9 @@ def main() -> int:
         base = Path(temporary)
         case = fixture(base)
         env = dict(case["env"])
-        env["SUM_PYTHON_HELPER"] = str(ROOT / "bin" / "sumctl")
         commands = [
             ("startup.version.cold", [str(binary), "--version"], dict(env)),
-            ("startup.help.cobra", [str(binary), "--help"], {**env, "SUM_PYTHON_HELPER": str(base / "missing-reference")}),
+            ("startup.help.cobra", [str(binary), "--help"], dict(env)),
             ("read.status.fixture", [str(binary), "--home", str(case["home"]), "status"], dict(env)),
             ("failure.show-missing", [str(binary), "--home", str(case["home"]), "show", "t-000000000000"], dict(env)),
         ]

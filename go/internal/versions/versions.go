@@ -275,6 +275,257 @@ func RefreshState(versionsObj *ordjson.Object) *ordjson.Object {
 	return row
 }
 
+const ContractDir = "coordinator"
+
+func emptyContractVersions() *ordjson.Object {
+	result := ordjson.NewObject()
+	result.Set("schema", jsonInt(Schema))
+	result.Set("kind", "coordinator-contract")
+	result.Set("revisions", []any{})
+	result.Set("active", nil)
+	result.Set("requested", nil)
+	result.Set("refresh", []any{})
+	return result
+}
+
+func ReadContractVersions(s *store.Store) (*ordjson.Object, error) {
+	path := filepath.Join(s.Home, ContractDir, File)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s must not be a symlink.", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return emptyContractVersions(), nil
+	}
+	value, err := ordjson.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	obj, ok := value.(*ordjson.Object)
+	schemaOK := false
+	if ok {
+		if schema, has := obj.Get("schema"); has {
+			if num, isNum := schema.(json.Number); isNum {
+				if n, convErr := num.Int64(); convErr == nil && n == Schema {
+					schemaOK = true
+				}
+			}
+		}
+	}
+	kind, _ := obj.Get("kind")
+	if !ok || !schemaOK || kind != "coordinator-contract" {
+		return nil, fmt.Errorf("Unsupported coordinator contract sidecar %s. Inspect it; sum never migrates it in place.", path)
+	}
+	return obj, nil
+}
+
+func ContractState(s *store.Store) *ordjson.Object {
+	versionsObj, err := ReadContractVersions(s)
+	if err != nil {
+		result := ordjson.NewObject()
+		result.Set("error", err.Error())
+		return result
+	}
+	row := RefreshState(versionsObj)
+	requested, _ := row.Get("requested")
+	requestedStr, ok := requested.(string)
+	if ok && requestedStr != "" {
+		revisionsValue, _ := versionsObj.Get("revisions")
+		list, _ := revisionsValue.([]any)
+		for _, raw := range list {
+			rev, _ := raw.(*ordjson.Object)
+			id, _ := rev.Get("id")
+			if id == requestedStr {
+				path, pathErr := revisionFile(filepath.Join(s.Home, ContractDir), rev)
+				if pathErr == nil {
+					row.Set("path", path)
+				}
+				summary, _ := rev.Get("summary")
+				row.Set("summary", summary)
+				break
+			}
+		}
+	}
+	return row
+}
+
+func WriteContractVersions(s *store.Store, value *ordjson.Object) error {
+	return ordjson.WriteFile(filepath.Join(s.Home, ContractDir, File), value)
+}
+
+func WriteVersions(s *store.Store, value *ordjson.Object) error {
+	taskID, _ := value.Get("task")
+	id, _ := taskID.(string)
+	taskPath, err := s.TaskPath(id)
+	if err != nil {
+		return err
+	}
+	return ordjson.WriteFile(filepath.Join(taskPath, File), value)
+}
+
+func Request(s *store.Store, taskID, revisionID string) (*ordjson.Object, error) {
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	versionsObj, err := ReadVersions(s, task)
+	if err != nil {
+		return nil, err
+	}
+	if legacy, _ := versionsObj.Get("legacy"); legacy == true {
+		return nil, fmt.Errorf("This task has no staged revisions; run `brief regenerate` first.")
+	}
+	revisionsValue, _ := versionsObj.Get("revisions")
+	list, _ := revisionsValue.([]any)
+	if len(list) == 0 {
+		return nil, fmt.Errorf("This task has no staged revisions; run `brief regenerate` first.")
+	}
+	latest, _ := list[len(list)-1].(*ordjson.Object)
+	var target *ordjson.Object
+	ids := make([]string, 0, len(list))
+	for _, raw := range list {
+		rev, _ := raw.(*ordjson.Object)
+		id, _ := rev.Get("id")
+		idStr, _ := id.(string)
+		ids = append(ids, idStr)
+		if idStr == revisionID {
+			target = rev
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("Unknown revision %s. Recorded: %v.", revisionID, ids)
+	}
+	latestID, _ := latest.Get("id")
+	if latestID != revisionID {
+		return nil, fmt.Errorf("Stale request: %s is superseded by %v. Request the latest revision or regenerate.", revisionID, latestID)
+	}
+	active, _ := versionsObj.Get("active")
+	if active == revisionID {
+		return nil, fmt.Errorf("%s is already the active brief.", revisionID)
+	}
+	taskPath, err := s.TaskPath(taskID)
+	if err != nil {
+		return nil, err
+	}
+	state := RevisionView(taskPath, target)
+	if ok, _ := state.Get("ok"); ok != true {
+		errText, _ := state.Get("error")
+		return nil, fmt.Errorf("%v", errText)
+	}
+	duplicate := markRequested(versionsObj, target)
+	if err := WriteVersions(s, versionsObj); err != nil {
+		return nil, err
+	}
+	result := ordjson.NewObject()
+	result.Set("task", taskID)
+	result.Set("requested", revisionID)
+	activeNow, _ := versionsObj.Get("active")
+	result.Set("active", activeNow)
+	result.Set("revision", state)
+	result.Set("duplicate", duplicate)
+	result.Set("note", "Recorded only. Delivery to the worker is a separate explicit step; the notice slot was not used.")
+	return result, nil
+}
+
+func markRequested(versionsObj, target *ordjson.Object) bool {
+	requested, _ := versionsObj.Get("requested")
+	status, _ := target.Get("status")
+	id, _ := target.Get("id")
+	if requested == id && status == "requested" {
+		return true
+	}
+	revisionsValue, _ := versionsObj.Get("revisions")
+	list, _ := revisionsValue.([]any)
+	for _, raw := range list {
+		rev, _ := raw.(*ordjson.Object)
+		if st, _ := rev.Get("status"); st == "requested" {
+			rev.Set("status", "superseded")
+		}
+	}
+	target.Set("status", "requested")
+	versionsObj.Set("requested", id)
+	refreshValue, _ := versionsObj.Get("refresh")
+	refresh, _ := refreshValue.([]any)
+	row := ordjson.NewObject()
+	row.Set("at", store.Now())
+	row.Set("event", "requested")
+	row.Set("revision", id)
+	row.Set("by", "coordinator")
+	versionsObj.Set("refresh", append(refresh, row))
+	return false
+}
+
+func Adopt(s *store.Store, taskID, revisionID string) (*ordjson.Object, error) {
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	versionsObj, err := ReadVersions(s, task)
+	if err != nil {
+		return nil, err
+	}
+	legacy, _ := versionsObj.Get("legacy")
+	requested, _ := versionsObj.Get("requested")
+	if legacy == true || requested != revisionID {
+		return nil, fmt.Errorf("%s is not the requested revision (%v). Adopt only what the coordinator requested.", revisionID, requested)
+	}
+	revisionsValue, _ := versionsObj.Get("revisions")
+	list, _ := revisionsValue.([]any)
+	var target *ordjson.Object
+	for _, raw := range list {
+		rev, _ := raw.(*ordjson.Object)
+		id, _ := rev.Get("id")
+		if id == revisionID {
+			target = rev
+			break
+		}
+	}
+	taskPath, err := s.TaskPath(taskID)
+	if err != nil {
+		return nil, err
+	}
+	state := RevisionView(taskPath, target)
+	if ok, _ := state.Get("ok"); ok != true {
+		errText, _ := state.Get("error")
+		return nil, fmt.Errorf("%v", errText)
+	}
+	for _, raw := range list {
+		rev, _ := raw.(*ordjson.Object)
+		if st, _ := rev.Get("status"); st == "active" {
+			rev.Set("status", "superseded")
+		}
+	}
+	target.Set("status", "active")
+	versionsObj.Set("active", revisionID)
+	versionsObj.Set("requested", nil)
+	refreshValue, _ := versionsObj.Get("refresh")
+	refresh, _ := refreshValue.([]any)
+	row := ordjson.NewObject()
+	row.Set("at", store.Now())
+	row.Set("event", "adopted")
+	row.Set("revision", revisionID)
+	versionsObj.Set("refresh", append(refresh, row))
+	if err := WriteVersions(s, versionsObj); err != nil {
+		return nil, err
+	}
+	result := ordjson.NewObject()
+	result.Set("task", taskID)
+	result.Set("active", revisionID)
+	result.Set("revision", state)
+	result.Set("note", "Receipt recorded: this revision was read and adopted. A receipt is evidence of reading, not proof the worker follows it.")
+	return result, nil
+}
+
 func BriefList(s *store.Store, taskID string) (*ordjson.Object, error) {
 	task, err := s.ReadTask(taskID)
 	if err != nil {

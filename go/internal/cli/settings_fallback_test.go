@@ -5,42 +5,25 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestSettings_fallsBackToReferenceWhenNotShowOrHomeUnset(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
+func TestSettings_unknownSubcommandIsGoError(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
-
-	cases := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{name: "show without --home", args: []string{"settings", "show"}, want: "settings\nshow\n"},
-		{name: "set with --home", args: []string{"--home", filepath.Join(dir, "state"), "settings", "set", "--global", "3"}, want: "--home\n" + filepath.Join(dir, "state") + "\nsettings\nset\n--global\n3\n"},
+	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			root := NewRoot(reference, &stdout, &stderr)
-			root.SetArgs(tc.args)
-			if err := root.ExecuteContext(context.Background()); err != nil {
-				t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
-			}
-			got, err := os.ReadFile(argsFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != tc.want {
-				t.Fatalf("reference argv = %q, want %q", got, tc.want)
-			}
-			os.Remove(argsFile)
-		})
+	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
+	root.SetArgs([]string{"--home", home, "settings", "explode"})
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected unrecognized arguments")
+	}
+	if !strings.Contains(err.Error(), "unrecognized arguments") {
+		t.Fatalf("err = %v", err)
 	}
 }

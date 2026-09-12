@@ -7,7 +7,6 @@ Newer code and dependencies are staged as an immutable release with `./bin/sumct
 from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -18,9 +17,8 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 CODEX_PACKAGE = "@openai/codex@0.153.4"
-_spec = importlib.util.spec_from_file_location("sumctl_lib", ROOT / "lib" / "sumctl.py")
-sumctl = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(sumctl)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import install_runtime as runtime_install
 
 
 def execute(args, cwd=None, capture=False):
@@ -105,24 +103,24 @@ def main():
     args = ap.parse_args()
     notes = []
     if not args.configure_only:
-        links = sumctl.resolve_tools(ROOT)  # mise install plus create-once links; an existing link is never retargeted.
+        links = runtime_install.resolve_tools(ROOT)
         for name, link in links.items():
             if link["differs"]:
                 notes.append(f"{link['link']} still points at {link['target']}; a running process may use it. Stage a release to pick up the new pin.")
-        sumctl.build_native_artifact(ROOT)
-        remainder = sumctl.install_remainder(ROOT)
+        runtime_install.build_native_artifact(ROOT)
+        remainder = runtime_install.install_remainder(ROOT)
         if remainder.get("differs"):
             notes.append(f"{remainder['link']} still points at {remainder['target']}; a running process may use it. Stage a release to pick up the new pin.")
         if remainder.get("reason"):
             notes.append(remainder["reason"])
-        sumctl.write_herdr_skill(ROOT)
+        runtime_install.write_herdr_skill(ROOT)
         if args.install_codex:
             harness = ROOT / ".deps/harnesses"
             harness.mkdir(parents=True, exist_ok=True)
             if not (harness / "package.json").exists():
                 write_json(harness / "package.json", {"private": True, "name": "sum-local-harnesses"})
             execute(["npm", "install", "--prefix", str(harness), "--save-exact", "--ignore-scripts", CODEX_PACKAGE])
-            sumctl.link_tool(ROOT / ".local/bin/codex", harness / "node_modules/.bin/codex")
+            runtime_install.link_tool(ROOT / ".local/bin/codex", harness / "node_modules/.bin/codex")
     configure()
     if not args.configure_only:
         execute([str(ROOT / ".local/bin/node"), str(ROOT / "scripts/mcp_smoke.mjs")])
@@ -138,6 +136,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError, sumctl.SumError) as exc:
+    except (OSError, RuntimeError, subprocess.CalledProcessError, ValueError, runtime_install.InstallError) as exc:
         print(f"setup failed: {exc}", file=sys.stderr)
         sys.exit(1)

@@ -24,7 +24,7 @@
       "requirements": ["runtime", "setup"],
       "role": "runtime",
       "owner": "sum",
-      "contracts": {"cli": ["sumctl.py"], "mcp": []}
+      "contracts": {"cli": ["scripts/setup.py", "scripts/demo.py", ".agents/skills/verify", ".agents/skills/evidence"], "mcp": []}
     },
     {
       "id": "node",
@@ -147,16 +147,28 @@
       "contracts": {"cli": [], "mcp": ["MCP 2025-11-25 compatibility"]}
     },
     {
-      "id": "sumctl-go",
-      "source": "go/cmd/sumctl-go",
+      "id": "sumctl",
+      "source": "go/cmd/sumctl",
       "version": "sum 0.1.0",
-      "checksum": "release.json#dependencies.native.sumctl-go.sha256",
+      "checksum": "release.json#dependencies.native.sumctl.sha256",
       "license": "MIT",
       "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
       "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
       "role": "runtime",
       "owner": "sum",
       "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []}
+    },
+    {
+      "id": "sumctl-go",
+      "source": "go/cmd/sumctl-go",
+      "version": "sum 0.1.0",
+      "checksum": "release.json#dependencies.native.sumctl-go.sha256",
+      "license": "MIT",
+      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
+      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain", "prior packager artifact name"],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {"cli": ["sumctl-go"], "mcp": []}
     },
     {
       "id": "remainder",

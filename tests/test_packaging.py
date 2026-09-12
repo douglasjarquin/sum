@@ -21,7 +21,7 @@ class PackagingInventoryTest(unittest.TestCase):
             self.assertTrue(entry["checksum"], entry["id"])
             self.assertIn(entry["role"], ("build", "runtime", "build-and-runtime"), entry["id"])
         ids = {entry["id"] for entry in entries}
-        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl-go", "herdr-mesh", "herdr-mesh-go", "quota-axi", "remainder"} <= ids)
+        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl", "sumctl-go", "herdr-mesh", "herdr-mesh-go", "quota-axi", "remainder"} <= ids)
         mesh = next(entry for entry in entries if entry["id"] == "herdr-mesh")
         prior = next(entry for entry in entries if entry["id"] == "herdr-mesh-go")
         self.assertEqual(mesh["source"], "go/cmd/herdr-mesh")
@@ -52,6 +52,14 @@ class PackagingInventoryTest(unittest.TestCase):
         herdr_line = text.index('.local/bin/herdr-mesh"')
         go_line = text.index(".local/bin/herdr-mesh-go")
         self.assertLess(herdr_line, go_line)
+
+    def test_sumctl_wrapper_execs_the_prior_packager_artifact_name(self):
+        text = (ROOT / "bin" / "sumctl").read_text()
+        self.assertIn(".local/bin/sumctl\"", text)
+        self.assertIn(".local/bin/sumctl-go", text)
+        sumctl_line = text.index(".local/bin/sumctl\"")
+        go_line = text.index(".local/bin/sumctl-go")
+        self.assertLess(sumctl_line, go_line)
 
     def test_mcp_smoke_launches_the_public_wrapper(self):
         text = (ROOT / "scripts" / "mcp_smoke.mjs").read_text()
