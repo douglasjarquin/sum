@@ -179,8 +179,7 @@ func pendingSummary(s *store.Store) (*ordjson.Object, error) {
 	return result, nil
 }
 
-// hookSummary ports `hook_summary`: records only, no Herdr call.
-func hookSummary(s *store.Store) (*ordjson.Object, error) {
+func Summary(s *store.Store) (*ordjson.Object, error) {
 	health, err := readHealth(s)
 	if err != nil {
 		pending, pErr := pendingSummary(s)
@@ -360,7 +359,7 @@ func observePlugin(runtimeRoot, session, pluginID string) *ordjson.Object {
 
 // Status ports `hook_status`: health from records plus one bounded registry observation when a session is known.
 func Status(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
-	value, err := hookSummary(s)
+	value, err := Summary(s)
 	if err != nil {
 		return nil, err
 	}

@@ -354,7 +354,7 @@ func deliver(s *store.Store, opts PumpOpts, route *ordjson.Object, items [][2]*o
 
 func promptRecipient(s *store.Store, opts PumpOpts, route *ordjson.Object, items, mentioned [][2]*ordjson.Object, sendable map[[2]string]bool, message string, withheld int) (state, detail, errStr string) {
 	cwd := routeValue(route, "cwd")
-	if err := observeRecipient(opts.RuntimeRoot, route, fmt.Sprint(cwd)); err != nil {
+	if err := ObserveRecipient(opts.RuntimeRoot, route, fmt.Sprint(cwd)); err != nil {
 		if u, ok := err.(*unreachableError); ok {
 			return "not-delivered", u.msg, u.msg
 		}
@@ -408,7 +408,7 @@ func promptRecipient(s *store.Store, opts PumpOpts, route *ordjson.Object, items
 	return "submitted", "notice submitted while the recipient was settled; nothing is acknowledged, read, or applied by that", ""
 }
 
-func observeRecipient(runtimeRoot string, route *ordjson.Object, expectedCwd string) error {
+func ObserveRecipient(runtimeRoot string, route *ordjson.Object, expectedCwd string) error {
 	host, err := os.Hostname()
 	if err != nil {
 		return err

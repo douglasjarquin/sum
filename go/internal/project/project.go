@@ -219,6 +219,72 @@ func projectsRoot(root string) string {
 
 // InstallationOf ports `installation_of`: the installation a designated `.sum` home belongs to; `runtimeRoot`
 // (mirroring Python's `ROOT`) otherwise, i.e. a lab home under another name.
+func PaneInside(s *store.Store, root, cwd string) *ordjson.Object {
+	if cwd == "" {
+		return nil
+	}
+	resolved := resolvePathOrSelf(cwd)
+	base := resolvePathOrSelf(projectsRoot(root))
+	if resolved == base || strings.HasPrefix(resolved, base+string(os.PathSeparator)) {
+		rel, err := filepath.Rel(base, resolved)
+		name := any(nil)
+		if err == nil && rel != "." {
+			parts := strings.Split(rel, string(os.PathSeparator))
+			if len(parts) > 3 {
+				parts = parts[:3]
+			}
+			name = strings.Join(parts, "/")
+		}
+		row := ordjson.NewObject()
+		row.Set("name", name)
+		row.Set("path", resolved)
+		row.Set("why", "under the installation's projects/ directory")
+		return row
+	}
+	registry, err := ReadProjects(s)
+	if err != nil {
+		return nil
+	}
+	projectsValue, _ := registry.Get("projects")
+	projects, _ := projectsValue.(*ordjson.Object)
+	if projects == nil {
+		return nil
+	}
+	for _, key := range projects.Keys() {
+		raw, _ := projects.Get(key)
+		record := asObject(raw)
+		if record == nil {
+			continue
+		}
+		kind, _ := record.Get("kind")
+		if kind == "installation" {
+			continue
+		}
+		pathValue, _ := record.Get("path")
+		cloneBase := resolvePathOrSelf(asString(pathValue))
+		if resolved == cloneBase || strings.HasPrefix(resolved, cloneBase+string(os.PathSeparator)) {
+			row := ordjson.NewObject()
+			name, _ := record.Get("name")
+			row.Set("name", name)
+			row.Set("path", cloneBase)
+			row.Set("why", fmt.Sprintf("inside the enrolled %v clone", kind))
+			return row
+		}
+	}
+	return nil
+}
+
+func resolvePathOrSelf(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
+}
+
 func InstallationOf(s *store.Store, runtimeRoot string) string {
 	if filepath.Base(s.Home) == ".sum" && s.Designated() {
 		return filepath.Dir(s.Home)

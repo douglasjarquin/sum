@@ -48,28 +48,16 @@ func TestInit_matchesThePythonReferenceInThisDevCheckout(t *testing.T) {
 	}
 }
 
-func TestInit_fallsBackToReferenceWhenRequestedRoleUnrecognized(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
-
-	home := filepath.Join(dir, "state")
+func TestInit_rejectsUnrecognizedRoleNatively(t *testing.T) {
+	home := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
+	root := NewRoot("", &stdout, &stderr)
 	root.SetArgs([]string{"--home", home, "init", "--role", "bogus"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid init arguments")
 	}
-	got, err := os.ReadFile(argsFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "--home\n" + home + "\ninit\n--role\nbogus\n"
-	if string(got) != want {
-		t.Fatalf("reference argv = %q, want %q", got, want)
+	if err.Error() != "invalid init arguments" {
+		t.Fatalf("err = %v", err)
 	}
 }

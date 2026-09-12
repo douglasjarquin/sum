@@ -7,12 +7,17 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/archive"
 	"github.com/douglasjarquin/sum/go/internal/ask"
+	"github.com/douglasjarquin/sum/go/internal/attention"
+	"github.com/douglasjarquin/sum/go/internal/backup"
+	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/repair"
+	"github.com/douglasjarquin/sum/go/internal/report"
 	"strconv"
 
 	"github.com/douglasjarquin/sum/go/internal/quota"
@@ -112,6 +117,30 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE:               o.runPump,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "backup",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runBackup,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "attention",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runAttention,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "bind",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runBind,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "report",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runReport,
 	})
 }
 
@@ -316,7 +345,329 @@ func (o *rootOptions) runExecution(cmd *cobra.Command, args []string) error {
 }
 
 func (o *rootOptions) runRepair(cmd *cobra.Command, args []string) error {
-	return o.compat(cmd.Context(), append([]string{"repair"}, args...))
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	switch args[0] {
+	case "send":
+		taskID, attempt, key, text, file, ok := parseRepairSendArgs(args[1:])
+		if !ok {
+			return fmt.Errorf("invalid repair send arguments")
+		}
+		st, err := o.openStore("repair-send")
+		if err != nil {
+			return err
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		body, err := app.TextInput(text, file)
+		if err != nil {
+			return err
+		}
+		view, err := repair.Send(st, ctx, repair.SendArgs{
+			TaskID:      taskID,
+			Attempt:     attempt,
+			Key:         key,
+			Text:        body,
+			RuntimeRoot: o.runtimeRoot,
+		})
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "extend":
+		taskID, question, additional, approved, text, file, ok := parseRepairExtendArgs(args[1:])
+		if !ok {
+			return fmt.Errorf("invalid repair extend arguments")
+		}
+		st, err := o.openStore("repair-extend")
+		if err != nil {
+			return err
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		body, err := app.TextInput(text, file)
+		if err != nil {
+			return err
+		}
+		view, err := repair.Extend(st, ctx, repair.ExtendArgs{
+			TaskID:     taskID,
+			Question:   question,
+			Additional: additional,
+			Approved:   approved,
+			Text:       body,
+		})
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	default:
+		return fmt.Errorf("unknown repair command")
+	}
+}
+
+func parseRepairSendArgs(tokens []string) (taskID, attempt, key, text, file string, ok bool) {
+	textSet, fileSet := false, false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--attempt":
+			if i+1 >= len(tokens) {
+				return "", "", "", "", "", false
+			}
+			i++
+			attempt = tokens[i]
+		case strings.HasPrefix(token, "--attempt="):
+			attempt = strings.TrimPrefix(token, "--attempt=")
+		case token == "--key":
+			if i+1 >= len(tokens) {
+				return "", "", "", "", "", false
+			}
+			i++
+			key = tokens[i]
+		case strings.HasPrefix(token, "--key="):
+			key = strings.TrimPrefix(token, "--key=")
+		case token == "--text":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", "", "", "", false
+			}
+			i++
+			text = tokens[i]
+			textSet = true
+		case strings.HasPrefix(token, "--text="):
+			if textSet || fileSet {
+				return "", "", "", "", "", false
+			}
+			text = strings.TrimPrefix(token, "--text=")
+			textSet = true
+		case token == "--file":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", "", "", "", false
+			}
+			i++
+			file = tokens[i]
+			fileSet = true
+		case strings.HasPrefix(token, "--file="):
+			if textSet || fileSet {
+				return "", "", "", "", "", false
+			}
+			file = strings.TrimPrefix(token, "--file=")
+			fileSet = true
+		case strings.HasPrefix(token, "-"):
+			return "", "", "", "", "", false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", "", "", "", false
+		}
+	}
+	if taskID == "" || attempt == "" || key == "" || (!textSet && !fileSet) {
+		return "", "", "", "", "", false
+	}
+	return taskID, attempt, key, text, file, true
+}
+
+func parseRepairExtendArgs(tokens []string) (taskID, question string, additional int, approved bool, text, file string, ok bool) {
+	textSet, fileSet, additionalSet := false, false, false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--question":
+			if i+1 >= len(tokens) {
+				return "", "", 0, false, "", "", false
+			}
+			i++
+			question = tokens[i]
+		case strings.HasPrefix(token, "--question="):
+			question = strings.TrimPrefix(token, "--question=")
+		case token == "--additional":
+			if i+1 >= len(tokens) {
+				return "", "", 0, false, "", "", false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return "", "", 0, false, "", "", false
+			}
+			additional = n
+			additionalSet = true
+		case strings.HasPrefix(token, "--additional="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--additional="))
+			if err != nil {
+				return "", "", 0, false, "", "", false
+			}
+			additional = n
+			additionalSet = true
+		case token == "--approved":
+			approved = true
+		case token == "--text":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", 0, false, "", "", false
+			}
+			i++
+			text = tokens[i]
+			textSet = true
+		case strings.HasPrefix(token, "--text="):
+			if textSet || fileSet {
+				return "", "", 0, false, "", "", false
+			}
+			text = strings.TrimPrefix(token, "--text=")
+			textSet = true
+		case token == "--file":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", 0, false, "", "", false
+			}
+			i++
+			file = tokens[i]
+			fileSet = true
+		case strings.HasPrefix(token, "--file="):
+			if textSet || fileSet {
+				return "", "", 0, false, "", "", false
+			}
+			file = strings.TrimPrefix(token, "--file=")
+			fileSet = true
+		case strings.HasPrefix(token, "-"):
+			return "", "", 0, false, "", "", false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", 0, false, "", "", false
+		}
+	}
+	if taskID == "" || question == "" || !additionalSet || (!textSet && !fileSet) {
+		return "", "", 0, false, "", "", false
+	}
+	return taskID, question, additional, approved, text, file, true
+}
+
+func (o *rootOptions) runBackup(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("backup destination is required")
+	}
+	st, err := o.openStore("backup")
+	if err != nil {
+		return err
+	}
+	view, err := backup.Run(st, args[0])
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func (o *rootOptions) runAttention(cmd *cobra.Command, args []string) error {
+	taskID, attentionID, ok := parseAttentionArgs(args)
+	if !ok {
+		return fmt.Errorf("invalid attention arguments")
+	}
+	st, err := o.openStore("attention")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	view, err := attention.Seen(st, ctx, taskID, attentionID)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseAttentionArgs(tokens []string) (taskID, attentionID string, ok bool) {
+	seen := false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--seen":
+			seen = true
+		case strings.HasPrefix(token, "-"):
+			return "", "", false
+		case taskID == "":
+			taskID = token
+		case attentionID == "":
+			attentionID = token
+		default:
+			return "", "", false
+		}
+	}
+	if !seen || taskID == "" || attentionID == "" {
+		return "", "", false
+	}
+	return taskID, attentionID, true
+}
+
+func (o *rootOptions) runBind(cmd *cobra.Command, args []string) error {
+	taskID, workerPane, parentOnly, ok := parseBindArgs(args)
+	if !ok {
+		return fmt.Errorf("invalid bind arguments")
+	}
+	st, err := o.openStore("bind")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	view, err := bindcmd.Run(st, ctx, taskID, workerPane, parentOnly, o.pumpOpts())
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseBindArgs(tokens []string) (taskID, workerPane string, parentOnly, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--parent-only":
+			parentOnly = true
+		case token == "--worker-pane":
+			if i+1 >= len(tokens) {
+				return "", "", false, false
+			}
+			i++
+			workerPane = tokens[i]
+		case strings.HasPrefix(token, "--worker-pane="):
+			workerPane = strings.TrimPrefix(token, "--worker-pane=")
+		case strings.HasPrefix(token, "-"):
+			return "", "", false, false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", false, false
+		}
+	}
+	if taskID == "" {
+		return "", "", false, false
+	}
+	return taskID, workerPane, parentOnly, true
+}
+
+func (o *rootOptions) runReport(cmd *cobra.Command, args []string) error {
+	taskID, text, file, ok := parseTextTaskArgs(args)
+	if !ok {
+		return fmt.Errorf("invalid report arguments")
+	}
+	st, err := o.openStore("report")
+	if err != nil {
+		return err
+	}
+	body, err := app.TextInput(text, file)
+	if err != nil {
+		return err
+	}
+	view, err := report.Run(st, taskID, body, nil, app.OptionalContext(o.installRoot), o.pumpOpts())
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
 }
 
 func (o *rootOptions) runArchive(cmd *cobra.Command, args []string) error {

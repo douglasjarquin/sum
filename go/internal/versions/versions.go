@@ -275,6 +275,80 @@ func RefreshState(versionsObj *ordjson.Object) *ordjson.Object {
 	return row
 }
 
+const ContractDir = "coordinator"
+
+func emptyContractVersions() *ordjson.Object {
+	result := ordjson.NewObject()
+	result.Set("schema", jsonInt(Schema))
+	result.Set("kind", "coordinator-contract")
+	result.Set("revisions", []any{})
+	result.Set("active", nil)
+	result.Set("requested", nil)
+	result.Set("refresh", []any{})
+	return result
+}
+
+func ReadContractVersions(s *store.Store) (*ordjson.Object, error) {
+	path := filepath.Join(s.Home, ContractDir, File)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s must not be a symlink.", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return emptyContractVersions(), nil
+	}
+	value, err := ordjson.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	obj, ok := value.(*ordjson.Object)
+	schemaOK := false
+	if ok {
+		if schema, has := obj.Get("schema"); has {
+			if num, isNum := schema.(json.Number); isNum {
+				if n, convErr := num.Int64(); convErr == nil && n == Schema {
+					schemaOK = true
+				}
+			}
+		}
+	}
+	kind, _ := obj.Get("kind")
+	if !ok || !schemaOK || kind != "coordinator-contract" {
+		return nil, fmt.Errorf("Unsupported coordinator contract sidecar %s. Inspect it; sum never migrates it in place.", path)
+	}
+	return obj, nil
+}
+
+func ContractState(s *store.Store) *ordjson.Object {
+	versionsObj, err := ReadContractVersions(s)
+	if err != nil {
+		result := ordjson.NewObject()
+		result.Set("error", err.Error())
+		return result
+	}
+	row := RefreshState(versionsObj)
+	requested, _ := row.Get("requested")
+	requestedStr, ok := requested.(string)
+	if ok && requestedStr != "" {
+		revisionsValue, _ := versionsObj.Get("revisions")
+		list, _ := revisionsValue.([]any)
+		for _, raw := range list {
+			rev, _ := raw.(*ordjson.Object)
+			id, _ := rev.Get("id")
+			if id == requestedStr {
+				path, pathErr := revisionFile(filepath.Join(s.Home, ContractDir), rev)
+				if pathErr == nil {
+					row.Set("path", path)
+				}
+				summary, _ := rev.Get("summary")
+				row.Set("summary", summary)
+				break
+			}
+		}
+	}
+	return row
+}
+
 func BriefList(s *store.Store, taskID string) (*ordjson.Object, error) {
 	task, err := s.ReadTask(taskID)
 	if err != nil {

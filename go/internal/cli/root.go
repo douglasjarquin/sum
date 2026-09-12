@@ -459,24 +459,38 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if true {
-				if role, task, ok := parseInitArgs(args); ok {
-					st, err := store.Open(opts.home)
-					if err == nil && !st.Designated() {
-						root := opts.runtimeRoot
-						ctx, ctxErr := store.Context(root)
-						if ctxErr != nil {
-							return ctxErr
-						}
-						view, initErr := roleinit.Init(root, st, ctx, role, task)
-						if initErr != nil {
-							return initErr
-						}
-						return emitOrdjson(cmd.OutOrStdout(), view)
-					}
-				}
+			role, task, reclaim, ok := parseInitArgs(args)
+			if !ok {
+				return fmt.Errorf("invalid init arguments")
 			}
-			return opts.compat(cmd.Context(), append([]string{"init"}, args...))
+			st, err := store.Open(opts.home)
+			if err != nil {
+				return err
+			}
+			ctx, ctxErr := store.Context(opts.runtimeRoot)
+			if ctxErr != nil {
+				return fmt.Errorf("%s", capitalizeHerdrContext(ctxErr.Error()))
+			}
+			if !st.Designated() {
+				view, initErr := roleinit.Init(opts.runtimeRoot, st, ctx, role, task)
+				if initErr != nil {
+					return initErr
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			view, initErr := roleinit.InitDesignated(roleinit.DesignatedOpts{
+				RuntimeRoot: opts.runtimeRoot,
+				SumctlPath:  opts.sumctlPath(),
+				Store:       st,
+				Ctx:         ctx,
+				Role:        role,
+				Task:        task,
+				Reclaim:     reclaim,
+			})
+			if initErr != nil {
+				return initErr
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
 		},
 	})
 
@@ -496,10 +510,10 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"prepare", "dispatch", "start", "report", "review", "verify", "pr", "cleanup", "attention", "bind", "backup", "dev", "refresh", "update",
+	"prepare", "dispatch", "start", "review", "verify", "pr", "cleanup", "dev", "refresh", "update",
 }
 
-func parseInitArgs(tokens []string) (role, task string, ok bool) {
+func parseInitArgs(tokens []string) (role, task string, reclaim, ok bool) {
 	roles := map[string]bool{"coordinator": true, "worker": true, "developer": true}
 	reclaimSeen := false
 	for i := 0; i < len(tokens); i++ {
@@ -507,39 +521,39 @@ func parseInitArgs(tokens []string) (role, task string, ok bool) {
 		switch {
 		case token == "--role":
 			if role != "" || i+1 >= len(tokens) {
-				return "", "", false
+				return "", "", false, false
 			}
 			i++
 			role = tokens[i]
 		case strings.HasPrefix(token, "--role="):
 			if role != "" {
-				return "", "", false
+				return "", "", false, false
 			}
 			role = strings.TrimPrefix(token, "--role=")
 		case token == "--task":
 			if task != "" || i+1 >= len(tokens) {
-				return "", "", false
+				return "", "", false, false
 			}
 			i++
 			task = tokens[i]
 		case strings.HasPrefix(token, "--task="):
 			if task != "" {
-				return "", "", false
+				return "", "", false, false
 			}
 			task = strings.TrimPrefix(token, "--task=")
 		case token == "--reclaim":
 			if reclaimSeen {
-				return "", "", false
+				return "", "", false, false
 			}
 			reclaimSeen = true
 		default:
-			return "", "", false
+			return "", "", false, false
 		}
 	}
 	if role != "" && !roles[role] {
-		return "", "", false
+		return "", "", false, false
 	}
-	return role, task, true
+	return role, task, reclaimSeen, true
 }
 
 func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {

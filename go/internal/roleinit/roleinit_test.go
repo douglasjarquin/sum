@@ -33,7 +33,7 @@ func TestInit_requiresTaskForRoleWorker(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	_, err = Init(root, s, fakeContext("m", "s", "p", root), "worker", "")
-	if err == nil || err.Error() != "--role worker needs --task TASK_ID" {
+	if err == nil || err.Error() != "--role worker needs --task TASK_ID." {
 		t.Fatalf("err = %v, want the worker/task requirement message", err)
 	}
 }

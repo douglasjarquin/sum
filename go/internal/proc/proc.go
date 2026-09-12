@@ -3,9 +3,11 @@ package proc
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -65,4 +67,18 @@ func trimDetail(stderr, stdout string) string {
 		return detail[len(detail)-4000:]
 	}
 	return detail
+}
+
+func PIDRunning(pid int) (bool, error) {
+	err := syscall.Kill(pid, 0)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, syscall.ESRCH) {
+		return false, nil
+	}
+	if errors.Is(err, syscall.EPERM) {
+		return false, fmt.Errorf("Reservation operation cannot be inspected; reservation remains held.")
+	}
+	return false, err
 }

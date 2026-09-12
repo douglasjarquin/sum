@@ -16,32 +16,106 @@ import (
 
 var sessionNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
-func run(herdrPath string, timeout time.Duration, args ...string) (string, error) {
+func runRaw(herdrPath string, timeout time.Duration, args ...string) (stdout, stderr string, code int, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, herdrPath, args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	runErr := cmd.Run()
 	name := filepath.Base(herdrPath)
-	if ctxErr := ctx.Err(); ctxErr == context.DeadlineExceeded {
-		return "", fmt.Errorf("%s: timed out after %s; its effect is unknown", name, timeout)
+	if ctx.Err() == context.DeadlineExceeded {
+		return outBuf.String(), errBuf.String(), -1, fmt.Errorf("%s: timed out after %s; its effect is unknown", name, timeout)
 	}
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			detail := strings.TrimSpace(stderr.String())
-			if detail == "" {
-				detail = strings.TrimSpace(stdout.String())
-			}
-			if len(detail) > 4000 {
-				detail = detail[len(detail)-4000:]
-			}
-			return "", fmt.Errorf("%s exited %d: %s", name, exitErr.ExitCode(), detail)
+	if runErr != nil {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
+			return outBuf.String(), errBuf.String(), exitErr.ExitCode(), nil
 		}
-		return "", fmt.Errorf("%s: %s", name, err)
+		return outBuf.String(), errBuf.String(), -1, fmt.Errorf("%s: %s", name, runErr)
 	}
-	return stdout.String(), nil
+	return outBuf.String(), errBuf.String(), 0, nil
+}
+
+func run(herdrPath string, timeout time.Duration, args ...string) (string, error) {
+	stdout, stderr, code, err := runRaw(herdrPath, timeout, args...)
+	if err != nil {
+		return "", err
+	}
+	if code != 0 {
+		name := filepath.Base(herdrPath)
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(stdout)
+		}
+		if len(detail) > 4000 {
+			detail = detail[len(detail)-4000:]
+		}
+		return "", fmt.Errorf("%s exited %d: %s", name, code, detail)
+	}
+	return stdout, nil
+}
+
+func ErrorCode(stderr string) string {
+	value, err := ordjson.Decode([]byte(stderr))
+	if err != nil {
+		return ""
+	}
+	obj, ok := value.(*ordjson.Object)
+	if !ok {
+		return ""
+	}
+	errValue, _ := obj.Get("error")
+	errObj, ok := errValue.(*ordjson.Object)
+	if !ok {
+		return ""
+	}
+	code, _ := errObj.Get("code")
+	s, _ := code.(string)
+	return s
+}
+
+func Observe(herdrPath, session string, timeout time.Duration, args ...string) (any, string, error) {
+	if !sessionNamePattern.MatchString(session) {
+		return nil, "", fmt.Errorf("Invalid session name.")
+	}
+	options := args
+	for i, a := range args {
+		if a == "--" {
+			options = args[:i]
+			break
+		}
+	}
+	for _, a := range options {
+		if a == "--session" || strings.HasPrefix(a, "--session=") {
+			return nil, "", fmt.Errorf("Do not override sum's explicit Herdr session inside command arguments.")
+		}
+	}
+	fullArgs := append([]string{"--session", session}, args...)
+	stdout, stderr, code, err := runRaw(herdrPath, timeout, fullArgs...)
+	if err != nil {
+		return nil, "", err
+	}
+	if code != 0 {
+		if herdrCode := ErrorCode(stderr); herdrCode != "" {
+			return nil, herdrCode, nil
+		}
+		name := filepath.Base(herdrPath)
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(stdout)
+		}
+		if len(detail) > 300 {
+			detail = detail[len(detail)-300:]
+		}
+		label := strings.Join(args[:min(2, len(args))], " ")
+		return nil, "", fmt.Errorf("%s %s exited %d: %s", name, label, code, detail)
+	}
+	value, err := decodeHerdr(stdout)
+	if err != nil {
+		return nil, "", err
+	}
+	return value, "", nil
 }
 
 func CallRaw(herdrPath, session string, timeout time.Duration, args ...string) (string, error) {

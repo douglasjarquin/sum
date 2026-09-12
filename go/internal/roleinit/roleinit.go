@@ -16,7 +16,7 @@ var ErrDesignated = fmt.Errorf("designated installation: init must run through t
 
 func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, requestedTask string) (*ordjson.Object, error) {
 	if requestedRole == "worker" && requestedTask == "" {
-		return nil, fmt.Errorf("--role worker needs --task TASK_ID")
+		return nil, fmt.Errorf("--role worker needs --task TASK_ID.")
 	}
 	if s.Designated() {
 		return nil, ErrDesignated
