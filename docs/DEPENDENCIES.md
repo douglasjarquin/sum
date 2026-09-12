@@ -23,7 +23,8 @@ The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, gener
 Remainder is not a mise `which` tool.
 The pins are per platform in [`dependency-inventory.json`](dependency-inventory.json): linux-amd64 v0.2.2, darwin-arm64 v0.2.1, linux-arm64 v0.2.1.
 Setup and release staging are the only download.
-`sumctl quota --provider codex` invokes that binary. Other providers keep quota-axi.
+`sumctl quota --provider codex` invokes that binary with `--format toon` unless `--format json` or `--format compact` is set.
+Other providers keep quota-axi.
 A missing Remainder for Codex is a refusal, not a silent fallback.
 
 Re-running setup is therefore safe while a coordinator, workers, or an MCP server are using the checkout; it changes nothing they hold open.
@@ -223,7 +224,7 @@ The contract is harness-neutral. The matrix describes installation surfaces, **n
 - Release-matched skill: https://herdr.dev/docs/agent-skill/
 - Herdr integration installation: https://herdr.dev/docs/integrations/
 - quota-axi package: https://github.com/kunchenguid/quota-axi/blob/main/package.json
-- Remainder releases: https://github.com/douglasjarquin/remainder/releases (linux-amd64 v0.2.2, darwin-arm64 v0.2.1, linux-arm64 v0.2.1)
+- Remainder releases: https://github.com/douglasjarquin/remainder/releases (darwin-arm64 v0.3.0 with `--format toon`, linux-amd64 v0.2.2, linux-arm64 v0.2.1)
 - GitHub CLI 2.99.0 (`--attach`): https://github.com/cli/cli/releases/tag/v2.99.0 and 2.100.0: https://github.com/cli/cli/releases/tag/v2.100.0 (2026-09-06)
 - before-and-after skill (PR block markup): https://github.com/vercel-labs/before-and-after at 8306d34f459b6704e08e6adb5829fcddb0dc3557
 - codegraph 1.5.0: https://github.com/colbymchenry/codegraph/releases/tag/v1.5.0 and https://www.npmjs.com/package/@colbymchenry/codegraph/v/1.5.0 (2026-09-06)

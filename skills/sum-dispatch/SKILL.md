@@ -62,7 +62,7 @@ A preset is a validated shortcut in the same file, expanded at `prepare` and fro
 Model and reasoning values are passed only through flags verified from the installed CLI's help (codex, claude, grok, copilot, cursor, pi, omp). A refusal names the harness without a verified flag; then pass the native argument with `--arg` or choose another harness. Do not guess a flag or invent a provider/model equivalence.
 Ask once only for genuine authority/account ambiguity or a requested combination the helper refuses as unusable; a saved default or `--same-as-you` is never a reason to ask.
 Honor the user's chosen harness and authorized account. Coordinator and worker may differ; a worker default never switches your own harness, model, account, or billing route.
-For Codex, run `sumctl quota --provider codex` (Remainder).
+For Codex, run `sumctl quota --provider codex` (Remainder `--format toon`).
 For any other provider, run `quota-axi --provider <provider>` or `sumctl quota --provider NAME` if the facade forwards that name.
 This is an advisory read, not a guaranteed budget or a scheduler.
 Known exhaustion: do not start on that route. Unknown/stale evidence: disclose it; do not silently switch to paid API use, a work account, or a new provider.

@@ -13,22 +13,22 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/devcmd"
-	"github.com/douglasjarquin/sum/go/internal/prcmd"
-	"github.com/douglasjarquin/sum/go/internal/refreshcmd"
-	"github.com/douglasjarquin/sum/go/internal/updatecmd"
-	"github.com/douglasjarquin/sum/go/internal/verifycmd"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/guard"
-	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/prcmd"
+	"github.com/douglasjarquin/sum/go/internal/prepare"
+	"github.com/douglasjarquin/sum/go/internal/refreshcmd"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/report"
 	"github.com/douglasjarquin/sum/go/internal/review"
+	"github.com/douglasjarquin/sum/go/internal/updatecmd"
+	"github.com/douglasjarquin/sum/go/internal/verifycmd"
 	"strconv"
 
 	"github.com/douglasjarquin/sum/go/internal/quota"
@@ -251,7 +251,6 @@ func (o *rootOptions) runQuota(cmd *cobra.Command, args []string) error {
 }
 
 func parseQuotaArgs(tokens []string) (provider, format string, ok bool) {
-	format = "compact"
 	for i := 0; i < len(tokens); i++ {
 		token := tokens[i]
 		switch {
@@ -278,7 +277,10 @@ func parseQuotaArgs(tokens []string) (provider, format string, ok bool) {
 			return "", "", false
 		}
 	}
-	if provider == "" || (format != "json" && format != "compact") {
+	if provider == "" {
+		return "", "", false
+	}
+	if format != "" && format != "json" && format != "compact" && format != "toon" {
 		return "", "", false
 	}
 	return provider, format, true
