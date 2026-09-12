@@ -34,6 +34,7 @@ The staged binaries' source, build requirements, runtime requirements, and SHA-2
 A helper from before the Go Mesh cutover records `herdr-mesh-go` instead.
 That id stays in the inventory until that helper is no longer the default.
 A helper from before the Go CLI cutover still requires `lib/sumctl.py` in the bundle and builds `go/cmd/sumctl-go` as `.local/bin/sumctl-go`.
+It also imports `lib/execution_reservations.py` and `lib/repair_control.py` when it loads that helper for `runtime_contracts`.
 Keep those until that helper is no longer the default.
 `bin/sumctl` execs `sumctl-go` when `.local/bin/sumctl` is absent.
 Running them requires no Go toolchain, module download, Node, Python, or Cobra generator.
