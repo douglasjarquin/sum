@@ -289,6 +289,28 @@ func execCommand(name string, args ...string) cmdResult {
 	return cmdResult{out: string(out), err: err}
 }
 
+func TestReview_appendsFindings(t *testing.T) {
+	home := writeDesignatedHome(t)
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "reported", "repository": "owner/repo",
+"questions": [], "evidence": [], "report": {"text": "done"}, "notice": null, "attention": [], "brief": "do the thing",
+"base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship"}`)
+	out, err := runCLI(t, home, "review", "t-aaaaaaaaaaaa", "--verdict", "comment", "--text", "looks fine")
+	if err != nil {
+		t.Fatalf("review: %v\n%s", err, out)
+	}
+	value := decodeObject(t, out)
+	if value["task"] != "t-aaaaaaaaaaaa" {
+		t.Fatalf("task = %v", value["task"])
+	}
+	ev, _ := value["evidence"].(map[string]any)
+	if ev["kind"] != "review" {
+		t.Fatalf("evidence = %v", ev)
+	}
+	if ev["verdict"] != "comment" {
+		t.Fatalf("verdict = %v", ev["verdict"])
+	}
+}
+
 func TestRepairExtend_requiresCoordinator(t *testing.T) {
 	home := writeDesignatedHome(t)
 	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "waiting", "repository": "owner/repo",

@@ -19,6 +19,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/report"
+	"github.com/douglasjarquin/sum/go/internal/review"
 	"strconv"
 
 	"github.com/douglasjarquin/sum/go/internal/quota"
@@ -160,6 +161,12 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE:               o.runStart,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "review",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runReview,
 	})
 }
 
@@ -1484,6 +1491,97 @@ func parsePrepareArgs(tokens []string) (prepare.Args, bool) {
 		return prepare.Args{}, false
 	}
 	return parsed, true
+}
+
+func (o *rootOptions) runReview(cmd *cobra.Command, args []string) error {
+	taskID, verdict, candidate, toolName, text, file, policyReviewed, ok := parseReviewArgs(args)
+	if !ok {
+		return fmt.Errorf("invalid review arguments")
+	}
+	st, err := o.openStore("review")
+	if err != nil {
+		return err
+	}
+	body, err := app.TextInput(text, file)
+	if err != nil {
+		return err
+	}
+	view, err := review.Run(st, taskID, verdict, candidate, toolName, body, policyReviewed, app.OptionalContext(o.installRoot))
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseReviewArgs(tokens []string) (taskID, verdict, candidate, toolName, text, file string, policyReviewed, ok bool) {
+	textSet, fileSet := false, false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--verdict":
+			if i+1 >= len(tokens) {
+				return "", "", "", "", "", "", false, false
+			}
+			i++
+			verdict = tokens[i]
+		case strings.HasPrefix(token, "--verdict="):
+			verdict = strings.TrimPrefix(token, "--verdict=")
+		case token == "--candidate":
+			if i+1 >= len(tokens) {
+				return "", "", "", "", "", "", false, false
+			}
+			i++
+			candidate = tokens[i]
+		case strings.HasPrefix(token, "--candidate="):
+			candidate = strings.TrimPrefix(token, "--candidate=")
+		case token == "--tool":
+			if i+1 >= len(tokens) {
+				return "", "", "", "", "", "", false, false
+			}
+			i++
+			toolName = tokens[i]
+		case strings.HasPrefix(token, "--tool="):
+			toolName = strings.TrimPrefix(token, "--tool=")
+		case token == "--policy-reviewed":
+			policyReviewed = true
+		case token == "--text":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", "", "", "", "", false, false
+			}
+			i++
+			text = tokens[i]
+			textSet = true
+		case strings.HasPrefix(token, "--text="):
+			if textSet || fileSet {
+				return "", "", "", "", "", "", false, false
+			}
+			text = strings.TrimPrefix(token, "--text=")
+			textSet = true
+		case token == "--file":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", "", "", "", "", false, false
+			}
+			i++
+			file = tokens[i]
+			fileSet = true
+		case strings.HasPrefix(token, "--file="):
+			if textSet || fileSet {
+				return "", "", "", "", "", "", false, false
+			}
+			file = strings.TrimPrefix(token, "--file=")
+			fileSet = true
+		case strings.HasPrefix(token, "-"):
+			return "", "", "", "", "", "", false, false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", "", "", "", "", false, false
+		}
+	}
+	if taskID == "" || verdict == "" || (!textSet && !fileSet) {
+		return "", "", "", "", "", "", false, false
+	}
+	return taskID, verdict, candidate, toolName, text, file, policyReviewed, true
 }
 
 func parseStartArgs(tokens []string) (taskID string, extra []string, ok bool) {

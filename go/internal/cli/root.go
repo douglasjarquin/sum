@@ -291,13 +291,50 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 2 && args[0] == "list" {
-				if st, err := store.Open(opts.home); err == nil {
-					view, viewErr := versions.BriefList(st, args[1])
-					if viewErr == nil {
-						return emitOrdjson(cmd.OutOrStdout(), view)
-					}
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				view, viewErr := versions.BriefList(st, args[1])
+				if viewErr != nil {
 					return viewErr
 				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			if len(args) == 3 && args[0] == "request" {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				if err := guard.Candidate(opts.installRoot, st, "brief-request"); err != nil {
+					return err
+				}
+				ctx, err := store.Context(opts.installRoot)
+				if err != nil {
+					return err
+				}
+				if err := app.RequireCoordinator(st, ctx); err != nil {
+					return err
+				}
+				view, err := versions.Request(st, args[1], args[2])
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			if len(args) == 3 && args[0] == "adopt" {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				if err := guard.Candidate(opts.installRoot, st, "brief-adopt"); err != nil {
+					return err
+				}
+				view, err := versions.Adopt(st, args[1], args[2])
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
 			return opts.compat(cmd.Context(), append([]string{"brief"}, args...))
 		},
@@ -544,7 +581,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"review", "verify", "pr", "cleanup", "dev", "refresh", "update",
+	"verify", "pr", "cleanup", "dev", "refresh", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, reclaim, ok bool) {
