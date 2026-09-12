@@ -2,7 +2,7 @@
 
 **Many agents. One finished job.**
 
-A small, Herdr-native agent distro. Launch a coding harness in this directory and it becomes your consigliere: it delegates approved work, gathers results, and brings decisions back to the boss.
+A small, Herdr-native agent distro. Launch a coding harness in this directory and it becomes your consigliere: it dispatches every approved request to a worker, stays free for inbox notices, gathers results, and brings decisions back to the boss.
 
 **MVP, not an unattended factory.** Instructions and skills do the reasoning. Herdr owns processes and worktrees. A small synchronous helper preserves task records. There is no sum daemon, scheduler, database server, or permanent hierarchy of managers.
 

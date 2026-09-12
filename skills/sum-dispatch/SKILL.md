@@ -5,6 +5,10 @@ description: Delegate explicitly approved work into an isolated Herdr task check
 # Dispatch
 
 Use this only from the pane registered as coordinator by `sumctl init`; the helper refuses dispatch from any other pane. Workers do not dispatch other workers.
+The coordinator does not do the requested work.
+Research, planning, investigation, and implementation are dispatched.
+Write the brief from the boss's words; do not investigate first.
+Stay available for inbox notices and further dispatches.
 
 ## Capacity
 
@@ -27,7 +31,8 @@ A free slot is never a reason to dispatch; work starts only from an explicit app
 
 ## Intake
 
-Identify the repository, outcome, scope/non-goals, acceptance criteria, and verification commands. A direct user request can be the approval; an unapproved issue cannot.
+Identify the repository, outcome, scope/non-goals, acceptance criteria, and verification commands from the boss's words. A direct user request can be the approval; an unapproved issue cannot.
+Do not research, plan, or implement in this pane to fill those fields.
 Use `templates/task.md` as a checklist, not an excuse to make the user rewrite a clear request.
 For a missing local clone, enroll the exact user-named repository: `./bin/sumctl project enroll owner/repo` clones exactly it under the Git-ignored `<installation>/projects/<owner>/<repo>` (a non-default host gets its own level: `--host gitlab.example.com` gives `projects/gitlab.example.com/owner/repo`), records host/owner/repo, the verified remote, and the path in `.sum/projects.json`, and is idempotent; never guess a similarly named project, and never clone everything an account can reach.
 A clone the earlier procedure made under `.sum/projects/<owner>/<repo>` or a checkout the boss names with `--path` is adopted where it is (`kind: legacy` or `external`) after its origin is verified; nothing is moved, re-cloned, or overwritten, and a dirty tree or different remote at the target is a refusal, not a replacement. Enrolling sum itself registers the installation (`kind: installation`), never a nested copy.

@@ -5,6 +5,7 @@ description: Reconcile saved tasks with bounded Herdr observations, surface unre
 # Rundown
 
 Run `./bin/sumctl inbox --live`. This takes one bounded `agent list` snapshot per Herdr session and reads every active task's state from it: twelve workers cost one observation call, not twelve sequential waits, and a worker missing from the snapshot is an attention item without its own lookup. The `fanout` field shows the Herdr calls and local elapsed time of that pass, and `capacity` shows the held slots. It is not a background monitor.
+A rundown does not authorize doing requested work in this pane; dispatch that work.
 For one task, `./bin/sumctl context TASK_ID --role coordinator` gives the outline, open questions with their text, the latest handoff (a worker claim), open returns, and the brief/update state in one bounded read; `--since CURSOR` (from the previous read's `cursor`) says whether anything changed and names only the new records. Reach for full `show` when you need the complete record.
 Surface unanswered decisions first, then reports ready for review, then failures/uncertainty, then tasks whose `cleanup` field is `pending` or `blocked`. Keep unchanged status silent unless the boss asked for it.
 A `cleanup: pending` row means the exact PR was observed merged and cleanup remains unfinished; offer `sumctl cleanup TASK_ID` (see `skills/sum-delivery/SKILL.md`).
