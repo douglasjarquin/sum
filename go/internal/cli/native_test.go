@@ -132,8 +132,9 @@ func TestAsk_matchesPythonWhenTheParentHasNoPane(t *testing.T) {
 		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
 	}
 	id := regexp.MustCompile(`q-[0-9a-f]{10}`)
-	got := id.ReplaceAllString(stdout.String(), "q-ID")
-	wantNorm := id.ReplaceAllString(string(want), "q-ID")
+	stamp := regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00`)
+	got := stamp.ReplaceAllString(id.ReplaceAllString(stdout.String(), "q-ID"), "<at>")
+	wantNorm := stamp.ReplaceAllString(id.ReplaceAllString(string(want), "q-ID"), "<at>")
 	if got != wantNorm {
 		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
 	}
