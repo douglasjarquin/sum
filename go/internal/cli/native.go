@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
+	"github.com/douglasjarquin/sum/go/internal/lsp"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prcmd"
@@ -213,6 +215,28 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		Args:               cobra.ArbitraryArgs,
 		RunE:               o.runUpdate,
 	})
+	root.AddCommand(&cobra.Command{
+		Use:                "lsp",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runLsp,
+	})
+}
+
+func (o *rootOptions) runLsp(cmd *cobra.Command, args []string) error {
+	if len(args) == 1 && args[0] == "ensure" {
+		payload, err := io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return nil
+		}
+		root := o.installRoot
+		if root == "" {
+			root = o.runtimeRoot
+		}
+		_ = lsp.Ensure(root, payload)
+		return nil
+	}
+	return usageError("lsp", args)
 }
 
 func (o *rootOptions) runHelp(cmd *cobra.Command, args []string) error {

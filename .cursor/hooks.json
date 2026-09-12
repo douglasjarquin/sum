@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "postToolUse": [
+      {
+        "command": "./bin/sumctl lsp ensure",
+        "timeout": 120
+      }
+    ]
+  }
+}

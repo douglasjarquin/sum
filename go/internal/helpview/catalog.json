@@ -39,6 +39,7 @@
       "project": "Managed project clones: enroll exactly one repository under <installation>/projects/<owner>/<repo>, list, show, or inspect a migration; never a shared task checkout",
       "herdr": "Session-scoped native CLI bridge for Mesh; no protocol reimplementation",
       "graph": "Per-checkout code graph (pinned codegraph): retry/resume one task's initialization, observe its freshness, or print an MCP snippet; never installs or configures globally",
+      "lsp": "Install allowlisted LSP binaries through mise into .local/bin; unknown binaries are refused; an existing link is never retargeted",
       "dev": "Prepare, list, or remove isolated self-development checkouts of this installation",
       "brief": "Inspect, regenerate, request, or adopt versioned worker brief revisions; the brief a worker reads is never rewritten",
       "refresh": "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status",
@@ -927,6 +928,16 @@
       "status"
     ]
   },
+  "lsp": {
+    "topic": "lsp",
+    "help": "Install allowlisted LSP binaries through mise into .local/bin; unknown binaries are refused; an existing link is never retargeted",
+    "arguments": [],
+    "subcommands": {
+      "ensure": "Read a Grok or Cursor PostToolUse event from stdin and install an allowlisted missing LSP binary; fails open"
+    },
+    "read_only": false,
+    "read_only_subcommands": []
+  },
   "dev": {
     "topic": "dev",
     "help": "Prepare, list, or remove isolated self-development checkouts of this installation",
@@ -1744,6 +1755,14 @@
     ],
     "subcommands": null,
     "read_only": true,
+    "read_only_subcommands": null
+  },
+  "lsp-ensure": {
+    "topic": "lsp-ensure",
+    "help": "Read a Grok or Cursor PostToolUse event from stdin and install an allowlisted missing LSP binary; fails open",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": false,
     "read_only_subcommands": null
   },
   "graph-config": {
