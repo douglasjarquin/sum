@@ -4,12 +4,38 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	os.Exit(buildCLIForTests(m))
+}
+
+func buildCLIForTests(m *testing.M) int {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "repo root: %v\n", err)
+		return 1
+	}
+	out := filepath.Join(root, ".local", "bin", "sumctl")
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "mkdir: %v\n", err)
+		return 1
+	}
+	cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", out, "./cmd/sumctl")
+	cmd.Dir = filepath.Join(root, "go")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "go build sumctl: %v\n%s\n", err, output)
+		return 1
+	}
+	return m.Run()
+}
 
 func repoReference(t *testing.T) (repoRoot, reference string) {
 	t.Helper()

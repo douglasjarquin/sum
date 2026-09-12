@@ -4,5 +4,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$(dirname "$(mise which go)"):${PATH:-}"
 unset GOROOT
-(cd go && go test ./...)
+mkdir -p .local/bin
+(cd go && go build -trimpath -buildvcs=false -o ../.local/bin/sumctl ./cmd/sumctl && go test ./...)
 python -m unittest discover -s tests -p 'test_*skill*.py' -v
