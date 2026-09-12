@@ -375,7 +375,9 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 		}
 	}
 	if truthy(native) {
-		if _, has := native.Get("sumctl"); !has {
+		_, hasSumctl := native.Get("sumctl")
+		_, hasSumctlGo := native.Get("sumctl-go")
+		if !hasSumctl && !hasSumctlGo {
 			return nil, verifyErrorf("%s: native dependency metadata is incomplete", path)
 		}
 		_, hasMesh := native.Get("herdr-mesh")

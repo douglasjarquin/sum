@@ -8,6 +8,9 @@ if [[ -L "$ROOT/.local/current" ]]; then
 fi
 BINARY="$RUNTIME/.local/bin/sumctl"
 if [[ ! -x "$BINARY" ]]; then
+  BINARY="$RUNTIME/.local/bin/sumctl-go"
+fi
+if [[ ! -x "$BINARY" ]]; then
   echo "sumctl: staged native binary is missing; run mise run setup or stage a release." >&2
   exit 1
 fi
