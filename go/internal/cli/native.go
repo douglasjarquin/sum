@@ -6,14 +6,17 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/archive"
+	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
 	"github.com/douglasjarquin/sum/go/internal/notes"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"strconv"
 
 	"github.com/douglasjarquin/sum/go/internal/quota"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/skills"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -79,6 +82,36 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE:               o.runArchive,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "ask",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runAsk,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "answer",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runAnswer,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "resolve",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runResolve,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "notice",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runNotice,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "pump",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runPump,
 	})
 }
 
@@ -307,6 +340,274 @@ func (o *rootOptions) runArchive(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func (o *rootOptions) pumpOpts() returns.PumpOpts {
+	return returns.PumpOpts{
+		RuntimeRoot: o.runtimeRoot,
+		SumctlPath:  o.sumctlPath(),
+		Ctx:         app.OptionalContext(o.installRoot),
+		Inline:      true,
+	}
+}
+
+func (o *rootOptions) runAsk(cmd *cobra.Command, args []string) error {
+	taskID, key, text, file, ok := parseAskArgs(args)
+	if !ok {
+		return o.compat(cmd.Context(), append([]string{"ask"}, args...))
+	}
+	st, err := o.openStore("ask")
+	if err != nil {
+		return err
+	}
+	body, err := app.TextInput(text, file)
+	if err != nil {
+		return err
+	}
+	view, err := ask.Ask(st, taskID, key, body, func() (*ordjson.Object, error) {
+		return returns.Notify(st, o.pumpOpts(), taskID, "parent", "a decision is waiting", false)
+	})
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseAskArgs(tokens []string) (taskID, key, text, file string, ok bool) {
+	textSet, fileSet := false, false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--key":
+			if i+1 >= len(tokens) {
+				return "", "", "", "", false
+			}
+			i++
+			key = tokens[i]
+		case strings.HasPrefix(token, "--key="):
+			key = strings.TrimPrefix(token, "--key=")
+		case token == "--text":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", "", "", false
+			}
+			i++
+			text = tokens[i]
+			textSet = true
+		case strings.HasPrefix(token, "--text="):
+			if textSet || fileSet {
+				return "", "", "", "", false
+			}
+			text = strings.TrimPrefix(token, "--text=")
+			textSet = true
+		case token == "--file":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", "", "", false
+			}
+			i++
+			file = tokens[i]
+			fileSet = true
+		case strings.HasPrefix(token, "--file="):
+			if textSet || fileSet {
+				return "", "", "", "", false
+			}
+			file = strings.TrimPrefix(token, "--file=")
+			fileSet = true
+		case strings.HasPrefix(token, "-"):
+			return "", "", "", "", false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", "", "", false
+		}
+	}
+	if taskID == "" || (!textSet && !fileSet) {
+		return "", "", "", "", false
+	}
+	return taskID, key, text, file, true
+}
+
+func (o *rootOptions) runAnswer(cmd *cobra.Command, args []string) error {
+	taskID, questionID, text, file, ok := parseAnswerArgs(args)
+	if !ok {
+		return o.compat(cmd.Context(), append([]string{"answer"}, args...))
+	}
+	st, err := o.openStore("answer")
+	if err != nil {
+		return err
+	}
+	body, err := app.TextInput(text, file)
+	if err != nil {
+		return err
+	}
+	endpoint := app.OptionalContext(o.installRoot)
+	view, err := ask.Answer(st, taskID, questionID, body, endpoint, func() (*ordjson.Object, error) {
+		return returns.Notify(st, o.pumpOpts(), taskID, "worker", "an answer has been recorded", false)
+	})
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseAnswerArgs(tokens []string) (taskID, questionID, text, file string, ok bool) {
+	textSet, fileSet := false, false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--text":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", "", "", false
+			}
+			i++
+			text = tokens[i]
+			textSet = true
+		case strings.HasPrefix(token, "--text="):
+			if textSet || fileSet {
+				return "", "", "", "", false
+			}
+			text = strings.TrimPrefix(token, "--text=")
+			textSet = true
+		case token == "--file":
+			if textSet || fileSet || i+1 >= len(tokens) {
+				return "", "", "", "", false
+			}
+			i++
+			file = tokens[i]
+			fileSet = true
+		case strings.HasPrefix(token, "--file="):
+			if textSet || fileSet {
+				return "", "", "", "", false
+			}
+			file = strings.TrimPrefix(token, "--file=")
+			fileSet = true
+		case strings.HasPrefix(token, "-"):
+			return "", "", "", "", false
+		case taskID == "":
+			taskID = token
+		case questionID == "":
+			questionID = token
+		default:
+			return "", "", "", "", false
+		}
+	}
+	if taskID == "" || questionID == "" || (!textSet && !fileSet) {
+		return "", "", "", "", false
+	}
+	return taskID, questionID, text, file, true
+}
+
+func (o *rootOptions) runResolve(cmd *cobra.Command, args []string) error {
+	if len(args) != 2 || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
+		return o.compat(cmd.Context(), append([]string{"resolve"}, args...))
+	}
+	st, err := o.openStore("resolve")
+	if err != nil {
+		return err
+	}
+	view, err := ask.Resolve(st, args[0], args[1])
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func (o *rootOptions) runNotice(cmd *cobra.Command, args []string) error {
+	taskID, recipient, ok := parseNoticeArgs(args)
+	if !ok {
+		return o.compat(cmd.Context(), append([]string{"notice"}, args...))
+	}
+	st, err := o.openStore("notice")
+	if err != nil {
+		return err
+	}
+	view, err := returns.Notify(st, o.pumpOpts(), taskID, recipient, "saved task state needs attention", true)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseNoticeArgs(tokens []string) (taskID, recipient string, ok bool) {
+	recipient = "parent"
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--to":
+			if i+1 >= len(tokens) {
+				return "", "", false
+			}
+			i++
+			recipient = tokens[i]
+		case strings.HasPrefix(token, "--to="):
+			recipient = strings.TrimPrefix(token, "--to=")
+		case strings.HasPrefix(token, "-"):
+			return "", "", false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", false
+		}
+	}
+	if taskID == "" || (recipient != "parent" && recipient != "worker") {
+		return "", "", false
+	}
+	return taskID, recipient, true
+}
+
+func (o *rootOptions) runPump(cmd *cobra.Command, args []string) error {
+	tasks, force, ok := parsePumpArgs(args)
+	if !ok {
+		return o.compat(cmd.Context(), append([]string{"pump"}, args...))
+	}
+	st, err := o.openStore("pump")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	if _, err := st.Registration(store.EndpointFromContext(ctx)); err != nil {
+		return err
+	}
+	reg, err := st.Registration(store.EndpointFromContext(ctx))
+	if err != nil {
+		return err
+	}
+	if reg == nil {
+		return fmt.Errorf("Run `sumctl init` in this pane first; the pump delivers only for a pane registered in this instance.")
+	}
+	opts := o.pumpOpts()
+	opts.Ctx = ctx
+	opts.Tasks = tasks
+	opts.Force = force
+	opts.Inline = true
+	view, err := returns.Pump(st, opts)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parsePumpArgs(tokens []string) (tasks []string, force bool, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--force":
+			force = true
+		case token == "--task":
+			if i+1 >= len(tokens) {
+				return nil, false, false
+			}
+			i++
+			tasks = append(tasks, tokens[i])
+		case strings.HasPrefix(token, "--task="):
+			tasks = append(tasks, strings.TrimPrefix(token, "--task="))
+		default:
+			return nil, false, false
+		}
+	}
+	return tasks, force, true
 }
 
 func parseArchiveArgs(tokens []string) (taskID string, acknowledge bool, ok bool) {

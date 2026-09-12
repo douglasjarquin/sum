@@ -496,7 +496,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"prepare", "dispatch", "start", "notice", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "attention", "bind", "backup", "dev", "refresh", "update",
+	"prepare", "dispatch", "start", "report", "review", "verify", "pr", "cleanup", "attention", "bind", "backup", "dev", "refresh", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, ok bool) {

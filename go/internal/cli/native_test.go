@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"testing"
 )
 
@@ -110,6 +111,31 @@ func TestSkillsAndExecutionAreOnTheCommandTree(t *testing.T) {
 		if !found {
 			t.Fatalf("missing command %s", name)
 		}
+	}
+}
+
+func TestAsk_matchesPythonWhenTheParentHasNoPane(t *testing.T) {
+	_, reference := repoReference(t)
+	home := t.TempDir()
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+"machine": "test-machine", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing",
+"base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md", "parent": null}`)
+	args := []string{"--home", home, "ask", "t-aaaaaaaaaaaa", "--text", "Keep going?"}
+	want, err := exec.Command(reference, args...).Output()
+	if err != nil {
+		t.Fatalf("python reference failed: %v\n%s", err, want)
+	}
+	var stdout, stderr bytes.Buffer
+	root := NewRoot(reference, &stdout, &stderr)
+	root.SetArgs(args)
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
+	}
+	id := regexp.MustCompile(`q-[0-9a-f]{10}`)
+	got := id.ReplaceAllString(stdout.String(), "q-ID")
+	wantNorm := id.ReplaceAllString(string(want), "q-ID")
+	if got != wantNorm {
+		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
 	}
 }
 
