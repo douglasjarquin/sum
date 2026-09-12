@@ -123,7 +123,7 @@ func TestCompatibilityHonorsCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := NewRoot(reference, &bytes.Buffer{}, &bytes.Buffer{})
-	root.SetArgs([]string{"status"})
+	root.SetArgs([]string{"prepare"})
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
 	defer cancel()
 	if err := root.ExecuteContext(ctx); err == nil || err != context.DeadlineExceeded {
@@ -138,7 +138,7 @@ func TestCompatibilityPreservesExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := NewRoot(reference, &bytes.Buffer{}, &bytes.Buffer{})
-	root.SetArgs([]string{"status"})
+	root.SetArgs([]string{"prepare"})
 	err := root.ExecuteContext(context.Background())
 	exit, ok := err.(*ExitError)
 	if !ok || exit.Code != 7 {

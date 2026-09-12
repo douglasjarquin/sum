@@ -44,9 +44,9 @@ func run(herdrPath string, timeout time.Duration, args ...string) (string, error
 	return stdout.String(), nil
 }
 
-func Call(herdrPath, session string, timeout time.Duration, args ...string) (any, error) {
+func CallRaw(herdrPath, session string, timeout time.Duration, args ...string) (string, error) {
 	if !sessionNamePattern.MatchString(session) {
-		return nil, fmt.Errorf("invalid session name")
+		return "", fmt.Errorf("Invalid session name.")
 	}
 	options := args
 	for i, a := range args {
@@ -57,14 +57,22 @@ func Call(herdrPath, session string, timeout time.Duration, args ...string) (any
 	}
 	for _, a := range options {
 		if a == "--session" || strings.HasPrefix(a, "--session=") {
-			return nil, fmt.Errorf("do not override sum's explicit Herdr session inside command arguments")
+			return "", fmt.Errorf("Do not override sum's explicit Herdr session inside command arguments.")
 		}
 	}
 	fullArgs := append([]string{"--session", session}, args...)
-	stdout, err := run(herdrPath, timeout, fullArgs...)
+	return run(herdrPath, timeout, fullArgs...)
+}
+
+func Call(herdrPath, session string, timeout time.Duration, args ...string) (any, error) {
+	stdout, err := CallRaw(herdrPath, session, timeout, args...)
 	if err != nil {
 		return nil, err
 	}
+	return decodeHerdr(stdout)
+}
+
+func decodeHerdr(stdout string) (any, error) {
 	value, err := ordjson.Decode([]byte(stdout))
 	if err != nil {
 		preview := stdout

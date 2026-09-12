@@ -22,7 +22,6 @@ func TestSettings_fallsBackToReferenceWhenNotShowOrHomeUnset(t *testing.T) {
 		args []string
 		want string
 	}{
-		{name: "show without --home", args: []string{"settings", "show"}, want: "settings\nshow\n"},
 		{name: "set with --home", args: []string{"--home", filepath.Join(dir, "state"), "settings", "set", "--global", "3"}, want: "--home\n" + filepath.Join(dir, "state") + "\nsettings\nset\n--global\n3\n"},
 	}
 	for _, tc := range cases {

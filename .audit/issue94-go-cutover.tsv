@@ -6,3 +6,6 @@ ts	phase	decision	why	evidence	result
 2026-09-12T03:35:00Z	mesh	Go tests own the former JS command contracts	relay prompt, refuse busy, wait --until, one handoff, failed handoff is error	go/internal/mesh/service_test.go	tests green
 2026-09-12T03:50:00Z	mesh	setup and release stage the Go binary only	no Node overlay path remains in install or verify_release	lib/sumctl.py scripts/setup.py go/internal/release/release.go	tests green
 2026-09-12T03:55:00Z	docs	record Grok Bot no-impact	this unit does not touch Bot templates	CONTRIBUTING.md	no-impact
+2026-09-12T03:10:50Z	frame	full cutover predicate: bin/sumctl execs Go, no Python sumctl, no SUM_PYTHON_HELPER or compat, go test green, home defaults like Python	owner mandate on issue 94; dual path is the bug	issue 94, go/internal/cli/root.go compatibilityCommands	open
+2026-09-12T03:10:50Z	workflow	sequence kernel then native commands then self-contained Go tests then switch bin/sumctl then delete Python	each unit ends in a check; no dual path left at the end	.audit/issue94-go-cutover.tsv	chosen
+2026-09-12T03:25:26Z	native-cli	native skills, execution show, help, quota, notes, herdr, archive; default home like Python	missing cobra commands blocked a full cutover; home required --home so production native paths never ran	go/internal/cli/native.go go/internal/helpview go/internal/skills	tests green

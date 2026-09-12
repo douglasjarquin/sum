@@ -204,7 +204,7 @@ func TestInstallationHint_findsTheLinkedWorktreesInstallation(t *testing.T) {
 	worktree := filepath.Join(base, "worktree")
 	runGit(t, installation, "worktree", "add", worktree, "-b", "wt")
 
-	hint, err := installationHint(worktree)
+	hint, err := InstallationHint(worktree)
 	if err != nil {
 		t.Fatalf("installationHint: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestInstallationHint_emptyForAnOrdinaryRepoRoot(t *testing.T) {
 	}
 	root := t.TempDir()
 	runGit(t, root, "init", "-q")
-	hint, err := installationHint(root)
+	hint, err := InstallationHint(root)
 	if err != nil {
 		t.Fatalf("installationHint: %v", err)
 	}

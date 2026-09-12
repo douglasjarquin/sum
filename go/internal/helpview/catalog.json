@@ -1,0 +1,2055 @@
+{
+  "": {
+    "commands": {
+      "doctor": "Observe setup, Herdr context, and this pane's registered role; writes nothing",
+      "quota": "Advisory provider quota. Codex uses Remainder. Other providers use quota-axi. Never switches accounts",
+      "release-contract": "Print this runtime's release contract; writes nothing",
+      "init": "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator",
+      "status": "All recorded tasks",
+      "inbox": "Only tasks that need attention: questions, reports, errors, cleanup",
+      "skills": "Check Sum-owned skill projections or copy explicit third-party skills into one project",
+      "prepare": "Coordinator only: record an approved task and create its isolated worktree (no launch)",
+      "dispatch": "Coordinator only: record an approved task and create its isolated worktree; then launch the worker",
+      "start": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch",
+      "execution": "Show, park, or explicitly resume task-local execution reservations",
+      "repair": "Coordinator-controlled corrective worker instructions",
+      "help": "Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments",
+      "context": "Bounded selective read of one task: outline by default, --section for parts, --role for a role view, --since CURSOR for changes",
+      "notes": "Append one timestamped entry to the task's optional notes.md (a claim, backed up with the records; credentials refused)",
+      "env": "Task-local environment record: declared dev commands, observed URLs/ports, log paths, pane/container references; observes and records only",
+      "show": "Full task record plus versions, evidence_view, and returns (unchanged shape; use `context` for a bounded read)",
+      "notice": "Explicit single retry of the pending notice toward one recipient",
+      "archive": "Coordinator only: archive a task after every execution reservation was separately released",
+      "ask": "Worker: save a question before waiting; the parent is notified only after it is saved",
+      "answer": "Coordinator: record the user's actual decision for one question",
+      "report": "Worker: submit the report (and --handoff) as a claim for the coordinator to verify",
+      "resolve": "Worker: mark an answered question applied",
+      "review": "Reviewer pane: append independent findings for one candidate; never replaces the worker report",
+      "verify": "Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)",
+      "pr": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names",
+      "cleanup": "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay",
+      "pump": "One bounded delivery pass over saved pending returns: at most one coalesced notice per recipient; nothing sleeps, polls, or is deleted",
+      "hook": "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon",
+      "metadata": "Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle",
+      "attention": "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays",
+      "bind": "Coordinator only: rebind this pane as a task's parent or adopt an existing worker pane; never launches",
+      "backup": "Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code",
+      "settings": "Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited",
+      "preset": "Named launch presets in .sum/settings.json: validated harness/model/argv shortcuts expanded at dispatch, not agents or roles",
+      "project": "Managed project clones: enroll exactly one repository under <installation>/projects/<owner>/<repo>, list, show, or inspect a migration; never a shared task checkout",
+      "herdr": "Session-scoped native CLI bridge for Mesh; no protocol reimplementation",
+      "graph": "Per-checkout code graph (pinned codegraph): retry/resume one task's initialization, observe its freshness, or print an MCP snippet; never installs or configures globally",
+      "dev": "Prepare, list, or remove isolated self-development checkouts of this installation",
+      "brief": "Inspect, regenerate, request, or adopt versioned worker brief revisions; the brief a worker reads is never rewritten",
+      "refresh": "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status",
+      "release": "Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates",
+      "update": "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running"
+    },
+    "read_only": [
+      "brief-list",
+      "context",
+      "doctor",
+      "env-show",
+      "execution-show",
+      "graph-config",
+      "graph-status",
+      "help",
+      "hook-status",
+      "inbox",
+      "metadata-snippet",
+      "metadata-status",
+      "preset-list",
+      "preset-show",
+      "project-list",
+      "project-show",
+      "quota",
+      "refresh-status",
+      "release-contract",
+      "release-list",
+      "release-show",
+      "settings-show",
+      "show",
+      "skills-check",
+      "status",
+      "update-status"
+    ],
+    "usage": "sumctl help TOPIC for one command's arguments and subcommands",
+    "context": "sumctl context TASK_ID [--section NAME ...] [--role worker|reviewer|coordinator] [--since CURSOR]",
+    "note": "Generated from the CLI definition; no manual to page through. Herdr CLI facts come from `herdr --skill`."
+  },
+  "doctor": {
+    "topic": "doctor",
+    "help": "Observe setup, Herdr context, and this pane's registered role; writes nothing",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "quota": {
+    "topic": "quota",
+    "help": "Advisory provider quota. Codex uses Remainder. Other providers use quota-axi. Never switches accounts",
+    "arguments": [
+      {
+        "name": "--provider",
+        "help": "Provider name (codex uses Remainder; any other name uses quota-axi)",
+        "required": true
+      },
+      {
+        "name": "--format",
+        "help": "compact (default, for model context) or json (for code)",
+        "choices": [
+          "json",
+          "compact"
+        ],
+        "default": "compact"
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "init": {
+    "topic": "init",
+    "help": "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator",
+    "arguments": [
+      {
+        "name": "--role",
+        "help": "Requested role; omitted means coordinator if unowned, worker if dispatched, else developer",
+        "choices": [
+          "coordinator",
+          "worker",
+          "developer"
+        ]
+      },
+      {
+        "name": "--task",
+        "help": "Task ID when explicitly registering as its dispatched worker"
+      },
+      {
+        "name": "--reclaim",
+        "help": "Deliberate, identity-checked takeover of an absent coordinator pane; never rebinds tasks"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "status": {
+    "topic": "status",
+    "help": "All recorded tasks",
+    "arguments": [
+      {
+        "name": "--live",
+        "help": "One bounded native-status lookup per task"
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "inbox": {
+    "topic": "inbox",
+    "help": "Only tasks that need attention: questions, reports, errors, cleanup",
+    "arguments": [
+      {
+        "name": "--live",
+        "help": "One bounded native-status lookup per task"
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "skills": {
+    "topic": "skills",
+    "help": "Check Sum-owned skill projections or copy explicit third-party skills into one project",
+    "arguments": [],
+    "subcommands": {
+      "check": "Refuse mismatched names, missing references, or namespace collisions",
+      "install": "Use the pinned Vercel Skills CLI to copy explicitly selected skills into a Git project"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "check"
+    ]
+  },
+  "prepare": {
+    "topic": "prepare",
+    "help": "Coordinator only: record an approved task and create its isolated worktree (no launch)",
+    "arguments": [
+      {
+        "name": "--repo",
+        "help": "Absolute path of the repository checkout to branch from (or use --project)"
+      },
+      {
+        "name": "--project",
+        "help": "An enrolled project name from `project list` (owner/repo, or host/owner/repo for a non-default host)"
+      },
+      {
+        "name": "--brief",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--harness",
+        "help": "Explicit Herdr integration kind; omitted means the saved worker default, else the coordinator's own harness"
+      },
+      {
+        "name": "--model",
+        "help": "Explicit model for this task only, passed through the verified flag of the resolved harness; never saved"
+      },
+      {
+        "name": "--reasoning",
+        "help": "Explicit reasoning/effort level for this task only (harnesses with a verified flag); never saved"
+      },
+      {
+        "name": "--same-as-you",
+        "help": "Explicit request for the coordinator's own harness with its native model, ignoring a saved worker default"
+      },
+      {
+        "name": "--preset",
+        "help": "Expand a saved named preset (see `preset list`) for this task; --model/--reasoning/--arg refine it, a different --harness is refused"
+      },
+      {
+        "name": "--base",
+        "help": null,
+        "default": "HEAD"
+      },
+      {
+        "name": "--kind",
+        "help": null,
+        "choices": [
+          "ship",
+          "scout"
+        ],
+        "default": "ship"
+      },
+      {
+        "name": "--approved",
+        "help": null
+      },
+      {
+        "name": "--arg",
+        "help": "An explicitly chosen harness argument; use --arg=-m for leading dashes"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "dispatch": {
+    "topic": "dispatch",
+    "help": "Coordinator only: record an approved task and create its isolated worktree; then launch the worker",
+    "arguments": [
+      {
+        "name": "--repo",
+        "help": "Absolute path of the repository checkout to branch from (or use --project)"
+      },
+      {
+        "name": "--project",
+        "help": "An enrolled project name from `project list` (owner/repo, or host/owner/repo for a non-default host)"
+      },
+      {
+        "name": "--brief",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--harness",
+        "help": "Explicit Herdr integration kind; omitted means the saved worker default, else the coordinator's own harness"
+      },
+      {
+        "name": "--model",
+        "help": "Explicit model for this task only, passed through the verified flag of the resolved harness; never saved"
+      },
+      {
+        "name": "--reasoning",
+        "help": "Explicit reasoning/effort level for this task only (harnesses with a verified flag); never saved"
+      },
+      {
+        "name": "--same-as-you",
+        "help": "Explicit request for the coordinator's own harness with its native model, ignoring a saved worker default"
+      },
+      {
+        "name": "--preset",
+        "help": "Expand a saved named preset (see `preset list`) for this task; --model/--reasoning/--arg refine it, a different --harness is refused"
+      },
+      {
+        "name": "--base",
+        "help": null,
+        "default": "HEAD"
+      },
+      {
+        "name": "--kind",
+        "help": null,
+        "choices": [
+          "ship",
+          "scout"
+        ],
+        "default": "ship"
+      },
+      {
+        "name": "--approved",
+        "help": null
+      },
+      {
+        "name": "--arg",
+        "help": "An explicitly chosen harness argument; use --arg=-m for leading dashes"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "start": {
+    "topic": "start",
+    "help": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--arg",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "execution": {
+    "topic": "execution",
+    "help": "Show, park, or explicitly resume task-local execution reservations",
+    "arguments": [],
+    "subcommands": {
+      "show": "Show worker and independent verifier attempts without observing or launching anything",
+      "park": "Release one exact worker or verifier attempt only after bounded conclusive stop observation; stops nothing",
+      "resume": "Reserve capacity for a successor to one exact released worker attempt, then launch it"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "show"
+    ]
+  },
+  "repair": {
+    "topic": "repair",
+    "help": "Coordinator-controlled corrective worker instructions",
+    "arguments": [],
+    "subcommands": {
+      "send": "Charge one task repair iteration before sending to the exact settled worker",
+      "extend": "Record the human's explicit additional allowance for an exhausted task"
+    },
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "help": {
+    "topic": "help",
+    "help": "Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments",
+    "arguments": [
+      {
+        "name": "topic",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "context": {
+    "topic": "context",
+    "help": "Bounded selective read of one task: outline by default, --section for parts, --role for a role view, --since CURSOR for changes",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--section",
+        "help": "Render only this section (repeatable)",
+        "choices": [
+          "outline",
+          "brief",
+          "decisions",
+          "handoff",
+          "evidence",
+          "execution",
+          "environment",
+          "update",
+          "returns",
+          "notes"
+        ]
+      },
+      {
+        "name": "--role",
+        "help": "Role view: the sections and short contract that role needs; summaries stay claims",
+        "choices": [
+          "worker",
+          "reviewer",
+          "coordinator"
+        ]
+      },
+      {
+        "name": "--since",
+        "help": "Cursor from an earlier read; reports what changed and renders nothing when unchanged (unless --section/--role)"
+      },
+      {
+        "name": "--revision",
+        "help": "With --section brief: also return that recorded brief revision's verified content"
+      },
+      {
+        "name": "--kind",
+        "help": "With --section evidence: only these record kinds (repeatable)"
+      },
+      {
+        "name": "--after",
+        "help": "Page offset into questions/evidence lists (stable: lists are append-only)"
+      },
+      {
+        "name": "--limit",
+        "help": "Page size for lists (1-200); omitted records are counted, never hidden",
+        "default": 20
+      },
+      {
+        "name": "--max-chars",
+        "help": "Bound for each prose field; 0 means unbounded",
+        "default": 4000
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "notes": {
+    "topic": "notes",
+    "help": "Append one timestamped entry to the task's optional notes.md (a claim, backed up with the records; credentials refused)",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--text",
+        "help": null
+      },
+      {
+        "name": "--file",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "env": {
+    "topic": "env",
+    "help": "Task-local environment record: declared dev commands, observed URLs/ports, log paths, pane/container references; observes and records only",
+    "arguments": [],
+    "subcommands": {
+      "discover": "Read the checkout's declared configuration (mise, package scripts, Makefile, justfile, Procfile, compose, Dockerfile, devcontainer) into command references; runs nothing",
+      "record": "Record one observed fact: --url (port observed via lsof now), --log (lstat, never read), --pane, or --container; never binds or reserves anything",
+      "inspect": "Re-observe every recorded fact once (configuration drift, listeners, logs) and mark stale ones; starts and stops nothing",
+      "show": "The compact redacted environment record from the sidecar; observes nothing",
+      "start": "Launch one command the repository declares (an `env discover` row) in a pane split under the worker pane; intent, pane, and process identity are recorded, readiness is bounded",
+      "stop": "Stop this task's sum-launched services whose pane, shell, pid, and argv still match the record: one interrupt, bounded exit wait, verified port release, then the sum-created pane closes"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "show"
+    ]
+  },
+  "show": {
+    "topic": "show",
+    "help": "Full task record plus versions, evidence_view, and returns (unchanged shape; use `context` for a bounded read)",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "notice": {
+    "topic": "notice",
+    "help": "Explicit single retry of the pending notice toward one recipient",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--to",
+        "help": null,
+        "choices": [
+          "parent",
+          "worker"
+        ],
+        "default": "parent"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "archive": {
+    "topic": "archive",
+    "help": "Coordinator only: archive a task after every execution reservation was separately released",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--acknowledge",
+        "help": "Confirm work has been inspected and preserved; this does not stop or delete anything"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "ask": {
+    "topic": "ask",
+    "help": "Worker: save a question before waiting; the parent is notified only after it is saved",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--key",
+        "help": "Stable question key for idempotent re-submission"
+      },
+      {
+        "name": "--text",
+        "help": null
+      },
+      {
+        "name": "--file",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "answer": {
+    "topic": "answer",
+    "help": "Coordinator: record the user's actual decision for one question",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "question",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--text",
+        "help": null
+      },
+      {
+        "name": "--file",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "report": {
+    "topic": "report",
+    "help": "Worker: submit the report (and --handoff) as a claim for the coordinator to verify",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--handoff",
+        "help": "Optional bounded JSON handoff (outcome, candidate SHA, files, checks, review, unresolved decisions, next action, PR identity claim)"
+      },
+      {
+        "name": "--text",
+        "help": null
+      },
+      {
+        "name": "--file",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "resolve": {
+    "topic": "resolve",
+    "help": "Worker: mark an answered question applied",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "question",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "review": {
+    "topic": "review",
+    "help": "Reviewer pane: append independent findings for one candidate; never replaces the worker report",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--verdict",
+        "help": null,
+        "choices": [
+          "approve",
+          "changes-requested",
+          "blocked",
+          "comment"
+        ],
+        "required": true
+      },
+      {
+        "name": "--candidate",
+        "help": "Full 40-hex SHA the findings cover"
+      },
+      {
+        "name": "--tool",
+        "help": "Name of the configured review facility that produced the findings (for example `made`); binds no reviewer pane"
+      },
+      {
+        "name": "--policy-reviewed",
+        "help": "The findings cover the candidate's changes to VERIFY.md, mise tasks, feature maps, or the verify skill line by line"
+      },
+      {
+        "name": "--text",
+        "help": null
+      },
+      {
+        "name": "--file",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "verify": {
+    "topic": "verify",
+    "help": "Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--candidate",
+        "help": "Full 40-hex SHA that was actually verified",
+        "required": true
+      },
+      {
+        "name": "--result",
+        "help": "Required without --run/--execute; with a run record it may only confirm the record's outcome",
+        "choices": [
+          "pass",
+          "fail",
+          "inconclusive"
+        ]
+      },
+      {
+        "name": "--run",
+        "help": "Path to the run.json of a verify-runner execution you performed yourself for this candidate"
+      },
+      {
+        "name": "--execute",
+        "help": "Run the candidate's VERIFY.md contract now in a separate detached checkout of that SHA and record the run"
+      },
+      {
+        "name": "--base",
+        "help": "Base commit for the policy comparison of --execute (default: the task's recorded base)"
+      },
+      {
+        "name": "--text",
+        "help": null
+      },
+      {
+        "name": "--file",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "pr": {
+    "topic": "pr",
+    "help": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names",
+    "arguments": [],
+    "subcommands": {
+      "reconcile": "Coordinator only: inspect PR --number in the task repository with gh and record its exact identity, state, and mismatches",
+      "evidence": "Coordinator only: publish one evidence run's before/after media into the reconciled PR's marked block via gh --attach; receipts and publish copies stay under the task record"
+    },
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "cleanup": {
+    "topic": "cleanup",
+    "help": "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--apply",
+        "help": "Remove the verified workspace/checkout without force and archive the record; without it, only inspect and persist the plan"
+      },
+      {
+        "name": "--reviewer-only",
+        "help": "Inspect or close only the bound reviewer pane (needs saved findings and an exited occupant); the checkout is untouched"
+      },
+      {
+        "name": "--number",
+        "help": "Observe this PR number when no complete PR identity is recorded yet"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "pump": {
+    "topic": "pump",
+    "help": "One bounded delivery pass over saved pending returns: at most one coalesced notice per recipient; nothing sleeps, polls, or is deleted",
+    "arguments": [
+      {
+        "name": "--task",
+        "help": "Limit the pass to this task (repeatable)"
+      },
+      {
+        "name": "--force",
+        "help": "Also retry returns whose last attempt was uncertain or stalled; still one prompt per recipient"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "hook": {
+    "topic": "hook",
+    "help": "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon",
+    "arguments": [],
+    "subcommands": {
+      "enable": "Coordinator only: write this instance's manifest under .sum/hook, link/enable it live, then reconcile once",
+      "disable": "Coordinator only: disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live",
+      "status": "Hook health from records plus one bounded registry observation: last event, errors, pending count/age, enabled",
+      "event": "Internal: the handler Herdr runs for one event (reads HERDR_PLUGIN_* from the environment)"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "status"
+    ]
+  },
+  "metadata": {
+    "topic": "metadata",
+    "help": "Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle",
+    "arguments": [],
+    "subcommands": {
+      "enable": "Coordinator only: probe the installed Herdr for report-metadata, record sum's source, project every saved task once",
+      "disable": "Coordinator only: clear the tokens sum recorded and stop projecting; nothing else in Herdr changes",
+      "status": "Recorded projection state, per-task tokens, errors, and (inside Herdr) the capabilities probed now; writes nothing",
+      "sync": "One bounded projection pass from records: only changed endpoints are written; no model, no polling",
+      "snippet": "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum",
+      "inbox": "Open the read-only `sumctl inbox` listing in a Herdr pane through the linked sum plugin entrypoint (needs `hook enable`)"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "snippet",
+      "status"
+    ]
+  },
+  "attention": {
+    "topic": "attention",
+    "help": "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "attention",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--seen",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "bind": {
+    "topic": "bind",
+    "help": "Coordinator only: rebind this pane as a task's parent or adopt an existing worker pane; never launches",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--worker-pane",
+        "help": "Explicitly adopt an existing worker; never launch a replacement"
+      },
+      {
+        "name": "--parent-only",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "backup": {
+    "topic": "backup",
+    "help": "Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code",
+    "arguments": [
+      {
+        "name": "destination",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "settings": {
+    "topic": "settings",
+    "help": "Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited",
+    "arguments": [],
+    "subcommands": {
+      "show": "Current limits, their source, and held slots; writes nothing",
+      "set": "Coordinator only: write validated capacity values atomically; future admissions only, nothing running is touched"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "show"
+    ]
+  },
+  "preset": {
+    "topic": "preset",
+    "help": "Named launch presets in .sum/settings.json: validated harness/model/argv shortcuts expanded at dispatch, not agents or roles",
+    "arguments": [],
+    "subcommands": {
+      "list": "Saved presets with harness, model, reasoning, args, and revision; writes nothing",
+      "show": "One preset and the exact argv it expands to; writes nothing",
+      "set": "Coordinator only: create or revise one preset atomically; prepared and running tasks keep their own specification",
+      "delete": "Coordinator only: remove one preset that no default references; tasks prepared with it are unaffected"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "list",
+      "show"
+    ]
+  },
+  "project": {
+    "topic": "project",
+    "help": "Managed project clones: enroll exactly one repository under <installation>/projects/<owner>/<repo>, list, show, or inspect a migration; never a shared task checkout",
+    "arguments": [],
+    "subcommands": {
+      "enroll": "Coordinator only: register owner/repo (or a URL); adopt a matching clone at the canonical, legacy .sum/projects, or --path location, else clone exactly it; idempotent",
+      "list": "Every enrolled project with one bounded observation (present, remote, dirty, linked worktrees); writes nothing",
+      "show": "One project's registration, observation, and the non-archived tasks that branch from it; writes nothing",
+      "migrate": "Inspect what still references a legacy/external clone and print guidance; --apply renames it to the canonical path only when zero references are proven (coordinator only)"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "list",
+      "show"
+    ]
+  },
+  "herdr": {
+    "topic": "herdr",
+    "help": "Session-scoped native CLI bridge for Mesh; no protocol reimplementation",
+    "arguments": [
+      {
+        "name": "args",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "graph": {
+    "topic": "graph",
+    "help": "Per-checkout code graph (pinned codegraph): retry/resume one task's initialization, observe its freshness, or print an MCP snippet; never installs or configures globally",
+    "arguments": [],
+    "subcommands": {
+      "init": "Coordinator only: initialize or reconcile the task checkout's index (bounded retries; exhausted stays recorded)",
+      "status": "Recorded graph state plus one live freshness observation; writes nothing",
+      "config": "Print an MCP snippet naming the pinned binary for one harness; no file is written"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "config",
+      "status"
+    ]
+  },
+  "dev": {
+    "topic": "dev",
+    "help": "Prepare, list, or remove isolated self-development checkouts of this installation",
+    "arguments": [],
+    "subcommands": {
+      "prepare": "Create or reopen .sum/dev/NAME on branch sum-dev/NAME; optionally open an ordinary Herdr pane there",
+      "list": null,
+      "remove": "Remove a clean development checkout with plain git worktree remove; dirty work is preserved"
+    },
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "brief": {
+    "topic": "brief",
+    "help": "Inspect, regenerate, request, or adopt versioned worker brief revisions; the brief a worker reads is never rewritten",
+    "arguments": [],
+    "subcommands": {
+      "list": "Show recorded revisions, their integrity, and refresh state",
+      "regenerate": "Stage a new numbered revision from the approved task, current decisions, and current policy (coordinator only)",
+      "request": "Mark the latest intact revision as requested for the worker (coordinator only); sends nothing",
+      "adopt": "Worker: record that the requested revision is now the brief being followed"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "list"
+    ]
+  },
+  "refresh": {
+    "topic": "refresh",
+    "help": "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status",
+    "arguments": [],
+    "subcommands": {
+      "request": "Coordinator only: regenerate and request revisions for the coordinator and/or tasks, persist, then try one delivery each",
+      "status": "Bounded refresh summary from saved records; writes nothing",
+      "adopt": "Coordinator: record the receipt of the requested contract revision"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "status"
+    ]
+  },
+  "release": {
+    "topic": "release",
+    "help": "Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates",
+    "arguments": [],
+    "subcommands": {
+      "stage": "Stage the runtime bundle for a commit (default HEAD) with its own dependencies; nothing live changes",
+      "list": null,
+      "show": null
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "contract",
+      "list",
+      "show"
+    ]
+  },
+  "update": {
+    "topic": "update",
+    "help": "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running",
+    "arguments": [],
+    "subcommands": {
+      "check": "Fetch origin, resolve the merged revision, and report compatibility; changes no selection",
+      "stage": "Check plus build the release bundle; the default is unchanged",
+      "apply": "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only)",
+      "status": "Default and active runtime, checkout state, staged releases, recent selections; writes nothing",
+      "rollback": "Atomically select the previous runtime (or --to SHA|checkout) after compatibility checks; records are never touched (coordinator only)",
+      "recover": "Complete generation-checked compensation for an interrupted activation (coordinator only)"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "status"
+    ]
+  },
+  "skills-check": {
+    "topic": "skills-check",
+    "help": "Refuse mismatched names, missing references, or namespace collisions",
+    "arguments": [
+      {
+        "name": "--root",
+        "help": "Checkout or release tree to inspect",
+        "default": "{{RUNTIME}}"
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "skills-install": {
+    "topic": "skills-install",
+    "help": "Use the pinned Vercel Skills CLI to copy explicitly selected skills into a Git project",
+    "arguments": [
+      {
+        "name": "--target",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--source",
+        "help": "Vercel Skills source: package, repository URL, or local path",
+        "required": true
+      },
+      {
+        "name": "--skill",
+        "help": "Exact skill name to copy (repeatable; wildcards and sum-* are refused)",
+        "required": true
+      },
+      {
+        "name": "--agent",
+        "help": "Exact Vercel Skills agent name (repeatable; wildcards are refused)",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "execution-show": {
+    "topic": "execution-show",
+    "help": "Show worker and independent verifier attempts without observing or launching anything",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "execution-park": {
+    "topic": "execution-park",
+    "help": "Release one exact worker or verifier attempt only after bounded conclusive stop observation; stops nothing",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "execution-resume": {
+    "topic": "execution-resume",
+    "help": "Reserve capacity for a successor to one exact released worker attempt, then launch it",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "repair-send": {
+    "topic": "repair-send",
+    "help": "Charge one task repair iteration before sending to the exact settled worker",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--key",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--text",
+        "help": null
+      },
+      {
+        "name": "--file",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "repair-extend": {
+    "topic": "repair-extend",
+    "help": "Record the human's explicit additional allowance for an exhausted task",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--question",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--additional",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--approved",
+        "help": null
+      },
+      {
+        "name": "--text",
+        "help": null
+      },
+      {
+        "name": "--file",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "env-discover": {
+    "topic": "env-discover",
+    "help": "Read the checkout's declared configuration (mise, package scripts, Makefile, justfile, Procfile, compose, Dockerfile, devcontainer) into command references; runs nothing",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "env-record": {
+    "topic": "env-record",
+    "help": "Record one observed fact: --url (port observed via lsof now), --log (lstat, never read), --pane, or --container; never binds or reserves anything",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--url",
+        "help": "An endpoint as the application reports it, without credentials; local hosts are observed, remote ones recorded unverified"
+      },
+      {
+        "name": "--log",
+        "help": "A log path: absolute, or relative to the checkout; stat'ed without following symlinks"
+      },
+      {
+        "name": "--pane",
+        "help": "A related Herdr pane ID (observed with `pane get` in the task session)"
+      },
+      {
+        "name": "--container",
+        "help": "A related container name or ID (recorded as reported)"
+      },
+      {
+        "name": "--label",
+        "help": "Short human label (at most 80 characters)"
+      },
+      {
+        "name": "--ownership",
+        "help": "Claimed ownership; observation overrides a claim it contradicts, `shared` marks a deliberately shared service",
+        "choices": [
+          "owned",
+          "shared",
+          "unknown"
+        ]
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "env-inspect": {
+    "topic": "env-inspect",
+    "help": "Re-observe every recorded fact once (configuration drift, listeners, logs) and mark stale ones; starts and stops nothing",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "env-show": {
+    "topic": "env-show",
+    "help": "The compact redacted environment record from the sidecar; observes nothing",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--max-chars",
+        "help": null,
+        "default": 4000
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "env-start": {
+    "topic": "env-start",
+    "help": "Launch one command the repository declares (an `env discover` row) in a pane split under the worker pane; intent, pane, and process identity are recorded, readiness is bounded",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--command",
+        "help": "The declared command name (from `env discover`); sum builds the line from the repository's own runner",
+        "required": true
+      },
+      {
+        "name": "--source",
+        "help": "Disambiguate a name declared in several files (e.g. package.json vs Makefile)"
+      },
+      {
+        "name": "--url",
+        "help": "The endpoint the service will serve; readiness waits until its port is taken by the launched process, a foreign occupant is a reported conflict"
+      },
+      {
+        "name": "--match",
+        "help": "Readiness text to wait for in the pane output when the service has no URL"
+      },
+      {
+        "name": "--log",
+        "help": "The service's log path to record (stat'ed, never read)"
+      },
+      {
+        "name": "--label",
+        "help": "Short human label (at most 80 characters)"
+      },
+      {
+        "name": "--timeout",
+        "help": "Readiness bound in seconds (default 30, at most 600); failure is explicit, never a retry"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "env-stop": {
+    "topic": "env-stop",
+    "help": "Stop this task's sum-launched services whose pane, shell, pid, and argv still match the record: one interrupt, bounded exit wait, verified port release, then the sum-created pane closes",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--service",
+        "help": "One service ID; default: every active service of the task"
+      },
+      {
+        "name": "--timeout",
+        "help": "Exit bound in seconds after the interrupt (default 10); a survivor stays recorded as stopping, nothing escalates"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "pr-reconcile": {
+    "topic": "pr-reconcile",
+    "help": "Coordinator only: inspect PR --number in the task repository with gh and record its exact identity, state, and mismatches",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--number",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--repo",
+        "help": "owner/name; must equal the task repository's GitHub identity"
+      },
+      {
+        "name": "--replace",
+        "help": "Switch a task from one recorded PR number to another after inspecting both"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "pr-evidence": {
+    "topic": "pr-evidence",
+    "help": "Coordinator only: publish one evidence run's before/after media into the reconciled PR's marked block via gh --attach; receipts and publish copies stay under the task record",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--run",
+        "help": "Evidence run id (the <evidence root>/<run> directory holding comparison.json files)",
+        "required": true
+      },
+      {
+        "name": "--scenario",
+        "help": "Publish only these scenario ids (default: every comparison in the run)"
+      },
+      {
+        "name": "--visibility",
+        "help": "The destination visibility you intend; a mismatch refuses before any upload",
+        "choices": [
+          "public",
+          "private",
+          "internal"
+        ],
+        "required": true
+      },
+      {
+        "name": "--evidence-root",
+        "help": "Evidence root (default: the worker checkout's .artifacts/evidence); use a promoted copy after cleanup"
+      },
+      {
+        "name": "--verification-run",
+        "help": "Verification run id(s) to cite (default: the runs recorded for this candidate)"
+      },
+      {
+        "name": "--timeout",
+        "help": "Seconds allowed for one gh call, uploads included",
+        "default": 300
+      },
+      {
+        "name": "--dry-run",
+        "help": "Plan and compute the body; upload and edit nothing"
+      },
+      {
+        "name": "--allow-head-mismatch",
+        "help": "Publish although the PR head moved past the captured candidate (labelled)"
+      },
+      {
+        "name": "--replace-foreign-block",
+        "help": "Take over a marked block this installation did not write, after inspecting it"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "hook-enable": {
+    "topic": "hook-enable",
+    "help": "Coordinator only: write this instance's manifest under .sum/hook, link/enable it live, then reconcile once",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "hook-disable": {
+    "topic": "hook-disable",
+    "help": "Coordinator only: disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live",
+    "arguments": [
+      {
+        "name": "--unlink",
+        "help": "Remove the registration instead of disabling it"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "hook-status": {
+    "topic": "hook-status",
+    "help": "Hook health from records plus one bounded registry observation: last event, errors, pending count/age, enabled",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "hook-event": {
+    "topic": "hook-event",
+    "help": "Internal: the handler Herdr runs for one event (reads HERDR_PLUGIN_* from the environment)",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "metadata-enable": {
+    "topic": "metadata-enable",
+    "help": "Coordinator only: probe the installed Herdr for report-metadata, record sum's source, project every saved task once",
+    "arguments": [
+      {
+        "name": "--notify",
+        "help": "Also send one coalesced `notification show` per pass for new needs-decision/review-ready/cleanup/refresh/blocked transitions (task ids and states only)"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "metadata-disable": {
+    "topic": "metadata-disable",
+    "help": "Coordinator only: clear the tokens sum recorded and stop projecting; nothing else in Herdr changes",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "metadata-status": {
+    "topic": "metadata-status",
+    "help": "Recorded projection state, per-task tokens, errors, and (inside Herdr) the capabilities probed now; writes nothing",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "metadata-sync": {
+    "topic": "metadata-sync",
+    "help": "One bounded projection pass from records: only changed endpoints are written; no model, no polling",
+    "arguments": [
+      {
+        "name": "--task",
+        "help": "Limit the pass to this task (repeatable)"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "metadata-snippet": {
+    "topic": "metadata-snippet",
+    "help": "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum",
+    "arguments": [
+      {
+        "name": "--raw",
+        "help": "Print the TOML text only"
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "metadata-inbox": {
+    "topic": "metadata-inbox",
+    "help": "Open the read-only `sumctl inbox` listing in a Herdr pane through the linked sum plugin entrypoint (needs `hook enable`)",
+    "arguments": [
+      {
+        "name": "--placement",
+        "help": null,
+        "choices": [
+          "popup",
+          "split",
+          "tab",
+          "zoomed",
+          "overlay"
+        ],
+        "default": "popup"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "settings-show": {
+    "topic": "settings-show",
+    "help": "Current limits, their source, and held slots; writes nothing",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "settings-set": {
+    "topic": "settings-set",
+    "help": "Coordinator only: write validated capacity values atomically; future admissions only, nothing running is touched",
+    "arguments": [
+      {
+        "name": "--global",
+        "help": "Execution slots across all repositories (1-64)"
+      },
+      {
+        "name": "--per-repository",
+        "help": "Execution slots per repository (1-64, at most --global)"
+      },
+      {
+        "name": "--clear-capacity",
+        "help": "Remove the capacity block and return admission to unlimited without changing worker or preset settings"
+      },
+      {
+        "name": "--worker-harness",
+        "help": "Save the default worker harness for future dispatches (the coordinator keeps its own)"
+      },
+      {
+        "name": "--worker-model",
+        "help": "Save the default worker model for the saved worker harness (needs a verified adapter)"
+      },
+      {
+        "name": "--worker-reasoning",
+        "help": "Save the default worker reasoning/effort level for the saved worker harness"
+      },
+      {
+        "name": "--worker-preset",
+        "help": "Save a preset name as the worker default for future dispatches; expanded at each prepare"
+      },
+      {
+        "name": "--clear-worker",
+        "help": "Remove the saved worker default: workers run the coordinator's harness again"
+      },
+      {
+        "name": "--reviewer-preset",
+        "help": "Save the preset the coordinator uses when it launches a reviewer itself; never applied when MADE or the repository's own tool owns review"
+      },
+      {
+        "name": "--clear-reviewer",
+        "help": "Remove the saved reviewer preset"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "preset-list": {
+    "topic": "preset-list",
+    "help": "Saved presets with harness, model, reasoning, args, and revision; writes nothing",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "preset-show": {
+    "topic": "preset-show",
+    "help": "One preset and the exact argv it expands to; writes nothing",
+    "arguments": [
+      {
+        "name": "name",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "preset-set": {
+    "topic": "preset-set",
+    "help": "Coordinator only: create or revise one preset atomically; prepared and running tasks keep their own specification",
+    "arguments": [
+      {
+        "name": "name",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--harness",
+        "help": "Herdr integration kind (required when creating; changing it drops the old harness's model/reasoning/args)"
+      },
+      {
+        "name": "--model",
+        "help": "Model passed through the harness's verified flag"
+      },
+      {
+        "name": "--reasoning",
+        "help": "Reasoning/effort level passed through the harness's verified flag"
+      },
+      {
+        "name": "--arg",
+        "help": "Replace the preset's native args with these exact tokens (repeatable; use --arg=-m for leading dashes)"
+      },
+      {
+        "name": "--clear-model",
+        "help": "Drop the preset's model"
+      },
+      {
+        "name": "--clear-reasoning",
+        "help": "Drop the preset's reasoning"
+      },
+      {
+        "name": "--clear-args",
+        "help": "Drop the preset's native args"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "preset-delete": {
+    "topic": "preset-delete",
+    "help": "Coordinator only: remove one preset that no default references; tasks prepared with it are unaffected",
+    "arguments": [
+      {
+        "name": "name",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "project-enroll": {
+    "topic": "project-enroll",
+    "help": "Coordinator only: register owner/repo (or a URL); adopt a matching clone at the canonical, legacy .sum/projects, or --path location, else clone exactly it; idempotent",
+    "arguments": [
+      {
+        "name": "spec",
+        "help": "owner/repo, host/owner/repo, or a full https/ssh remote URL",
+        "required": true
+      },
+      {
+        "name": "--host",
+        "help": "Git host for owner/repo (default github.com); a non-default host gets its own directory level"
+      },
+      {
+        "name": "--remote",
+        "help": "Exact clone URL to use and verify instead of the one derived from the host (e.g. a mirror); recorded as the verified remote"
+      },
+      {
+        "name": "--path",
+        "help": "Register an existing checkout at this path for the identity instead of cloning; its origin must be the same repository"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "project-list": {
+    "topic": "project-list",
+    "help": "Every enrolled project with one bounded observation (present, remote, dirty, linked worktrees); writes nothing",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "project-show": {
+    "topic": "project-show",
+    "help": "One project's registration, observation, and the non-archived tasks that branch from it; writes nothing",
+    "arguments": [
+      {
+        "name": "name",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "project-migrate": {
+    "topic": "project-migrate",
+    "help": "Inspect what still references a legacy/external clone and print guidance; --apply renames it to the canonical path only when zero references are proven (coordinator only)",
+    "arguments": [
+      {
+        "name": "name",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--apply",
+        "help": "Perform the rename after a clean inspection; refused while any task, linked worktree, or process references the clone"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "graph-init": {
+    "topic": "graph-init",
+    "help": "Coordinator only: initialize or reconcile the task checkout's index (bounded retries; exhausted stays recorded)",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "graph-status": {
+    "topic": "graph-status",
+    "help": "Recorded graph state plus one live freshness observation; writes nothing",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "graph-config": {
+    "topic": "graph-config",
+    "help": "Print an MCP snippet naming the pinned binary for one harness; no file is written",
+    "arguments": [
+      {
+        "name": "--harness",
+        "help": null,
+        "choices": [
+          "claude",
+          "codex",
+          "cursor",
+          "opencode"
+        ],
+        "required": true
+      },
+      {
+        "name": "--raw",
+        "help": "Print only the snippet text"
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "dev-prepare": {
+    "topic": "dev-prepare",
+    "help": "Create or reopen .sum/dev/NAME on branch sum-dev/NAME; optionally open an ordinary Herdr pane there",
+    "arguments": [
+      {
+        "name": "--name",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--base",
+        "help": null,
+        "default": "HEAD"
+      },
+      {
+        "name": "--pane",
+        "help": "Also create a Herdr workspace whose root pane starts in the checkout"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "dev-list": {
+    "topic": "dev-list",
+    "help": null,
+    "arguments": [],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "dev-remove": {
+    "topic": "dev-remove",
+    "help": "Remove a clean development checkout with plain git worktree remove; dirty work is preserved",
+    "arguments": [
+      {
+        "name": "--name",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "brief-list": {
+    "topic": "brief-list",
+    "help": "Show recorded revisions, their integrity, and refresh state",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "brief-regenerate": {
+    "topic": "brief-regenerate",
+    "help": "Stage a new numbered revision from the approved task, current decisions, and current policy (coordinator only)",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "brief-request": {
+    "topic": "brief-request",
+    "help": "Mark the latest intact revision as requested for the worker (coordinator only); sends nothing",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "revision",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "brief-adopt": {
+    "topic": "brief-adopt",
+    "help": "Worker: record that the requested revision is now the brief being followed",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "revision",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "refresh-request": {
+    "topic": "refresh-request",
+    "help": "Coordinator only: regenerate and request revisions for the coordinator and/or tasks, persist, then try one delivery each",
+    "arguments": [
+      {
+        "name": "--task",
+        "help": "Refresh only this task (repeatable)"
+      },
+      {
+        "name": "--coordinator",
+        "help": "Refresh only the coordinator's operating contract"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "refresh-status": {
+    "topic": "refresh-status",
+    "help": "Bounded refresh summary from saved records; writes nothing",
+    "arguments": [
+      {
+        "name": "--task",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "refresh-adopt": {
+    "topic": "refresh-adopt",
+    "help": "Coordinator: record the receipt of the requested contract revision",
+    "arguments": [
+      {
+        "name": "--coordinator",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "revision",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "release-stage": {
+    "topic": "release-stage",
+    "help": "Stage the runtime bundle for a commit (default HEAD) with its own dependencies; nothing live changes",
+    "arguments": [
+      {
+        "name": "--ref",
+        "help": null,
+        "default": "HEAD"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "release-list": {
+    "topic": "release-list",
+    "help": null,
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "release-show": {
+    "topic": "release-show",
+    "help": null,
+    "arguments": [
+      {
+        "name": "sha",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "update-check": {
+    "topic": "update-check",
+    "help": "Fetch origin, resolve the merged revision, and report compatibility; changes no selection",
+    "arguments": [
+      {
+        "name": "--ref",
+        "help": "A revision merged on origin's default branch; default: that branch tip"
+      },
+      {
+        "name": "--no-fetch",
+        "help": "Use the already fetched origin refs (offline host)"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "update-stage": {
+    "topic": "update-stage",
+    "help": "Check plus build the release bundle; the default is unchanged",
+    "arguments": [
+      {
+        "name": "--ref",
+        "help": "A revision merged on origin's default branch; default: that branch tip"
+      },
+      {
+        "name": "--no-fetch",
+        "help": "Use the already fetched origin refs (offline host)"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "update-apply": {
+    "topic": "update-apply",
+    "help": "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only)",
+    "arguments": [
+      {
+        "name": "--ref",
+        "help": "A revision merged on origin's default branch; default: that branch tip"
+      },
+      {
+        "name": "--no-fetch",
+        "help": "Use the already fetched origin refs (offline host)"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "update-status": {
+    "topic": "update-status",
+    "help": "Default and active runtime, checkout state, staged releases, recent selections; writes nothing",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "update-rollback": {
+    "topic": "update-rollback",
+    "help": "Atomically select the previous runtime (or --to SHA|checkout) after compatibility checks; records are never touched (coordinator only)",
+    "arguments": [
+      {
+        "name": "--to",
+        "help": null
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "update-recover": {
+    "topic": "update-recover",
+    "help": "Complete generation-checked compensation for an interrupted activation (coordinator only)",
+    "arguments": [
+      {
+        "name": "--generation",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  }
+}

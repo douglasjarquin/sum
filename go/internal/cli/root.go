@@ -23,6 +23,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/statuscmd"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -41,11 +42,13 @@ func (e *ExitError) Error() string {
 }
 
 type rootOptions struct {
-	reference string
-	home      string
-	homeSet   bool
-	out       io.Writer
-	err       io.Writer
+	reference   string
+	runtimeRoot string
+	installRoot string
+	home        string
+	homeSet     bool
+	out         io.Writer
+	err         io.Writer
 }
 
 func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
@@ -55,7 +58,13 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	if errOut == nil {
 		errOut = io.Discard
 	}
-	opts := &rootOptions{reference: reference, out: out, err: errOut}
+	runtimeRoot := sumruntime.RootFromHelper(reference)
+	if runtimeRoot == "" {
+		cwd, _ := os.Getwd()
+		runtimeRoot = cwd
+	}
+	installRoot := sumruntime.ResolveInstallation(runtimeRoot, os.Getenv("SUM_INSTALL_ROOT"))
+	opts := &rootOptions{reference: reference, runtimeRoot: runtimeRoot, installRoot: installRoot, out: out, err: errOut}
 	root := &cobra.Command{
 		Use:                "sumctl",
 		Short:              "Small, synchronous helpers for sum",
@@ -77,6 +86,9 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	root.Flags().Lookup("home").NoOptDefVal = ""
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		opts.homeSet = root.Flags().Changed("home")
+		if !opts.homeSet {
+			opts.home = sumruntime.DefaultHome(opts.installRoot)
+		}
 	}
 	root.SetHelpCommand(nil)
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
@@ -104,7 +116,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 && args[0] == "show" && opts.homeSet {
+			if len(args) == 1 && args[0] == "show" {
 				st, err := store.Open(opts.home)
 				if err != nil {
 					return err
@@ -124,25 +136,23 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet {
-				st, err := store.Open(opts.home)
+			st, err := store.Open(opts.home)
+			if err != nil {
+				return err
+			}
+			switch {
+			case len(args) == 1 && args[0] == "list":
+				view, err := settings.PresetList(st)
 				if err != nil {
 					return err
 				}
-				switch {
-				case len(args) == 1 && args[0] == "list":
-					view, err := settings.PresetList(st)
-					if err != nil {
-						return err
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				case len(args) == 2 && args[0] == "show":
-					view, err := settings.PresetShow(st, args[1])
-					if err != nil {
-						return err
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			case len(args) == 2 && args[0] == "show":
+				view, err := settings.PresetShow(st, args[1])
+				if err != nil {
+					return err
 				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
 			return opts.compat(cmd.Context(), append([]string{"preset"}, args...))
 		},
@@ -153,9 +163,9 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && len(args) >= 1 && args[0] == "config" {
+			if len(args) >= 1 && args[0] == "config" {
 				if harness, raw, ok := parseGraphConfigArgs(args[1:]); ok && graph.IsValidHarness(harness) {
-					if runtimeRoot := runtimeRootFromReference(opts.reference); runtimeRoot != "" {
+					if runtimeRoot := opts.runtimeRoot; runtimeRoot != "" {
 						if _, err := store.Open(opts.home); err != nil {
 							return err
 						}
@@ -185,14 +195,15 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && opts.reference != "" {
+			if opts.sumctlPath() != "" {
 				raw := len(args) == 2 && args[0] == "snippet" && args[1] == "--raw"
 				plain := len(args) == 1 && args[0] == "snippet"
 				if raw || plain {
-					if _, err := store.Open(opts.home); err != nil {
+					st, err := store.Open(opts.home)
+					if err != nil {
 						return err
 					}
-					view := metadata.Snippet(opts.reference, opts.home)
+					view := metadata.Snippet(opts.sumctlPath(), st.Home)
 					if raw {
 						tomlValue, _ := view.Get("toml")
 						toml, _ := tomlValue.(string)
@@ -208,7 +219,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 
 	statusHandler := func(name string, inboxMode bool) func(cmd *cobra.Command, args []string) error {
 		return func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && len(args) == 0 {
+			if len(args) == 0 {
 				if st, err := store.Open(opts.home); err == nil {
 					view, viewErr := statuscmd.Status(st, inboxMode)
 					if viewErr == nil {
@@ -238,7 +249,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && len(args) == 2 && args[0] == "list" {
+			if len(args) == 2 && args[0] == "list" {
 				if st, err := store.Open(opts.home); err == nil {
 					view, viewErr := versions.BriefList(st, args[1])
 					if viewErr == nil {
@@ -256,13 +267,13 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && opts.reference != "" && len(args) >= 2 && args[0] == "show" {
+			if len(args) >= 2 && args[0] == "show" {
 				if taskID, maxChars, ok := parseEnvShowArgs(args[1:]); ok {
 					st, err := store.Open(opts.home)
 					if err != nil {
 						return err
 					}
-					view, viewErr := environment.Show(st, taskID, opts.reference, maxChars)
+					view, viewErr := environment.Show(st, taskID, opts.sumctlPath(), maxChars)
 					if viewErr != nil {
 						return viewErr
 					}
@@ -278,7 +289,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet {
+			if true {
 				switch {
 				case len(args) == 1 && args[0] == "list":
 					st, err := store.Open(opts.home)
@@ -311,14 +322,14 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet {
+			if true {
 				switch {
 				case len(args) == 1 && args[0] == "list":
 					st, err := store.Open(opts.home)
 					if err != nil {
 						return err
 					}
-					view, viewErr := project.List(st, runtimeRootFromReference(opts.reference))
+					view, viewErr := project.List(st, opts.runtimeRoot)
 					if viewErr != nil {
 						return viewErr
 					}
@@ -344,17 +355,17 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && opts.reference != "" && len(args) == 1 && args[0] == "status" {
+			if len(args) == 1 && args[0] == "status" {
 				st, err := store.Open(opts.home)
 				if err != nil {
 					return err
 				}
-				runtimeRoot := runtimeRootFromReference(opts.reference)
+				runtimeRoot := opts.runtimeRoot
 				ctx, ctxErr := store.Context(runtimeRoot)
 				if ctxErr != nil {
 					ctx = nil
 				}
-				view, viewErr := hookstatus.Status(st, ctx, runtimeRoot, opts.reference)
+				view, viewErr := hookstatus.Status(st, ctx, runtimeRoot, opts.sumctlPath())
 				if viewErr != nil {
 					return viewErr
 				}
@@ -369,7 +380,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && len(args) == 1 {
+			if len(args) == 1 {
 				st, err := store.Open(opts.home)
 				if err != nil {
 					return err
@@ -389,7 +400,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && opts.reference != "" && len(args) >= 1 {
+			if len(args) >= 1 {
 				taskID := args[0]
 				contextOpts, ok := contextview.Options{
 					After:    contextview.DefaultAfter,
@@ -404,7 +415,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 					if err != nil {
 						return err
 					}
-					view, viewErr := contextview.View(st, taskID, opts.reference, contextOpts)
+					view, viewErr := contextview.View(st, taskID, opts.sumctlPath(), contextOpts)
 					if viewErr != nil {
 						return viewErr
 					}
@@ -420,9 +431,9 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && opts.reference != "" && len(args) == 0 {
+			if len(args) == 0 {
 				if st, err := store.Open(opts.home); err == nil {
-					view := doctor.Doctor(runtimeRootFromReference(opts.reference), st)
+					view := doctor.Doctor(opts.runtimeRoot, st)
 					if emitErr := emitOrdjson(cmd.OutOrStdout(), view); emitErr != nil {
 						return emitErr
 					}
@@ -441,11 +452,11 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.homeSet && opts.reference != "" {
+			if true {
 				if role, task, ok := parseInitArgs(args); ok {
 					st, err := store.Open(opts.home)
 					if err == nil && !st.Designated() {
-						root := runtimeRootFromReference(opts.reference)
+						root := opts.runtimeRoot
 						ctx, ctxErr := store.Context(root)
 						if ctxErr != nil {
 							return ctxErr
@@ -462,6 +473,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
+	opts.addNativeCommands(root)
 	for _, name := range compatibilityCommands {
 		command := &cobra.Command{
 			Use:                name,
@@ -477,7 +489,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"prepare", "dispatch", "start", "help", "quota", "notes", "notice", "archive", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "attention", "bind", "backup", "herdr", "dev", "refresh", "update",
+	"prepare", "dispatch", "start", "notice", "ask", "answer", "report", "resolve", "review", "verify", "pr", "cleanup", "pump", "attention", "bind", "backup", "dev", "refresh", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, ok bool) {
@@ -753,11 +765,11 @@ func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
 	return task, maxChars, true
 }
 
-func runtimeRootFromReference(reference string) string {
-	if reference == "" {
-		return ""
+func (o *rootOptions) sumctlPath() string {
+	if o.reference != "" {
+		return o.reference
 	}
-	return filepath.Dir(filepath.Dir(reference))
+	return filepath.Join(o.installRoot, "bin", "sumctl")
 }
 
 func (o *rootOptions) compat(ctx context.Context, args []string) error {

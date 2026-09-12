@@ -138,6 +138,40 @@ func (s *Store) Lock() (func() error, error) {
 	}, nil
 }
 
+func (s *Store) DeliveryLock() (func() error, error) {
+	if err := s.Init(); err != nil {
+		return nil, err
+	}
+	handle, err := os.OpenFile(filepath.Join(s.Home, ".deliver.lock"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(handle.Fd()), syscall.LOCK_EX); err != nil {
+		handle.Close()
+		return nil, err
+	}
+	return func() error {
+		unlockErr := syscall.Flock(int(handle.Fd()), syscall.LOCK_UN)
+		closeErr := handle.Close()
+		if unlockErr != nil {
+			return unlockErr
+		}
+		return closeErr
+	}, nil
+}
+
+func (s *Store) CheckMachine(task *ordjson.Object) error {
+	machine, _ := task.Get("machine")
+	host, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+	if machine != host {
+		return fmt.Errorf("Task belongs to another machine. Inspect saved work and use bind explicitly; stale pane IDs are not portable.")
+	}
+	return nil
+}
+
 func (s *Store) TaskPath(taskID string) (string, error) {
 	if !taskIDPattern.MatchString(taskID) {
 		return "", fmt.Errorf("invalid task ID")
