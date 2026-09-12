@@ -8,7 +8,7 @@ This page distinguishes conceptual inspiration, direct dependency, adapted code,
 
 **[Firstmate](https://github.com/kunchenguid/firstmate)** is the origin of **the agent-distro concept that inspired sum**: an ordinary coding harness, portable instructions/skills/helpers, and one liaison coordinating workers. That shape is sum's lineage, not a claim that Firstmate invented agent orchestration generally. If the idea of one coordinator delegating to disposable workers appeals to you, try Firstmate itself first.
 
-**[Consigliere](https://github.com/douglasjarquin/consigliere)** was the author's own earlier, Firstmate-derived experiment: delegation conventions and the light mafia identity sum still carries came from there. It is respectful lineage, not a story about something that didn't work.
+**[Consigliere](https://github.com/douglasjarquin/consigliere)** was the author's own earlier, Firstmate-derived experiment: delegation conventions and the light mafia identity earlier versions used came from there. It is respectful lineage, not a story about something that didn't work.
 
 ## Terminal and session runtime
 

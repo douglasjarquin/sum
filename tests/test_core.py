@@ -109,7 +109,7 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(self.git("branch", "--show-current", cwd=task["worktree"]), task["branch"])
         self.assertEqual(self.git("branch", "--show-current"), "main")
         brief = Path(task["brief_path"]).read_text()
-        self.assertIn("not the coordinating consigliere", brief)
+        self.assertIn("not the coordinator", brief)
         self.assertIn("ask", brief)
         self.assertIn(str(self.store.home), brief)
 

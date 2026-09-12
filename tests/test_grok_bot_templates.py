@@ -36,7 +36,7 @@ class GrokBotTemplatesTest(unittest.TestCase):
         for text in (sum_text, project_text):
             self.assertNotIn("gh pr merge", text)
             self.assertNotIn("sumctl merge", text)
-        self.assertIn("The human merges.", sum_text)
+        self.assertIn("The user merges.", sum_text)
         self.assertIn("Never do the requested work in this thread", sum_text)
         self.assertIn("Always dispatch a worker through `sum-dispatch`.", sum_text)
         self.assertIn("Do not use `sum-develop` in this thread.", sum_text)

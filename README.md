@@ -1,10 +1,12 @@
 # sum
 
-**Many agents. One finished job.**
+**Many agents. One finished task.**
 
-A small, Herdr-native agent distro. Launch a coding harness in this directory and it becomes your consigliere: it dispatches every approved request to a worker, stays free for inbox notices, gathers results, and brings decisions back to the boss.
+A small, Herdr-native agent distro. Launch a coding harness in this directory and it becomes the coordinator: it dispatches every approved request to a worker agent, stays free for inbox notices, gathers results, and brings decisions back to you.
 
 **MVP, not an unattended factory.** Instructions and skills do the reasoning. Herdr owns processes and worktrees. A small synchronous helper preserves task records. There is no sum daemon, scheduler, database server, or permanent hierarchy of managers.
+
+Roles and work objects use the dictionary in [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md).
 
 ## Start
 
@@ -56,6 +58,7 @@ Herdr's optional native integrations can be installed separately, for example `h
 | Component | Purpose |
 | --- | --- |
 | `AGENTS.md` and harness instruction aliases | A short coordinator contract, with a separate worker role |
+| Plain-language dictionary | [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md): user, coordinator, agent, reviewer, task, brief, question, inbox, result |
 | Six bundled skills | Dispatch, worker execution, verification/PR delivery, rundown/recovery, isolated self-development, and atomic updates with rolling session refresh and code-only rollback |
 | Project-local third-party skills | `bin/sumctl skills install` delegates explicit skill and agent selections to the pinned Vercel Skills CLI in project copy mode; see `docs/sum-skills.md` |
 | Evidence publication into the PR | `.agents/skills/evidence/scripts/evidence_publish.py` and `sumctl pr evidence`: validated before/after media (hashes, containment, size, type, secret checks) uploaded through `gh pr edit --attach` (GitHub CLI 2.99+) into one marked block of the reconciled PR; receipts per content hash and destination so a second publish uploads nothing; prose outside the block preserved; a foreign or hand-edited block refused; every failure leaves the previous body and the local originals intact; an older `gh` defers |
@@ -67,7 +70,7 @@ Herdr's optional native integrations can be installed separately, for example `h
 | Optional Herdr plugin (`sumctl hook`) | A per-installation manifest under `.sum/hook` whose event handler runs the same bounded pump and records native attention, plus a read-only inbox pane entrypoint; no daemon |
 | Optional native metadata (`sumctl metadata`) | sum task state (needs-decision, review-ready, merged-cleanup-pending, instruction-refresh-pending, ...) projected as namespaced `sum_*` tokens on the endpoints sum owns, rendered by sidebar rows the user chooses to add; opt-in coalesced notifications |
 | Remainder (Codex) and `quota-axi` (other providers) | Advisory quota evidence through `sumctl quota --provider NAME`; no automatic billing or account switching |
-| Pinned codegraph per checkout (`sumctl graph`) | `@colbymchenry/codegraph` 1.5.0 from the mise pin, run in CLI mode once in every checkout sum creates (task, root verification, self-development) after its Git identity is validated; one `.codegraph/` index local to that checkout, kept out of `git status` through the repository-local exclude; exact commands and the source fallback in the brief; bounded retries, bounded concurrency, no daemon, no global configuration |
+| Pinned codegraph per checkout (`sumctl graph`) | `@colbymchenry/codegraph` 1.5.0 from the mise pin, run in CLI mode once in every checkout sum creates (task, coordinator verification, self-development) after its Git identity is validated; one `.codegraph/` index local to that checkout, kept out of `git status` through the repository-local exclude; exact commands and the source fallback in the brief; bounded retries, bounded concurrency, no daemon, no global configuration |
 | Offline tests and a demo | Test behavior without model credentials, a real Herdr installation, or GitHub writes |
 | Explicit live smoke test | Validate the real Herdr API in an isolated named session |
 
@@ -128,7 +131,7 @@ Native idle does not detect a question asked only in prose; the attention record
 `./bin/sumctl metadata enable` (coordinator only) first reads the installed Herdr's own `api schema` to confirm `pane.report_metadata`, `workspace.report_metadata`, and `notification.show` exist in the pinned build; documentation fields are never assumed.
 It then projects every saved task once and, from that point, after each state-changing helper command (`ask`, `answer`, `resolve`, `report`, `verify`, `pr reconcile`, `brief`, `refresh`, `update apply`, `bind`, `archive`, `cleanup`, `init`, `inbox --live`) and each native event the hook handles.
 The projection is display only: `sum_state`, `sum_task`, `sum_repo`, an optional `sum_rev` (`r1>r2` while a brief revision is requested and not adopted), and an optional `sum_pr` (the exact recorded PR URL) on the task's Herdr workspace and on its worker pane; `sum_inbox` (for example `2 decision · 1 review · contract r2`) and `sum_tasks` on the registered coordinator pane.
-The state comes from the records alone, ordered by what the boss acts on first: `needs-attention`, `needs-decision`, `merged-cleanup-pending`, `review-ready`, `attention-blocked|exited|closed|idle`, `instruction-refresh-pending`, `answer-pending`, `pr-open`, `verified`, `preparing`, `running`.
+The state comes from the records alone, ordered by what you act on first: `needs-attention`, `needs-decision`, `merged-cleanup-pending`, `review-ready`, `attention-blocked|exited|closed|idle`, `instruction-refresh-pending`, `answer-pending`, `pr-open`, `verified`, `preparing`, `running`.
 Herdr's agent lifecycle (`working`, `idle`, `blocked`) is never reported or overridden by sum; a worker seen `working` beside a `needs-decision` token is exactly the truth. Pane labels, titles, display names, state labels, theme, keybindings, and every other reporter's tokens are untouched.
 All keys live under sum's own source `sum:<instance>`; a worker pane receives tokens only after its identity is verified (the session snapshot or one `pane get` shows the recorded checkout), a stale or reused pane gets nothing and loses sum's old keys, a rebind clears only sum's keys on the old pane, and archive, cleanup, or `metadata disable` clear exactly the recorded keys. Two installations use two sources and two homes.
 Writes happen only when the derived tokens differ from what sum last wrote: a duplicate event or an unchanged rundown makes no Herdr call; the coordinator line is recomputed from local records, never from a fleet observation.
@@ -157,7 +160,7 @@ The precedence is fixed: an explicit instruction (`--harness`, `--model`, `--rea
 ```sh
 ./bin/sumctl settings set --worker-harness codex --worker-model gpt-5-codex --worker-reasoning high   # coordinator only; future dispatches
 ./bin/sumctl settings set --worker-harness claude                                                    # switching harness drops the old harness's model
-./bin/sumctl settings set --clear-worker                                                             # back to same-as-root
+./bin/sumctl settings set --clear-worker                                                             # back to the coordinator's harness
 ./bin/sumctl dispatch --repo R --brief B --approved --model o4-mini                                  # this task only; the default is unchanged
 ./bin/sumctl dispatch --repo R --brief B --approved --harness claude                                 # harness-only override: a saved Codex model is never applied to claude
 ./bin/sumctl dispatch --repo R --brief B --approved --same-as-you                                    # the coordinator's harness and native model, ignoring the saved default
@@ -172,7 +175,7 @@ Saving a default affects future dispatches only: no running worker, the coordina
 
 ### Named launch presets
 
-A preset is a named, validated harness/model/argv shortcut in the same `.sum/settings.json`, so the boss can say "use deep for this task" instead of repeating launch arguments.
+A preset is a named, validated harness/model/argv shortcut in the same `.sum/settings.json`, so you can say "use deep for this task" instead of repeating launch arguments.
 It is not an agent, a role, a credential store, or a default until you save it as one; an installation without presets behaves exactly as before.
 
 ```sh
@@ -226,7 +229,7 @@ Parking does not remove a leftover verification checkout.
 
 `.sum/settings.json` is the one owner of executable admission values, worker launch defaults, and named presets (`{"schema": 1, "capacity": {"global": N, "per_repository": M}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."} | {"preset": "deep"}, "presets": {"deep": {"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1}}, "reviewer": {"preset": "review"}}`); capacity integers from 1 to 64, `per_repository` at most `global`; `capacity`, `worker`, `presets`, and `reviewer` are optional, a model/reasoning needs a verified adapter for its harness, and a referenced preset must exist.
 Absent `capacity` means no admission cap, including when the settings file exists for worker or preset defaults; `settings show` reports `limits: null` for this state.
-`.sum/preferences.md` and `.sum/projects.md` stay narrative and never set a limit or a worker default; only the boss's explicit "make this my default" becomes a `settings set --worker-*` write.
+`.sum/preferences.md` and `.sum/projects.md` stay narrative and never set a limit or a worker default; only your explicit "make this my default" becomes a `settings set --worker-*` write.
 An invalid file is refused with the exact defect before any side effect: nothing is admitted, no task or worker is touched, `ask`/`report`/`show` keep working, and `settings set` refuses to overwrite it silently.
 Lowering a limit affects future admission only; tasks above the new limit keep their slots, processes, and checkouts.
 Raising `global` never raises `per_repository`: one checkout gets one writer unless you say otherwise.
@@ -254,7 +257,7 @@ An uncertain delivery stays charged, including when the helper exits after savin
 Use a new key only for an explicitly requested new iteration.
 
 Every `execution resume` also consumes one iteration, including an infrastructure relaunch.
-Initial dispatch, observations, notifications, required worker and root verification, and brief refresh do not consume extra iterations.
+Initial dispatch, observations, notifications, required worker and coordinator verification, and brief refresh do not consume extra iterations.
 Candidate, harness, and runtime changes do not reset the task record.
 Read the `repairs` field in `sumctl show TASK_ID` for consumed operations and grants.
 
@@ -275,7 +278,7 @@ Older helpers can preserve the records without enforcing this policy.
 ### Cleanup after a merge
 
 A merged PR archives nothing by itself.
-When the boss says a task is merged, or a rundown shows a task as `cleanup: pending`, the coordinator runs the guarded cleanup:
+When you say a task is merged, or a rundown shows a task as `cleanup: pending`, the coordinator runs the guarded cleanup:
 
 ```sh
 ./bin/sumctl cleanup TASK_ID                 # inspect: fresh GitHub observation, identity, occupants, artifacts; persists the plan, removes nothing

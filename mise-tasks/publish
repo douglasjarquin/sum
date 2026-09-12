@@ -23,4 +23,4 @@ if git remote get-url origin >/dev/null 2>&1; then
 fi
 # gh refuses an existing repository. Never fall back to overwriting one or force-pushing.
 gh repo create douglasjarquin/sum "$visibility" --source . --remote origin --push \
-  --description 'Many agents. One finished job. A Herdr-native agent distro.'
+  --description 'Many agents. One finished task. A Herdr-native agent distro.'
