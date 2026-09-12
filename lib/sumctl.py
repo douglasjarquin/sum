@@ -7133,8 +7133,13 @@ def doctor(store):
     installed = {kind: shutil.which(exe) or (str(ROOT / '.local/bin' / exe) if (ROOT / '.local/bin' / exe).is_file() else None)
                  for kind, exe in HARNESSES.items()}
     checks.append({"tool": "harness", "ok": any(installed.values()), "installed": {k:v for k,v in installed.items() if v}})
-    mesh = RUNTIME / ".local" / "bin" / "herdr-mesh"
-    checks.append({"tool": "mesh", "ok": mesh.is_file() and os.access(mesh, os.X_OK)})
+    mesh_ok = False
+    for name in ("herdr-mesh", "herdr-mesh-go"):
+        path = RUNTIME / ".local" / "bin" / name
+        if path.is_file() and os.access(path, os.X_OK):
+            mesh_ok = True
+            break
+    checks.append({"tool": "mesh", "ok": mesh_ok})
     graph = graph_tool()
     checks.append({"tool": "codegraph", "ok": True, "available": graph["available"], "pinned": graph["pinned"], "version": graph["version"], "path": graph["path"],
                    "detail": "pinned codegraph available; new checkouts get a local index" if graph["available"] else f"graph optional and unavailable: {graph['reason']}"})

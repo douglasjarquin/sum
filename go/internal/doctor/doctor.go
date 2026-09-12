@@ -142,7 +142,8 @@ func Doctor(runtimeRoot string, s *store.Store) *ordjson.Object {
 
 	meshRow := ordjson.NewObject()
 	meshRow.Set("tool", "mesh")
-	meshRow.Set("ok", isExecutable(filepath.Join(runtimeRoot, ".local", "bin", "herdr-mesh")))
+	meshRow.Set("ok", isExecutable(filepath.Join(runtimeRoot, ".local", "bin", "herdr-mesh")) ||
+		isExecutable(filepath.Join(runtimeRoot, ".local", "bin", "herdr-mesh-go")))
 	rows = append(rows, meshRow)
 
 	graphTool := graph.Tool(runtimeRoot)
