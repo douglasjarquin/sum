@@ -127,6 +127,9 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
+			if len(args) >= 1 && args[0] == "set" {
+				return opts.runSettingsSet(cmd, args[1:])
+			}
 			return opts.compat(cmd.Context(), append([]string{"settings"}, args...))
 		},
 	})
@@ -153,6 +156,10 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 					return err
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
+			case len(args) >= 1 && args[0] == "set":
+				return opts.runPresetSet(cmd, args[1:])
+			case len(args) == 2 && args[0] == "delete":
+				return opts.runPresetDelete(cmd, args[1])
 			}
 			return opts.compat(cmd.Context(), append([]string{"preset"}, args...))
 		},

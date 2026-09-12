@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestSettings_fallsBackToReferenceWhenNotShowOrHomeUnset(t *testing.T) {
+func TestSettings_fallsBackToReferenceForUnknownSubcommand(t *testing.T) {
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "args")
 	reference := filepath.Join(dir, "reference.sh")
@@ -17,29 +17,19 @@ func TestSettings_fallsBackToReferenceWhenNotShowOrHomeUnset(t *testing.T) {
 	}
 	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
 
-	cases := []struct {
-		name string
-		args []string
-		want string
-	}{
-		{name: "set with --home", args: []string{"--home", filepath.Join(dir, "state"), "settings", "set", "--global", "3"}, want: "--home\n" + filepath.Join(dir, "state") + "\nsettings\nset\n--global\n3\n"},
+	home := filepath.Join(dir, "state")
+	var stdout, stderr bytes.Buffer
+	root := NewRoot(reference, &stdout, &stderr)
+	root.SetArgs([]string{"--home", home, "settings", "explode"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout, stderr bytes.Buffer
-			root := NewRoot(reference, &stdout, &stderr)
-			root.SetArgs(tc.args)
-			if err := root.ExecuteContext(context.Background()); err != nil {
-				t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
-			}
-			got, err := os.ReadFile(argsFile)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != tc.want {
-				t.Fatalf("reference argv = %q, want %q", got, tc.want)
-			}
-			os.Remove(argsFile)
-		})
+	got, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "--home\n" + home + "\nsettings\nexplode\n"
+	if string(got) != want {
+		t.Fatalf("reference argv = %q, want %q", got, want)
 	}
 }

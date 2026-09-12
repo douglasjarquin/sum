@@ -113,6 +113,12 @@ func TestSkillsAndExecutionAreOnTheCommandTree(t *testing.T) {
 	}
 }
 
+func TestSettingsSet_requiresCoordinatorLikePython(t *testing.T) {
+	_, reference := repoReference(t)
+	home := t.TempDir()
+	assertCLIFailureMatches(t, reference, []string{"--home", home, "settings", "set", "--global", "3"})
+}
+
 func TestDefaultHomeUsesSUMHOME(t *testing.T) {
 	_, reference := repoReference(t)
 	home := t.TempDir()

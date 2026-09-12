@@ -11,7 +11,10 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
 	"github.com/douglasjarquin/sum/go/internal/notes"
+	"strconv"
+
 	"github.com/douglasjarquin/sum/go/internal/quota"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/skills"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -405,6 +408,244 @@ func (o *rootOptions) runHerdr(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%s The bridge never borrows a saved coordinator context.", capitalizeHerdrContext(ctxErr.Error()))
 	}
 	return herdrbridge.Run(o.runtimeRoot, st, ctx, args, cmd.OutOrStdout())
+}
+
+func (o *rootOptions) runSettingsSet(cmd *cobra.Command, args []string) error {
+	parsed, ok := parseSettingsSetArgs(args)
+	if !ok {
+		return o.compat(cmd.Context(), append([]string{"settings", "set"}, args...))
+	}
+	st, err := o.openStore("settings-set")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	if err := app.RequireCoordinator(st, ctx); err != nil {
+		return err
+	}
+	if parsed.ClearCapacity && (parsed.Global != nil || parsed.PerRepository != nil) {
+		return fmt.Errorf("--clear-capacity conflicts with --global/--per-repository.")
+	}
+	if parsed.ClearWorker && (parsed.WorkerHarness != "" || parsed.WorkerModel != "" || parsed.WorkerReasoning != "" || parsed.WorkerPresetSet) {
+		return fmt.Errorf("--clear-worker conflicts with --worker-* values.")
+	}
+	if parsed.WorkerPresetSet && (parsed.WorkerHarness != "" || parsed.WorkerModel != "" || parsed.WorkerReasoning != "") {
+		return fmt.Errorf("--worker-preset conflicts with --worker-harness/--worker-model/--worker-reasoning: a default is either a preset reference or a plain specification.")
+	}
+	if parsed.ClearReviewer && parsed.ReviewerPresetSet {
+		return fmt.Errorf("--clear-reviewer conflicts with --reviewer-preset.")
+	}
+	if parsed.Global == nil && parsed.PerRepository == nil && !parsed.ClearCapacity && parsed.WorkerHarness == "" && parsed.WorkerModel == "" && parsed.WorkerReasoning == "" && !parsed.WorkerPresetSet && !parsed.ClearWorker && !parsed.ReviewerPresetSet && !parsed.ClearReviewer {
+		return fmt.Errorf("Give --global, --per-repository, --clear-capacity, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, or --clear-reviewer.")
+	}
+	view, err := settings.Write(st, parsed)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseSettingsSetArgs(tokens []string) (settings.WriteArgs, bool) {
+	var parsed settings.WriteArgs
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		takeInt := func(dest **int) bool {
+			if i+1 >= len(tokens) {
+				return false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return false
+			}
+			*dest = &n
+			return true
+		}
+		takeString := func(dest *string) bool {
+			if i+1 >= len(tokens) {
+				return false
+			}
+			i++
+			*dest = tokens[i]
+			return true
+		}
+		switch {
+		case token == "--global":
+			if !takeInt(&parsed.Global) {
+				return settings.WriteArgs{}, false
+			}
+		case strings.HasPrefix(token, "--global="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--global="))
+			if err != nil {
+				return settings.WriteArgs{}, false
+			}
+			parsed.Global = &n
+		case token == "--per-repository":
+			if !takeInt(&parsed.PerRepository) {
+				return settings.WriteArgs{}, false
+			}
+		case strings.HasPrefix(token, "--per-repository="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--per-repository="))
+			if err != nil {
+				return settings.WriteArgs{}, false
+			}
+			parsed.PerRepository = &n
+		case token == "--clear-capacity":
+			parsed.ClearCapacity = true
+		case token == "--worker-harness":
+			if !takeString(&parsed.WorkerHarness) {
+				return settings.WriteArgs{}, false
+			}
+		case strings.HasPrefix(token, "--worker-harness="):
+			parsed.WorkerHarness = strings.TrimPrefix(token, "--worker-harness=")
+		case token == "--worker-model":
+			if !takeString(&parsed.WorkerModel) {
+				return settings.WriteArgs{}, false
+			}
+		case strings.HasPrefix(token, "--worker-model="):
+			parsed.WorkerModel = strings.TrimPrefix(token, "--worker-model=")
+		case token == "--worker-reasoning":
+			if !takeString(&parsed.WorkerReasoning) {
+				return settings.WriteArgs{}, false
+			}
+		case strings.HasPrefix(token, "--worker-reasoning="):
+			parsed.WorkerReasoning = strings.TrimPrefix(token, "--worker-reasoning=")
+		case token == "--worker-preset":
+			if !takeString(&parsed.WorkerPreset) {
+				return settings.WriteArgs{}, false
+			}
+			parsed.WorkerPresetSet = true
+		case strings.HasPrefix(token, "--worker-preset="):
+			parsed.WorkerPreset = strings.TrimPrefix(token, "--worker-preset=")
+			parsed.WorkerPresetSet = true
+		case token == "--clear-worker":
+			parsed.ClearWorker = true
+		case token == "--reviewer-preset":
+			if !takeString(&parsed.ReviewerPreset) {
+				return settings.WriteArgs{}, false
+			}
+			parsed.ReviewerPresetSet = true
+		case strings.HasPrefix(token, "--reviewer-preset="):
+			parsed.ReviewerPreset = strings.TrimPrefix(token, "--reviewer-preset=")
+			parsed.ReviewerPresetSet = true
+		case token == "--clear-reviewer":
+			parsed.ClearReviewer = true
+		default:
+			return settings.WriteArgs{}, false
+		}
+	}
+	return parsed, true
+}
+
+func (o *rootOptions) runPresetSet(cmd *cobra.Command, args []string) error {
+	parsed, ok := parsePresetSetArgs(args)
+	if !ok {
+		return o.compat(cmd.Context(), append([]string{"preset", "set"}, args...))
+	}
+	st, err := o.openStore("preset-set")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	if err := app.RequireCoordinator(st, ctx); err != nil {
+		return err
+	}
+	clear := map[string]bool{}
+	for _, c := range parsed.Clear {
+		clear[c] = true
+	}
+	if (clear["model"] && parsed.Model != "") || (clear["reasoning"] && parsed.Reasoning != "") || (clear["args"] && parsed.ArgsSet) {
+		return fmt.Errorf("--clear-* conflicts with a value for the same field.")
+	}
+	view, err := settings.WritePreset(st, parsed)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parsePresetSetArgs(tokens []string) (settings.PresetWriteArgs, bool) {
+	var parsed settings.PresetWriteArgs
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--harness":
+			if i+1 >= len(tokens) {
+				return settings.PresetWriteArgs{}, false
+			}
+			i++
+			parsed.Harness = tokens[i]
+		case strings.HasPrefix(token, "--harness="):
+			parsed.Harness = strings.TrimPrefix(token, "--harness=")
+		case token == "--model":
+			if i+1 >= len(tokens) {
+				return settings.PresetWriteArgs{}, false
+			}
+			i++
+			parsed.Model = tokens[i]
+		case strings.HasPrefix(token, "--model="):
+			parsed.Model = strings.TrimPrefix(token, "--model=")
+		case token == "--reasoning":
+			if i+1 >= len(tokens) {
+				return settings.PresetWriteArgs{}, false
+			}
+			i++
+			parsed.Reasoning = tokens[i]
+		case strings.HasPrefix(token, "--reasoning="):
+			parsed.Reasoning = strings.TrimPrefix(token, "--reasoning=")
+		case token == "--arg":
+			if i+1 >= len(tokens) {
+				return settings.PresetWriteArgs{}, false
+			}
+			i++
+			parsed.Args = append(parsed.Args, tokens[i])
+			parsed.ArgsSet = true
+		case strings.HasPrefix(token, "--arg="):
+			parsed.Args = append(parsed.Args, strings.TrimPrefix(token, "--arg="))
+			parsed.ArgsSet = true
+		case token == "--clear-model":
+			parsed.Clear = append(parsed.Clear, "model")
+		case token == "--clear-reasoning":
+			parsed.Clear = append(parsed.Clear, "reasoning")
+		case token == "--clear-args":
+			parsed.Clear = append(parsed.Clear, "args")
+		case strings.HasPrefix(token, "-"):
+			return settings.PresetWriteArgs{}, false
+		case parsed.Name == "":
+			parsed.Name = token
+		default:
+			return settings.PresetWriteArgs{}, false
+		}
+	}
+	if parsed.Name == "" {
+		return settings.PresetWriteArgs{}, false
+	}
+	return parsed, true
+}
+
+func (o *rootOptions) runPresetDelete(cmd *cobra.Command, name string) error {
+	st, err := o.openStore("preset-delete")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	if err := app.RequireCoordinator(st, ctx); err != nil {
+		return err
+	}
+	view, err := settings.DeletePreset(st, name)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
 }
 
 func capitalizeHerdrContext(msg string) string {
