@@ -48,19 +48,19 @@ class NativePackagingTest(unittest.TestCase):
             empty.mkdir()
             with mock.patch.dict(sumctl.os.environ, {"SUM_GO_BIN": shutil.which("go"), "GOROOT": "/stale/go", "GOTOOLDIR": "/stale/go/pkg/tool", "GOTOOLCHAIN": "local"}):
                 sumctl.build_native_artifact(target)
-            mesh = target / ".local" / "bin" / "herdr-mesh-go"
+            mesh = target / ".local" / "bin" / "herdr-mesh"
             result = subprocess.run([str(mesh), "--version"], env={"PATH": str(empty)}, capture_output=True, text=True, check=True)
             self.assertEqual((result.stdout, result.stderr), ("herdr-mesh 0.1.0\n", ""))
 
     def test_mesh_launcher_uses_selected_runtime(self):
         with tempfile.TemporaryDirectory(prefix="sum-mesh-launcher-") as name:
             target = Path(name)
-            launcher = target / "bin" / "herdr-mesh-go"
+            launcher = target / "bin" / "herdr-mesh"
             launcher.parent.mkdir()
-            shutil.copy2(ROOT / "bin" / "herdr-mesh-go", launcher)
+            shutil.copy2(ROOT / "bin" / "herdr-mesh", launcher)
             launcher.chmod(0o755)
             release = target / "release"
-            binary = release / ".local" / "bin" / "herdr-mesh-go"
+            binary = release / ".local" / "bin" / "herdr-mesh"
             binary.parent.mkdir(parents=True)
             binary.write_text("#!/bin/sh\nprintf 'selected-runtime\\n'\n")
             binary.chmod(0o755)

@@ -54,17 +54,6 @@ func buildValidRelease(t *testing.T, releasesRoot, sha string) {
 		t.Fatal(err)
 	}
 
-	serverJS := "// server\n"
-	commandsMJS := "// commands\n"
-	writeReleaseFile(t, dir, ".deps/herdr-mesh/dist/server.js", []byte(serverJS), 0o644)
-	writeReleaseFile(t, dir, ".deps/herdr-mesh/dist/sum-commands.mjs", []byte(commandsMJS), 0o644)
-	writeReleaseFile(t, dir, ".deps/herdr-mesh/dist/index.js", []byte("// index\n"), 0o644)
-	writeReleaseFile(t, dir, ".deps/herdr-mesh/node_modules/@modelcontextprotocol/sdk/package.json", []byte(`{"name":"sdk"}`), 0o644)
-
-	overlay := fmt.Sprintf(`{"upstream": %q, "server_sha256": %q, "commands_sha256": %q}`,
-		release.MeshRev, sha256Hex([]byte(serverJS)), sha256Hex([]byte(commandsMJS)))
-	writeReleaseFile(t, dir, ".deps/herdr-mesh/.sum-patched", []byte(overlay), 0o644)
-
 	var toolPaths []string
 	for _, name := range release.CoreTools {
 		targetRel := filepath.Join("native", name)
@@ -85,7 +74,6 @@ func buildValidRelease(t *testing.T, releasesRoot, sha string) {
   "source": {"sha": %q, "tree": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "repository": "/tmp/installation"},
   "files": {%s},
   "dependencies": {
-    "herdr_mesh": {"remote": "https://example.invalid/herdr-mesh.git", "rev": %q, "path": ".deps/herdr-mesh", "overlay": %s},
     "tools": {"pins": {}, "paths": {%s}},
     "codegraph": {"package": "@colbymchenry/codegraph", "version": "1.5.0", "license": "MIT"},
     "inventory": null,
@@ -93,7 +81,7 @@ func buildValidRelease(t *testing.T, releasesRoot, sha string) {
   },
   "contracts": {}, "supports": {},
   "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": {"machine": "m1", "installation": "/tmp/installation", "instance": null}
-}`, sha, strings.Join(filesEntries, ", "), release.MeshRev, overlay, strings.Join(toolPaths, ", "))
+}`, sha, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "))
 	writeReleaseFile(t, dir, "release.json", []byte(manifest), 0o644)
 }
 

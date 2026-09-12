@@ -21,9 +21,6 @@ const (
 	Manifest = "release.json"
 	Schema   = 1
 
-	// MeshRev is the Herdr Mesh overlay revision every staged release's marker must match.
-	MeshRev = "54adef519aa6af4dcd0bbd72586d414abab90046"
-
 	// GraphDir is codegraph's own storage name; a release tree must never carry one.
 	GraphDir = ".codegraph"
 )
@@ -166,64 +163,6 @@ func contains(list []any, want string) bool {
 		}
 	}
 	return false
-}
-
-// valuesEqual is a Python-`==`-shaped deep comparison over decoded JSON values: objects compare by key/value
-// regardless of key order (dict equality), arrays compare element-by-element in order (list equality).
-func valuesEqual(a, b any) bool {
-	switch av := a.(type) {
-	case nil:
-		return b == nil
-	case string:
-		bv, ok := b.(string)
-		return ok && av == bv
-	case bool:
-		bv, ok := b.(bool)
-		return ok && av == bv
-	case json.Number:
-		bv, ok := b.(json.Number)
-		if !ok {
-			return false
-		}
-		af, aerr := av.Float64()
-		bf, berr := bv.Float64()
-		if aerr == nil && berr == nil {
-			return af == bf
-		}
-		return string(av) == string(bv)
-	case []any:
-		bv, ok := b.([]any)
-		if !ok || len(av) != len(bv) {
-			return false
-		}
-		for i := range av {
-			if !valuesEqual(av[i], bv[i]) {
-				return false
-			}
-		}
-		return true
-	case *ordjson.Object:
-		bv, ok := b.(*ordjson.Object)
-		if !ok {
-			return false
-		}
-		if av == nil || bv == nil {
-			return av == bv
-		}
-		if av.Len() != bv.Len() {
-			return false
-		}
-		for _, k := range av.Keys() {
-			aval, _ := av.Get(k)
-			bval, has := bv.Get(k)
-			if !has || !valuesEqual(aval, bval) {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
 }
 
 // ValidateDependencyInventory ports `validate_dependency_inventory`.
@@ -406,40 +345,6 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 		return nil, verifyErrorf("%s: a release tree must not contain a %s index; graph state never rides an immutable bundle", path, GraphDir)
 	}
 
-	mesh := filepath.Join(path, ".deps", "herdr-mesh")
-	overlay := asObject(getPath(manifest, "dependencies", "herdr_mesh", "overlay"))
-	if overlay == nil {
-		overlay = ordjson.NewObject()
-	}
-	marker := filepath.Join(mesh, ".sum-patched")
-	markerOK := isRegularFile(marker)
-	var markerValue *ordjson.Object
-	if markerOK {
-		decoded, decodeErr := ordjson.ReadFile(marker)
-		if decodeErr != nil {
-			return nil, decodeErr
-		}
-		markerValue = asObject(decoded)
-	}
-	upstreamValue, _ := overlay.Get("upstream")
-	if !markerOK || !valuesEqual(markerValue, overlay) || asString(upstreamValue) != MeshRev {
-		return nil, verifyErrorf("%s: Mesh overlay marker does not match the manifest", path)
-	}
-	overlayHashKeys := [][2]string{{"dist/server.js", "server_sha256"}, {"dist/sum-commands.mjs", "commands_sha256"}}
-	for _, pair := range overlayHashKeys {
-		name, key := pair[0], pair[1]
-		member := filepath.Join(mesh, name)
-		expected, _ := overlay.Get(key)
-		hash, hashErr := Sha256File(member)
-		if !isRegularFile(member) || hashErr != nil || hash != asString(expected) {
-			return nil, verifyErrorf("%s: %s does not match the recorded overlay hash", path, name)
-		}
-	}
-	if !isRegularFile(filepath.Join(mesh, "dist", "index.js")) ||
-		!isRegularFile(filepath.Join(mesh, "node_modules", "@modelcontextprotocol", "sdk", "package.json")) {
-		return nil, verifyErrorf("%s: Mesh dependencies are incomplete", path)
-	}
-
 	toolPaths := asObject(getPath(manifest, "dependencies", "tools", "paths"))
 	if toolPaths == nil {
 		toolPaths = ordjson.NewObject()
@@ -471,6 +376,9 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 	}
 	if truthy(native) {
 		if _, has := native.Get("sumctl-go"); !has {
+			return nil, verifyErrorf("%s: native dependency metadata is incomplete", path)
+		}
+		if _, has := native.Get("herdr-mesh"); !has {
 			return nil, verifyErrorf("%s: native dependency metadata is incomplete", path)
 		}
 		for _, name := range native.Keys() {

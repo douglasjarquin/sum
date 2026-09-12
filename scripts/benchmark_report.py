@@ -7,8 +7,8 @@ import statistics
 
 INVENTORY = [
     {"entrypoint": "bin/sumctl -> lib/sumctl.py", "call_sites": "operator shell, generated worker briefs, tests, demo", "frequency_class": "interactive", "role": "stable CLI for status/inbox/context/show and ask/report"},
-    {"entrypoint": "bin/herdr-scoped -> lib/sumctl.py herdr", "call_sites": "HERDR_BIN used by the Mesh server", "frequency_class": "interactive", "role": "one scoped Python process per MCP tool call"},
-    {"entrypoint": "bin/herdr-mesh", "call_sites": "MCP client configuration", "frequency_class": "interactive", "role": "long-lived Node transport; calls bin/herdr-scoped"},
+    {"entrypoint": "bin/herdr-scoped -> lib/sumctl.py herdr", "call_sites": "Python session bridge for callers that still use it", "frequency_class": "interactive", "role": "one scoped Python process per herdr-scoped invocation"},
+    {"entrypoint": "bin/herdr-mesh", "call_sites": "MCP client configuration", "frequency_class": "interactive", "role": "long-lived Go MCP server; calls the pinned Herdr CLI"},
     {"entrypoint": "lib/sumctl.py hook event", "call_sites": "generated Herdr plugin event handler", "frequency_class": "interactive", "role": "bounded native event reconciliation"},
     {"entrypoint": "lib/sumctl.py prepare/dispatch/brief", "call_sites": "coordinator task lifecycle", "frequency_class": "lifecycle", "role": "real Git, Herdr worktree, brief, and graph preparation"},
     {"entrypoint": "scripts/demo.py and scripts/live_smoke.py", "call_sites": "mise demo/test-live and verification", "frequency_class": "lifecycle", "role": "isolated end-to-end fixtures"},

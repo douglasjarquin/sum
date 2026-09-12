@@ -1,19 +1,21 @@
 # Sum-owned Go Mesh
 
-`go/cmd/herdr-mesh` is the opt-in native Herdr Mesh candidate for issue #41.
+`bin/herdr-mesh` starts the Sum-owned Herdr Mesh MCP server.
 
-The existing `bin/herdr-mesh` entrypoint remains the pinned Node server for connected clients.
+The server is the cgo-free binary built from `go/cmd/herdr-mesh` and staged as `.local/bin/herdr-mesh`.
 
-`bin/herdr-mesh-go` selects the staged cgo-free Go executable without changing MCP configuration.
+The wrapper selects that binary from the checkout, or from `.local/current` once a release is the default.
 
-The root Cobra command starts the MCP stdio server with no extra subcommand, preserving the configured launch form.
+The root Cobra command starts the MCP stdio server with no extra subcommand.
 
 `--help` and `--version` are metadata-only paths and never open Sum state or Herdr.
 
 The MCP server uses the pinned official Go SDK v1.6.1 for protocol framing, capabilities, request cancellation, and stdio lifecycle.
 
-The ten existing tool names, schemas, defaults, bounded reads and waits, prompt uncertainty, and result meanings are owned by `go/internal/mesh`.
+The ten tool names, schemas, defaults, bounded reads and waits, prompt uncertainty, and result meanings are owned by `go/internal/mesh`.
 
 Each operation validates the calling Herdr environment, explicit session, registered pane, Sum instance, and developer read-only boundary before invoking the verified Herdr CLI.
 
-The Go candidate is staged beside Node and Python by native artifact packaging; release activation and MCP configuration replacement remain separate decisions.
+Setup and release staging install this binary.
+
+There is no Node Mesh path.

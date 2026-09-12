@@ -33,10 +33,10 @@
       "checksum": "mise.toml#tools.node",
       "license": "MIT",
       "platforms": ["darwin", "linux"],
-      "requirements": ["runtime", "setup", "Mesh MCP server"],
+      "requirements": ["runtime", "setup"],
       "role": "runtime",
-      "owner": "sum/herdr-mesh",
-      "contracts": {"cli": ["node scripts/mcp_smoke.mjs"], "mcp": ["stdio"]}
+      "owner": "sum",
+      "contracts": {"cli": ["node scripts/mcp_smoke.mjs"], "mcp": []}
     },
     {
       "id": "herdr",
@@ -100,14 +100,14 @@
     },
     {
       "id": "herdr-mesh",
-      "source": "https://github.com/runchr-works/herdr-mesh",
-      "version": "54adef519aa6af4dcd0bbd72586d414abab90046",
-      "checksum": "git:54adef519aa6af4dcd0bbd72586d414abab90046",
+      "source": "go/cmd/herdr-mesh",
+      "version": "0.1.0",
+      "checksum": "release.json#dependencies.native.herdr-mesh.sha256",
       "license": "MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["setup/release staging", "Node runtime", "sum overlay"],
+      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
+      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
       "role": "runtime",
-      "owner": "Herdr Mesh",
+      "owner": "sum",
       "contracts": {"cli": ["bin/herdr-mesh"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
     },
     {
@@ -145,18 +145,6 @@
       "role": "runtime",
       "owner": "sum",
       "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []}
-    },
-    {
-      "id": "herdr-mesh-go",
-      "source": "go/cmd/herdr-mesh",
-      "version": "0.1.0",
-      "checksum": "release.json#dependencies.native.herdr-mesh-go.sha256",
-      "license": "MIT",
-      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
-      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
-      "role": "runtime",
-      "owner": "sum",
-      "contracts": {"cli": ["bin/herdr-mesh-go"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
     },
     {
       "id": "remainder",

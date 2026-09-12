@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""First-install setup: link pinned tools, install the pinned Mesh once, and create only repository-local integration files.
+"""First-install setup: link pinned tools, install the Go Mesh binary, and create only repository-local integration files.
 
-Re-running is safe while sum is in service: an existing .deps/herdr-mesh, tool link, or configuration is never rewritten.
+Re-running is safe while sum is in service: an existing native binary, tool link, or configuration is never rewritten.
 Newer code and dependencies are staged as an immutable release with `./bin/sumctl release stage` instead.
 """
 from __future__ import annotations
@@ -115,15 +115,6 @@ def main():
             notes.append(f"{remainder['link']} still points at {remainder['target']}; a running process may use it. Stage a release to pick up the new pin.")
         if remainder.get("reason"):
             notes.append(remainder["reason"])
-        mesh = ROOT / ".deps" / "herdr-mesh"
-        state = sumctl.mesh_state(ROOT, mesh)
-        if not state["installed"]:
-            sumctl.install_mesh(mesh, ROOT, local_mesh=None)  # Built in a private staging directory, then renamed into place.
-        elif not state["patched"]:
-            raise RuntimeError(f"{mesh} exists without sum's overlay marker; inspect or move it yourself. Setup never rewrites an installed Mesh.")
-        elif not state["matches_source"]:
-            notes.append(f"{mesh} carries an earlier overlay (upstream {state['upstream']}); it was left untouched because a running MCP server may use it. "
-                         "Run ./bin/sumctl release stage to build the current code and dependencies as a separate immutable release.")
         sumctl.write_herdr_skill(ROOT)
         if args.install_codex:
             harness = ROOT / ".deps/harnesses"

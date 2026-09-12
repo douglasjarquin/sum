@@ -42,7 +42,7 @@ It runs, in order, the existing commands and stops at the first failure:
 | Check | Command | Proves |
 | --- | --- | --- |
 | Offline behavior suites | `python -m unittest discover -s tests -p 'test_*.py'` | Task state, roles, dispatch, environment, evidence, cleanup, projects, the verification runner and its create/maintain skills against fixtures, and the #8 twelve-worker mixed-version regression, against real Git and a strict fake Herdr |
-| Mesh command contracts | `node --test tests/mesh.test.mjs` | Herdr Mesh command construction and bounded waits |
+| Mesh command contracts | `cd go && go test ./internal/mesh ./cmd/herdr-mesh` | Herdr Mesh command construction, bounded waits, and stdio MCP |
 | Scripted end-to-end demo | `python scripts/demo.py` | Delegation, a question surviving a busy coordinator, an answer, a branch commit, a report, and a records backup |
 
 Scoped tasks stay available for iteration: `mise run test` (suites only) and `mise run demo`.

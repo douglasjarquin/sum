@@ -102,24 +102,6 @@ class SetupTest(unittest.TestCase):
         with self.assertRaises(setup.sumctl.SumError):
             setup.sumctl.link_tool(self.root / 'regular', '/elsewhere')
 
-    def test_installed_mesh_is_never_rewritten_and_drift_is_only_reported(self):
-        mesh = self.root / '.deps/herdr-mesh'
-        self.assertEqual(setup.sumctl.mesh_state(ROOT, mesh)['installed'], False)
-        (mesh / 'dist').mkdir(parents=True)
-        self.assertEqual(setup.sumctl.mesh_state(ROOT, mesh), {'installed': True, 'patched': False, 'matches_source': False})
-        setup.sumctl.apply_overlay(ROOT, mesh)
-        self.assertTrue(setup.sumctl.mesh_state(ROOT, mesh)['matches_source'])
-        (mesh / 'dist/server.js').write_text('// older overlay\n')
-        (mesh / '.sum-patched').write_text(json.dumps(
-            {'upstream': setup.sumctl.MESH_REV, 'server_sha256': 'old', 'commands_sha256': 'old'}
-        ))
-        state = setup.sumctl.mesh_state(ROOT, mesh)
-        self.assertEqual((state['patched'], state['matches_source']), (True, False))
-        self.assertEqual((mesh / 'dist/server.js').read_text(), '// older overlay\n')
-        with self.assertRaisesRegex(setup.sumctl.SumError, 'never rewritten in place'):
-            setup.sumctl.install_mesh(mesh, ROOT)
-        self.assertEqual((mesh / 'dist/server.js').read_text(), '// older overlay\n')
-
     def test_remainder_is_not_a_mise_which_tool(self):
         self.assertNotIn("remainder", setup.sumctl.TOOLS)
 

@@ -1222,29 +1222,26 @@ class CoreTest(unittest.TestCase):
             self.assertEqual(sumctl.session_from_env(), "lab")
 
 
-def fake_installer(target, local_mesh=None):
+def fake_installer(target):
     """Offline stand-in for install_runtime: the same tree shape, no network, npm, or mise."""
     target = Path(target)
-    mesh = target / ".deps" / "herdr-mesh"
-    (mesh / "dist").mkdir(parents=True)
-    (mesh / "dist" / "index.js").write_text("// fake mesh\n")
-    (mesh / "node_modules" / "@modelcontextprotocol" / "sdk").mkdir(parents=True)
-    (mesh / "node_modules" / "@modelcontextprotocol" / "sdk" / "package.json").write_text('{"name": "@modelcontextprotocol/sdk"}\n')
-    sumctl.apply_overlay(target, mesh)
     for name in sumctl.TOOLS:
         real = {"python3": sys.executable, "node": shutil.which("node") or sys.executable}.get(name, str(ROOT / "tests/fixtures/herdr.py"))
         sumctl.link_tool(target / ".local" / "bin" / name, real)
     native = target / ".local" / "bin" / "sumctl-go"
     native.write_text("#!/bin/sh\nprintf '%s\\n' 'sum 0.1.0'\n")
     native.chmod(0o755)
+    mesh = target / ".local" / "bin" / "herdr-mesh"
+    mesh.write_text("#!/bin/sh\nprintf '%s\\n' 'herdr-mesh 0.1.0'\n")
+    mesh.chmod(0o755)
     (target / ".local" / "skills" / "herdr").mkdir(parents=True)
     (target / ".local" / "skills" / "herdr" / "SKILL.md").write_text("fake herdr skill\n")
 
 
 def slow_installer(delay):
-    def installer(target, local_mesh=None):
+    def installer(target):
         time.sleep(delay)
-        fake_installer(target, local_mesh)
+        fake_installer(target)
     return installer
 
 
@@ -1325,6 +1322,7 @@ class ReleaseTest(ReleaseLab):
         _, store = self.installation()
         historical = self.root / "historical-release"
         sumctl.archive_source(ROOT, "de92361b87181837c58308acf2521fdae2677cec", historical)
+        shutil.copy2(ROOT / "docs/dependency-inventory.json", historical / "docs/dependency-inventory.json")
         fake_installer(historical)
         manifest = sumctl.build_manifest(store, ROOT, "de92361b87181837c58308acf2521fdae2677cec", historical)
         sumctl.atomic_json(historical / sumctl.RELEASE_MANIFEST, manifest)
@@ -1344,7 +1342,8 @@ class ReleaseTest(ReleaseLab):
         manifest = value["manifest"]
         self.assertEqual(manifest["files"]["lib/sumctl.py"], "sha256:" + hashlib_sha(release / "lib/sumctl.py"))
         self.assertEqual(manifest["files"]["CLAUDE.md"], "link:AGENTS.md")
-        self.assertEqual(manifest["dependencies"]["herdr_mesh"]["rev"], sumctl.MESH_REV)
+        self.assertEqual(manifest["dependencies"]["native"]["herdr-mesh"]["source"], "go/cmd/herdr-mesh")
+        self.assertNotIn("herdr_mesh", manifest["dependencies"])
         self.assertEqual(manifest["dependencies"]["tools"]["pins"]["node"], "22.20.0")
         self.assertEqual(manifest["dependencies"]["tools"]["pins"]["npm:skills"], "1.5.25")
         self.assertIn("skills", manifest["dependencies"]["tools"]["paths"])
@@ -1368,7 +1367,8 @@ class ReleaseTest(ReleaseLab):
     def test_stage_packages_native_bridge_with_runtime_provenance(self):
         root, store = self.installation()
         release = Path(self.stage(store)["release"])
-        native = json.loads((release / "release.json").read_text())["dependencies"]["native"]["sumctl-go"]
+        artifacts = json.loads((release / "release.json").read_text())["dependencies"]["native"]
+        native = artifacts["sumctl-go"]
         binary = release / native["path"]
         self.assertEqual(native["source"], "go/cmd/sumctl-go")
         self.assertEqual(native["version"], "sum 0.1.0")
@@ -1378,6 +1378,12 @@ class ReleaseTest(ReleaseLab):
         self.assertTrue(binary.is_file() and os.access(binary, os.X_OK))
         self.assertEqual(native["sha256"], hashlib_sha(binary))
         self.assertEqual(self.cli([binary, "--version"]).stdout, "sum 0.1.0\n")
+        mesh = artifacts["herdr-mesh"]
+        mesh_binary = release / mesh["path"]
+        self.assertEqual(mesh["source"], "go/cmd/herdr-mesh")
+        self.assertEqual(mesh["path"], ".local/bin/herdr-mesh")
+        self.assertTrue(mesh_binary.is_file() and os.access(mesh_binary, os.X_OK))
+        self.assertEqual(mesh["sha256"], hashlib_sha(mesh_binary))
 
         sumctl.set_read_only(release, read_only=False)
         binary.write_text("corrupt\n")
@@ -1431,8 +1437,8 @@ class ReleaseTest(ReleaseLab):
         self.git("add", "NOTE.md", cwd=root)
         self.git("commit", "-q", "-m", "second", cwd=root)
         records, kept = self.snapshot(store.home), self.snapshot(first)
-        def broken(target, local_mesh=None):
-            fake_installer(target, local_mesh)
+        def broken(target):
+            fake_installer(target)
             raise sumctl.SumError("npm: simulated download failure")
         with self.assertRaisesRegex(sumctl.SumError, "partial bundle was removed.*simulated download failure"):
             self.stage(store, installer=broken)
@@ -1777,8 +1783,8 @@ class UpdateTest(UpdateLab):
         records = self.snapshot(store.home)
         second = self.commit_upstream(root, "two.py")
         # Interrupted network install: staging fails, nothing selected, records intact.
-        def broken(target, local_mesh=None):
-            fake_installer(target, local_mesh)
+        def broken(target):
+            fake_installer(target)
             raise sumctl.SumError("npm: simulated network interruption")
         with self.assertRaisesRegex(sumctl.SumError, "partial bundle was removed"):
             sumctl.update_apply(store, self.ns(), installer=broken)
@@ -1787,12 +1793,12 @@ class UpdateTest(UpdateLab):
         release_two = Path(sumctl.stage(store, second, installer=fake_installer)["release"])
         sumctl.set_read_only(release_two, read_only=False)
         manifest = json.loads((release_two / "release.json").read_text())
-        manifest["dependencies"]["herdr_mesh"]["overlay"]["server_sha256"] = "0" * 64
+        manifest["dependencies"]["native"]["herdr-mesh"]["sha256"] = "0" * 64
         (release_two / "release.json").write_text(json.dumps(manifest))
-        with self.assertRaisesRegex(sumctl.SumError, "Mesh overlay marker does not match"):  # Refused before the lock; nothing selected.
+        with self.assertRaisesRegex(sumctl.SumError, "native artifact herdr-mesh does not match"):  # Refused before the lock; nothing selected.
             self.apply(store, no_fetch=True)
         self.assertEqual(self.current(root), root / ".local" / "releases" / first)
-        manifest["dependencies"]["herdr_mesh"]["overlay"] = json.loads((release_two / ".deps/herdr-mesh/.sum-patched").read_text())
+        manifest["dependencies"]["native"]["herdr-mesh"]["sha256"] = hashlib_sha(release_two / ".local" / "bin" / "herdr-mesh")
         manifest["contracts"]["herdr_cli"] = "0.10.0"  # A candidate that needs a Herdr upgrade is deferred here, never upgraded globally.
         (release_two / "release.json").write_text(json.dumps(manifest))
         with self.assertRaisesRegex(sumctl.SumError, "requires Herdr CLI 0.10.0.*never performs"):

@@ -1,0 +1,8 @@
+ts	phase	decision	why	evidence	result
+2026-09-12T02:41:00Z	frame	cut over to Go sumctl and Go mesh, delete Python CLI and JS mesh	owner asked for a full cutover on #94, not a dual-path	issue 94, this session	open
+2026-09-12T02:41:30Z	frame	keep verify_run.py and evidence scripts in Python	those are not sumctl	.agents/skills/verify .agents/skills/evidence	open
+2026-09-12T02:42:00Z	workflow	land mesh live first, then native CLI, then delete Python	Go mesh already exists, CLI still forwards most commands to Python	go/cmd/herdr-mesh go/internal/cli/root.go compatibilityCommands	open
+2026-09-12T03:20:00Z	mesh	live name is herdr-mesh, delete herdr-mesh-go and Node clone	keep one MCP entrypoint and no compatibility suffix	bin/herdr-mesh .local/bin/herdr-mesh	chosen
+2026-09-12T03:35:00Z	mesh	Go tests own the former JS command contracts	relay prompt, refuse busy, wait --until, one handoff, failed handoff is error	go/internal/mesh/service_test.go	tests green
+2026-09-12T03:50:00Z	mesh	setup and release stage the Go binary only	no Node overlay path remains in install or verify_release	lib/sumctl.py scripts/setup.py go/internal/release/release.go	tests green
+2026-09-12T03:55:00Z	docs	record Grok Bot no-impact	this unit does not touch Bot templates	CONTRIBUTING.md	no-impact

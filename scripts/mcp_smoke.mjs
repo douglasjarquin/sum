@@ -1,10 +1,22 @@
-/** Test the installed upstream MCP transport without touching a Herdr session. */
+/** Test the installed MCP transport without touching a Herdr session. */
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const child = spawn(process.execPath, [path.join(root, ".deps/herdr-mesh/dist/index.js")], { stdio: ["pipe", "pipe", "inherit"] });
+const binary = path.join(root, ".local", "bin", "herdr-mesh");
+const child = spawn(binary, [], {
+  stdio: ["pipe", "pipe", "inherit"],
+  env: {
+    ...process.env,
+    SUM_SESSION: "sum-smoke",
+    HERDR_SESSION: "sum-smoke",
+    HERDR_ENV: "1",
+    HERDR_PANE_ID: "w-smoke:p1",
+    SUM_HERDR_BIN: "/bin/true",
+    SUM_INSTALL_ROOT: root,
+  },
+});
 const responses = new Map();
 const lines = createInterface({ input: child.stdout });
 let failure;
