@@ -21,7 +21,7 @@ class PackagingInventoryTest(unittest.TestCase):
             self.assertTrue(entry["checksum"], entry["id"])
             self.assertIn(entry["role"], ("build", "runtime", "build-and-runtime"), entry["id"])
         ids = {entry["id"] for entry in entries}
-        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl", "herdr-mesh", "herdr-mesh-go", "quota-axi", "remainder"} <= ids)
+        self.assertTrue({"go", "cobra", "go-toon", "mcp-go-sdk", "sumctl", "herdr-mesh", "herdr-mesh-go", "quota-axi", "remainder"} <= ids)
         self.assertNotIn("sumctl-go", ids)
         self.assertFalse((ROOT / "lib" / "sumctl.py").exists())
         mesh = next(entry for entry in entries if entry["id"] == "herdr-mesh")

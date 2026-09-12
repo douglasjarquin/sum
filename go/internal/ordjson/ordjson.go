@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+
+	"github.com/douglasjarquin/go-toon"
 )
 
 type Object struct {
@@ -141,6 +143,46 @@ func MarshalCompact(value any) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func MarshalTOON(value any) ([]byte, error) {
+	encoded, err := toon.Marshal(toToonValue(value))
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func toToonValue(value any) any {
+	switch v := value.(type) {
+	case *Object:
+		if v == nil {
+			return nil
+		}
+		fields := make([]toon.Field, 0, v.Len())
+		for _, key := range v.Keys() {
+			item, _ := v.Get(key)
+			fields = append(fields, toon.Field{Key: key, Value: toToonValue(item)})
+		}
+		return toon.NewObject(fields...)
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = toToonValue(item)
+		}
+		return out
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i
+		}
+		f, err := v.Float64()
+		if err != nil {
+			return v.String()
+		}
+		return f
+	default:
+		return v
+	}
 }
 
 // MarshalSortedCompact matches Python's `json.dumps(value, sort_keys=True)` (default `(', ', ': ')` separators):

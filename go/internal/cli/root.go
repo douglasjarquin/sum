@@ -48,6 +48,7 @@ type rootOptions struct {
 	installRoot string
 	home        string
 	homeSet     bool
+	format      string
 	out         io.Writer
 	err         io.Writer
 }
@@ -85,11 +86,16 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.Flags().StringVar(&opts.home, "home", "", "state home")
 	root.Flags().Lookup("home").NoOptDefVal = ""
+	root.PersistentFlags().StringVar(&opts.format, "format", "toon", "stdout encoding: toon or json")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		opts.homeSet = root.Flags().Changed("home")
 		if !opts.homeSet {
 			opts.home = sumruntime.DefaultHome(opts.installRoot)
 		}
+		if opts.format == "" {
+			opts.format = "toon"
+		}
+		outputFormat = opts.format
 		if _, err := os.Stat(filepath.Join(opts.installRoot, "release.json")); err == nil {
 			return fmt.Errorf("%s is an immutable release tree. Run the installation's bin/sumctl, which selects a runtime and keeps state in its own .sum; a release never owns state.", opts.installRoot)
 		}
@@ -605,6 +611,8 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	opts.addNativeCommands(root)
+	opts.format = "toon"
+	wrapOutputFormat(root, opts)
 	return root
 }
 
@@ -1019,10 +1027,64 @@ func emitJSON(out io.Writer, value any) error {
 }
 
 func emitOrdjson(out io.Writer, value any) error {
-	encoded, err := ordjson.MarshalIndent(value)
+	return emitOrdjsonFormat(out, outputFormat, value)
+}
+
+var outputFormat = "toon"
+
+func emitOrdjsonFormat(out io.Writer, format string, value any) error {
+	var encoded []byte
+	var err error
+	if format == "json" {
+		encoded, err = ordjson.MarshalIndent(value)
+	} else {
+		encoded, err = ordjson.MarshalTOON(value)
+	}
 	if err != nil {
 		return err
 	}
 	_, err = fmt.Fprintln(out, string(encoded))
 	return err
+}
+
+func peelFormat(args []string) (rest []string, format string, ok bool) {
+	for i := 0; i < len(args); i++ {
+		token := args[i]
+		switch {
+		case token == "--format":
+			if i+1 >= len(args) {
+				return nil, "", false
+			}
+			i++
+			format = args[i]
+		case strings.HasPrefix(token, "--format="):
+			format = strings.TrimPrefix(token, "--format=")
+		default:
+			rest = append(rest, token)
+		}
+	}
+	if format != "" && format != "json" && format != "toon" {
+		return nil, "", false
+	}
+	return rest, format, true
+}
+
+func wrapOutputFormat(cmd *cobra.Command, opts *rootOptions) {
+	if cmd.Name() != "quota" && cmd.RunE != nil {
+		next := cmd.RunE
+		cmd.RunE = func(c *cobra.Command, args []string) error {
+			rest, format, ok := peelFormat(args)
+			if !ok {
+				return fmt.Errorf("invalid --format")
+			}
+			if format != "" {
+				opts.format = format
+			}
+			outputFormat = opts.format
+			return next(c, rest)
+		}
+	}
+	for _, child := range cmd.Commands() {
+		wrapOutputFormat(child, opts)
+	}
 }

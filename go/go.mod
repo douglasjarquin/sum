@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/douglasjarquin/go-toon v0.0.0-20260910175100-a2d441264455 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect

@@ -95,6 +95,7 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
 - [ ] Use [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) in new first-party instructions and user-visible text.
 - [ ] Assess Grok Bot deployment impact for every new feature or changed contract, and update `templates/grok-bot/` references and tests or record an explicit no-impact or deferred rationale.
   Remainder integration is advisory quota only (`sumctl quota`). It does not bind Grok Bot, change `templates/grok-bot/`, or alter Bot commands.
+  Default TOON stdout does not bind Grok Bot templates. Agents read TOON. jq callers pass `--format json`.
   Remote-machine returns use Herdr `machine add`. They do not bind Grok Bot, change `templates/grok-bot/`, or add a Sum SSH enroll path.
   Making Go Mesh the live `bin/herdr-mesh` server does not bind Grok Bot, change `templates/grok-bot/`, or alter Bot commands.
   Keeping overlay sources so a prior helper can stage this tree does not bind Grok Bot.

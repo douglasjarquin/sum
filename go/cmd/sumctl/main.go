@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/douglasjarquin/sum/go/internal/cli"
@@ -25,14 +26,35 @@ func main() {
 		}
 		errorValue := ordjson.NewObject()
 		errorValue.Set("error", err.Error())
-		payload, marshalErr := ordjson.MarshalCompact(errorValue)
+		var payload []byte
+		var marshalErr error
+		if outputFormatFromArgs(os.Args[1:]) == "json" {
+			payload, marshalErr = ordjson.MarshalCompact(errorValue)
+		} else {
+			payload, marshalErr = ordjson.MarshalTOON(errorValue)
+		}
 		if marshalErr != nil {
-			fmt.Fprintln(os.Stderr, `{"error": "sumctl failed"}`)
+			fmt.Fprintln(os.Stderr, "error: sumctl failed")
 		} else {
 			fmt.Fprintln(os.Stderr, string(payload))
 		}
 		os.Exit(1)
 	}
+}
+
+func outputFormatFromArgs(args []string) string {
+	format := "toon"
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--format" && i+1 < len(args) {
+			format = args[i+1]
+			i++
+			continue
+		}
+		if strings.HasPrefix(args[i], "--format=") {
+			format = strings.TrimPrefix(args[i], "--format=")
+		}
+	}
+	return format
 }
 
 func helperPath() string {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCompiledEntrypoint_errorJSONUsesCompactSeparators(t *testing.T) {
+func TestCompiledEntrypoint_errorUsesTOON(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "sumctl")
 	build := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", binary, ".")
@@ -20,8 +20,8 @@ func TestCompiledEntrypoint_errorJSONUsesCompactSeparators(t *testing.T) {
 	cmd := exec.Command(binary, "--home", home, "preset", "show", "nope")
 	combined, _ := cmd.CombinedOutput()
 	got := extractLast(string(combined))
-	if !strings.HasPrefix(got, `{"error": `) {
-		t.Fatalf("stderr does not use compact JSON separators: %q", got)
+	if !strings.HasPrefix(got, "error:") {
+		t.Fatalf("stderr is not TOON error: %q", got)
 	}
 }
 

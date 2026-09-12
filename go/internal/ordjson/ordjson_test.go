@@ -1,6 +1,10 @@
 package ordjson
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/douglasjarquin/go-toon"
+)
 
 func TestDecodeThenMarshalIndent_preservesInsertionOrder(t *testing.T) {
 	input := `{"b": 1, "a": 2, "c": {"z": 1, "y": 2}}`
@@ -22,6 +26,38 @@ func TestDecodeThenMarshalIndent_preservesInsertionOrder(t *testing.T) {
 	want := "{\n  \"b\": 1,\n  \"a\": 2,\n  \"c\": {\n    \"z\": 1,\n    \"y\": 2\n  }\n}"
 	if string(encoded) != want {
 		t.Fatalf("encoded =\n%s\nwant\n%s", encoded, want)
+	}
+}
+
+func TestMarshalTOON_roundTripPreservesKeysAndIsSmallerThanJSON(t *testing.T) {
+	obj := NewObject()
+	obj.Set("role", "coordinator")
+	tasks := []any{}
+	for i := 0; i < 3; i++ {
+		row := NewObject()
+		row.Set("id", "task-"+string(rune('a'+i)))
+		row.Set("status", "running")
+		row.Set("ok", true)
+		tasks = append(tasks, row)
+	}
+	obj.Set("tasks", tasks)
+	jsonBytes, err := MarshalIndent(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toonBytes, err := MarshalTOON(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toonBytes) >= len(jsonBytes) {
+		t.Fatalf("TOON %d bytes is not smaller than JSON %d bytes\n%s", len(toonBytes), len(jsonBytes), toonBytes)
+	}
+	decoded, err := toon.Decode(toonBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded == nil {
+		t.Fatal("empty decode")
 	}
 }
 
