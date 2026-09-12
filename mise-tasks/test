@@ -2,5 +2,7 @@
 #MISE description="Run offline Go CLI tests and remaining skill tests (no credentials or LLM calls)"
 set -euo pipefail
 cd "$(dirname "$0")/.."
+export PATH="$(dirname "$(mise which go)"):${PATH:-}"
+unset GOROOT
 (cd go && go test ./...)
 python -m unittest discover -s tests -p 'test_*skill*.py' -v
