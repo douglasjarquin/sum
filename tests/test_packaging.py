@@ -70,6 +70,28 @@ class PackagingInventoryTest(unittest.TestCase):
         out = subprocess.check_output([str(root / "bin" / "herdr-mesh"), "--version"], text=True)
         self.assertEqual(out, "herdr-mesh 0.1.0\n")
 
+    def test_relink_rewrites_absolute_remainder_link_so_a_renamed_tree_still_resolves(self):
+        staging = Path(tempfile.mkdtemp(prefix=".staging-remainder-"))
+        dest = staging / ".deps" / "remainder" / "0.2.1-darwin-arm64" / "remainder_v0.2.1_darwin_arm64"
+        dest.mkdir(parents=True)
+        binary = dest / "remainder"
+        binary.write_text("#!/bin/sh\necho remainder\n")
+        os.chmod(binary, 0o755)
+        link = staging / ".local" / "bin" / "remainder"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(binary)
+        self.assertTrue(os.path.isabs(os.readlink(link)))
+        node = shutil.which("node")
+        self.assertTrue(node)
+        subprocess.check_call([node, str(ROOT / "scripts" / "relink_runtime_links.mjs"), str(staging)])
+        self.assertFalse(os.path.isabs(os.readlink(link)))
+        released = Path(tempfile.mkdtemp(prefix="release-remainder-")) / "tree"
+        shutil.move(str(staging), str(released))
+        moved = released / ".local" / "bin" / "remainder"
+        self.assertTrue(moved.resolve().is_file())
+        smoke = (ROOT / "scripts" / "mcp_smoke.mjs").read_text()
+        self.assertIn("relinkRuntimeBin", smoke)
+
 
 if __name__ == "__main__":
     unittest.main()

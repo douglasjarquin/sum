@@ -8393,17 +8393,28 @@ def content_id(path):
     return "link:" + os.readlink(path) if path.is_symlink() else "sha256:" + sha256_file(path)
 
 
+def link_destination(link, target):
+    """Prefer a relative destination when the target lives in the same tree as the link."""
+    link = Path(link)
+    target = Path(target)
+    try:
+        return os.path.relpath(target, start=link.parent)
+    except ValueError:
+        return str(target)
+
+
 def link_tool(link, target):
     """Create a runtime symlink once. An existing link is never retargeted: a live process may depend on it."""
     link = Path(link)
     link.parent.mkdir(parents=True, exist_ok=True)
+    dest = link_destination(link, target)
     if link.is_symlink():
         current = os.readlink(link)
-        return {"link": str(link), "target": current, "created": False, "differs": current != str(target)}
+        return {"link": str(link), "target": current, "created": False, "differs": current != dest}
     if link.exists():
         raise SumError(f"Refusing to replace non-symlink {link}")
-    link.symlink_to(str(target))
-    return {"link": str(link), "target": str(target), "created": True, "differs": False}
+    link.symlink_to(dest)
+    return {"link": str(link), "target": dest, "created": True, "differs": False}
 
 
 def mise_env(target):

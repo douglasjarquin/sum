@@ -95,9 +95,10 @@ class SetupTest(unittest.TestCase):
     def test_tool_links_are_created_once_and_never_retargeted(self):
         link = self.root / '.local/bin/node'
         first = setup.sumctl.link_tool(link, '/opt/node-22.19.0/bin/node')
-        self.assertEqual((first['created'], os.readlink(link)), (True, '/opt/node-22.19.0/bin/node'))
+        expected = os.path.relpath('/opt/node-22.19.0/bin/node', start=link.parent)
+        self.assertEqual((first['created'], os.readlink(link)), (True, expected))
         second = setup.sumctl.link_tool(link, '/opt/node-22.20.0/bin/node')  # A new pin never moves a link a live process may use.
-        self.assertEqual((second['created'], second['differs'], os.readlink(link)), (False, True, '/opt/node-22.19.0/bin/node'))
+        self.assertEqual((second['created'], second['differs'], os.readlink(link)), (False, True, expected))
         (self.root / 'regular').write_text('x')
         with self.assertRaises(setup.sumctl.SumError):
             setup.sumctl.link_tool(self.root / 'regular', '/elsewhere')
@@ -130,18 +131,19 @@ class SetupTest(unittest.TestCase):
         self.assertTrue(first["created"])
         self.assertFalse(first["rewritten"])
         self.assertTrue(dest.is_dir())
-        self.assertEqual(os.readlink(link), str(dest / "remainder"))
+        self.assertEqual(os.readlink(link), os.path.relpath(dest / "remainder", start=link.parent))
+        self.assertTrue((link.parent / os.readlink(link)).resolve().is_file())
         self.assertEqual(len(fetched), 1)
         second = setup.sumctl.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="darwin-arm64")
         self.assertEqual(len(fetched), 1)
         self.assertFalse(second["created"])
         self.assertFalse(second["rewritten"])
-        self.assertEqual(os.readlink(link), str(dest / "remainder"))
+        self.assertEqual(os.readlink(link), os.path.relpath(dest / "remainder", start=link.parent))
         later = {"version": "0.0.1", "sha256": digest, "asset": archive.name}
         third = setup.sumctl.install_remainder(runtime, fetch=fetch, pin=later, platform_name="darwin-arm64")
         self.assertEqual(len(fetched), 2)
         self.assertTrue(third["differs"])
-        self.assertEqual(os.readlink(link), str(dest / "remainder"))
+        self.assertEqual(os.readlink(link), os.path.relpath(dest / "remainder", start=link.parent))
 
     def test_install_remainder_refuses_checksum_mismatch_without_leaving_dest(self):
         archive = self.root / "remainder_v0.0.0_test.tar.gz"
