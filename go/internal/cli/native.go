@@ -229,7 +229,11 @@ func (o *rootOptions) runLsp(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return nil
 		}
-		_ = lsp.Ensure(o.runtimeRoot, payload)
+		root := o.installRoot
+		if root == "" {
+			root = o.runtimeRoot
+		}
+		_ = lsp.Ensure(root, payload)
 		return nil
 	}
 	return usageError("lsp", args)

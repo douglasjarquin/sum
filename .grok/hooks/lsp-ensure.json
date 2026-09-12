@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bin/sumctl lsp ensure",
+            "command": "./bin/sumctl lsp ensure",
             "timeout": 120
           }
         ]
