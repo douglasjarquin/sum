@@ -29,7 +29,7 @@ var (
 	CoreTools = []string{"python3", "node", "herdr", "gh"}
 
 	requiredFiles = []string{"bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "go/cmd/sumctl/main.go"}
-	workerSkills  = []string{"skills/sum-worker/SKILL.md", "skills/worker/SKILL.md"}
+	workerSkill   = "skills/sum-worker/SKILL.md"
 
 	sha40Hex        = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	shaPrefix       = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
@@ -325,14 +325,7 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 			return nil, verifyErrorf("%s: release lacks %s", path, required)
 		}
 	}
-	hasWorkerSkill := false
-	for _, name := range workerSkills {
-		if _, has := files.Get(name); has {
-			hasWorkerSkill = true
-			break
-		}
-	}
-	if !hasWorkerSkill {
+	if _, has := files.Get(workerSkill); !has {
 		return nil, verifyErrorf("%s: release lacks a Sum worker skill resource", path)
 	}
 	if !isExecutable(filepath.Join(path, "bin", "sumctl")) {

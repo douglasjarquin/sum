@@ -17,7 +17,7 @@ Project scope is the upstream default, so the wrapper does not pass a nonexisten
 The target must be the root of an existing Git project so upstream's non-interactive scope detection cannot fall back to a user-level install.
 
 Wildcards, option-looking names, option-looking sources, and the reserved `sum-*` namespace are refused before the upstream tool runs.
-`bin/sumctl skills check --root /path/to/sum` continues to validate Sum-owned skill names, projections, portable imports, and compatibility references.
+`bin/sumctl skills check --root /path/to/sum` continues to validate Sum-owned skill names, projections, and portable imports, and refuses leftover unprefixed aliases.
 It does not checksum or certify third-party skill content.
 
 Vercel Skills owns source parsing, discovery, copying, and its `skills-lock.json` format.
