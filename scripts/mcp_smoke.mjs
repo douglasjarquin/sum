@@ -3,7 +3,9 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { relinkRuntimeBin } from "./relink_runtime_links.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+relinkRuntimeBin(root);
 const binary = path.join(root, "bin", "herdr-mesh");
 const child = spawn(binary, [], {
   stdio: ["pipe", "pipe", "inherit"],

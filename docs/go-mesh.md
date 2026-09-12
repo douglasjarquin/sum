@@ -25,3 +25,5 @@ A bundle staged by that helper names the Go binary `herdr-mesh-go`.
 `docs/dependency-inventory.json` keeps that id so the helper can record `darwin-arm64`.
 `bin/herdr-mesh` execs that name when `.local/bin/herdr-mesh` is absent.
 Release smoke launches `bin/herdr-mesh`, not the internal artifact name.
+It also rewrites in-tree `.local/bin` links to relative paths before the packager snapshots the bundle.
+A 4e4b841 remainder link is absolute into the staging directory. Without that rewrite, verify fails after the bundle is renamed.
