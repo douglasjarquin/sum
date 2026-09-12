@@ -13,7 +13,7 @@ Observable conditions that make the result correct.
 Existing repository commands, expected test coverage, and independent-review expectations.
 
 ## Decisions and constraints
-Known compatibility requirements, risk areas, account/harness restrictions, and what requires asking the boss.
+Known compatibility requirements, risk areas, account/harness restrictions, and what requires asking the user.
 
 ## Deliverable
 A committed candidate and evidence-bearing report, or an investigation report for a scout task.

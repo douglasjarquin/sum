@@ -120,11 +120,11 @@ The source-controlled pin `0.1.0` is not that SHA.
 Enroll one scratch project with `./bin/sumctl project enroll owner/repo` for a repository you control.
 Dispatch one approved task.
 Save a question with `sumctl ask` using a stable key.
-Record the human's answer with `sumctl answer` by question ID.
+Record the user's answer with `sumctl answer` by question ID.
 Confirm the worker submits with `sumctl report`.
 Run worker verification, then a distinct coordinator `sumctl verify --execute` or `sumctl verify --run`.
 Reading worker logs is not the second run.
-The human merges if anything is published.
+The user merges if anything is published.
 The Bot never merges.
 
 ## 14. Codex Remainder quota canary

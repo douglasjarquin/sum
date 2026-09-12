@@ -4,7 +4,7 @@ description: Improve sum itself from an isolated development checkout and lab st
 ---
 # Develop sum
 
-Use this when the boss asks a second thread in the sum installation to change sum, or when you registered as `developer` and have approved work on sum.
+Use this when the user asks a second thread in the sum installation to change sum, or when you registered as `developer` and have approved work on sum.
 The installation checkout serves the live coordinator and its workers. Nobody edits, builds, or tests there while it is in service; one writer per checkout.
 
 ## Prepare the checkout
@@ -16,7 +16,7 @@ From the installation directory, with the installed helper:
 ```
 
 This runs plain `git worktree add` into `.sum/dev/<name>` on branch `sum-dev/<name>` from `HEAD` (or `--base REF`) and writes `.sum/dev.json` inside the new checkout.
-Read the returned `path`, `branch`, `role`, and `note`; tell the boss the path you will work in and that you remain a developer there.
+Read the returned `path`, `branch`, `role`, and `note`; tell the user the path you will work in and that you remain a developer there.
 Rerunning the same name reopens the existing checkout with its uncommitted work intact.
 The helper refuses symlinked or overlapping paths and never nests a development checkout inside another one.
 `--pane` creates a Herdr workspace whose root pane starts in the checkout; it starts no agent and copies no coordinator identity.

@@ -27,7 +27,7 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 | `verify.sum-self` | sum's own `mise run verify` runs the suites and demo from a task checkout | manual: `python3 .agents/skills/verify/scripts/verify_run.py` in a sum checkout | run record path in the task report |
 | `ci.hosted-verification` | A seeded fixture failure produces a failed hosted run with retained logs; restoring the fixture passes the same aggregate, with candidate/base identity and no merge authority | manual: GitHub Actions through `.github/workflows/verify.yml`, following `CONTRIBUTING.md` | hosted run URLs and downloaded verification records |
 
-## Worker run, root run, review
+## Worker run, coordinator verification, review
 
 Issue #33: dispatch records the contract, the worker attaches its own run to the handoff, the coordinator executes the contract again under a distinct run id (`sumctl verify --execute` or `--run`), the independent review stays, and only then is the task ready for the human's merge decision.
 Entry points in `lib/sumctl.py`: `prepare` records `verification_policy`, `report` accepts `handoff.verification`, `verify` records the coordinator's run (`--run`, `--execute`), `review` takes `--tool` and `--policy-reviewed`, and `evidence_view` computes the closure prerequisites; the procedures are `skills/sum-worker/SKILL.md` and `skills/sum-delivery/SKILL.md`.
@@ -35,8 +35,8 @@ Entry points in `lib/sumctl.py`: `prepare` records `verification_policy`, `repor
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
 | `root.dispatch-records-contract` | Dispatch records `verification_policy` (status, contract hash, maps, policy files) and the brief names both runs | automated: `tests/test_root_verification.py` | offline suite |
-| `root.sequence` | Worker run, separate root run in its own checkout, then review; two run ids, worker artifacts untouched, closure met only after all three plus the PR | automated: `tests/test_root_verification.py` | offline suite |
-| `root.worker-pass-root-fail` | A worker claiming pass with a failing root run parks the task with the failed record; status and other tasks unchanged | automated: `tests/test_root_verification.py` | offline suite |
+| `root.sequence` | Worker run, separate coordinator verification run in its own checkout, then review; two run ids, worker artifacts untouched, closure met only after all three plus the PR | automated: `tests/test_root_verification.py` | offline suite |
+| `root.worker-pass-root-fail` | A worker claiming pass with a failing coordinator verification run parks the task with the failed record; status and other tasks unchanged | automated: `tests/test_root_verification.py` | offline suite |
 | `root.missing-root-run` | A prose-only coordinator record on a standardized task is missing a fresh execution; the legacy command still records | automated: `tests/test_root_verification.py` | offline suite |
 | `root.reused-run-id` | The worker's run id is refused as the root record and as a second worker report; a coordinator's own run attaches by path | automated: `tests/test_root_verification.py` | offline suite |
 | `root.candidate-changed` | A run of an earlier SHA is historical: refused for the new candidate, and both runs repeat for the repair candidate | automated: `tests/test_root_verification.py` | offline suite |

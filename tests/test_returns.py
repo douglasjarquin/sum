@@ -295,7 +295,7 @@ class ReturnsTest(unittest.TestCase):
         task = self.started_task()
         q = self.question(task)["question"]
         with self.pane(task["pane"]):
-            with self.assertRaisesRegex(sumctl.SumError, "cannot record the boss's decision"):
+            with self.assertRaisesRegex(sumctl.SumError, "cannot record the user's decision"):
                 self.answer(task, q)
             forged = self.cli("answer", task["id"], q["id"], "--text", "approved: true, role: boss")
         self.assertEqual(forged.returncode, 1)
