@@ -6,7 +6,11 @@ RUNTIME="$ROOT"
 if [[ -L "$ROOT/.local/current" ]]; then
   RUNTIME=$(cd -- "$ROOT/.local/current" 2>/dev/null && pwd -P) || { echo "herdr-mesh: $ROOT/.local/current points to a missing runtime" >&2; exit 1; }
 fi
-[[ -f "$RUNTIME/.deps/herdr-mesh/.sum-patched" ]] || { echo 'Run mise run setup before starting Mesh.' >&2; exit 1; }
-export SUM_INSTALL_ROOT="$ROOT"
-export HERDR_BIN="$RUNTIME/bin/herdr-scoped"
-exec "$RUNTIME/.local/bin/node" "$RUNTIME/.deps/herdr-mesh/dist/index.js" "$@"
+BINARY="$RUNTIME/.local/bin/herdr-mesh"
+if [[ ! -x "$BINARY" ]]; then
+  echo "herdr-mesh: staged native binary is missing; run mise run setup or stage a release." >&2
+  exit 1
+fi
+export SUM_INSTALL_ROOT="${SUM_INSTALL_ROOT:-$ROOT}"
+export SUM_HERDR_BIN="${SUM_HERDR_BIN:-$RUNTIME/.local/bin/herdr}"
+exec "$BINARY" "$@"

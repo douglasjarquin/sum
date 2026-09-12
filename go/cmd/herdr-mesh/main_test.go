@@ -25,7 +25,7 @@ func packageDir(t *testing.T) string {
 func meshBinary(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	binary := filepath.Join(dir, "herdr-mesh-go")
+	binary := filepath.Join(dir, "herdr-mesh")
 	command := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", binary, ".")
 	command.Dir = packageDir(t)
 	command.Env = cleanGoEnv(os.Environ())

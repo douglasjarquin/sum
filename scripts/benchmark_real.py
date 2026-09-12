@@ -26,8 +26,7 @@ def runtime_tools():
     return {
         "runtime": runtime,
         "herdr": runtime / ".local" / "bin" / "herdr",
-        "node": runtime / ".local" / "bin" / "node",
-        "mesh": runtime / ".deps" / "herdr-mesh" / "dist" / "index.js",
+        "mesh": runtime / ".local" / "bin" / "herdr-mesh",
     }
 
 
@@ -53,7 +52,7 @@ def rpc(process, selector, request_id: int, method: str, params):
 
 def run_real(base: Path, runs: int, include_mcp: bool):
     tools = runtime_tools()
-    missing = [name for name in ("herdr", "node", "mesh") if not tools[name].is_file()]
+    missing = [name for name in ("herdr", "mesh") if not tools[name].is_file()]
     if missing:
         reason = "installed pinned runtime missing " + ", ".join(missing)
         return [
@@ -108,8 +107,8 @@ def run_real(base: Path, runs: int, include_mcp: bool):
         scenarios.append({"id": "herdr.real.workspace-list", "status": "measured", "statistics": summarize(herdr_samples), "samples": herdr_samples})
         if include_mcp:
             mcp_trace = base / "real-mcp.jsonl"
-            mesh_env = {**env, "HERDR_BIN": str(ROOT / "bin" / "herdr-scoped"), "SUM_HOME": str(state), "SUM_MEASURE_FILE": str(mcp_trace)}
-            mesh = subprocess.Popen([str(tools["node"]), str(tools["mesh"])], env=mesh_env, text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log)
+            mesh_env = {**env, "SUM_HERDR_BIN": str(tools["herdr"]), "SUM_HOME": str(state), "SUM_MEASURE_FILE": str(mcp_trace)}
+            mesh = subprocess.Popen([str(tools["mesh"])], env=mesh_env, text=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log)
             selector = selectors.DefaultSelector()
             selector.register(mesh.stdout, selectors.EVENT_READ)
             rpc(mesh, selector, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "sum-benchmark", "version": "0.1.0"}})

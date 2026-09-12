@@ -187,7 +187,7 @@ With Python and Node already available, no network or credentials are required:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py' -v
-node --test tests/mesh.test.mjs
+(cd go && go test ./internal/mesh ./cmd/herdr-mesh)
 python3 scripts/demo.py
 ```
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,31 @@ RUNNER_PYTHON_BIN = str(Path(sys.executable).parent)
 
 
 class UpdateRecoveryRegressionTest(UpdateLab):
+    def plant_legacy_mesh_overlay(self, prior: Path, manifest: dict) -> None:
+        """Give an old helper the Node overlay files its verify_release still requires."""
+        mesh = prior / ".deps" / "herdr-mesh"
+        (mesh / "dist").mkdir(parents=True, exist_ok=True)
+        sdk = mesh / "node_modules" / "@modelcontextprotocol" / "sdk"
+        sdk.mkdir(parents=True, exist_ok=True)
+        server = b"legacy-server\n"
+        commands = b"legacy-commands\n"
+        (mesh / "dist" / "server.js").write_bytes(server)
+        (mesh / "dist" / "sum-commands.mjs").write_bytes(commands)
+        (mesh / "dist" / "index.js").write_bytes(b"legacy-index\n")
+        (sdk / "package.json").write_text("{}\n")
+        overlay = {
+            "upstream": "54adef519aa6af4dcd0bbd72586d414abab90046",
+            "server_sha256": hashlib.sha256(server).hexdigest(),
+            "commands_sha256": hashlib.sha256(commands).hexdigest(),
+        }
+        (mesh / ".sum-patched").write_text(json.dumps(overlay))
+        manifest.setdefault("dependencies", {})["herdr_mesh"] = {
+            "remote": "https://github.com/runchr-works/herdr-mesh.git",
+            "rev": overlay["upstream"],
+            "path": ".deps/herdr-mesh",
+            "overlay": overlay,
+        }
+
     def test_interrupted_recovery_is_serialized_and_never_replays_callbacks(self) -> None:
         root, store = self.installation()
         task = self.task_fixture(store)
@@ -355,6 +381,7 @@ class UpdateRecoveryRegressionTest(UpdateLab):
         manifest_path = prior / "release.json"
         manifest = json.loads(manifest_path.read_text())
         manifest["files"]["lib/sumctl.py"] = "sha256:" + sumctl.sha256_file(prior / "lib" / "sumctl.py")
+        self.plant_legacy_mesh_overlay(prior, manifest)
         manifest_path.write_text(json.dumps(manifest))
         sumctl.set_read_only(prior)
         second = self.commit_upstream(root, "two.py", "two = True\n")

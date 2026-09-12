@@ -9,7 +9,7 @@ gh auth status >/dev/null
 login=$(gh api user --jq .login)
 [[ "$login" == douglasjarquin ]] || { echo "Authenticated as $login, not douglasjarquin; no repository was created." >&2; exit 1; }
 python -m unittest discover -s tests -p 'test_*.py'
-node --test tests/mesh.test.mjs
+(cd go && go test ./internal/mesh ./cmd/herdr-mesh)
 if [[ ! -d .git ]]; then
   git init -b main
   git add .

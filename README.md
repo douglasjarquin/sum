@@ -371,7 +371,7 @@ Offline, without installing the full toolchain:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py' -v
-node --test tests/mesh.test.mjs
+(cd go && go test ./internal/mesh ./cmd/herdr-mesh)
 python3 scripts/demo.py
 ```
 
@@ -437,11 +437,11 @@ The checkout where setup ran is the installation: it owns `.sum/`, the generated
 ./bin/sumctl release list
 ```
 
-A release holds the committed sum tree, its own pinned tool links, its own installed Mesh, and a `release.json` manifest with source SHA, content hashes, dependency pins, and contract versions. It is validated before it appears, kept read-only, and never contains state. Re-running `mise run setup` never rewrites an installed `.deps/herdr-mesh` or retargets a tool link either. Switching a live installation onto a staged release is a separate, explicit step that this version does not perform. See [dependencies](docs/DEPENDENCIES.md).
+A release holds the committed sum tree, its own pinned tool links, its own Go Mesh binary, and a `release.json` manifest with source SHA, content hashes, dependency pins, and contract versions. It is validated before it appears, kept read-only, and never contains state. Re-running `mise run setup` never rewrites an existing native binary or retargets a tool link either. Switching a live installation onto a staged release is a separate, explicit step that this version does not perform. See [dependencies](docs/DEPENDENCIES.md).
 
 ## Development and publication
 
-See [dependencies](docs/DEPENDENCIES.md) for pins and the Mesh overlay. No secrets or runtime state belong in commits. `mise.lock`, if generated on a networked machine, should be committed with dependency changes; none is fabricated here.
+See [dependencies](docs/DEPENDENCIES.md) for pins. No secrets or runtime state belong in commits. `mise.lock`, if generated on a networked machine, should be committed with dependency changes; none is fabricated here.
 
 After extracting the source archive, create and push the repository with:
 

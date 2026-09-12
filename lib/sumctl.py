@@ -66,8 +66,6 @@ VERSION = "0.1.0"
 SCHEMA = 1
 BRIEF_SCHEMA = 1  # The worker brief format written by write_brief; recorded in release manifests.
 HERDR_VERSION = "0.9.0"
-MESH_REV = "54adef519aa6af4dcd0bbd72586d414abab90046"
-MESH_REMOTE = "https://github.com/runchr-works/herdr-mesh.git"
 MCP_CONTRACT = {"server": "herdr-mesh-sum", "version": "0.1.0", "tools": 10}
 TOOLS = ("python3", "node", "herdr", "gh", "quota-axi", "codegraph", "skills")
 CORE_TOOLS = ("python3", "node", "herdr", "gh")  # A release bundle must carry at least these; older bundles without later pins stay selectable.
@@ -7135,7 +7133,8 @@ def doctor(store):
     installed = {kind: shutil.which(exe) or (str(ROOT / '.local/bin' / exe) if (ROOT / '.local/bin' / exe).is_file() else None)
                  for kind, exe in HARNESSES.items()}
     checks.append({"tool": "harness", "ok": any(installed.values()), "installed": {k:v for k,v in installed.items() if v}})
-    checks.append({"tool": "mesh", "ok": (RUNTIME / ".deps/herdr-mesh/.sum-patched").is_file()})
+    mesh = RUNTIME / ".local" / "bin" / "herdr-mesh"
+    checks.append({"tool": "mesh", "ok": mesh.is_file() and os.access(mesh, os.X_OK)})
     graph = graph_tool()
     checks.append({"tool": "codegraph", "ok": True, "available": graph["available"], "pinned": graph["pinned"], "version": graph["version"], "path": graph["path"],
                    "detail": "pinned codegraph available; new checkouts get a local index" if graph["available"] else f"graph optional and unavailable: {graph['reason']}"})
@@ -8389,12 +8388,6 @@ def content_id(path):
     return "link:" + os.readlink(path) if path.is_symlink() else "sha256:" + sha256_file(path)
 
 
-def overlay_hashes(source_root):
-    """Expected hashes of sum's Mesh overlay as shipped in the given source tree."""
-    patches = Path(source_root) / "patches" / "herdr-mesh"
-    return {"server_sha256": sha256_file(patches / "server.js"), "commands_sha256": sha256_file(patches / "commands.mjs")}
-
-
 def link_tool(link, target):
     """Create a runtime symlink once. An existing link is never retargeted: a live process may depend on it."""
     link = Path(link)
@@ -8435,7 +8428,7 @@ def build_native_artifact(target):
     source = target / "go"
     if not (source / "go.mod").is_file():
         raise SumError(f"Native Go source is missing from {source}")
-    outputs = {"sumctl-go": "./cmd/sumctl-go", "herdr-mesh-go": "./cmd/herdr-mesh"}
+    outputs = {"sumctl-go": "./cmd/sumctl-go", "herdr-mesh": "./cmd/herdr-mesh"}
     output_dir = target / ".local" / "bin"
     output_dir.mkdir(parents=True, exist_ok=True)
     pending = []
@@ -8485,53 +8478,6 @@ def native_platform():
     system = {"darwin": "darwin", "linux": "linux"}.get(sys.platform, sys.platform)
     machine = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine().lower(), platform.machine().lower())
     return f"{system}-{machine}"
-
-
-def install_mesh(destination, source_root, local_mesh=None):
-    """Clone, install, and overlay the pinned Mesh into a fresh directory; never into one that already exists."""
-    destination, source_root = Path(destination), Path(source_root)
-    if destination.exists():
-        raise SumError(f"{destination} already exists; an installed Mesh is never rewritten in place.")
-    node = source_root / ".local" / "bin" / "node"
-    npm = node.resolve().parent / "npm"
-    if not node.is_file() or not npm.is_file():
-        raise SumError("Pinned node/npm are not linked; resolve tools first.")
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".mesh-", dir=destination.parent))
-    mesh = staging / "herdr-mesh"
-    try:
-        origin = str(local_mesh) if local_mesh and Path(local_mesh, ".git").exists() and \
-            run(["git", "-C", local_mesh, "cat-file", "-e", f"{MESH_REV}^{{commit}}"], check=False).returncode == 0 else MESH_REMOTE
-        run(["git", "clone", "--no-checkout", *([] if origin != MESH_REMOTE else ["--filter=blob:none"]), origin, str(mesh)], timeout=600)
-        run(["git", "-C", mesh, "checkout", "--detach", MESH_REV], timeout=120)
-        if run(["git", "-C", mesh, "rev-parse", "HEAD"]).stdout.strip() != MESH_REV:
-            raise SumError("Unexpected Mesh checkout")
-        if not (mesh / "package-lock.json").is_file() or not (mesh / "LICENSE").is_file():
-            raise SumError("Pinned Mesh checkout is incomplete")
-        run([npm, "ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=mesh, timeout=900)
-        apply_overlay(source_root, mesh)
-        os.rename(mesh, destination)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-    return destination
-
-
-def apply_overlay(source_root, mesh):
-    """sum's documented runtime overlay for a freshly installed Mesh (see docs/DEPENDENCIES.md)."""
-    source_root, mesh = Path(source_root), Path(mesh)
-    shutil.copyfile(source_root / "patches/herdr-mesh/server.js", mesh / "dist/server.js")
-    shutil.copyfile(source_root / "patches/herdr-mesh/commands.mjs", mesh / "dist/sum-commands.mjs")
-    atomic_json(mesh / ".sum-patched", {"upstream": MESH_REV, **overlay_hashes(source_root)})
-
-
-def mesh_state(source_root, mesh):
-    """Compare an installed Mesh with the overlay in a source tree without touching either."""
-    marker = Path(mesh) / ".sum-patched"
-    if not marker.is_file():
-        return {"installed": Path(mesh).exists(), "patched": False, "matches_source": False}
-    value = read_json(marker)
-    return {"installed": True, "patched": True, "upstream": value.get("upstream"),
-            "matches_source": value.get("upstream") == MESH_REV and {k: value.get(k) for k in ("server_sha256", "commands_sha256")} == overlay_hashes(source_root)}
 
 
 REMAINDER_REMOTE = "https://github.com/douglasjarquin/remainder/releases/download"
@@ -8632,12 +8578,11 @@ def write_herdr_skill(target):
     return path
 
 
-def install_runtime(target, local_mesh=None):
+def install_runtime(target):
     """Install every runtime dependency into one tree and prove the MCP server starts from it. Used for staging."""
     target = Path(target)
     resolve_tools(target)
     build_native_artifact(target)
-    install_mesh(target / ".deps" / "herdr-mesh", target, local_mesh=local_mesh)
     install_remainder(target)
     write_herdr_skill(target)
     run([target / ".local" / "bin" / "node", target / "scripts" / "mcp_smoke.mjs"], timeout=60)
@@ -8686,6 +8631,16 @@ def validate_dependency_inventory(value):
         seen.add(entry["id"])
 
 
+def native_artifact_record(inventory, target, name):
+    entry = next((item for item in inventory["dependencies"] if item.get("id") == name), None)
+    path = Path(target) / ".local" / "bin" / name
+    if entry is None or not path.is_file() or not os.access(path, os.X_OK):
+        raise SumError(f"Release is missing the staged native {name} artifact")
+    return {**entry, "path": f".local/bin/{name}", "sha256": sha256_file(path),
+            "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
+            "runtime": {"requires": []}}
+
+
 def build_manifest(store, root, sha, target):
     target = Path(target)
     contract = candidate_contract(target)
@@ -8699,29 +8654,16 @@ def build_manifest(store, root, sha, target):
     remainder_link = target / ".local" / "bin" / "remainder"
     if remainder_link.is_symlink():
         tools["remainder"] = os.readlink(remainder_link)
-    mesh = target / ".deps" / "herdr-mesh"
-    patched = read_json(mesh / ".sum-patched")
     inventory = dependency_inventory(target)
-    native = next((entry for entry in inventory["dependencies"] if entry["id"] == "sumctl-go"), None)
-    native_path = target / ".local" / "bin" / "sumctl-go"
-    if native is None or not native_path.is_file() or not os.access(native_path, os.X_OK):
-        raise SumError("Release is missing the staged native sumctl-go artifact")
-    native = {**native, "path": ".local/bin/sumctl-go", "sha256": sha256_file(native_path),
-              "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
-              "runtime": {"requires": []}}
-    native_artifacts = {"sumctl-go": native}
-    mesh_path = target / ".local" / "bin" / "herdr-mesh-go"
-    if mesh_path.is_file() and os.access(mesh_path, os.X_OK):
-        native_artifacts["herdr-mesh-go"] = {"source": "go/cmd/herdr-mesh", "version": "0.1.0",
-                                              "path": ".local/bin/herdr-mesh-go", "sha256": sha256_file(mesh_path),
-                                              "platform": native_platform(), "build": {"cgo": False, "requires": ["go >= 1.25"]},
-                                              "runtime": {"requires": []}}
+    native_artifacts = {
+        "sumctl-go": native_artifact_record(inventory, target, "sumctl-go"),
+        "herdr-mesh": native_artifact_record(inventory, target, "herdr-mesh"),
+    }
     state = read_json(store.home / "state.json") if (store.home / "state.json").is_file() else {}
     return {"schema": RELEASE_SCHEMA, "kind": "sum-release", "sum_version": contract["sum_version"],
             "source": {"sha": sha, "tree": run(["git", "-C", root, "rev-parse", f"{sha}^{{tree}}"]).stdout.strip(), "repository": str(root)},
             "files": files,
-            "dependencies": {"herdr_mesh": {"remote": MESH_REMOTE, "rev": MESH_REV, "path": ".deps/herdr-mesh", "overlay": patched},
-                             "tools": {"pins": tool_pins(target), "paths": tools},
+            "dependencies": {"tools": {"pins": tool_pins(target), "paths": tools},
                              "codegraph": {**CODEGRAPH_PROVENANCE, "pin": tool_pins(target).get(f"npm:{CODEGRAPH_PACKAGE}"), "path": ".local/bin/codegraph"},
                              "inventory": inventory, "native": native_artifacts},
             "contracts": contract["contracts"],
@@ -8761,16 +8703,6 @@ def verify_release(path, expected_sha=None):
         raise SumError(f"{path}: a release tree must not contain .sum state")
     if (path / GRAPH_DIR).exists():
         raise SumError(f"{path}: a release tree must not contain a {GRAPH_DIR} index; graph state never rides an immutable bundle")
-    mesh = path / ".deps" / "herdr-mesh"
-    overlay = manifest.get("dependencies", {}).get("herdr_mesh", {}).get("overlay", {})
-    marker = mesh / ".sum-patched"
-    if not marker.is_file() or read_json(marker) != overlay or overlay.get("upstream") != MESH_REV:
-        raise SumError(f"{path}: Mesh overlay marker does not match the manifest")
-    for name, key in (("dist/server.js", "server_sha256"), ("dist/sum-commands.mjs", "commands_sha256")):
-        if not (mesh / name).is_file() or sha256_file(mesh / name) != overlay.get(key):
-            raise SumError(f"{path}: {name} does not match the recorded overlay hash")
-    if not (mesh / "dist" / "index.js").is_file() or not (mesh / "node_modules" / "@modelcontextprotocol" / "sdk" / "package.json").is_file():
-        raise SumError(f"{path}: Mesh dependencies are incomplete")
     paths = manifest.get("dependencies", {}).get("tools", {}).get("paths", {})
     for name in CORE_TOOLS:
         if name not in paths:
@@ -8784,7 +8716,7 @@ def verify_release(path, expected_sha=None):
     if inventory is not None:
         validate_dependency_inventory(inventory)
     if native:
-        if not isinstance(native, dict) or "sumctl-go" not in native:
+        if not isinstance(native, dict) or "sumctl-go" not in native or "herdr-mesh" not in native:
             raise SumError(f"{path}: native dependency metadata is incomplete")
         for name, artifact in native.items():
             relative = artifact.get("path") if isinstance(artifact, dict) else None
@@ -8849,7 +8781,7 @@ def stage(store, ref, installer=install_runtime):
             raise SumError("Skill inventory refused release staging: " + "; ".join(inventory["errors"]))
         if (staging / ".sum").exists() or (staging / RELEASE_MANIFEST).exists():
             raise SumError("The committed tree must not contain .sum or a release manifest.")
-        installer(staging, local_mesh=root / ".deps" / "herdr-mesh")
+        installer(staging)
         atomic_json(staging / RELEASE_MANIFEST, build_manifest(store, root, sha, staging))
         manifest = verify_release(staging, sha)
         set_read_only(staging)

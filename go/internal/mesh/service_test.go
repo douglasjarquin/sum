@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -71,7 +73,7 @@ func writeJSON(t *testing.T, path string, value any) {
 	}
 }
 
-func TestService_relay_preservesLeadingDashMessageAfterIdlePreflight(t *testing.T) {
+func TestService_relay_usesAgentPromptAfterIdlePreflight(t *testing.T) {
 	runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"agent":{"agent_status":"idle"}}}`}, {stdout: `{"result":{"ok":true}}`}}}
 	service := newTestService(t, "coordinator", runner)
 
@@ -79,31 +81,68 @@ func TestService_relay_preservesLeadingDashMessageAfterIdlePreflight(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result == "" || len(runner.calls) != 2 {
-		t.Fatalf("result=%q calls=%d", result, len(runner.calls))
+	if !strings.Contains(result, "submitted-not-acknowledged") {
+		t.Fatalf("result=%q", result)
 	}
-	if got := runner.calls[1][3]; got != "sum message:\n--session malicious" {
-		t.Fatalf("prompt message = %q", got)
+	if len(runner.calls) != 2 {
+		t.Fatalf("calls=%d, want preflight and one prompt", len(runner.calls))
+	}
+	want := []string{"agent", "prompt", "w-test:p2", "sum message:\n--session malicious"}
+	if !slices.Equal(runner.calls[1], want) {
+		t.Fatalf("prompt argv = %v, want %v", runner.calls[1], want)
 	}
 }
 
-func TestService_relay_refusesBusyTargetBeforePrompt(t *testing.T) {
-	runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"agent":{"agent_status":"working"}}}`}}}
+func TestService_relay_refusesBusyStatusesBeforePrompt(t *testing.T) {
+	for _, status := range []string{"working", "blocked", "unknown"} {
+		t.Run(status, func(t *testing.T) {
+			runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"agent":{"agent_status":"` + status + `"}}}`}}}
+			service := newTestService(t, "coordinator", runner)
+
+			_, err := service.Call(context.Background(), "herdr_relay", json.RawMessage(`{"target":"w-test:p2","message":"hello"}`))
+			if err == nil || !strings.Contains(err.Error(), "do not inject") {
+				t.Fatalf("error=%v", err)
+			}
+			if len(runner.calls) != 1 {
+				t.Fatalf("calls=%d, want preflight only", len(runner.calls))
+			}
+		})
+	}
+}
+
+func TestService_handoff_usesOnePromptWait(t *testing.T) {
+	runner := &fakeRunner{results: []commandResult{
+		{stdout: `{"result":{"agent":{"agent_status":"idle"}}}`},
+		{stdout: "prompted\n"},
+		{stdout: "screen\n"},
+	}}
 	service := newTestService(t, "coordinator", runner)
 
-	_, err := service.Call(context.Background(), "herdr_relay", json.RawMessage(`{"target":"w-test:p2","message":"hello"}`))
-	if err == nil || len(runner.calls) != 1 {
-		t.Fatalf("error=%v calls=%d", err, len(runner.calls))
+	result, err := service.Call(context.Background(), "herdr_handoff", json.RawMessage(`{"target":"w-test:p2","message":"review","timeout_ms":5000}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result, "NOT proof of task completion") {
+		t.Fatalf("result=%q", result)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("calls=%d, want preflight, one prompt/wait, and one read", len(runner.calls))
+	}
+	if !slices.Contains(runner.calls[1], "--wait") || !slices.Contains(runner.calls[1], "--until") {
+		t.Fatalf("prompt argv = %v", runner.calls[1])
 	}
 }
 
-func TestService_handoff_reportsUncertainSubmissionWithoutReadingStaleOutput(t *testing.T) {
+func TestService_handoff_failedWaitIsErrorWithoutStaleRead(t *testing.T) {
 	runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"agent":{"agent_status":"idle"}}}`}, {}}, errors: []error{nil, errors.New("timeout")}}
 	service := newTestService(t, "coordinator", runner)
 
 	result, err := service.Call(context.Background(), "herdr_handoff", json.RawMessage(`{"target":"w-test:p2","message":"review"}`))
 	if err == nil || result != "" {
 		t.Fatalf("result=%q error=%v", result, err)
+	}
+	if !strings.Contains(err.Error(), "may already have been submitted") {
+		t.Fatalf("error=%v", err)
 	}
 	if len(runner.calls) != 2 {
 		t.Fatalf("calls=%d, want preflight and one prompt", len(runner.calls))
@@ -158,14 +197,41 @@ func TestService_rejectsTrailingArgumentsBeforeHerdr(t *testing.T) {
 	}
 }
 
-func TestService_wait_clampsTimeoutLikeTheNodeHandler(t *testing.T) {
+func TestService_wait_usesUntilAndClampsTimeout(t *testing.T) {
 	runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"agent":{"agent_status":"idle"}}}`}}}
 	service := newTestService(t, "coordinator", runner)
 
-	if _, err := service.Call(context.Background(), "herdr_agent_wait", json.RawMessage(`{"target":"w-test:p2","timeout_ms":999999}`)); err != nil {
+	if _, err := service.Call(context.Background(), "herdr_agent_wait", json.RawMessage(`{"target":"reviewer","status":"done","timeout_ms":999999}`)); err != nil {
 		t.Fatal(err)
 	}
-	if runner.durations[0] != 65*time.Second || runner.calls[0][6] != "60000" {
+	want := []string{"agent", "wait", "reviewer", "--until", "done", "--timeout", "60000"}
+	if !slices.Equal(runner.calls[0], want) || runner.durations[0] != 65*time.Second {
 		t.Fatalf("timeout=%s args=%v", runner.durations[0], runner.calls[0])
+	}
+}
+
+func TestService_start_usesExistingPaneAndKind(t *testing.T) {
+	runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"ok":true}}`}}}
+	service := newTestService(t, "coordinator", runner)
+
+	if _, err := service.Call(context.Background(), "herdr_agent_start", json.RawMessage(`{"name":"reviewer","kind":"codex","pane_id":"w1:p2","args":["-m","chosen-model"]}`)); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"agent", "start", "reviewer", "--kind", "codex", "--pane", "w1:p2", "--timeout", "30000", "--", "-m", "chosen-model"}
+	if !slices.Equal(runner.calls[0], want) {
+		t.Fatalf("start argv = %v", runner.calls[0])
+	}
+}
+
+func TestService_read_isBoundedAndPassive(t *testing.T) {
+	runner := &fakeRunner{results: []commandResult{{stdout: "visible output\n"}}}
+	service := newTestService(t, "coordinator", runner)
+
+	if _, err := service.Call(context.Background(), "herdr_agent_read", json.RawMessage(`{"target":"reviewer"}`)); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"agent", "read", "reviewer", "--source", "visible", "--lines", "80", "--format", "text"}
+	if !slices.Equal(runner.calls[0], want) {
+		t.Fatalf("read argv = %v", runner.calls[0])
 	}
 }
