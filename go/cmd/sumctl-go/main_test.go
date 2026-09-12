@@ -27,7 +27,7 @@ func TestCompiledEntrypointCancellationExitsOnce(t *testing.T) {
 	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s' $$ > \"$SUM_GO_MARKER\"\nsleep 30\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(binary, "prepare")
+	command := exec.Command(binary, "review")
 	command.Env = append(os.Environ(), "SUM_PYTHON_HELPER="+reference, "SUM_GO_MARKER="+marker)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout

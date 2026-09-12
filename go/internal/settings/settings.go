@@ -546,7 +546,7 @@ func CapacityView(s *store.Store) (*ordjson.Object, error) {
 	return result, nil
 }
 
-func adapterArgv(harness, field string, value string) []string {
+func AdapterArgv(harness, field string, value string) []string {
 	prefix, _ := adapterPrefix(harness, field)
 	if len(prefix) == 0 {
 		return nil
@@ -566,7 +566,7 @@ func presetLaunch(spec *ordjson.Object) *ordjson.Object {
 	for _, field := range []string{"model", "reasoning"} {
 		if value, has := spec.Get(field); has {
 			if s, ok := value.(string); ok {
-				argv = append(argv, adapterArgv(harness, field, s)...)
+				argv = append(argv, AdapterArgv(harness, field, s)...)
 			}
 		}
 	}

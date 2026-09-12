@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -211,6 +212,81 @@ func TestBind_parentOnlyUpdatesParent(t *testing.T) {
 	if parent["pane"] != "w-parent:p1" {
 		t.Fatalf("parent = %v", parent)
 	}
+}
+
+func TestPrepare_createsIsolatedWorktree(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	if _, err := runCLI(t, home, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	repo := filepath.Join(home, "repo")
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := execGit(t, repo, args...)
+		if cmd != "" {
+			t.Fatal(cmd)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.name", "sum test")
+	run("config", "user.email", "test@example.invalid")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "fixture")
+	briefPath := filepath.Join(home, "brief.md")
+	if err := os.WriteFile(briefPath, []byte("Add a greeting and test it. Do not publish or merge.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCLI(t, home, "prepare", "--repo", repo, "--brief", briefPath, "--harness", "codex", "--approved")
+	if err != nil {
+		t.Fatalf("prepare: %v\n%s", err, out)
+	}
+	value := decodeObject(t, out)
+	if value["status"] != "prepared" {
+		t.Fatalf("status = %v\n%s", value["status"], out)
+	}
+	worktree, _ := value["worktree"].(string)
+	if worktree == "" || worktree == repo {
+		t.Fatalf("worktree = %q", worktree)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree missing: %v", err)
+	}
+	briefFile, _ := value["brief_path"].(string)
+	text, err := os.ReadFile(briefFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(text)
+	if !strings.Contains(body, "not the coordinator") || !strings.Contains(body, "ask") {
+		t.Fatalf("brief missing required contract text:\n%s", body)
+	}
+}
+
+func execGit(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	cmd := execCommand("git", append([]string{"-C", repo}, args...)...)
+	if cmd.err != nil {
+		return cmd.err.Error() + "\n" + cmd.out
+	}
+	return ""
+}
+
+type cmdResult struct {
+	out string
+	err error
+}
+
+func execCommand(name string, args ...string) cmdResult {
+	cmd := exec.Command(name, args...)
+	out, err := cmd.CombinedOutput()
+	return cmdResult{out: string(out), err: err}
 }
 
 func TestRepairExtend_requiresCoordinator(t *testing.T) {

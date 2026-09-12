@@ -12,6 +12,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/guard"
+	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
 	"github.com/douglasjarquin/sum/go/internal/notes"
@@ -141,6 +142,24 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE:               o.runReport,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "prepare",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runPrepare,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "dispatch",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runDispatch,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "start",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runStart,
 	})
 }
 
@@ -1305,4 +1324,190 @@ func capitalizeHerdrContext(msg string) string {
 		return "Run" + msg[3:]
 	}
 	return msg
+}
+
+func (o *rootOptions) runPrepare(cmd *cobra.Command, args []string) error {
+	parsed, ok := parsePrepareArgs(args)
+	if !ok {
+		return fmt.Errorf("invalid prepare arguments")
+	}
+	st, err := o.openStore("prepare")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	parsed.RuntimeRoot = o.runtimeRoot
+	parsed.SumctlPath = o.sumctlPath()
+	view, err := prepare.Prepare(st, ctx, parsed)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func (o *rootOptions) runDispatch(cmd *cobra.Command, args []string) error {
+	parsed, ok := parsePrepareArgs(args)
+	if !ok {
+		return fmt.Errorf("invalid dispatch arguments")
+	}
+	st, err := o.openStore("dispatch")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	parsed.RuntimeRoot = o.runtimeRoot
+	parsed.SumctlPath = o.sumctlPath()
+	view, err := prepare.Dispatch(st, ctx, parsed)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func (o *rootOptions) runStart(cmd *cobra.Command, args []string) error {
+	taskID, extra, ok := parseStartArgs(args)
+	if !ok {
+		return fmt.Errorf("invalid start arguments")
+	}
+	st, err := o.openStore("start")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	view, err := prepare.Start(st, ctx, o.runtimeRoot, taskID, extra)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parsePrepareArgs(tokens []string) (prepare.Args, bool) {
+	var parsed prepare.Args
+	parsed.Base = "HEAD"
+	parsed.Kind = "ship"
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		take := func(dest *string) bool {
+			if i+1 >= len(tokens) {
+				return false
+			}
+			i++
+			*dest = tokens[i]
+			return true
+		}
+		switch {
+		case token == "--repo":
+			if !take(&parsed.Repo) {
+				return prepare.Args{}, false
+			}
+		case strings.HasPrefix(token, "--repo="):
+			parsed.Repo = strings.TrimPrefix(token, "--repo=")
+		case token == "--project":
+			if !take(&parsed.Project) {
+				return prepare.Args{}, false
+			}
+		case strings.HasPrefix(token, "--project="):
+			parsed.Project = strings.TrimPrefix(token, "--project=")
+		case token == "--brief":
+			if !take(&parsed.Brief) {
+				return prepare.Args{}, false
+			}
+		case strings.HasPrefix(token, "--brief="):
+			parsed.Brief = strings.TrimPrefix(token, "--brief=")
+		case token == "--harness":
+			if !take(&parsed.Harness) {
+				return prepare.Args{}, false
+			}
+		case strings.HasPrefix(token, "--harness="):
+			parsed.Harness = strings.TrimPrefix(token, "--harness=")
+		case token == "--model":
+			if !take(&parsed.Model) {
+				return prepare.Args{}, false
+			}
+		case strings.HasPrefix(token, "--model="):
+			parsed.Model = strings.TrimPrefix(token, "--model=")
+		case token == "--reasoning":
+			if !take(&parsed.Reasoning) {
+				return prepare.Args{}, false
+			}
+		case strings.HasPrefix(token, "--reasoning="):
+			parsed.Reasoning = strings.TrimPrefix(token, "--reasoning=")
+		case token == "--same-as-you":
+			parsed.SameAsYou = true
+		case token == "--preset":
+			if !take(&parsed.Preset) {
+				return prepare.Args{}, false
+			}
+			parsed.PresetSet = true
+		case strings.HasPrefix(token, "--preset="):
+			parsed.Preset = strings.TrimPrefix(token, "--preset=")
+			parsed.PresetSet = true
+		case token == "--base":
+			if !take(&parsed.Base) {
+				return prepare.Args{}, false
+			}
+		case strings.HasPrefix(token, "--base="):
+			parsed.Base = strings.TrimPrefix(token, "--base=")
+		case token == "--kind":
+			if !take(&parsed.Kind) {
+				return prepare.Args{}, false
+			}
+		case strings.HasPrefix(token, "--kind="):
+			parsed.Kind = strings.TrimPrefix(token, "--kind=")
+		case token == "--approved":
+			parsed.Approved = true
+		case token == "--arg":
+			if i+1 >= len(tokens) {
+				return prepare.Args{}, false
+			}
+			i++
+			parsed.Extra = append(parsed.Extra, tokens[i])
+		case strings.HasPrefix(token, "--arg="):
+			parsed.Extra = append(parsed.Extra, strings.TrimPrefix(token, "--arg="))
+		default:
+			return prepare.Args{}, false
+		}
+	}
+	if parsed.Brief == "" {
+		return prepare.Args{}, false
+	}
+	if parsed.Kind != "ship" && parsed.Kind != "scout" {
+		return prepare.Args{}, false
+	}
+	return parsed, true
+}
+
+func parseStartArgs(tokens []string) (taskID string, extra []string, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--arg":
+			if i+1 >= len(tokens) {
+				return "", nil, false
+			}
+			i++
+			extra = append(extra, tokens[i])
+		case strings.HasPrefix(token, "--arg="):
+			extra = append(extra, strings.TrimPrefix(token, "--arg="))
+		case strings.HasPrefix(token, "-"):
+			return "", nil, false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", nil, false
+		}
+	}
+	if taskID == "" {
+		return "", nil, false
+	}
+	return taskID, extra, true
 }

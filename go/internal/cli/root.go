@@ -11,8 +11,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/contextview"
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/doctor"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
@@ -192,6 +194,38 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 						return emitOrdjson(cmd.OutOrStdout(), view)
 					}
 				}
+			}
+			if len(args) >= 2 && args[0] == "init" && !strings.HasPrefix(args[1], "-") {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				if err := guard.Candidate(opts.installRoot, st, "graph-init"); err != nil {
+					return err
+				}
+				ctx, err := store.Context(opts.installRoot)
+				if err != nil {
+					return err
+				}
+				if err := app.RequireCoordinator(st, ctx); err != nil {
+					return err
+				}
+				view, err := graph.InitTask(st, opts.runtimeRoot, args[1])
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			if len(args) >= 2 && args[0] == "status" && !strings.HasPrefix(args[1], "-") {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				view, err := graph.StatusTask(st, opts.runtimeRoot, args[1])
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
 			return opts.compat(cmd.Context(), append([]string{"graph"}, args...))
 		},
@@ -510,7 +544,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 }
 
 var compatibilityCommands = []string{
-	"prepare", "dispatch", "start", "review", "verify", "pr", "cleanup", "dev", "refresh", "update",
+	"review", "verify", "pr", "cleanup", "dev", "refresh", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, reclaim, ok bool) {

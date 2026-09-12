@@ -12,3 +12,4 @@ ts	phase	decision	why	evidence	result
 2026-09-12T03:29:52Z	native-cli	native settings set and preset set/delete	mutating settings still forwarded after the first native unit	go/internal/settings/write.go go/internal/cli/native.go	tests green
 2026-09-12T03:34:21Z	native-cli	native ask, answer, resolve, notice, pump	question flow needs the returns pump; no-pane path matches Python	go/internal/ask go/internal/returns/pump.go	tests green
 2026-09-12T04:10:00Z	native-cli	native designated init, backup, attention, bind, report, and repair	these commands still forwarded to Python after the previous native units	go/internal/cli/cutover_test.go go/internal/repair go/internal/backup	tests green
+2026-09-12T04:40:00Z	native-cli	native prepare, dispatch, start, and graph init/status	dispatch is the core write path; graph init is called from prepare	go/internal/prepare go/internal/launch go/internal/cli/cutover_test.go	tests green
