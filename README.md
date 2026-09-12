@@ -371,8 +371,7 @@ Offline, without installing the full toolchain:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py' -v
-(cd go && go test ./internal/mesh ./cmd/herdr-mesh)
-python3 scripts/demo.py
+(cd go && go test ./internal/cli -run TestOfflineDemo ./internal/mesh ./cmd/herdr-mesh)
 ```
 
 Or after setup:

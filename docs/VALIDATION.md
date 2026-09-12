@@ -187,8 +187,7 @@ With Python and Node already available, no network or credentials are required:
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py' -v
-(cd go && go test ./internal/mesh ./cmd/herdr-mesh)
-python3 scripts/demo.py
+(cd go && go test ./internal/cli -run TestOfflineDemo ./internal/mesh ./cmd/herdr-mesh)
 ```
 
 On the execution host, first run setup, then `mise run test-live` and the steps in [ACCEPTANCE.md](ACCEPTANCE.md). Use a throwaway project for the first real-model delegation.
