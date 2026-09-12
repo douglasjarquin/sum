@@ -63,7 +63,7 @@ The subprocess disables upstream telemetry with both documented environment vari
 
 Vercel Skills owns repository discovery, copying, and `skills-lock.json`.
 Its `--yes` path may overwrite an existing same-named third-party skill, so the operator reviews the Git diff after installation.
-Sum's own `skills check` remains limited to its bundled names, projections, portable imports, and compatibility references; it does not claim third-party content integrity.
+Sum's own `skills check` remains limited to its bundled names, projections, and portable imports, and refuses leftover unprefixed aliases; it does not claim third-party content integrity.
 
 ## codegraph 1.5.0 per checkout
 

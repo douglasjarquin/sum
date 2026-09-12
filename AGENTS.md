@@ -80,7 +80,7 @@ If the user wants a change deployed, tell them; they decide when the coordinator
 
 ## Skills
 
-Load procedures only when needed: `dispatch`, `delivery`, `rundown`, `worker`, `develop`, and `update` under `skills/`.
+Load procedures only when needed: `sum-dispatch`, `sum-delivery`, `sum-rundown`, `sum-worker`, `sum-develop`, and `sum-update` under `skills/`.
 `VERIFY.md` at the root is this repository's verification contract; `.agents/skills/verify` is the portable procedure and runner behind `mise run verify`, usable in any clone without sum.
 `.agents/skills/evidence` captures before/after proof (screenshots, screencasts, transcripts) of one mapped scenario from the base and candidate builds and compares them; `.agents/skills/create-verification` bootstraps that contract in another repository and `.agents/skills/maintain-verification` audits it after a change; a standardized project checkout carries its own vendored copies.
 MCP tool descriptions document the patched interface. Herdr CLI facts come from `herdr --skill`, not remembered flags.

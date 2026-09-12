@@ -30,12 +30,10 @@ func asString(v any) string {
 }
 
 func WorkerSkill(runtimeRoot string) string {
-	for _, name := range []string{"sum-worker", "worker"} {
-		path := filepath.Join(runtimeRoot, "skills", name, "SKILL.md")
-		data, err := os.ReadFile(path)
-		if err == nil {
-			return string(data)
-		}
+	path := filepath.Join(runtimeRoot, "skills", "sum-worker", "SKILL.md")
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return string(data)
 	}
 	return ""
 }

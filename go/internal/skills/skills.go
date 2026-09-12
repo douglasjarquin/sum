@@ -75,17 +75,11 @@ func inventory(root string) (*ordjson.Object, error) {
 		for _, canonical := range sumSkillNames {
 			legacy := strings.TrimPrefix(canonical, "sum-")
 			path := filepath.Join(canonicalRoot, legacy)
-			target, linkErr := os.Readlink(path)
-			if linkErr == nil && target == canonical {
-				compatibility = append(compatibility, fmt.Sprintf("skills/%s->skills/%s", legacy, canonical))
-			} else if exists(path) {
-				errors = append(errors, fmt.Sprintf("legacy compatibility reference mismatch: %s must point to %s", path, canonical))
+			if exists(path) {
+				errors = append(errors, fmt.Sprintf("leftover unprefixed skill alias: %s", path))
 			}
 		}
 	}
-	sort.Slice(compatibility, func(i, j int) bool {
-		return compatibility[i].(string) < compatibility[j].(string)
-	})
 
 	routes := ordjson.NewObject()
 	for _, route := range []struct {
