@@ -159,18 +159,6 @@
       "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []}
     },
     {
-      "id": "sumctl-go",
-      "source": "go/cmd/sumctl-go",
-      "version": "sum 0.1.0",
-      "checksum": "release.json#dependencies.native.sumctl-go.sha256",
-      "license": "MIT",
-      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
-      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain", "prior packager artifact name"],
-      "role": "runtime",
-      "owner": "sum",
-      "contracts": {"cli": ["sumctl-go"], "mcp": []}
-    },
-    {
       "id": "remainder",
       "source": "https://github.com/douglasjarquin/remainder",
       "version": "0.2.2 (linux-amd64), 0.2.1 (darwin-arm64, linux-arm64)",

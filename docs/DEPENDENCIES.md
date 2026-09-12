@@ -33,10 +33,8 @@ The native companions are also built in a release staging directory with `CGO_EN
 The staged binaries' source, build requirements, runtime requirements, and SHA-256 are recorded in `release.json` under `dependencies.native.sumctl` and `dependencies.native.herdr-mesh`.
 A helper from before the Go Mesh cutover records `herdr-mesh-go` instead.
 That id stays in the inventory until that helper is no longer the default.
-A helper from before the Go CLI cutover still requires `lib/sumctl.py` in the bundle and builds `go/cmd/sumctl-go` as `.local/bin/sumctl-go`.
-It also imports `lib/execution_reservations.py` and `lib/repair_control.py` when it loads that helper for `runtime_contracts`.
-Keep those until that helper is no longer the default.
-`bin/sumctl` execs `sumctl-go` when `.local/bin/sumctl` is absent.
+`bin/sumctl` execs `.local/bin/sumctl`, built from `go/cmd/sumctl`.
+It still execs `sumctl-go` when that is the only staged name, so a 04ee293 runtime keeps working.
 Running them requires no Go toolchain, module download, Node, Python, or Cobra generator.
 
 The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
