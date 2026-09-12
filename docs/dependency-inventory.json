@@ -161,14 +161,14 @@
     {
       "id": "remainder",
       "source": "https://github.com/douglasjarquin/remainder",
-      "version": "0.2.2 (linux-amd64), 0.2.1 (darwin-arm64, linux-arm64)",
+      "version": "0.3.0 (darwin-arm64), 0.2.2 (linux-amd64), 0.2.1 (linux-arm64)",
       "checksum": "per-platform archive SHA-256 in pins",
       "license": "MIT",
       "platforms": ["linux-amd64", "darwin-arm64", "linux-arm64"],
       "requirements": ["setup/release staging only", "checksum-verified GitHub release tar.gz", "Codex quota; not a mise which tool"],
       "role": "runtime",
       "owner": "Remainder",
-      "contracts": {"cli": ["remainder --provider", "remainder --format json"], "mcp": []},
+      "contracts": {"cli": ["remainder --provider", "remainder --format toon", "remainder --format json"], "mcp": []},
       "pins": {
         "linux-amd64": {
           "version": "0.2.2",
@@ -176,9 +176,9 @@
           "asset": "remainder_v0.2.2_linux_amd64.tar.gz"
         },
         "darwin-arm64": {
-          "version": "0.2.1",
-          "sha256": "84f3b21f3a0a30068644e4c6f229af1ec7b183744be30f10c379fe514921af95",
-          "asset": "remainder_v0.2.1_darwin_arm64.tar.gz"
+          "version": "0.3.0",
+          "sha256": "b0e263a0f0ac96125d76691cf145836650d777cfd7a85dd8d840ae5c1a898ba2",
+          "asset": "remainder_v0.3.0_darwin_arm64.tar.gz"
         },
         "linux-arm64": {
           "version": "0.2.1",

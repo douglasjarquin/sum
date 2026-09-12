@@ -133,8 +133,9 @@ This section is unrun until an operator records it.
 Offline fixtures do not certify a live Codex account.
 
 After `mise run setup` (or a staged release) on a supported platform, confirm `./bin/sumctl doctor` lists `remainder` with `ok` true at the runtime `.local/bin/remainder` link.
-Confirm `sumctl quota --provider codex` prints one compact line and exits 0 when the selected Codex account is usable, including a remaining value of 0.
+Confirm `sumctl quota --provider codex` prints Remainder TOON and exits 0 when the selected Codex account is usable, including a remaining value of 0.
 Confirm `sumctl quota --provider codex --format json` prints Remainder JSON and does not wrap it in a sum envelope.
+Confirm `sumctl quota --provider codex --format compact` still prints Remainder compact.
 Confirm a missing Remainder binary refuses Codex quota with a clear error and does not invoke quota-axi.
 Confirm `sumctl quota --provider claude` still runs quota-axi and does not invoke Remainder.
 Do not switch accounts, stop workers, or rank providers from this output.

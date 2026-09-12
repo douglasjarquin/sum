@@ -11,19 +11,16 @@ import (
 )
 
 func Run(runtimeRoot, provider, format string, stdout, stderr io.Writer) (int, error) {
-	if format == "" {
-		format = "compact"
-	}
 	var argv []string
 	if provider == "codex" {
 		binary, err := toolpath.Find(runtimeRoot, "remainder")
 		if err != nil || !isFile(binary) {
 			return 1, fmt.Errorf("Missing remainder for Codex quota. Run mise run setup. quota-axi is not used for this provider.")
 		}
-		argv = []string{binary, "--provider", "codex", "--profile", "default"}
-		if format == "json" {
-			argv = append(argv, "--format", "json")
+		if format == "" {
+			format = "toon"
 		}
+		argv = []string{binary, "--provider", "codex", "--profile", "default", "--format", format}
 	} else {
 		binary, err := toolpath.Find(runtimeRoot, "quota-axi")
 		if err != nil {
