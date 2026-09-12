@@ -1,6 +1,8 @@
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -48,6 +50,23 @@ class PackagingInventoryTest(unittest.TestCase):
         herdr_line = text.index('.local/bin/herdr-mesh"')
         go_line = text.index(".local/bin/herdr-mesh-go")
         self.assertLess(herdr_line, go_line)
+
+    def test_mcp_smoke_launches_the_public_wrapper(self):
+        text = (ROOT / "scripts" / "mcp_smoke.mjs").read_text()
+        self.assertIn('path.join(root, "bin", "herdr-mesh")', text)
+        self.assertNotIn('path.join(root, ".local", "bin", "herdr-mesh")', text)
+
+    def test_wrapper_execs_herdr_mesh_go_when_that_is_the_only_artifact(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "bin").mkdir()
+        (root / ".local" / "bin").mkdir(parents=True)
+        shutil.copy(ROOT / "bin" / "herdr-mesh", root / "bin" / "herdr-mesh")
+        os.chmod(root / "bin" / "herdr-mesh", 0o755)
+        artifact = root / ".local" / "bin" / "herdr-mesh-go"
+        artifact.write_text("#!/bin/sh\necho herdr-mesh 0.1.0\n")
+        os.chmod(artifact, 0o755)
+        out = subprocess.check_output([str(root / "bin" / "herdr-mesh"), "--version"], text=True)
+        self.assertEqual(out, "herdr-mesh 0.1.0\n")
 
 
 if __name__ == "__main__":

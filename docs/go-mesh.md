@@ -23,3 +23,4 @@ A helper from before this cutover still copies those files when it stages this t
 Keep them until that helper is no longer the default.
 A bundle staged by that helper names the Go binary `herdr-mesh-go`.
 `bin/herdr-mesh` execs that name when `.local/bin/herdr-mesh` is absent.
+Release smoke launches `bin/herdr-mesh`, not the internal artifact name.
