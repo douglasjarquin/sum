@@ -40,9 +40,20 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 		return nil, err
 	}
 	repo := asString(task, "repository")
+	remote := args.Repo
+	if remote == "" {
+		view := exec.Command(gh, "repo", "view", "--json", "nameWithOwner")
+		view.Dir = repo
+		if out, viewErr := view.Output(); viewErr == nil {
+			var payload map[string]any
+			if json.Unmarshal(out, &payload) == nil {
+				remote, _ = payload["nameWithOwner"].(string)
+			}
+		}
+	}
 	cmd := exec.Command(gh, "pr", "view", fmt.Sprint(args.Number), "--json", "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit")
-	if args.Repo != "" {
-		cmd.Args = append(cmd.Args, "--repo", args.Repo)
+	if remote != "" {
+		cmd.Args = append(cmd.Args, "--repo", remote)
 	}
 	cmd.Dir = repo
 	out, runErr := cmd.CombinedOutput()
@@ -79,9 +90,38 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 		by.Set(k, v)
 	}
 	pr.Set("observed_by", by)
-	pr.Set("findings", []any{})
-	merged := state == "merged"
-	pr.Set("merged_for_task", merged)
+	var findings []any
+	headSHA := fmt.Sprint(data["headRefOid"])
+	var candidate string
+	if report := asObject(func() any { v, _ := task.Get("report"); return v }()); report != nil {
+		candidate = asString(report, "candidate")
+	}
+	if candidate == "" {
+		for _, raw := range asList(func() any { v, _ := task.Get("evidence"); return v }()) {
+			ev := asObject(raw)
+			if asString(ev, "kind") == "handoff" {
+				if c := asString(ev, "candidate"); c != "" {
+					candidate = c
+				}
+			}
+		}
+	}
+	if candidate != "" && headSHA != candidate {
+		findings = append(findings, fmt.Sprintf("PR head %s is not the recorded candidate %s", headSHA, candidate))
+	}
+	var mergeCommit any
+	if mc, ok := data["mergeCommit"]; ok && mc != nil {
+		if m, isMap := mc.(map[string]any); isMap {
+			mergeCommit = m["oid"]
+		} else {
+			mergeCommit = mc
+		}
+	}
+	pr.Set("findings", findings)
+	pr.Set("merge_commit", mergeCommit)
+	complete := state == "merged" && mergeCommit != nil && len(findings) == 0
+	pr.Set("complete", complete)
+	pr.Set("merged_for_task", complete)
 	task.Set("pr", pr)
 	body := ordjson.NewObject()
 	body.Set("outcome", "observed")
@@ -113,6 +153,16 @@ func Evidence(s *store.Store, ctx *ordjson.Object, taskID, run, visibility strin
 		return nil, err
 	}
 	return nil, fmt.Errorf("pr evidence requires a reconciled PR and a captured evidence run; record the PR with `pr reconcile` first.")
+}
+
+func asObject(v any) *ordjson.Object {
+	o, _ := v.(*ordjson.Object)
+	return o
+}
+
+func asList(v any) []any {
+	list, _ := v.([]any)
+	return list
 }
 
 func asString(o *ordjson.Object, key string) string {

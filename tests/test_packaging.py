@@ -21,7 +21,7 @@ class PackagingInventoryTest(unittest.TestCase):
             self.assertTrue(entry["checksum"], entry["id"])
             self.assertIn(entry["role"], ("build", "runtime", "build-and-runtime"), entry["id"])
         ids = {entry["id"] for entry in entries}
-        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl-go", "herdr-mesh", "herdr-mesh-go", "quota-axi", "remainder"} <= ids)
+        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl", "herdr-mesh", "herdr-mesh-go", "quota-axi", "remainder"} <= ids)
         mesh = next(entry for entry in entries if entry["id"] == "herdr-mesh")
         prior = next(entry for entry in entries if entry["id"] == "herdr-mesh-go")
         self.assertEqual(mesh["source"], "go/cmd/herdr-mesh")

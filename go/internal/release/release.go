@@ -28,7 +28,7 @@ const (
 var (
 	CoreTools = []string{"python3", "node", "herdr", "gh"}
 
-	requiredFiles = []string{"bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "lib/sumctl.py"}
+	requiredFiles = []string{"bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "go/cmd/sumctl/main.go"}
 	workerSkills  = []string{"skills/sum-worker/SKILL.md", "skills/worker/SKILL.md"}
 
 	sha40Hex        = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -375,7 +375,7 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 		}
 	}
 	if truthy(native) {
-		if _, has := native.Get("sumctl-go"); !has {
+		if _, has := native.Get("sumctl"); !has {
 			return nil, verifyErrorf("%s: native dependency metadata is incomplete", path)
 		}
 		_, hasMesh := native.Get("herdr-mesh")

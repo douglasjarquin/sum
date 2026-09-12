@@ -36,11 +36,11 @@ func main() {
 }
 
 func helperPath() string {
-	if root := os.Getenv("SUM_INSTALL_ROOT"); root != "" {
-		return filepath.Join(root, "bin", "sumctl")
-	}
 	if exe, err := os.Executable(); err == nil {
 		return exe
+	}
+	if root := os.Getenv("SUM_INSTALL_ROOT"); root != "" {
+		return filepath.Join(root, "bin", "sumctl")
 	}
 	return ""
 }

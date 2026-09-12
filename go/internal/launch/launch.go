@@ -216,13 +216,13 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 			if len(names) > 0 {
 				listed = strings.Join(names, ", ")
 			}
-			return nil, fmt.Errorf("Unknown preset %q; saved presets: %s. Run `preset list`, or create it with `preset set %s --harness ...`. Nothing was created.", args.Preset, listed, args.Preset)
+			return nil, fmt.Errorf("Unknown preset '%s'; saved presets: %s. Run `preset list`, or create it with `preset set %s --harness ...`. Nothing was created.", args.Preset, listed, args.Preset)
 		}
 		chosen = spec
 		chosenSource = "preset"
 		h := asString(func() any { v, _ := spec.Get("harness"); return v }())
 		if args.Harness != "" && args.Harness != h {
-			return nil, fmt.Errorf("Preset %q runs on %s but --harness %s was requested. Choose one: drop --harness, pick another preset, or dispatch without --preset. Nothing was created.", args.Preset, h, args.Harness)
+			return nil, fmt.Errorf("Preset '%s' runs on %s but --harness %s was requested. Choose one: drop --harness, pick another preset, or dispatch without --preset. Nothing was created.", args.Preset, h, args.Harness)
 		}
 	} else if name := asString(func() any { v, _ := saved.Get("preset"); return v }()); name != "" && !args.SameAsRoot {
 		spec, ok := presets[name]

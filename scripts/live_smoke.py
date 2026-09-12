@@ -65,7 +65,7 @@ def main():
             brief = base / "brief.md"
             brief.write_text("Smoke test only. Do not launch any model or publish anything.")
             def sumctl(*args):
-                result = subprocess.run([sys.executable, str(ROOT / "lib/sumctl.py"), *args], env=env, text=True, capture_output=True)
+                result = subprocess.run([str(ROOT / "bin/sumctl"), *args], env=env, text=True, capture_output=True)
                 if result.returncode:
                     raise RuntimeError(f"sumctl {' '.join(args)} failed: {result.stderr.strip()[-1500:]}")
                 return json.loads(result.stdout)

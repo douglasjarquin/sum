@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -42,7 +41,7 @@ func buildValidRelease(t *testing.T, releasesRoot, sha string) {
 		{"bin/sumctl", "#!/bin/sh\necho sumctl\n"},
 		{"bin/herdr-mesh", "#!/bin/sh\necho herdr-mesh\n"},
 		{"bin/herdr-scoped", "#!/bin/sh\necho herdr-scoped\n"},
-		{"lib/sumctl.py", "# sumctl\n"},
+		{"go/cmd/sumctl/main.go", "package main\n"},
 		{"skills/sum-worker/SKILL.md", "# worker\n"},
 	}
 	var filesEntries []string
@@ -104,22 +103,13 @@ func buildInstallation(t *testing.T) (root, home string) {
 	return root, home
 }
 
-func TestReleaseList_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
-
+func TestReleaseList_emptyAndMixedBundles(t *testing.T) {
 	t.Run("no releases directory", func(t *testing.T) {
 		_, home := buildInstallation(t)
-		assertReleaseMatches(t, reference, home, []string{"release", "list"})
+		out := runRelease(t, home, []string{"release", "list"})
+		if !strings.Contains(out, `"releases"`) {
+			t.Fatalf("missing releases key: %s", out)
+		}
 	})
 
 	t.Run("one valid release, one broken (missing manifest), one in-progress staging dir", func(t *testing.T) {
@@ -134,92 +124,60 @@ func TestReleaseList_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(releasesRoot, ".staging-ccccccccc"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		assertReleaseMatches(t, reference, home, []string{"release", "list"})
+		out := runRelease(t, home, []string{"release", "list"})
+		if !strings.Contains(out, validSHA) {
+			t.Fatalf("valid SHA missing: %s", out)
+		}
+		if !strings.Contains(out, `"ok": false`) {
+			t.Fatalf("broken bundle should be ok=false: %s", out)
+		}
 	})
 }
 
-func TestReleaseShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
-
+func TestReleaseShow_shaAndPrefix(t *testing.T) {
 	t.Run("full SHA match", func(t *testing.T) {
 		root, home := buildInstallation(t)
 		validSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		buildValidRelease(t, filepath.Join(root, ".local", "releases"), validSHA)
-		assertReleaseMatches(t, reference, home, []string{"release", "show", validSHA})
+		out := runRelease(t, home, []string{"release", "show", validSHA})
+		if !strings.Contains(out, validSHA) {
+			t.Fatalf("show missing SHA: %s", out)
+		}
 	})
 
 	t.Run("short SHA prefix match", func(t *testing.T) {
 		root, home := buildInstallation(t)
 		validSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		buildValidRelease(t, filepath.Join(root, ".local", "releases"), validSHA)
-		assertReleaseMatches(t, reference, home, []string{"release", "show", "aaaaaaa"})
+		out := runRelease(t, home, []string{"release", "show", "aaaaaaa"})
+		if !strings.Contains(out, validSHA) {
+			t.Fatalf("prefix show missing SHA: %s", out)
+		}
 	})
 
 	t.Run("no match is a command-level failure", func(t *testing.T) {
 		root, home := buildInstallation(t)
 		validSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		buildValidRelease(t, filepath.Join(root, ".local", "releases"), validSHA)
-		assertReleaseFailureMatches(t, reference, home, []string{"release", "show", "ffffffff"})
+		var stdout, stderr bytes.Buffer
+		cli := NewRoot("", &stdout, &stderr)
+		cli.SetArgs([]string{"--home", home, "release", "show", "ffffffff"})
+		err := cli.ExecuteContext(context.Background())
+		if err == nil {
+			t.Fatalf("expected failure, got %s", stdout.String())
+		}
 	})
 }
 
-func assertReleaseMatches(t *testing.T, reference, home string, args []string) {
+func runRelease(t *testing.T, home string, args []string) string {
 	t.Helper()
-	fullArgs := append([]string{"--home", home}, args...)
-	want, err := exec.Command(reference, fullArgs...).Output()
-	if err != nil {
-		t.Fatalf("python reference failed: %v", err)
-	}
 	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs(fullArgs)
+	root := NewRoot("", &stdout, &stderr)
+	root.SetArgs(append([]string{"--home", home}, args...))
 	if err := root.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
 	}
-	if stdout.String() != string(want) {
-		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
-	}
-}
-
-// assertReleaseFailureMatches covers the command-level error path: `verify_release`/`release_show` raise, main()
-// catches and prints `{"error": ...}` to stderr with exit 1. The Go RunE returns a bare error whose .Error() text
-// must equal that JSON's "error" field, since main.go wraps it in the identical shape.
-func assertReleaseFailureMatches(t *testing.T, reference, home string, args []string) {
-	t.Helper()
-	fullArgs := append([]string{"--home", home}, args...)
-	cmd := exec.Command(reference, fullArgs...)
-	var pyStderr bytes.Buffer
-	cmd.Stderr = &pyStderr
-	if err := cmd.Run(); err == nil {
-		t.Fatalf("expected python reference to fail, got success with stderr=%s", pyStderr.String())
-	}
-	var pyPayload struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal(pyStderr.Bytes(), &pyPayload); err != nil {
-		t.Fatalf("python stderr is not the expected error JSON: %v (stderr=%s)", err, pyStderr.String())
-	}
-
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs(fullArgs)
-	err := root.ExecuteContext(context.Background())
-	if err == nil {
-		t.Fatalf("expected go command to fail, got success with stdout=%s", stdout.String())
-	}
-	if err.Error() != pyPayload.Error {
-		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), pyPayload.Error)
-	}
+	return stdout.String()
 }
 
 func TestReleaseStage_requiresInstallationHome(t *testing.T) {

@@ -13,11 +13,11 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/brief"
 	"github.com/douglasjarquin/sum/go/internal/contextview"
 	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/doctor"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/graph"
+	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -85,11 +85,15 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.Flags().StringVar(&opts.home, "home", "", "state home")
 	root.Flags().Lookup("home").NoOptDefVal = ""
-	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		opts.homeSet = root.Flags().Changed("home")
 		if !opts.homeSet {
 			opts.home = sumruntime.DefaultHome(opts.installRoot)
 		}
+		if _, err := os.Stat(filepath.Join(opts.installRoot, "release.json")); err == nil {
+			return fmt.Errorf("%s is an immutable release tree. Run the installation's bin/sumctl, which selects a runtime and keeps state in its own .sum; a release never owns state.", opts.installRoot)
+		}
+		return nil
 	}
 	root.SetHelpCommand(nil)
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
@@ -404,6 +408,8 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 					ref = args[2]
 				} else if len(args) == 2 && strings.HasPrefix(args[1], "--ref=") {
 					ref = strings.TrimPrefix(args[1], "--ref=")
+				} else if len(args) == 2 && !strings.HasPrefix(args[1], "-") {
+					ref = args[1]
 				} else if len(args) != 1 {
 					return usageError("release stage", args[1:])
 				}
@@ -544,7 +550,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				if st, err := store.Open(opts.home); err == nil {
-					view := doctor.Doctor(opts.runtimeRoot, st)
+					view := doctor.Doctor(opts.runtimeRoot, opts.installRoot, st)
 					if emitErr := emitOrdjson(cmd.OutOrStdout(), view); emitErr != nil {
 						return emitErr
 					}
@@ -958,11 +964,29 @@ func (o *rootOptions) runMetadata(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		if _, err := store.Context(o.installRoot); err != nil && args[0] != "status" {
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
 			return err
 		}
-		_ = st
-		return fmt.Errorf("metadata %s requires a registered coordinator pane and a Herdr that exposes report-metadata", args[0])
+		notify := false
+		for _, a := range args[1:] {
+			if a == "--notify" {
+				notify = true
+			}
+		}
+		var view *ordjson.Object
+		switch args[0] {
+		case "enable":
+			view, err = metadata.Enable(st, ctx, o.runtimeRoot, notify)
+		case "disable":
+			view, err = metadata.Disable(st, ctx)
+		case "sync", "inbox":
+			view, err = metadata.Sync(st, ctx, o.runtimeRoot)
+		}
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
 	default:
 		return usageError("metadata", args)
 	}
@@ -976,10 +1000,13 @@ func usageError(command string, args []string) error {
 }
 
 func (o *rootOptions) sumctlPath() string {
+	if o.installRoot != "" {
+		return filepath.Join(o.installRoot, "bin", "sumctl")
+	}
 	if o.reference != "" {
 		return o.reference
 	}
-	return filepath.Join(o.installRoot, "bin", "sumctl")
+	return filepath.Join(o.runtimeRoot, "bin", "sumctl")
 }
 
 func emitJSON(out io.Writer, value any) error {
@@ -999,5 +1026,3 @@ func emitOrdjson(out io.Writer, value any) error {
 	_, err = fmt.Fprintln(out, string(encoded))
 	return err
 }
-
-

@@ -53,7 +53,7 @@ With all slots occupied, confirm resume and `verify --execute` refuse before lau
 Confirm idle, missing, and unobservable workers remain reserved rather than permitting duplicate execution.
 Then follow the fleet canary in `skills/sum-update/SKILL.md`: update, refresh, answer and report through old callbacks, roll back, refresh again.
 Record each worker's observed state, the `fanout` counts and wall time of every pass, the receipts that appeared and when, and every worker that kept its process, checkout, and partial work.
-Scripted workers in `tests/test_fleet.py` establish the bookkeeping; only this step says anything about a model acting on a refresh.
+Scripted workers in `scripts/demo.py` establish the bookkeeping; only this step says anything about a model acting on a refresh.
 
 For controlled repairs, send two approved corrections to a settled lab worker with `repair send TASK_ID --attempt ID --key KEY --file FILE`, using distinct keys.
 Confirm the third correction and an execution resume are refused with one budget question and no native launch or prompt.

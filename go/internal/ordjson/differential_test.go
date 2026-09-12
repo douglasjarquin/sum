@@ -12,15 +12,6 @@ func TestWriteFile_matchesPythonAtomicJSONByteForByte(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not on PATH")
 	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	libPath := filepath.Join(repoRoot, "lib", "sumctl.py")
-	if _, err := os.Stat(libPath); err != nil {
-		t.Skipf("reference lib/sumctl.py not found: %v", err)
-	}
-
 	eAcute := string(rune(0x00e9))
 	musicalSymbol := string(rune(0x1d11e))
 	stringValue := strings.Join([]string{
@@ -33,7 +24,7 @@ func TestWriteFile_matchesPythonAtomicJSONByteForByte(t *testing.T) {
 	input := `{"b": 1, "a": {"nested": true, "list": [1, 2, "x"]}, "s": "` + stringValue + `"}`
 
 	pythonOut := filepath.Join(t.TempDir(), "python.json")
-	cmd := exec.Command("python3", "testdata/atomic_json_ref.py", libPath, pythonOut, input)
+	cmd := exec.Command("python3", "testdata/atomic_json_ref.py", pythonOut, input)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("python reference failed: %v\n%s", err, out)
 	}

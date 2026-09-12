@@ -784,7 +784,7 @@ func parseBindArgs(tokens []string) (taskID, workerPane string, parentOnly, ok b
 }
 
 func (o *rootOptions) runReport(cmd *cobra.Command, args []string) error {
-	taskID, text, file, ok := parseTextTaskArgs(args)
+	taskID, text, file, handoffPath, ok := parseReportArgs(args)
 	if !ok {
 		return fmt.Errorf("invalid report arguments")
 	}
@@ -796,11 +796,82 @@ func (o *rootOptions) runReport(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	view, err := report.Run(st, taskID, body, nil, app.OptionalContext(o.installRoot), o.pumpOpts())
+	var handoff *ordjson.Object
+	if handoffPath != "" {
+		raw, readErr := os.ReadFile(handoffPath)
+		if readErr != nil {
+			return readErr
+		}
+		decoded, decErr := ordjson.Decode(raw)
+		if decErr != nil {
+			return decErr
+		}
+		obj, isObj := decoded.(*ordjson.Object)
+		if !isObj {
+			return fmt.Errorf("handoff file is not a JSON object")
+		}
+		handoff = obj
+	}
+	view, err := report.Run(st, taskID, body, handoff, app.OptionalContext(o.installRoot), o.pumpOpts())
 	if err != nil {
 		return err
 	}
 	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseReportArgs(tokens []string) (taskID, text, file, handoff string, ok bool) {
+	textSet, fileSet := false, false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		take := func(dest *string) bool {
+			if i+1 >= len(tokens) {
+				return false
+			}
+			i++
+			*dest = tokens[i]
+			return true
+		}
+		switch {
+		case token == "--text":
+			if textSet || !take(&text) {
+				return "", "", "", "", false
+			}
+			textSet = true
+		case strings.HasPrefix(token, "--text="):
+			if textSet {
+				return "", "", "", "", false
+			}
+			text = strings.TrimPrefix(token, "--text=")
+			textSet = true
+		case token == "--file":
+			if fileSet || !take(&file) {
+				return "", "", "", "", false
+			}
+			fileSet = true
+		case strings.HasPrefix(token, "--file="):
+			if fileSet {
+				return "", "", "", "", false
+			}
+			file = strings.TrimPrefix(token, "--file=")
+			fileSet = true
+		case token == "--handoff":
+			if !take(&handoff) {
+				return "", "", "", "", false
+			}
+		case strings.HasPrefix(token, "--handoff="):
+			handoff = strings.TrimPrefix(token, "--handoff=")
+		case strings.HasPrefix(token, "-"):
+			return "", "", "", "", false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", "", "", false
+		}
+	}
+	if taskID == "" || (!textSet && !fileSet) {
+		return "", "", "", "", false
+	}
+	return taskID, text, file, handoff, true
 }
 
 func (o *rootOptions) runArchive(cmd *cobra.Command, args []string) error {
@@ -2316,7 +2387,7 @@ func (o *rootOptions) runCleanup(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	view, err := cleanup.Run(st, ctx, parsed)
+	view, err := cleanup.Run(st, ctx, o.runtimeRoot, parsed)
 	if err != nil {
 		return err
 	}
@@ -2487,7 +2558,7 @@ func (o *rootOptions) runRefresh(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		view, err := refreshcmd.Request(st, ctx, tasks, coordinator)
+		view, err := refreshcmd.Request(st, ctx, tasks, coordinator, o.runtimeRoot, o.sumctlPath())
 		if err != nil {
 			return err
 		}

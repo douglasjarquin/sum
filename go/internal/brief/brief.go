@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -102,7 +101,6 @@ func Render(s *store.Store, runtimeRoot, sumctlPath string, task *ordjson.Object
 	branch := asString(func() any { v, _ := task.Get("branch"); return v }())
 	kind := asString(func() any { v, _ := task.Get("kind"); return v }())
 	harness := asString(func() any { v, _ := task.Get("harness"); return v }())
-	helper := sumctlPath
 	skillHash := asString(func() any { v, _ := policy.Get("worker_skill_sha256"); return v }())
 	if len(skillHash) > 16 {
 		skillHash = skillHash[:16]
@@ -112,13 +110,8 @@ func Render(s *store.Store, runtimeRoot, sumctlPath string, task *ordjson.Object
 	contextCmd := asString(func() any { v, _ := commands.Get("context"); return v }())
 	resolve := asString(func() any { v, _ := commands.Get("resolve"); return v }())
 	report := asString(func() any { v, _ := commands.Get("report"); return v }())
-	graphSection := "- Not recorded for this task (dispatched before sum initialized graphs). Use your normal source tools; do not run `codegraph init` yourself."
-	if text, err := graphview.View(s, task); err == nil && text != nil {
-		if present, _ := text.Get("present"); present == true {
-			state, _ := text.Get("state")
-			graphSection = fmt.Sprintf("- State: `%v`. %s", state, graphview.GraphFallback)
-		}
-	}
+	graphSection := graphText(s, sumctlPath, task)
+	delivered := deliveredRuntimeText(s, runtimeRoot, sumctlPath, task)
 	return fmt.Sprintf(`# sum worker brief — %s
 
 You are the worker for this ONE task, not the coordinator.
@@ -152,8 +145,7 @@ Read this entire file. Do not load the coordinator's AGENTS.md as your role.
 
 ## Delivered runtime
 
-- Role: `+"`worker`"+` (registered at dispatch; `+"`sumctl init`"+` in your checkout reports it and never grants coordination).
-- Helper: `+"`%s`"+` is the installed entrypoint; every command in this brief uses that absolute path. Do not look for `+"`bin/sumctl`"+` or `+"`skills/`"+` relative to your checkout.
+%s
 
 ## Brief revision
 
@@ -201,7 +193,7 @@ A report is a claim for the coordinator to verify, NOT proof of successful compl
 ## Worker procedure
 
 %s
-`, id, brief, repo, worktree, base, branch, kind, harness, graphSection, helper, revision, contract.SumVersion, skillHash, ask, show, contextCmd, resolve, report, WorkerSkill(runtimeRoot))
+`, id, brief, repo, worktree, base, branch, kind, harness, graphSection, delivered, revision, contract.SumVersion, skillHash, ask, show, contextCmd, resolve, report, WorkerSkill(runtimeRoot))
 }
 
 func WriteInitial(s *store.Store, runtimeRoot, sumctlPath string, task *ordjson.Object) (string, error) {

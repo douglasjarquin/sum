@@ -268,6 +268,79 @@ func TestPrepare_createsIsolatedWorktree(t *testing.T) {
 	if !strings.Contains(body, "not the coordinator") || !strings.Contains(body, "ask") {
 		t.Fatalf("brief missing required contract text:\n%s", body)
 	}
+	if !strings.Contains(body, "## Delivered runtime") {
+		t.Fatalf("brief missing delivered runtime:\n%s", body)
+	}
+}
+
+func TestPrepare_usesEnrolledProject(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	if _, err := runCLI(t, home, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	repo := filepath.Join(home, "repo")
+	if err := os.MkdirAll(repo, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		if out := execGit(t, repo, args...); out != "" {
+			t.Fatal(out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.name", "sum test")
+	run("config", "user.email", "test@example.invalid")
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("base\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "fixture")
+	run("remote", "add", "origin", "https://github.com/demo/project.git")
+	registry := fmt.Sprintf(`{"schema": 1, "projects": {"demo/project": {
+"name": "demo/project", "host": "github.com", "owner": "demo", "repo": "project", "kind": "managed",
+"path": %q, "remote": "https://github.com/demo/project.git",
+"enrolled_at": "2026-01-01T00:00:00+00:00",
+"enrolled_by": {"machine": "m1", "session": "s1", "pane": "p1"},
+"canonical_path": %q, "note": null}}}`, repo, repo)
+	if err := os.WriteFile(filepath.Join(home, "projects.json"), []byte(registry), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	briefPath := filepath.Join(home, "brief.md")
+	if err := os.WriteFile(briefPath, []byte("Add a greeting and test it. Do not publish or merge.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unknown, err := runCLI(t, home, "prepare", "--project", "demo/missing", "--brief", briefPath, "--harness", "codex", "--approved")
+	if err == nil {
+		t.Fatalf("unknown project succeeded:\n%s", unknown)
+	}
+	if !strings.Contains(err.Error(), "No enrolled project") {
+		t.Fatalf("unknown project err = %v\n%s", err, unknown)
+	}
+	out, err := runCLI(t, home, "prepare", "--project", "demo/project", "--brief", briefPath, "--harness", "codex", "--approved")
+	if err != nil {
+		t.Fatalf("prepare --project: %v\n%s", err, out)
+	}
+	value := decodeObject(t, out)
+	if value["status"] != "prepared" {
+		t.Fatalf("status = %v\n%s", value["status"], out)
+	}
+	resolved := repo
+	if real, err := filepath.EvalSymlinks(repo); err == nil {
+		resolved = real
+	}
+	if value["repository"] != resolved {
+		t.Fatalf("repository = %v want %q", value["repository"], resolved)
+	}
+	projectObj, _ := value["project"].(map[string]any)
+	if projectObj["name"] != "demo/project" {
+		t.Fatalf("project = %v", projectObj)
+	}
+	worktree, _ := value["worktree"].(string)
+	if worktree == "" || worktree == resolved {
+		t.Fatalf("worktree = %q", worktree)
+	}
 }
 
 func execGit(t *testing.T, repo string, args ...string) string {

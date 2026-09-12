@@ -455,6 +455,89 @@ func List(s *store.Store, runtimeRoot string) (*ordjson.Object, error) {
 	return result, nil
 }
 
+func identityOf(record *ordjson.Object) *ordjson.Object {
+	return pick(record, []string{"name", "host", "owner", "repo", "path", "kind", "remote"})
+}
+
+func boolField(o *ordjson.Object, key string) (value bool, present bool) {
+	if o == nil {
+		return false, false
+	}
+	raw, ok := o.Get(key)
+	if !ok {
+		return false, false
+	}
+	b, ok := raw.(bool)
+	if !ok {
+		return false, false
+	}
+	return b, true
+}
+
+// ResolveTaskRepository ports `resolve_task_repository`: exactly one of --repo PATH or --project NAME.
+func ResolveTaskRepository(s *store.Store, repo, name string) (string, *ordjson.Object, error) {
+	if name != "" && repo != "" {
+		return "", nil, fmt.Errorf("Give either --repo PATH or --project NAME, not both.")
+	}
+	if name == "" {
+		if repo == "" {
+			return "", nil, fmt.Errorf("Give --repo PATH or --project NAME.")
+		}
+		return repo, nil, nil
+	}
+	registry, err := ReadProjects(s)
+	if err != nil {
+		return "", nil, err
+	}
+	projectsObj := asObject(getPath(registry, "projects"))
+	var record *ordjson.Object
+	if projectsObj != nil {
+		record = asObject(getPath(projectsObj, name))
+	}
+	if record == nil {
+		return "", nil, fmt.Errorf("No enrolled project %s; `project list` shows the registry and `project enroll owner/repo` adds exactly one repository.", pyrepr.Repr(name))
+	}
+	observed := ObserveProject(record)
+	present, _ := boolField(observed, "present")
+	gitOK, _ := boolField(observed, "git")
+	remoteMatches, remotePresent := boolField(observed, "remote_matches")
+	if !present || !gitOK || (remotePresent && !remoteMatches) {
+		problem, _ := observed.Get("problem")
+		return "", nil, fmt.Errorf("Enrolled project %s at %s is not usable: %v. Nothing was dispatched or re-cloned.", name, asString(getPath(record, "path")), problem)
+	}
+	return asString(getPath(record, "path")), identityOf(record), nil
+}
+
+// ByPath ports `project_by_path`: the registered project whose clone is exactly path, or nil.
+func ByPath(s *store.Store, path string) *ordjson.Object {
+	registry, err := ReadProjects(s)
+	if err != nil {
+		return nil
+	}
+	resolved, err := resolvePath(path)
+	if err != nil {
+		resolved = path
+	}
+	projectsObj := asObject(getPath(registry, "projects"))
+	if projectsObj == nil {
+		return nil
+	}
+	for _, key := range projectsObj.Keys() {
+		record := asObject(getPath(projectsObj, key))
+		if record == nil {
+			continue
+		}
+		recorded, recErr := resolvePath(asString(getPath(record, "path")))
+		if recErr != nil {
+			recorded = asString(getPath(record, "path"))
+		}
+		if recorded == resolved {
+			return identityOf(record)
+		}
+	}
+	return nil
+}
+
 // Show ports `project_show`.
 func Show(s *store.Store, name string) (*ordjson.Object, error) {
 	registry, err := ReadProjects(s)

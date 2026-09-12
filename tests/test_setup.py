@@ -94,17 +94,17 @@ class SetupTest(unittest.TestCase):
 
     def test_tool_links_are_created_once_and_never_retargeted(self):
         link = self.root / '.local/bin/node'
-        first = setup.sumctl.link_tool(link, '/opt/node-22.19.0/bin/node')
+        first = setup.runtime_install.link_tool(link, '/opt/node-22.19.0/bin/node')
         expected = os.path.relpath('/opt/node-22.19.0/bin/node', start=link.parent)
         self.assertEqual((first['created'], os.readlink(link)), (True, expected))
-        second = setup.sumctl.link_tool(link, '/opt/node-22.20.0/bin/node')  # A new pin never moves a link a live process may use.
+        second = setup.runtime_install.link_tool(link, '/opt/node-22.20.0/bin/node')  # A new pin never moves a link a live process may use.
         self.assertEqual((second['created'], second['differs'], os.readlink(link)), (False, True, expected))
         (self.root / 'regular').write_text('x')
-        with self.assertRaises(setup.sumctl.SumError):
-            setup.sumctl.link_tool(self.root / 'regular', '/elsewhere')
+        with self.assertRaises(setup.runtime_install.InstallError):
+            setup.runtime_install.link_tool(self.root / 'regular', '/elsewhere')
 
     def test_remainder_is_not_a_mise_which_tool(self):
-        self.assertNotIn("remainder", setup.sumctl.TOOLS)
+        self.assertNotIn("remainder", setup.runtime_install.TOOLS)
 
     def test_install_remainder_verifies_checksum_extracts_once_and_never_retargets(self):
         pkg = self.root / "pkg"
@@ -124,7 +124,7 @@ class SetupTest(unittest.TestCase):
             shutil.copyfile(archive, dest)
 
         runtime = self.root / "runtime"
-        first = setup.sumctl.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="darwin-arm64")
+        first = setup.runtime_install.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="darwin-arm64")
         link = runtime / ".local/bin/remainder"
         dest = runtime / ".deps/remainder/0.0.0-darwin-arm64"
         self.assertTrue(first["installed"])
@@ -134,13 +134,13 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(os.readlink(link), os.path.relpath(dest / "remainder", start=link.parent))
         self.assertTrue((link.parent / os.readlink(link)).resolve().is_file())
         self.assertEqual(len(fetched), 1)
-        second = setup.sumctl.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="darwin-arm64")
+        second = setup.runtime_install.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="darwin-arm64")
         self.assertEqual(len(fetched), 1)
         self.assertFalse(second["created"])
         self.assertFalse(second["rewritten"])
         self.assertEqual(os.readlink(link), os.path.relpath(dest / "remainder", start=link.parent))
         later = {"version": "0.0.1", "sha256": digest, "asset": archive.name}
-        third = setup.sumctl.install_remainder(runtime, fetch=fetch, pin=later, platform_name="darwin-arm64")
+        third = setup.runtime_install.install_remainder(runtime, fetch=fetch, pin=later, platform_name="darwin-arm64")
         self.assertEqual(len(fetched), 2)
         self.assertTrue(third["differs"])
         self.assertEqual(os.readlink(link), os.path.relpath(dest / "remainder", start=link.parent))
@@ -154,8 +154,8 @@ class SetupTest(unittest.TestCase):
             shutil.copyfile(archive, dest)
 
         runtime = self.root / "runtime"
-        with self.assertRaisesRegex(setup.sumctl.SumError, "checksum mismatch"):
-            setup.sumctl.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="linux-amd64")
+        with self.assertRaisesRegex(setup.runtime_install.InstallError, "checksum mismatch"):
+            setup.runtime_install.install_remainder(runtime, fetch=fetch, pin=pin, platform_name="linux-amd64")
         self.assertFalse((runtime / ".deps/remainder/0.0.0-linux-amd64").exists())
         self.assertFalse((runtime / ".local/bin/remainder").exists())
 
@@ -163,8 +163,8 @@ class SetupTest(unittest.TestCase):
         os.environ["SUM_REMAINDER_NO_DOWNLOAD"] = "1"
         self.addCleanup(os.environ.pop, "SUM_REMAINDER_NO_DOWNLOAD", None)
         pin = {"version": "0.2.1", "sha256": "abc", "asset": "remainder_v0.2.1_darwin_arm64.tar.gz"}
-        with self.assertRaisesRegex(setup.sumctl.SumError, "disabled"):
-            setup.sumctl.install_remainder(self.root / "runtime", pin=pin, platform_name="darwin-arm64")
+        with self.assertRaisesRegex(setup.runtime_install.InstallError, "disabled"):
+            setup.runtime_install.install_remainder(self.root / "runtime", pin=pin, platform_name="darwin-arm64")
 
     def test_mise_and_all_python_sources_parse(self):
         tomllib.loads((ROOT / 'mise.toml').read_text())

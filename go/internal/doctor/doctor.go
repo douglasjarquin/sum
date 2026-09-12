@@ -34,7 +34,7 @@ var harnessExecutables = []struct {
 	{"copilot", "copilot"},
 }
 
-func Doctor(runtimeRoot string, s *store.Store) *ordjson.Object {
+func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 	rows := make([]any, 0, 12)
 
 	for _, name := range toolNames {
@@ -180,7 +180,10 @@ func Doctor(runtimeRoot string, s *store.Store) *ordjson.Object {
 	result.Set("version", contract.SumVersion)
 	result.Set("home", s.Home)
 	result.Set("runtime", runtimeRoot)
-	result.Set("installation", runtimeRoot)
+	if installRoot == "" {
+		installRoot = runtimeRoot
+	}
+	result.Set("installation", installRoot)
 	result.Set("checks", rows)
 	result.Set("ok", allOK)
 	result.Set("note", "Observation only: nothing was bound or written. No auth changes or permission bypasses. Authenticate the chosen harness and gh separately.")

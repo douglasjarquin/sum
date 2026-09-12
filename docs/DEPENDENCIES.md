@@ -16,7 +16,7 @@ The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, gener
 
 1. Creates local runtime symlinks under `.local/bin`, once. An existing link is never retargeted, because a running process may depend on it; setup reports a differing pin instead.
 2. Copies the release-matched Herdr skill from `herdr --skill`.
-3. Builds the cgo-free `go/cmd/sumctl-go` companion as `.local/bin/sumctl-go` and the live Mesh server from `go/cmd/herdr-mesh` as `.local/bin/herdr-mesh`. An existing native binary is never rewritten. `bin/sumctl` still runs the Python helper. `bin/herdr-mesh` selects the Go binary.
+3. Builds the cgo-free `go/cmd/sumctl` binary as `.local/bin/sumctl` and the live Mesh server from `go/cmd/herdr-mesh` as `.local/bin/herdr-mesh`. An existing native binary is never rewritten. `bin/sumctl` and `bin/herdr-mesh` exec those staged binaries.
 4. Generates repository-local MCP settings and tests MCP initialization/discovery against the Go Mesh server.
 5. Downloads the pinned Remainder GitHub release archive for this platform, verifies its SHA-256, extracts it into `.deps/remainder/<version>-<platform>/`, and links `.local/bin/remainder` once. An existing dest or link is never rewritten.
 
@@ -30,9 +30,11 @@ Re-running setup is therefore safe while a coordinator, workers, or an MCP serve
 Newer code or dependencies go into a staged release instead (below).
 
 The native companions are also built in a release staging directory with `CGO_ENABLED=0`.
-The staged binaries' source, build requirements, runtime requirements, and SHA-256 are recorded in `release.json` under `dependencies.native.sumctl-go` and `dependencies.native.herdr-mesh`.
+The staged binaries' source, build requirements, runtime requirements, and SHA-256 are recorded in `release.json` under `dependencies.native.sumctl` and `dependencies.native.herdr-mesh`.
 A helper from before the Go Mesh cutover records `herdr-mesh-go` instead.
 That id stays in the inventory until that helper is no longer the default.
+A helper from before the Go CLI cutover still requires `lib/sumctl.py` in the bundle.
+Keep that file until that helper is no longer the default.
 Running them requires no Go toolchain, module download, Node, Python, or Cobra generator.
 
 The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
@@ -114,7 +116,7 @@ The helper honors `SUM_INSTALL_ROOT` only when it runs from that installation or
 
 - the committed tree from `git archive` (no working-tree edits, `.sum`, `.deps`, `.local`, or credentials);
 - `.local/bin/*` links to the mise tool versions pinned by the bundled `mise.toml` (`mise install` may add a version; nothing is pruned);
-- `.local/bin/herdr-mesh` and `.local/bin/sumctl-go` built with `CGO_ENABLED=0`;
+- `.local/bin/herdr-mesh` and `.local/bin/sumctl` built with `CGO_ENABLED=0`;
 - `.local/skills/herdr/SKILL.md` from the pinned `herdr --skill`;
 - `release.json`: source SHA and tree, a content hash for every bundled file, native artifact hashes, tool pins and resolved paths, the Herdr CLI and MCP tool contract versions, the supported state and brief schema versions, and who staged it.
 

@@ -94,6 +94,14 @@ func InitCheckout(s *store.Store, runtimeRoot, worktree, purpose string, existin
 		record.Set("error", reason)
 		return record
 	}
+	path := asString(func() any { v, _ := tool.Get("path"); return v }())
+	if err := runCodegraph(path, worktree, "init"); err != nil {
+		appendAttempt(record, "init", false, err.Error())
+		record.Set("state", "failed")
+		record.Set("error", err.Error())
+		return record
+	}
+	_ = ensureExclude(worktree)
 	head, _ := ident.Get("head")
 	record.Set("indexed_head", head)
 	record.Set("state", "ready")
@@ -102,13 +110,59 @@ func InitCheckout(s *store.Store, runtimeRoot, worktree, purpose string, existin
 	index.Set("fileCount", nil)
 	index.Set("nodeCount", nil)
 	record.Set("index", index)
+	quoted := fmt.Sprintf("%q", worktree)
 	commands := ordjson.NewObject()
-	path, _ := tool.Get("path")
-	quoted := fmt.Sprintf("%v", worktree)
-	commands.Set("status", fmt.Sprintf("CODEGRAPH_NO_DAEMON=1 %v status --json %s", path, quoted))
+	commands.Set("status", fmt.Sprintf("CODEGRAPH_NO_DAEMON=1 %s status --json %s", path, quoted))
+	commands.Set("sync", fmt.Sprintf("CODEGRAPH_NO_DAEMON=1 %s sync %s", path, quoted))
+	commands.Set("explore", fmt.Sprintf("CODEGRAPH_NO_DAEMON=1 %s query NAME -p %s --json", path, quoted))
+	commands.Set("query", fmt.Sprintf("CODEGRAPH_NO_DAEMON=1 %s query NAME -p %s --json", path, quoted))
+	commands.Set("node", fmt.Sprintf("CODEGRAPH_NO_DAEMON=1 %s query NAME -p %s --json", path, quoted))
+	commands.Set("affected", fmt.Sprintf("CODEGRAPH_NO_DAEMON=1 %s query NAME -p %s --json", path, quoted))
 	record.Set("commands", commands)
-	appendAttempt(record, "verified", true, "tool present; full index deferred to an explicit graph init retry")
+	appendAttempt(record, "init", true, "")
+	appendAttempt(record, "verified", true, "")
 	return record
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func ensureExclude(worktree string) error {
+	exclude := filepath.Join(worktree, ".git", "info", "exclude")
+	if common, err := runGit(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil && common != "" {
+		exclude = filepath.Join(common, "info", "exclude")
+	}
+	if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
+		return err
+	}
+	existing, _ := os.ReadFile(exclude)
+	if strings.Contains(string(existing), ".codegraph/") {
+		return nil
+	}
+	f, err := os.OpenFile(exclude, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString("\n.codegraph/\n")
+	return err
+}
+
+func runCodegraph(bin, worktree string, args ...string) error {
+	cmd := exec.Command(bin, append(args, worktree)...)
+	cmd.Dir = worktree
+	cmd.Env = append(os.Environ(), "CODEGRAPH_NO_DAEMON=1", "CODEGRAPH_NO_DOWNLOAD=1", "NO_COLOR=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return fmt.Errorf("%s", detail)
+	}
+	return nil
 }
 
 func appendAttempt(record *ordjson.Object, action string, ok bool, errText string) {
@@ -203,7 +257,47 @@ func StatusTask(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, er
 		result.Set("recorded", nil)
 		result.Set("commands", nil)
 	}
-	result.Set("live", nil)
+	live := ordjson.NewObject()
+	if record != nil {
+		tool := asObject(func() any { v, _ := record.Get("tool"); return v }())
+		bin := asString(func() any { v, _ := tool.Get("path"); return v }())
+		worktree := asString(func() any { v, _ := record.Get("worktree"); return v }())
+		if bin != "" && worktree != "" {
+			cmd := exec.Command(bin, "status", "--json", worktree)
+			cmd.Dir = worktree
+			cmd.Env = append(os.Environ(), "CODEGRAPH_NO_DAEMON=1", "CODEGRAPH_NO_DOWNLOAD=1", "NO_COLOR=1")
+			if out, err := cmd.Output(); err == nil {
+				if decoded, decErr := ordjson.Decode(out); decErr == nil {
+					live.Set("status", decoded)
+					fresh := ordjson.NewObject()
+					fresh.Set("state", "fresh")
+					if obj := asObject(decoded); obj != nil {
+						if pending, ok := obj.Get("pendingChanges"); ok {
+							if p := asObject(pending); p != nil {
+								added, _ := p.Get("added")
+								modified, _ := p.Get("modified")
+								if fmt.Sprint(added) != "0" || fmt.Sprint(modified) != "0" {
+									fresh.Set("state", "stale")
+								}
+							}
+						}
+					}
+					live.Set("freshness", fresh)
+					live.Set("reconcile_needed", nil)
+				}
+			}
+		}
+	}
+	if live.Len() == 0 {
+		result.Set("live", nil)
+	} else {
+		result.Set("live", live)
+	}
 	result.Set("note", "Observation only. `stale` means edits are not in the index until `sync`; a `reconcile_needed` action runs only through `graph init`.")
 	return result, nil
+}
+
+func asObject(v any) *ordjson.Object {
+	o, _ := v.(*ordjson.Object)
+	return o
 }

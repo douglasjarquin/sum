@@ -305,6 +305,10 @@ func processIdentity(process *ordjson.Object, paneID string, shellPID any) *ordj
 	return row
 }
 
+func ObserveService(task, service *ordjson.Object, runtimeRoot string) (*ordjson.Object, error) {
+	return observeService(task, service, runtimeRoot)
+}
+
 func observeService(task, service *ordjson.Object, runtimeRoot string) (*ordjson.Object, error) {
 	view := ordjson.NewObject()
 	view.Set("id", stringField(service, "id"))
@@ -728,7 +732,7 @@ func Start(s *store.Store, args StartArgs, endpoint *ordjson.Object) (*ordjson.O
 		return nil, err
 	}
 	state := stringField(workerReservation, "state")
-	if state != "held" && state != "running" {
+	if state == "released" {
 		return nil, fmt.Errorf("Worker execution reservation %s is %s; service start is refused before any launch.", stringField(workerReservation, "id"), state)
 	}
 	worktree, err := requireWorktree(task)
@@ -1054,7 +1058,7 @@ func Start(s *store.Store, args StartArgs, endpoint *ordjson.Object) (*ordjson.O
 		}
 		return nil, err
 	}
-	if stringField(currentReservation, "id") != stringField(workerReservation, "id") || (stringField(currentReservation, "state") != "held" && stringField(currentReservation, "state") != "running") {
+	if stringField(currentReservation, "id") != stringField(workerReservation, "id") || stringField(currentReservation, "state") == "released" {
 		unlock()
 		return nil, fmt.Errorf("Worker execution reservation changed during service inspection; no service was launched.")
 	}

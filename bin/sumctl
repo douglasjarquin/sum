@@ -6,7 +6,10 @@ RUNTIME="$ROOT"
 if [[ -L "$ROOT/.local/current" ]]; then
   RUNTIME=$(cd -- "$ROOT/.local/current" 2>/dev/null && pwd -P) || { echo "sumctl: $ROOT/.local/current points to a missing runtime" >&2; exit 1; }
 fi
+BINARY="$RUNTIME/.local/bin/sumctl"
+if [[ ! -x "$BINARY" ]]; then
+  echo "sumctl: staged native binary is missing; run mise run setup or stage a release." >&2
+  exit 1
+fi
 export SUM_INSTALL_ROOT="$ROOT"
-PYTHON="$RUNTIME/.local/bin/python3"
-[[ -x "$PYTHON" ]] || PYTHON=python3
-exec "$PYTHON" "$RUNTIME/lib/sumctl.py" "$@"
+exec "$BINARY" "$@"

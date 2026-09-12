@@ -18,6 +18,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -89,21 +90,18 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if _, err := herdrclient.EnsureVersion(herdrPath, contract.HerdrCLI); err != nil {
 		return nil, err
 	}
-	if args.Repo == "" && args.Project == "" {
-		return nil, fmt.Errorf("Give --repo PATH or --project NAME.")
-	}
-	if args.Repo != "" && args.Project != "" {
-		return nil, fmt.Errorf("Give either --repo PATH or --project NAME, not both.")
-	}
-	repoArg := args.Repo
-	if args.Project != "" {
-		return nil, fmt.Errorf("No enrolled project %q; `project list` shows the registry and `project enroll owner/repo` adds exactly one repository.", args.Project)
+	repoArg, projectObj, err := project.ResolveTaskRepository(s, args.Repo, args.Project)
+	if err != nil {
+		return nil, err
 	}
 	repo, err := runGit("-C", repoArg, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return nil, err
 	}
 	repo = resolvePath(repo)
+	if projectObj == nil {
+		projectObj = project.ByPath(s, repo)
+	}
 	if args.Base == "" {
 		args.Base = "HEAD"
 	}
@@ -178,7 +176,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	task.Set("status", "preparing")
 	task.Set("machine", host)
 	task.Set("repository", repo)
-	task.Set("project", nil)
+	task.Set("project", projectObj)
 	task.Set("base_sha", baseSHA)
 	task.Set("branch", "sum/"+tid)
 	harness, _ := launchSpec.Get("harness")
