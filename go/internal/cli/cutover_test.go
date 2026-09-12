@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -308,6 +309,39 @@ func TestReview_appendsFindings(t *testing.T) {
 	}
 	if ev["verdict"] != "comment" {
 		t.Fatalf("verdict = %v", ev["verdict"])
+	}
+}
+
+func TestExecutionPark_releasesVerifierAttempt(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	if _, err := runCLI(t, home, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{
+"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+"machine": %q, "session": "sum-test", "pane": "w-worker:p1",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [],
+"brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship",
+"execution": {"schema": 1,
+  "worker": {"id": "x-aaaaaaaaaaaa", "kind": "worker", "state": "running", "generation": 1,
+             "owner": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}, "checkout": "/tmp/x",
+             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []},
+  "verifiers": [{"id": "x-bbbbbbbbbbbb", "kind": "verifier", "state": "running", "generation": 1,
+             "owner": {"machine": %q, "session": "sum-test", "pane": "w-rev:p1"}, "checkout": "/tmp/y",
+             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []}]
+}}`, host, host, host))
+	out, err := runCLI(t, home, "execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-bbbbbbbbbbbb")
+	if err != nil {
+		t.Fatalf("park: %v\n%s", err, out)
+	}
+	value := decodeObject(t, out)
+	if value["released"] != true {
+		t.Fatalf("released = %v\n%s", value["released"], out)
 	}
 }
 

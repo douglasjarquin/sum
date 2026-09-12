@@ -354,7 +354,7 @@ func (o *rootOptions) runExecution(cmd *cobra.Command, args []string) error {
 	switch args[0] {
 	case "show":
 		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
-			return o.compat(cmd.Context(), append([]string{"execution"}, args...))
+			return fmt.Errorf("invalid execution show arguments")
 		}
 		st, err := o.openStore("execution-show")
 		if err != nil {
@@ -365,8 +365,44 @@ func (o *rootOptions) runExecution(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "park":
+		taskID, attempt, ok := parseExecutionAttemptArgs(args[1:])
+		if !ok {
+			return fmt.Errorf("invalid execution park arguments")
+		}
+		st, err := o.openStore("execution-park")
+		if err != nil {
+			return err
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		view, err := execution.Park(st, ctx, o.runtimeRoot, taskID, attempt)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "resume":
+		taskID, attempt, ok := parseExecutionAttemptArgs(args[1:])
+		if !ok {
+			return fmt.Errorf("invalid execution resume arguments")
+		}
+		st, err := o.openStore("execution-resume")
+		if err != nil {
+			return err
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		view, err := execution.Resume(st, ctx, o.runtimeRoot, taskID, attempt)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
 	default:
-		return o.compat(cmd.Context(), append([]string{"execution"}, args...))
+		return fmt.Errorf("unknown execution command")
 	}
 }
 
@@ -434,6 +470,32 @@ func (o *rootOptions) runRepair(cmd *cobra.Command, args []string) error {
 	default:
 		return fmt.Errorf("unknown repair command")
 	}
+}
+
+func parseExecutionAttemptArgs(tokens []string) (taskID, attempt string, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--attempt":
+			if i+1 >= len(tokens) {
+				return "", "", false
+			}
+			i++
+			attempt = tokens[i]
+		case strings.HasPrefix(token, "--attempt="):
+			attempt = strings.TrimPrefix(token, "--attempt=")
+		case strings.HasPrefix(token, "-"):
+			return "", "", false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", false
+		}
+	}
+	if taskID == "" || attempt == "" {
+		return "", "", false
+	}
+	return taskID, attempt, true
 }
 
 func parseRepairSendArgs(tokens []string) (taskID, attempt, key, text, file string, ok bool) {
