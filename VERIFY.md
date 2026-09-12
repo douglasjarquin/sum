@@ -41,9 +41,7 @@ It runs, in order, the existing commands and stops at the first failure:
 
 | Check | Command | Proves |
 | --- | --- | --- |
-| Go CLI and Mesh | `cd go && go test ./...` | sumctl command contracts, Herdr Mesh, and native helpers |
-| Skill tests | `python -m unittest discover -s tests -p 'test_*skill*.py'` | The portable verify and evidence skills against fixtures |
-| Scripted end-to-end demo | `go test ./internal/cli -run TestOfflineDemo` | Delegation, a question surviving a busy coordinator, an answer, a branch commit, a report |
+| Go CLI, Mesh, and skill tests | `cd go && go test ./...` | sumctl command contracts, Herdr Mesh, portable verify/evidence skills, and the offline demo |
 
 Scoped tasks stay available for iteration: `mise run test` (suites only) and `mise run demo`.
 `mise run test-live` is the explicit real-Herdr smoke test and is not part of the aggregate because it needs an installed Herdr; `mise run doctor` observes the installation and is not a check.
