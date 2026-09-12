@@ -97,6 +97,7 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
   Remainder integration is advisory quota only (`sumctl quota`). It does not bind Grok Bot, change `templates/grok-bot/`, or alter Bot commands.
   Remote-machine returns use Herdr `machine add`. They do not bind Grok Bot, change `templates/grok-bot/`, or add a Sum SSH enroll path.
   Making Go Mesh the live `bin/herdr-mesh` server does not bind Grok Bot, change `templates/grok-bot/`, or alter Bot commands.
+  Keeping overlay sources so a prior helper can stage this tree does not bind Grok Bot.
   This dictionary binds `templates/grok-bot/`. A platform Bot stays a Bot. Its sum role is coordinator or project agent.
 - [ ] Update [ATTRIBUTIONS.md](ATTRIBUTIONS.md) when credit is due.
 
