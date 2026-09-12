@@ -143,8 +143,11 @@ A release tree contains no `.sum`, and running its `bin/sumctl` directly is refu
 
 `.local/current` is the installation default; `bin/sumctl` and `bin/herdr-mesh` follow it when it exists and otherwise run the checkout.
 `update apply` first refuses a pending activation under `.local/update.lock`, then resolves the source to a SHA merged on `origin/<default branch>` and stages the release outside the lock.
-Only `refs/remotes/origin/*` are fetched; HEAD, the working tree, and remotes are never changed.
+Only `refs/remotes/origin/*` are fetched; remotes are never rewritten and there is no second fetch.
 Under the lock it validates the manifest, the installation state schema, each non-archived task's brief schema, the installed Herdr CLI version against `release.json`, the pinned tool links, and a read-only run of the candidate helper (`--version`, `status`, `show`) against the records; then it creates the new symlink under a private name and renames it over `.local/current`.
+After that selection succeeds, a clean installation clone is fast-forwarded to the selected SHA when that SHA is already an ancestor of `origin/<default branch>` and the move is a fast-forward.
+A dirty tree, a conflicting untracked file, or a non-fast-forward is left in place and reported as `deferred: checkout-instructions` with the refuse reason.
+Development checkouts and task worktrees are not edited.
 `.local/approvals.json` records installation-bound source approval; plain `release stage` does not approve a release.
 Existing approval receipts allow compatible immutable rollback without fetching or retaining historical Git objects.
 `.local/activation.json` records committed known-good selection and any pending generation; `.local/updates.jsonl` is diagnostic history, not the recovery source of truth.
