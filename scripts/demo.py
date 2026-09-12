@@ -44,7 +44,7 @@ def main():
         helper = ROOT / "bin/sumctl"
         def ctl(*args, pane=None, check=True):
             pane_env = dict(env, HERDR_PANE_ID=pane) if pane else env
-            result = subprocess.run([str(helper), "--home", str(base / "state"), *args],
+            result = subprocess.run([str(helper), "--format", "json", "--home", str(base / "state"), *args],
                                     env=pane_env, check=False, text=True, capture_output=True)
             if check and result.returncode:
                 raise RuntimeError(result.stderr or result.stdout)
@@ -285,7 +285,7 @@ def main():
         delivered = Path(managed["brief_path"]).read_text()
         assert "## Delivered runtime" in delivered and str(ROOT / "skills/sum-worker/SKILL.md") in delivered and "../../skills" not in delivered
         env_project = dict(env, HERDR_PANE_ID="w-project:p1", FAKE_PARENT_CWD=str(clone))
-        nested = json.loads(subprocess.run([str(helper), "--home", str(installation / ".sum"), "init"], env=env_project, text=True, capture_output=True).stderr)
+        nested = json.loads(subprocess.run([str(helper), "--format", "json", "--home", str(installation / ".sum"), "init"], env=env_project, text=True, capture_output=True).stderr)
         assert "A project session is not a sum session" in nested["error"]
         mise_bin = env.get("SUM_MISE_BIN") or "mise"
         listed = json.loads(subprocess.run([mise_bin, "tasks", "ls", "--json"], cwd=clone, env={**env, "MISE_QUIET": "1"}, text=True, capture_output=True).stdout or "[]")
@@ -322,7 +322,7 @@ def main():
         applied = ctl("--home", inst, "update", "apply", "--no-fetch")
         assert applied["changed"] and applied["previous"]["kind"] == "checkout" and applied["default"]["sha"] == head and applied["post_check"]["ok"]
         assert Path(os.readlink(installation / ".local/current")) == Path("releases") / head
-        served = json.loads(subprocess.run([str(installation / "bin/sumctl"), "--home", str(base / "state"), "doctor"], env=env, text=True, capture_output=True).stdout)
+        served = json.loads(subprocess.run([str(installation / "bin/sumctl"), "--format", "json", "--home", str(base / "state"), "doctor"], env=env, text=True, capture_output=True).stdout)
         assert served["runtime"] == str(release) and served["installation"] == str(installation)  # New entrypoint calls run the new default.
         ctl("ask", task["id"], "--key", "after-update", "--text", "Saved while the new default serves?")  # Old absolute callback, same records.
         assert git("status", "--porcelain", cwd=installation) == "" and git("rev-parse", "HEAD", cwd=installation) == head  # Checkout untouched.
