@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
@@ -10,11 +11,19 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/attention"
 	"github.com/douglasjarquin/sum/go/internal/backup"
 	"github.com/douglasjarquin/sum/go/internal/bindcmd"
+	"github.com/douglasjarquin/sum/go/internal/cleanup"
+	"github.com/douglasjarquin/sum/go/internal/devcmd"
+	"github.com/douglasjarquin/sum/go/internal/prcmd"
+	"github.com/douglasjarquin/sum/go/internal/refreshcmd"
+	"github.com/douglasjarquin/sum/go/internal/updatecmd"
+	"github.com/douglasjarquin/sum/go/internal/verifycmd"
+	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
+	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/repair"
@@ -168,6 +177,42 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		Args:               cobra.ArbitraryArgs,
 		RunE:               o.runReview,
 	})
+	root.AddCommand(&cobra.Command{
+		Use:                "verify",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runVerify,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "pr",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runPR,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "cleanup",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runCleanup,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "dev",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runDev,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "refresh",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runRefresh,
+	})
+	root.AddCommand(&cobra.Command{
+		Use:                "update",
+		DisableFlagParsing: true,
+		Args:               cobra.ArbitraryArgs,
+		RunE:               o.runUpdate,
+	})
 }
 
 func (o *rootOptions) runHelp(cmd *cobra.Command, args []string) error {
@@ -178,7 +223,7 @@ func (o *rootOptions) runHelp(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 && !strings.HasPrefix(args[0], "-") {
 		topic = args[0]
 	} else if len(args) > 1 {
-		return o.compat(cmd.Context(), append([]string{"help"}, args...))
+		return usageError("help", args)
 	}
 	view, err := helpview.View(o.runtimeRoot, topic)
 	if err != nil {
@@ -193,7 +238,7 @@ func (o *rootOptions) runQuota(cmd *cobra.Command, args []string) error {
 	}
 	provider, format, ok := parseQuotaArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"quota"}, args...))
+		return usageError("quota", args)
 	}
 	code, err := quota.Run(o.runtimeRoot, provider, format, cmd.OutOrStdout(), cmd.ErrOrStderr())
 	if err != nil {
@@ -247,7 +292,7 @@ func (o *rootOptions) runSkills(cmd *cobra.Command, args []string) error {
 	case "check":
 		rootPath, ok := parseSkillsCheckArgs(args[1:], o.runtimeRoot)
 		if !ok {
-			return o.compat(cmd.Context(), append([]string{"skills"}, args...))
+			return usageError("skills", args)
 		}
 		if _, err := o.openStore("skills-check"); err != nil {
 			return err
@@ -266,7 +311,7 @@ func (o *rootOptions) runSkills(cmd *cobra.Command, args []string) error {
 	case "install":
 		target, source, skillNames, agentNames, ok := parseSkillsInstallArgs(args[1:])
 		if !ok {
-			return o.compat(cmd.Context(), append([]string{"skills"}, args...))
+			return usageError("skills", args)
 		}
 		if _, err := o.openStore("skills-install"); err != nil {
 			return err
@@ -277,7 +322,7 @@ func (o *rootOptions) runSkills(cmd *cobra.Command, args []string) error {
 		}
 		return emitOrdjson(cmd.OutOrStdout(), view)
 	default:
-		return o.compat(cmd.Context(), append([]string{"skills"}, args...))
+		return usageError("skills", args)
 	}
 }
 
@@ -761,7 +806,7 @@ func (o *rootOptions) runReport(cmd *cobra.Command, args []string) error {
 func (o *rootOptions) runArchive(cmd *cobra.Command, args []string) error {
 	taskID, acknowledge, ok := parseArchiveArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"archive"}, args...))
+		return usageError("archive", args)
 	}
 	st, err := o.openStore("archive")
 	if err != nil {
@@ -793,7 +838,7 @@ func (o *rootOptions) pumpOpts() returns.PumpOpts {
 func (o *rootOptions) runAsk(cmd *cobra.Command, args []string) error {
 	taskID, key, text, file, ok := parseAskArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"ask"}, args...))
+		return usageError("ask", args)
 	}
 	st, err := o.openStore("ask")
 	if err != nil {
@@ -868,7 +913,7 @@ func parseAskArgs(tokens []string) (taskID, key, text, file string, ok bool) {
 func (o *rootOptions) runAnswer(cmd *cobra.Command, args []string) error {
 	taskID, questionID, text, file, ok := parseAnswerArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"answer"}, args...))
+		return usageError("answer", args)
 	}
 	st, err := o.openStore("answer")
 	if err != nil {
@@ -937,7 +982,7 @@ func parseAnswerArgs(tokens []string) (taskID, questionID, text, file string, ok
 
 func (o *rootOptions) runResolve(cmd *cobra.Command, args []string) error {
 	if len(args) != 2 || strings.HasPrefix(args[0], "-") || strings.HasPrefix(args[1], "-") {
-		return o.compat(cmd.Context(), append([]string{"resolve"}, args...))
+		return usageError("resolve", args)
 	}
 	st, err := o.openStore("resolve")
 	if err != nil {
@@ -953,7 +998,7 @@ func (o *rootOptions) runResolve(cmd *cobra.Command, args []string) error {
 func (o *rootOptions) runNotice(cmd *cobra.Command, args []string) error {
 	taskID, recipient, ok := parseNoticeArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"notice"}, args...))
+		return usageError("notice", args)
 	}
 	st, err := o.openStore("notice")
 	if err != nil {
@@ -996,7 +1041,7 @@ func parseNoticeArgs(tokens []string) (taskID, recipient string, ok bool) {
 func (o *rootOptions) runPump(cmd *cobra.Command, args []string) error {
 	tasks, force, ok := parsePumpArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"pump"}, args...))
+		return usageError("pump", args)
 	}
 	st, err := o.openStore("pump")
 	if err != nil {
@@ -1075,7 +1120,7 @@ func parseArchiveArgs(tokens []string) (taskID string, acknowledge bool, ok bool
 func (o *rootOptions) runNotes(cmd *cobra.Command, args []string) error {
 	taskID, text, file, ok := parseTextTaskArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"notes"}, args...))
+		return usageError("notes", args)
 	}
 	st, err := o.openStore("notes")
 	if err != nil {
@@ -1153,7 +1198,7 @@ func (o *rootOptions) runHerdr(cmd *cobra.Command, args []string) error {
 func (o *rootOptions) runSettingsSet(cmd *cobra.Command, args []string) error {
 	parsed, ok := parseSettingsSetArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"settings", "set"}, args...))
+		return usageError("settings set", args)
 	}
 	st, err := o.openStore("settings-set")
 	if err != nil {
@@ -1283,7 +1328,7 @@ func parseSettingsSetArgs(tokens []string) (settings.WriteArgs, bool) {
 func (o *rootOptions) runPresetSet(cmd *cobra.Command, args []string) error {
 	parsed, ok := parsePresetSetArgs(args)
 	if !ok {
-		return o.compat(cmd.Context(), append([]string{"preset", "set"}, args...))
+		return usageError("preset set", args)
 	}
 	st, err := o.openStore("preset-set")
 	if err != nil {
@@ -1670,4 +1715,995 @@ func parseStartArgs(tokens []string) (taskID string, extra []string, ok bool) {
 		return "", nil, false
 	}
 	return taskID, extra, true
+}
+
+func (o *rootOptions) runEnv(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	switch args[0] {
+	case "show":
+		taskID, maxChars, ok := parseEnvShowArgs(args[1:])
+		if !ok {
+			return usageError("env show", args[1:])
+		}
+		st, err := o.openStore("env-show")
+		if err != nil {
+			return err
+		}
+		view, err := environment.Show(st, taskID, o.sumctlPath(), maxChars)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "discover":
+		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
+			return usageError("env discover", args[1:])
+		}
+		st, err := o.openStore("env-discover")
+		if err != nil {
+			return err
+		}
+		view, err := environment.Discover(st, args[1], app.OptionalContext(o.installRoot), o.sumctlPath())
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "inspect":
+		if len(args) != 2 || strings.HasPrefix(args[1], "-") {
+			return usageError("env inspect", args[1:])
+		}
+		st, err := o.openStore("env-inspect")
+		if err != nil {
+			return err
+		}
+		view, err := environment.Inspect(st, environment.InspectArgs{Task: args[1], RuntimeRoot: o.runtimeRoot}, app.OptionalContext(o.installRoot))
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "record":
+		parsed, ok := parseEnvRecordArgs(args[1:])
+		if !ok {
+			return usageError("env record", args[1:])
+		}
+		st, err := o.openStore("env-record")
+		if err != nil {
+			return err
+		}
+		parsed.RuntimeRoot = o.runtimeRoot
+		view, err := environment.Record(st, parsed, app.OptionalContext(o.installRoot))
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "start":
+		parsed, ok := parseEnvStartArgs(args[1:])
+		if !ok {
+			return usageError("env start", args[1:])
+		}
+		st, err := o.openStore("env-start")
+		if err != nil {
+			return err
+		}
+		parsed.RuntimeRoot = o.runtimeRoot
+		view, err := environment.Start(st, parsed, app.OptionalContext(o.installRoot))
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "stop":
+		parsed, ok := parseEnvStopArgs(args[1:])
+		if !ok {
+			return usageError("env stop", args[1:])
+		}
+		st, err := o.openStore("env-stop")
+		if err != nil {
+			return err
+		}
+		parsed.RuntimeRoot = o.runtimeRoot
+		view, err := environment.Stop(st, parsed)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	default:
+		return usageError("env", args)
+	}
+}
+
+func parseEnvRecordArgs(tokens []string) (environment.RecordArgs, bool) {
+	var parsed environment.RecordArgs
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		take := func(dest *string) bool {
+			if i+1 >= len(tokens) {
+				return false
+			}
+			i++
+			*dest = tokens[i]
+			return true
+		}
+		switch {
+		case token == "--url":
+			if !take(&parsed.URL) {
+				return environment.RecordArgs{}, false
+			}
+		case strings.HasPrefix(token, "--url="):
+			parsed.URL = strings.TrimPrefix(token, "--url=")
+		case token == "--log":
+			if !take(&parsed.Log) {
+				return environment.RecordArgs{}, false
+			}
+		case strings.HasPrefix(token, "--log="):
+			parsed.Log = strings.TrimPrefix(token, "--log=")
+		case token == "--pane":
+			if !take(&parsed.Pane) {
+				return environment.RecordArgs{}, false
+			}
+		case strings.HasPrefix(token, "--pane="):
+			parsed.Pane = strings.TrimPrefix(token, "--pane=")
+		case token == "--container":
+			if !take(&parsed.Container) {
+				return environment.RecordArgs{}, false
+			}
+		case strings.HasPrefix(token, "--container="):
+			parsed.Container = strings.TrimPrefix(token, "--container=")
+		case token == "--label":
+			if !take(&parsed.Label) {
+				return environment.RecordArgs{}, false
+			}
+		case strings.HasPrefix(token, "--label="):
+			parsed.Label = strings.TrimPrefix(token, "--label=")
+		case token == "--ownership":
+			if !take(&parsed.Ownership) {
+				return environment.RecordArgs{}, false
+			}
+		case strings.HasPrefix(token, "--ownership="):
+			parsed.Ownership = strings.TrimPrefix(token, "--ownership=")
+		case strings.HasPrefix(token, "-"):
+			return environment.RecordArgs{}, false
+		case parsed.Task == "":
+			parsed.Task = token
+		default:
+			return environment.RecordArgs{}, false
+		}
+	}
+	if parsed.Task == "" {
+		return environment.RecordArgs{}, false
+	}
+	return parsed, true
+}
+
+func parseEnvStartArgs(tokens []string) (environment.StartArgs, bool) {
+	var parsed environment.StartArgs
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		take := func(dest *string) bool {
+			if i+1 >= len(tokens) {
+				return false
+			}
+			i++
+			*dest = tokens[i]
+			return true
+		}
+		switch {
+		case token == "--command":
+			if !take(&parsed.Command) {
+				return environment.StartArgs{}, false
+			}
+		case strings.HasPrefix(token, "--command="):
+			parsed.Command = strings.TrimPrefix(token, "--command=")
+		case token == "--source":
+			if !take(&parsed.Source) {
+				return environment.StartArgs{}, false
+			}
+		case strings.HasPrefix(token, "--source="):
+			parsed.Source = strings.TrimPrefix(token, "--source=")
+		case token == "--url":
+			if !take(&parsed.URL) {
+				return environment.StartArgs{}, false
+			}
+		case strings.HasPrefix(token, "--url="):
+			parsed.URL = strings.TrimPrefix(token, "--url=")
+		case token == "--match":
+			if !take(&parsed.Match) {
+				return environment.StartArgs{}, false
+			}
+		case strings.HasPrefix(token, "--match="):
+			parsed.Match = strings.TrimPrefix(token, "--match=")
+		case token == "--log":
+			if !take(&parsed.Log) {
+				return environment.StartArgs{}, false
+			}
+		case strings.HasPrefix(token, "--log="):
+			parsed.Log = strings.TrimPrefix(token, "--log=")
+		case token == "--label":
+			if !take(&parsed.Label) {
+				return environment.StartArgs{}, false
+			}
+		case strings.HasPrefix(token, "--label="):
+			parsed.Label = strings.TrimPrefix(token, "--label=")
+		case token == "--timeout":
+			if i+1 >= len(tokens) {
+				return environment.StartArgs{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return environment.StartArgs{}, false
+			}
+			parsed.Timeout = n
+			parsed.TimeoutSet = true
+		case strings.HasPrefix(token, "--timeout="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--timeout="))
+			if err != nil {
+				return environment.StartArgs{}, false
+			}
+			parsed.Timeout = n
+			parsed.TimeoutSet = true
+		case strings.HasPrefix(token, "-"):
+			return environment.StartArgs{}, false
+		case parsed.Task == "":
+			parsed.Task = token
+		default:
+			return environment.StartArgs{}, false
+		}
+	}
+	if parsed.Task == "" || parsed.Command == "" {
+		return environment.StartArgs{}, false
+	}
+	return parsed, true
+}
+
+func parseEnvStopArgs(tokens []string) (environment.StopArgs, bool) {
+	var parsed environment.StopArgs
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--service":
+			if i+1 >= len(tokens) {
+				return environment.StopArgs{}, false
+			}
+			i++
+			parsed.Service = tokens[i]
+		case strings.HasPrefix(token, "--service="):
+			parsed.Service = strings.TrimPrefix(token, "--service=")
+		case token == "--timeout":
+			if i+1 >= len(tokens) {
+				return environment.StopArgs{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return environment.StopArgs{}, false
+			}
+			parsed.Timeout = n
+			parsed.TimeoutSet = true
+		case strings.HasPrefix(token, "--timeout="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--timeout="))
+			if err != nil {
+				return environment.StopArgs{}, false
+			}
+			parsed.Timeout = n
+			parsed.TimeoutSet = true
+		case strings.HasPrefix(token, "-"):
+			return environment.StopArgs{}, false
+		case parsed.Task == "":
+			parsed.Task = token
+		default:
+			return environment.StopArgs{}, false
+		}
+	}
+	if parsed.Task == "" {
+		return environment.StopArgs{}, false
+	}
+	return parsed, true
+}
+
+func (o *rootOptions) runHook(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	switch args[0] {
+	case "status":
+		if len(args) != 1 {
+			return usageError("hook status", args[1:])
+		}
+		st, err := store.Open(o.home)
+		if err != nil {
+			return err
+		}
+		ctx, ctxErr := store.Context(o.runtimeRoot)
+		if ctxErr != nil {
+			ctx = nil
+		}
+		view, err := hookstatus.Status(st, ctx, o.runtimeRoot, o.sumctlPath())
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "enable":
+		if len(args) != 1 {
+			return usageError("hook enable", args[1:])
+		}
+		st, err := o.openStore("hook-enable")
+		if err != nil {
+			return err
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		view, err := hookstatus.Enable(st, ctx, o.runtimeRoot, o.sumctlPath())
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "disable":
+		unlink := false
+		if len(args) == 2 && args[1] == "--unlink" {
+			unlink = true
+		} else if len(args) != 1 {
+			return usageError("hook disable", args[1:])
+		}
+		st, err := o.openStore("hook-disable")
+		if err != nil {
+			return err
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		view, err := hookstatus.Disable(st, ctx, o.runtimeRoot, unlink)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "event":
+		if len(args) != 1 {
+			return usageError("hook event", args[1:])
+		}
+		st, err := store.Open(o.home)
+		if err != nil {
+			return err
+		}
+		environ := map[string]string{}
+		for _, e := range os.Environ() {
+			if i := strings.IndexByte(e, '='); i > 0 {
+				environ[e[:i]] = e[i+1:]
+			}
+		}
+		view, err := hookstatus.Event(st, environ, o.runtimeRoot, o.sumctlPath())
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	default:
+		return usageError("hook", args)
+	}
+}
+
+func (o *rootOptions) runVerify(cmd *cobra.Command, args []string) error {
+	parsed, ok := parseVerifyArgs(args)
+	if !ok {
+		return usageError("verify", args)
+	}
+	st, err := o.openStore("verify")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	view, err := verifycmd.Run(st, ctx, parsed)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseVerifyArgs(tokens []string) (verifycmd.Args, bool) {
+	var parsed verifycmd.Args
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		take := func(dest *string) bool {
+			if i+1 >= len(tokens) {
+				return false
+			}
+			i++
+			*dest = tokens[i]
+			return true
+		}
+		switch {
+		case token == "--candidate":
+			if !take(&parsed.Candidate) {
+				return verifycmd.Args{}, false
+			}
+		case strings.HasPrefix(token, "--candidate="):
+			parsed.Candidate = strings.TrimPrefix(token, "--candidate=")
+		case token == "--result":
+			if !take(&parsed.Result) {
+				return verifycmd.Args{}, false
+			}
+		case strings.HasPrefix(token, "--result="):
+			parsed.Result = strings.TrimPrefix(token, "--result=")
+		case token == "--run":
+			if !take(&parsed.Run) {
+				return verifycmd.Args{}, false
+			}
+		case strings.HasPrefix(token, "--run="):
+			parsed.Run = strings.TrimPrefix(token, "--run=")
+		case token == "--execute":
+			parsed.Execute = true
+		case token == "--base":
+			if !take(&parsed.Base) {
+				return verifycmd.Args{}, false
+			}
+		case strings.HasPrefix(token, "--base="):
+			parsed.Base = strings.TrimPrefix(token, "--base=")
+		case token == "--text":
+			if !take(&parsed.Text) {
+				return verifycmd.Args{}, false
+			}
+		case strings.HasPrefix(token, "--text="):
+			parsed.Text = strings.TrimPrefix(token, "--text=")
+		case token == "--file":
+			if !take(&parsed.File) {
+				return verifycmd.Args{}, false
+			}
+		case strings.HasPrefix(token, "--file="):
+			parsed.File = strings.TrimPrefix(token, "--file=")
+		case strings.HasPrefix(token, "-"):
+			return verifycmd.Args{}, false
+		case parsed.Task == "":
+			parsed.Task = token
+		default:
+			return verifycmd.Args{}, false
+		}
+	}
+	if parsed.Task == "" || parsed.Candidate == "" {
+		return verifycmd.Args{}, false
+	}
+	return parsed, true
+}
+
+func (o *rootOptions) runPR(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	st, err := o.openStore("pr-" + args[0])
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "reconcile":
+		parsed, ok := parsePRReconcileArgs(args[1:])
+		if !ok {
+			return usageError("pr reconcile", args[1:])
+		}
+		view, err := prcmd.Reconcile(st, ctx, o.runtimeRoot, parsed)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "evidence":
+		taskID, run, visibility, ok := parsePREvidenceArgs(args[1:])
+		if !ok {
+			return usageError("pr evidence", args[1:])
+		}
+		view, err := prcmd.Evidence(st, ctx, taskID, run, visibility)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	default:
+		return usageError("pr", args)
+	}
+}
+
+func parsePRReconcileArgs(tokens []string) (prcmd.ReconcileArgs, bool) {
+	var parsed prcmd.ReconcileArgs
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--number":
+			if i+1 >= len(tokens) {
+				return prcmd.ReconcileArgs{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return prcmd.ReconcileArgs{}, false
+			}
+			parsed.Number = n
+		case strings.HasPrefix(token, "--number="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--number="))
+			if err != nil {
+				return prcmd.ReconcileArgs{}, false
+			}
+			parsed.Number = n
+		case token == "--repo":
+			if i+1 >= len(tokens) {
+				return prcmd.ReconcileArgs{}, false
+			}
+			i++
+			parsed.Repo = tokens[i]
+		case strings.HasPrefix(token, "--repo="):
+			parsed.Repo = strings.TrimPrefix(token, "--repo=")
+		case token == "--replace":
+			parsed.Replace = true
+		case strings.HasPrefix(token, "-"):
+			return prcmd.ReconcileArgs{}, false
+		case parsed.Task == "":
+			parsed.Task = token
+		default:
+			return prcmd.ReconcileArgs{}, false
+		}
+	}
+	if parsed.Task == "" || parsed.Number == 0 {
+		return prcmd.ReconcileArgs{}, false
+	}
+	return parsed, true
+}
+
+func parsePREvidenceArgs(tokens []string) (taskID, run, visibility string, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--run":
+			if i+1 >= len(tokens) {
+				return "", "", "", false
+			}
+			i++
+			run = tokens[i]
+		case strings.HasPrefix(token, "--run="):
+			run = strings.TrimPrefix(token, "--run=")
+		case token == "--visibility":
+			if i+1 >= len(tokens) {
+				return "", "", "", false
+			}
+			i++
+			visibility = tokens[i]
+		case strings.HasPrefix(token, "--visibility="):
+			visibility = strings.TrimPrefix(token, "--visibility=")
+		case token == "--scenario" || strings.HasPrefix(token, "--scenario="):
+			if token == "--scenario" {
+				i++
+			}
+		case token == "--evidence-root" || strings.HasPrefix(token, "--evidence-root="):
+			if token == "--evidence-root" {
+				i++
+			}
+		case token == "--verification-run" || strings.HasPrefix(token, "--verification-run="):
+			if token == "--verification-run" {
+				i++
+			}
+		case token == "--timeout" || strings.HasPrefix(token, "--timeout="):
+			if token == "--timeout" {
+				i++
+			}
+		case token == "--dry-run" || token == "--allow-head-mismatch" || token == "--replace-foreign-block":
+		case strings.HasPrefix(token, "-"):
+			return "", "", "", false
+		case taskID == "":
+			taskID = token
+		default:
+			return "", "", "", false
+		}
+	}
+	if taskID == "" || run == "" || visibility == "" {
+		return "", "", "", false
+	}
+	return taskID, run, visibility, true
+}
+
+func (o *rootOptions) runCleanup(cmd *cobra.Command, args []string) error {
+	parsed, ok := parseCleanupArgs(args)
+	if !ok {
+		return usageError("cleanup", args)
+	}
+	st, err := o.openStore("cleanup")
+	if err != nil {
+		return err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return err
+	}
+	view, err := cleanup.Run(st, ctx, parsed)
+	if err != nil {
+		return err
+	}
+	return emitOrdjson(cmd.OutOrStdout(), view)
+}
+
+func parseCleanupArgs(tokens []string) (cleanup.Args, bool) {
+	var parsed cleanup.Args
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--apply":
+			parsed.Apply = true
+		case token == "--reviewer-only":
+			parsed.ReviewerOnly = true
+		case token == "--number":
+			if i+1 >= len(tokens) {
+				return cleanup.Args{}, false
+			}
+			i++
+			n, err := strconv.Atoi(tokens[i])
+			if err != nil {
+				return cleanup.Args{}, false
+			}
+			parsed.Number = n
+		case strings.HasPrefix(token, "--number="):
+			n, err := strconv.Atoi(strings.TrimPrefix(token, "--number="))
+			if err != nil {
+				return cleanup.Args{}, false
+			}
+			parsed.Number = n
+		case strings.HasPrefix(token, "-"):
+			return cleanup.Args{}, false
+		case parsed.Task == "":
+			parsed.Task = token
+		default:
+			return cleanup.Args{}, false
+		}
+	}
+	if parsed.Task == "" {
+		return cleanup.Args{}, false
+	}
+	return parsed, true
+}
+
+func (o *rootOptions) runDev(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	st, err := o.openStore("dev-" + args[0])
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return usageError("dev list", args[1:])
+		}
+		view, err := devcmd.List(st)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "prepare":
+		name, base, pane, ok := parseDevPrepareArgs(args[1:])
+		if !ok {
+			return usageError("dev prepare", args[1:])
+		}
+		ctx := app.OptionalContext(o.installRoot)
+		view, err := devcmd.Prepare(st, ctx, o.runtimeRoot, name, base, pane)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "remove":
+		name, ok := parseDevRemoveArgs(args[1:])
+		if !ok {
+			return usageError("dev remove", args[1:])
+		}
+		view, err := devcmd.Remove(st, name)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	default:
+		return usageError("dev", args)
+	}
+}
+
+func parseDevPrepareArgs(tokens []string) (name, base string, pane, ok bool) {
+	base = "HEAD"
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--name":
+			if i+1 >= len(tokens) {
+				return "", "", false, false
+			}
+			i++
+			name = tokens[i]
+		case strings.HasPrefix(token, "--name="):
+			name = strings.TrimPrefix(token, "--name=")
+		case token == "--base":
+			if i+1 >= len(tokens) {
+				return "", "", false, false
+			}
+			i++
+			base = tokens[i]
+		case strings.HasPrefix(token, "--base="):
+			base = strings.TrimPrefix(token, "--base=")
+		case token == "--pane":
+			pane = true
+		default:
+			return "", "", false, false
+		}
+	}
+	if name == "" {
+		return "", "", false, false
+	}
+	return name, base, pane, true
+}
+
+func parseDevRemoveArgs(tokens []string) (string, bool) {
+	name := ""
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--name":
+			if i+1 >= len(tokens) {
+				return "", false
+			}
+			i++
+			name = tokens[i]
+		case strings.HasPrefix(token, "--name="):
+			name = strings.TrimPrefix(token, "--name=")
+		default:
+			return "", false
+		}
+	}
+	return name, name != ""
+}
+
+func (o *rootOptions) runRefresh(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	st, err := o.openStore("refresh-" + args[0])
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "status":
+		tasks, ok := parseRepeatableTask(args[1:])
+		if !ok {
+			return usageError("refresh status", args[1:])
+		}
+		view, err := refreshcmd.Status(st, tasks)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "request":
+		tasks, coordinator, ok := parseRefreshRequest(args[1:])
+		if !ok {
+			return usageError("refresh request", args[1:])
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		view, err := refreshcmd.Request(st, ctx, tasks, coordinator)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "adopt":
+		revision, ok := parseRefreshAdopt(args[1:])
+		if !ok {
+			return usageError("refresh adopt", args[1:])
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		view, err := refreshcmd.AdoptCoordinator(st, ctx, revision)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	default:
+		return usageError("refresh", args)
+	}
+}
+
+func parseRepeatableTask(tokens []string) ([]string, bool) {
+	var tasks []string
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--task":
+			if i+1 >= len(tokens) {
+				return nil, false
+			}
+			i++
+			tasks = append(tasks, tokens[i])
+		case strings.HasPrefix(token, "--task="):
+			tasks = append(tasks, strings.TrimPrefix(token, "--task="))
+		default:
+			return nil, false
+		}
+	}
+	return tasks, true
+}
+
+func parseRefreshRequest(tokens []string) ([]string, bool, bool) {
+	var tasks []string
+	coordinator := false
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--task":
+			if i+1 >= len(tokens) {
+				return nil, false, false
+			}
+			i++
+			tasks = append(tasks, tokens[i])
+		case strings.HasPrefix(token, "--task="):
+			tasks = append(tasks, strings.TrimPrefix(token, "--task="))
+		case token == "--coordinator":
+			coordinator = true
+		default:
+			return nil, false, false
+		}
+	}
+	return tasks, coordinator, true
+}
+
+func parseRefreshAdopt(tokens []string) (string, bool) {
+	coordinator := false
+	revision := ""
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--coordinator":
+			coordinator = true
+		case strings.HasPrefix(token, "-"):
+			return "", false
+		case revision == "":
+			revision = token
+		default:
+			return "", false
+		}
+	}
+	if !coordinator || revision == "" {
+		return "", false
+	}
+	return revision, true
+}
+
+func (o *rootOptions) runUpdate(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	st, err := o.openStore("update-" + args[0])
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "status":
+		if len(args) != 1 {
+			return usageError("update status", args[1:])
+		}
+		view, err := updatecmd.Status(st)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "check", "stage", "apply":
+		ref, noFetch, ok := parseUpdateRef(args[1:])
+		if !ok {
+			return usageError("update "+args[0], args[1:])
+		}
+		ctx := app.OptionalContext(o.installRoot)
+		var view *ordjson.Object
+		var err error
+		switch args[0] {
+		case "check":
+			view, err = updatecmd.Check(st, o.runtimeRoot, ref, noFetch)
+		case "stage":
+			view, err = updatecmd.Stage(st, ctx, ref, noFetch)
+		case "apply":
+			view, err = updatecmd.Apply(st, ctx, ref, noFetch)
+		}
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "rollback":
+		to, ok := parseUpdateTo(args[1:])
+		if !ok {
+			return usageError("update rollback", args[1:])
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		view, err := updatecmd.Rollback(st, ctx, to)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "recover":
+		generation, ok := parseUpdateRecover(args[1:])
+		if !ok {
+			return usageError("update recover", args[1:])
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		view, err := updatecmd.Recover(st, ctx, generation)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	default:
+		return usageError("update", args)
+	}
+}
+
+func parseUpdateRef(tokens []string) (ref string, noFetch, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--ref":
+			if i+1 >= len(tokens) {
+				return "", false, false
+			}
+			i++
+			ref = tokens[i]
+		case strings.HasPrefix(token, "--ref="):
+			ref = strings.TrimPrefix(token, "--ref=")
+		case token == "--no-fetch":
+			noFetch = true
+		default:
+			return "", false, false
+		}
+	}
+	return ref, noFetch, true
+}
+
+func parseUpdateTo(tokens []string) (string, bool) {
+	to := ""
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--to":
+			if i+1 >= len(tokens) {
+				return "", false
+			}
+			i++
+			to = tokens[i]
+		case strings.HasPrefix(token, "--to="):
+			to = strings.TrimPrefix(token, "--to=")
+		default:
+			return "", false
+		}
+	}
+	return to, true
+}
+
+func parseUpdateRecover(tokens []string) (string, bool) {
+	generation := ""
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--generation":
+			if i+1 >= len(tokens) {
+				return "", false
+			}
+			i++
+			generation = tokens[i]
+		case strings.HasPrefix(token, "--generation="):
+			generation = strings.TrimPrefix(token, "--generation=")
+		default:
+			return "", false
+		}
+	}
+	return generation, generation != ""
 }

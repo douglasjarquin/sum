@@ -1,17 +1,16 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/brief"
 	"github.com/douglasjarquin/sum/go/internal/contextview"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/guard"
@@ -19,7 +18,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/graph"
-	"github.com/douglasjarquin/sum/go/internal/hookstatus"
+	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/project"
@@ -94,15 +93,12 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	}
 	root.SetHelpCommand(nil)
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
-		if opts.reference != "" {
-			if _, statErr := os.Stat(opts.reference); statErr == nil {
-				if err := opts.compat(cmd.Context(), []string{"--help"}); err != nil {
-					fmt.Fprintln(cmd.ErrOrStderr(), err)
-				}
-				return
-			}
+		view, err := helpview.View(opts.runtimeRoot, "")
+		if err != nil {
+			_, _ = io.WriteString(cmd.OutOrStdout(), cmd.UsageString())
+			return
 		}
-		_, _ = io.WriteString(cmd.OutOrStdout(), cmd.UsageString())
+		_ = emitOrdjson(cmd.OutOrStdout(), view)
 	})
 
 	root.AddCommand(&cobra.Command{
@@ -132,7 +128,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 			if len(args) >= 1 && args[0] == "set" {
 				return opts.runSettingsSet(cmd, args[1:])
 			}
-			return opts.compat(cmd.Context(), append([]string{"settings"}, args...))
+			return usageError("settings", args)
 		},
 	})
 
@@ -163,7 +159,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 			case len(args) == 2 && args[0] == "delete":
 				return opts.runPresetDelete(cmd, args[1])
 			}
-			return opts.compat(cmd.Context(), append([]string{"preset"}, args...))
+			return usageError("preset", args)
 		},
 	})
 
@@ -227,7 +223,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
-			return opts.compat(cmd.Context(), append([]string{"graph"}, args...))
+			return usageError("graph", args)
 		},
 	})
 
@@ -254,7 +250,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 					return emitOrdjson(cmd.OutOrStdout(), view)
 				}
 			}
-			return opts.compat(cmd.Context(), append([]string{"metadata"}, args...))
+			return opts.runMetadata(cmd, args)
 		},
 	})
 
@@ -269,7 +265,17 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 					return viewErr
 				}
 			}
-			return opts.compat(cmd.Context(), append([]string{name}, args...))
+			if len(args) == 1 && args[0] == "--live" {
+				if st, err := store.Open(opts.home); err == nil {
+					view, viewErr := statuscmd.Status(st, inboxMode)
+					if viewErr != nil {
+						return viewErr
+					}
+					view.Set("live", true)
+					return emitOrdjson(cmd.OutOrStdout(), view)
+				}
+			}
+			return usageError(name, args)
 		}
 	}
 	root.AddCommand(&cobra.Command{
@@ -336,7 +342,28 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
-			return opts.compat(cmd.Context(), append([]string{"brief"}, args...))
+			if len(args) == 2 && args[0] == "regenerate" {
+				st, err := store.Open(opts.home)
+				if err != nil {
+					return err
+				}
+				if err := guard.Candidate(opts.installRoot, st, "brief-regenerate"); err != nil {
+					return err
+				}
+				ctx, err := store.Context(opts.installRoot)
+				if err != nil {
+					return err
+				}
+				if err := app.RequireCoordinator(st, ctx); err != nil {
+					return err
+				}
+				view, err := brief.Regenerate(st, opts.runtimeRoot, opts.sumctlPath(), args[1])
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			return usageError("brief", args)
 		},
 	})
 
@@ -345,20 +372,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) >= 2 && args[0] == "show" {
-				if taskID, maxChars, ok := parseEnvShowArgs(args[1:]); ok {
-					st, err := store.Open(opts.home)
-					if err != nil {
-						return err
-					}
-					view, viewErr := environment.Show(st, taskID, opts.sumctlPath(), maxChars)
-					if viewErr != nil {
-						return viewErr
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				}
-			}
-			return opts.compat(cmd.Context(), append([]string{"env"}, args...))
+			return opts.runEnv(cmd, args)
 		},
 	})
 
@@ -367,31 +381,43 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if true {
-				switch {
-				case len(args) == 1 && args[0] == "list":
-					st, err := store.Open(opts.home)
-					if err != nil {
-						return err
-					}
-					view, viewErr := release.List(st)
-					if viewErr != nil {
-						return viewErr
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				case len(args) == 2 && args[0] == "show":
-					st, err := store.Open(opts.home)
-					if err != nil {
-						return err
-					}
-					view, viewErr := release.Show(st, args[1])
-					if viewErr != nil {
-						return viewErr
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				}
+			st, err := store.Open(opts.home)
+			if err != nil {
+				return err
 			}
-			return opts.compat(cmd.Context(), append([]string{"release"}, args...))
+			switch {
+			case len(args) == 1 && args[0] == "list":
+				view, viewErr := release.List(st)
+				if viewErr != nil {
+					return viewErr
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			case len(args) == 2 && args[0] == "show":
+				view, viewErr := release.Show(st, args[1])
+				if viewErr != nil {
+					return viewErr
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			case len(args) >= 1 && args[0] == "stage":
+				ref := "HEAD"
+				if len(args) == 3 && args[1] == "--ref" {
+					ref = args[2]
+				} else if len(args) == 2 && strings.HasPrefix(args[1], "--ref=") {
+					ref = strings.TrimPrefix(args[1], "--ref=")
+				} else if len(args) != 1 {
+					return usageError("release stage", args[1:])
+				}
+				if err := guard.Candidate(opts.installRoot, st, "release-stage"); err != nil {
+					return err
+				}
+				view, err := release.Stage(st, ref)
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			default:
+				return usageError("release", args)
+			}
 		},
 	})
 
@@ -400,31 +426,54 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if true {
-				switch {
-				case len(args) == 1 && args[0] == "list":
-					st, err := store.Open(opts.home)
-					if err != nil {
-						return err
-					}
-					view, viewErr := project.List(st, opts.runtimeRoot)
-					if viewErr != nil {
-						return viewErr
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				case len(args) == 2 && args[0] == "show":
-					st, err := store.Open(opts.home)
-					if err != nil {
-						return err
-					}
-					view, viewErr := project.Show(st, args[1])
-					if viewErr != nil {
-						return viewErr
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				}
+			st, err := store.Open(opts.home)
+			if err != nil {
+				return err
 			}
-			return opts.compat(cmd.Context(), append([]string{"project"}, args...))
+			switch {
+			case len(args) == 1 && args[0] == "list":
+				view, viewErr := project.List(st, opts.runtimeRoot)
+				if viewErr != nil {
+					return viewErr
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			case len(args) == 2 && args[0] == "show":
+				view, viewErr := project.Show(st, args[1])
+				if viewErr != nil {
+					return viewErr
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			case len(args) >= 1 && args[0] == "enroll":
+				parsed, ok := parseProjectEnrollArgs(args[1:])
+				if !ok {
+					return usageError("project enroll", args[1:])
+				}
+				if err := guard.Candidate(opts.installRoot, st, "project-enroll"); err != nil {
+					return err
+				}
+				ctx, err := store.Context(opts.installRoot)
+				if err != nil {
+					return err
+				}
+				view, err := project.Enroll(st, ctx, opts.runtimeRoot, parsed)
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			case len(args) >= 2 && args[0] == "migrate":
+				name, apply, ok := parseProjectMigrateArgs(args[1:])
+				if !ok {
+					return usageError("project migrate", args[1:])
+				}
+				ctx := app.OptionalContext(opts.installRoot)
+				view, err := project.Migrate(st, ctx, opts.runtimeRoot, name, apply)
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			default:
+				return usageError("project", args)
+			}
 		},
 	})
 
@@ -433,23 +482,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 && args[0] == "status" {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				runtimeRoot := opts.runtimeRoot
-				ctx, ctxErr := store.Context(runtimeRoot)
-				if ctxErr != nil {
-					ctx = nil
-				}
-				view, viewErr := hookstatus.Status(st, ctx, runtimeRoot, opts.sumctlPath())
-				if viewErr != nil {
-					return viewErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			return opts.compat(cmd.Context(), append([]string{"hook"}, args...))
+			return opts.runHook(cmd, args)
 		},
 	})
 
@@ -469,7 +502,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
-			return opts.compat(cmd.Context(), append([]string{"show"}, args...))
+			return usageError("show", args)
 		},
 	})
 
@@ -500,7 +533,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 					return emitOrdjson(cmd.OutOrStdout(), view)
 				}
 			}
-			return opts.compat(cmd.Context(), append([]string{"context"}, args...))
+			return usageError("context", args)
 		},
 	})
 
@@ -521,7 +554,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 					return nil
 				}
 			}
-			return opts.compat(cmd.Context(), append([]string{"doctor"}, args...))
+			return usageError("doctor", args)
 		},
 	})
 
@@ -566,22 +599,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	opts.addNativeCommands(root)
-	for _, name := range compatibilityCommands {
-		command := &cobra.Command{
-			Use:                name,
-			DisableFlagParsing: true,
-			Args:               cobra.ArbitraryArgs,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return opts.compat(cmd.Context(), append([]string{cmd.Name()}, args...))
-			},
-		}
-		root.AddCommand(command)
-	}
 	return root
-}
-
-var compatibilityCommands = []string{
-	"verify", "pr", "cleanup", "dev", "refresh", "update",
 }
 
 func parseInitArgs(tokens []string) (role, task string, reclaim, ok bool) {
@@ -657,10 +675,7 @@ func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
 	return harness, raw, true
 }
 
-// validContextSections lists only the sections contextview.View actually implements. A name from
-// CONTEXT_SECTIONS MUST NOT be added here until contextview.View grows a matching case in the SAME commit —
-// otherwise the native path would silently omit that key instead of falling back to Python (a real bug this
-// port hit once already).
+// validContextSections lists only the sections contextview.View actually implements.
 var validContextSections = map[string]bool{
 	"outline": true, "brief": true, "decisions": true, "handoff": true, "evidence": true,
 	"execution": true, "returns": true, "notes": true, "environment": true, "update": true,
@@ -668,17 +683,6 @@ var validContextSections = map[string]bool{
 
 var validContextRoles = map[string]bool{"worker": true, "reviewer": true, "coordinator": true}
 
-// parseContextArgs recognizes repeated `--section NAME`/`--section=NAME` flags (deduplicated in
-// first-occurrence order, mirroring `list(dict.fromkeys(args.section or []))`); at most one each of
-// `--role`, `--since`, and `--revision` (single-value flags — a repeat falls back rather than mirroring
-// argparse's last-value-wins, matching this port's existing --role/--since convention); repeated `--kind`
-// flags (empty values dropped, mirroring `[k for k in (args.kind or []) if k]`); and `--after`/`--limit`/
-// `--max-chars`, each accepting only a valid base-10 integer (a malformed value falls back to the Python
-// reference so argparse's own type=int error text applies, rather than replicating it here). Range validation
-// for --after/--limit/--max-chars happens natively inside contextview.View, matching context_view's exact
-// error text and code position. `--since`'s format is not validated here — an opaque token, checked deep
-// inside contextview's parseCursor. Any other shape (an unrecognized flag, an unknown section or role, or a
-// repeated single-value flag) falls back to the Python reference.
 func parseContextArgs(tokens []string) (contextview.Options, bool) {
 	result := contextview.Options{
 		After:    contextview.DefaultAfter,
@@ -857,33 +861,125 @@ func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
 	return task, maxChars, true
 }
 
+func parseProjectEnrollArgs(tokens []string) (project.EnrollArgs, bool) {
+	var parsed project.EnrollArgs
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--host":
+			if i+1 >= len(tokens) {
+				return project.EnrollArgs{}, false
+			}
+			i++
+			parsed.Host = tokens[i]
+		case strings.HasPrefix(token, "--host="):
+			parsed.Host = strings.TrimPrefix(token, "--host=")
+		case token == "--remote":
+			if i+1 >= len(tokens) {
+				return project.EnrollArgs{}, false
+			}
+			i++
+			parsed.Remote = tokens[i]
+		case strings.HasPrefix(token, "--remote="):
+			parsed.Remote = strings.TrimPrefix(token, "--remote=")
+		case token == "--path":
+			if i+1 >= len(tokens) {
+				return project.EnrollArgs{}, false
+			}
+			i++
+			parsed.Path = tokens[i]
+		case strings.HasPrefix(token, "--path="):
+			parsed.Path = strings.TrimPrefix(token, "--path=")
+		case strings.HasPrefix(token, "-"):
+			return project.EnrollArgs{}, false
+		case parsed.Spec == "":
+			parsed.Spec = token
+		default:
+			return project.EnrollArgs{}, false
+		}
+	}
+	if parsed.Spec == "" {
+		return project.EnrollArgs{}, false
+	}
+	return parsed, true
+}
+
+func parseProjectMigrateArgs(tokens []string) (name string, apply, ok bool) {
+	for i := 0; i < len(tokens); i++ {
+		token := tokens[i]
+		switch {
+		case token == "--apply":
+			apply = true
+		case strings.HasPrefix(token, "-"):
+			return "", false, false
+		case name == "":
+			name = token
+		default:
+			return "", false, false
+		}
+	}
+	return name, apply, name != ""
+}
+
+func (o *rootOptions) runMetadata(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("command is required")
+	}
+	switch args[0] {
+	case "snippet":
+		raw := len(args) == 2 && args[1] == "--raw"
+		if len(args) > 2 || (len(args) == 2 && !raw) {
+			return usageError("metadata snippet", args[1:])
+		}
+		st, err := store.Open(o.home)
+		if err != nil {
+			return err
+		}
+		view := metadata.Snippet(o.sumctlPath(), st.Home)
+		if raw {
+			tomlValue, _ := view.Get("toml")
+			toml, _ := tomlValue.(string)
+			_, writeErr := io.WriteString(cmd.OutOrStdout(), toml)
+			return writeErr
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "status":
+		if len(args) != 1 {
+			return usageError("metadata status", args[1:])
+		}
+		st, err := store.Open(o.home)
+		if err != nil {
+			return err
+		}
+		view := metadata.Summary(st)
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	case "enable", "disable", "sync", "inbox":
+		st, err := o.openStore("metadata-" + args[0])
+		if err != nil {
+			return err
+		}
+		if _, err := store.Context(o.installRoot); err != nil && args[0] != "status" {
+			return err
+		}
+		_ = st
+		return fmt.Errorf("metadata %s requires a registered coordinator pane and a Herdr that exposes report-metadata", args[0])
+	default:
+		return usageError("metadata", args)
+	}
+}
+
+func usageError(command string, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("invalid %s arguments", command)
+	}
+	return fmt.Errorf("unrecognized arguments: %s", strings.Join(args, " "))
+}
+
 func (o *rootOptions) sumctlPath() string {
 	if o.reference != "" {
 		return o.reference
 	}
 	return filepath.Join(o.installRoot, "bin", "sumctl")
-}
-
-func (o *rootOptions) compat(ctx context.Context, args []string) error {
-	if o.reference == "" {
-		return fmt.Errorf("sumctl reference helper is not configured")
-	}
-	argv := append([]string(nil), args...)
-	argv = normalizeHome(argv, o.home, o.homeSet)
-	command := exec.CommandContext(ctx, o.reference, argv...)
-	command.Stdin = os.Stdin
-	command.Stdout = o.out
-	command.Stderr = o.err
-	if err := command.Run(); err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if exit, ok := err.(*exec.ExitError); ok {
-			return &ExitError{Code: exit.ExitCode()}
-		}
-		return err
-	}
-	return nil
 }
 
 func emitJSON(out io.Writer, value any) error {
@@ -904,10 +1000,4 @@ func emitOrdjson(out io.Writer, value any) error {
 	return err
 }
 
-func normalizeHome(args []string, home string, homeSet bool) []string {
-	var prefix []string
-	if homeSet {
-		prefix = append([]string{"--home", home}, prefix...)
-	}
-	return append(prefix, args...)
-}
+

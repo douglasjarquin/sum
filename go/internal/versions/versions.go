@@ -349,6 +349,10 @@ func ContractState(s *store.Store) *ordjson.Object {
 	return row
 }
 
+func WriteContractVersions(s *store.Store, value *ordjson.Object) error {
+	return ordjson.WriteFile(filepath.Join(s.Home, ContractDir, File), value)
+}
+
 func WriteVersions(s *store.Store, value *ordjson.Object) error {
 	taskID, _ := value.Get("task")
 	id, _ := taskID.(string)

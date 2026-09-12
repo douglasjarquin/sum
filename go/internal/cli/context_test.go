@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -658,65 +659,21 @@ func assertContextArgsFailureMatches(t *testing.T, reference, home, taskID strin
 	}
 }
 
-func TestContext_fallsBackToReferenceForUnsupportedFlags(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
+func TestContext_unknownFlagsAreGoErrors(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
-
-	home := filepath.Join(dir, "state")
-
-	t.Run("a non-integer --max-chars is not yet supported (mirrors argparse's own type=int error)", func(t *testing.T) {
-		var stdout, stderr bytes.Buffer
-		root := NewRoot(reference, &stdout, &stderr)
-		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--max-chars", "not-a-number"})
-		if err := root.ExecuteContext(context.Background()); err != nil {
-			t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
-		}
-		got, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--max-chars\nnot-a-number\n"
-		if string(got) != want {
-			t.Fatalf("reference argv = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("an unrecognized role is not yet supported", func(t *testing.T) {
-		var stdout, stderr bytes.Buffer
-		root := NewRoot(reference, &stdout, &stderr)
-		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--role", "not-a-real-role"})
-		if err := root.ExecuteContext(context.Background()); err != nil {
-			t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
-		}
-		got, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--role\nnot-a-real-role\n"
-		if string(got) != want {
-			t.Fatalf("reference argv = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("an unrecognized section name is not yet supported", func(t *testing.T) {
-		var stdout, stderr bytes.Buffer
-		root := NewRoot(reference, &stdout, &stderr)
-		root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--section", "not-a-real-section"})
-		if err := root.ExecuteContext(context.Background()); err != nil {
-			t.Fatalf("execute: %v (stderr=%s)", err, stderr.String())
-		}
-		got, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "--home\n" + home + "\ncontext\nt-aaaaaaaaaaaa\n--section\nnot-a-real-section\n"
-		if string(got) != want {
-			t.Fatalf("reference argv = %q, want %q", got, want)
-		}
-	})
+	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
+	root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--role", "not-a-real-role"})
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected unrecognized arguments")
+	}
+	if !strings.Contains(err.Error(), "unrecognized arguments") {
+		t.Fatalf("err = %v", err)
+	}
 }

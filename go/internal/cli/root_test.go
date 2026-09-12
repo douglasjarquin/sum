@@ -6,8 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-	"time"
 )
 
 func BenchmarkNewRoot(b *testing.B) {
@@ -60,88 +60,37 @@ func TestCommandTreesDoNotLeakFlags(t *testing.T) {
 	}
 }
 
-func TestCompatibilityCommandPreservesLeadingDashAndRepeatedArguments(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
+func TestUnknownFlagsAreGoErrors(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs([]string{"status", "--arg=-m", "--arg=-m", "--"})
-
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("compatibility command failed: %v", err)
-	}
-	want := "status\n--arg=-m\n--arg=-m\n--\n"
-	got, err := os.ReadFile(argsFile)
-	if err != nil {
+	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if string(got) != want {
-		t.Fatalf("reference argv = %q, want %q", got, want)
-	}
-}
-
-func TestCompatibilityPreservesGlobalHomePosition(t *testing.T) {
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$SUM_GO_ARGS_FILE\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SUM_GO_ARGS_FILE", argsFile)
-	for _, input := range [][]string{
-		{"--home", filepath.Join(dir, "before"), "status", "--arg=-m"},
-		{"status", "--home=" + filepath.Join(dir, "after"), "--arg=-m"},
-	} {
-		root := NewRoot(reference, &bytes.Buffer{}, &bytes.Buffer{})
-		root.SetArgs(input)
-		if err := root.ExecuteContext(context.Background()); err != nil {
-			t.Fatalf("compatibility command failed for %q: %v", input, err)
-		}
-		got, err := os.ReadFile(argsFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "--home\n" + input[1] + "\nstatus\n--arg=-m\n"
-		if input[0] == "status" {
-			want = "status\n" + input[1] + "\n--arg=-m\n"
-		}
-		if string(got) != want {
-			t.Fatalf("reference argv = %q, want %q", got, want)
-		}
-	}
-}
-
-func TestCompatibilityHonorsCancellation(t *testing.T) {
-	dir := t.TempDir()
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nsleep 10\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	root := NewRoot(reference, &bytes.Buffer{}, &bytes.Buffer{})
-	root.SetArgs([]string{"cleanup"})
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
-	defer cancel()
-	if err := root.ExecuteContext(ctx); err == nil || err != context.DeadlineExceeded {
-		t.Fatalf("cancellation error = %v, want context deadline", err)
-	}
-}
-
-func TestCompatibilityPreservesExitCode(t *testing.T) {
-	dir := t.TempDir()
-	reference := filepath.Join(dir, "reference.sh")
-	if err := os.WriteFile(reference, []byte("#!/bin/sh\nexit 7\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	root := NewRoot(reference, &bytes.Buffer{}, &bytes.Buffer{})
-	root.SetArgs([]string{"cleanup"})
+	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
+	root.SetArgs([]string{"--home", home, "status", "--arg=-m"})
 	err := root.ExecuteContext(context.Background())
-	exit, ok := err.(*ExitError)
-	if !ok || exit.Code != 7 {
-		t.Fatalf("error = %#v, want ExitError{Code: 7}", err)
+	if err == nil {
+		t.Fatal("expected unrecognized arguments")
+	}
+	if !strings.Contains(err.Error(), "unrecognized arguments") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCleanupUnknownArgsAreGoErrors(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
+	root.SetArgs([]string{"--home", home, "cleanup"})
+	err := root.ExecuteContext(context.Background())
+	if err == nil {
+		t.Fatal("expected invalid cleanup arguments")
 	}
 }

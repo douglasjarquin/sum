@@ -17,7 +17,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root := cli.NewRoot(referenceHelper(), os.Stdout, os.Stderr)
+	root := cli.NewRoot(helperPath(), os.Stdout, os.Stderr)
 	if err := root.ExecuteContext(ctx); err != nil {
 		var exitErr *cli.ExitError
 		if errors.As(err, &exitErr) {
@@ -27,7 +27,7 @@ func main() {
 		errorValue.Set("error", err.Error())
 		payload, marshalErr := ordjson.MarshalCompact(errorValue)
 		if marshalErr != nil {
-			fmt.Fprintln(os.Stderr, `{"error": "sumctl-go failed"}`)
+			fmt.Fprintln(os.Stderr, `{"error": "sumctl failed"}`)
 		} else {
 			fmt.Fprintln(os.Stderr, string(payload))
 		}
@@ -35,14 +35,12 @@ func main() {
 	}
 }
 
-func referenceHelper() string {
-	if value := os.Getenv("SUM_PYTHON_HELPER"); value != "" {
-		return value
+func helperPath() string {
+	if root := os.Getenv("SUM_INSTALL_ROOT"); root != "" {
+		return filepath.Join(root, "bin", "sumctl")
 	}
-	if value, err := filepath.Abs("bin/sumctl"); err == nil {
-		if _, statErr := os.Stat(value); statErr == nil {
-			return value
-		}
+	if exe, err := os.Executable(); err == nil {
+		return exe
 	}
 	return ""
 }
