@@ -1,10 +1,8 @@
-import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
-import sys
 import tempfile
 import unittest
 
@@ -23,7 +21,9 @@ class PackagingInventoryTest(unittest.TestCase):
             self.assertTrue(entry["checksum"], entry["id"])
             self.assertIn(entry["role"], ("build", "runtime", "build-and-runtime"), entry["id"])
         ids = {entry["id"] for entry in entries}
-        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl", "sumctl-go", "herdr-mesh", "herdr-mesh-go", "quota-axi", "remainder"} <= ids)
+        self.assertTrue({"go", "cobra", "mcp-go-sdk", "sumctl", "herdr-mesh", "herdr-mesh-go", "quota-axi", "remainder"} <= ids)
+        self.assertNotIn("sumctl-go", ids)
+        self.assertFalse((ROOT / "lib" / "sumctl.py").exists())
         mesh = next(entry for entry in entries if entry["id"] == "herdr-mesh")
         prior = next(entry for entry in entries if entry["id"] == "herdr-mesh-go")
         self.assertEqual(mesh["source"], "go/cmd/herdr-mesh")
@@ -101,17 +101,6 @@ class PackagingInventoryTest(unittest.TestCase):
         self.assertTrue(moved.resolve().is_file())
         smoke = (ROOT / "scripts" / "mcp_smoke.mjs").read_text()
         self.assertIn("relinkRuntimeBin", smoke)
-
-    def test_prior_packager_can_import_candidate_runtime_contracts(self):
-        lib = ROOT / "lib"
-        sys.path.insert(0, str(lib))
-        self.addCleanup(lambda: sys.path.remove(str(lib)) if str(lib) in sys.path else None)
-        spec = importlib.util.spec_from_file_location("candidate_sumctl", lib / "sumctl.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        offered = module.runtime_contracts({})
-        self.assertEqual(offered["sum_version"], "0.1.0")
-        self.assertEqual(offered["mcp"]["server"], "herdr-mesh-sum")
 
 
 if __name__ == "__main__":
