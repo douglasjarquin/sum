@@ -93,7 +93,7 @@ func resolveAuthorized(root, ref string, fetch bool) (*ordjson.Object, error) {
 	checkout := ordjson.NewObject()
 	checkout.Set("head", strings.TrimSpace(headOut.Stdout))
 	checkout.Set("dirty", strings.TrimSpace(dirtyOut.Stdout) != "")
-	checkout.Set("note", "The checkout is left exactly as it is; an update never pulls, resets, or edits it.")
+	checkout.Set("note", "check and stage leave the checkout unchanged. apply fast-forwards a clean installation clone when the selected SHA is a fast-forward.")
 	result := ordjson.NewObject()
 	result.Set("sha", sha)
 	result.Set("ref", target)
@@ -322,7 +322,7 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 		row := ordjson.NewObject()
 		row.Set("what", "checkout-instructions")
 		row.Set("checkout_head", head)
-		row.Set("note", "AGENTS.md and skills read by a plain harness come from the checkout, which this update leaves untouched. Refreshing running sessions' instructions is separate work.")
+		row.Set("note", "AGENTS.md and skills read by a plain harness come from the checkout. apply fast-forwards a clean installation clone; this command does not.")
 		deferred = append(deferred, row)
 	}
 	helper := filepath.Join(candidatePath, ".local", "bin", "sumctl")
@@ -465,6 +465,116 @@ func SelectDefault(root, target string) (string, error) {
 	return relative, nil
 }
 
+func syncInstallationCheckout(root, sha string) *ordjson.Object {
+	result := ordjson.NewObject()
+	headOut, err := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, false, nil)
+	head := strings.TrimSpace(headOut.Stdout)
+	result.Set("head", head)
+	if err != nil || headOut.Code != 0 || head == "" {
+		result.Set("result", "refused")
+		result.Set("reason", "installation checkout HEAD is unreadable")
+		return result
+	}
+	if sha == "" || sha == head {
+		result.Set("result", "already-aligned")
+		return result
+	}
+	branch := defaultBranch(root)
+	upstream := "refs/remotes/origin/" + branch
+	tipOut, tipErr := proc.Run([]string{"git", "-C", root, "rev-parse", "--verify", upstream}, "", 20*time.Second, false, nil)
+	tip := strings.TrimSpace(tipOut.Stdout)
+	if tipErr != nil || tipOut.Code != 0 || tip == "" {
+		result.Set("result", "refused")
+		result.Set("reason", fmt.Sprintf("%s is unknown here", upstream))
+		return result
+	}
+	anc, _ := proc.Run([]string{"git", "-C", root, "merge-base", "--is-ancestor", sha, tip}, "", 20*time.Second, false, nil)
+	if anc.Code != 0 {
+		result.Set("result", "refused")
+		result.Set("reason", fmt.Sprintf("%s is not an ancestor of origin/%s", sha, branch))
+		return result
+	}
+	dirtyOut, _ := proc.Run([]string{"git", "-C", root, "status", "--porcelain", "--untracked-files=no"}, "", 20*time.Second, false, nil)
+	if strings.TrimSpace(dirtyOut.Stdout) != "" {
+		result.Set("result", "refused")
+		result.Set("reason", "checkout has tracked changes")
+		return result
+	}
+	ff, _ := proc.Run([]string{"git", "-C", root, "merge-base", "--is-ancestor", head, sha}, "", 20*time.Second, false, nil)
+	if ff.Code != 0 {
+		result.Set("result", "refused")
+		result.Set("reason", fmt.Sprintf("HEAD %s is not a fast-forward to %s", head, sha))
+		return result
+	}
+	merge, mergeErr := proc.Run([]string{"git", "-C", root, "merge", "--ff-only", sha}, "", 20*time.Second, false, nil)
+	if mergeErr != nil || merge.Code != 0 {
+		reason := strings.TrimSpace(merge.Stderr)
+		if reason == "" {
+			reason = strings.TrimSpace(merge.Stdout)
+		}
+		if reason == "" && mergeErr != nil {
+			reason = mergeErr.Error()
+		}
+		if reason == "" {
+			reason = "git merge --ff-only refused"
+		}
+		result.Set("result", "refused")
+		result.Set("reason", reason)
+		return result
+	}
+	newHeadOut, _ := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, false, nil)
+	result.Set("head", strings.TrimSpace(newHeadOut.Stdout))
+	result.Set("result", "fast-forwarded")
+	return result
+}
+
+func applyCheckoutOutcome(compat, checkout *ordjson.Object) {
+	if compat == nil || checkout == nil {
+		return
+	}
+	raw, _ := compat.Get("deferred")
+	list, _ := raw.([]any)
+	kept := make([]any, 0, len(list))
+	for _, item := range list {
+		row := asObject(item)
+		if row != nil && asString(func() any { v, _ := row.Get("what"); return v }()) == "checkout-instructions" {
+			continue
+		}
+		kept = append(kept, item)
+	}
+	outcome, _ := checkout.Get("result")
+	if asString(outcome) == "refused" {
+		head, _ := checkout.Get("head")
+		reason, _ := checkout.Get("reason")
+		row := ordjson.NewObject()
+		row.Set("what", "checkout-instructions")
+		row.Set("checkout_head", head)
+		row.Set("reason", reason)
+		row.Set("note", "AGENTS.md and skills read by a plain harness come from the checkout. The default runtime is the new release. The checkout was not reset, stashed, or force-updated.")
+		kept = append(kept, row)
+	}
+	compat.Set("deferred", kept)
+}
+
+func deferredWhats(compat *ordjson.Object) []any {
+	var deferredWhat []any
+	if compat == nil {
+		return deferredWhat
+	}
+	if d, ok := compat.Get("deferred"); ok {
+		if list, isList := d.([]any); isList {
+			for _, raw := range list {
+				if obj := asObject(raw); obj != nil {
+					if w, has := obj.Get("what"); has {
+						deferredWhat = append(deferredWhat, w)
+					}
+				}
+			}
+		}
+	}
+	return deferredWhat
+}
+
 func updateLog(root string, entry *ordjson.Object) {
 	path := filepath.Join(root, ".local", "updates.jsonl")
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
@@ -566,13 +676,21 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 		wantKind = "checkout"
 	}
 	if curKind == wantKind && curSHA == newSHA {
+		checkout := syncInstallationCheckout(root, newSHA)
+		applyCheckoutOutcome(compat, checkout)
+		note := "Already the default; nothing changed."
+		checkoutResult, _ := checkout.Get("result")
+		if asString(checkoutResult) == "fast-forwarded" {
+			note = "Already the default runtime; the installation checkout was fast-forwarded to that SHA."
+		}
 		result := ordjson.NewObject()
 		result.Set("action", action)
 		result.Set("changed", false)
 		result.Set("default", current)
 		result.Set("compatibility", compat)
+		result.Set("checkout", checkout)
 		result.Set("source", source)
-		result.Set("note", "Already the default; nothing changed.")
+		result.Set("note", note)
 		return result, nil
 	}
 	before := selectionDescriptor(current)
@@ -590,24 +708,15 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 		detail, _ := check.Get("detail")
 		return nil, fmt.Errorf("%s candidate entrypoint check failed: %v. The prior known-good runtime was restored; records are untouched.", action, detail)
 	}
+	checkout := syncInstallationCheckout(root, newSHA)
+	applyCheckoutOutcome(compat, checkout)
 	log := ordjson.NewObject()
 	log.Set("action", action)
 	log.Set("result", "selected")
 	log.Set("from", before)
 	log.Set("to", selectionDescriptor(after))
-	var deferredWhat []any
-	if d, ok := compat.Get("deferred"); ok {
-		if list, isList := d.([]any); isList {
-			for _, raw := range list {
-				if obj := asObject(raw); obj != nil {
-					if w, has := obj.Get("what"); has {
-						deferredWhat = append(deferredWhat, w)
-					}
-				}
-			}
-		}
-	}
-	log.Set("deferred", deferredWhat)
+	log.Set("deferred", deferredWhats(compat))
+	log.Set("checkout", checkout)
 	log.Set("post_check", check)
 	updateLog(root, log)
 	result := ordjson.NewObject()
@@ -616,6 +725,7 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 	result.Set("previous", before)
 	result.Set("default", after)
 	result.Set("compatibility", compat)
+	result.Set("checkout", checkout)
 	result.Set("post_check", check)
 	result.Set("source", source)
 	result.Set("note", "New entrypoint invocations and new dispatches use this default. Commands already running finish on the runtime they resolved; connected MCP servers keep their start tree; task records, worktrees, and .sum were not touched.")

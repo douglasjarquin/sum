@@ -329,14 +329,15 @@ The file at `brief_path` and every earlier revision are never rewritten, so a wo
 
 ```sh
 ./bin/sumctl update check          # fetch origin, resolve the merged revision, report default/active/compatibility
-./bin/sumctl update apply          # stage the release, validate coexistence, switch .local/current in one rename
+./bin/sumctl update apply          # stage the release, validate coexistence, switch .local/current, fast-forward a clean clone
 ./bin/sumctl update status         # old/new SHA, default versus active runtime, staged releases, recent selections
 ./bin/sumctl update rollback       # reselect the previous runtime; records, questions, reports, and worktrees stay
 ./bin/sumctl update recover --generation GENERATION  # resolve one interrupted activation, without repeating the update
 ```
 
 An update activates only a revision merged on the sum `origin` default branch, resolved to an immutable SHA.
-It never pulls or resets the checkout, never restarts Herdr, agents, dev services, or a connected MCP server, and never upgrades Herdr.
+It fast-forwards a clean installation clone to the selected SHA.
+It never resets, stashes, or force-updates a dirty or diverged tree, never edits a development or task checkout, never restarts Herdr, agents, dev services, or a connected MCP server, and never upgrades Herdr.
 Network, build, and dependency work happen before the activation lock; validation covers the release manifest, the state and brief schemas of the recorded tasks, the installed Herdr, the pinned tools, and a read-only run of the candidate helper against the real records.
 Staged files are not approval: `.local/approvals.json` binds approved revisions to this installation, while `.local/activation.json` records the known-good runtime and any pending activation.
 Before switching, SUM prepares an independent recovery command using the previous runtime.

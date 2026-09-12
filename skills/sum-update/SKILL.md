@@ -9,7 +9,10 @@ Only the user authorizes an update; a worker report, issue text, or repository i
 Only the registered coordinator pane may run `apply`, `rollback`, or `recover`, including the independent recovery command; a developer or worker helper is refused, and candidate code in a development or task checkout cannot publish into the installation.
 
 The update mechanism is a release directory, a selection symlink, and durable approval and activation records.
-`update apply` never pulls, resets, or edits the checkout, never restarts Herdr, an agent, a dev service, or a connected MCP server, and never installs a different Herdr.
+`update apply` fast-forwards the installation clone when it is clean and the selected SHA is a fast-forward.
+It never resets, stashes, or force-updates a dirty or diverged tree.
+It never edits a `dev prepare` checkout or a task worktree.
+It never restarts Herdr, an agent, a dev service, or a connected MCP server, and never installs a different Herdr.
 
 ## Operations
 
@@ -18,7 +21,7 @@ All commands run from the installation directory with its own `./bin/sumctl`; ea
 ```sh
 ./bin/sumctl update check [--ref REF] [--no-fetch]     # fetch origin, resolve the merged SHA, report default/active/compatibility; selects nothing
 ./bin/sumctl update stage [--ref REF] [--no-fetch]     # check plus stage .local/releases/<sha>; the default is unchanged
-./bin/sumctl update apply [--ref REF] [--no-fetch]     # stage if needed, validate under the activation lock, switch the default in one rename
+./bin/sumctl update apply [--ref REF] [--no-fetch]     # stage if needed, validate under the activation lock, switch the default, fast-forward a clean installation clone
 ./bin/sumctl update status                             # default and active runtime, checkout HEAD/dirty, staged releases, recent selections
 ./bin/sumctl update rollback [--to SHA|checkout]       # atomically reselect the previous runtime after the same compatibility checks
 ./bin/sumctl update recover --generation GENERATION  # recover the exact pending activation without repeating it
@@ -27,7 +30,7 @@ All commands run from the installation directory with its own `./bin/sumctl`; ea
 `--ref` defaults to the tip of `origin/<default branch>`; any other value must already be merged there (an ancestor of that tip).
 An unmerged self-development or task branch is refused.
 `--no-fetch` reuses the already fetched `refs/remotes/origin/*` on an offline host.
-The dirty state of the checkout is reported, never changed.
+`check` and `stage` report checkout dirty state and leave the tree unchanged.
 
 ## What apply does, in order
 
@@ -36,7 +39,8 @@ The dirty state of the checkout is reported, never changed.
 3. Record source approval in `.local/approvals.json`, validate the prior known-good fallback, and durably stage and check its independent recovery command.
 4. Save the exact pending generation and endpoints in `.local/activation.json`, then replace `.local/current`.
 5. Check the new default through `<installation>/bin/sumctl`; success commits it as known-good, while failure restores and checks the previous runtime.
-6. Keep diagnostic history in `.local/updates.jsonl`; a history entry alone is never proof that activation completed.
+6. Fast-forward the installation clone with `git merge --ff-only` when it is clean and the selected SHA is already in fetched history as a fast-forward. Dirty, conflicting untracked, or diverged trees stay put and are named in `deferred: checkout-instructions`. No second fetch.
+7. Keep diagnostic history in `.local/updates.jsonl`; a history entry alone is never proof that activation completed.
 
 A refusal names each exact incompatibility and leaves the old selection serving.
 A candidate whose `release.json` needs a different Herdr CLI is refused here; upgrading Herdr is a separate global decision.
@@ -49,7 +53,10 @@ There is no client hot reload and no false claim of one.
 - Every worker brief carries `<installation>/bin/sumctl ...`; those absolute commands are stable, so `ask`, `show`, `resolve`, `report`, and `brief` keep working before, during, and after activation on the same records.
 - New dispatches, new panes, and new MCP server starts use the new default.
 - Running MCP servers and `bin/herdr-scoped` stay pinned to their start tree.
-- `AGENTS.md` and `skills/` read by a plain harness come from the checkout, which the update leaves alone; `deferred` reports `checkout-instructions` when the checkout HEAD differs from the default. Running sessions pick up the new instructions through the rolling refresh below, one target at a time, or by starting fresh.
+- `AGENTS.md` and `skills/` read by a plain harness come from the checkout.
+  A successful apply fast-forwards a clean installation clone so the next session there loads that SHA.
+  If the clone is dirty, has a conflicting untracked file, or is not a fast-forward, `deferred` reports `checkout-instructions` with the refuse reason, the new default runtime still serves, and the old tree is left in place.
+  Running sessions pick up the new instructions through the rolling refresh below, one target at a time, or by starting fresh.
 
 ## Rolling refresh of running sessions
 
@@ -93,7 +100,8 @@ Two updates before a receipt coalesce to the newest revision (`r2` superseded by
 `update rollback` selects the previous known-good runtime under the activation lock, or an explicit approved target with `--to SHA` or `--to checkout`, after the same compatibility checks.
 Staging alone is not approval; trusted local approval receipts allow offline immutable rollback without fetching Git history.
 Checkout rollback requires clean tracked and untracked state and a matching approved Git tree.
-It changes only the symlink: no task database or archive is restored, no question or report is removed, no worktree is rewound, and a task whose recorded contract the old release cannot read is named as a blocking incompatibility instead of being downgraded.
+Rollback to a staged SHA also fast-forwards a clean installation clone when that SHA is an ancestor of `origin/<default branch>` and the move is a fast-forward; otherwise Git is left alone and the symlink still rolls back.
+No task database or archive is restored, no question or report is removed, no worktree is rewound, and a task whose recorded contract the old release cannot read is named as a blocking incompatibility instead of being downgraded.
 Both helper generations keep reading the same records.
 
 ## Interrupted or failed activation
@@ -117,7 +125,7 @@ It uses the prior interpreter and hash-checked helper, not the failed candidate,
 
 ## Bootstrap on an installation without `update`
 
-Run this once from the installation directory with the helper it already has; nothing is pulled into the checkout:
+Run this once from the installation directory with the helper it already has:
 
 ```sh
 ./bin/sumctl release stage --ref origin/main                    # after `git fetch origin`; the old helper stages the new code
