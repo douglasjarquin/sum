@@ -31,6 +31,8 @@ Newer code or dependencies go into a staged release instead (below).
 
 The native companions are also built in a release staging directory with `CGO_ENABLED=0`.
 The staged binaries' source, build requirements, runtime requirements, and SHA-256 are recorded in `release.json` under `dependencies.native.sumctl-go` and `dependencies.native.herdr-mesh`.
+A helper from before the Go Mesh cutover records `herdr-mesh-go` instead.
+That id stays in the inventory until that helper is no longer the default.
 Running them requires no Go toolchain, module download, Node, Python, or Cobra generator.
 
 The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
