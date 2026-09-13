@@ -36,9 +36,13 @@ An unmerged self-development or task branch is refused.
 
 1. Refuse any pending activation under the lock; outside the lock, fetch origin, resolve the SHA, and stage the bundle (source from `git archive`, pinned tools, Mesh, overlay, Herdr skill, `release.json`).
 2. Under `.local/update.lock` (non-blocking; a concurrent update is refused with the current selection intact): validate the bundle against its manifest, the installation's state schema, every non-archived task's brief schema (legacy records count as schema 1), the installed Herdr version, the pinned tool links, and then run the candidate's own helper read-only (`--version`, `status`, `show` for the most recent tasks) against the real records.
-3. Record source approval in `.local/approvals.json`, validate the prior known-good fallback, and durably stage and check its independent recovery command.
-4. Save the exact pending generation and endpoints in `.local/activation.json`, then replace `.local/current`.
-5. Check the new default through `<installation>/bin/sumctl`; success commits it as known-good, while failure restores and checks the previous runtime.
+3. Resolve the recorded previous known-good target by exact path and SHA, not from a checkout HEAD that apply may later fast-forward.
+   Check that helper with `--version` and record its hash.
+4. Save the pending generation, candidate, previous target, and recovery argv in `.local/activation.json`, then replace `.local/current`.
+5. Check the new default through `<installation>/bin/sumctl`.
+   Success commits it as known-good.
+   Failure restores that exact previous target and checks it.
+   Candidate failure, restoration failure, and verified restoration are distinct results.
 6. Fast-forward the installation clone with `git merge --ff-only` when it is clean and the selected SHA is already in fetched history as a fast-forward. Dirty, conflicting untracked, or diverged trees stay put and are named in `deferred: checkout-instructions`. No second fetch.
 7. Keep diagnostic history in `.local/updates.jsonl`; a history entry alone is never proof that activation completed.
 
@@ -113,15 +117,18 @@ If the prior checkout has changed, or either endpoint no longer matches, recover
 If recovery also fails, preserve the pending record and report both outcomes; do not delete the record to retry.
 A failed audit write also retains pending state; inspect and recover that generation instead of repeating apply or rollback.
 
-When the selected helper cannot start, read the saved independent command without invoking that helper:
+When the selected helper cannot start, do not run `./bin/sumctl`.
+That launcher follows `.local/current` and would exec the failed candidate.
+Read `pending.recovery.argv` from `.local/activation.json` (also shown by `update status` when a helper still starts) and run that exact argv from the registered coordinator pane.
 
 ```sh
-python3 -c 'import json,shlex; print(shlex.join(json.load(open(".local/activation.json"))["pending"]["recovery"]["argv"]))'
+SUM_INSTALL_ROOT="$PWD" <prior-helper> --home <recorded-home> update recover --generation GENERATION
 ```
 
-Run the printed command from the registered coordinator pane.
-Keep its recorded state-home argument unchanged; a copied state directory is not interchangeable with the bound home.
-It uses the prior interpreter and hash-checked helper, not the failed candidate, and checks the same pending generation before changing selection.
+Keep the recorded `--home` unchanged.
+A copied state directory is not interchangeable with the bound home.
+The argv points at the hash-checked prior known-good helper, not the failed candidate.
+It checks the same pending generation before changing selection.
 
 ## Bootstrap on an installation without `update`
 

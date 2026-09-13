@@ -160,7 +160,7 @@ func TestApply_failedCompensation_isExplicitFailure(t *testing.T) {
 	lab := newActivationLab(t)
 	selectWorkingRelease(t, lab, lab.newSHA)
 	previous := currentSHA(t, lab.root)
-	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", previous), "#!/bin/sh\necho broken-prior >&2\nexit 1\n")
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", previous), "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\necho broken-prior >&2\nexit 1\n")
 	next := stageNextRelease(t, lab)
 
 	_, applyErr := Apply(lab.store, lab.ctx, next, true)
@@ -558,5 +558,3 @@ func assertTaskBrief(t *testing.T, lab *applyLab, want string) {
 		t.Fatalf("task questions mutated: %s", dump(questions))
 	}
 }
-
-
