@@ -195,3 +195,173 @@ func TestReleaseStage_requiresInstallationHome(t *testing.T) {
 		t.Fatal("expected installation home requirement")
 	}
 }
+
+func TestReleaseStage_unknownFlagOrExtraPositionalDoesNotStage(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		unknown bool
+	}{
+		{name: "unknown flag", args: []string{"release", "stage", "--unexpected"}, unknown: true},
+		{name: "extra positional after --ref", args: []string{"release", "stage", "--ref", "HEAD", "extra"}},
+		{name: "extra positional after --ref=", args: []string{"release", "stage", "--ref=HEAD", "extra"}},
+		{name: "extra positional after HEAD", args: []string{"release", "stage", "HEAD", "extra"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root, home := buildInstallation(t)
+			commitInstallation(t, root)
+			releasesDir := filepath.Join(root, ".local", "releases")
+
+			stdout, stderr, err := runReleaseErr(t, home, tc.args...)
+			if err == nil {
+				t.Fatalf("expected usage failure, stdout=%s stderr=%s", stdout, stderr)
+			}
+			assertReleaseUsageError(t, err)
+			if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+				t.Fatalf("err = %v, want unknown flag", err)
+			}
+			if stdout != "" {
+				t.Fatalf("usage failure wrote stdout: %s", stdout)
+			}
+			if _, statErr := os.Stat(releasesDir); statErr == nil {
+				t.Fatal("release.Stage wrote .local/releases")
+			}
+		})
+	}
+}
+
+func TestReleaseCommands(t *testing.T) {
+	validSHA := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cases := []struct {
+		name      string
+		args      []string
+		lab       string
+		success   bool
+		usage     bool
+		unknown   bool
+		domainErr string
+	}{
+		{name: "valid list", args: []string{"release", "list"}, lab: "empty", success: true},
+		{name: "valid list after dashdash", args: []string{"release", "list", "--"}, lab: "empty", success: true},
+		{name: "valid show", args: []string{"release", "show", validSHA}, lab: "show", success: true},
+		{name: "valid show after dashdash", args: []string{"release", "show", "--", validSHA}, lab: "show", success: true},
+		{name: "valid stage default HEAD", args: []string{"release", "stage"}, lab: "empty", domainErr: "git"},
+		{name: "valid stage --ref", args: []string{"release", "stage", "--ref", "HEAD"}, lab: "empty", domainErr: "git"},
+		{name: "valid stage --ref=", args: []string{"release", "stage", "--ref=HEAD"}, lab: "empty", domainErr: "git"},
+		{name: "valid stage positional ref", args: []string{"release", "stage", "HEAD"}, lab: "empty", domainErr: "git"},
+		{name: "release missing subcommand", args: []string{"release"}, usage: true},
+		{name: "show missing sha", args: []string{"release", "show"}, usage: true},
+		{name: "list extra positional", args: []string{"release", "list", "extra"}, lab: "empty", usage: true},
+		{name: "list unknown flag", args: []string{"release", "list", "--unexpected"}, lab: "empty", usage: true, unknown: true},
+		{name: "show extra positional", args: []string{"release", "show", validSHA, "extra"}, lab: "show", usage: true},
+		{name: "show unknown flag", args: []string{"release", "show", validSHA, "--unexpected"}, lab: "show", usage: true, unknown: true},
+		{name: "stage extra positional", args: []string{"release", "stage", "HEAD", "extra"}, lab: "commit", usage: true},
+		{name: "stage unknown flag", args: []string{"release", "stage", "--unexpected"}, lab: "commit", usage: true, unknown: true},
+		{name: "stage extra after --ref", args: []string{"release", "stage", "--ref", "HEAD", "extra"}, lab: "commit", usage: true},
+		{name: "stage extra after --ref=", args: []string{"release", "stage", "--ref=HEAD", "extra"}, lab: "commit", usage: true},
+		{name: "stage extra after dashdash", args: []string{"release", "stage", "HEAD", "--", "extra"}, lab: "commit", usage: true},
+		{name: "stage missing --ref value", args: []string{"release", "stage", "--ref"}, usage: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root, home := releaseUsageLab(t, tc.lab)
+			stdout, stderr, err := runReleaseErr(t, home, tc.args...)
+			switch {
+			case tc.success:
+				if err != nil {
+					t.Fatalf("err = %v stderr=%s stdout=%s", err, stderr, stdout)
+				}
+				if !strings.Contains(stdout, "releases") && !strings.Contains(stdout, validSHA) {
+					t.Fatalf("stdout missing release payload:\n%s", stdout)
+				}
+			case tc.usage:
+				assertReleaseUsageError(t, err)
+				if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+					t.Fatalf("err = %v, want unknown flag", err)
+				}
+				if stdout != "" {
+					t.Fatalf("usage failure wrote stdout: %s", stdout)
+				}
+				if root != "" {
+					if _, statErr := os.Stat(filepath.Join(root, ".local", "releases")); statErr == nil && tc.lab == "commit" {
+						t.Fatal("release.Stage wrote .local/releases")
+					}
+				}
+			default:
+				if err == nil {
+					t.Fatalf("expected domain error, stdout=%s", stdout)
+				}
+				if !strings.Contains(err.Error(), tc.domainErr) {
+					t.Fatalf("err = %v, want substring %q", err, tc.domainErr)
+				}
+			}
+		})
+	}
+}
+
+func runReleaseErr(t *testing.T, home string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	root := NewRoot("", &outBuf, &errBuf)
+	root.SetArgs(append([]string{"--home", home}, args...))
+	err = root.ExecuteContext(context.Background())
+	return outBuf.String(), errBuf.String(), err
+}
+
+func assertReleaseUsageError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected usage failure")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "is not a sum installation") || strings.Contains(msg, "git exited") || strings.Contains(msg, "Needed a single revision") {
+		t.Fatalf("err = %v, want a usage failure", err)
+	}
+	usage := strings.Contains(msg, "unknown flag") ||
+		strings.Contains(msg, "accepts 0 arg") ||
+		strings.Contains(msg, "accepts 1 arg") ||
+		strings.Contains(msg, "accepts at most 1 arg") ||
+		strings.Contains(msg, "flag needs an argument") ||
+		strings.Contains(msg, "command is required") ||
+		strings.Contains(msg, "unknown command") ||
+		strings.Contains(msg, "unrecognized arguments") ||
+		strings.Contains(msg, "invalid release")
+	if !usage {
+		t.Fatalf("err = %v, want a usage failure", err)
+	}
+}
+
+func releaseUsageLab(t *testing.T, lab string) (root, home string) {
+	t.Helper()
+	switch lab {
+	case "show":
+		root, home = buildInstallation(t)
+		buildValidRelease(t, filepath.Join(root, ".local", "releases"), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	case "commit":
+		root, home = buildInstallation(t)
+		commitInstallation(t, root)
+	case "empty":
+		root, home = buildInstallation(t)
+	default:
+		home = writeDesignatedHome(t)
+	}
+	return root, home
+}
+
+func commitInstallation(t *testing.T, root string) {
+	t.Helper()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "README.md")
+	run("commit", "--quiet", "-m", "initial")
+}
