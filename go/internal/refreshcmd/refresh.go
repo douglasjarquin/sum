@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -289,7 +290,33 @@ func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd, host
 	return "submitted-unconfirmed", status, nil
 }
 
+func interruptTestDelivery() {
+	raw := os.Getenv("SUM_TEST_INTERRUPT_AFTER_DELIVERIES")
+	if raw == "" {
+		return
+	}
+	limit, err := strconv.Atoi(raw)
+	if err != nil || limit < 0 {
+		return
+	}
+	root := os.Getenv("FAKE_HERDR_ROOT")
+	if root == "" {
+		return
+	}
+	path := filepath.Join(root, "delivery_count")
+	n := 0
+	if data, readErr := os.ReadFile(path); readErr == nil {
+		n, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+	}
+	n++
+	_ = os.WriteFile(path, []byte(strconv.Itoa(n)), 0o644)
+	if n > limit {
+		os.Exit(130)
+	}
+}
+
 func attemptDelivery(sn *snapshots, endpoint *ordjson.Object, expectedCwd, message, hostname string) *ordjson.Object {
+	interruptTestDelivery()
 	state, reason, err := observeRecipient(sn, endpoint, expectedCwd, hostname)
 	row := ordjson.NewObject()
 	if err != nil {

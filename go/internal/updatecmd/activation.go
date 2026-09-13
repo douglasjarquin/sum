@@ -554,6 +554,9 @@ func ensureActivationState(s *store.Store, root string, current *ordjson.Object)
 }
 
 func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Object, error) {
+	if TestRecoverPending != nil {
+		return TestRecoverPending(s, root, generation)
+	}
 	state, err := readActivationState(s, root)
 	if err != nil {
 		return nil, err
