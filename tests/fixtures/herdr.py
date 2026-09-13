@@ -79,6 +79,19 @@ if args[:2] == ["agent", "prompt"]:
     pane = state["panes"].get(args[2])
     if not pane or not pane.get("agent"): fail("agent_not_running")
     if pane["agent_status"] == "blocked": fail("agent_blocked")
+    # FAKE_INTERRUPT_AFTER_PROMPTS=N SIGINTs the caller on prompt N+1 in this fake root, then hangs so the prompt is not accepted. Fleet tests use this to stop a rolling refresh mid fan-out.
+    limit = os.environ.get("FAKE_INTERRUPT_AFTER_PROMPTS")
+    if limit not in (None, ""):
+        import signal
+        counter_path = root / "prompt_count"
+        n = int(counter_path.read_text()) + 1 if counter_path.exists() else 1
+        counter_path.write_text(str(n))
+        if n > int(limit):
+            try:
+                os.kill(os.getppid(), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            os._exit(1)
     if os.environ.get("FAKE_FAIL_PROMPT") or args[2] in os.environ.get("FAKE_FAIL_PROMPT_PANES", "").split(","): fail("simulated uncertain prompt")
     pane["last_prompt"] = args[3]
     pane["agent_status"] = "working"

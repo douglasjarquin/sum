@@ -453,6 +453,9 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 }
 
 func postCheck(s *store.Store, root string) *ordjson.Object {
+	if TestPostCheck != nil {
+		return TestPostCheck(s, root)
+	}
 	helper := filepath.Join(root, "bin", "sumctl")
 	out, err := proc.Run([]string{helper, "--home", s.Home, "status"}, "", 60*time.Second, false, append(os.Environ(), "SUM_INSTALL_ROOT="+root))
 	result := ordjson.NewObject()
@@ -1120,3 +1123,9 @@ func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.O
 // Test seams for crash injection. Production leaves these nil.
 var afterPendingWrite func() error
 var afterSelect func() error
+
+// TestPostCheck, if set, replaces postCheck. Tests only.
+var TestPostCheck func(s *store.Store, root string) *ordjson.Object
+
+// TestRecoverPending, if set, replaces recoverPendingLocked. Tests only.
+var TestRecoverPending func(s *store.Store, root, generation string) (*ordjson.Object, error)
