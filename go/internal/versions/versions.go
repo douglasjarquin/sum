@@ -16,6 +16,9 @@ import (
 const (
 	File   = "versions.json"
 	Schema = 1
+	// RefreshUnreachable is terminal delivery for a revision whose worker pane or agent is gone.
+	// pending-unreachable remains retryable (other machine, cwd mismatch, prompt refusal).
+	RefreshUnreachable = "unreachable"
 )
 
 func sha256Text(text string) string {
@@ -273,6 +276,23 @@ func RefreshState(versionsObj *ordjson.Object) *ordjson.Object {
 		row.Set("observed", nil)
 	}
 	return row
+}
+
+// RefreshWorkerGone reports a recorded delivery that cannot reach the worker because
+// the pane or agent is absent. That revision's delivery is terminal; it is not a live
+// "needs the worker" obligation.
+func RefreshWorkerGone(state *ordjson.Object) bool {
+	if state == nil {
+		return false
+	}
+	st, _ := state.Get("state")
+	s, _ := st.(string)
+	if s == RefreshUnreachable {
+		return true
+	}
+	reason, _ := state.Get("reason")
+	r, _ := reason.(string)
+	return strings.Contains(r, "agent_not_found") || strings.Contains(r, "pane_not_found")
 }
 
 const ContractDir = "coordinator"

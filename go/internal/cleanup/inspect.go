@@ -232,6 +232,7 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 	view.Set("foreground", []any{})
 	view.Set("detached", []any{})
 	var blockers []any
+	agentAbsent := false
 	agent, code, err := observe(runtimeRoot, session, 5*time.Second, "agent", "get", paneID)
 	if err != nil {
 		return nil, err
@@ -245,7 +246,9 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 		}
 		view.Set("agent", row)
 		blockers = append(blockers, fmt.Sprintf("pane %s still hosts agent %q (%v); Herdr idle/done is not exit, wait for the agent process to end", paneID, stringField(agentObj, "agent"), func() any { v, _ := agentObj.Get("agent_status"); return v }()))
-	} else if code != "agent_not_found" {
+	} else if herdrclient.IsAbsent(code) {
+		agentAbsent = true
+	} else {
 		blockers = append(blockers, fmt.Sprintf("agent observation for pane %s is uncertain (%s)", paneID, code))
 	}
 	info, code, err := observe(runtimeRoot, session, 5*time.Second, "pane", "process-info", "--pane", paneID)
@@ -253,7 +256,26 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 		return nil, err
 	}
 	if info == nil {
-		blockers = append(blockers, fmt.Sprintf("process observation for pane %s is uncertain (%s)", paneID, code))
+		if !(agentAbsent && herdrclient.IsAbsent(code)) {
+			blockers = append(blockers, fmt.Sprintf("process observation for pane %s is uncertain (%s)", paneID, code))
+		}
+		if worktree != "" {
+			inside, errorText := processesIn(worktree, map[int]bool{})
+			if errorText != "" {
+				blockers = append(blockers, "processes with a cwd in the checkout cannot be established: "+errorText)
+			} else if len(inside) > 0 {
+				view.Set("detached", inside)
+				var parts []string
+				for i, raw := range inside {
+					if i >= 10 {
+						break
+					}
+					p := asObject(raw)
+					parts = append(parts, fmt.Sprintf("pid %v at %v", func() any { v, _ := p.Get("pid"); return v }(), func() any { v, _ := p.Get("cwd"); return v }()))
+				}
+				blockers = append(blockers, "processes still run inside the checkout (detached from the pane or another pane): "+strings.Join(parts, ", "))
+			}
+		}
 		view.Set("blockers", blockers)
 		return view, nil
 	}
@@ -288,7 +310,7 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 		}
 		blockers = append(blockers, fmt.Sprintf("pane %s has foreground processes besides its shell: %s", paneID, strings.Join(names, ", ")))
 	}
-	if shell == nil {
+	if shell == nil && !agentAbsent {
 		blockers = append(blockers, fmt.Sprintf("pane %s reported no shell pid; occupancy cannot be established", paneID))
 	}
 	if worktree != "" {

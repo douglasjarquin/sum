@@ -196,28 +196,30 @@ func OpenObligations(s *store.Store, task *ordjson.Object) ([]*ordjson.Object, e
 				}
 			}
 			if found {
-				var since any
-				refreshValue, _ := versionsObj.Get("refresh")
-				refreshList, _ := refreshValue.([]any)
-				for i := len(refreshList) - 1; i >= 0; i-- {
-					entry, _ := refreshList[i].(*ordjson.Object)
-					event, _ := entry.Get("event")
-					revision, _ := entry.Get("revision")
-					if event == "requested" && revision == requested {
-						since, _ = entry.Get("at")
-						break
-					}
-				}
 				priorState := versions.RefreshState(versionsObj)
-				priorStateValue, _ := priorState.Get("state")
-				item := ordjson.NewObject()
-				item.Set("id", "refresh:"+requested)
-				item.Set("kind", "refresh")
-				item.Set("ref", requested)
-				item.Set("recipient", "worker")
-				item.Set("since", since)
-				item.Set("prior", priorStateValue)
-				items = append(items, item)
+				if !versions.RefreshWorkerGone(priorState) {
+					var since any
+					refreshValue, _ := versionsObj.Get("refresh")
+					refreshList, _ := refreshValue.([]any)
+					for i := len(refreshList) - 1; i >= 0; i-- {
+						entry, _ := refreshList[i].(*ordjson.Object)
+						event, _ := entry.Get("event")
+						revision, _ := entry.Get("revision")
+						if event == "requested" && revision == requested {
+							since, _ = entry.Get("at")
+							break
+						}
+					}
+					priorStateValue, _ := priorState.Get("state")
+					item := ordjson.NewObject()
+					item.Set("id", "refresh:"+requested)
+					item.Set("kind", "refresh")
+					item.Set("ref", requested)
+					item.Set("recipient", "worker")
+					item.Set("since", since)
+					item.Set("prior", priorStateValue)
+					items = append(items, item)
+				}
 			}
 		}
 	}

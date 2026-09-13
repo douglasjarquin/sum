@@ -151,7 +151,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	}
 	expected := map[string]string{
 		"busy-tool-call": "pending-busy",
-		"unknown-worker": "pending-unreachable",
+		"unknown-worker": "unreachable",
 		"failed-refresh": "pending-unreachable",
 	}
 	for _, role := range fleetRoles {
@@ -171,6 +171,23 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	}
 	if !strings.Contains(asString(rows["unknown-worker"]["reason"]), "agent_not_found") {
 		t.Fatalf("unknown reason = %v", rows["unknown-worker"]["reason"])
+	}
+	statusAfter := f.ctl(true, "status")
+	for _, item := range asSlice(statusAfter["tasks"]) {
+		row := asMap(item)
+		if asString(row["id"]) != asString(tasks["unknown-worker"]["id"]) {
+			continue
+		}
+		refresh := asMap(row["refresh"])
+		if asString(refresh["state"]) != "unreachable" {
+			t.Fatalf("unknown-worker status refresh = %v, want unreachable", row["refresh"])
+		}
+		for _, ret := range asSlice(row["returns"]) {
+			r := asMap(ret)
+			if asString(r["kind"]) == "refresh" {
+				t.Fatalf("closed worker still has a refresh obligation: %v", ret)
+			}
+		}
 	}
 	if !strings.Contains(asString(rows["failed-refresh"]["reason"]), "prompt was not accepted") {
 		t.Fatalf("failed-refresh reason = %v", rows["failed-refresh"]["reason"])
@@ -372,7 +389,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	}
 	final := f.ctl(true, "refresh", "status")
 	counts := asMap(final["counts"])
-	if asInt(counts["confirmed"]) != 4 || asInt(counts["pending-busy"]) != 1 || asInt(counts["pending-unreachable"]) != 2 {
+	if asInt(counts["confirmed"]) != 4 || asInt(counts["pending-busy"]) != 1 || asInt(counts["pending-unreachable"]) != 1 || asInt(counts["unreachable"]) != 1 {
 		var bits []string
 		for _, item := range asSlice(final["targets"]) {
 			row := asMap(item)

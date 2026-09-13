@@ -408,6 +408,136 @@ func TestPark_absentWorkerAgentWithBackgroundWriterRetainsCapacity(t *testing.T)
 	}
 }
 
+func (l *lab) workerRunningJSON(occupant string) string {
+	l.t.Helper()
+	if occupant != "" && !strings.HasPrefix(occupant, ",") {
+		occupant = ", " + occupant
+	}
+	return fmt.Sprintf(`{
+"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
+"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "workspace": "w-worker",
+"worktree": %q, "branch": "sum/t-aaaaaaaaaaaa",
+"questions": [{"id": "q-aaaaaaaaaa", "status": "open", "text": "keep the report?"}],
+"evidence": [], "report": {"text": "done"}, "notice": null, "attention": [],
+"brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship",
+"execution": {"schema": 1,
+  "worker": {"id": %q, "kind": "worker", "state": "running", "generation": 1,
+             "owner": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}, "checkout": %q,
+             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []%s},
+  "verifiers": []}
+}`, taskID, l.host, l.checkout, workerID, l.host, l.checkout, occupant)
+}
+
+func (l *lab) writeIdleWorker() {
+	l.t.Helper()
+	l.writeWorkerPane("claude", []map[string]any{
+		{"pid": 4242, "name": "bash", "argv0": "bash", "argv": []any{"-bash"}, "cwd": l.checkout},
+	})
+	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		l.t.Fatal(err)
+	}
+	panes := state["panes"].(map[string]any)
+	worker := panes["w-worker:p1"].(map[string]any)
+	worker["agent_status"] = "idle"
+	panes["w-worker:p1"] = worker
+	state["panes"] = panes
+	out, err := json.Marshal(state)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), out, 0o600); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+func TestPark_absentWorkerPaneReleasesLegacyAndSchemaAttempts(t *testing.T) {
+	t.Run("schema-1", func(t *testing.T) {
+		l := newLab(t)
+		l.writeSettings(1, 1)
+		l.plantLsof(nil)
+		occupant := fmt.Sprintf(`"occupant": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "checkout": %q, "harness": "codex", "name": "done", "shell_pid": 4242, "pid": null, "argv": null}`, l.host, l.checkout)
+		l.saveTask(l.workerRunningJSON(occupant))
+		result, err := l.park(workerID)
+		if err != nil {
+			t.Fatalf("park closed pane: %v", err)
+		}
+		released, _ := result.Get("released")
+		if released != true {
+			t.Fatalf("released = %v", released)
+		}
+		if l.attemptState(workerID) != "released" {
+			t.Fatalf("state = %s", l.attemptState(workerID))
+		}
+		l.questionsRemain()
+		if err := l.admit(); err != nil {
+			t.Fatalf("admission after closed pane: %v", err)
+		}
+	})
+	t.Run("legacy", func(t *testing.T) {
+		l := newLab(t)
+		l.writeSettings(1, 1)
+		l.plantLsof(nil)
+		raw := fmt.Sprintf(`{
+"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
+"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "workspace": "w-worker",
+"worktree": %q, "branch": "sum/t-aaaaaaaaaaaa",
+"questions": [{"id": "q-aaaaaaaaaa", "status": "open", "text": "keep the report?"}],
+"evidence": [], "report": {"text": "done"}, "notice": null, "attention": [],
+"brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship"
+}`, taskID, l.host, l.checkout)
+		l.saveTask(raw)
+		result, err := l.park("legacy:" + taskID)
+		if err != nil {
+			t.Fatalf("park legacy closed pane: %v", err)
+		}
+		released, _ := result.Get("released")
+		if released != true {
+			t.Fatalf("released = %v", released)
+		}
+		if err := l.admit(); err != nil {
+			t.Fatalf("admission after legacy closed pane: %v", err)
+		}
+	})
+}
+
+func TestPark_idleWorkerDoesNotRelease(t *testing.T) {
+	l := newLab(t)
+	l.writeSettings(1, 1)
+	l.plantLsof(nil)
+	l.writeIdleWorker()
+	occupant := fmt.Sprintf(`"occupant": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "checkout": %q, "harness": "claude", "name": "idle", "shell_pid": 4242, "pid": null, "argv": null}`, l.host, l.checkout)
+	l.saveTask(l.workerRunningJSON(occupant))
+	if _, err := l.park(workerID); err == nil {
+		t.Fatal("idle agent released capacity")
+	}
+	if l.attemptState(workerID) == "released" {
+		t.Fatal("idle agent parked")
+	}
+	if l.heldCount() == 0 {
+		t.Fatal("idle reservation was released")
+	}
+}
+
+func TestPark_absentWorkerPaneWithCheckoutWriterRetainsCapacity(t *testing.T) {
+	l := newLab(t)
+	l.writeSettings(1, 1)
+	child := startCheckoutWriter(t, l.checkout)
+	l.plantLsof([]map[string]any{{"pid": child, "cwd": l.checkout}})
+	occupant := fmt.Sprintf(`"occupant": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "checkout": %q, "harness": "codex", "name": "done", "shell_pid": 4242, "pid": null, "argv": null}`, l.host, l.checkout)
+	l.saveTask(l.workerRunningJSON(occupant))
+	if _, err := l.park(workerID); err == nil {
+		t.Fatal("closed pane with a checkout writer released capacity")
+	}
+	if l.heldCount() == 0 {
+		t.Fatal("worker reservation was released")
+	}
+}
+
 func TestPark_stoppedExecutionReleasesOnceAndKeepsObligations(t *testing.T) {
 	l := newLab(t)
 	l.writeSettings(1, 1)

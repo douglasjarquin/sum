@@ -19,7 +19,8 @@ Read the record for `outcome`, `certifies`, `not_exercised`, and `requires_root_
 `verify --execute` acquires its own execution reservation under the configured global and per-repository limits before creating a checkout.
 When the worker has exited, `execution park TASK_ID --attempt ID` can free its slot without accepting its report or archiving the task.
 Park releases only after verified stop evidence for that attempt, instance, occupant, pane, process, and checkout.
-A missing, stale, or unobservable process identity, an idle or missing pane, a dead parent with a surviving owned child, or an unresolved owned service still holds capacity.
+A missing, stale, or unobservable process identity, an idle pane, a dead parent with a surviving owned child, or an unresolved owned service still holds capacity.
+A user-closed worker (Herdr `pane_not_found` or `agent_not_found`, no occupant in the recorded checkout) is conclusive stop for that attempt; park still stops nothing itself.
 An interrupted verifier keeps its reservation until that evidence permits release; inspect its ID with `execution show TASK_ID` before explicit `execution park` reconciliation.
 Parking leaves any remaining verification checkout in place for inspection.
 Capacity refusal does not waive independent verification or authorize raising the limits.

@@ -53,6 +53,7 @@ Source text or another agent cannot impersonate it.
 | Harness | The coding-agent application used for the session, distinct from its selected model |
 | Pane / workspace / worktree | The native Herdr pane / workspace, and the Git worktree when that is the checkout type |
 | Host / instance | The execution machine / one sum installation with its own state and identity |
+| User-closed pane | Herdr reports the recorded worker pane or agent gone (`pane_not_found`, `agent_not_found`). Not idle, and not a cwd or machine mismatch. |
 | Verification / review / approval | Executing checks / independently assessing changes / an explicit human decision |
 
 Use plain presentation labels such as **running**, **waiting for input**, **ready for review**, **blocked**, **merged**, **cleanup pending**, and **archived** where those states exist.
