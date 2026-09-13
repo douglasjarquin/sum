@@ -13,7 +13,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/attention"
 	"github.com/douglasjarquin/sum/go/internal/backup"
 	"github.com/douglasjarquin/sum/go/internal/bindcmd"
-	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/devcmd"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/guard"
@@ -25,14 +24,12 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/prcmd"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/quota"
-	"github.com/douglasjarquin/sum/go/internal/refreshcmd"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/report"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/review"
 	"github.com/douglasjarquin/sum/go/internal/skills"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/updatecmd"
 	"github.com/spf13/cobra"
 )
 
@@ -169,28 +166,10 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		RunE:               o.runPR,
 	})
 	root.AddCommand(&cobra.Command{
-		Use:                "cleanup",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE:               o.runCleanup,
-	})
-	root.AddCommand(&cobra.Command{
 		Use:                "dev",
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE:               o.runDev,
-	})
-	root.AddCommand(&cobra.Command{
-		Use:                "refresh",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE:               o.runRefresh,
-	})
-	root.AddCommand(&cobra.Command{
-		Use:                "update",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE:               o.runUpdate,
 	})
 	root.AddCommand(&cobra.Command{
 		Use:                "lsp",
@@ -1547,65 +1526,6 @@ func parsePREvidenceArgs(tokens []string) (taskID, run, visibility string, ok bo
 	return taskID, run, visibility, true
 }
 
-func (o *rootOptions) runCleanup(cmd *cobra.Command, args []string) error {
-	parsed, ok := parseCleanupArgs(args)
-	if !ok {
-		return usageError("cleanup", args)
-	}
-	st, err := o.openStore("cleanup")
-	if err != nil {
-		return err
-	}
-	ctx, err := store.Context(o.installRoot)
-	if err != nil {
-		return err
-	}
-	view, err := cleanup.Run(st, ctx, o.runtimeRoot, parsed)
-	if err != nil {
-		return err
-	}
-	return emitOrdjson(cmd.OutOrStdout(), view)
-}
-
-func parseCleanupArgs(tokens []string) (cleanup.Args, bool) {
-	var parsed cleanup.Args
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--apply":
-			parsed.Apply = true
-		case token == "--reviewer-only":
-			parsed.ReviewerOnly = true
-		case token == "--number":
-			if i+1 >= len(tokens) {
-				return cleanup.Args{}, false
-			}
-			i++
-			n, err := strconv.Atoi(tokens[i])
-			if err != nil {
-				return cleanup.Args{}, false
-			}
-			parsed.Number = n
-		case strings.HasPrefix(token, "--number="):
-			n, err := strconv.Atoi(strings.TrimPrefix(token, "--number="))
-			if err != nil {
-				return cleanup.Args{}, false
-			}
-			parsed.Number = n
-		case strings.HasPrefix(token, "-"):
-			return cleanup.Args{}, false
-		case parsed.Task == "":
-			parsed.Task = token
-		default:
-			return cleanup.Args{}, false
-		}
-	}
-	if parsed.Task == "" {
-		return cleanup.Args{}, false
-	}
-	return parsed, true
-}
-
 func (o *rootOptions) runDev(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("command is required")
@@ -1701,253 +1621,4 @@ func parseDevRemoveArgs(tokens []string) (string, bool) {
 		}
 	}
 	return name, name != ""
-}
-
-func (o *rootOptions) runRefresh(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("command is required")
-	}
-	st, err := o.openStore("refresh-" + args[0])
-	if err != nil {
-		return err
-	}
-	switch args[0] {
-	case "status":
-		tasks, ok := parseRepeatableTask(args[1:])
-		if !ok {
-			return usageError("refresh status", args[1:])
-		}
-		view, err := refreshcmd.Status(st, tasks)
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "request":
-		tasks, coordinator, ok := parseRefreshRequest(args[1:])
-		if !ok {
-			return usageError("refresh request", args[1:])
-		}
-		ctx, err := store.Context(o.installRoot)
-		if err != nil {
-			return err
-		}
-		view, err := refreshcmd.Request(st, ctx, tasks, coordinator, o.runtimeRoot, o.sumctlPath())
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "adopt":
-		revision, ok := parseRefreshAdopt(args[1:])
-		if !ok {
-			return usageError("refresh adopt", args[1:])
-		}
-		ctx, err := store.Context(o.installRoot)
-		if err != nil {
-			return err
-		}
-		view, err := refreshcmd.AdoptCoordinator(st, ctx, revision)
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	default:
-		return usageError("refresh", args)
-	}
-}
-
-func parseRepeatableTask(tokens []string) ([]string, bool) {
-	var tasks []string
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--task":
-			if i+1 >= len(tokens) {
-				return nil, false
-			}
-			i++
-			tasks = append(tasks, tokens[i])
-		case strings.HasPrefix(token, "--task="):
-			tasks = append(tasks, strings.TrimPrefix(token, "--task="))
-		default:
-			return nil, false
-		}
-	}
-	return tasks, true
-}
-
-func parseRefreshRequest(tokens []string) ([]string, bool, bool) {
-	var tasks []string
-	coordinator := false
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--task":
-			if i+1 >= len(tokens) {
-				return nil, false, false
-			}
-			i++
-			tasks = append(tasks, tokens[i])
-		case strings.HasPrefix(token, "--task="):
-			tasks = append(tasks, strings.TrimPrefix(token, "--task="))
-		case token == "--coordinator":
-			coordinator = true
-		default:
-			return nil, false, false
-		}
-	}
-	return tasks, coordinator, true
-}
-
-func parseRefreshAdopt(tokens []string) (string, bool) {
-	coordinator := false
-	revision := ""
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--coordinator":
-			coordinator = true
-		case strings.HasPrefix(token, "-"):
-			return "", false
-		case revision == "":
-			revision = token
-		default:
-			return "", false
-		}
-	}
-	if !coordinator || revision == "" {
-		return "", false
-	}
-	return revision, true
-}
-
-func (o *rootOptions) runUpdate(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("command is required")
-	}
-	st, err := o.openStore("update-" + args[0])
-	if err != nil {
-		return err
-	}
-	switch args[0] {
-	case "status":
-		if len(args) != 1 {
-			return usageError("update status", args[1:])
-		}
-		view, err := updatecmd.Status(st)
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "check", "stage", "apply":
-		ref, noFetch, ok := parseUpdateRef(args[1:])
-		if !ok {
-			return usageError("update "+args[0], args[1:])
-		}
-		ctx := app.OptionalContext(o.installRoot)
-		var view *ordjson.Object
-		var err error
-		switch args[0] {
-		case "check":
-			view, err = updatecmd.Check(st, o.runtimeRoot, ref, noFetch)
-		case "stage":
-			view, err = updatecmd.Stage(st, ctx, ref, noFetch)
-		case "apply":
-			view, err = updatecmd.Apply(st, ctx, ref, noFetch)
-		}
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "rollback":
-		to, ok := parseUpdateTo(args[1:])
-		if !ok {
-			return usageError("update rollback", args[1:])
-		}
-		ctx, err := store.Context(o.installRoot)
-		if err != nil {
-			return err
-		}
-		view, err := updatecmd.Rollback(st, ctx, to)
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "recover":
-		generation, ok := parseUpdateRecover(args[1:])
-		if !ok {
-			return usageError("update recover", args[1:])
-		}
-		ctx, err := store.Context(o.installRoot)
-		if err != nil {
-			return err
-		}
-		view, err := updatecmd.Recover(st, ctx, generation)
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	default:
-		return usageError("update", args)
-	}
-}
-
-func parseUpdateRef(tokens []string) (ref string, noFetch, ok bool) {
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--ref":
-			if i+1 >= len(tokens) {
-				return "", false, false
-			}
-			i++
-			ref = tokens[i]
-		case strings.HasPrefix(token, "--ref="):
-			ref = strings.TrimPrefix(token, "--ref=")
-		case token == "--no-fetch":
-			noFetch = true
-		default:
-			return "", false, false
-		}
-	}
-	return ref, noFetch, true
-}
-
-func parseUpdateTo(tokens []string) (string, bool) {
-	to := ""
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--to":
-			if i+1 >= len(tokens) {
-				return "", false
-			}
-			i++
-			to = tokens[i]
-		case strings.HasPrefix(token, "--to="):
-			to = strings.TrimPrefix(token, "--to=")
-		default:
-			return "", false
-		}
-	}
-	return to, true
-}
-
-func parseUpdateRecover(tokens []string) (string, bool) {
-	generation := ""
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--generation":
-			if i+1 >= len(tokens) {
-				return "", false
-			}
-			i++
-			generation = tokens[i]
-		case strings.HasPrefix(token, "--generation="):
-			generation = strings.TrimPrefix(token, "--generation=")
-		default:
-			return "", false
-		}
-	}
-	return generation, generation != ""
 }
