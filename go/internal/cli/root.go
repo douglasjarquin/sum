@@ -205,7 +205,7 @@ func peelFormat(args []string) (rest []string, format string, ok bool) {
 }
 
 func wrapOutputFormat(cmd *cobra.Command, opts *rootOptions) {
-	if cmd.Name() != "quota" && cmd.RunE != nil {
+	if cmd.Name() != "quota" && cmd.Name() != "herdr" && cmd.RunE != nil {
 		next := cmd.RunE
 		cmd.RunE = func(c *cobra.Command, args []string) error {
 			rest, format, ok := peelFormat(args)
