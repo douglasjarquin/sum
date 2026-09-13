@@ -332,7 +332,7 @@ The file at `brief_path` and every earlier revision are never rewritten, so a wo
 ./bin/sumctl update check          # fetch origin, resolve the merged revision, report default/active/compatibility
 ./bin/sumctl update apply          # stage the release, validate coexistence, switch .local/current, fast-forward a clean clone
 ./bin/sumctl update status         # old/new SHA, default versus active runtime, staged releases, recent selections
-./bin/sumctl update rollback       # reselect the previous runtime; records, questions, reports, and worktrees stay
+./bin/sumctl update rollback       # reselect the recorded previous approved runtime; records, questions, reports, and worktrees stay
 ./bin/sumctl update recover --generation GENERATION  # resolve one interrupted activation, without repeating the update
 ```
 

@@ -1004,7 +1004,7 @@
       "stage": "Check plus build the release bundle; the default is unchanged",
       "apply": "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only)",
       "status": "Default and active runtime, checkout state, staged releases, recent selections; writes nothing",
-      "rollback": "Atomically select the previous runtime (or --to SHA|checkout) after compatibility checks; records are never touched (coordinator only)",
+      "rollback": "Select the recorded previous approved runtime. Staging is not approval. Missing history is a refusal (No recorded previous known-good), not a checkout fallback. --to SHA or --to checkout needs exact approved identity (coordinator only)",
       "recover": "Reconcile one pending activation generation from the journal without repeating the update (coordinator only)"
     },
     "read_only": false,
@@ -2046,11 +2046,11 @@
   },
   "update-rollback": {
     "topic": "update-rollback",
-    "help": "Atomically select the previous runtime (or --to SHA|checkout) after compatibility checks; records are never touched (coordinator only)",
+    "help": "Select the recorded previous approved runtime. Staging is not approval. Missing history is a refusal (No recorded previous known-good), not a checkout fallback. --to SHA or --to checkout needs exact approved identity (coordinator only)",
     "arguments": [
       {
         "name": "--to",
-        "help": null
+        "help": "SHA of a staged approved release, or checkout. Omitted means the recorded previous known-good runtime. Dirty or unapproved --to checkout is refused."
       }
     ],
     "subcommands": null,

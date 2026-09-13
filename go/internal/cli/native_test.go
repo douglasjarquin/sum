@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -171,4 +172,25 @@ func TestDefaultHomeUsesSUMHOME(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("SUM_HOME", home)
 	assertCLIMatches(t, reference, []string{"settings", "show"})
+}
+
+func TestHelp_updateRollbackNamesDefaultAndRefusals(t *testing.T) {
+	home := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	root := NewRoot("", &stdout, &stderr)
+	root.SetArgs([]string{"--home", home, "help", "update-rollback"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("help update-rollback: %v (stderr=%s)", err, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"recorded previous",
+		"Staging is not approval",
+		"No recorded previous known-good",
+		"--to checkout",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("help missing %q\n%s", want, out)
+		}
+	}
 }
