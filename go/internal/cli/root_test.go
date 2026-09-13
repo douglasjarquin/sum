@@ -74,8 +74,8 @@ func TestUnknownFlagsAreGoErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unrecognized arguments")
 	}
-	if !strings.Contains(err.Error(), "unrecognized arguments") {
-		t.Fatalf("err = %v", err)
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("err = %v, want unknown flag", err)
 	}
 }
 

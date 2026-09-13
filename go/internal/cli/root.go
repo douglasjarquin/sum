@@ -11,11 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
-	"github.com/douglasjarquin/sum/go/internal/settings"
-	"github.com/douglasjarquin/sum/go/internal/statuscmd"
-	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -106,100 +102,12 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
-	root.AddCommand(&cobra.Command{
-		Use:                "settings",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 && args[0] == "show" {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				view, err := settings.CapacityView(st)
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			if len(args) >= 1 && args[0] == "set" {
-				return opts.runSettingsSet(cmd, args[1:])
-			}
-			return usageError("settings", args)
-		},
-	})
-
-	root.AddCommand(&cobra.Command{
-		Use:                "preset",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := store.Open(opts.home)
-			if err != nil {
-				return err
-			}
-			switch {
-			case len(args) == 1 && args[0] == "list":
-				view, err := settings.PresetList(st)
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			case len(args) == 2 && args[0] == "show":
-				view, err := settings.PresetShow(st, args[1])
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			case len(args) >= 1 && args[0] == "set":
-				return opts.runPresetSet(cmd, args[1:])
-			case len(args) == 2 && args[0] == "delete":
-				return opts.runPresetDelete(cmd, args[1])
-			}
-			return usageError("preset", args)
-		},
-	})
-
+	opts.addSettingsCommands(root)
+	opts.addPresetCommands(root)
 	opts.addGraphCommands(root)
 	opts.addMetadataCommands(root)
 
-	statusHandler := func(name string, inboxMode bool) func(cmd *cobra.Command, args []string) error {
-		return func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				if st, err := store.Open(opts.home); err == nil {
-					view, viewErr := statuscmd.Status(st, inboxMode)
-					if viewErr == nil {
-						return emitOrdjson(cmd.OutOrStdout(), view)
-					}
-					return viewErr
-				}
-			}
-			if len(args) == 1 && args[0] == "--live" {
-				if st, err := store.Open(opts.home); err == nil {
-					view, viewErr := statuscmd.Status(st, inboxMode)
-					if viewErr != nil {
-						return viewErr
-					}
-					view.Set("live", true)
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				}
-			}
-			return usageError(name, args)
-		}
-	}
-	root.AddCommand(&cobra.Command{
-		Use:                "status",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE:               statusHandler("status", false),
-	})
-	root.AddCommand(&cobra.Command{
-		Use:                "inbox",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE:               statusHandler("inbox", true),
-	})
-
+	opts.addStatusCommands(root)
 	opts.addBriefCommands(root)
 	opts.addEnvCommands(root)
 	opts.addReleaseCommands(root)
@@ -209,94 +117,11 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addShowCommand(root)
 	opts.addContextCommand(root)
 	opts.addDoctorCommand(root)
-
-	root.AddCommand(&cobra.Command{
-		Use:                "init",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			role, task, reclaim, ok := parseInitArgs(args)
-			if !ok {
-				return fmt.Errorf("invalid init arguments")
-			}
-			st, err := store.Open(opts.home)
-			if err != nil {
-				return err
-			}
-			ctx, ctxErr := store.Context(opts.runtimeRoot)
-			if ctxErr != nil {
-				return fmt.Errorf("%s", capitalizeHerdrContext(ctxErr.Error()))
-			}
-			if !st.Designated() {
-				view, initErr := roleinit.Init(opts.runtimeRoot, st, ctx, role, task)
-				if initErr != nil {
-					return initErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			view, initErr := roleinit.InitDesignated(roleinit.DesignatedOpts{
-				RuntimeRoot: opts.runtimeRoot,
-				SumctlPath:  opts.sumctlPath(),
-				Store:       st,
-				Ctx:         ctx,
-				Role:        role,
-				Task:        task,
-				Reclaim:     reclaim,
-			})
-			if initErr != nil {
-				return initErr
-			}
-			return emitOrdjson(cmd.OutOrStdout(), view)
-		},
-	})
-
+	opts.addInitCommand(root)
 	opts.addNativeCommands(root)
 	opts.format = "toon"
 	wrapOutputFormat(root, opts)
 	return root
-}
-
-func parseInitArgs(tokens []string) (role, task string, reclaim, ok bool) {
-	roles := map[string]bool{"coordinator": true, "worker": true, "developer": true}
-	reclaimSeen := false
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--role":
-			if role != "" || i+1 >= len(tokens) {
-				return "", "", false, false
-			}
-			i++
-			role = tokens[i]
-		case strings.HasPrefix(token, "--role="):
-			if role != "" {
-				return "", "", false, false
-			}
-			role = strings.TrimPrefix(token, "--role=")
-		case token == "--task":
-			if task != "" || i+1 >= len(tokens) {
-				return "", "", false, false
-			}
-			i++
-			task = tokens[i]
-		case strings.HasPrefix(token, "--task="):
-			if task != "" {
-				return "", "", false, false
-			}
-			task = strings.TrimPrefix(token, "--task=")
-		case token == "--reclaim":
-			if reclaimSeen {
-				return "", "", false, false
-			}
-			reclaimSeen = true
-		default:
-			return "", "", false, false
-		}
-	}
-	if role != "" && !roles[role] {
-		return "", "", false, false
-	}
-	return role, task, reclaimSeen, true
 }
 
 func usageError(command string, args []string) error {
