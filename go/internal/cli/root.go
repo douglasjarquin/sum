@@ -16,7 +16,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/doctor"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
-	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
@@ -173,69 +172,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
-	root.AddCommand(&cobra.Command{
-		Use:                "graph",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) >= 1 && args[0] == "config" {
-				if harness, raw, ok := parseGraphConfigArgs(args[1:]); ok && graph.IsValidHarness(harness) {
-					if runtimeRoot := opts.runtimeRoot; runtimeRoot != "" {
-						if _, err := store.Open(opts.home); err != nil {
-							return err
-						}
-						view, err := graph.Config(runtimeRoot, harness)
-						if err != nil {
-							return err
-						}
-						if raw {
-							snippetValue, _ := view.Get("snippet")
-							snippet, _ := snippetValue.(string)
-							if !strings.HasSuffix(snippet, "\n") {
-								snippet += "\n"
-							}
-							_, writeErr := io.WriteString(cmd.OutOrStdout(), snippet)
-							return writeErr
-						}
-						return emitOrdjson(cmd.OutOrStdout(), view)
-					}
-				}
-			}
-			if len(args) >= 2 && args[0] == "init" && !strings.HasPrefix(args[1], "-") {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				if err := guard.Candidate(opts.installRoot, st, "graph-init"); err != nil {
-					return err
-				}
-				ctx, err := store.Context(opts.installRoot)
-				if err != nil {
-					return err
-				}
-				if err := app.RequireCoordinator(st, ctx); err != nil {
-					return err
-				}
-				view, err := graph.InitTask(st, opts.runtimeRoot, args[1])
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			if len(args) >= 2 && args[0] == "status" && !strings.HasPrefix(args[1], "-") {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				view, err := graph.StatusTask(st, opts.runtimeRoot, args[1])
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			return usageError("graph", args)
-		},
-	})
+	opts.addGraphCommands(root)
 
 	root.AddCommand(&cobra.Command{
 		Use:                "metadata",
@@ -657,36 +594,6 @@ func parseInitArgs(tokens []string) (role, task string, reclaim, ok bool) {
 		return "", "", false, false
 	}
 	return role, task, reclaimSeen, true
-}
-
-func parseGraphConfigArgs(tokens []string) (harness string, raw bool, ok bool) {
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--harness":
-			if harness != "" || i+1 >= len(tokens) {
-				return "", false, false
-			}
-			i++
-			harness = tokens[i]
-		case strings.HasPrefix(token, "--harness="):
-			if harness != "" {
-				return "", false, false
-			}
-			harness = strings.TrimPrefix(token, "--harness=")
-		case token == "--raw":
-			if raw {
-				return "", false, false
-			}
-			raw = true
-		default:
-			return "", false, false
-		}
-	}
-	if harness == "" {
-		return "", false, false
-	}
-	return harness, raw, true
 }
 
 // validContextSections lists only the sections contextview.View actually implements.
