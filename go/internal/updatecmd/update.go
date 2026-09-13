@@ -456,10 +456,6 @@ func postCheck(s *store.Store, root string) *ordjson.Object {
 	if TestPostCheck != nil {
 		return TestPostCheck(s, root)
 	}
-	return PostCheck(s, root)
-}
-
-func PostCheck(s *store.Store, root string) *ordjson.Object {
 	helper := filepath.Join(root, "bin", "sumctl")
 	out, err := proc.Run([]string{helper, "--home", s.Home, "status"}, "", 60*time.Second, false, append(os.Environ(), "SUM_INSTALL_ROOT="+root))
 	result := ordjson.NewObject()
@@ -1128,7 +1124,7 @@ func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.O
 var afterPendingWrite func() error
 var afterSelect func() error
 
-// TestPostCheck, if set, replaces PostCheck. Tests only.
+// TestPostCheck, if set, replaces postCheck. Tests only.
 var TestPostCheck func(s *store.Store, root string) *ordjson.Object
 
 // TestRecoverPending, if set, replaces recoverPendingLocked. Tests only.

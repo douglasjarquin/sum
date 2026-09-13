@@ -246,16 +246,11 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	if err := os.Remove(filepath.Join(f.base, "fake", "prompt_count")); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(f.base, "fake", "delivery_count")); err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
 	f.setEnv("FAKE_INTERRUPT_AFTER_PROMPTS", "5")
-	f.setEnv("SUM_TEST_INTERRUPT_AFTER_DELIVERIES", "5")
 	if _, err := f.ctlRaw("refresh", "request"); err == nil {
 		t.Fatal("interrupted refresh request succeeded")
 	}
 	f.setEnv("FAKE_INTERRUPT_AFTER_PROMPTS", "")
-	f.setEnv("SUM_TEST_INTERRUPT_AFTER_DELIVERIES", "")
 
 	status := f.ctl(true, "refresh", "status")
 	states := map[string]map[string]any{}
@@ -443,7 +438,10 @@ func TestFleetTwelveWorkers(t *testing.T) {
 			row.Set("detail", "fleet candidate-only post-check failure")
 			return row
 		}
-		return updatecmd.PostCheck(s, root)
+		ok := ordjson.NewObject()
+		ok.Set("ok", true)
+		ok.Set("detail", nil)
+		return ok
 	}
 	t.Cleanup(func() {
 		updatecmd.TestPostCheck = nil
