@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -141,5 +142,121 @@ func TestStatus_malformedReservationMatchesPythonReference(t *testing.T) {
 	}
 	if stdout.String() != string(want) {
 		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
+	}
+}
+
+func TestStatusUnknownFlagsAreUsageErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		unknown bool
+	}{
+		{name: "status unknown flag", args: []string{"status", "--unexpected"}, unknown: true},
+		{name: "status extra positional", args: []string{"status", "extra"}},
+		{name: "status extra after dashdash", args: []string{"status", "--", "extra"}},
+		{name: "status extra after --live", args: []string{"status", "--live", "extra"}},
+		{name: "inbox unknown flag", args: []string{"inbox", "--unexpected"}, unknown: true},
+		{name: "inbox extra positional", args: []string{"inbox", "extra"}},
+		{name: "inbox extra after --live", args: []string{"inbox", "--live", "extra"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHerdrEnv(t)
+			home := writeDesignatedHome(t)
+			stdout, stderr, err := runStatus(t, home, tc.args...)
+			if err == nil {
+				t.Fatalf("expected usage failure, stdout=%s stderr=%s", stdout, stderr)
+			}
+			assertStatusUsageError(t, err)
+			if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+				t.Fatalf("err = %v, want unknown flag", err)
+			}
+			if stdout != "" {
+				t.Fatalf("usage failure wrote stdout: %s", stdout)
+			}
+		})
+	}
+}
+
+func TestStatusCommands(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		success bool
+		live    bool
+		usage   bool
+		unknown bool
+	}{
+		{name: "valid status", args: []string{"status"}, success: true},
+		{name: "valid status after dashdash", args: []string{"status", "--"}, success: true},
+		{name: "valid status --live", args: []string{"status", "--live"}, success: true, live: true},
+		{name: "valid status --live=", args: []string{"status", "--live=true"}, success: true, live: true},
+		{name: "valid inbox", args: []string{"inbox"}, success: true},
+		{name: "valid inbox after dashdash", args: []string{"inbox", "--"}, success: true},
+		{name: "valid inbox --live", args: []string{"inbox", "--live"}, success: true, live: true},
+		{name: "valid inbox --live=", args: []string{"inbox", "--live=true"}, success: true, live: true},
+		{name: "status extra positional", args: []string{"status", "extra"}, usage: true},
+		{name: "status unknown flag", args: []string{"status", "--unexpected"}, usage: true, unknown: true},
+		{name: "status extra after --live", args: []string{"status", "--live", "extra"}, usage: true},
+		{name: "inbox extra positional", args: []string{"inbox", "extra"}, usage: true},
+		{name: "inbox unknown flag", args: []string{"inbox", "--unexpected"}, usage: true, unknown: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHerdrEnv(t)
+			home := writeDesignatedHome(t)
+			stdout, stderr, err := runStatus(t, home, tc.args...)
+			switch {
+			case tc.success:
+				if err != nil {
+					t.Fatalf("err = %v stderr=%s stdout=%s", err, stderr, stdout)
+				}
+				if stdout == "" {
+					t.Fatal("expected status output")
+				}
+				value := decodeObject(t, stdout)
+				if tc.live {
+					if value["live"] != true {
+						t.Fatalf("live = %v, want true", value["live"])
+					}
+				} else if value["live"] != false {
+					t.Fatalf("live = %v, want false", value["live"])
+				}
+			default:
+				assertStatusUsageError(t, err)
+				if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+					t.Fatalf("err = %v, want unknown flag", err)
+				}
+				if stdout != "" {
+					t.Fatalf("usage failure wrote stdout: %s", stdout)
+				}
+			}
+		})
+	}
+}
+
+func runStatus(t *testing.T, home string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
+	root.SetArgs(append([]string{"--home", home}, args...))
+	err = root.ExecuteContext(context.Background())
+	return outBuf.String(), errBuf.String(), err
+}
+
+func assertStatusUsageError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected usage failure")
+	}
+	msg := err.Error()
+	usage := strings.Contains(msg, "unknown flag") ||
+		strings.Contains(msg, "unknown command") ||
+		strings.Contains(msg, "accepts 0 arg") ||
+		strings.Contains(msg, "unrecognized arguments") ||
+		strings.Contains(msg, "invalid status") ||
+		strings.Contains(msg, "invalid inbox")
+	if !usage {
+		t.Fatalf("err = %v, want a usage failure", err)
 	}
 }
