@@ -159,7 +159,7 @@ func herdrPath(runtimeRoot string) (string, error) {
 	return toolpath.Find(runtimeRoot, "herdr")
 }
 
-func paneProcesses(runtimeRoot, session, paneID string) (*ordjson.Object, string, error) {
+func PaneProcesses(runtimeRoot, session, paneID string) (*ordjson.Object, string, error) {
 	path, err := herdrPath(runtimeRoot)
 	if err != nil {
 		return nil, "", err
@@ -365,7 +365,7 @@ func observeService(task, service *ordjson.Object, runtimeRoot string) (*ordjson
 	if cwd == "" || !inside(cwd, stringField(task, "worktree")) {
 		reasons = append(reasons, fmt.Sprintf("pane %s runs in %q, not inside the task checkout", paneID, cwd))
 	}
-	info, procCode, procErr := paneProcesses(runtimeRoot, session, paneID)
+	info, procCode, procErr := PaneProcesses(runtimeRoot, session, paneID)
 	if procErr != nil {
 		return nil, procErr
 	}
@@ -558,7 +558,7 @@ func waitForListener(s *store.Store, task, parsed *ordjson.Object, session, pane
 	waited := 0.0
 	misses := 0
 	for {
-		info, code, err := paneProcesses(runtimeRoot, session, paneID)
+		info, code, err := PaneProcesses(runtimeRoot, session, paneID)
 		if err != nil {
 			return nil, err
 		}
@@ -685,7 +685,7 @@ func captureProcess(runtimeRoot, session, paneID, command string) (*ordjson.Obje
 	var code string
 	for {
 		var err error
-		info, code, err = paneProcesses(runtimeRoot, session, paneID)
+		info, code, err = PaneProcesses(runtimeRoot, session, paneID)
 		if err != nil {
 			return nil, nil, "", err
 		}
@@ -1130,7 +1130,7 @@ func Start(s *store.Store, args StartArgs, endpoint *ordjson.Object) (*ordjson.O
 			return nil, fmt.Errorf("Herdr `pane split` returned no pane ID (%s); the intent %s stays recorded for reconciliation.", preview, serviceID)
 		}
 	}
-	info, _, _ := paneProcesses(args.RuntimeRoot, session, paneID)
+	info, _, _ := PaneProcesses(args.RuntimeRoot, session, paneID)
 	var shellPID any
 	if info != nil {
 		shellPID, _ = info.Get("shell_pid")
@@ -1279,7 +1279,7 @@ func Start(s *store.Store, args StartArgs, endpoint *ordjson.Object) (*ordjson.O
 		readiness.Set("note", "no --url or --match given; the process is observed, readiness is not asserted")
 	}
 	if ready, _ := readiness.Get("ready"); ready == true {
-		info2, _, _ := paneProcesses(args.RuntimeRoot, session, paneID)
+		info2, _, _ := PaneProcesses(args.RuntimeRoot, session, paneID)
 		matched := false
 		if info2 != nil && process != nil {
 			for _, raw := range listField(info2, "processes") {
@@ -1678,7 +1678,7 @@ func stopService(s *store.Store, task, service *ordjson.Object, timeout int, run
 		sent = true
 		deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 		for {
-			info, code, procErr := paneProcesses(runtimeRoot, session, stringField(service, "pane"))
+			info, code, procErr := PaneProcesses(runtimeRoot, session, stringField(service, "pane"))
 			if procErr != nil {
 				return nil, procErr
 			}

@@ -95,6 +95,7 @@ A pending target is rechecked only at ordinary interactions: a later `refresh re
 An interrupted `refresh request` leaves every target it reached with its request and delivery recorded and the interrupted target with a persisted request and no delivery event (`refresh status` shows `requested; no delivery attempt recorded yet`); running `refresh request` again is the recovery and coalesces everything on the latest revision.
 Neither an update nor a refresh releases execution reservations or changes configured capacity.
 Reports during an update do not prove stop; use the current runtime's `execution park TASK_ID --attempt ID` for explicit stop inspection.
+Missing process identity is unknown, not stopped.
 Older coordinators keep their original admission behavior even when they preserve the new reservation fields.
 Developer sessions are excluded from the fan-out and listed under `excluded`; a developer rereads its own checkout.
 Two updates before a receipt coalesce to the newest revision (`r2` superseded by `r3`); a receipt for `r2` is then refused. A rollback stages the next revision from the rolled-back runtime; earlier receipts never count for it. Questions, answers, reports, and repair accounting are never touched by a refresh.

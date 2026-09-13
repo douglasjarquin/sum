@@ -207,15 +207,17 @@ Admission uses the same global and per-repository limits under the local record 
 A refused admission launches nothing.
 
 Use `execution show TASK_ID` to read the current attempt IDs.
-After a worker exits, `execution park TASK_ID --attempt ATTEMPT_ID` checks its recorded pane, checkout, processes, and owned services before releasing the slot.
+After a worker exits, `execution park TASK_ID --attempt ATTEMPT_ID` checks its recorded attempt, instance, occupant, pane, checkout, processes, and owned services before releasing the slot.
+Missing, stale, or unobservable identity is unknown, not stopped.
 The command stops nothing and preserves questions, reports, evidence, and the checkout.
-A report, an idle or `done` pane, a missing pane, or an uncertain observation cannot release capacity.
+A report, an idle or `done` pane, a missing pane, a dead parent with a surviving owned child, or an uncertain observation cannot release capacity.
 Owned services keep the worker reservation held until their shutdown is proven.
 
 To continue approved work, use `execution resume TASK_ID --attempt ATTEMPT_ID` with the released worker attempt ID.
 Resume checks capacity again, saves the previous attempt in the task's evidence history, and records a new attempt before launching.
 An old attempt ID cannot release or resume its successor.
-Use the current verifier attempt ID with `execution park` to reconcile an interrupted verification only after its operation and checkout processes are conclusively stopped.
+Use the current verifier attempt ID with `execution park` to reconcile an interrupted verification only after its recorded operation, occupant, and checkout processes are conclusively stopped.
+A verifier without those identities stays reserved.
 Parking does not remove a leftover verification checkout.
 `archive --acknowledge` refuses held reservations and never substitutes for stop inspection.
 

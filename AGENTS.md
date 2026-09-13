@@ -48,7 +48,7 @@ Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox aga
 - Capacity comes from `.sum/settings.json` (`./bin/sumctl settings show`); absent or without a `capacity` block, admission is unlimited.
   Worker attempts and independent coordinator verification runs hold separate execution reservations.
   Read attempt IDs with `execution show TASK_ID`, and use `execution park TASK_ID --attempt ID` only for explicit stop inspection.
-  A report, an idle or missing pane, uncertain process state, or unresolved owned service releases nothing.
+  A report, an idle or missing pane, missing process identity, uncertain process state, a surviving owned child, or unresolved owned service releases nothing.
   Parking preserves unfinished obligations; `execution resume TASK_ID --attempt ID` reacquires capacity before launching approved work and retains the prior attempt's evidence.
   Archive refuses held reservations and cannot free a slot by itself.
   Only the user sets capacity, and per-repository isolation never widens unless configured.

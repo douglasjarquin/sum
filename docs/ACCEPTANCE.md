@@ -51,6 +51,7 @@ Confirm its slot is free while its questions, report, and checkout remain availa
 Resume approved work with `execution resume TASK_ID --attempt ID`, and confirm the old ID cannot release the successor.
 With all slots occupied, confirm resume and `verify --execute` refuse before launching anything.
 Confirm idle, missing, and unobservable workers remain reserved rather than permitting duplicate execution.
+Confirm a running verifier or worker without recorded process identity cannot be parked, and that a dead parent with a surviving owned child keeps the slot.
 Then follow the fleet canary in `skills/sum-update/SKILL.md`: update, refresh, answer and report through old callbacks, roll back, refresh again.
 Record each worker's observed state, the `fanout` counts and wall time of every pass, the receipts that appeared and when, and every worker that kept its process, checkout, and partial work.
 Scripted workers in `go/internal/cli/demo_test.go` establish the bookkeeping; only this step says anything about a model acting on a refresh.

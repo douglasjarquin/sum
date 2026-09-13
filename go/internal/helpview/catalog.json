@@ -326,7 +326,7 @@
     "arguments": [],
     "subcommands": {
       "show": "Show worker and independent verifier attempts without observing or launching anything",
-      "park": "Release one exact worker or verifier attempt only after bounded conclusive stop observation; stops nothing",
+      "park": "Release one exact worker or verifier attempt only after verified stop evidence; missing identity stays reserved",
       "resume": "Reserve capacity for a successor to one exact released worker attempt, then launch it"
     },
     "read_only": false,
@@ -1071,7 +1071,7 @@
   },
   "execution-park": {
     "topic": "execution-park",
-    "help": "Release one exact worker or verifier attempt only after bounded conclusive stop observation; stops nothing",
+    "help": "Release one exact worker or verifier attempt only after verified stop evidence for that attempt, instance, occupant, pane, process, and checkout; missing, stale, or unobservable identity stays reserved and stops nothing",
     "arguments": [
       {
         "name": "task",
