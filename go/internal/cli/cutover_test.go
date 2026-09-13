@@ -386,6 +386,9 @@ func TestExecutionPark_releasesVerifierAttempt(t *testing.T) {
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte(`{"schema": 1, "capacity": {"global": 1, "per_repository": 1}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	host, err := os.Hostname()
 	if err != nil {
 		t.Fatal(err)
@@ -393,10 +396,11 @@ func TestExecutionPark_releasesVerifierAttempt(t *testing.T) {
 	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{
 "schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "machine": %q, "session": "sum-test", "pane": "w-worker:p1",
-"questions": [], "evidence": [], "report": null, "notice": null, "attention": [],
+"questions": [{"id": "q-aaaaaaaaaa", "status": "open", "text": "keep going?"}],
+"evidence": [], "report": {"text": "done"}, "notice": null, "attention": [],
 "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship",
 "execution": {"schema": 1,
-  "worker": {"id": "x-aaaaaaaaaaaa", "kind": "worker", "state": "running", "generation": 1,
+  "worker": {"id": "x-aaaaaaaaaaaa", "kind": "worker", "state": "released", "generation": 1,
              "owner": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}, "checkout": "/tmp/x",
              "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []},
   "verifiers": [{"id": "x-bbbbbbbbbbbb", "kind": "verifier", "state": "running", "generation": 1,
@@ -404,12 +408,26 @@ func TestExecutionPark_releasesVerifierAttempt(t *testing.T) {
              "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []}]
 }}`, host, host, host))
 	out, err := runCLI(t, home, "execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-bbbbbbbbbbbb")
-	if err != nil {
-		t.Fatalf("park: %v\n%s", err, out)
+	if err == nil {
+		t.Fatalf("park released a running verifier with no process identity\n%s", out)
 	}
-	value := decodeObject(t, out)
-	if value["released"] != true {
-		t.Fatalf("released = %v\n%s", value["released"], out)
+	msg := err.Error() + "\n" + out
+	if !strings.Contains(msg, "reservation remains held") && !strings.Contains(msg, "unknown") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	show, showErr := runCLI(t, home, "execution", "show", "t-aaaaaaaaaaaa")
+	if showErr != nil {
+		t.Fatalf("show: %v\n%s", showErr, show)
+	}
+	value := decodeObject(t, show)
+	execution, _ := value["execution"].(map[string]any)
+	verifiers, _ := execution["verifiers"].([]any)
+	if len(verifiers) != 1 {
+		t.Fatalf("verifiers = %v", verifiers)
+	}
+	row, _ := verifiers[0].(map[string]any)
+	if row["state"] == "released" {
+		t.Fatalf("verifier was released: %v", row)
 	}
 }
 

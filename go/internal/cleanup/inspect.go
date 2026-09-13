@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/environment"
+	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
@@ -210,52 +211,16 @@ func commitsNotCovered(worktree, mergedHead string) (string, []any, error) {
 }
 
 func processesIn(worktree string, exclude map[int]bool) ([]any, string) {
-	lsof, err := toolpath.Find("", "lsof")
+	found, err := proc.ProcessesIn(worktree, exclude)
 	if err != nil {
 		return nil, err.Error()
 	}
-	out, runErr := proc.Run([]string{lsof, "-a", "-d", "cwd", "-Fpn", "-w"}, "", 30*time.Second, false, nil)
-	if runErr != nil && out.Stdout == "" {
-		return nil, runErr.Error()
-	}
-	var rows []any
-	var pid int
-	self := os.Getpid()
-	for _, line := range strings.Split(out.Stdout, "\n") {
-		if strings.HasPrefix(line, "p") {
-			fmt.Sscanf(line[1:], "%d", &pid)
-		} else if strings.HasPrefix(line, "n") && pid != 0 {
-			rows = append(rows, map[string]any{"pid": json.Number(fmt.Sprint(pid)), "cwd": line[1:]})
-		}
-	}
-	if len(rows) == 0 {
-		detail := strings.TrimSpace(out.Stderr)
-		if len(detail) > 200 {
-			detail = detail[len(detail)-200:]
-		}
-		return nil, fmt.Sprintf("lsof exited %d without a process table: %s", out.Code, detail)
-	}
-	roots := []string{worktree}
-	if real, err := filepath.EvalSymlinks(worktree); err == nil {
-		roots = append(roots, real)
-	}
 	var inside []any
-	for _, raw := range rows {
-		row := raw.(map[string]any)
-		p, _ := row["pid"].(json.Number).Int64()
-		if int(p) == self || exclude[int(p)] {
-			continue
-		}
-		cwd, _ := row["cwd"].(string)
-		for _, root := range roots {
-			if cwd == root || strings.HasPrefix(cwd, root+"/") {
-				item := ordjson.NewObject()
-				item.Set("pid", row["pid"])
-				item.Set("cwd", cwd)
-				inside = append(inside, item)
-				break
-			}
-		}
+	for _, row := range found {
+		item := ordjson.NewObject()
+		item.Set("pid", json.Number(fmt.Sprint(row.PID)))
+		item.Set("cwd", row.CWD)
+		inside = append(inside, item)
 	}
 	return inside, ""
 }
@@ -906,22 +871,12 @@ func inspectTask(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string, 
 		} else if execVal == nil {
 			ins.block("execution", "legacy task has no exact execution owner; adopt it through explicit stop inspection before cleanup")
 		} else {
-			attempts := executionStopProof(execVal)
+			attempts := executionStopProof(ins, execVal)
 			row := ordjson.NewObject()
 			row.Set("attempts", attempts)
 			ins.view.Set("execution", row)
 			if asString(func() any { v, _ := execVal.Worker.Get("state"); return v }()) == "starting" {
 				ins.block("execution", "worker launch is in progress; its checkout cannot be removed")
-			}
-			var active []any
-			for _, v := range execVal.Verifiers {
-				st := asString(func() any { x, _ := v.Get("state"); return x }())
-				if st == "held" || st == "observing" || st == "starting" || st == "running" || st == "uncertain" {
-					active = append(active, func() any { x, _ := v.Get("id"); return x }())
-				}
-			}
-			if len(active) > 0 {
-				ins.block("execution", fmt.Sprintf("independent verification reservations remain held: %v", active))
 			}
 		}
 	}
@@ -956,13 +911,21 @@ func inspectTask(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string, 
 	return ins.plan(), nil
 }
 
-func executionStopProof(execVal *reservations.Execution) []any {
+func executionStopProof(ins *inspection, execVal *reservations.Execution) []any {
 	var rows []any
 	add := func(row *ordjson.Object) {
+		proof := execution.ObserveStop(ins.store, ins.runtimeRoot, ins.task, row)
 		item := ordjson.NewObject()
 		item.Set("id", func() any { v, _ := row.Get("id"); return v }())
 		item.Set("generation", func() any { v, _ := row.Get("generation"); return v }())
+		item.Set("outcome", proof.Outcome)
+		if proof.Reason != "" {
+			item.Set("reason", proof.Reason)
+		}
 		rows = append(rows, item)
+		if proof.Outcome != execution.OutcomeStopped {
+			ins.block("execution", proof.Reason)
+		}
 	}
 	add(execVal.Worker)
 	for _, v := range execVal.Verifiers {

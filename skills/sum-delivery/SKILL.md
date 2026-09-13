@@ -18,8 +18,9 @@ When the task was dispatched into a standardized checkout (`verification_policy.
 Read the record for `outcome`, `certifies`, `not_exercised`, and `requires_root_review`: a candidate that changed `VERIFY.md`, `mise.toml`, `mise-tasks/`, the feature maps, or the verify skill cannot certify itself, and closure then also needs findings recorded with `review --policy-reviewed` after you read those files line by line. A `not-yet-standardized` project keeps its existing commands and the prose record (`--result ... --text ...`). Both forms stay the same public `sumctl verify` command.
 `verify --execute` acquires its own execution reservation under the configured global and per-repository limits before creating a checkout.
 When the worker has exited, `execution park TASK_ID --attempt ID` can free its slot without accepting its report or archiving the task.
-An idle worker or unresolved owned service still holds capacity.
-An interrupted verifier keeps its reservation until stop evidence permits release; inspect its ID with `execution show TASK_ID` before explicit `execution park` reconciliation.
+Park releases only after verified stop evidence for that attempt, instance, occupant, pane, process, and checkout.
+A missing, stale, or unobservable process identity, an idle or missing pane, a dead parent with a surviving owned child, or an unresolved owned service still holds capacity.
+An interrupted verifier keeps its reservation until that evidence permits release; inspect its ID with `execution show TASK_ID` before explicit `execution park` reconciliation.
 Parking leaves any remaining verification checkout in place for inspection.
 Capacity refusal does not waive independent verification or authorize raising the limits.
 `verify --execute` initializes a separate code graph in its detached checkout and removes it with that checkout (`graph` in the run evidence); the worker's index is never read or written by coordinator verification, and a reviewer you launch may use the CLI commands from the task brief against the task checkout read-only, after `sync`. A graph result is exploration, never a run, a review finding, or feature-map coverage.

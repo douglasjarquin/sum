@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/repair"
@@ -273,7 +274,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	if asString(func() any { v, _ := detail.Get("branch"); return v }()) != "present" {
 		detail.Set("warning", fmt.Sprintf("branch %s is missing; sum never deletes branches, inspect the repository", stringField(task, "branch")))
 	}
-	if err := releaseCleanupReservations(s, args.Task, detail); err != nil {
+	if err := releaseCleanupReservations(s, args.Task, runtimeRoot, detail); err != nil {
 		return nil, err
 	}
 	complete := ordjson.NewObject()
@@ -339,13 +340,12 @@ func saveCleanupIntent(s *store.Store, taskID string, intent *ordjson.Object, ex
 	if execVal == nil {
 		return fmt.Errorf("Legacy task has no exact execution owner to bind cleanup to.")
 	}
-	attempts := executionStopProof(execVal)
 	record := cleanupRecord(task)
 	record.Set("schema", json.Number("1"))
 	record.Set("at", store.Now())
 	record.Set("state", "ready")
 	record.Set("step", "intent")
-	intent.Set("attempts", attempts)
+	intent.Set("attempts", expectedAttempts)
 	record.Set("intent", intent)
 	record.Set("blockers", []any{})
 	record.Set("resources", resources)
@@ -356,11 +356,10 @@ func saveCleanupIntent(s *store.Store, taskID string, intent *ordjson.Object, ex
 	entry.Set("step", "intent")
 	record.Set("history", append(history, entry))
 	task.Set("cleanup", record)
-	_ = expectedAttempts
 	return s.SaveTask(task)
 }
 
-func releaseCleanupReservations(s *store.Store, taskID string, detail *ordjson.Object) error {
+func releaseCleanupReservations(s *store.Store, taskID, runtimeRoot string, detail *ordjson.Object) error {
 	unlock, err := s.Lock()
 	if err != nil {
 		return err
@@ -382,10 +381,17 @@ func releaseCleanupReservations(s *store.Store, taskID string, detail *ordjson.O
 	for _, row := range rows {
 		state := asString(func() any { v, _ := row.Get("state"); return v }())
 		if state == "held" || state == "observing" || state == "starting" || state == "running" || state == "uncertain" {
+			proof := execution.ObserveStop(s, runtimeRoot, task, row)
+			if proof.Outcome != execution.OutcomeStopped {
+				return fmt.Errorf("Cleanup cannot archive %s: %s", taskID, proof.Reason)
+			}
 			id := asString(func() any { v, _ := row.Get("id"); return v }())
-			obs := ordjson.NewObject()
-			obs.Set("at", stamp)
-			obs.Set("outcome", "cleanup-stopped")
+			obs := proof.Observation
+			if obs == nil {
+				obs = ordjson.NewObject()
+				obs.Set("at", stamp)
+				obs.Set("outcome", execution.OutcomeStopped)
+			}
 			obs.Set("resources", detail)
 			if _, tErr := reservations.Transition(task, id, "released", stamp, obs, nil); tErr != nil {
 				return tErr

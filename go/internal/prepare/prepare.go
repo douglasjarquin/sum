@@ -14,6 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/brief"
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/launch"
@@ -447,18 +448,41 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	occupant.Set("harness", observedKind)
 	name, _ := agent.Get("name")
 	occupant.Set("name", name)
-	occupant.Set("shell_pid", nil)
-	occupant.Set("pid", nil)
-	occupant.Set("argv", nil)
+	info, _, procErr := environment.PaneProcesses(runtimeRoot, session, pane)
+	var shellPID, occPID, occArgv any
+	captured := false
+	if procErr == nil && info != nil {
+		if v, ok := info.Get("shell_pid"); ok {
+			shellPID = v
+		}
+		processes, _ := info.Get("processes")
+		list, _ := processes.([]any)
+		if len(list) == 1 {
+			p := asObject(list[0])
+			if p != nil {
+				occPID, _ = p.Get("pid")
+				occArgv, _ = p.Get("argv")
+				captured = occPID != nil && occArgv != nil
+			}
+		}
+	}
+	occupant.Set("shell_pid", shellPID)
+	occupant.Set("pid", occPID)
+	occupant.Set("argv", occArgv)
 	currentWorker.Set("occupant", occupant)
 	wid, _ = currentWorker.Get("id")
-	if _, err := reservations.Transition(current, fmt.Sprint(wid), "uncertain", store.Now(), func() *ordjson.Object {
-		obs := ordjson.NewObject()
-		obs.Set("at", store.Now())
+	next := "uncertain"
+	obs := ordjson.NewObject()
+	obs.Set("at", store.Now())
+	if captured {
+		next = "running"
+		obs.Set("outcome", "occupant")
+		obs.Set("pid", occPID)
+	} else {
 		obs.Set("outcome", "occupant-uncertain")
 		obs.Set("reason", "not exactly one foreground process")
-		return obs
-	}(), nil); err != nil {
+	}
+	if _, err := reservations.Transition(current, fmt.Sprint(wid), next, store.Now(), obs, nil); err != nil {
 		return failStart(s, taskID, err)
 	}
 	if err := s.SaveTask(current); err != nil {

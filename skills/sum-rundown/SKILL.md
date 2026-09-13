@@ -55,7 +55,7 @@ Only when the user confirms the old coordinator pane is gone, run `./bin/sumctl 
 Then inspect saved tasks and actual Herdr inventory.
 To make an existing task report to this coordinator, explicitly run `sumctl bind TASK_ID --parent-only`. Its output carries one catch-up listing of everything still owed to the parent; the returns that failed against the old pane are not retried against it.
 To adopt a known existing worker after a pane ID change, use `sumctl bind TASK_ID --worker-pane PANE` after verifying its cwd and task identity.
-Never launch a replacement just because a pane cannot be observed. Missing/uncertain workers need inspection; sum has no automatic retry or process-fencing service.
+Never launch a replacement just because a pane cannot be observed. Missing, uncertain, or identity-less execution stays reserved until `execution park` sees verified stop evidence; sum has no automatic retry or process-fencing service.
 Do not alter Herdr's global auto-resume policy. Herdr is the sole process/restore owner in this MVP.
 
 ## Backup

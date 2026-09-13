@@ -16,7 +16,8 @@ Stay available for inbox notices and further dispatches.
 Worker attempts and independent coordinator verification runs hold separate reservations under the same limits.
 Read the current IDs with `execution show TASK_ID`.
 Use `execution park TASK_ID --attempt ID` to inspect stopped execution and release its reservation without losing unfinished questions, reports, or work.
-A report, an idle or missing pane, and unresolved owned services release nothing.
+Park needs verified stop evidence for the attempt, instance, occupant, pane, process, and checkout.
+A report, an idle or missing pane, missing process identity, a surviving owned child, and unresolved owned services release nothing.
 To resume approved work, use `execution resume TASK_ID --attempt ID` with the released worker attempt ID; it checks capacity before launching a successor.
 Every resume consumes a task repair iteration, including an infrastructure relaunch.
 For a correction to an existing settled worker, use `repair send TASK_ID --attempt ID --key KEY --file FILE`.

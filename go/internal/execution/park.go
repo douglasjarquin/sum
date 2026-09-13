@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
@@ -18,10 +15,9 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
-func asString(v any) string { s, _ := v.(string); return s }
+func asString(v any) string          { s, _ := v.(string); return s }
 func asObject(v any) *ordjson.Object { o, _ := v.(*ordjson.Object); return o }
 
 func Park(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID string) (*ordjson.Object, error) {
@@ -114,6 +110,15 @@ func Park(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID st
 			return nil, fmt.Errorf("Verifier launch ownership is unknown; reservation remains held.")
 		}
 	}
+	if state == "released" {
+		result := ordjson.NewObject()
+		result.Set("task", taskID)
+		result.Set("attempt", attempt)
+		result.Set("released", true)
+		result.Set("observation", lastObservation(attempt))
+		unlock()
+		return result, nil
+	}
 	if !allowed[state] {
 		unlock()
 		return nil, fmt.Errorf("Execution attempt %s is %s and not parkable; no reservation changed.", attemptID, state)
@@ -133,10 +138,11 @@ func Park(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID st
 
 	var observation *ordjson.Object
 	var observeErr error
-	if kind == "worker" {
-		observation, observeErr = parkWorker(s, runtimeRoot, task)
+	proof := ObserveStop(s, runtimeRoot, task, attempt)
+	if proof.Outcome != OutcomeStopped {
+		observeErr = fmt.Errorf("%s", proof.Reason)
 	} else {
-		observation, observeErr = parkVerifier(attempt)
+		observation = proof.Observation
 	}
 	if observeErr != nil {
 		unlock, err = s.Lock()
@@ -227,126 +233,22 @@ func int64From(o *ordjson.Object, key string) int64 {
 	return 0
 }
 
-func parkWorker(s *store.Store, runtimeRoot string, task *ordjson.Object) (*ordjson.Object, error) {
-	session := asString(func() any { v, _ := task.Get("session"); return v }())
-	envSession, err := store.SessionFromEnv()
-	if err != nil {
-		return nil, err
+func lastObservation(attempt *ordjson.Object) *ordjson.Object {
+	raw, _ := attempt.Get("observations")
+	list, _ := raw.([]any)
+	if len(list) == 0 {
+		obs := ordjson.NewObject()
+		obs.Set("at", store.Now())
+		obs.Set("outcome", OutcomeStopped)
+		return obs
 	}
-	if session != envSession {
-		return nil, fmt.Errorf("Task lives in Herdr session %s; observation from another session cannot release it.", session)
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return nil, err
-	}
-	paneID := asString(func() any { v, _ := task.Get("pane"); return v }())
-	pane, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", paneID)
-	if err != nil {
-		return nil, err
-	}
-	if pane == nil {
-		return nil, fmt.Errorf("Worker pane cannot prove exit (%s); a missing or unobservable pane does not release capacity.", code)
-	}
-	paneObj := asObject(pane)
-	if nested, ok := paneObj.Get("pane"); ok {
-		if inner := asObject(nested); inner != nil {
-			paneObj = inner
-		}
-	}
-	workspace, _ := task.Get("workspace")
-	ws, _ := paneObj.Get("workspace_id")
-	cwd, _ := paneObj.Get("cwd")
-	worktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
-	if ws != workspace || resolve(asString(cwd)) != resolve(worktree) {
-		return nil, fmt.Errorf("Worker pane identity changed; reservation remains held.")
-	}
-	agent, agentCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", paneID)
-	if err != nil {
-		return nil, err
-	}
-	if agent != nil {
-		agentObj := asObject(agent)
-		if nested, ok := agentObj.Get("agent"); ok {
-			if inner := asObject(nested); inner != nil {
-				agentObj = inner
-			}
-		}
-		status, _ := agentObj.Get("agent_status")
-		return nil, fmt.Errorf("Worker is still observable (%v); idle or done status is not exit proof.", status)
-	}
-	if agentCode != "agent_not_found" {
-		return nil, fmt.Errorf("Worker agent cannot be observed conclusively (%s); reservation remains held.", agentCode)
-	}
-	env, err := environment.Read(s, asString(func() any { v, _ := task.Get("id"); return v }()))
-	if err != nil {
-		return nil, err
-	}
-	if env != nil {
-		services, _ := env.Get("services")
-		list, _ := services.([]any)
-		var active []any
-		for _, raw := range list {
-			row := asObject(raw)
-			state := asString(func() any { v, _ := row.Get("state"); return v }())
-			for _, a := range append(environment.ServiceActive, "failed") {
-				if state == a {
-					id, _ := row.Get("id")
-					active = append(active, id)
-				}
-			}
-		}
-		if len(active) > 0 {
-			return nil, fmt.Errorf("Owned service reservations remain unresolved: %v; stop or reconcile them before parking the worker.", active)
-		}
+	if obj := asObject(list[len(list)-1]); obj != nil {
+		return obj
 	}
 	obs := ordjson.NewObject()
 	obs.Set("at", store.Now())
-	obs.Set("outcome", "stopped")
-	obs.Set("pane", paneID)
-	obs.Set("workspace", workspace)
-	obs.Set("checkout", worktree)
-	return obs, nil
-}
-
-func parkVerifier(attempt *ordjson.Object) (*ordjson.Object, error) {
-	if pid := intFrom(attempt, "operation_pid"); pid != 0 {
-		running, err := proc.PIDRunning(pid)
-		if err != nil {
-			return nil, err
-		}
-		if running {
-			return nil, fmt.Errorf("Verifier operation is still in progress; reservation remains held.")
-		}
-	}
-	occupant := asObject(func() any { v, _ := attempt.Get("occupant"); return v }())
-	var pid any
-	if occupant != nil {
-		pid, _ = occupant.Get("pid")
-		if n := intFrom(occupant, "pid"); n != 0 {
-			running, err := proc.PIDRunning(n)
-			if err != nil {
-				return nil, fmt.Errorf("Verifier pid %d cannot be inspected; reservation remains held.", n)
-			}
-			if running {
-				return nil, fmt.Errorf("Verifier pid %d still exists; reservation remains held.", n)
-			}
-		}
-	}
-	checkout := asString(func() any { v, _ := attempt.Get("checkout"); return v }())
-	present := checkout != ""
-	if present {
-		if _, err := os.Stat(checkout); err != nil {
-			present = false
-		}
-	}
-	obs := ordjson.NewObject()
-	obs.Set("at", store.Now())
-	obs.Set("outcome", "stopped")
-	obs.Set("pid", pid)
-	obs.Set("checkout", checkout)
-	obs.Set("checkout_present", present)
-	return obs, nil
+	obs.Set("outcome", OutcomeStopped)
+	return obs
 }
 
 func resolve(path string) string {
