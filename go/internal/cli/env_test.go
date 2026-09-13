@@ -185,3 +185,185 @@ func TestEnvDiscover_requiresRecordedTask(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestEnvUnknownFlagsAreUsageErrorsBeforeDomain(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		unknown bool
+	}{
+		{name: "show unknown flag", args: []string{"env", "show", "t-aaaaaaaaaaaa", "--unexpected"}, unknown: true},
+		{name: "show unknown flag before task", args: []string{"env", "show", "--unexpected", "t-aaaaaaaaaaaa"}, unknown: true},
+		{name: "show extra positional", args: []string{"env", "show", "t-aaaaaaaaaaaa", "extra"}},
+		{name: "show extra after dashdash", args: []string{"env", "show", "t-aaaaaaaaaaaa", "--", "extra"}},
+		{name: "discover unknown flag", args: []string{"env", "discover", "t-aaaaaaaaaaaa", "--unexpected"}, unknown: true},
+		{name: "discover extra positional", args: []string{"env", "discover", "t-aaaaaaaaaaaa", "extra"}},
+		{name: "inspect unknown flag", args: []string{"env", "inspect", "t-aaaaaaaaaaaa", "--unexpected"}, unknown: true},
+		{name: "inspect extra positional", args: []string{"env", "inspect", "t-aaaaaaaaaaaa", "extra"}},
+		{name: "record unknown flag", args: []string{"env", "record", "t-aaaaaaaaaaaa", "--url", "http://127.0.0.1:3000", "--unexpected"}, unknown: true},
+		{name: "record unknown flag before task", args: []string{"env", "record", "--unexpected", "t-aaaaaaaaaaaa"}, unknown: true},
+		{name: "record extra positional", args: []string{"env", "record", "t-aaaaaaaaaaaa", "extra"}},
+		{name: "record extra after --url", args: []string{"env", "record", "t-aaaaaaaaaaaa", "--url", "http://127.0.0.1:3000", "extra"}},
+		{name: "start unknown flag", args: []string{"env", "start", "t-aaaaaaaaaaaa", "--command", "dev", "--unexpected"}, unknown: true},
+		{name: "start unknown flag before task", args: []string{"env", "start", "--unexpected", "t-aaaaaaaaaaaa", "--command", "dev"}, unknown: true},
+		{name: "start extra positional", args: []string{"env", "start", "t-aaaaaaaaaaaa", "--command", "dev", "extra"}},
+		{name: "stop unknown flag", args: []string{"env", "stop", "t-aaaaaaaaaaaa", "--unexpected"}, unknown: true},
+		{name: "stop extra positional", args: []string{"env", "stop", "t-aaaaaaaaaaaa", "extra"}},
+		{name: "stop extra after --timeout", args: []string{"env", "stop", "t-aaaaaaaaaaaa", "--timeout", "5", "extra"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHerdrEnv(t)
+			home, taskID, before := envUsageLab(t)
+			stdout, stderr, err := runEnv(t, home, tc.args...)
+			if err == nil {
+				t.Fatalf("expected usage failure, stdout=%s stderr=%s", stdout, stderr)
+			}
+			assertEnvUsageError(t, err)
+			if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+				t.Fatalf("err = %v, want unknown flag", err)
+			}
+			if stdout != "" {
+				t.Fatalf("usage failure wrote stdout: %s", stdout)
+			}
+			assertEnvSidecarUnchanged(t, home, taskID, before)
+		})
+	}
+}
+
+func TestEnvCommands(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      []string
+		success   bool
+		usage     bool
+		unknown   bool
+		domainErr string
+	}{
+		{name: "valid show", args: []string{"env", "show", "t-aaaaaaaaaaaa"}, success: true},
+		{name: "valid show after dashdash", args: []string{"env", "show", "--", "t-aaaaaaaaaaaa"}, success: true},
+		{name: "valid show --max-chars", args: []string{"env", "show", "t-aaaaaaaaaaaa", "--max-chars", "40"}, success: true},
+		{name: "valid show --max-chars=", args: []string{"env", "show", "t-aaaaaaaaaaaa", "--max-chars=0"}, success: true},
+		{name: "valid discover", args: []string{"env", "discover", "t-aaaaaaaaaaaa"}, domainErr: "recorded worktree"},
+		{name: "valid inspect", args: []string{"env", "inspect", "t-aaaaaaaaaaaa"}, domainErr: "recorded worktree"},
+		{name: "valid record --url", args: []string{"env", "record", "t-aaaaaaaaaaaa", "--url", "http://127.0.0.1:3000"}, domainErr: "recorded worktree"},
+		{name: "valid record --url=", args: []string{"env", "record", "t-aaaaaaaaaaaa", "--url=http://127.0.0.1:3000"}, domainErr: "recorded worktree"},
+		{name: "valid start --command", args: []string{"env", "start", "t-aaaaaaaaaaaa", "--command", "dev"}, domainErr: "another machine"},
+		{name: "valid start --command=", args: []string{"env", "start", "t-aaaaaaaaaaaa", "--command=dev", "--timeout=5"}, domainErr: "another machine"},
+		{name: "valid stop --timeout", args: []string{"env", "stop", "t-aaaaaaaaaaaa", "--timeout", "5"}, domainErr: "another machine"},
+		{name: "valid stop --service=", args: []string{"env", "stop", "t-aaaaaaaaaaaa", "--service=svc1"}, domainErr: "another machine"},
+		{name: "env missing subcommand", args: []string{"env"}, usage: true},
+		{name: "show missing task", args: []string{"env", "show"}, usage: true},
+		{name: "discover missing task", args: []string{"env", "discover"}, usage: true},
+		{name: "inspect missing task", args: []string{"env", "inspect"}, usage: true},
+		{name: "record missing task", args: []string{"env", "record"}, usage: true},
+		{name: "start missing task", args: []string{"env", "start", "--command", "dev"}, usage: true},
+		{name: "start missing --command", args: []string{"env", "start", "t-aaaaaaaaaaaa"}, usage: true},
+		{name: "stop missing task", args: []string{"env", "stop"}, usage: true},
+		{name: "show extra positional", args: []string{"env", "show", "t-aaaaaaaaaaaa", "extra"}, usage: true},
+		{name: "show unknown flag", args: []string{"env", "show", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
+		{name: "discover unknown flag", args: []string{"env", "discover", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
+		{name: "inspect unknown flag", args: []string{"env", "inspect", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
+		{name: "record unknown flag", args: []string{"env", "record", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
+		{name: "record missing --url value", args: []string{"env", "record", "t-aaaaaaaaaaaa", "--url"}, usage: true},
+		{name: "start unknown flag", args: []string{"env", "start", "t-aaaaaaaaaaaa", "--command", "dev", "--unexpected"}, usage: true, unknown: true},
+		{name: "start missing --command value", args: []string{"env", "start", "t-aaaaaaaaaaaa", "--command"}, usage: true},
+		{name: "stop unknown flag", args: []string{"env", "stop", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
+		{name: "stop invalid --timeout", args: []string{"env", "stop", "t-aaaaaaaaaaaa", "--timeout", "nope"}, usage: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHerdrEnv(t)
+			home, taskID, before := envUsageLab(t)
+			stdout, stderr, err := runEnv(t, home, tc.args...)
+			switch {
+			case tc.success:
+				if err != nil {
+					t.Fatalf("err = %v stderr=%s stdout=%s", err, stderr, stdout)
+				}
+				if !strings.Contains(stdout, taskID) {
+					t.Fatalf("stdout missing task id:\n%s", stdout)
+				}
+			case tc.usage:
+				assertEnvUsageError(t, err)
+				if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+					t.Fatalf("err = %v, want unknown flag", err)
+				}
+				if stdout != "" {
+					t.Fatalf("usage failure wrote stdout: %s", stdout)
+				}
+				assertEnvSidecarUnchanged(t, home, taskID, before)
+			default:
+				if err == nil {
+					t.Fatalf("expected domain error, stdout=%s", stdout)
+				}
+				if !strings.Contains(err.Error(), tc.domainErr) {
+					t.Fatalf("err = %v, want substring %q", err, tc.domainErr)
+				}
+				assertEnvSidecarUnchanged(t, home, taskID, before)
+			}
+		})
+	}
+}
+
+func runEnv(t *testing.T, home string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
+	root.SetArgs(append([]string{"--home", home}, args...))
+	err = root.ExecuteContext(context.Background())
+	return outBuf.String(), errBuf.String(), err
+}
+
+func assertEnvUsageError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected usage failure")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "recorded worktree") || strings.Contains(msg, "another machine") || strings.Contains(msg, "Give exactly one") {
+		t.Fatalf("err = %v, want a usage failure", err)
+	}
+	usage := strings.Contains(msg, "unknown flag") ||
+		strings.Contains(msg, "accepts 1 arg") ||
+		strings.Contains(msg, "accepts 0 arg") ||
+		strings.Contains(msg, "flag needs an argument") ||
+		strings.Contains(msg, "required flag") ||
+		strings.Contains(msg, "invalid argument") ||
+		strings.Contains(msg, "command is required") ||
+		strings.Contains(msg, "unknown command") ||
+		strings.Contains(msg, "unrecognized arguments") ||
+		strings.Contains(msg, "invalid env")
+	if !usage {
+		t.Fatalf("err = %v, want a usage failure", err)
+	}
+}
+
+func envUsageLab(t *testing.T) (home, taskID, before string) {
+	t.Helper()
+	home = writeDesignatedHome(t)
+	taskID = "t-aaaaaaaaaaaa"
+	writeTaskFixture(t, home, taskID, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "task", "brief_path": "brief.md"}`)
+	writeEnvironmentFixture(t, home, taskID, `{"schema": 1, "task": "t-aaaaaaaaaaaa", "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "discovery": {"observed_at": "2026-01-01T00:00:00+00:00", "head": "abc123", "config_revision": "r1", "current_revision": "r1", "stale": false, "stale_reason": null, "checked_at": "2026-01-01T00:00:00+00:00", "summary": [], "problems": [], "task_origins": [], "verification_contract": null, "sources": [], "commands": []}, "endpoints": [], "logs": [], "resources": [], "services": [], "history": []}`)
+	before = readEnvSidecar(t, home, taskID)
+	return home, taskID, before
+}
+
+func readEnvSidecar(t *testing.T, home, taskID string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, "tasks", taskID, "environment.json"))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func assertEnvSidecarUnchanged(t *testing.T, home, taskID, before string) {
+	t.Helper()
+	if got := readEnvSidecar(t, home, taskID); got != before {
+		t.Fatalf("environment.json changed:\nbefore:\n%s\nafter:\n%s", before, got)
+	}
+}
