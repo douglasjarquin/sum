@@ -33,7 +33,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/skills"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/updatecmd"
-	"github.com/douglasjarquin/sum/go/internal/verifycmd"
 	"github.com/spf13/cobra"
 )
 
@@ -152,18 +151,6 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		RunE:               o.runReport,
 	})
 	root.AddCommand(&cobra.Command{
-		Use:                "prepare",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE:               o.runPrepare,
-	})
-	root.AddCommand(&cobra.Command{
-		Use:                "dispatch",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE:               o.runDispatch,
-	})
-	root.AddCommand(&cobra.Command{
 		Use:                "start",
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
@@ -174,12 +161,6 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		DisableFlagParsing: true,
 		Args:               cobra.ArbitraryArgs,
 		RunE:               o.runReview,
-	})
-	root.AddCommand(&cobra.Command{
-		Use:                "verify",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE:               o.runVerify,
 	})
 	root.AddCommand(&cobra.Command{
 		Use:                "pr",
@@ -1295,50 +1276,6 @@ func capitalizeHerdrContext(msg string) string {
 	return msg
 }
 
-func (o *rootOptions) runPrepare(cmd *cobra.Command, args []string) error {
-	parsed, ok := parsePrepareArgs(args)
-	if !ok {
-		return fmt.Errorf("invalid prepare arguments")
-	}
-	st, err := o.openStore("prepare")
-	if err != nil {
-		return err
-	}
-	ctx, err := store.Context(o.installRoot)
-	if err != nil {
-		return err
-	}
-	parsed.RuntimeRoot = o.runtimeRoot
-	parsed.SumctlPath = o.sumctlPath()
-	view, err := prepare.Prepare(st, ctx, parsed)
-	if err != nil {
-		return err
-	}
-	return emitOrdjson(cmd.OutOrStdout(), view)
-}
-
-func (o *rootOptions) runDispatch(cmd *cobra.Command, args []string) error {
-	parsed, ok := parsePrepareArgs(args)
-	if !ok {
-		return fmt.Errorf("invalid dispatch arguments")
-	}
-	st, err := o.openStore("dispatch")
-	if err != nil {
-		return err
-	}
-	ctx, err := store.Context(o.installRoot)
-	if err != nil {
-		return err
-	}
-	parsed.RuntimeRoot = o.runtimeRoot
-	parsed.SumctlPath = o.sumctlPath()
-	view, err := prepare.Dispatch(st, ctx, parsed)
-	if err != nil {
-		return err
-	}
-	return emitOrdjson(cmd.OutOrStdout(), view)
-}
-
 func (o *rootOptions) runStart(cmd *cobra.Command, args []string) error {
 	taskID, extra, ok := parseStartArgs(args)
 	if !ok {
@@ -1357,102 +1294,6 @@ func (o *rootOptions) runStart(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return emitOrdjson(cmd.OutOrStdout(), view)
-}
-
-func parsePrepareArgs(tokens []string) (prepare.Args, bool) {
-	var parsed prepare.Args
-	parsed.Base = "HEAD"
-	parsed.Kind = "ship"
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		take := func(dest *string) bool {
-			if i+1 >= len(tokens) {
-				return false
-			}
-			i++
-			*dest = tokens[i]
-			return true
-		}
-		switch {
-		case token == "--repo":
-			if !take(&parsed.Repo) {
-				return prepare.Args{}, false
-			}
-		case strings.HasPrefix(token, "--repo="):
-			parsed.Repo = strings.TrimPrefix(token, "--repo=")
-		case token == "--project":
-			if !take(&parsed.Project) {
-				return prepare.Args{}, false
-			}
-		case strings.HasPrefix(token, "--project="):
-			parsed.Project = strings.TrimPrefix(token, "--project=")
-		case token == "--brief":
-			if !take(&parsed.Brief) {
-				return prepare.Args{}, false
-			}
-		case strings.HasPrefix(token, "--brief="):
-			parsed.Brief = strings.TrimPrefix(token, "--brief=")
-		case token == "--harness":
-			if !take(&parsed.Harness) {
-				return prepare.Args{}, false
-			}
-		case strings.HasPrefix(token, "--harness="):
-			parsed.Harness = strings.TrimPrefix(token, "--harness=")
-		case token == "--model":
-			if !take(&parsed.Model) {
-				return prepare.Args{}, false
-			}
-		case strings.HasPrefix(token, "--model="):
-			parsed.Model = strings.TrimPrefix(token, "--model=")
-		case token == "--reasoning":
-			if !take(&parsed.Reasoning) {
-				return prepare.Args{}, false
-			}
-		case strings.HasPrefix(token, "--reasoning="):
-			parsed.Reasoning = strings.TrimPrefix(token, "--reasoning=")
-		case token == "--same-as-you":
-			parsed.SameAsYou = true
-		case token == "--preset":
-			if !take(&parsed.Preset) {
-				return prepare.Args{}, false
-			}
-			parsed.PresetSet = true
-		case strings.HasPrefix(token, "--preset="):
-			parsed.Preset = strings.TrimPrefix(token, "--preset=")
-			parsed.PresetSet = true
-		case token == "--base":
-			if !take(&parsed.Base) {
-				return prepare.Args{}, false
-			}
-		case strings.HasPrefix(token, "--base="):
-			parsed.Base = strings.TrimPrefix(token, "--base=")
-		case token == "--kind":
-			if !take(&parsed.Kind) {
-				return prepare.Args{}, false
-			}
-		case strings.HasPrefix(token, "--kind="):
-			parsed.Kind = strings.TrimPrefix(token, "--kind=")
-		case token == "--approved":
-			parsed.Approved = true
-		case token == "--arg":
-			if i+1 >= len(tokens) {
-				return prepare.Args{}, false
-			}
-			i++
-			parsed.Extra = append(parsed.Extra, tokens[i])
-		case strings.HasPrefix(token, "--arg="):
-			parsed.Extra = append(parsed.Extra, strings.TrimPrefix(token, "--arg="))
-		default:
-			return prepare.Args{}, false
-		}
-	}
-	if parsed.Brief == "" {
-		return prepare.Args{}, false
-	}
-	if parsed.Kind != "ship" && parsed.Kind != "scout" {
-		return prepare.Args{}, false
-	}
-	return parsed, true
 }
 
 func (o *rootOptions) runReview(cmd *cobra.Command, args []string) error {
@@ -1570,92 +1411,6 @@ func parseStartArgs(tokens []string) (taskID string, extra []string, ok bool) {
 		return "", nil, false
 	}
 	return taskID, extra, true
-}
-
-func (o *rootOptions) runVerify(cmd *cobra.Command, args []string) error {
-	parsed, ok := parseVerifyArgs(args)
-	if !ok {
-		return usageError("verify", args)
-	}
-	st, err := o.openStore("verify")
-	if err != nil {
-		return err
-	}
-	ctx, err := store.Context(o.installRoot)
-	if err != nil {
-		return err
-	}
-	parsed.RuntimeRoot = o.runtimeRoot
-	view, err := verifycmd.Run(st, ctx, parsed)
-	if err != nil {
-		return err
-	}
-	return emitOrdjson(cmd.OutOrStdout(), view)
-}
-
-func parseVerifyArgs(tokens []string) (verifycmd.Args, bool) {
-	var parsed verifycmd.Args
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		take := func(dest *string) bool {
-			if i+1 >= len(tokens) {
-				return false
-			}
-			i++
-			*dest = tokens[i]
-			return true
-		}
-		switch {
-		case token == "--candidate":
-			if !take(&parsed.Candidate) {
-				return verifycmd.Args{}, false
-			}
-		case strings.HasPrefix(token, "--candidate="):
-			parsed.Candidate = strings.TrimPrefix(token, "--candidate=")
-		case token == "--result":
-			if !take(&parsed.Result) {
-				return verifycmd.Args{}, false
-			}
-		case strings.HasPrefix(token, "--result="):
-			parsed.Result = strings.TrimPrefix(token, "--result=")
-		case token == "--run":
-			if !take(&parsed.Run) {
-				return verifycmd.Args{}, false
-			}
-		case strings.HasPrefix(token, "--run="):
-			parsed.Run = strings.TrimPrefix(token, "--run=")
-		case token == "--execute":
-			parsed.Execute = true
-		case token == "--base":
-			if !take(&parsed.Base) {
-				return verifycmd.Args{}, false
-			}
-		case strings.HasPrefix(token, "--base="):
-			parsed.Base = strings.TrimPrefix(token, "--base=")
-		case token == "--text":
-			if !take(&parsed.Text) {
-				return verifycmd.Args{}, false
-			}
-		case strings.HasPrefix(token, "--text="):
-			parsed.Text = strings.TrimPrefix(token, "--text=")
-		case token == "--file":
-			if !take(&parsed.File) {
-				return verifycmd.Args{}, false
-			}
-		case strings.HasPrefix(token, "--file="):
-			parsed.File = strings.TrimPrefix(token, "--file=")
-		case strings.HasPrefix(token, "-"):
-			return verifycmd.Args{}, false
-		case parsed.Task == "":
-			parsed.Task = token
-		default:
-			return verifycmd.Args{}, false
-		}
-	}
-	if parsed.Task == "" || parsed.Candidate == "" {
-		return verifycmd.Args{}, false
-	}
-	return parsed, true
 }
 
 func (o *rootOptions) runPR(cmd *cobra.Command, args []string) error {
