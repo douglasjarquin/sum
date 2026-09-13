@@ -147,6 +147,11 @@ func selectionDescriptor(runtimeObj *ordjson.Object) *ordjson.Object {
 	kind, _ := runtimeObj.Get("kind")
 	sha, _ := runtimeObj.Get("sha")
 	path, _ := runtimeObj.Get("path")
+	if p, ok := path.(string); ok && p != "" {
+		if abs, err := filepath.Abs(p); err == nil {
+			path = abs
+		}
+	}
 	row.Set("kind", kind)
 	row.Set("sha", sha)
 	row.Set("path", path)
@@ -635,39 +640,37 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 		return nil, err
 	}
 	defer unlock()
-	current := DefaultRuntime(root)
-	candidate := root
-	if target != "" {
-		candidate = target
+	if err := requireNoPending(s, root); err != nil {
+		return nil, err
 	}
-	compat, err := Compatibility(s, root, candidate, current)
+	current := DefaultRuntime(root)
+	state, err := ensureActivationState(s, root, current)
 	if err != nil {
 		return nil, err
 	}
-	newSHA := ""
-	if target == "" {
-		headOut, _ := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, true, nil)
-		newSHA = strings.TrimSpace(headOut.Stdout)
-	} else {
-		newSHA = filepath.Base(target)
-	}
-	if ok, _ := compat.Get("ok"); ok != true {
-		blocking, _ := compat.Get("blocking")
-		log := ordjson.NewObject()
-		log.Set("action", action)
-		log.Set("result", "refused")
-		log.Set("from", func() any { v, _ := current.Get("sha"); return v }())
-		log.Set("to", newSHA)
-		log.Set("blocking", blocking)
-		updateLog(root, log)
-		kind, _ := current.Get("kind")
-		sha, _ := current.Get("sha")
-		list, _ := blocking.([]any)
-		var parts []string
-		for _, b := range list {
-			parts = append(parts, fmt.Sprint(b))
+	compat, intended, err := ValidateTarget(s, root, target, current)
+	newSHA := asString(func() any {
+		if intended != nil {
+			v, _ := intended.Get("sha")
+			return v
 		}
-		return nil, fmt.Errorf("%s refused; the current selection (%v %v) still serves. Exact incompatibilities: %s", action, kind, sha, strings.Join(parts, "; "))
+		return filepath.Base(target)
+	}())
+	if err != nil {
+		if compat != nil {
+			blocking, _ := compat.Get("blocking")
+			log := ordjson.NewObject()
+			log.Set("action", action)
+			log.Set("result", "refused")
+			log.Set("from", func() any { v, _ := current.Get("sha"); return v }())
+			log.Set("to", newSHA)
+			log.Set("blocking", blocking)
+			updateLog(root, log)
+			kind, _ := current.Get("kind")
+			sha, _ := current.Get("sha")
+			return nil, fmt.Errorf("%s refused; the current selection (%v %v) still serves. Exact incompatibilities: %s", action, kind, sha, joinBlocking(blocking))
+		}
+		return nil, err
 	}
 	curKind, _ := current.Get("kind")
 	curSHA, _ := current.Get("sha")
@@ -693,32 +696,103 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 		result.Set("note", note)
 		return result, nil
 	}
+	knownGood := asObject(func() any { v, _ := state.Get("known_good"); return v }())
+	if _, priorErr := resolveDescriptor(root, knownGood); priorErr != nil {
+		return nil, priorErr
+	}
+	generation, genErr := newGeneration()
+	if genErr != nil {
+		return nil, genErr
+	}
+	recovery, recErr := stageRecovery(s, root, generation, knownGood)
+	if recErr != nil {
+		return nil, recErr
+	}
 	before := selectionDescriptor(current)
-	if _, err := SelectDefault(root, target); err != nil {
+	pending := ordjson.NewObject()
+	pending.Set("generation", generation)
+	pending.Set("action", action)
+	pending.Set("from", knownGood)
+	pending.Set("to", intended)
+	pending.Set("source", source)
+	pending.Set("recovery", recovery)
+	pending.Set("status", "prepared")
+	state.Set("pending", pending)
+	if err := writeActivationState(s, root, state); err != nil {
 		return nil, err
+	}
+	log := ordjson.NewObject()
+	log.Set("action", action)
+	log.Set("phase", "selecting")
+	log.Set("generation", generation)
+	log.Set("from", before)
+	log.Set("to", intended)
+	log.Set("source", source)
+	updateLog(root, log)
+	if afterPendingWrite != nil {
+		if hookErr := afterPendingWrite(); hookErr != nil {
+			return nil, hookErr
+		}
+	}
+	if _, err := SelectDefault(root, target); err != nil {
+		if _, recErr := recoverPendingLocked(s, root, generation); recErr != nil {
+			return nil, fmt.Errorf("%s could not replace the selection: %v. Recovery also failed: %v. Run `%s`; records are untouched.", action, err, recErr, argvJoin(recovery))
+		}
+		return nil, err
+	}
+	if afterSelect != nil {
+		if hookErr := afterSelect(); hookErr != nil {
+			return nil, hookErr
+		}
 	}
 	after := DefaultRuntime(root)
 	check := postCheck(s, root)
 	if ok, _ := check.Get("ok"); ok != true {
-		_, _ = SelectDefault(root, "")
-		if curKind == "release" {
-			prevPath := asString(func() any { v, _ := before.Get("path"); return v }())
-			_, _ = SelectDefault(root, prevPath)
-		}
+		recovered, recErr := recoverPendingLocked(s, root, generation)
 		detail, _ := check.Get("detail")
-		return nil, fmt.Errorf("%s candidate entrypoint check failed: %v. The prior known-good runtime was restored; records are untouched.", action, detail)
+		if recErr != nil {
+			failLog := ordjson.NewObject()
+			failLog.Set("action", action)
+			failLog.Set("result", "selected-but-entrypoint-check-failed")
+			failLog.Set("generation", generation)
+			failLog.Set("from", before)
+			failLog.Set("to", selectionDescriptor(after))
+			failLog.Set("post_check", check)
+			failLog.Set("recovery", "failed")
+			updateLog(root, failLog)
+			return nil, fmt.Errorf("%s switched the default to %v but the entrypoint check failed: %v. Recovery also failed: %v. Run `%s`; records are untouched.", action, func() any { v, _ := after.Get("sha"); return v }(), detail, recErr, argvJoin(recovery))
+		}
+		restoredSHA := asString(func() any {
+			def := asObject(func() any { v, _ := recovered.Get("default"); return v }())
+			if def == nil {
+				return nil
+			}
+			v, _ := def.Get("sha")
+			return v
+		}())
+		return nil, fmt.Errorf("%s candidate entrypoint check failed: %v. The prior known-good runtime %s was restored and verified; records are untouched.", action, detail, restoredSHA)
 	}
 	checkout := syncInstallationCheckout(root, newSHA)
 	applyCheckoutOutcome(compat, checkout)
-	log := ordjson.NewObject()
-	log.Set("action", action)
-	log.Set("result", "selected")
-	log.Set("from", before)
-	log.Set("to", selectionDescriptor(after))
-	log.Set("deferred", deferredWhats(compat))
-	log.Set("checkout", checkout)
-	log.Set("post_check", check)
-	updateLog(root, log)
+	committed := ordjson.NewObject()
+	committed.Set("generation", generation)
+	committed.Set("from", before)
+	committed.Set("to", selectionDescriptor(after))
+	committed.Set("known_good", selectionDescriptor(after))
+	committed.Set("pending", nil)
+	if err := writeActivationState(s, root, committed); err != nil {
+		return nil, fmt.Errorf("%s selected %v but the activation record could not be committed: %v. Run `update recover --generation %s`; records are untouched.", action, func() any { v, _ := after.Get("sha"); return v }(), err, generation)
+	}
+	okLog := ordjson.NewObject()
+	okLog.Set("action", action)
+	okLog.Set("result", "selected")
+	okLog.Set("generation", generation)
+	okLog.Set("from", before)
+	okLog.Set("to", selectionDescriptor(after))
+	okLog.Set("deferred", deferredWhats(compat))
+	okLog.Set("checkout", checkout)
+	okLog.Set("post_check", check)
+	updateLog(root, okLog)
 	result := ordjson.NewObject()
 	result.Set("action", action)
 	result.Set("changed", true)
@@ -728,6 +802,8 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 	result.Set("checkout", checkout)
 	result.Set("post_check", check)
 	result.Set("source", source)
+	result.Set("generation", generation)
+	result.Set("recovery", recovery)
 	result.Set("note", "New entrypoint invocations and new dispatches use this default. Commands already running finish on the runtime they resolved; connected MCP servers keep their start tree; task records, worktrees, and .sum were not touched.")
 	return result, nil
 }
@@ -774,6 +850,11 @@ func Status(s *store.Store) (*ordjson.Object, error) {
 		}
 	}
 	result.Set("history", readUpdateLog(root, 20))
+	activation, actErr := readActivationState(s, root)
+	if actErr != nil {
+		return nil, actErr
+	}
+	result.Set("activation", activation)
 	result.Set("note", "Selection is the .local/current symlink; the history is a local log, not the source of truth. Running MCP servers and helpers are not enumerated: they keep the tree they started from.")
 	return result, nil
 }
@@ -862,6 +943,9 @@ func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	if err != nil {
 		return nil, err
 	}
+	if err := requireNoPending(s, root); err != nil {
+		return nil, err
+	}
 	source, err := resolveAuthorized(root, ref, !noFetch)
 	if err != nil {
 		return nil, err
@@ -887,6 +971,9 @@ func Rollback(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, 
 	}
 	root, err := release.InstallationRoot(s)
 	if err != nil {
+		return nil, err
+	}
+	if err := requireNoPending(s, root); err != nil {
 		return nil, err
 	}
 	if to == "" || to == "checkout" {
@@ -920,5 +1007,18 @@ func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.O
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("No interrupted activation is recorded for generation %s.", generation)
+	root, err := release.InstallationRoot(s)
+	if err != nil {
+		return nil, err
+	}
+	unlock, lockErr := activationLock(root)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
+	return recoverPendingLocked(s, root, generation)
 }
+
+// Test seams for crash injection. Production leaves these nil.
+var afterPendingWrite func() error
+var afterSelect func() error

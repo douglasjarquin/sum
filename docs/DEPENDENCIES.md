@@ -159,11 +159,14 @@ Existing approval receipts allow compatible immutable rollback without fetching 
 `.local/activation.json` records committed known-good selection and any pending generation; `.local/updates.jsonl` is diagnostic history, not the recovery source of truth.
 Activation state and the independent recovery record are bound to the exact canonical state-home path as well as the installation and instance.
 Pending state is cleared only after the successful selection or recovery audit write, so a failed audit remains explicitly recoverable.
-Before switching, SUM durably writes and checks a generation-specific `.local/recovery/<generation>/sum-recover.py` using the prior runtime's interpreter and helper.
-The stable entrypoint is checked after selection; failure restores and checks the prior known-good runtime under the same activation lock.
+Before switching, SUM records `pending.recovery.argv` pointing at the hash-checked prior known-good helper (`<runtime>/.local/bin/sumctl`) and checks that helper with `--version`.
+The stable entrypoint is checked after selection.
+Failure restores that exact previous target under the same activation lock and checks it.
+Candidate failure, restoration failure, and verified restoration are distinct results.
 If recovery fails or the process is interrupted, the pending record remains and another apply or rollback is refused until explicit `update recover --generation GENERATION` resolves it.
 Recovery compares the generation and actual selection with the recorded endpoints, checks the prior target again, and never repeats an update or worker callback.
-The independent command in `activation.pending.recovery.argv` remains usable when the candidate helper cannot import; it also requires the registered coordinator.
+When `./bin/sumctl` cannot start because the candidate is selected, run `activation.pending.recovery.argv` from the registered coordinator pane.
+That argv does not follow `.local/current`.
 A candidate needing another Herdr version is refused here.
 A changed MCP contract is applied with `deferred` naming the clients that keep their old tool set until they restart.
 `update rollback` chooses the previous known-good target while holding the activation lock, or accepts an explicit approved target through the same compatibility checks.

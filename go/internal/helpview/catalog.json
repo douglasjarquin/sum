@@ -1005,7 +1005,7 @@
       "apply": "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only)",
       "status": "Default and active runtime, checkout state, staged releases, recent selections; writes nothing",
       "rollback": "Atomically select the previous runtime (or --to SHA|checkout) after compatibility checks; records are never touched (coordinator only)",
-      "recover": "Complete generation-checked compensation for an interrupted activation (coordinator only)"
+      "recover": "Reconcile one pending activation generation from the journal without repeating the update (coordinator only)"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -2059,7 +2059,7 @@
   },
   "update-recover": {
     "topic": "update-recover",
-    "help": "Complete generation-checked compensation for an interrupted activation (coordinator only)",
+    "help": "Reconcile one pending activation generation from the journal without repeating the update (coordinator only)",
     "arguments": [
       {
         "name": "--generation",
