@@ -118,6 +118,8 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addContextCommand(root)
 	opts.addDoctorCommand(root)
 	opts.addInitCommand(root)
+	opts.addPrepareCommands(root)
+	opts.addVerifyCommand(root)
 	opts.addNativeCommands(root)
 	opts.format = "toon"
 	wrapOutputFormat(root, opts)
