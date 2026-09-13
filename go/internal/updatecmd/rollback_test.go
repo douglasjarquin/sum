@@ -243,6 +243,9 @@ func TestRollback_cleanApprovedCheckoutUsesTargetEvidence(t *testing.T) {
 
 func TestCompatibility_absentManifestIsNotSavedByCompiledContract(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
+	if err := os.RemoveAll(filepath.Join(lab.root, ".local", "bin")); err != nil {
+		t.Fatal(err)
+	}
 	current := DefaultRuntime(lab.root)
 	compat, err := Compatibility(lab.store, lab.root, lab.root, current)
 	if err != nil {

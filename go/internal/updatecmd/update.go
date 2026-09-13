@@ -159,38 +159,81 @@ func selectionDescriptor(runtimeObj *ordjson.Object) *ordjson.Object {
 }
 
 func offeredContracts(manifest *ordjson.Object) (sumVersion, herdrCLI string, mcp *ordjson.Object, stateSchema, briefSchema []any) {
-	if manifest != nil {
-		sumVersion = asString(func() any { v, _ := manifest.Get("sum_version"); return v }())
-		contracts := asObject(func() any { v, _ := manifest.Get("contracts"); return v }())
-		if contracts != nil {
-			herdrCLI = asString(func() any { v, _ := contracts.Get("herdr_cli"); return v }())
-			mcp = asObject(func() any { v, _ := contracts.Get("mcp"); return v }())
-		}
-		supports := asObject(func() any { v, _ := manifest.Get("supports"); return v }())
-		if supports != nil {
-			if v, ok := supports.Get("state_schema"); ok {
-				stateSchema, _ = v.([]any)
-			}
-			if v, ok := supports.Get("brief_schema"); ok {
-				briefSchema, _ = v.([]any)
-			}
-		}
+	if manifest == nil {
 		return
 	}
-	offered := contract.BuildRelease()
-	sumVersion = offered.SumVersion
-	herdrCLI = offered.Contracts.HerdrCLI
-	mcp = ordjson.NewObject()
-	mcp.Set("server", offered.Contracts.MCP.Server)
-	mcp.Set("version", offered.Contracts.MCP.Version)
-	mcp.Set("tools", jsonNumber(offered.Contracts.MCP.Tools))
-	for _, n := range offered.Supports.StateSchema {
-		stateSchema = append(stateSchema, jsonNumber(n))
+	sumVersion = asString(func() any { v, _ := manifest.Get("sum_version"); return v }())
+	contracts := asObject(func() any { v, _ := manifest.Get("contracts"); return v }())
+	if contracts != nil {
+		herdrCLI = asString(func() any { v, _ := contracts.Get("herdr_cli"); return v }())
+		mcp = asObject(func() any { v, _ := contracts.Get("mcp"); return v }())
 	}
-	for _, n := range offered.Supports.BriefSchema {
-		briefSchema = append(briefSchema, jsonNumber(n))
+	supports := asObject(func() any { v, _ := manifest.Get("supports"); return v }())
+	if supports != nil {
+		if v, ok := supports.Get("state_schema"); ok {
+			stateSchema, _ = v.([]any)
+		}
+		if v, ok := supports.Get("brief_schema"); ok {
+			briefSchema, _ = v.([]any)
+		}
 	}
 	return
+}
+
+func checkoutContract(candidatePath string) (*ordjson.Object, error) {
+	helpers := []string{
+		filepath.Join(candidatePath, ".local", "bin", "sumctl"),
+		filepath.Join(candidatePath, ".local", "bin", "sumctl-go"),
+	}
+	var last string
+	for _, helper := range helpers {
+		info, err := os.Stat(helper)
+		if err != nil || info.Mode()&0o111 == 0 {
+			continue
+		}
+		out, runErr := proc.Run([]string{helper, "release-contract"}, candidatePath, 60*time.Second, false, append(os.Environ(), "SUM_INSTALL_ROOT="+candidatePath))
+		if runErr != nil || out.Code != 0 {
+			detail := strings.TrimSpace(out.Stderr)
+			if detail == "" {
+				detail = strings.TrimSpace(out.Stdout)
+			}
+			if runErr != nil && detail == "" {
+				detail = runErr.Error()
+			}
+			last = detail
+			continue
+		}
+		value, decErr := ordjson.Decode([]byte(strings.TrimSpace(out.Stdout)))
+		if decErr != nil {
+			return nil, fmt.Errorf("Candidate release contract is not JSON: %s", trimForError(out.Stdout))
+		}
+		obj := asObject(value)
+		if obj == nil {
+			return nil, fmt.Errorf("Candidate release contract is incomplete")
+		}
+		if _, hasSum := obj.Get("sum_version"); !hasSum {
+			return nil, fmt.Errorf("Candidate release contract is incomplete")
+		}
+		if asObject(func() any { v, _ := obj.Get("contracts"); return v }()) == nil {
+			return nil, fmt.Errorf("Candidate release contract is incomplete")
+		}
+		if asObject(func() any { v, _ := obj.Get("supports"); return v }()) == nil {
+			return nil, fmt.Errorf("Candidate release contract is incomplete")
+		}
+		return obj, nil
+	}
+	if last != "" {
+		return nil, fmt.Errorf("%s", last)
+	}
+	return nil, fmt.Errorf("checkout has no release manifest or contract evidence")
+}
+
+func trimForError(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 300 {
+		return s[:300]
+	}
+	return s
 }
 
 func containsNumber(list []any, n int) bool {
@@ -224,6 +267,17 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 			return nil, err
 		}
 		candidateSHA = strings.TrimSpace(headOut.Stdout)
+		m, contractErr := checkoutContract(candidatePath)
+		if contractErr != nil {
+			result := ordjson.NewObject()
+			result.Set("ok", false)
+			result.Set("blocking", []any{"checkout contract: " + contractErr.Error()})
+			result.Set("deferred", []any{})
+			result.Set("probes", []any{})
+			result.Set("tasks", []any{})
+			return result, nil
+		}
+		manifest = m
 	} else {
 		m, err := release.VerifyRelease(candidatePath, filepath.Base(candidatePath))
 		if err != nil {
@@ -640,6 +694,10 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 		return nil, err
 	}
 	defer unlock()
+	return activateLocked(s, root, target, action, source)
+}
+
+func activateLocked(s *store.Store, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
 	if err := requireNoPending(s, root); err != nil {
 		return nil, err
 	}
@@ -920,6 +978,17 @@ func Stage(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	}
 	current := DefaultRuntime(root)
 	relPath := asString(func() any { v, _ := staged.Get("release"); return v }())
+	unlock, lockErr := activationLock(root)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	if err := approveUpdateTarget(s, root, relPath, nil); err != nil {
+		_ = unlock()
+		return nil, err
+	}
+	if err := unlock(); err != nil {
+		return nil, err
+	}
 	compat, err := Compatibility(s, root, relPath, current)
 	if err != nil {
 		return nil, err
@@ -973,16 +1042,46 @@ func Rollback(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, 
 	if err != nil {
 		return nil, err
 	}
+	unlock, lockErr := activationLock(root)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer unlock()
 	if err := requireNoPending(s, root); err != nil {
 		return nil, err
 	}
-	if to == "" || to == "checkout" {
-		src := ordjson.NewObject()
-		src.Set("to", "checkout")
-		return activate(s, root, "", "rollback", src)
+	current := DefaultRuntime(root)
+	state, err := ensureActivationState(s, root, current)
+	if err != nil {
+		return nil, err
 	}
-	if !shaPrefix.MatchString(to) {
-		return nil, fmt.Errorf("Roll back to a staged release SHA or `checkout`.")
+	target, src, err := resolveRollbackTarget(root, to, state, current)
+	if err != nil {
+		return nil, err
+	}
+	return activateLocked(s, root, target, "rollback", src)
+}
+
+func resolveRollbackTarget(root, to string, state, current *ordjson.Object) (string, *ordjson.Object, error) {
+	src := ordjson.NewObject()
+	requested := to
+	if requested == "" {
+		previous := asObject(func() any { v, _ := state.Get("from"); return v }())
+		if previous == nil || descriptorsEqual(previous, selectionDescriptor(current)) {
+			return "", nil, fmt.Errorf("No recorded previous known-good selection. Name the target: `update rollback --to SHA` or `--to checkout`.")
+		}
+		if asString(func() any { v, _ := previous.Get("kind"); return v }()) == "checkout" {
+			requested = "checkout"
+		} else {
+			requested = asString(func() any { v, _ := previous.Get("sha"); return v }())
+		}
+	}
+	if requested == "checkout" {
+		src.Set("to", "checkout")
+		return "", src, nil
+	}
+	if !shaPrefix.MatchString(requested) {
+		return "", nil, fmt.Errorf("Roll back to a staged release SHA or `checkout`.")
 	}
 	releases := filepath.Join(root, ".local", "releases")
 	entries, _ := os.ReadDir(releases)
@@ -991,16 +1090,15 @@ func Rollback(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, 
 		if strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
-		if strings.HasPrefix(e.Name(), to) {
+		if strings.HasPrefix(e.Name(), requested) {
 			matches = append(matches, filepath.Join(releases, e.Name()))
 		}
 	}
 	if len(matches) != 1 {
-		return nil, fmt.Errorf("%d staged releases match %s; rollback uses only bundles that are already staged.", len(matches), to)
+		return "", nil, fmt.Errorf("%d staged releases match %s; rollback uses only bundles that are already staged.", len(matches), requested)
 	}
-	src := ordjson.NewObject()
 	src.Set("to", filepath.Base(matches[0]))
-	return activate(s, root, matches[0], "rollback", src)
+	return matches[0], src, nil
 }
 
 func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.Object, error) {

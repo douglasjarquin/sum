@@ -142,6 +142,7 @@ func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(home, "state.json"), `{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n")
+	plantNativeHelper(t, root, workingHelper(""))
 	host, err := os.Hostname()
 	if err != nil {
 		t.Fatal(err)
@@ -180,6 +181,14 @@ func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 
 func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
 	t.Helper()
+	root := filepath.Dir(filepath.Dir(releasesRoot))
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	tree := git(t, root, "rev-parse", sha+"^{tree}")
 	dir := filepath.Join(releasesRoot, sha)
 	required := []struct{ rel, content string }{
 		{"bin/sumctl", "#!/bin/sh\nexit 0\n"},
@@ -215,7 +224,7 @@ func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
 	}
 	manifest := fmt.Sprintf(`{
   "schema": 1, "kind": "sum-release", "sum_version": "0.1.0",
-  "source": {"sha": %q, "tree": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "repository": "/tmp/installation"},
+  "source": {"sha": %q, "tree": %q, "repository": %q},
   "files": {%s},
   "dependencies": {
     "tools": {"pins": {}, "paths": {%s}},
@@ -225,8 +234,8 @@ func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
   },
   "contracts": {},
   "supports": {"state_schema": [1], "brief_schema": [1]},
-  "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": {"machine": "m1", "installation": "/tmp/installation", "instance": null}
-}`, sha, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "))
+  "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": {"machine": "m1", "installation": %q, "instance": null}
+}`, sha, tree, root, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "), root)
 	writeFile(t, filepath.Join(dir, "release.json"), manifest)
 }
 

@@ -185,7 +185,7 @@ func TestHelp_updateRollbackNamesDefaultAndRefusals(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"recorded previous",
-		"staging is not approval",
+		"Staging is not approval",
 		"No recorded previous known-good",
 		"--to checkout",
 	} {

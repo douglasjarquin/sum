@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,14 +17,22 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-const activationStatePath = ".local/activation.json"
+const (
+	activationStatePath = ".local/activation.json"
+	approvalsPath       = ".local/approvals.json"
+)
 
-// ValidateTarget is the single target-validation path for apply, compensation, and recovery.
-// Rollback (#124) reuses it. A staged directory is not approval.
+var sha40Hex = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// ValidateTarget is the single target-validation path for apply, rollback, compensation, and recovery.
+// A staged directory is not approval.
 func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object) (*ordjson.Object, *ordjson.Object, error) {
 	resolvedRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, nil, err
+	}
+	if eval, evalErr := filepath.EvalSymlinks(resolvedRoot); evalErr == nil {
+		resolvedRoot = eval
 	}
 	candidate := resolvedRoot
 	kind := "checkout"
@@ -43,7 +52,20 @@ func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object
 		if headErr != nil {
 			return nil, nil, headErr
 		}
-		descriptor.Set("sha", strings.TrimSpace(headOut.Stdout))
+		sha := strings.TrimSpace(headOut.Stdout)
+		descriptor.Set("sha", sha)
+		if !checkoutIsCurrent(resolvedRoot, sha, current) {
+			dirtyOut, dirtyErr := proc.Run([]string{"git", "-C", root, "status", "--porcelain", "--untracked-files=all"}, "", 20*time.Second, true, nil)
+			if dirtyErr != nil {
+				return nil, nil, dirtyErr
+			}
+			if strings.TrimSpace(dirtyOut.Stdout) != "" {
+				return nil, nil, fmt.Errorf("Checkout rollback requires a clean approved checkout; local changes were preserved.")
+			}
+		}
+		if err := approveUpdateTarget(s, resolvedRoot, "", nil); err != nil {
+			return nil, nil, err
+		}
 	} else {
 		releases, relErr := filepath.Abs(filepath.Join(root, ".local", "releases"))
 		if relErr != nil {
@@ -52,10 +74,14 @@ func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object
 		if filepath.Dir(candidate) != releases {
 			return nil, nil, fmt.Errorf("Update target must be an immutable release of this installation.")
 		}
-		if _, verifyErr := release.VerifyRelease(candidate, filepath.Base(candidate)); verifyErr != nil {
+		verified, verifyErr := release.VerifyRelease(candidate, filepath.Base(candidate))
+		if verifyErr != nil {
 			return nil, nil, verifyErr
 		}
 		descriptor.Set("sha", filepath.Base(candidate))
+		if err := approveUpdateTarget(s, resolvedRoot, candidate, verified); err != nil {
+			return nil, nil, err
+		}
 	}
 	compat, compatErr := Compatibility(s, root, candidate, current)
 	if compatErr != nil {
@@ -65,6 +91,200 @@ func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object
 		return compat, descriptor, fmt.Errorf("%s", joinBlocking(func() any { v, _ := compat.Get("blocking"); return v }()))
 	}
 	return compat, descriptor, nil
+}
+
+func checkoutIsCurrent(root, sha string, current *ordjson.Object) bool {
+	if current == nil {
+		return false
+	}
+	path := asString(func() any { v, _ := current.Get("path"); return v }())
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	if eval, err := filepath.EvalSymlinks(path); err == nil {
+		path = eval
+	}
+	return asString(func() any { v, _ := current.Get("kind"); return v }()) == "checkout" &&
+		asString(func() any { v, _ := current.Get("sha"); return v }()) == sha &&
+		path == root
+}
+
+func requireReleaseProvenance(s *store.Store, root string, manifest *ordjson.Object) error {
+	identity, err := readStateIdentity(s)
+	if err != nil {
+		return err
+	}
+	source := asObject(func() any { v, _ := manifest.Get("source"); return v }())
+	staged := asObject(func() any { v, _ := manifest.Get("staged_by"); return v }())
+	repo := asString(func() any {
+		if source == nil {
+			return nil
+		}
+		v, _ := source.Get("repository")
+		return v
+	}())
+	installation := asString(func() any {
+		if staged == nil {
+			return nil
+		}
+		v, _ := staged.Get("installation")
+		return v
+	}())
+	instance := func() any {
+		if staged == nil {
+			return nil
+		}
+		v, _ := staged.Get("instance")
+		return v
+	}()
+	if repo != root || installation != root || fmt.Sprint(instance) != fmt.Sprint(instanceValue(identity)) {
+		return fmt.Errorf("Release provenance does not match this installation; selection unchanged.")
+	}
+	return nil
+}
+
+func approveUpdateTarget(s *store.Store, root, target string, manifest *ordjson.Object) error {
+	var sha, manifestTree string
+	if target == "" {
+		headOut, err := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, true, nil)
+		if err != nil {
+			return err
+		}
+		sha = strings.TrimSpace(headOut.Stdout)
+	} else {
+		if manifest == nil {
+			verified, err := release.VerifyRelease(target, filepath.Base(target))
+			if err != nil {
+				return err
+			}
+			manifest = verified
+		}
+		source := asObject(func() any { v, _ := manifest.Get("source"); return v }())
+		sha = asString(func() any {
+			if source == nil {
+				return nil
+			}
+			v, _ := source.Get("sha")
+			return v
+		}())
+		manifestTree = asString(func() any {
+			if source == nil {
+				return nil
+			}
+			v, _ := source.Get("tree")
+			return v
+		}())
+		if err := requireReleaseProvenance(s, root, manifest); err != nil {
+			return err
+		}
+	}
+	path := filepath.Join(root, approvalsPath)
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("Update approval records must not be a symlink.")
+	}
+	identity, err := approvalIdentity(s, root)
+	if err != nil {
+		return err
+	}
+	approvals := ordjson.NewObject()
+	if _, err := os.Stat(path); err == nil {
+		value, readErr := ordjson.ReadFile(path)
+		if readErr != nil {
+			return fmt.Errorf("Update approval records are malformed or belong to another installation.")
+		}
+		obj := asObject(value)
+		if obj == nil {
+			return fmt.Errorf("Update approval records are malformed or belong to another installation.")
+		}
+		approvals = obj
+	} else if !os.IsNotExist(err) {
+		return err
+	} else {
+		approvals.Set("schema", json.Number("1"))
+		for _, key := range []string{"installation", "instance", "origin"} {
+			v, _ := identity.Get(key)
+			approvals.Set(key, v)
+		}
+		approvals.Set("revisions", ordjson.NewObject())
+	}
+	if fmt.Sprint(func() any { v, _ := approvals.Get("schema"); return v }()) != "1" {
+		return fmt.Errorf("Update approval records are malformed or belong to another installation.")
+	}
+	for _, key := range []string{"installation", "instance", "origin"} {
+		want, _ := identity.Get(key)
+		got, _ := approvals.Get(key)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			return fmt.Errorf("Update approval records are malformed or belong to another installation.")
+		}
+	}
+	revisions := asObject(func() any { v, _ := approvals.Get("revisions"); return v }())
+	if revisions == nil {
+		return fmt.Errorf("Update approval records are malformed or belong to another installation.")
+	}
+	receipt := asObject(func() any { v, _ := revisions.Get(sha); return v }())
+	if receipt != nil {
+		expectedTree := manifestTree
+		if target == "" {
+			treeOut, treeErr := proc.Run([]string{"git", "-C", root, "rev-parse", "--verify", sha + "^{tree}", "--"}, "", 20*time.Second, true, nil)
+			if treeErr != nil {
+				return treeErr
+			}
+			expectedTree = strings.TrimSpace(treeOut.Stdout)
+		}
+		if err := receiptMatches(receipt, sha, expectedTree); err != nil {
+			return err
+		}
+		return nil
+	}
+	treeOut, treeErr := proc.Run([]string{"git", "-C", root, "rev-parse", "--verify", sha + "^{tree}", "--"}, "", 20*time.Second, true, nil)
+	if treeErr != nil {
+		return treeErr
+	}
+	tree := strings.TrimSpace(treeOut.Stdout)
+	if manifestTree != "" && manifestTree != tree {
+		return fmt.Errorf("Release source tree does not match its approved Git revision.")
+	}
+	source, authErr := resolveAuthorized(root, sha, false)
+	if authErr != nil {
+		return authErr
+	}
+	receipt = ordjson.NewObject()
+	receipt.Set("sha", sha)
+	receipt.Set("tree", tree)
+	receipt.Set("branch", asString(func() any { v, _ := source.Get("branch"); return v }()))
+	receipt.Set("tip", asString(func() any { v, _ := source.Get("tip"); return v }()))
+	receipt.Set("approved_at", store.Now())
+	revisions.Set(sha, receipt)
+	approvals.Set("revisions", revisions)
+	return ordjson.WriteFile(path, approvals)
+}
+
+func approvalIdentity(s *store.Store, root string) (*ordjson.Object, error) {
+	state, err := readStateIdentity(s)
+	if err != nil {
+		return nil, err
+	}
+	remote, err := origin(root)
+	if err != nil {
+		return nil, err
+	}
+	row := ordjson.NewObject()
+	row.Set("installation", root)
+	row.Set("instance", instanceValue(state))
+	row.Set("origin", remote)
+	return row, nil
+}
+
+func receiptMatches(receipt *ordjson.Object, sha, expectedTree string) error {
+	gotSHA := asString(func() any { v, _ := receipt.Get("sha"); return v }())
+	gotTree := asString(func() any { v, _ := receipt.Get("tree"); return v }())
+	branch := asString(func() any { v, _ := receipt.Get("branch"); return v }())
+	tip := asString(func() any { v, _ := receipt.Get("tip"); return v }())
+	approvedAt := asString(func() any { v, _ := receipt.Get("approved_at"); return v }())
+	if _, err := time.Parse(time.RFC3339, approvedAt); err != nil || gotSHA != sha || gotTree != expectedTree || branch == "" || !sha40Hex.MatchString(tip) {
+		return fmt.Errorf("Update approval receipt does not match the selected revision and tree.")
+	}
+	return nil
 }
 
 func joinBlocking(v any) string {

@@ -23,7 +23,7 @@ All commands run from the installation directory with its own `./bin/sumctl`; ea
 ./bin/sumctl update stage [--ref REF] [--no-fetch]     # check plus stage .local/releases/<sha>; the default is unchanged
 ./bin/sumctl update apply [--ref REF] [--no-fetch]     # stage if needed, validate under the activation lock, switch the default, fast-forward a clean installation clone
 ./bin/sumctl update status                             # default and active runtime, checkout HEAD/dirty, staged releases, recent selections
-./bin/sumctl update rollback [--to SHA|checkout]       # atomically reselect the previous runtime after the same compatibility checks
+./bin/sumctl update rollback [--to SHA|checkout]       # recorded previous approved runtime; --to needs exact approved identity. Staging is not approval
 ./bin/sumctl update recover --generation GENERATION  # recover the exact pending activation without repeating it
 ```
 
@@ -101,10 +101,29 @@ Two updates before a receipt coalesce to the newest revision (`r2` superseded by
 
 ## Rollback
 
-`update rollback` selects the previous known-good runtime under the activation lock, or an explicit approved target with `--to SHA` or `--to checkout`, after the same compatibility checks.
-Staging alone is not approval; trusted local approval receipts allow offline immutable rollback without fetching Git history.
-Checkout rollback requires clean tracked and untracked state and a matching approved Git tree.
-Rollback to a staged SHA also fast-forwards a clean installation clone when that SHA is an ancestor of `origin/<default branch>` and the move is a fast-forward; otherwise Git is left alone and the symlink still rolls back.
+`update rollback` selects the recorded previous approved runtime under the activation lock.
+That default is `activation.from`, not the installation checkout.
+Apply may have fast-forwarded HEAD, so checkout is not a previous-runtime pointer.
+Missing or unusable history is an explicit refusal (`No recorded previous known-good selection. Name the target: update rollback --to SHA or --to checkout.`), never a checkout fallback.
+
+`--to SHA` and `--to checkout` use the same `ValidateTarget` path as apply and recovery.
+A directory name or matching SHA alone is not enough.
+Staging is not approval.
+Trusted receipts in `.local/approvals.json` allow offline immutable rollback without fetching Git history.
+An explicit staged target must have exact identity, matching provenance, a complete manifest, compatible state and protocol, and a usable entrypoint.
+Checkout rollback requires a clean tracked and untracked tree whose exact revision is already approved and whose contract evidence comes from that checkout, not from the executing helper's compiled contract.
+
+Refusal diagnostics that leave selection and previous-known-good unchanged:
+
+- `No recorded previous known-good selection` when default history is missing or already current
+- `Checkout rollback requires a clean approved checkout` when `--to checkout` is dirty
+- `Release provenance does not match this installation` when the bundle was not staged here
+- `Update approval receipt does not match the selected revision and tree` when the receipt and Git tree disagree
+- `N staged releases match SHA` when the prefix is missing or ambiguous
+- `candidate bundle` / `checkout contract` when target evidence is absent, incomplete, or incompatible
+
+Rollback to a staged SHA also fast-forwards a clean installation clone when that SHA is an ancestor of `origin/<default branch>` and the move is a fast-forward.
+Otherwise Git is left alone and the symlink still rolls back.
 No task database or archive is restored, no question or report is removed, no worktree is rewound, and a task whose recorded contract the old release cannot read is named as a blocking incompatibility instead of being downgraded.
 Both helper generations keep reading the same records.
 
