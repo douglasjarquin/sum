@@ -18,7 +18,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
-	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/lsp"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -1811,89 +1810,6 @@ func parseStartArgs(tokens []string) (taskID string, extra []string, ok bool) {
 		return "", nil, false
 	}
 	return taskID, extra, true
-}
-
-func (o *rootOptions) runHook(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("command is required")
-	}
-	switch args[0] {
-	case "status":
-		if len(args) != 1 {
-			return usageError("hook status", args[1:])
-		}
-		st, err := store.Open(o.home)
-		if err != nil {
-			return err
-		}
-		ctx, ctxErr := store.Context(o.runtimeRoot)
-		if ctxErr != nil {
-			ctx = nil
-		}
-		view, err := hookstatus.Status(st, ctx, o.runtimeRoot, o.sumctlPath())
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "enable":
-		if len(args) != 1 {
-			return usageError("hook enable", args[1:])
-		}
-		st, err := o.openStore("hook-enable")
-		if err != nil {
-			return err
-		}
-		ctx, err := store.Context(o.installRoot)
-		if err != nil {
-			return err
-		}
-		view, err := hookstatus.Enable(st, ctx, o.runtimeRoot, o.sumctlPath())
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "disable":
-		unlink := false
-		if len(args) == 2 && args[1] == "--unlink" {
-			unlink = true
-		} else if len(args) != 1 {
-			return usageError("hook disable", args[1:])
-		}
-		st, err := o.openStore("hook-disable")
-		if err != nil {
-			return err
-		}
-		ctx, err := store.Context(o.installRoot)
-		if err != nil {
-			return err
-		}
-		view, err := hookstatus.Disable(st, ctx, o.runtimeRoot, unlink)
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "event":
-		if len(args) != 1 {
-			return usageError("hook event", args[1:])
-		}
-		st, err := store.Open(o.home)
-		if err != nil {
-			return err
-		}
-		environ := map[string]string{}
-		for _, e := range os.Environ() {
-			if i := strings.IndexByte(e, '='); i > 0 {
-				environ[e[:i]] = e[i+1:]
-			}
-		}
-		view, err := hookstatus.Event(st, environ, o.runtimeRoot, o.sumctlPath())
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	default:
-		return usageError("hook", args)
-	}
 }
 
 func (o *rootOptions) runVerify(cmd *cobra.Command, args []string) error {

@@ -204,15 +204,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addEnvCommands(root)
 	opts.addReleaseCommands(root)
 	opts.addProjectCommands(root)
-
-	root.AddCommand(&cobra.Command{
-		Use:                "hook",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return opts.runHook(cmd, args)
-		},
-	})
+	opts.addHookCommands(root)
 
 	opts.addShowCommand(root)
 	opts.addContextCommand(root)
