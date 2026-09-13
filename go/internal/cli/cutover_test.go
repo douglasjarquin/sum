@@ -61,6 +61,14 @@ func herdrEnv(t *testing.T, home string) {
 	t.Setenv("FAKE_PARENT_KIND", "claude")
 }
 
+func clearHerdrEnv(t *testing.T) {
+	t.Helper()
+	for _, v := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", "SUM_SESSION"} {
+		t.Setenv(v, "")
+		os.Unsetenv(v)
+	}
+}
+
 func decodeObject(t *testing.T, raw string) map[string]any {
 	return decodeCLIMap(t, raw)
 }

@@ -9,17 +9,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/contextview"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/doctor"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
-	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/settings"
@@ -247,62 +244,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	opts.addReleaseCommands(root)
-
-	root.AddCommand(&cobra.Command{
-		Use:                "project",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := store.Open(opts.home)
-			if err != nil {
-				return err
-			}
-			switch {
-			case len(args) == 1 && args[0] == "list":
-				view, viewErr := project.List(st, opts.runtimeRoot)
-				if viewErr != nil {
-					return viewErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			case len(args) == 2 && args[0] == "show":
-				view, viewErr := project.Show(st, args[1])
-				if viewErr != nil {
-					return viewErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			case len(args) >= 1 && args[0] == "enroll":
-				parsed, ok := parseProjectEnrollArgs(args[1:])
-				if !ok {
-					return usageError("project enroll", args[1:])
-				}
-				if err := guard.Candidate(opts.installRoot, st, "project-enroll"); err != nil {
-					return err
-				}
-				ctx, err := store.Context(opts.installRoot)
-				if err != nil {
-					return err
-				}
-				view, err := project.Enroll(st, ctx, opts.runtimeRoot, parsed)
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			case len(args) >= 2 && args[0] == "migrate":
-				name, apply, ok := parseProjectMigrateArgs(args[1:])
-				if !ok {
-					return usageError("project migrate", args[1:])
-				}
-				ctx := app.OptionalContext(opts.installRoot)
-				view, err := project.Migrate(st, ctx, opts.runtimeRoot, name, apply)
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			default:
-				return usageError("project", args)
-			}
-		},
-	})
+	opts.addProjectCommands(root)
 
 	root.AddCommand(&cobra.Command{
 		Use:                "hook",
@@ -658,66 +600,6 @@ func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
 		return "", 0, false
 	}
 	return task, maxChars, true
-}
-
-func parseProjectEnrollArgs(tokens []string) (project.EnrollArgs, bool) {
-	var parsed project.EnrollArgs
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--host":
-			if i+1 >= len(tokens) {
-				return project.EnrollArgs{}, false
-			}
-			i++
-			parsed.Host = tokens[i]
-		case strings.HasPrefix(token, "--host="):
-			parsed.Host = strings.TrimPrefix(token, "--host=")
-		case token == "--remote":
-			if i+1 >= len(tokens) {
-				return project.EnrollArgs{}, false
-			}
-			i++
-			parsed.Remote = tokens[i]
-		case strings.HasPrefix(token, "--remote="):
-			parsed.Remote = strings.TrimPrefix(token, "--remote=")
-		case token == "--path":
-			if i+1 >= len(tokens) {
-				return project.EnrollArgs{}, false
-			}
-			i++
-			parsed.Path = tokens[i]
-		case strings.HasPrefix(token, "--path="):
-			parsed.Path = strings.TrimPrefix(token, "--path=")
-		case strings.HasPrefix(token, "-"):
-			return project.EnrollArgs{}, false
-		case parsed.Spec == "":
-			parsed.Spec = token
-		default:
-			return project.EnrollArgs{}, false
-		}
-	}
-	if parsed.Spec == "" {
-		return project.EnrollArgs{}, false
-	}
-	return parsed, true
-}
-
-func parseProjectMigrateArgs(tokens []string) (name string, apply, ok bool) {
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--apply":
-			apply = true
-		case strings.HasPrefix(token, "-"):
-			return "", false, false
-		case name == "":
-			name = token
-		default:
-			return "", false, false
-		}
-	}
-	return name, apply, name != ""
 }
 
 func (o *rootOptions) runMetadata(cmd *cobra.Command, args []string) error {
