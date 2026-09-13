@@ -10,10 +10,8 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/doctor"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
-	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
@@ -165,33 +163,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	opts.addGraphCommands(root)
-
-	root.AddCommand(&cobra.Command{
-		Use:                "metadata",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if opts.sumctlPath() != "" {
-				raw := len(args) == 2 && args[0] == "snippet" && args[1] == "--raw"
-				plain := len(args) == 1 && args[0] == "snippet"
-				if raw || plain {
-					st, err := store.Open(opts.home)
-					if err != nil {
-						return err
-					}
-					view := metadata.Snippet(opts.sumctlPath(), st.Home)
-					if raw {
-						tomlValue, _ := view.Get("toml")
-						toml, _ := tomlValue.(string)
-						_, writeErr := io.WriteString(cmd.OutOrStdout(), toml)
-						return writeErr
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				}
-			}
-			return opts.runMetadata(cmd, args)
-		},
-	})
+	opts.addMetadataCommands(root)
 
 	statusHandler := func(name string, inboxMode bool) func(cmd *cobra.Command, args []string) error {
 		return func(cmd *cobra.Command, args []string) error {
@@ -255,27 +227,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 
 	opts.addShowCommand(root)
 	opts.addContextCommand(root)
-
-	root.AddCommand(&cobra.Command{
-		Use:                "doctor",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				if st, err := store.Open(opts.home); err == nil {
-					view := doctor.Doctor(opts.runtimeRoot, opts.installRoot, st)
-					if emitErr := emitOrdjson(cmd.OutOrStdout(), view); emitErr != nil {
-						return emitErr
-					}
-					if okValue, _ := view.Get("ok"); okValue != true {
-						return &ExitError{Code: 1}
-					}
-					return nil
-				}
-			}
-			return usageError("doctor", args)
-		},
-	})
+	opts.addDoctorCommand(root)
 
 	root.AddCommand(&cobra.Command{
 		Use:                "init",
@@ -405,71 +357,6 @@ func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
 		return "", 0, false
 	}
 	return task, maxChars, true
-}
-
-func (o *rootOptions) runMetadata(cmd *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("command is required")
-	}
-	switch args[0] {
-	case "snippet":
-		raw := len(args) == 2 && args[1] == "--raw"
-		if len(args) > 2 || (len(args) == 2 && !raw) {
-			return usageError("metadata snippet", args[1:])
-		}
-		st, err := store.Open(o.home)
-		if err != nil {
-			return err
-		}
-		view := metadata.Snippet(o.sumctlPath(), st.Home)
-		if raw {
-			tomlValue, _ := view.Get("toml")
-			toml, _ := tomlValue.(string)
-			_, writeErr := io.WriteString(cmd.OutOrStdout(), toml)
-			return writeErr
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "status":
-		if len(args) != 1 {
-			return usageError("metadata status", args[1:])
-		}
-		st, err := store.Open(o.home)
-		if err != nil {
-			return err
-		}
-		view := metadata.Summary(st)
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	case "enable", "disable", "sync", "inbox":
-		st, err := o.openStore("metadata-" + args[0])
-		if err != nil {
-			return err
-		}
-		ctx, err := store.Context(o.installRoot)
-		if err != nil {
-			return err
-		}
-		notify := false
-		for _, a := range args[1:] {
-			if a == "--notify" {
-				notify = true
-			}
-		}
-		var view *ordjson.Object
-		switch args[0] {
-		case "enable":
-			view, err = metadata.Enable(st, ctx, o.runtimeRoot, notify)
-		case "disable":
-			view, err = metadata.Disable(st, ctx)
-		case "sync", "inbox":
-			view, err = metadata.Sync(st, ctx, o.runtimeRoot)
-		}
-		if err != nil {
-			return err
-		}
-		return emitOrdjson(cmd.OutOrStdout(), view)
-	default:
-		return usageError("metadata", args)
-	}
 }
 
 func usageError(command string, args []string) error {
