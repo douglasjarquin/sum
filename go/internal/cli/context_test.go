@@ -660,3 +660,157 @@ func TestContext_unknownFlagsAreGoErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestContext_unknownFlagOrExtraPositionalDoesNotCallView(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		unknown bool
+	}{
+		{name: "unknown flag", args: []string{"context", "t-aaaaaaaaaaaa", "--unexpected"}, unknown: true},
+		{name: "unknown flag before task", args: []string{"context", "--unexpected", "t-aaaaaaaaaaaa"}, unknown: true},
+		{name: "extra positional", args: []string{"context", "t-aaaaaaaaaaaa", "extra"}},
+		{name: "extra after dashdash", args: []string{"context", "t-aaaaaaaaaaaa", "--", "extra"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHerdrEnv(t)
+			home, taskPath, before := contextUsageLab(t)
+			stdout, stderr, err := runContext(t, home, tc.args...)
+			if err == nil {
+				t.Fatalf("expected usage failure, stdout=%s stderr=%s", stdout, stderr)
+			}
+			assertContextUsageError(t, err)
+			if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+				t.Fatalf("err = %v, want unknown flag", err)
+			}
+			if stdout != "" {
+				t.Fatalf("View wrote stdout: %s", stdout)
+			}
+			assertFileUnchanged(t, taskPath, before)
+		})
+	}
+}
+
+func TestContextCommands(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      []string
+		success   bool
+		usage     bool
+		unknown   bool
+		domainErr string
+	}{
+		{name: "valid context", args: []string{"context", "t-aaaaaaaaaaaa"}, success: true},
+		{name: "valid context after dashdash", args: []string{"context", "--", "t-aaaaaaaaaaaa"}, success: true},
+		{name: "valid --section", args: []string{"context", "t-aaaaaaaaaaaa", "--section", "outline"}, success: true},
+		{name: "valid --section=", args: []string{"context", "t-aaaaaaaaaaaa", "--section=brief"}, success: true},
+		{name: "valid repeated --section", args: []string{"context", "t-aaaaaaaaaaaa", "--section", "outline", "--section", "brief"}, success: true},
+		{name: "valid --role", args: []string{"context", "t-aaaaaaaaaaaa", "--role", "worker"}, success: true},
+		{name: "valid --role=", args: []string{"context", "t-aaaaaaaaaaaa", "--role=coordinator"}, success: true},
+		{name: "valid flags before task", args: []string{"context", "--section", "notes", "t-aaaaaaaaaaaa"}, success: true},
+		{name: "missing task", args: []string{"context"}, usage: true},
+		{name: "extra positional", args: []string{"context", "t-aaaaaaaaaaaa", "extra"}, usage: true},
+		{name: "unknown flag", args: []string{"context", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
+		{name: "unknown flag before task", args: []string{"context", "--unexpected", "t-aaaaaaaaaaaa"}, usage: true, unknown: true},
+		{name: "extra after dashdash", args: []string{"context", "t-aaaaaaaaaaaa", "--", "extra"}, usage: true},
+		{name: "missing --section value", args: []string{"context", "t-aaaaaaaaaaaa", "--section"}, usage: true},
+		{name: "missing --role value", args: []string{"context", "t-aaaaaaaaaaaa", "--role"}, usage: true},
+		{name: "missing --since value", args: []string{"context", "t-aaaaaaaaaaaa", "--since"}, usage: true},
+		{name: "invalid --section", args: []string{"context", "t-aaaaaaaaaaaa", "--section", "not-a-section"}, usage: true},
+		{name: "invalid --role", args: []string{"context", "t-aaaaaaaaaaaa", "--role", "not-a-real-role"}, usage: true},
+		{name: "duplicate --role", args: []string{"context", "t-aaaaaaaaaaaa", "--role", "worker", "--role", "reviewer"}, usage: true},
+		{name: "unknown task", args: []string{"context", "t-bbbbbbbbbbbb"}, domainErr: "Cannot read"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHerdrEnv(t)
+			home, taskPath, before := contextUsageLab(t)
+			stdout, stderr, err := runContext(t, home, tc.args...)
+			switch {
+			case tc.success:
+				if err != nil {
+					t.Fatalf("err = %v stderr=%s stdout=%s", err, stderr, stdout)
+				}
+				if !strings.Contains(stdout, "t-aaaaaaaaaaaa") {
+					t.Fatalf("stdout missing task id:\n%s", stdout)
+				}
+			case tc.usage:
+				assertContextUsageError(t, err)
+				if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+					t.Fatalf("err = %v, want unknown flag", err)
+				}
+				if stdout != "" {
+					t.Fatalf("usage failure wrote stdout: %s", stdout)
+				}
+				assertFileUnchanged(t, taskPath, before)
+			default:
+				if err == nil {
+					t.Fatalf("expected domain error, stdout=%s", stdout)
+				}
+				if !strings.Contains(err.Error(), tc.domainErr) {
+					t.Fatalf("err = %v, want substring %q", err.Error(), tc.domainErr)
+				}
+				if stdout != "" {
+					t.Fatalf("domain failure wrote stdout: %s", stdout)
+				}
+			}
+		})
+	}
+}
+
+func runContext(t *testing.T, home string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
+	root.SetArgs(append([]string{"--home", home}, args...))
+	err = root.ExecuteContext(context.Background())
+	return outBuf.String(), errBuf.String(), err
+}
+
+func assertContextUsageError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected usage failure")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "Cannot read") || strings.Contains(msg, "--limit must be") || strings.Contains(msg, "must not be negative") {
+		t.Fatalf("err = %v, want a usage failure", err)
+	}
+	usage := strings.Contains(msg, "unknown flag") ||
+		strings.Contains(msg, "accepts 1 arg") ||
+		strings.Contains(msg, "flag needs an argument") ||
+		strings.Contains(msg, "unrecognized arguments") ||
+		strings.Contains(msg, "invalid context")
+	if !usage {
+		t.Fatalf("err = %v, want a usage failure", err)
+	}
+}
+
+func contextUsageLab(t *testing.T) (home, taskPath string, before []byte) {
+	t.Helper()
+	home = writeDesignatedHome(t)
+	taskID := "t-aaaaaaaaaaaa"
+	writeTaskFixture(t, home, taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
+"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing",
+"base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "task", "brief_path": "brief.md",
+"created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, taskID))
+	taskPath = filepath.Join(home, "tasks", taskID, "task.json")
+	var err error
+	before, err = os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return home, taskPath, before
+}
+
+func assertFileUnchanged(t *testing.T, path string, before []byte) {
+	t.Helper()
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("%s changed:\n%s", path, after)
+	}
+}
