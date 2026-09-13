@@ -15,22 +15,23 @@ import (
 )
 
 var (
-	sha40          = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	verifyResults  = map[string]bool{"pass": true, "fail": true, "blocked": true, "inconclusive": true}
-	runIDPattern   = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`)
-	runOutcomes    = map[string]bool{"pass": true, "fail": true, "blocked": true, "error": true, "checked": true}
-	runOutcomeMap  = map[string]string{"pass": "pass", "fail": "fail", "blocked": "blocked", "error": "inconclusive"}
+	sha40         = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	verifyResults = map[string]bool{"pass": true, "fail": true, "blocked": true, "inconclusive": true}
+	runIDPattern  = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`)
+	runOutcomes   = map[string]bool{"pass": true, "fail": true, "blocked": true, "error": true, "checked": true}
+	runOutcomeMap = map[string]string{"pass": "pass", "fail": "fail", "blocked": "blocked", "error": "inconclusive"}
 )
 
 type Args struct {
-	Task      string
-	Candidate string
-	Result    string
-	Run       string
-	Execute   bool
-	Base      string
-	Text      string
-	File      string
+	Task        string
+	Candidate   string
+	Result      string
+	Run         string
+	Execute     bool
+	Base        string
+	Text        string
+	File        string
+	RuntimeRoot string
 }
 
 func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error) {
@@ -65,9 +66,22 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 	body.Set("result", args.Result)
 	body.Set("text", text)
 	if args.Execute {
-		return nil, fmt.Errorf("--execute is not available until a detached verification checkout is launched from this helper; record a run you executed with --run PATH.")
-	}
-	if args.Run != "" {
+		record, kept, execErr := executeRootVerification(s, args.RuntimeRoot, task, args.Candidate, args.Base, ctx)
+		if execErr != nil {
+			return nil, execErr
+		}
+		fields, evErr := runEvidence(record, args.Candidate, task, kept, "separate-checkout")
+		if evErr != nil {
+			return nil, evErr
+		}
+		for _, k := range fields.Keys() {
+			v, _ := fields.Get(k)
+			body.Set(k, v)
+		}
+		if graph, ok := record.Get("graph"); ok {
+			body.Set("graph", graph)
+		}
+	} else if args.Run != "" {
 		record, readErr := readRunRecord(args.Run)
 		if readErr != nil {
 			return nil, readErr
@@ -203,6 +217,12 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	body.Set("run_id", runID)
 	body.Set("outcome", outcome)
 	body.Set("record", recordPath)
+	root := boundString(asString(record, "root"), 500)
+	if root == "" {
+		body.Set("root", nil)
+	} else {
+		body.Set("root", root)
+	}
 	body.Set("isolation", isolation)
 	body.Set("dirty", dirtyBool)
 	var certifies any
@@ -213,7 +233,59 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	body.Set("requires_root_review", requires)
 	body.Set("contract_sha256", contractSHA)
 	body.Set("contract_changed_since_dispatch", contractChanged)
+	policyBody := ordjson.NewObject()
+	policyBody.Set("checked", checked == true)
+	if policyBase, ok := policy.Get("base"); ok {
+		policyBody.Set("base", policyBase)
+	} else {
+		policyBody.Set("base", nil)
+	}
+	policyBody.Set("changed", boundStringList(policy, "changed", 500, 50))
+	body.Set("policy", policyBody)
+	body.Set("not_exercised", boundStringList(record, "not_exercised", 200, 100))
+	if execution := objectField(record, "execution"); execution != nil {
+		row := ordjson.NewObject()
+		for _, key := range []string{"exit", "timed_out", "seconds"} {
+			v, _ := execution.Get(key)
+			row.Set(key, v)
+		}
+		body.Set("execution", row)
+	} else {
+		body.Set("execution", nil)
+	}
+	if reason := asString(record, "blocked_reason"); reason != "" {
+		body.Set("blocked_reason", boundString(reason, 500))
+	} else {
+		body.Set("blocked_reason", nil)
+	}
 	return body, nil
+}
+
+func boundString(s string, limit int) string {
+	runes := []rune(s)
+	if len(runes) > limit {
+		return string(runes[:limit])
+	}
+	return s
+}
+
+func boundStringList(o *ordjson.Object, key string, itemLimit, listLimit int) []any {
+	if o == nil {
+		return []any{}
+	}
+	raw, _ := o.Get(key)
+	list, _ := raw.([]any)
+	if list == nil {
+		return []any{}
+	}
+	if len(list) > listLimit {
+		list = list[:listLimit]
+	}
+	out := make([]any, 0, len(list))
+	for _, item := range list {
+		out = append(out, boundString(fmt.Sprint(item), itemLimit))
+	}
+	return out
 }
 
 func objectField(o *ordjson.Object, key string) *ordjson.Object {

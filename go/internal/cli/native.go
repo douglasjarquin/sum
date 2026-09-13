@@ -2194,6 +2194,7 @@ func (o *rootOptions) runVerify(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	parsed.RuntimeRoot = o.runtimeRoot
 	view, err := verifycmd.Run(st, ctx, parsed)
 	if err != nil {
 		return err
