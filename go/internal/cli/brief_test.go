@@ -288,6 +288,8 @@ func briefUsageLab(t *testing.T, lab string) (home, taskID, before string) {
 		writeBriefRevisions(t, home, taskID, "")
 	case "request-plain":
 		home = writeDesignatedHome(t)
+		herdrEnv(t, home)
+		t.Setenv("HERDR_PANE_ID", "w-other:p1")
 		writeBriefTask(t, home, taskID, "")
 		writeBriefRevisions(t, home, taskID, "")
 	case "adopt":
@@ -299,6 +301,8 @@ func briefUsageLab(t *testing.T, lab string) (home, taskID, before string) {
 		writeBriefFile(t, home, taskID)
 	case "regenerate-plain":
 		home = writeDesignatedHome(t)
+		herdrEnv(t, home)
+		t.Setenv("HERDR_PANE_ID", "w-other:p1")
 		writeBriefTask(t, home, taskID, "")
 		writeBriefFile(t, home, taskID)
 	case "list":
