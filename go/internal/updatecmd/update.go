@@ -922,3 +922,7 @@ func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.O
 	}
 	return nil, fmt.Errorf("No interrupted activation is recorded for generation %s.", generation)
 }
+
+// Test seams for crash injection. Production leaves these nil.
+var afterPendingWrite func() error
+var afterSelect func() error
