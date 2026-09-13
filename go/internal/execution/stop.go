@@ -121,8 +121,8 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 		return unknown(err.Error())
 	}
 	if pane == nil {
-		if !released {
-			return unknown(fmt.Sprintf("Worker pane cannot prove exit (%s); a missing or unobservable pane does not release capacity.", code))
+		if !herdrclient.IsAbsent(code) && !released {
+			return unknown(fmt.Sprintf("Worker pane cannot prove exit (%s); an unobservable pane does not release capacity.", code))
 		}
 	} else {
 		paneObj := asObject(pane)

@@ -97,7 +97,7 @@ func deferredCapabilities(recorded *ordjson.Object) []any {
 
 func refreshSummary(rows []any, excluded []any) *ordjson.Object {
 	counts := ordjson.NewObject()
-	for _, state := range []string{"confirmed", "submitted-unconfirmed", "pending-busy", "pending-unreachable", "not-requested", "capability-deferred"} {
+	for _, state := range []string{"confirmed", "submitted-unconfirmed", "pending-busy", "pending-unreachable", versions.RefreshUnreachable, "not-requested", "capability-deferred"} {
 		counts.Set(state, jsonNumber(0))
 	}
 	inc := func(state string) {
@@ -131,7 +131,7 @@ func refreshSummary(rows []any, excluded []any) *ordjson.Object {
 	result.Set("counts", counts)
 	result.Set("targets", rows)
 	result.Set("excluded", excluded)
-	result.Set("note", "Bounded status from saved records and one delivery attempt per target. No fleet barrier, sleep, polling loop, or relaunch. confirmed = receipt recorded; submitted-unconfirmed = prompt accepted, nothing read yet; pending-* = old contract keeps serving; capability-deferred = a surface this client cannot reload until it restarts.")
+	result.Set("note", "Bounded status from saved records and one delivery attempt per target. No fleet barrier, sleep, polling loop, or relaunch. confirmed = receipt recorded; submitted-unconfirmed = prompt accepted, nothing read yet; pending-* = old contract keeps serving and may be rechecked; unreachable = the worker pane or agent is gone, delivery for that revision is terminal; capability-deferred = a surface this client cannot reload until it restarts.")
 	return result
 }
 
@@ -267,6 +267,9 @@ func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd, host
 	pane := asString(func() any { v, _ := endpoint.Get("pane"); return v }())
 	agent, err := sn.agent(session, pane)
 	if err != nil {
+		if herdrclient.ErrorIsAbsent(err) {
+			return versions.RefreshUnreachable, "Recipient pane is gone (" + err.Error() + "); delivery for this revision is terminal. The old contract keeps serving; the coordinator still sees the task.", nil
+		}
 		return "pending-unreachable", "Recipient cannot be observed: " + err.Error(), nil
 	}
 	cwd := asString(func() any { v, _ := agent.Get("cwd"); return v }())
@@ -405,6 +408,18 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 			row.Set("state", st)
 		}
 		if reason, ok := state.Get("reason"); ok {
+			row.Set("reason", reason)
+		}
+		unlock()
+		return row, nil
+	}
+	existing := versions.RefreshState(versionsObj)
+	if asString(func() any { v, _ := versionsObj.Get("requested"); return v }()) == latest && versions.RefreshWorkerGone(existing) {
+		row.Set("revision", latest)
+		if st, ok := existing.Get("state"); ok {
+			row.Set("state", st)
+		}
+		if reason, ok := existing.Get("reason"); ok {
 			row.Set("reason", reason)
 		}
 		unlock()

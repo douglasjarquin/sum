@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -390,5 +391,83 @@ func TestCleanup_applyRefusesUncertainStop(t *testing.T) {
 	}
 	if len(held) == 0 {
 		t.Fatal("apply released the reservation")
+	}
+}
+
+func blockerDetails(plan *ordjson.Object) []string {
+	raw, _ := plan.Get("blockers")
+	list, _ := raw.([]any)
+	var details []string
+	for _, item := range list {
+		row, _ := item.(*ordjson.Object)
+		if row == nil {
+			continue
+		}
+		detail, _ := row.Get("detail")
+		details = append(details, fmt.Sprint(detail))
+	}
+	return details
+}
+
+func (l *lab) workerRunningJSON() string {
+	return fmt.Sprintf(`{
+"schema": 1, "id": %q, "status": "running", "repository": %q,
+"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "workspace": "w-worker",
+"worktree": %q, "branch": "sum/t-aaaaaaaaaaaa",
+"questions": [{"id": "q-aaaaaaaaaa", "status": "open", "text": "keep the report?"}],
+"evidence": [], "report": {"text": "done"}, "notice": null, "attention": [],
+"brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship",
+"execution": {"schema": 1,
+  "worker": {"id": %q, "kind": "worker", "state": "running", "generation": 1,
+             "owner": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}, "checkout": %q,
+             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": [],
+             "occupant": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "checkout": %q, "harness": "codex", "name": "done", "shell_pid": 4242, "pid": null, "argv": null}},
+  "verifiers": []}
+}`, taskID, l.repo, l.host, l.checkout, workerID, l.host, l.checkout, l.host, l.checkout)
+}
+
+func TestCleanup_absentWorkerPaneIsNotOccupant(t *testing.T) {
+	l := newLab(t)
+	l.writeSettings(1, 1)
+	l.plantLsof(nil)
+	l.saveTask(l.workerRunningJSON())
+	plan := l.inspect()
+	for _, detail := range blockerDetails(plan) {
+		if strings.Contains(detail, "still hosts agent") {
+			t.Fatalf("missing agent listed as occupant: %v", blockerDetails(plan))
+		}
+		if strings.Contains(detail, "cannot prove exit") || strings.Contains(detail, "missing or unobservable pane") {
+			t.Fatalf("closed pane treated as unknown stop: %v", blockerDetails(plan))
+		}
+	}
+	if hasCode(blockerCodes(plan), "occupant") {
+		t.Fatalf("closed pane occupancy blockers = %v details=%v", blockerCodes(plan), blockerDetails(plan))
+	}
+}
+
+func TestCleanup_checkoutProcessStillBlocksWhenPaneGone(t *testing.T) {
+	l := newLab(t)
+	l.writeSettings(1, 1)
+	child := startCheckoutWriter(t, l.checkout)
+	l.plantLsof([]map[string]any{{"pid": child, "cwd": l.checkout}})
+	l.saveTask(l.workerRunningJSON())
+	if _, err := execution.Park(l.store, l.ctx, l.runtime, taskID, workerID); err == nil {
+		t.Fatal("park released a closed pane with a checkout writer")
+	}
+	plan := l.inspect()
+	if !hasCode(blockerCodes(plan), "occupant") && !hasCode(blockerCodes(plan), "execution") {
+		t.Fatalf("cleanup blockers = %v details=%v, want occupant or execution for the live process", blockerCodes(plan), blockerDetails(plan))
+	}
+	foundProcess := false
+	for _, detail := range blockerDetails(plan) {
+		if strings.Contains(detail, fmt.Sprintf("pid %d", child)) || strings.Contains(detail, "still run inside the checkout") || strings.Contains(detail, "owned process") {
+			foundProcess = true
+		}
+		if strings.Contains(detail, "still hosts agent") {
+			t.Fatalf("missing agent listed as occupant: %s", detail)
+		}
+	}
+	if !foundProcess {
+		t.Fatalf("live checkout process was not named: %v", blockerDetails(plan))
 	}
 }

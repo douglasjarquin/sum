@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
+	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
 var legacyReasons = map[string]string{
@@ -356,6 +357,9 @@ func promptRecipient(s *store.Store, opts PumpOpts, route *ordjson.Object, items
 	cwd := routeValue(route, "cwd")
 	if err := ObserveRecipient(opts.RuntimeRoot, route, fmt.Sprint(cwd)); err != nil {
 		if u, ok := err.(*unreachableError); ok {
+			if u.state == versions.RefreshUnreachable {
+				_ = stampRefreshGone(s, items, u.msg)
+			}
 			return "not-delivered", u.msg, u.msg
 		}
 		return "not-delivered", "prompt was not accepted: " + err.Error(), err.Error()
@@ -424,6 +428,9 @@ func ObserveRecipient(runtimeRoot string, route *ordjson.Object, expectedCwd str
 	pane := fmt.Sprint(routeValue(route, "pane"))
 	agent, err := herdrclient.Call(herdrPath, session, 5*time.Second, "agent", "get", pane)
 	if err != nil {
+		if herdrclient.ErrorIsAbsent(err) {
+			return &unreachableError{state: versions.RefreshUnreachable, msg: "Recipient pane is gone (" + err.Error() + "); delivery for this revision is terminal."}
+		}
 		return &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
 	}
 	agentObj, _ := agent.(*ordjson.Object)
@@ -712,6 +719,61 @@ func containsIndex(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+func stampRefreshGone(s *store.Store, items [][2]*ordjson.Object, reason string) error {
+	seen := map[string]bool{}
+	for _, pair := range items {
+		kind, _ := pair[1].Get("kind")
+		if fmt.Sprint(kind) != "refresh" {
+			continue
+		}
+		taskID, _ := pair[0].Get("id")
+		idStr := fmt.Sprint(taskID)
+		if seen[idStr] {
+			continue
+		}
+		seen[idStr] = true
+		unlock, err := s.Lock()
+		if err != nil {
+			return err
+		}
+		task, err := s.ReadTask(idStr)
+		if err != nil {
+			unlock()
+			return err
+		}
+		versionsObj, err := versions.ReadVersions(s, task)
+		if err != nil {
+			unlock()
+			return err
+		}
+		requested, _ := versionsObj.Get("requested")
+		rev, _ := requested.(string)
+		if rev == "" {
+			unlock()
+			continue
+		}
+		refreshValue, _ := versionsObj.Get("refresh")
+		list, _ := refreshValue.([]any)
+		row := ordjson.NewObject()
+		row.Set("at", store.Now())
+		row.Set("event", "delivery")
+		row.Set("revision", rev)
+		row.Set("state", versions.RefreshUnreachable)
+		row.Set("reason", reason)
+		list = append(list, row)
+		if len(list) > 40 {
+			list = list[len(list)-40:]
+		}
+		versionsObj.Set("refresh", list)
+		if err := versions.WriteVersions(s, versionsObj); err != nil {
+			unlock()
+			return err
+		}
+		unlock()
+	}
+	return nil
 }
 
 func cloneObject(obj *ordjson.Object) *ordjson.Object {

@@ -79,7 +79,7 @@ After `update apply` (or `rollback`), ask running sessions to reread their opera
 1. Stage the target's next immutable revision from that runtime: for a task, `brief regenerate` (`briefs/rN.md`, machine-generated change summary, decisions as recorded); for the coordinator, a contract snapshot `.sum/coordinator/contracts/rN.md` rendered from the runtime's `AGENTS.md` and skills. Unchanged content stages nothing.
 2. Mark that revision `requested` and persist it in the target's version sidecar, superseding any earlier request. Repeating the request records nothing new.
 3. Attempt one delivery through the native agent boundary: the recorded pane must exist, run in the recorded checkout, and be reported `idle` or `done` by Herdr; then one `agent prompt` carries a fixed message with the task ID, revision, runtime, change summary, file path, and the exact `adopt` command. No question, answer, or report prose is ever placed in that message. Observation comes from one `agent list` snapshot per session taken at the start of the pass, so a fleet of twelve costs one observation call plus one prompt per settled recipient; each prompt has its own timeout (`fanout.per_recipient_timeout_s`), and an unobservable or refusing worker never delays the others. The result's `fanout` field reports the Herdr calls and local elapsed time of the pass; these are measurements of that run, not a latency guarantee.
-4. Record the attempt (`submitted-unconfirmed`, `pending-busy`, or `pending-unreachable` with the exact reason) in the sidecar, beside the notice slot, never in it.
+4. Record the attempt (`submitted-unconfirmed`, `pending-busy`, `pending-unreachable`, or `unreachable` with the exact reason) in the sidecar, beside the notice slot, never in it.
 
 Then read your own contract revision at `refresh status` → `path` (also shown by `init` after a restart) and run `refresh adopt --coordinator rN`. Continue coordination from `inbox --live`; nothing about your role, registration, or task routes changed.
 
@@ -88,7 +88,8 @@ Then read your own contract revision at `refresh status` → `path` (also shown 
 - `confirmed`: the target recorded a receipt (`brief adopt` / `refresh adopt`) for the latest revision. A receipt shows the revision was read; it does not prove the model follows it.
 - `submitted-unconfirmed`: the prompt was accepted while the agent was settled. A submitted prompt is not acknowledgement; a `working`/`idle` edge is not acknowledgement either.
 - `pending-busy`: Herdr reported `working`, `blocked`, or `unknown`; the target keeps working on its current brief. Herdr idle would not have proven that a foreground tool stopped, so nothing is inferred from it.
-- `pending-unreachable`: pane missing, cwd not the recorded checkout, another machine, or Herdr refused the prompt (`agent_blocked`, `agent_prompt_stalled`). Same outcome: the old contract keeps serving.
+- `pending-unreachable`: cwd not the recorded checkout, another machine, or Herdr refused the prompt (`agent_blocked`, `agent_prompt_stalled`). Same outcome: the old contract keeps serving, and a later request may recheck.
+- `unreachable`: the worker pane or agent is gone (`pane_not_found`, `agent_not_found`). Delivery for that revision is terminal. It is not a live "needs the worker" inbox item. The coordinator still sees the task until archive or cleanup. Another machine or a cwd mismatch is not this state.
 - `capability-deferred`: a surface the client cannot reload by rereading text, today the MCP tool set of an already-connected client (`deferred: mcp` with the recorded start contract). The compatible old surface stays; the new capability waits for the client's own restart. New sessions and new dispatches get the newest surface.
 
 A pending target is rechecked only at ordinary interactions: a later `refresh request` (idempotent), `inbox`/`status` rows (`refresh` field), or `refresh status`. There is no polling loop, fleet barrier, fixed sleep, or automatic relaunch, and no claim that a whole client updated.
@@ -96,6 +97,7 @@ An interrupted `refresh request` leaves every target it reached with its request
 Neither an update nor a refresh releases execution reservations or changes configured capacity.
 Reports during an update do not prove stop; use the current runtime's `execution park TASK_ID --attempt ID` for explicit stop inspection.
 Missing process identity is unknown, not stopped.
+A user-closed worker pane with no occupant in the recorded checkout is stopped for that attempt; idle is not.
 Older coordinators keep their original admission behavior even when they preserve the new reservation fields.
 Developer sessions are excluded from the fan-out and listed under `excluded`; a developer rereads its own checkout.
 Two updates before a receipt coalesce to the newest revision (`r2` superseded by `r3`); a receipt for `r2` is then refused. A rollback stages the next revision from the rolled-back runtime; earlier receipts never count for it. Questions, answers, reports, and repair accounting are never touched by a refresh.

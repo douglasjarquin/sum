@@ -75,6 +75,21 @@ func ErrorCode(stderr string) string {
 	return s
 }
 
+// IsAbsent reports a Herdr code that means the pane or agent is gone.
+// pane_not_found and agent_not_found are user-closed or Herdr-absent, not an in-flight unknown tool.
+func IsAbsent(code string) bool {
+	return code == "pane_not_found" || code == "agent_not_found"
+}
+
+// ErrorIsAbsent reports an observation or Call error for a missing pane or agent.
+func ErrorIsAbsent(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "agent_not_found") || strings.Contains(msg, "pane_not_found")
+}
+
 func Observe(herdrPath, session string, timeout time.Duration, args ...string) (any, string, error) {
 	if !sessionNamePattern.MatchString(session) {
 		return nil, "", fmt.Errorf("Invalid session name.")
