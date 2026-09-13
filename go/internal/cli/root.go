@@ -20,7 +20,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/project"
-	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/settings"
@@ -247,52 +246,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
-	root.AddCommand(&cobra.Command{
-		Use:                "release",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := store.Open(opts.home)
-			if err != nil {
-				return err
-			}
-			switch {
-			case len(args) == 1 && args[0] == "list":
-				view, viewErr := release.List(st)
-				if viewErr != nil {
-					return viewErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			case len(args) == 2 && args[0] == "show":
-				view, viewErr := release.Show(st, args[1])
-				if viewErr != nil {
-					return viewErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			case len(args) >= 1 && args[0] == "stage":
-				ref := "HEAD"
-				if len(args) == 3 && args[1] == "--ref" {
-					ref = args[2]
-				} else if len(args) == 2 && strings.HasPrefix(args[1], "--ref=") {
-					ref = strings.TrimPrefix(args[1], "--ref=")
-				} else if len(args) == 2 && !strings.HasPrefix(args[1], "-") {
-					ref = args[1]
-				} else if len(args) != 1 {
-					return usageError("release stage", args[1:])
-				}
-				if err := guard.Candidate(opts.installRoot, st, "release-stage"); err != nil {
-					return err
-				}
-				view, err := release.Stage(st, ref)
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			default:
-				return usageError("release", args)
-			}
-		},
-	})
+	opts.addReleaseCommands(root)
 
 	root.AddCommand(&cobra.Command{
 		Use:                "project",
