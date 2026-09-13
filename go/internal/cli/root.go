@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/brief"
 	"github.com/douglasjarquin/sum/go/internal/contextview"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/doctor"
@@ -27,7 +26,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/statuscmd"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/versions"
 	"github.com/spf13/cobra"
 )
 
@@ -238,81 +236,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		RunE:               statusHandler("inbox", true),
 	})
 
-	root.AddCommand(&cobra.Command{
-		Use:                "brief",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 2 && args[0] == "list" {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				view, viewErr := versions.BriefList(st, args[1])
-				if viewErr != nil {
-					return viewErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			if len(args) == 3 && args[0] == "request" {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				if err := guard.Candidate(opts.installRoot, st, "brief-request"); err != nil {
-					return err
-				}
-				ctx, err := store.Context(opts.installRoot)
-				if err != nil {
-					return err
-				}
-				if err := app.RequireCoordinator(st, ctx); err != nil {
-					return err
-				}
-				view, err := versions.Request(st, args[1], args[2])
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			if len(args) == 3 && args[0] == "adopt" {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				if err := guard.Candidate(opts.installRoot, st, "brief-adopt"); err != nil {
-					return err
-				}
-				view, err := versions.Adopt(st, args[1], args[2])
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			if len(args) == 2 && args[0] == "regenerate" {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				if err := guard.Candidate(opts.installRoot, st, "brief-regenerate"); err != nil {
-					return err
-				}
-				ctx, err := store.Context(opts.installRoot)
-				if err != nil {
-					return err
-				}
-				if err := app.RequireCoordinator(st, ctx); err != nil {
-					return err
-				}
-				view, err := brief.Regenerate(st, opts.runtimeRoot, opts.sumctlPath(), args[1])
-				if err != nil {
-					return err
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			return usageError("brief", args)
-		},
-	})
+	opts.addBriefCommands(root)
 
 	root.AddCommand(&cobra.Command{
 		Use:                "env",
