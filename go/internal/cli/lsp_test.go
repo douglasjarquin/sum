@@ -53,6 +53,54 @@ func TestLspEnsure_refusesUnknownBinary(t *testing.T) {
 	}
 }
 
+func TestLspUnknownFlagsAreUsageErrorsBeforeEnsure(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		unknown bool
+	}{
+		{name: "ensure unknown flag", args: []string{"lsp", "ensure", "--unexpected"}, unknown: true},
+		{name: "ensure extra positional", args: []string{"lsp", "ensure", "extra"}},
+		{name: "ensure extra after dashdash", args: []string{"lsp", "ensure", "--", "extra"}},
+		{name: "lsp unknown flag", args: []string{"lsp", "--unexpected"}, unknown: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHerdrEnv(t)
+			root, logPath, helper := setupLspCheckout(t)
+			var stdout, stderr bytes.Buffer
+			cmd := NewRoot(helper, &stdout, &stderr)
+			cmd.SetIn(strings.NewReader(`{"toolResponse":"Command not found: basedpyright-langserver\nNOT INSTALLED\n"}`))
+			cmd.SetArgs(tc.args)
+			err := cmd.ExecuteContext(context.Background())
+			if err == nil {
+				t.Fatalf("expected usage failure, stdout=%s stderr=%s", stdout.String(), stderr.String())
+			}
+			msg := err.Error()
+			usage := strings.Contains(msg, "unknown flag") ||
+				strings.Contains(msg, "accepts 0 arg") ||
+				strings.Contains(msg, "command is required") ||
+				strings.Contains(msg, "unknown command") ||
+				strings.Contains(msg, "unrecognized arguments")
+			if !usage {
+				t.Fatalf("err = %v, want a usage failure", err)
+			}
+			if tc.unknown && !strings.Contains(msg, "unknown flag") {
+				t.Fatalf("err = %v, want unknown flag", err)
+			}
+			if stdout.String() != "" {
+				t.Fatalf("usage failure wrote stdout: %s", stdout.String())
+			}
+			if _, err := os.Lstat(filepath.Join(root, ".local", "bin", "basedpyright-langserver")); !os.IsNotExist(err) {
+				t.Fatalf("unknown flag installed a binary: %v", err)
+			}
+			if logBody := readLspFile(t, logPath); logBody != "" {
+				t.Fatalf("mise was invoked: %q", logBody)
+			}
+		})
+	}
+}
+
 func TestLspEnsure_doesNotRetargetExistingLink(t *testing.T) {
 	root, logPath, helper := setupLspCheckout(t)
 	link := filepath.Join(root, ".local", "bin", "basedpyright-langserver")
