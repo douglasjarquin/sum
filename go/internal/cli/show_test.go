@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -133,5 +134,86 @@ func TestShow_extraArgsAreGoErrors(t *testing.T) {
 	err := root.ExecuteContext(context.Background())
 	if err == nil {
 		t.Fatal("expected unrecognized arguments")
+	}
+}
+
+func TestShowCommands(t *testing.T) {
+	cases := []struct {
+		name      string
+		args      []string
+		success   bool
+		usage     bool
+		unknown   bool
+		domainErr string
+	}{
+		{name: "valid show", args: []string{"show", "t-aaaaaaaaaaaa"}, success: true},
+		{name: "valid show after dashdash", args: []string{"show", "--", "t-aaaaaaaaaaaa"}, success: true},
+		{name: "missing task", args: []string{"show"}, usage: true},
+		{name: "extra positional", args: []string{"show", "t-aaaaaaaaaaaa", "extra"}, usage: true},
+		{name: "unknown flag", args: []string{"show", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
+		{name: "unknown flag before task", args: []string{"show", "--unexpected", "t-aaaaaaaaaaaa"}, usage: true, unknown: true},
+		{name: "extra after dashdash", args: []string{"show", "t-aaaaaaaaaaaa", "--", "extra"}, usage: true},
+		{name: "unknown task", args: []string{"show", "t-bbbbbbbbbbbb"}, domainErr: "Cannot read"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearHerdrEnv(t)
+			home, taskPath, before := contextUsageLab(t)
+			stdout, stderr, err := runShow(t, home, tc.args...)
+			switch {
+			case tc.success:
+				if err != nil {
+					t.Fatalf("err = %v stderr=%s stdout=%s", err, stderr, stdout)
+				}
+				if !strings.Contains(stdout, "t-aaaaaaaaaaaa") {
+					t.Fatalf("stdout missing task id:\n%s", stdout)
+				}
+			case tc.usage:
+				assertShowUsageError(t, err)
+				if tc.unknown && !strings.Contains(err.Error(), "unknown flag") {
+					t.Fatalf("err = %v, want unknown flag", err)
+				}
+				if stdout != "" {
+					t.Fatalf("usage failure wrote stdout: %s", stdout)
+				}
+				assertFileUnchanged(t, taskPath, before)
+			default:
+				if err == nil {
+					t.Fatalf("expected domain error, stdout=%s", stdout)
+				}
+				if !strings.Contains(err.Error(), tc.domainErr) {
+					t.Fatalf("err = %v, want substring %q", err.Error(), tc.domainErr)
+				}
+				if stdout != "" {
+					t.Fatalf("domain failure wrote stdout: %s", stdout)
+				}
+			}
+		})
+	}
+}
+
+func runShow(t *testing.T, home string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	var outBuf, errBuf bytes.Buffer
+	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
+	root.SetArgs(append([]string{"--home", home}, args...))
+	err = root.ExecuteContext(context.Background())
+	return outBuf.String(), errBuf.String(), err
+}
+
+func assertShowUsageError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected usage failure")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "Cannot read") {
+		t.Fatalf("err = %v, want a usage failure", err)
+	}
+	usage := strings.Contains(msg, "unknown flag") ||
+		strings.Contains(msg, "accepts 1 arg") ||
+		strings.Contains(msg, "unrecognized arguments")
+	if !usage {
+		t.Fatalf("err = %v, want a usage failure", err)
 	}
 }

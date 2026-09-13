@@ -9,11 +9,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/douglasjarquin/sum/go/internal/contextview"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/doctor"
 	"github.com/douglasjarquin/sum/go/internal/environment"
-	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -255,56 +253,8 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		},
 	})
 
-	root.AddCommand(&cobra.Command{
-		Use:                "show",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 1 {
-				st, err := store.Open(opts.home)
-				if err != nil {
-					return err
-				}
-				view, viewErr := evidenceview.Show(st, args[0])
-				if viewErr != nil {
-					return viewErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			return usageError("show", args)
-		},
-	})
-
-	root.AddCommand(&cobra.Command{
-		Use:                "context",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) >= 1 {
-				taskID := args[0]
-				contextOpts, ok := contextview.Options{
-					After:    contextview.DefaultAfter,
-					Limit:    contextview.DefaultLimit,
-					MaxChars: contextview.DefaultMaxChars,
-				}, true
-				if len(args) > 1 {
-					contextOpts, ok = parseContextArgs(args[1:])
-				}
-				if ok {
-					st, err := store.Open(opts.home)
-					if err != nil {
-						return err
-					}
-					view, viewErr := contextview.View(st, taskID, opts.sumctlPath(), contextOpts)
-					if viewErr != nil {
-						return viewErr
-					}
-					return emitOrdjson(cmd.OutOrStdout(), view)
-				}
-			}
-			return usageError("context", args)
-		},
-	})
+	opts.addShowCommand(root)
+	opts.addContextCommand(root)
 
 	root.AddCommand(&cobra.Command{
 		Use:                "doctor",
@@ -414,151 +364,6 @@ func parseInitArgs(tokens []string) (role, task string, reclaim, ok bool) {
 		return "", "", false, false
 	}
 	return role, task, reclaimSeen, true
-}
-
-// validContextSections lists only the sections contextview.View actually implements.
-var validContextSections = map[string]bool{
-	"outline": true, "brief": true, "decisions": true, "handoff": true, "evidence": true,
-	"execution": true, "returns": true, "notes": true, "environment": true, "update": true,
-}
-
-var validContextRoles = map[string]bool{"worker": true, "reviewer": true, "coordinator": true}
-
-func parseContextArgs(tokens []string) (contextview.Options, bool) {
-	result := contextview.Options{
-		After:    contextview.DefaultAfter,
-		Limit:    contextview.DefaultLimit,
-		MaxChars: contextview.DefaultMaxChars,
-	}
-	var raw []string
-	sinceSet, revisionSet := false, false
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--section":
-			if i+1 >= len(tokens) {
-				return contextview.Options{}, false
-			}
-			i++
-			raw = append(raw, tokens[i])
-		case strings.HasPrefix(token, "--section="):
-			raw = append(raw, strings.TrimPrefix(token, "--section="))
-		case token == "--role":
-			if result.Role != "" || i+1 >= len(tokens) {
-				return contextview.Options{}, false
-			}
-			i++
-			result.Role = tokens[i]
-		case strings.HasPrefix(token, "--role="):
-			if result.Role != "" {
-				return contextview.Options{}, false
-			}
-			result.Role = strings.TrimPrefix(token, "--role=")
-		case token == "--since":
-			if sinceSet || i+1 >= len(tokens) {
-				return contextview.Options{}, false
-			}
-			i++
-			result.Since = tokens[i]
-			sinceSet = true
-		case strings.HasPrefix(token, "--since="):
-			if sinceSet {
-				return contextview.Options{}, false
-			}
-			result.Since = strings.TrimPrefix(token, "--since=")
-			sinceSet = true
-		case token == "--revision":
-			if revisionSet || i+1 >= len(tokens) {
-				return contextview.Options{}, false
-			}
-			i++
-			result.Revision = tokens[i]
-			revisionSet = true
-		case strings.HasPrefix(token, "--revision="):
-			if revisionSet {
-				return contextview.Options{}, false
-			}
-			result.Revision = strings.TrimPrefix(token, "--revision=")
-			revisionSet = true
-		case token == "--kind":
-			if i+1 >= len(tokens) {
-				return contextview.Options{}, false
-			}
-			i++
-			if tokens[i] != "" {
-				result.Kinds = append(result.Kinds, tokens[i])
-			}
-		case strings.HasPrefix(token, "--kind="):
-			if value := strings.TrimPrefix(token, "--kind="); value != "" {
-				result.Kinds = append(result.Kinds, value)
-			}
-		case token == "--after":
-			if i+1 >= len(tokens) {
-				return contextview.Options{}, false
-			}
-			i++
-			n, err := strconv.Atoi(tokens[i])
-			if err != nil {
-				return contextview.Options{}, false
-			}
-			result.After = n
-		case strings.HasPrefix(token, "--after="):
-			n, err := strconv.Atoi(strings.TrimPrefix(token, "--after="))
-			if err != nil {
-				return contextview.Options{}, false
-			}
-			result.After = n
-		case token == "--limit":
-			if i+1 >= len(tokens) {
-				return contextview.Options{}, false
-			}
-			i++
-			n, err := strconv.Atoi(tokens[i])
-			if err != nil {
-				return contextview.Options{}, false
-			}
-			result.Limit = n
-		case strings.HasPrefix(token, "--limit="):
-			n, err := strconv.Atoi(strings.TrimPrefix(token, "--limit="))
-			if err != nil {
-				return contextview.Options{}, false
-			}
-			result.Limit = n
-		case token == "--max-chars":
-			if i+1 >= len(tokens) {
-				return contextview.Options{}, false
-			}
-			i++
-			n, err := strconv.Atoi(tokens[i])
-			if err != nil {
-				return contextview.Options{}, false
-			}
-			result.MaxChars = n
-		case strings.HasPrefix(token, "--max-chars="):
-			n, err := strconv.Atoi(strings.TrimPrefix(token, "--max-chars="))
-			if err != nil {
-				return contextview.Options{}, false
-			}
-			result.MaxChars = n
-		default:
-			return contextview.Options{}, false
-		}
-	}
-	if result.Role != "" && !validContextRoles[result.Role] {
-		return contextview.Options{}, false
-	}
-	seen := map[string]bool{}
-	for _, sec := range raw {
-		if !validContextSections[sec] {
-			return contextview.Options{}, false
-		}
-		if seen[sec] {
-			continue
-		}
-		seen[sec] = true
-		result.Sections = append(result.Sections, sec)
-	}
-	return result, true
 }
 
 func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
