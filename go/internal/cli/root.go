@@ -123,6 +123,12 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addUpdateCommands(root)
 	opts.addRefreshCommands(root)
 	opts.addCleanupCommand(root)
+	opts.addExecutionCommands(root)
+	opts.addRepairCommands(root)
+	opts.addStartCommand(root)
+	opts.addReviewCommand(root)
+	opts.addPRCommands(root)
+	opts.addLspCommand(root)
 	opts.addNativeCommands(root)
 	opts.format = "toon"
 	wrapOutputFormat(root, opts)
