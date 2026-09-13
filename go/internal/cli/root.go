@@ -6,11 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
@@ -203,16 +201,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	})
 
 	opts.addBriefCommands(root)
-
-	root.AddCommand(&cobra.Command{
-		Use:                "env",
-		DisableFlagParsing: true,
-		Args:               cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return opts.runEnv(cmd, args)
-		},
-	})
-
+	opts.addEnvCommands(root)
 	opts.addReleaseCommands(root)
 	opts.addProjectCommands(root)
 
@@ -316,47 +305,6 @@ func parseInitArgs(tokens []string) (role, task string, reclaim, ok bool) {
 		return "", "", false, false
 	}
 	return role, task, reclaimSeen, true
-}
-
-func parseEnvShowArgs(tokens []string) (task string, maxChars int, ok bool) {
-	maxChars = environment.DefaultMaxChars
-	maxCharsSet := false
-	for i := 0; i < len(tokens); i++ {
-		token := tokens[i]
-		switch {
-		case token == "--max-chars":
-			if maxCharsSet || i+1 >= len(tokens) {
-				return "", 0, false
-			}
-			i++
-			n, err := strconv.Atoi(tokens[i])
-			if err != nil {
-				return "", 0, false
-			}
-			maxChars = n
-			maxCharsSet = true
-		case strings.HasPrefix(token, "--max-chars="):
-			if maxCharsSet {
-				return "", 0, false
-			}
-			n, err := strconv.Atoi(strings.TrimPrefix(token, "--max-chars="))
-			if err != nil {
-				return "", 0, false
-			}
-			maxChars = n
-			maxCharsSet = true
-		case strings.HasPrefix(token, "-"):
-			return "", 0, false
-		case task == "":
-			task = token
-		default:
-			return "", 0, false
-		}
-	}
-	if task == "" {
-		return "", 0, false
-	}
-	return task, maxChars, true
 }
 
 func usageError(command string, args []string) error {
