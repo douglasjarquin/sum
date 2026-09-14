@@ -7,6 +7,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -97,6 +98,7 @@ func Run(s *store.Store, taskID, text string, handoff *ordjson.Object, endpoint 
 		unlock()
 		return nil, err
 	}
+	note := pipeline.RefreshNote(s, task)
 	unlock()
 
 	notice, err := returns.Notify(s, pump, taskID, "parent", "a worker report is available", false)
@@ -108,6 +110,7 @@ func Run(s *store.Store, taskID, text string, handoff *ordjson.Object, endpoint 
 	result.Set("status", "reported-not-verified")
 	result.Set("evidence", ids)
 	result.Set("notice", notice)
+	result.Set("pipeline_note", note)
 	return result, nil
 }
 

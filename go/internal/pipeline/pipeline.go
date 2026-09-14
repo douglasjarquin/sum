@@ -7,15 +7,15 @@ import "strings"
 type Stage string
 
 const (
-	Intent   Stage = "intent"
-	Rebase   Stage = "rebase"
-	Review   Stage = "review"
-	Test     Stage = "test"
-	Document Stage = "document"
-	Lint     Stage = "lint"
-	Push     Stage = "push"
-	PR       Stage = "pr"
-	CI       Stage = "ci"
+	StageIntent   Stage = "intent"
+	StageRebase   Stage = "rebase"
+	StageReview   Stage = "review"
+	StageTest     Stage = "test"
+	StageDocument Stage = "document"
+	StageLint     Stage = "lint"
+	StagePush     Stage = "push"
+	StagePR       Stage = "pr"
+	StageCI       Stage = "ci"
 )
 
 type Status string
@@ -36,15 +36,15 @@ type Definition struct {
 
 // Stages is the pipeline, in order. Everything else reads this table instead of repeating the order.
 var Stages = [...]Definition{
-	{Intent, "Intent"},
-	{Rebase, "Rebase"},
-	{Review, "Review"},
-	{Test, "Test"},
-	{Document, "Document"},
-	{Lint, "Lint"},
-	{Push, "Push"},
-	{PR, "PR"},
-	{CI, "CI"},
+	{StageIntent, "Intent"},
+	{StageRebase, "Rebase"},
+	{StageReview, "Review"},
+	{StageTest, "Test"},
+	{StageDocument, "Document"},
+	{StageLint, "Lint"},
+	{StagePush, "Push"},
+	{StagePR, "PR"},
+	{StageCI, "CI"},
 }
 
 const Count = len(Stages)

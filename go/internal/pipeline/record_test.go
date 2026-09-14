@@ -50,7 +50,7 @@ func TestLoad_withNoFileIsAnAllPendingRecord(t *testing.T) {
 func TestSet_persistsOneRowAndWritesNothingTheSecondTime(t *testing.T) {
 	s, taskID := labStore(t, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "brief": "b"}`)
 
-	if _, err := Set(s, taskID, Document, Pass, "Passed", "e-4"); err != nil {
+	if _, err := Set(s, taskID, StageDocument, Pass, "Passed", "e-4"); err != nil {
 		t.Fatal(err)
 	}
 	path, err := Path(s, taskID)
@@ -65,12 +65,12 @@ func TestSet_persistsOneRowAndWritesNothingTheSecondTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row := record.Get(Document)
+	row := record.Get(StageDocument)
 	if row.Status != Pass || row.Result != "Passed" || len(row.Evidence) != 1 || row.Evidence[0] != "e-4" {
 		t.Fatalf("document row = %+v", row)
 	}
 
-	if _, err := Set(s, taskID, Document, Pass, "Passed", "e-4"); err != nil {
+	if _, err := Set(s, taskID, StageDocument, Pass, "Passed", "e-4"); err != nil {
 		t.Fatal(err)
 	}
 	second, err := os.ReadFile(path)
@@ -93,10 +93,10 @@ func TestRefresh_rebuildsTheRecordFromTheTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := record.Get(Test); got.Status != Pass {
+	if got := record.Get(StageTest); got.Status != Pass {
 		t.Fatalf("test row = %+v, want pass", got)
 	}
-	if got := record.Get(Intent); got.Status != Pass {
+	if got := record.Get(StageIntent); got.Status != Pass {
 		t.Fatalf("intent row = %+v, want pass", got)
 	}
 	if record.UpdatedAt == "" {

@@ -27,7 +27,7 @@ func TestDerive_taskWithNothingRecordedIsPendingExceptTheMissingBrief(t *testing
 
 	for _, row := range record.Rows {
 		want := Pending
-		if row.Stage == Intent {
+		if row.Stage == StageIntent {
 			want = Fail
 		}
 		if row.Status != want {
@@ -39,7 +39,7 @@ func TestDerive_taskWithNothingRecordedIsPendingExceptTheMissingBrief(t *testing
 func TestDerive_noBriefFailsIntent(t *testing.T) {
 	record := Derive(taskFrom(t, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "brief": "", "evidence": []}`))
 
-	row := record.Get(Intent)
+	row := record.Get(StageIntent)
 	if row.Status != Fail || row.Result != "No approved brief" {
 		t.Fatalf("intent row = %+v", row)
 	}
@@ -82,7 +82,7 @@ func TestDerive_verificationReviewAndPRRenderTheExpectedTable(t *testing.T) {
 	if got := record.Candidate; got != candidateSHA {
 		t.Fatalf("candidate = %s, want %s", got, candidateSHA)
 	}
-	if got := record.Get(Test).Evidence; len(got) != 1 || got[0] != "e-3" {
+	if got := record.Get(StageTest).Evidence; len(got) != 1 || got[0] != "e-3" {
 		t.Fatalf("test row evidence = %v, want [e-3]", got)
 	}
 }
@@ -94,7 +94,7 @@ func TestDerive_reviewOnlyCommentsStaysPendingAndRepairsCountAsRemediation(t *te
 "evidence": [{"schema": 1, "id": "e-1", "kind": "review", "source": "reviewer", "at": "2026-01-01T01:00:00+00:00",
 "candidate": "cccccccccccccccccccccccccccccccccccccccc", "verdict": "comment", "text": "a thought"}]}`)
 
-	row := Derive(task).Get(Review)
+	row := Derive(task).Get(StageReview)
 	if row.Status != Pending || row.Result != "Comments only; no verdict on this candidate" {
 		t.Fatalf("review row = %+v", row)
 	}
@@ -114,12 +114,12 @@ func TestDerive_blockedVerificationAndFindingOnThePR(t *testing.T) {
 
 	record := Derive(task)
 
-	test := record.Get(Test)
+	test := record.Get(StageTest)
 	wantTest := "Blocked (`mise run verify`, run 20260906T010203Z-abcd): the checkout was dirty; the run certifies no candidate, requires root review"
 	if test.Status != Blocked || test.Result != wantTest {
 		t.Fatalf("test row = %+v\nwant result %q", test, wantTest)
 	}
-	pr := record.Get(PR)
+	pr := record.Get(StagePR)
 	if pr.Status != Blocked || pr.Result != "PR head aaaa is not the recorded candidate cccc" {
 		t.Fatalf("pr row = %+v", pr)
 	}
@@ -127,12 +127,12 @@ func TestDerive_blockedVerificationAndFindingOnThePR(t *testing.T) {
 
 func TestDerive_mergedAndClosedPRRows(t *testing.T) {
 	merged := Derive(taskFrom(t, `{"schema": 1, "id": "t-a", "brief": "b",
-"pr": {"identity": {"number": 7, "url": "https://github.com/o/r/pull/7"}, "state": "merged", "findings": []}}`)).Get(PR)
+"pr": {"identity": {"number": 7, "url": "https://github.com/o/r/pull/7"}, "state": "merged", "findings": []}}`)).Get(StagePR)
 	if merged.Status != Pass || merged.Result != "Merged" {
 		t.Fatalf("merged pr row = %+v", merged)
 	}
 	closed := Derive(taskFrom(t, `{"schema": 1, "id": "t-a", "brief": "b",
-"pr": {"identity": {"number": 7, "url": "https://github.com/o/r/pull/7"}, "state": "closed", "findings": []}}`)).Get(PR)
+"pr": {"identity": {"number": 7, "url": "https://github.com/o/r/pull/7"}, "state": "closed", "findings": []}}`)).Get(StagePR)
 	if closed.Status != Fail {
 		t.Fatalf("closed pr row = %+v", closed)
 	}
@@ -140,7 +140,7 @@ func TestDerive_mergedAndClosedPRRows(t *testing.T) {
 
 func TestTable_foldsLineBreaksAndEscapesPipes(t *testing.T) {
 	record := New("t-a", "")
-	record.Set(Row{Stage: Intent, Status: Pass, Result: "one | two\nthree"})
+	record.Set(Row{Stage: StageIntent, Status: Pass, Result: "one | two\nthree"})
 
 	want := "| Intent | ✅ | one \\| two three |"
 	if got := record.Table(); !strings.Contains(got, want) {

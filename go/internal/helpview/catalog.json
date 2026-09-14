@@ -27,6 +27,7 @@
       "review": "Reviewer pane: append independent findings for one candidate; never replaces the worker report",
       "verify": "Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)",
       "pr": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names",
+      "pipeline": "The delivery gates one task has passed, and the status table sum owns in its PR body",
       "cleanup": "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay",
       "pump": "One bounded delivery pass over saved pending returns: at most one coalesced notice per recipient; nothing sleeps, polls, or is deleted",
       "hook": "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon",
@@ -718,6 +719,21 @@
     },
     "read_only": false,
     "read_only_subcommands": []
+  },
+  "pipeline": {
+    "topic": "pipeline",
+    "help": "The delivery gates one task has passed, derived from its own records; the table states what has run, never that a change may merge",
+    "arguments": [],
+    "subcommands": {
+      "show": "Print the recorded gates and the table; writes nothing",
+      "refresh": "Coordinator only: re-derive every gate from the task record",
+      "document": "Coordinator only: audit the candidate's VERIFY.md and feature maps in a throwaway checkout and record the result",
+      "publish": "Coordinator only: write the pipeline table into the reconciled PR's own marked block; --dry-run edits nothing"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "show"
+    ]
   },
   "cleanup": {
     "topic": "cleanup",

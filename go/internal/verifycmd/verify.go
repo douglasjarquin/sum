@@ -11,6 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -136,12 +137,14 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 	if err := s.SaveTask(task); err != nil {
 		return nil, err
 	}
+	note := pipeline.RefreshNote(s, task)
 	view := evidenceview.View(task)
 	verification, _ := view.Get("verification")
 	result := ordjson.NewObject()
 	result.Set("task", args.Task)
 	result.Set("evidence", record)
 	result.Set("verification", verification)
+	result.Set("pipeline_note", note)
 	return result, nil
 }
 

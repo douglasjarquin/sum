@@ -20,7 +20,7 @@ func Derive(task *ordjson.Object) Record {
 	record.Set(deriveReview(task, candidate))
 	record.Set(deriveDocument(task, candidate))
 	record.Set(derivePR(task))
-	for _, stage := range []Stage{Rebase, Lint, Push, CI} {
+	for _, stage := range []Stage{StageRebase, StageLint, StagePush, StageCI} {
 		record.Set(Row{Stage: stage, Status: Pending, Result: notInRelease})
 	}
 	return record
@@ -44,7 +44,7 @@ func Candidate(task *ordjson.Object) string {
 }
 
 func deriveIntent(task *ordjson.Object) Row {
-	row := Row{Stage: Intent}
+	row := Row{Stage: StageIntent}
 	if stringField(task, "brief") == "" {
 		row.Status = Fail
 		row.Result = "No approved brief"
@@ -62,7 +62,7 @@ func deriveIntent(task *ordjson.Object) Row {
 }
 
 func deriveTest(task *ordjson.Object, candidate string) Row {
-	row := Row{Stage: Test, Status: Pending}
+	row := Row{Stage: StageTest, Status: Pending}
 	latest := latestFor(task, "verification", "coordinator", candidate)
 	if latest == nil {
 		row.Result = "No coordinator verification for this candidate"
@@ -110,7 +110,7 @@ func verificationCaveats(record *ordjson.Object, candidate string) string {
 }
 
 func deriveReview(task *ordjson.Object, candidate string) Row {
-	row := Row{Stage: Review, Status: Pending}
+	row := Row{Stage: StageReview, Status: Pending}
 	reviews := Reviews(task, candidate)
 	if len(reviews) == 0 {
 		row.Result = "No review recorded for this candidate"
@@ -193,7 +193,7 @@ func RemediationPasses(task *ordjson.Object) int {
 }
 
 func deriveDocument(task *ordjson.Object, candidate string) Row {
-	row := Row{Stage: Document, Status: Pending}
+	row := Row{Stage: StageDocument, Status: Pending}
 	latest := latestFor(task, "documentation", "coordinator", candidate)
 	if latest == nil {
 		row.Result = "No documentation audit for this candidate"
@@ -214,7 +214,7 @@ func deriveDocument(task *ordjson.Object, candidate string) Row {
 }
 
 func derivePR(task *ordjson.Object) Row {
-	row := Row{Stage: PR, Status: Pending}
+	row := Row{Stage: StagePR, Status: Pending}
 	pr, _ := field(task, "pr").(*ordjson.Object)
 	identity, _ := field(pr, "identity").(*ordjson.Object)
 	if identity == nil {
