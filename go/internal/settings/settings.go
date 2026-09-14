@@ -28,7 +28,7 @@ var (
 	presetNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	harnessKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	launchValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@,=\[\]-]{0,127}$`)
-	settingsKeys       = map[string]bool{"schema": true, "capacity": true, "worker": true, "presets": true, "reviewer": true}
+	settingsKeys       = map[string]bool{"schema": true, "capacity": true, "worker": true, "presets": true, "reviewer": true, "evidence": true}
 	defaultCapacity    = map[string]int{"global": defaultGlobal, "per_repository": defaultPerRepository}
 )
 
@@ -107,8 +107,38 @@ type Settings struct {
 	Worker   *ordjson.Object
 	Presets  map[string]*ordjson.Object
 	Reviewer *ordjson.Object
+	Evidence *ordjson.Object
 	Source   string
 	Path     string
+}
+
+// AutoPublishEvidence is on unless an explicit evidence block turns it off.
+func (s *Settings) AutoPublishEvidence() bool {
+	if s == nil {
+		return true
+	}
+	return autoPublish(s.Evidence)
+}
+
+func autoPublish(block *ordjson.Object) bool {
+	if block == nil {
+		return true
+	}
+	value, _ := block.Get("auto_publish")
+	enabled, _ := value.(bool)
+	return enabled
+}
+
+// EvidenceView renders the effective setting and where it came from, the way an absent capacity block reads as unlimited.
+func EvidenceView(block *ordjson.Object) *ordjson.Object {
+	view := ordjson.NewObject()
+	view.Set("auto_publish", autoPublish(block))
+	if block == nil {
+		view.Set("source", "default")
+	} else {
+		view.Set("source", "settings")
+	}
+	return view
 }
 
 func LoadSettings(s *store.Store) (*Settings, error) {
@@ -147,7 +177,7 @@ func loadSettingsFile(path string) (*Settings, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		allowed := []string{"capacity", "presets", "reviewer", "schema", "worker"}
+		allowed := []string{"capacity", "evidence", "presets", "reviewer", "schema", "worker"}
 		return nil, fmt.Errorf("unknown keys %s; allowed: %s", pyrepr.StrList(unknown), pyrepr.StrList(allowed))
 	}
 	var capacity *ordjson.Object
@@ -173,7 +203,15 @@ func loadSettingsFile(path string) (*Settings, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Settings{Capacity: capacity, Worker: worker, Presets: presets, Reviewer: reviewer, Source: "settings.json", Path: path}, nil
+	var evidenceBlock *ordjson.Object
+	if evidenceValue, has := obj.Get("evidence"); has {
+		validated, err := validateEvidence(evidenceValue)
+		if err != nil {
+			return nil, err
+		}
+		evidenceBlock = validated
+	}
+	return &Settings{Capacity: capacity, Worker: worker, Presets: presets, Reviewer: reviewer, Evidence: evidenceBlock, Source: "settings.json", Path: path}, nil
 }
 
 func isSchema(value any, want int) bool {
@@ -227,6 +265,34 @@ func validateCapacity(value any) (*ordjson.Object, error) {
 	canonical := ordjson.NewObject()
 	canonical.Set("global", json.Number(fmt.Sprint(result["global"])))
 	canonical.Set("per_repository", json.Number(fmt.Sprint(result["per_repository"])))
+	return canonical, nil
+}
+
+func validateEvidence(value any) (*ordjson.Object, error) {
+	obj, ok := value.(*ordjson.Object)
+	if !ok {
+		return nil, fmt.Errorf("evidence must be an object")
+	}
+	var unknown []string
+	for _, k := range obj.Keys() {
+		if k != "auto_publish" {
+			unknown = append(unknown, k)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return nil, fmt.Errorf("unknown evidence keys %s; allowed: %s", pyrepr.StrList(unknown), pyrepr.StrList([]string{"auto_publish"}))
+	}
+	raw, has := obj.Get("auto_publish")
+	if !has {
+		return nil, fmt.Errorf("evidence.auto_publish is required when an evidence block is present")
+	}
+	enabled, ok := raw.(bool)
+	if !ok {
+		return nil, fmt.Errorf("evidence.auto_publish must be true or false, got %s", pyrepr.Repr(raw))
+	}
+	canonical := ordjson.NewObject()
+	canonical.Set("auto_publish", enabled)
 	return canonical, nil
 }
 
@@ -541,6 +607,7 @@ func CapacityView(s *store.Store) (*ordjson.Object, error) {
 	result.Set("occupied", occupied)
 	result.Set("presets", presetSummary(loaded.Presets))
 	result.Set("reviewer", orNil(loaded.Reviewer))
+	result.Set("evidence", EvidenceView(loaded.Evidence))
 	result.Set("worker_note", "Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.")
 	result.Set("note", "Each recorded execution reservation holds a slot until a conclusive stop observation releases it; legacy non-archived tasks remain conservatively held.")
 	return result, nil
