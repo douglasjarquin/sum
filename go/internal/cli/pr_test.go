@@ -24,6 +24,8 @@ func TestPRUnknownFlagsAreUsageErrorsBeforePR(t *testing.T) {
 		{name: "evidence extra after --run", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "extra"}},
 		{name: "evidence missing --run value", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run"}},
 		{name: "evidence missing --visibility value", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility"}},
+		{name: "evidence invalid --timeout", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--timeout", "nope"}},
+		{name: "evidence missing --evidence-root value", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--evidence-root"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,7 +61,8 @@ func TestPRCommands(t *testing.T) {
 		{name: "valid reconcile with herdr", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12"}, herdr: true, domainErr: "registered coordinator"},
 		{name: "valid evidence --run --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, domainErr: "Herdr pane"},
 		{name: "valid evidence --run= --visibility=", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run=r1", "--visibility=public"}, domainErr: "Herdr pane"},
-		{name: "valid evidence ignored flags", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--scenario", "web", "--dry-run", "--timeout", "5"}, domainErr: "Herdr pane"},
+		{name: "valid evidence every flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--scenario", "web", "--scenario", "cli", "--evidence-root", "/tmp/promoted", "--verification-run", "20260906T010203Z-abcd", "--dry-run", "--timeout", "5", "--allow-head-mismatch", "--replace-foreign-block"}, domainErr: "Herdr pane"},
+		{name: "valid evidence without --run or --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
 		{name: "valid evidence with herdr", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, herdr: true, domainErr: "registered coordinator"},
 		{name: "pr missing subcommand", args: []string{"pr"}, usage: true},
 		{name: "reconcile missing --number", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa"}, usage: true},
@@ -67,8 +70,9 @@ func TestPRCommands(t *testing.T) {
 		{name: "reconcile unknown flag", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--unexpected"}, usage: true, unknown: true},
 		{name: "reconcile extra positional", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "extra"}, usage: true},
 		{name: "reconcile invalid --number", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "nope"}, usage: true},
-		{name: "evidence missing --run", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--visibility", "public"}, usage: true},
-		{name: "evidence missing --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1"}, usage: true},
+		{name: "evidence without --run", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--visibility", "public"}, domainErr: "Herdr pane"},
+		{name: "evidence without --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1"}, domainErr: "Herdr pane"},
+		{name: "evidence invalid --timeout", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--timeout", "nope"}, usage: true},
 		{name: "evidence unknown flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--unexpected"}, usage: true, unknown: true},
 	}
 	for _, tc := range cases {

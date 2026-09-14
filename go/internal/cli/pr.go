@@ -54,7 +54,10 @@ func (o *rootOptions) addPRCommands(root *cobra.Command) {
 	_ = reconcileCmd.MarkFlagRequired("number")
 	prCmd.AddCommand(reconcileCmd)
 
-	var run, visibility string
+	var run, visibility, evidenceRoot string
+	var scenarios, verificationRuns []string
+	var timeout int
+	var dryRun, allowHeadMismatch, replaceForeignBlock bool
 	evidenceCmd := &cobra.Command{
 		Use:  "evidence TASK",
 		Args: cobra.ExactArgs(1),
@@ -67,7 +70,18 @@ func (o *rootOptions) addPRCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := prcmd.Evidence(st, ctx, args[0], run, visibility)
+			view, err := prcmd.Evidence(st, ctx, o.runtimeRoot, prcmd.PublishArgs{
+				Task:                args[0],
+				Run:                 run,
+				Visibility:          visibility,
+				Scenarios:           scenarios,
+				EvidenceRoot:        evidenceRoot,
+				VerificationRuns:    verificationRuns,
+				Timeout:             timeout,
+				DryRun:              dryRun,
+				AllowHeadMismatch:   allowHeadMismatch,
+				ReplaceForeignBlock: replaceForeignBlock,
+			})
 			if err != nil {
 				return err
 			}
@@ -76,15 +90,13 @@ func (o *rootOptions) addPRCommands(root *cobra.Command) {
 	}
 	evidenceCmd.Flags().StringVar(&run, "run", "", "")
 	evidenceCmd.Flags().StringVar(&visibility, "visibility", "", "")
-	evidenceCmd.Flags().String("scenario", "", "")
-	evidenceCmd.Flags().String("evidence-root", "", "")
-	evidenceCmd.Flags().String("verification-run", "", "")
-	evidenceCmd.Flags().String("timeout", "", "")
-	evidenceCmd.Flags().Bool("dry-run", false, "")
-	evidenceCmd.Flags().Bool("allow-head-mismatch", false, "")
-	evidenceCmd.Flags().Bool("replace-foreign-block", false, "")
-	_ = evidenceCmd.MarkFlagRequired("run")
-	_ = evidenceCmd.MarkFlagRequired("visibility")
+	evidenceCmd.Flags().StringArrayVar(&scenarios, "scenario", nil, "")
+	evidenceCmd.Flags().StringVar(&evidenceRoot, "evidence-root", "", "")
+	evidenceCmd.Flags().StringArrayVar(&verificationRuns, "verification-run", nil, "")
+	evidenceCmd.Flags().IntVar(&timeout, "timeout", 0, "")
+	evidenceCmd.Flags().BoolVar(&dryRun, "dry-run", false, "")
+	evidenceCmd.Flags().BoolVar(&allowHeadMismatch, "allow-head-mismatch", false, "")
+	evidenceCmd.Flags().BoolVar(&replaceForeignBlock, "replace-foreign-block", false, "")
 	prCmd.AddCommand(evidenceCmd)
 
 	root.AddCommand(prCmd)

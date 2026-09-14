@@ -10,6 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -64,14 +65,28 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	if err := json.Unmarshal(out, &data); err != nil {
 		return nil, fmt.Errorf("gh did not return JSON: %s", string(out)[:min(300, len(out))])
 	}
-	unlock, err := s.Lock()
+	pr, recordID, err := recordObservation(s, ctx, args.Task, data)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
-	task, err = s.ReadTask(args.Task)
+	result := ordjson.NewObject()
+	result.Set("task", args.Task)
+	result.Set("pr", pr)
+	result.Set("evidence", recordID)
+	result.Set("evidence_publication", autoPublish(s, ctx, runtimeRoot, args.Task, pr))
+	result.Set("note", "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains.")
+	return result, nil
+}
+
+func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data map[string]any) (*ordjson.Object, any, error) {
+	unlock, err := s.Lock()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	defer unlock()
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, nil, err
 	}
 	identity := ordjson.NewObject()
 	identity.Set("number", json.Number(fmt.Sprint(intOf(data["number"]))))
@@ -128,31 +143,65 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	body.Set("pr", pr)
 	record, err := evidence.Append(task, "publication", "github", body, identityValue(identity, "head_sha"), ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := s.SaveTask(task); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	result := ordjson.NewObject()
-	result.Set("task", args.Task)
-	result.Set("pr", pr)
-	result.Set("evidence", func() any { v, _ := record.Get("id"); return v }())
-	result.Set("note", "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains.")
-	return result, nil
+	recordID, _ := record.Get("id")
+	return pr, recordID, nil
 }
 
-func Evidence(s *store.Store, ctx *ordjson.Object, taskID, run, visibility string) (*ordjson.Object, error) {
+func Evidence(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PublishArgs) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
-	if visibility != "public" && visibility != "private" && visibility != "internal" {
+	if args.Visibility != "" && args.Visibility != "public" && args.Visibility != "private" && args.Visibility != "internal" {
 		return nil, fmt.Errorf("--visibility must be public, private, or internal")
 	}
-	_, err := s.ReadTask(taskID)
+	args.Trigger = "manual"
+	publications, err := Publish(s, ctx, runtimeRoot, args)
 	if err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("pr evidence requires a reconciled PR and a captured evidence run; record the PR with `pr reconcile` first.")
+	if len(publications) == 0 {
+		return nil, fmt.Errorf("this task records no evidence run to publish; a worker's handoff must list a comparison.json, or pass --run with --evidence-root for a promoted copy.")
+	}
+	result := ordjson.NewObject()
+	result.Set("task", args.Task)
+	result.Set("publications", publicationRows(publications))
+	result.Set("note", "The block states the worker's claim about the candidate build. It is not verification, review, or a merge decision.")
+	return result, nil
+}
+
+// autoPublish never fails reconcile: the PR observation is already saved, and a publication failure is its own record.
+func autoPublish(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, pr *ordjson.Object) []any {
+	if asString(pr, "state") != "open" {
+		return []any{}
+	}
+	if len(asList(func() any { v, _ := pr.Get("findings"); return v }())) > 0 {
+		return []any{}
+	}
+	loaded, err := settings.LoadSettings(s)
+	if err != nil {
+		row := ordjson.NewObject()
+		row.Set("run", nil)
+		row.Set("outcome", string(Skipped))
+		row.Set("reason", err.Error())
+		return []any{row}
+	}
+	if !loaded.AutoPublishEvidence() {
+		return []any{}
+	}
+	publications, err := Publish(s, ctx, runtimeRoot, PublishArgs{Task: taskID, Trigger: "reconcile"})
+	if err != nil {
+		row := ordjson.NewObject()
+		row.Set("run", nil)
+		row.Set("outcome", string(Failed))
+		row.Set("reason", err.Error())
+		return []any{row}
+	}
+	return publicationRows(publications)
 }
 
 func asObject(v any) *ordjson.Object {
