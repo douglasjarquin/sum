@@ -63,6 +63,22 @@ class PackagingInventoryTest(unittest.TestCase):
         go_line = text.index(".local/bin/sumctl-go")
         self.assertLess(sumctl_line, go_line)
 
+    def test_sumctl_wrapper_keeps_an_inherited_install_root(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "bin").mkdir()
+        (root / ".local" / "bin").mkdir(parents=True)
+        shutil.copy(ROOT / "bin" / "sumctl", root / "bin" / "sumctl")
+        os.chmod(root / "bin" / "sumctl", 0o755)
+        artifact = root / ".local" / "bin" / "sumctl"
+        artifact.write_text('#!/bin/sh\necho "root=$SUM_INSTALL_ROOT"\n')
+        os.chmod(artifact, 0o755)
+        env = {k: v for k, v in os.environ.items() if k != "SUM_INSTALL_ROOT"}
+        out = subprocess.check_output([str(root / "bin" / "sumctl"), "--version"], text=True, env=env)
+        self.assertEqual(out, f"root={root}\n")
+        env["SUM_INSTALL_ROOT"] = "/some/installation"
+        out = subprocess.check_output([str(root / "bin" / "sumctl"), "--version"], text=True, env=env)
+        self.assertEqual(out, "root=/some/installation\n")
+
     def test_mcp_smoke_launches_the_public_wrapper(self):
         text = (ROOT / "scripts" / "mcp_smoke.mjs").read_text()
         self.assertIn('path.join(root, "bin", "herdr-mesh")', text)
