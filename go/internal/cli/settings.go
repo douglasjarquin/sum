@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/settings"
@@ -42,6 +43,8 @@ func (o *rootOptions) addSettingsCommands(root *cobra.Command) {
 		clearWorker                                               bool
 		reviewerPreset                                            string
 		clearReviewer                                             bool
+		autoPublishEvidence                                       string
+		clearEvidence                                             bool
 	)
 	setCmd := &cobra.Command{
 		Use:  "set",
@@ -58,6 +61,14 @@ func (o *rootOptions) addSettingsCommands(root *cobra.Command) {
 				ClearReviewer:     clearReviewer,
 				WorkerPresetSet:   cmd.Flags().Changed("worker-preset"),
 				ReviewerPresetSet: cmd.Flags().Changed("reviewer-preset"),
+				ClearEvidence:     clearEvidence,
+			}
+			if cmd.Flags().Changed("auto-publish-evidence") {
+				enabled, boolErr := strconv.ParseBool(autoPublishEvidence)
+				if boolErr != nil {
+					return fmt.Errorf("--auto-publish-evidence takes true or false, got %q", autoPublishEvidence)
+				}
+				parsed.AutoPublish = &enabled
 			}
 			if cmd.Flags().Changed("global") {
 				parsed.Global = &global
@@ -78,6 +89,8 @@ func (o *rootOptions) addSettingsCommands(root *cobra.Command) {
 	setCmd.Flags().BoolVar(&clearWorker, "clear-worker", false, "")
 	setCmd.Flags().StringVar(&reviewerPreset, "reviewer-preset", "", "")
 	setCmd.Flags().BoolVar(&clearReviewer, "clear-reviewer", false, "")
+	setCmd.Flags().StringVar(&autoPublishEvidence, "auto-publish-evidence", "", "")
+	setCmd.Flags().BoolVar(&clearEvidence, "clear-evidence", false, "")
 	settingsCmd.AddCommand(setCmd)
 
 	root.AddCommand(settingsCmd)
@@ -107,8 +120,11 @@ func (o *rootOptions) runSettingsSet(cmd *cobra.Command, parsed settings.WriteAr
 	if parsed.ClearReviewer && parsed.ReviewerPresetSet {
 		return fmt.Errorf("--clear-reviewer conflicts with --reviewer-preset.")
 	}
-	if parsed.Global == nil && parsed.PerRepository == nil && !parsed.ClearCapacity && parsed.WorkerHarness == "" && parsed.WorkerModel == "" && parsed.WorkerReasoning == "" && !parsed.WorkerPresetSet && !parsed.ClearWorker && !parsed.ReviewerPresetSet && !parsed.ClearReviewer {
-		return fmt.Errorf("Give --global, --per-repository, --clear-capacity, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, or --clear-reviewer.")
+	if parsed.ClearEvidence && parsed.AutoPublish != nil {
+		return fmt.Errorf("--clear-evidence conflicts with --auto-publish-evidence.")
+	}
+	if parsed.Global == nil && parsed.PerRepository == nil && !parsed.ClearCapacity && parsed.WorkerHarness == "" && parsed.WorkerModel == "" && parsed.WorkerReasoning == "" && !parsed.WorkerPresetSet && !parsed.ClearWorker && !parsed.ReviewerPresetSet && !parsed.ClearReviewer && parsed.AutoPublish == nil && !parsed.ClearEvidence {
+		return fmt.Errorf("Give --global, --per-repository, --clear-capacity, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, --clear-reviewer, --auto-publish-evidence, or --clear-evidence.")
 	}
 	view, err := settings.Write(st, parsed)
 	if err != nil {

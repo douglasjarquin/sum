@@ -28,6 +28,8 @@ type WriteArgs struct {
 	ClearReviewer     bool
 	WorkerPresetSet   bool
 	ReviewerPresetSet bool
+	AutoPublish       *bool
+	ClearEvidence     bool
 }
 
 func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
@@ -134,10 +136,24 @@ func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
 		}
 	}
 
+	mergedEvidence := current.Evidence
+	switch {
+	case args.ClearEvidence:
+		mergedEvidence = nil
+	case args.AutoPublish != nil:
+		obj := ordjson.NewObject()
+		obj.Set("auto_publish", *args.AutoPublish)
+		mergedEvidence, err = validateEvidence(obj)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	previousCapacity := current.Capacity
 	previousWorker := current.Worker
 	previousReviewer := current.Reviewer
-	path, err := save(s, mergedCapacity, mergedWorker, current.Presets, mergedReviewer)
+	previousEvidence := current.Evidence
+	path, err := save(s, mergedCapacity, mergedWorker, current.Presets, mergedReviewer, mergedEvidence)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +173,8 @@ func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
 	result.Set("worker", orNil(mergedWorker))
 	result.Set("previous_reviewer", orNil(previousReviewer))
 	result.Set("reviewer", orNil(mergedReviewer))
+	result.Set("previous_evidence", EvidenceView(previousEvidence))
+	result.Set("evidence", EvidenceView(mergedEvidence))
 	result.Set("occupied", occupied)
 	result.Set("note", note)
 	return result, nil
@@ -246,7 +264,7 @@ func WritePreset(s *store.Store, args PresetWriteArgs) (*ordjson.Object, error) 
 		presets[k] = v
 	}
 	presets[args.Name] = spec
-	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer)
+	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +301,7 @@ func DeletePreset(s *store.Store, name string) (*ordjson.Object, error) {
 			presets[k] = v
 		}
 	}
-	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer)
+	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence)
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +322,7 @@ func DeletePreset(s *store.Store, name string) (*ordjson.Object, error) {
 	return result, nil
 }
 
-func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*ordjson.Object, reviewer *ordjson.Object) (string, error) {
+func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*ordjson.Object, reviewer, evidenceBlock *ordjson.Object) (string, error) {
 	path := filepath.Join(s.Home, File)
 	doc := ordjson.NewObject()
 	doc.Set("schema", json.Number(fmt.Sprint(Schema)))
@@ -328,6 +346,9 @@ func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*
 	}
 	if reviewer != nil {
 		doc.Set("reviewer", reviewer)
+	}
+	if evidenceBlock != nil {
+		doc.Set("evidence", evidenceBlock)
 	}
 	if err := ordjson.WriteFile(path, doc); err != nil {
 		return "", err
