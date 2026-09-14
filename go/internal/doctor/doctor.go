@@ -1,9 +1,12 @@
 package doctor
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -68,6 +72,8 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 	rows = append(rows, herdrVersionRow)
 
 	rows = append(rows, ghAttachCheck(runtimeRoot))
+
+	rows = append(rows, runtimeRevisionCheck(runtimeRoot, installRoot))
 
 	role := ordjson.NewObject()
 	role.Set("tool", "role")
@@ -236,4 +242,116 @@ func isExecutable(path string) bool {
 		return false
 	}
 	return info.Mode()&0o111 != 0
+}
+
+// runtimeRevisionCheck reports which revision the active runtime was staged from
+// and how far the installation checkout has moved past it. bin/sumctl is always
+// the checkout's file while the binary it execs belongs to the staged release,
+// so the two can drift apart silently; this row is the only place that says so.
+// A runtime that is an ancestor of the checkout is the ordinary "pulled but not
+// updated yet" state and stays ok. A runtime that cannot be identified, or that
+// is not on the checkout's history at all, is not.
+func runtimeRevisionCheck(runtimeRoot, installRoot string) *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("tool", "runtime-revision")
+	// Claim the key order every branch below reports in; Set keeps a key's
+	// position when it is overwritten, and an unreached branch stays not-ok.
+	row.Set("ok", false)
+	if installRoot == "" {
+		installRoot = runtimeRoot
+	}
+	if sameDirectory(runtimeRoot, installRoot) {
+		row.Set("ok", true)
+		row.Set("detail", "no staged release is active; the runtime is the checkout itself")
+		return row
+	}
+
+	runtimeSHA, err := stagedSourceSHA(runtimeRoot)
+	if err != nil {
+		row.Set("ok", false)
+		row.Set("detail", "cannot identify the active runtime's revision: "+err.Error())
+		return row
+	}
+	row.Set("runtime_sha", runtimeSHA)
+
+	checkoutSHA, headErr := gitOutput(installRoot, "rev-parse", "HEAD")
+	if headErr != nil {
+		row.Set("ok", true)
+		row.Set("detail", "the installation is not a readable Git checkout; revision drift cannot be compared")
+		return row
+	}
+	row.Set("checkout_sha", checkoutSHA)
+
+	if runtimeSHA == checkoutSHA {
+		row.Set("behind", 0)
+		row.Set("ok", true)
+		row.Set("detail", "the active runtime was staged from the checkout's current HEAD")
+		return row
+	}
+
+	if _, ancestorErr := gitOutput(installRoot, "merge-base", "--is-ancestor", runtimeSHA, checkoutSHA); ancestorErr != nil {
+		row.Set("ok", false)
+		row.Set("detail", "the active runtime was staged from "+shortSHA(runtimeSHA)+", which is not on this checkout's history; stage and activate a release from HEAD")
+		return row
+	}
+
+	count, countErr := gitOutput(installRoot, "rev-list", "--count", runtimeSHA+".."+checkoutSHA)
+	behind, convErr := strconv.Atoi(count)
+	if countErr != nil || convErr != nil {
+		// The revisions differ and one is an ancestor of the other, so never
+		// report a distance of zero just because counting them failed.
+		row.Set("behind", nil)
+		row.Set("ok", true)
+		row.Set("detail", "the active runtime was staged from "+shortSHA(runtimeSHA)+", an unknown distance behind the checkout; `update` activates a release from HEAD")
+		return row
+	}
+	row.Set("behind", behind)
+	row.Set("ok", true)
+	row.Set("detail", fmt.Sprintf("the active runtime was staged from %s, %d commit(s) behind the checkout; `update` activates a release from HEAD", shortSHA(runtimeSHA), behind))
+	return row
+}
+
+func stagedSourceSHA(runtimeRoot string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(runtimeRoot, release.Manifest))
+	if err != nil {
+		return "", err
+	}
+	var manifest struct {
+		Source struct {
+			SHA string `json:"sha"`
+		} `json:"source"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", err
+	}
+	if manifest.Source.SHA == "" {
+		return "", fmt.Errorf("%s has no source.sha", release.Manifest)
+	}
+	return manifest.Source.SHA, nil
+}
+
+func gitOutput(root string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func sameDirectory(a, b string) bool {
+	return resolveDirectory(a) == resolveDirectory(b)
+}
+
+func resolveDirectory(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
 }
