@@ -38,9 +38,8 @@ type Destination struct {
 }
 
 type Run struct {
-	ID          string
-	Root        string
-	Comparisons []string
+	ID   string
+	Root string
 }
 
 type Publication struct {
@@ -207,13 +206,10 @@ func discoverRuns(task *ordjson.Object, args PublishArgs) ([]Run, error) {
 			}
 			runDir := filepath.Dir(filepath.Dir(resolved))
 			id := filepath.Base(runDir)
-			run, seen := byID[id]
-			if !seen {
-				run = &Run{ID: id, Root: filepath.Dir(runDir)}
-				byID[id] = run
+			if _, seen := byID[id]; !seen {
+				byID[id] = &Run{ID: id, Root: filepath.Dir(runDir)}
 				order = append(order, id)
 			}
-			run.Comparisons = append(run.Comparisons, resolved)
 		}
 	}
 	sort.Strings(order)
