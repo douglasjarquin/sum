@@ -70,16 +70,17 @@ func Render(record Record, task *ordjson.Object) string {
 	var out strings.Builder
 	out.WriteString(MarkerStart + "\n## Pipeline\n\n" + attribution + "\n\n")
 	out.WriteString(record.Table())
-	if review := renderReview(task, record.Candidate); review != "" {
+	if review := renderReview(task); review != "" {
 		out.WriteString("\n" + review)
 	}
 	out.WriteString(MarkerEnd + "\n")
 	return out.String()
 }
 
-// renderReview is empty when no reviewer has recorded anything: the section exists only when it has content.
-func renderReview(task *ordjson.Object, candidate string) string {
-	reviews := Reviews(task, candidate)
+// renderReview reads every review the task ever collected, not only this candidate's: the remediation log
+// is the history of the candidates that were sent back, which by definition are not the current one.
+func renderReview(task *ordjson.Object) string {
+	reviews := reviewHistory(task)
 	if len(reviews) == 0 {
 		return ""
 	}
@@ -113,6 +114,16 @@ func renderReview(task *ordjson.Object, candidate string) string {
 		out.WriteString("</details>\n")
 	}
 	return out.String()
+}
+
+func reviewHistory(task *ordjson.Object) []*ordjson.Object {
+	var out []*ordjson.Object
+	for _, record := range records(task) {
+		if stringField(record, "kind") == "review" {
+			out = append(out, record)
+		}
+	}
+	return out
 }
 
 // reviewText strips both marker families, so a reviewer's quoted marker can never split either block.
