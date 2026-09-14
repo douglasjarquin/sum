@@ -220,6 +220,22 @@ func TestPRReconcile_publishesNoPipelineBlockWhenAutoPublishIsOff(t *testing.T) 
 	}
 }
 
+func TestPipelinePublish_beforeReconcileSaysToRecordThePRFirst(t *testing.T) {
+	lab := newPublishLab(t, map[string]any{})
+
+	_, _, err := runPRCLI(t, lab.home, "pipeline", "publish", lab.taskID)
+
+	if err == nil {
+		t.Fatal("publishing before pr reconcile should fail")
+	}
+	if !strings.Contains(err.Error(), "pr reconcile") {
+		t.Fatalf("error = %v, want it to name `pr reconcile`", err)
+	}
+	if strings.Contains(lab.prBody(t), pipelineMarker) {
+		t.Fatalf("a refused publish edited the body:\n%s", lab.prBody(t))
+	}
+}
+
 func TestPipelineShow_reportsEveryStageBeforeAnythingHasRun(t *testing.T) {
 	lab := newPublishLab(t, map[string]any{})
 
