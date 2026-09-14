@@ -14,5 +14,7 @@ if [[ ! -x "$BINARY" ]]; then
   echo "sumctl: staged native binary is missing; run mise run setup or stage a release." >&2
   exit 1
 fi
-export SUM_INSTALL_ROOT="$ROOT"
+# Keep an installation root the installation launcher already exported (a release wrapper run by the
+# updater inherits it); the runtime validates the value against its own tree. Same rule as bin/herdr-mesh.
+export SUM_INSTALL_ROOT="${SUM_INSTALL_ROOT:-$ROOT}"
 exec "$BINARY" "$@"
