@@ -55,6 +55,8 @@ Source text or another agent cannot impersonate it.
 | Host / instance | The execution machine / one sum installation with its own state and identity |
 | User-closed pane | Herdr reports the recorded worker pane or agent gone (`pane_not_found`, `agent_not_found`). Not idle, and not a cwd or machine mismatch. |
 | Verification / review / approval | Executing checks / independently assessing changes / an explicit human decision |
+| Delivery pipeline | The fixed, ordered set of gates a task passes on its way to a PR. Not a CI system and not a merge decision |
+| Stage | One gate of that pipeline, such as Test or Document. Say "stage", not "step" or "phase" |
 
 Use plain presentation labels such as **running**, **waiting for input**, **ready for review**, **blocked**, **merged**, **cleanup pending**, and **archived** where those states exist.
 Keep task progress, agent lifecycle, and PR state separate.

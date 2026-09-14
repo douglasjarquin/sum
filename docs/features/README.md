@@ -8,6 +8,7 @@ The runner in `.agents/skills/verify/` reads the scenario tables from the files 
 - [Before/after evidence](evidence.md)
 - [Code graph per checkout](graph.md)
 - [Project-local third-party skills](skills.md)
+- [Delivery pipeline](pipeline.md)
 
 A row's driver column starts with `automated` or `manual`; anything after that is free text naming the test or the procedure.
 Keep maps truthful: describe what is exercised today, not what a future slice will cover.
