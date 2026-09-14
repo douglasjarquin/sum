@@ -713,8 +713,8 @@
     "help": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names",
     "arguments": [],
     "subcommands": {
-      "reconcile": "Coordinator only: inspect PR --number in the task repository with gh and record its exact identity, state, and mismatches",
-      "evidence": "Coordinator only: publish one evidence run's before/after media into the reconciled PR's marked block via gh --attach; receipts and publish copies stay under the task record"
+      "reconcile": "Coordinator only: inspect PR --number in the task repository with gh, record its exact identity, state, and mismatches, then publish the worker's before/after evidence",
+      "evidence": "Coordinator only: publish each evidence run's before/after media into the reconciled PR's marked block; receipts and publish copies stay under the task record"
     },
     "read_only": false,
     "read_only_subcommands": []
@@ -857,11 +857,11 @@
   },
   "settings": {
     "topic": "settings",
-    "help": "Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited",
+    "help": "Show or set validated optional settings in .sum/settings.json; absent capacity is unlimited and absent evidence publishes into the PR",
     "arguments": [],
     "subcommands": {
       "show": "Current limits, their source, and held slots; writes nothing",
-      "set": "Coordinator only: write validated capacity values atomically; future admissions only, nothing running is touched"
+      "set": "Coordinator only: write validated capacity, worker, reviewer, and evidence values atomically; future admissions only, nothing running is touched"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1359,7 +1359,7 @@
   },
   "pr-evidence": {
     "topic": "pr-evidence",
-    "help": "Coordinator only: publish one evidence run's before/after media into the reconciled PR's marked block via gh --attach; receipts and publish copies stay under the task record",
+    "help": "Coordinator only: publish each evidence run's before/after media into the reconciled PR's marked block via gh --attach; pr reconcile already does this unless settings turn it off",
     "arguments": [
       {
         "name": "task",
@@ -1368,8 +1368,7 @@
       },
       {
         "name": "--run",
-        "help": "Evidence run id (the <evidence root>/<run> directory holding comparison.json files)",
-        "required": true
+        "help": "Evidence run id (the <evidence root>/<run> directory holding comparison.json files); default: every run the handoff lists"
       },
       {
         "name": "--scenario",
@@ -1377,13 +1376,12 @@
       },
       {
         "name": "--visibility",
-        "help": "The destination visibility you intend; a mismatch refuses before any upload",
+        "help": "The destination visibility you intend; a mismatch refuses before any upload (default: what gh reports for the destination)",
         "choices": [
           "public",
           "private",
           "internal"
-        ],
-        "required": true
+        ]
       },
       {
         "name": "--evidence-root",
@@ -1538,7 +1536,7 @@
   },
   "settings-set": {
     "topic": "settings-set",
-    "help": "Coordinator only: write validated capacity values atomically; future admissions only, nothing running is touched",
+    "help": "Coordinator only: write validated capacity, worker, reviewer, and evidence settings atomically; future admissions only, nothing running is touched",
     "arguments": [
       {
         "name": "--global",
@@ -1579,6 +1577,14 @@
       {
         "name": "--clear-reviewer",
         "help": "Remove the saved reviewer preset"
+      },
+      {
+        "name": "--auto-publish-evidence",
+        "help": "true or false: whether pr reconcile publishes the worker's before/after evidence into the PR (default when unset: true)"
+      },
+      {
+        "name": "--clear-evidence",
+        "help": "Remove the evidence block and return publication to the default, which is on"
       }
     ],
     "subcommands": null,
