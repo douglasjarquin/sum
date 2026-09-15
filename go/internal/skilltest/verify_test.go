@@ -1,6 +1,7 @@
 package skilltest
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -326,4 +327,101 @@ func TestGenerationKeepsUserEdits(t *testing.T) {
 	if statuses["VERIFY.md"] != "kept" {
 		t.Fatalf("VERIFY.md %v", statuses)
 	}
+}
+
+// The runner reports a map row that names visual proof as missing until a comparison for this candidate exists,
+// and it reads VERIFY_EVIDENCE_ROOT so a capture written outside a disposable checkout is still found.
+func TestRunnerReportsRequiredEvidence(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "evidence-required"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	v.fill(repo, "cli")
+	relative := seededMap(t, repo)
+	feature := strings.TrimSuffix(filepath.Base(relative), ".md")
+	scenario := feature + ".banner"
+	mapPath := filepath.Join(repo, filepath.FromSlash(relative))
+	mustWrite(t, mapPath, addScenarioRow(t, readFile(t, mapPath),
+		"| `"+scenario+"` | The banner renders in colour | manual: run it and look | screenshot before/after |"))
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "a row that needs visual proof")
+	head := git(t, repo, "rev-parse", "HEAD")
+
+	_, record, stderr := v.runner(repo, "--base", head)
+	evidence := asMap(record["evidence"])
+	if got := asSlice(evidence["required"]); len(got) != 1 || asString(got[0]) != scenario {
+		t.Fatalf("required %v %s", evidence["required"], stderr)
+	}
+	if got := asSlice(evidence["missing"]); len(got) != 1 || asString(got[0]) != scenario {
+		t.Fatalf("missing %v", evidence["missing"])
+	}
+	detail := asMap(asSlice(evidence["missing_details"])[0])
+	if asString(detail["scenario"]) != scenario || asString(detail["feature"]) != feature || asString(detail["map"]) != relative {
+		t.Fatalf("missing detail %v", detail)
+	}
+	if asString(record["outcome"]) != "pass" {
+		t.Fatalf("outcome %v: the runner reports missing evidence, it never fails the run for it", record["outcome"])
+	}
+
+	promoted := filepath.Join(v.stop, "promoted-evidence")
+	writeComparison(t, filepath.Join(promoted, "run-1", scenario, "comparison.json"), scenario, head)
+	_, found, stderr := v.runnerWithEnv(repo, append(v.env, "VERIFY_EVIDENCE_ROOT="+promoted), "--base", head)
+	evidence = asMap(found["evidence"])
+	if len(asSlice(evidence["missing"])) != 0 {
+		t.Fatalf("missing after promoting the capture %v %s", evidence["missing"], stderr)
+	}
+	if asString(evidence["root_source"]) != "VERIFY_EVIDENCE_ROOT" || asString(evidence["root"]) != promoted {
+		t.Fatalf("root %v %v", evidence["root_source"], evidence["root"])
+	}
+}
+
+func (v *verifyLab) runnerWithEnv(repo string, env []string, args ...string) (int, map[string]any, string) {
+	script := filepath.Join(repo, ".agents/skills/verify/scripts/verify_run.py")
+	code, rec, _, stderr := runPy(v.t, env, script, repo, append([]string{"--json"}, args...)...)
+	return code, rec, stderr
+}
+
+func writeComparison(t *testing.T, path, scenario, head string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"schema": 1, "scenario": scenario, "verdict": "red-green", "visual_proof": "captured",
+		"after": map[string]any{"sha": head}, "candidate": map[string]any{"sha": head},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seededMap(t *testing.T, repo string) string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(repo, "docs/features"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() && e.Name() != "README.md" && strings.HasSuffix(e.Name(), ".md") {
+			return "docs/features/" + e.Name()
+		}
+	}
+	t.Fatal("the scaffold seeded no feature map")
+	return ""
+}
+
+func addScenarioRow(t *testing.T, body, row string) string {
+	t.Helper()
+	lines := strings.Split(body, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "|") {
+			return strings.Join(append(lines[:i+1:i+1], append([]string{row}, lines[i+1:]...)...), "\n")
+		}
+	}
+	t.Fatal("the seeded map carries no scenario table")
+	return body
 }
