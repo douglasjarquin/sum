@@ -727,6 +727,10 @@
     "subcommands": {
       "show": "Print the recorded gates and the table; writes nothing",
       "refresh": "Coordinator only: re-derive every gate from the task record",
+      "run": "Coordinator only: run the gates this pane owns in order (rebase, test, lint, document, push) and stop at the first failure",
+      "rebase": "Coordinator only: observe the candidate against its base branch in a throwaway worktree; never rewrites the branch",
+      "lint": "Coordinator only: run the lint task the project itself declares against the candidate; a project that declares none is not-declared",
+      "push": "Coordinator only: fast-forward push the recorded branch to origin once the worker has reported and Rebase passes; never forces",
       "document": "Coordinator only: audit the candidate's VERIFY.md and feature maps in a throwaway checkout and record the result",
       "publish": "Coordinator only: write the pipeline table into the reconciled PR's own marked block; --dry-run edits nothing"
     },
