@@ -16,12 +16,23 @@ var advice = map[Stage]string{
 	StageLint:     "run `sumctl pipeline lint TASK_ID`",
 	StagePush:     "run `sumctl pipeline push TASK_ID`",
 	StagePR:       "open the PR with `gh pr create`, then `sumctl pr reconcile TASK_ID --number N`",
-	StageCI:       "read the checks on the PR yourself; this release does not observe them",
+	StageCI:       "run `sumctl pipeline ci TASK_ID` to read the checks again; sum observes them, it never watches them",
 }
 
 // A gate a project does not declare, or one deliberately skipped, needs nothing further; only these three do.
 func settled(status Status) bool {
 	return status == Pass || status == Skipped || status == NotDeclared
+}
+
+// FirstUnsettled names the gate a task is actually waiting on, as `<stage>-<status>`, or "" when every gate is
+// settled. It is the one-token form of Next, for a display that has room for a label and not a sentence.
+func FirstUnsettled(record Record) string {
+	for i, definition := range Stages {
+		if row := record.Rows[i]; !settled(row.Status) {
+			return string(definition.Stage) + "-" + string(row.Status)
+		}
+	}
+	return ""
 }
 
 func Next(record Record) string {

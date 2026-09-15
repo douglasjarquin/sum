@@ -9,8 +9,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
-const notInRelease = "Not run in this release"
-
 // Derive computes every row from the task record alone, so the pipeline can always be rebuilt and never drifts from the evidence.
 func Derive(task *ordjson.Object) Record {
 	candidate := Candidate(task)
@@ -23,7 +21,7 @@ func Derive(task *ordjson.Object) Record {
 	record.Set(gateRow(task, StageRebase, rebaseGate, rebaseUnobserved, rebaseOutcomes))
 	record.Set(gateRow(task, StageLint, lintGate, lintUnobserved, lintOutcomes))
 	record.Set(derivePush(task, candidate))
-	record.Set(Row{Stage: StageCI, Status: Pending, Result: notInRelease})
+	record.Set(deriveCI(task))
 	return record
 }
 

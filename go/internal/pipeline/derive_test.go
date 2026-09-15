@@ -85,7 +85,7 @@ func TestDerive_everyGateThatRanRendersTheExpectedTable(t *testing.T) {
 		"| Lint | \u2705 | Passed (`mise run lint`) |\n" +
 		"| Push | \u2705 | Pushed ccccccc to origin/sum/t-aaaaaaaaaaaa |\n" +
 		"| PR | \u2705 | Open: https://github.com/douglasjarquin/project/pull/7 |\n" +
-		"| CI | \u23f3 | Not run in this release |\n"
+		"| CI | \u23f3 | Not observed; `pr reconcile` or `pipeline ci` reads the checks |\n"
 	if got := record.Table(); got != want {
 		t.Fatalf("table =\n%s\nwant\n%s", got, want)
 	}
@@ -95,8 +95,11 @@ func TestDerive_everyGateThatRanRendersTheExpectedTable(t *testing.T) {
 	if got := record.Get(StageTest).Evidence; len(got) != 1 || got[0] != "e-3" {
 		t.Fatalf("test row evidence = %v, want [e-3]", got)
 	}
-	if got := Next(record); got != "CI is pending: Not run in this release. Do: read the checks on the PR yourself; this release does not observe them." {
+	if got := Next(record); got != "CI is pending: Not observed; `pr reconcile` or `pipeline ci` reads the checks. Do: run `sumctl pipeline ci TASK_ID` to read the checks again; sum observes them, it never watches them." {
 		t.Fatalf("next = %q, want the CI gate", got)
+	}
+	if got := FirstUnsettled(record); got != "ci-pending" {
+		t.Fatalf("first unsettled = %q, want ci-pending", got)
 	}
 }
 

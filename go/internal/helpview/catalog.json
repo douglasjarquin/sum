@@ -722,7 +722,7 @@
   },
   "pipeline": {
     "topic": "pipeline",
-    "help": "The delivery gates one task has passed, derived from its own records; the table states what has run, never that a change may merge",
+    "help": "The delivery gates one task has passed, derived from its own records; the table states what has run at the instant it was observed, never that a change may merge",
     "arguments": [],
     "subcommands": {
       "show": "Print the recorded gates and the table; writes nothing",
@@ -732,6 +732,7 @@
       "lint": "Coordinator only: run the lint task the project itself declares against the candidate; a project that declares none is not-declared",
       "push": "Coordinator only: fast-forward push the recorded branch to origin once the worker has reported and Rebase passes; never forces",
       "document": "Coordinator only: audit the candidate's VERIFY.md and feature maps in a throwaway checkout and record the result",
+      "ci": "Coordinator only: read the checks GitHub reports on the reconciled PR and record what they said; observed at this instant, never watched, and republished unless --no-publish",
       "publish": "Coordinator only: write the pipeline table into the reconciled PR's own marked block; --dry-run edits nothing"
     },
     "read_only": false,

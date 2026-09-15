@@ -152,6 +152,27 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	documentCmd.Flags().StringVar(&candidate, "candidate", "", "")
 	pipelineCmd.AddCommand(documentCmd)
 
+	var noPublish bool
+	var ciTimeout int
+	ciCmd := &cobra.Command{
+		Use:  "ci TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-ci")
+			if err != nil {
+				return err
+			}
+			view, err := pipeline.CI(st, ctx, o.runtimeRoot, pipeline.CIArgs{Task: args[0], NoPublish: noPublish, Timeout: ciTimeout})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	ciCmd.Flags().BoolVar(&noPublish, "no-publish", false, "")
+	ciCmd.Flags().IntVar(&ciTimeout, "timeout", 0, "")
+	pipelineCmd.AddCommand(ciCmd)
+
 	var dryRun, replaceForeignBlock bool
 	var timeout int
 	publishCmd := &cobra.Command{

@@ -53,7 +53,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 			}
 		}
 	}
-	cmd := exec.Command(gh, "pr", "view", fmt.Sprint(args.Number), "--json", "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit")
+	cmd := exec.Command(gh, "pr", "view", fmt.Sprint(args.Number), "--json", "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,statusCheckRollup")
 	if remote != "" {
 		cmd.Args = append(cmd.Args, "--repo", remote)
 	}
@@ -74,6 +74,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	result.Set("task", args.Task)
 	result.Set("pr", pr)
 	result.Set("evidence", recordID)
+	result.Set("ci", observeCI(s, ctx, runtimeRoot, args.Task, asList(data["statusCheckRollup"])))
 	result.Set("evidence_publication", autoPublish(s, ctx, runtimeRoot, args.Task, pr))
 	result.Set("pipeline_publication", autoPipeline(s, ctx, runtimeRoot, args.Task, pr))
 	result.Set("note", "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains.")
@@ -175,6 +176,20 @@ func Evidence(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Publ
 	result.Set("publications", publicationRows(publications))
 	result.Set("note", "The block states the worker's claim about the candidate build. It is not verification, review, or a merge decision.")
 	return result, nil
+}
+
+// observeCI never fails reconcile: the PR observation is already saved, and an unreadable check list is its own
+// record. This is the moment sum is already talking to GitHub about this PR, so it is where the checks are read.
+func observeCI(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, rollup []any) any {
+	row, err := pipeline.ObserveCI(s, ctx, runtimeRoot, taskID, rollup, 0)
+	if err != nil {
+		failed := ordjson.NewObject()
+		failed.Set("gate", "ci")
+		failed.Set("outcome", "unavailable")
+		failed.Set("summary", err.Error())
+		return failed
+	}
+	return row
 }
 
 // autoPublish never fails reconcile: the PR observation is already saved, and a publication failure is its own record.

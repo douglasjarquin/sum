@@ -11,6 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -26,7 +27,7 @@ func jsonInt(n int) json.Number {
 	return json.Number(fmt.Sprint(n))
 }
 
-var TaskTokens = []string{"sum_state", "sum_task", "sum_repo", "sum_rev", "sum_pr"}
+var TaskTokens = []string{"sum_state", "sum_pipeline", "sum_task", "sum_repo", "sum_rev", "sum_pr"}
 
 var RootTokens = []string{"sum_inbox", "sum_tasks"}
 
@@ -40,7 +41,7 @@ func snippetTOML() string {
 		"# sum: optional sidebar rows that render sum's task tokens. Merge into ~/.config/herdr/config.toml, then run",
 		"# `herdr server reload-config`. `rows` replaces the whole layout, so keep the built-in tokens you already use.",
 		"[ui.sidebar.agents]",
-		`rows = [["state_icon", "workspace", "tab"], ["agent", "$sum_state"], ["$sum_task", "$sum_inbox"]]`,
+		`rows = [["state_icon", "workspace", "tab"], ["agent", "$sum_state", "$sum_pipeline"], ["$sum_task", "$sum_inbox"]]`,
 		"",
 		"[ui.sidebar.spaces]",
 		`rows = [["state_icon", "workspace"], ["branch", "git_status"], ["$sum_state", "$sum_task"]]`,
@@ -261,9 +262,10 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 		}
 		repo := asString(func() any { v, _ := task.Get("repository"); return v }())
 		tokens := map[string]string{
-			"sum_state": state,
-			"sum_task":  asString(func() any { v, _ := task.Get("id"); return v }()),
-			"sum_repo":  filepath.Base(repo),
+			"sum_state":    state,
+			"sum_pipeline": pipelineToken(task),
+			"sum_task":     asString(func() any { v, _ := task.Get("id"); return v }()),
+			"sum_repo":     filepath.Base(repo),
 		}
 		pane := asString(func() any { v, _ := task.Get("pane"); return v }())
 		workspace := asString(func() any { v, _ := task.Get("workspace"); return v }())
@@ -294,6 +296,15 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 		}
 	}
 	return nil
+}
+
+// pipelineToken is the one gate the task is waiting on, derived from the same records the rundown reads.
+// It is a label in the user's own sidebar and changes nothing about the task.
+func pipelineToken(task *ordjson.Object) string {
+	if stage := pipeline.FirstUnsettled(pipeline.Derive(task)); stage != "" {
+		return stage
+	}
+	return "settled"
 }
 
 func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot string, notify bool) (*ordjson.Object, error) {
