@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -81,4 +83,18 @@ func PIDRunning(pid int) (bool, error) {
 		return false, fmt.Errorf("Reservation operation cannot be inspected; reservation remains held.")
 	}
 	return false, err
+}
+
+// ScrubbedEnv is the environment for a command that runs candidate-controlled code: this pane's Herdr identity
+// and sum state home are removed so the candidate's own tooling cannot reach the installation through them.
+func ScrubbedEnv() []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "HERDR_") || key == "SUM_HOME" || key == "SUM_SESSION" || key == "SUM_INSTALL_ROOT" {
+			continue
+		}
+		env = append(env, entry)
+	}
+	return env
 }
