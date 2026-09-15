@@ -2,8 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,7 +12,6 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -75,26 +72,18 @@ func Document(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Docu
 	if err != nil {
 		return nil, fmt.Errorf("python3 is not on PATH; cannot run %s", auditScript)
 	}
-	taskDir, err := s.TaskPath(args.Task)
+	dir, err := runDir(s, args.Task, documentDir)
 	if err != nil {
 		return nil, err
 	}
-	stamp, err := documentStamp()
-	if err != nil {
-		return nil, err
-	}
-	runDir := filepath.Join(taskDir, pipelineDir, documentDir, stamp)
-	checkout := filepath.Join(runDir, "checkout")
-	if err := os.MkdirAll(runDir, 0o700); err != nil {
-		return nil, err
-	}
+	checkout := filepath.Join(dir, "checkout")
 	if out, addErr := git(worktree, "worktree", "add", "--detach", checkout, candidate); addErr != nil {
 		return nil, fmt.Errorf("could not check out %s to audit it: %s", candidate, out)
 	}
 	defer removeCheckout(worktree, checkout)
 
-	result, summary := runAudit(python, script, checkout, stringField(task, "base_sha"), filepath.Join(runDir, "audit.json"))
-	return recordDocumentation(s, ctx, args.Task, candidate, result, summary)
+	result, summary := runAudit(python, script, checkout, stringField(task, "base_sha"), filepath.Join(dir, "audit.json"))
+	return recordGate(s, ctx, args.Task, "documentation", candidate, result, summary)
 }
 
 func runAudit(python, script, checkout, base, recordPath string) (*ordjson.Object, string) {
@@ -204,37 +193,6 @@ func countsObject(counts map[string]int) *ordjson.Object {
 	return out
 }
 
-func recordDocumentation(s *store.Store, ctx *ordjson.Object, taskID, candidate string, body *ordjson.Object, summary string) (*ordjson.Object, error) {
-	body.Set("summary", summary)
-	unlock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	task, err := s.ReadTask(taskID)
-	if err != nil {
-		return nil, err
-	}
-	appended, err := evidence.Append(task, "documentation", "coordinator", body, candidate, ctx)
-	if err != nil {
-		return nil, err
-	}
-	note := RefreshNote(s, task)
-	if err := s.SaveTask(task); err != nil {
-		return nil, err
-	}
-	record, err := Load(s, taskID)
-	if err != nil {
-		return nil, err
-	}
-	result := ordjson.NewObject()
-	result.Set("task", taskID)
-	result.Set("evidence", appended)
-	result.Set("pipeline", View(record))
-	result.Set("pipeline_note", note)
-	return result, nil
-}
-
 func git(worktree string, args ...string) (string, error) {
 	runCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
@@ -249,12 +207,4 @@ func removeCheckout(worktree, checkout string) {
 		note := fmt.Sprintf("git worktree remove failed: %s\nThe documentation audit checkout was left in place; inspect it, then remove it with `git worktree remove`.\n", out)
 		_ = os.WriteFile(filepath.Join(filepath.Dir(checkout), "checkout-not-removed.txt"), []byte(note), 0o600)
 	}
-}
-
-func documentStamp() (string, error) {
-	buf := make([]byte, 3)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return time.Now().UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(buf), nil
 }

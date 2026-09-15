@@ -45,9 +45,10 @@ func TestDerive_noBriefFailsIntent(t *testing.T) {
 	}
 }
 
-func TestDerive_verificationReviewAndPRRenderTheExpectedTable(t *testing.T) {
+func TestDerive_everyGateThatRanRendersTheExpectedTable(t *testing.T) {
 	task := taskFrom(t, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "brief": "do the thing",
 "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "repository": "/tmp/project", "kind": "ship",
+"branch": "sum/t-aaaaaaaaaaaa", "status": "reported",
 "repairs": {"schema": 1, "default_allowance": 2, "consumed": 0, "operations": [], "grants": []},
 "report": {"text": "done", "candidate": "cccccccccccccccccccccccccccccccccccccccc"},
 "pr": {"identity": {"number": 7, "url": "https://github.com/douglasjarquin/project/pull/7"}, "state": "open", "findings": [],
@@ -61,21 +62,30 @@ func TestDerive_verificationReviewAndPRRenderTheExpectedTable(t *testing.T) {
 "candidate": "cccccccccccccccccccccccccccccccccccccccc", "result": "pass", "run_id": "20260906T010203Z-abcd",
 "certifies": "cccccccccccccccccccccccccccccccccccccccc", "requires_root_review": false},
 {"schema": 1, "id": "e-4", "kind": "documentation", "source": "coordinator", "at": "2026-01-01T04:00:00+00:00",
-"candidate": "cccccccccccccccccccccccccccccccccccccccc", "result": "pass", "summary": "Passed"}]}`)
+"candidate": "cccccccccccccccccccccccccccccccccccccccc", "result": "pass", "summary": "Passed"},
+{"schema": 1, "id": "e-5", "kind": "rebase", "source": "coordinator", "at": "2026-01-01T05:00:00+00:00",
+"candidate": "cccccccccccccccccccccccccccccccccccccccc", "outcome": "up-to-date", "base_branch": "main",
+"behind": 0, "conflicts": [], "summary": "Up to date with main"},
+{"schema": 1, "id": "e-6", "kind": "lint", "source": "coordinator", "at": "2026-01-01T06:00:00+00:00",
+"candidate": "cccccccccccccccccccccccccccccccccccccccc", "outcome": "pass", "command": "mise run lint", "exit": 0,
+"summary": "Passed (\u0060mise run lint\u0060)"},
+{"schema": 1, "id": "e-7", "kind": "push", "source": "coordinator", "at": "2026-01-01T07:00:00+00:00",
+"candidate": "cccccccccccccccccccccccccccccccccccccccc", "outcome": "pushed", "branch": "sum/t-aaaaaaaaaaaa",
+"remote_sha": "cccccccccccccccccccccccccccccccccccccccc", "summary": "Pushed ccccccc to origin/sum/t-aaaaaaaaaaaa"}]}`)
 
 	record := Derive(task)
 
 	want := "| Stage | Status | Result |\n" +
 		"|---|:---:|---|\n" +
-		"| Intent | ✅ | Approved brief recorded |\n" +
-		"| Rebase | ⏳ | Not run in this release |\n" +
-		"| Review | ✅ | Passed after 1 remediation pass |\n" +
-		"| Test | ✅ | Passed (`mise run verify`, run 20260906T010203Z-abcd) |\n" +
-		"| Document | ✅ | Passed |\n" +
-		"| Lint | ⏳ | Not run in this release |\n" +
-		"| Push | ⏳ | Not run in this release |\n" +
-		"| PR | ✅ | Open: https://github.com/douglasjarquin/project/pull/7 |\n" +
-		"| CI | ⏳ | Not run in this release |\n"
+		"| Intent | \u2705 | Approved brief recorded |\n" +
+		"| Rebase | \u2705 | Up to date with main |\n" +
+		"| Review | \u2705 | Passed after 1 remediation pass |\n" +
+		"| Test | \u2705 | Passed (`mise run verify`, run 20260906T010203Z-abcd) |\n" +
+		"| Document | \u2705 | Passed |\n" +
+		"| Lint | \u2705 | Passed (`mise run lint`) |\n" +
+		"| Push | \u2705 | Pushed ccccccc to origin/sum/t-aaaaaaaaaaaa |\n" +
+		"| PR | \u2705 | Open: https://github.com/douglasjarquin/project/pull/7 |\n" +
+		"| CI | \u23f3 | Not run in this release |\n"
 	if got := record.Table(); got != want {
 		t.Fatalf("table =\n%s\nwant\n%s", got, want)
 	}
@@ -84,6 +94,38 @@ func TestDerive_verificationReviewAndPRRenderTheExpectedTable(t *testing.T) {
 	}
 	if got := record.Get(StageTest).Evidence; len(got) != 1 || got[0] != "e-3" {
 		t.Fatalf("test row evidence = %v, want [e-3]", got)
+	}
+	if got := Next(record); got != "CI is pending: Not run in this release. Do: read the checks on the PR yourself; this release does not observe them." {
+		t.Fatalf("next = %q, want the CI gate", got)
+	}
+}
+
+func TestDerive_gatesThatHaveNotRunSayWhichCommandObservesThem(t *testing.T) {
+	record := Derive(taskFrom(t, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "brief": "b",
+"report": {"candidate": "cccccccccccccccccccccccccccccccccccccccc"}, "evidence": []}`))
+
+	for stage, want := range map[Stage]string{
+		StageRebase: "Not observed; run `pipeline rebase`",
+		StageLint:   "Not observed; run `pipeline lint`",
+		StagePush:   "Not observed; run `pipeline push`",
+	} {
+		row := record.Get(stage)
+		if row.Status != Pending || row.Result != want {
+			t.Fatalf("%s row = %+v, want pending with %q", stage, row, want)
+		}
+	}
+}
+
+func TestDerive_aReconciledPRHeadProvesTheCandidateReachedOrigin(t *testing.T) {
+	record := Derive(taskFrom(t, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "brief": "b",
+"report": {"candidate": "cccccccccccccccccccccccccccccccccccccccc"},
+"pr": {"identity": {"number": 7, "url": "https://github.com/o/r/pull/7",
+"head_sha": "cccccccccccccccccccccccccccccccccccccccc"}, "state": "open", "findings": [],
+"observed_at": "2026-01-02T00:00:00+00:00"}, "evidence": []}`))
+
+	row := record.Get(StagePush)
+	if row.Status != Pass || row.Result != "On origin: the reconciled PR head is this candidate" {
+		t.Fatalf("push row = %+v, want a pass derived from the reconciled PR", row)
 	}
 }
 
