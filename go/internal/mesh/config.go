@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
-)
 
-var sessionName = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	"github.com/douglasjarquin/sum/go/internal/store"
+)
 
 type Config struct {
 	HerdrPath string
@@ -17,15 +16,12 @@ type Config struct {
 }
 
 func LoadConfig() (Config, error) {
-	session := os.Getenv("SUM_SESSION")
-	if session == "" {
-		session = os.Getenv("HERDR_SESSION")
-	}
-	if session == "" {
-		return Config{}, fmt.Errorf("cannot identify the Herdr session; set SUM_SESSION explicitly")
-	}
-	if !sessionName.MatchString(session) {
-		return Config{}, fmt.Errorf("invalid Herdr session name")
+	// One session-identification path for the whole distro. The Mesh server and
+	// sumctl run in the same pane and must agree on which session that is; when
+	// they disagreed, sumctl resolved a session and the server refused to start.
+	session, err := store.SessionFromEnv()
+	if err != nil {
+		return Config{}, err
 	}
 	pane := os.Getenv("HERDR_PANE_ID")
 	if os.Getenv("HERDR_ENV") != "1" || pane == "" {
@@ -39,7 +35,6 @@ func LoadConfig() (Config, error) {
 	if home == "" {
 		root := os.Getenv("SUM_INSTALL_ROOT")
 		if root == "" {
-			var err error
 			root, err = os.Getwd()
 			if err != nil {
 				return Config{}, fmt.Errorf("identify working directory: %w", err)
