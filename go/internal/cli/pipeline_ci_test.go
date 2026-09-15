@@ -77,11 +77,11 @@ func TestPipelineCI_reconcileObservesThePassingChecksAndPublishesTheRow(t *testi
 		t.Fatalf("counts = %v, want only the two required checks", row["counts"])
 	}
 	recorded := ciRowOfRecord(t, lab)
-	if recorded["status"] != "pass" || !strings.HasPrefix(recorded["result"].(string), "Passed 2/2 required checks (observed ") {
+	if recorded["status"] != "pass" || !strings.HasPrefix(recorded["result"].(string), "Passed 2/2 required checks (as of ") {
 		t.Fatalf("derived CI row = %v", recorded)
 	}
 	publishPipeline(t, lab)
-	if body := lab.prBody(t); !strings.Contains(body, "| CI | ✅ | Passed 2/2 required checks (observed ") {
+	if body := lab.prBody(t); !strings.Contains(body, "| CI | ✅ | Passed 2/2 required checks (as of ") {
 		t.Fatalf("PR body has no passing CI row:\n%s", body)
 	}
 }
@@ -99,7 +99,7 @@ func TestPipelineCI_aFailingCheckFailsTheRowAndLinksIt(t *testing.T) {
 	if recorded["status"] != "fail" || !strings.Contains(result, "Failed: [test](https://github.com/douglasjarquin/project/actions/runs/1/job/test)") {
 		t.Fatalf("derived CI row = %v", recorded)
 	}
-	if !strings.Contains(result, "1 of 2 required checks passed (observed ") {
+	if !strings.Contains(result, "1 of 2 required checks passed (as of ") {
 		t.Fatalf("the failing row does not carry the counts: %q", result)
 	}
 	publishPipeline(t, lab)
@@ -117,7 +117,7 @@ func TestPipelineCI_aPendingCheckLeavesTheRowPending(t *testing.T) {
 		t.Fatalf("ci observation = %v", row)
 	}
 	recorded := ciRowOfRecord(t, lab)
-	if recorded["status"] != "pending" || !strings.HasPrefix(recorded["result"].(string), "1 pending, 1 passed of 3 required checks (observed ") {
+	if recorded["status"] != "pending" || !strings.HasPrefix(recorded["result"].(string), "1 pending, 1 passed of 3 required checks (as of ") {
 		t.Fatalf("derived CI row = %v", recorded)
 	}
 }
@@ -132,7 +132,7 @@ func TestPipelineCI_aPRWithNoChecksIsNotDeclared(t *testing.T) {
 	}
 	recorded := ciRowOfRecord(t, lab)
 	if recorded["status"] != "not_declared" || recorded["mark"] != "➖" ||
-		!strings.HasPrefix(recorded["result"].(string), "No checks reported for this PR (observed ") {
+		!strings.HasPrefix(recorded["result"].(string), "No checks reported for this PR (as of ") {
 		t.Fatalf("derived CI row = %v", recorded)
 	}
 }
@@ -146,7 +146,7 @@ func TestPipelineCI_withoutRequiredChecksEveryCheckIsTheScopeAndTheRowSaysSo(t *
 		t.Fatalf("ci observation = %v", row)
 	}
 	result, _ := ciRowOfRecord(t, lab)["result"].(string)
-	if !strings.HasPrefix(result, "Passed 2/2 checks (observed ") || !strings.HasSuffix(result, "; GitHub reports no required checks") {
+	if !strings.HasPrefix(result, "Passed 2/2 checks; GitHub reports no required checks (as of ") {
 		t.Fatalf("the row does not say the scope is every check: %q", result)
 	}
 }
@@ -191,6 +191,11 @@ func TestPipelineCI_republishingTheSameObservationIsUnchangedAndEditsNothing(t *
 	}
 	if publishPipeline(t, lab)["outcome"] != "published" {
 		t.Fatal("the first publish of a fresh observation should have edited the body")
+	}
+	second := runPipelineCI(t, lab)
+	publication, _ := second["publication"].(map[string]any)
+	if publication == nil || publication["outcome"] != "unchanged" {
+		t.Fatalf("re-observing the same checks published %v, want unchanged", publication)
 	}
 	before := lab.prBody(t)
 	again := publishPipeline(t, lab)

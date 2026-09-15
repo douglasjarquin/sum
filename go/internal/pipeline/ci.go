@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
@@ -130,17 +131,30 @@ func observeChecks(gh, repoDir string, dest Destination, timeout int, rollup []a
 	body.Set("required_only", requiredOnly)
 	body.Set("checks", checkRows(checks))
 	body.Set("counts", countRows(checks))
-	if reason != "" {
-		body.Set("outcome", outcomeUnavailable)
-		return body, fmt.Sprintf("Could not read the checks: %s (observed %s)", reason, observedStamp(observedAt))
+	outcome, headline := "not-declared", "No checks reported for this PR"
+	switch {
+	case reason != "":
+		outcome, headline = outcomeUnavailable, "Could not read the checks: "+reason
+	case len(checks) > 0:
+		outcome = ciOutcome(checks)
+		headline = ciHeadline(outcome, checks, requiredOnly)
 	}
-	if len(checks) == 0 {
-		body.Set("outcome", "not-declared")
-		return body, fmt.Sprintf("No checks reported for this PR (observed %s)", observedStamp(observedAt))
-	}
-	outcome := ciOutcome(checks)
 	body.Set("outcome", outcome)
-	return body, ciSummary(outcome, checks, requiredOnly, observedAt)
+	body.Set("headline", headline)
+	body.Set("state", stateOf(outcome, checks))
+	return body, fmt.Sprintf("%s (observed %s)", headline, observedStamp(observedAt))
+}
+
+// stateOf fingerprints what the checks said, so a later read that found the same thing is recognisable as the same
+// state. The row's time is when that state was first seen, which keeps an unchanged green from rewriting the PR body.
+func stateOf(outcome string, checks []check) string {
+	parts := make([]string, 0, len(checks)+1)
+	parts = append(parts, outcome)
+	for _, one := range checks {
+		parts = append(parts, one.Name+"="+one.Bucket)
+	}
+	sort.Strings(parts[1:])
+	return strings.Join(parts, " ")
 }
 
 // readChecks prefers the required checks, which is the scope GitHub itself gates a merge on. A repository that marks
@@ -322,7 +336,8 @@ func severityOf(bucket string) int {
 	return severity["fail"]
 }
 
-func ciSummary(outcome string, checks []check, requiredOnly bool, observedAt string) string {
+// ciHeadline is the sentence without any time in it: deriveCI stamps it with the instant the state began.
+func ciHeadline(outcome string, checks []check, requiredOnly bool) string {
 	noun := "checks"
 	suffix := ciNoRequired
 	if requiredOnly {
@@ -333,21 +348,20 @@ func ciSummary(outcome string, checks []check, requiredOnly bool, observedAt str
 	for _, one := range checks {
 		counts[one.Bucket]++
 	}
-	stamp := observedStamp(observedAt)
 	switch outcome {
 	case "pass":
-		return fmt.Sprintf("Passed %d/%d %s (observed %s)%s", counts["pass"], len(checks), noun, stamp, suffix)
+		return fmt.Sprintf("Passed %d/%d %s%s", counts["pass"], len(checks), noun, suffix)
 	case "pending":
-		return fmt.Sprintf("%d pending, %d passed of %d %s (observed %s)%s",
-			counts["pending"], counts["pass"], len(checks), noun, stamp, suffix)
+		return fmt.Sprintf("%d pending, %d passed of %d %s%s",
+			counts["pending"], counts["pass"], len(checks), noun, suffix)
 	default:
 		failing := firstFailing(checks)
 		headline, known := headlines[failing.Bucket]
 		if !known {
 			headline = "Failed on " + failing.State
 		}
-		return fmt.Sprintf("%s: %s; %d of %d %s passed (observed %s)%s",
-			headline, checkLabel(failing), counts["pass"], len(checks), noun, stamp, suffix)
+		return fmt.Sprintf("%s: %s; %d of %d %s passed%s",
+			headline, checkLabel(failing), counts["pass"], len(checks), noun, suffix)
 	}
 }
 
@@ -423,7 +437,7 @@ func deriveCI(task *ordjson.Object) Row {
 	if head == "" {
 		return row
 	}
-	var latest *ordjson.Object
+	var observations []*ordjson.Object
 	for _, record := range records(task) {
 		if stringField(record, "kind") != ciGate || stringField(record, "source") != "coordinator" {
 			continue
@@ -431,11 +445,12 @@ func deriveCI(task *ordjson.Object) Row {
 		if stringField(record, "head_sha") != head {
 			continue
 		}
-		latest = record
+		observations = append(observations, record)
 	}
-	if latest == nil {
+	if len(observations) == 0 {
 		return row
 	}
+	latest := observations[len(observations)-1]
 	status, known := ciOutcomes[stringField(latest, "outcome")]
 	if !known {
 		status = Fail
@@ -443,10 +458,25 @@ func deriveCI(task *ordjson.Object) Row {
 	return Row{
 		Stage:    StageCI,
 		Status:   status,
-		Result:   stringField(latest, "summary"),
-		At:       stringField(latest, "at"),
+		Result:   fmt.Sprintf("%s (as of %s)", stringField(latest, "headline"), observedStamp(stateBegan(observations))),
+		At:       stringField(latest, "observed_at"),
 		Evidence: []string{stringField(latest, "id")},
 	}
+}
+
+// stateBegan is when the newest observation's state was first seen: the oldest consecutive record that said the same
+// thing. An unchanged read therefore renders an identical row, and the republish that follows it edits nothing.
+func stateBegan(observations []*ordjson.Object) string {
+	newest := observations[len(observations)-1]
+	state := stringField(newest, "state")
+	began := stringField(newest, "observed_at")
+	for i := len(observations) - 2; i >= 0; i-- {
+		if stringField(observations[i], "state") != state {
+			break
+		}
+		began = stringField(observations[i], "observed_at")
+	}
+	return began
 }
 
 // republish never fails the observation that was already recorded: a publication failure is its own record.

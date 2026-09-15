@@ -102,7 +102,7 @@ func TestPipelinePublish_writesOneBlockBesideTheEvidenceBlockAndKeepsTheProse(t 
 	if !strings.Contains(body, prProse) {
 		t.Fatalf("PR body lost the human prose:\n%s", body)
 	}
-	for _, want := range []string{"## Pipeline", "| Stage | Status | Result |", "| Intent | ✅ | Approved brief recorded |", "| CI | ➖ | No checks reported for this PR"} {
+	for _, want := range []string{"## Pipeline", "| Stage | Status | Result |", "| Intent | ✅ | Approved brief recorded |", "| CI | ➖ | No checks reported for this PR (as of "} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("PR body is missing %q:\n%s", want, body)
 		}
