@@ -20,9 +20,10 @@ func Derive(task *ordjson.Object) Record {
 	record.Set(deriveReview(task, candidate))
 	record.Set(deriveDocument(task, candidate))
 	record.Set(derivePR(task))
-	for _, stage := range []Stage{StageRebase, StageLint, StagePush, StageCI} {
-		record.Set(Row{Stage: stage, Status: Pending, Result: notInRelease})
-	}
+	record.Set(gateRow(task, StageRebase, rebaseGate, rebaseUnobserved, rebaseOutcomes))
+	record.Set(gateRow(task, StageLint, lintGate, lintUnobserved, lintOutcomes))
+	record.Set(derivePush(task, candidate))
+	record.Set(Row{Stage: StageCI, Status: Pending, Result: notInRelease})
 	return record
 }
 

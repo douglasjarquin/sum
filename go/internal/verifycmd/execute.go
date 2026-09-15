@@ -17,6 +17,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
@@ -109,7 +110,7 @@ func executeRootVerification(s *store.Store, runtimeRoot string, task *ordjson.O
 	defer cancel()
 	cmd = exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = checkout
-	cmd.Env = runnerEnv()
+	cmd.Env = proc.ScrubbedEnv()
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -142,6 +143,13 @@ func executeRootVerification(s *store.Store, runtimeRoot string, task *ordjson.O
 		return nil, "", err
 	}
 	copyVerifyLog(parsed, checkout, filepath.Dir(checkout))
+
+	// The Lint gate runs here, in the checkout root verification already made, before it is removed: one command,
+	// both rows, and the same detached candidate for each.
+	lintBody, lintSummary := pipeline.RunLint(runtimeRoot, checkout, filepath.Dir(checkout))
+	lintBody.Set("summary", lintSummary)
+	parsed.Set("lint", lintBody)
+
 	removeCheckoutArtifacts(parsed, checkout)
 	parsed.Set("root", checkout)
 	parsed.Set("graph", graphSummary)
@@ -202,18 +210,6 @@ func verificationStamp() (string, error) {
 		return "", err
 	}
 	return time.Now().UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(buf), nil
-}
-
-func runnerEnv() []string {
-	var env []string
-	for _, e := range os.Environ() {
-		key, _, _ := strings.Cut(e, "=")
-		if strings.HasPrefix(key, "HERDR_") || key == "SUM_HOME" || key == "SUM_SESSION" || key == "SUM_INSTALL_ROOT" {
-			continue
-		}
-		env = append(env, e)
-	}
-	return env
 }
 
 func anyStrings(values []string) []any {

@@ -53,6 +53,63 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	}
 	pipelineCmd.AddCommand(refreshCmd)
 
+	var rebaseCandidate string
+	rebaseCmd := &cobra.Command{
+		Use:  "rebase TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-rebase")
+			if err != nil {
+				return err
+			}
+			view, err := pipeline.Rebase(st, ctx, pipeline.RebaseArgs{Task: args[0], Candidate: rebaseCandidate})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	rebaseCmd.Flags().StringVar(&rebaseCandidate, "candidate", "", "")
+	pipelineCmd.AddCommand(rebaseCmd)
+
+	var lintCandidate string
+	lintCmd := &cobra.Command{
+		Use:  "lint TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-lint")
+			if err != nil {
+				return err
+			}
+			view, err := pipeline.Lint(st, ctx, o.runtimeRoot, pipeline.LintArgs{Task: args[0], Candidate: lintCandidate})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	lintCmd.Flags().StringVar(&lintCandidate, "candidate", "", "")
+	pipelineCmd.AddCommand(lintCmd)
+
+	var allowBehind bool
+	pushCmd := &cobra.Command{
+		Use:  "push TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-push")
+			if err != nil {
+				return err
+			}
+			view, err := pipeline.Push(st, ctx, pipeline.PushArgs{Task: args[0], AllowBehind: allowBehind})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	pushCmd.Flags().BoolVar(&allowBehind, "allow-behind", false, "")
+	pipelineCmd.AddCommand(pushCmd)
+
 	var candidate string
 	documentCmd := &cobra.Command{
 		Use:  "document TASK",

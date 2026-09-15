@@ -66,6 +66,7 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 	body := ordjson.NewObject()
 	body.Set("result", args.Result)
 	body.Set("text", text)
+	var lintBody *ordjson.Object
 	if args.Execute {
 		record, kept, execErr := executeRootVerification(s, args.RuntimeRoot, task, args.Candidate, args.Base, ctx)
 		if execErr != nil {
@@ -81,6 +82,9 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 		}
 		if graph, ok := record.Get("graph"); ok {
 			body.Set("graph", graph)
+		}
+		if lint, ok := record.Get("lint"); ok {
+			lintBody, _ = lint.(*ordjson.Object)
 		}
 	} else if args.Run != "" {
 		record, readErr := readRunRecord(args.Run)
@@ -134,6 +138,11 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 		return nil, err
 	}
 	record.Set("brief_revision", evidence.ActiveRevision(s, task))
+	if lintBody != nil {
+		if _, lintErr := evidence.Append(task, "lint", "coordinator", lintBody, args.Candidate, ctx); lintErr != nil {
+			return nil, lintErr
+		}
+	}
 	if err := s.SaveTask(task); err != nil {
 		return nil, err
 	}
