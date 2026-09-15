@@ -242,8 +242,19 @@ func (s *Store) AllTasks() ([]*ordjson.Object, error) {
 	return tasks, nil
 }
 
+// NowTime is the one clock every sum process reads. SUM_NOW, an RFC 3339 stamp, pins it so that two processes
+// whose output is compared observe the same instant; a value that does not parse is ignored.
+func NowTime() time.Time {
+	if pinned := os.Getenv("SUM_NOW"); pinned != "" {
+		if parsed, err := time.Parse(time.RFC3339, pinned); err == nil {
+			return parsed
+		}
+	}
+	return time.Now()
+}
+
 func Now() string {
-	return time.Now().UTC().Format("2006-01-02T15:04:05+00:00")
+	return NowTime().UTC().Format("2006-01-02T15:04:05+00:00")
 }
 
 type Endpoint struct {
