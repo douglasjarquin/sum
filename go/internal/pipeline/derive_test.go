@@ -183,6 +183,34 @@ func TestDerive_mergedAndClosedPRRows(t *testing.T) {
 	}
 }
 
+func TestDerive_aRefusedPRStageBlocksTheRowUntilTheCoordinatorDecides(t *testing.T) {
+	refused := `{"schema": 1, "id": "t-a", "brief": "b", "report": {"candidate": "` + candidateSHA + `"},
+"evidence": [{"schema": 1, "id": "e-1", "kind": "pr", "source": "coordinator", "at": "2026-01-01T00:00:00+00:00",
+"candidate": "` + candidateSHA + `", "action": "refused", "summary": "Refused: sum/t-a already has #4 (closed)"}]}`
+
+	row := Derive(taskFrom(t, refused)).Get(StagePR)
+
+	if row.Status != Blocked || row.Result != "Refused: sum/t-a already has #4 (closed)" {
+		t.Fatalf("pr row = %+v, want blocked with the refusal", row)
+	}
+	if len(row.Evidence) != 1 || row.Evidence[0] != "e-1" {
+		t.Fatalf("pr row evidence = %v, want the refusal record", row.Evidence)
+	}
+}
+
+// A create that failed left no PR and no decision for the user, so the row stays the pending work it is.
+func TestDerive_aFailedPRStageLeavesTheRowPending(t *testing.T) {
+	failed := `{"schema": 1, "id": "t-a", "brief": "b", "report": {"candidate": "` + candidateSHA + `"},
+"evidence": [{"schema": 1, "id": "e-1", "kind": "pr", "source": "coordinator", "at": "2026-01-01T00:00:00+00:00",
+"candidate": "` + candidateSHA + `", "action": "failed", "summary": "Failed to open the PR: gh said no"}]}`
+
+	row := Derive(taskFrom(t, failed)).Get(StagePR)
+
+	if row.Status != Pending || row.Result != "No PR reconciled for this task" {
+		t.Fatalf("pr row = %+v, want it still pending", row)
+	}
+}
+
 func TestTable_foldsLineBreaksAndEscapesPipes(t *testing.T) {
 	record := New("t-a", "")
 	record.Set(Row{Stage: StageIntent, Status: Pass, Result: "one | two\nthree"})

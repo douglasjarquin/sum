@@ -217,8 +217,7 @@ func derivePR(task *ordjson.Object) Row {
 	pr, _ := field(task, "pr").(*ordjson.Object)
 	identity, _ := field(pr, "identity").(*ordjson.Object)
 	if identity == nil {
-		row.Result = "No PR reconciled for this task"
-		return row
+		return unreconciledPR(task, row)
 	}
 	row.At = stringField(pr, "observed_at")
 	findings, _ := field(pr, "findings").([]any)
@@ -240,6 +239,21 @@ func derivePR(task *ordjson.Object) Row {
 	default:
 		row.Result = "PR state is not recorded"
 	}
+	return row
+}
+
+// unreconciledPR reads the PR stage's own record. A refusal is the one thing a coordinator must act on before this
+// gate can move, so it blocks the row with its reason instead of reading as work nobody has started.
+func unreconciledPR(task *ordjson.Object, row Row) Row {
+	row.Result = "No PR reconciled for this task"
+	latest := latestFor(task, prGate, "coordinator", Candidate(task))
+	if stringField(latest, "action") != prRefused {
+		return row
+	}
+	row.Status = Blocked
+	row.Result = stringField(latest, "summary")
+	row.At = stringField(latest, "at")
+	row.Evidence = []string{stringField(latest, "id")}
 	return row
 }
 
