@@ -34,6 +34,8 @@ This page distinguishes conceptual inspiration, direct dependency, adapted code,
 
 **[Cursor pstack skills](https://github.com/cursor/plugins/tree/main/pstack/skills)**, in particular [create-verification-skill](https://github.com/cursor/plugins/blob/main/pstack/skills/create-verification-skill/SKILL.md) and [maintain-verification-skill](https://github.com/cursor/plugins/blob/main/pstack/skills/maintain-verification-skill/SKILL.md), shaped how sum creates and maintains project verification contracts and feature maps, and how it selects useful upstream skills at all. Individual imported-source attribution is added here as specific skill imports actually land.
 
+The shared engineering principles reference is authored for sum and builds on these existing Sum verification and delivery contracts rather than copying an external policy document.
+
 **[before-and-after](https://github.com/vercel-labs/before-and-after)** shaped how sum presents and publishes before/after media in a pull request — the presentation and publication step, distinct from the capture itself. Any adapted material keeps its original notices.
 
 ## Code exploration

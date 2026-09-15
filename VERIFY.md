@@ -2,7 +2,8 @@
 
 This file is the single repository-local verification convention for sum.
 It works in an ordinary clone with Git, mise, and Python 3.11 or newer; no sum installation, Herdr session, or absolute path outside this checkout is required.
-The portable procedure and the runner that records evidence live in `.agents/skills/verify/` (alias `.claude/skills/verify`); `.agents/skills/evidence/` captures before/after proof of one scenario from the base and candidate builds; `.agents/skills/create-verification/` scaffolds this convention in another repository and `.agents/skills/maintain-verification/` audits it after a change.
+The portable procedure and the runner that records evidence live in `.agents/skills/verify/` (alias `.claude/skills/verify`); its shared engineering rubric is `.agents/skills/verify/references/engineering-principles.md`.
+`.agents/skills/evidence/` captures before/after proof of one scenario from the base and candidate builds; `.agents/skills/create-verification/` scaffolds this convention in another repository and `.agents/skills/maintain-verification/` audits it after a change.
 A harness without skill discovery follows this file directly.
 
 ```verify

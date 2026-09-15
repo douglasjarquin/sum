@@ -9,6 +9,9 @@ Your pane was registered as this task's worker at dispatch. If you run `./bin/su
 A sum checkout you are editing is not an installation: do not create `.sum` state there or run setup for it.
 
 Read relevant repository instructions and code. Establish the current behavior before changing it. Keep changes inside the approved scope and your checkout.
+Before changing files, read the shared engineering rubric at `.agents/skills/verify/references/engineering-principles.md` when the target carries it.
+If the target does not carry that reference, record the missing rubric as an onboarding gap rather than inventing project architecture, dependencies, examples or commands.
+During repository discovery, identify the nearest owner README, one canonical example for the change and the intended verification command; these are project facts, not Sum defaults.
 Do not edit other tasks, the primary clone, sum's operating files, credentials, or unrelated panes.
 Do not install or elevate privileges without the user's explicit authorization.
 
