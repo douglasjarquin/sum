@@ -135,7 +135,7 @@ Read this entire file. Do not load the coordinator's AGENTS.md as your role.
 
 ## Verification contract
 
-- Not recorded for this task (dispatched before sum recorded contracts). Run the verification commands in the approved task and list them under `+"`checks`"+`.
+%s
 
 ## Code graph
 
@@ -191,7 +191,7 @@ A report is a claim for the coordinator to verify, NOT proof of successful compl
 ## Worker procedure
 
 %s
-`, id, brief, repo, worktree, base, branch, kind, harness, graphSection, delivered, revision, contract.SumVersion, skillHash, ask, show, contextCmd, resolve, report, WorkerSkill(runtimeRoot))
+`, id, brief, repo, worktree, base, branch, kind, harness, verificationContractText(task), graphSection, delivered, revision, contract.SumVersion, skillHash, ask, show, contextCmd, resolve, report, WorkerSkill(runtimeRoot))
 }
 
 func WriteInitial(s *store.Store, runtimeRoot, sumctlPath string, task *ordjson.Object) (string, error) {
