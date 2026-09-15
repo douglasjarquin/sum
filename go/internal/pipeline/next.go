@@ -24,6 +24,17 @@ func settled(status Status) bool {
 	return status == Pass || status == Skipped || status == NotDeclared
 }
 
+// FirstUnsettled names the gate a task is actually waiting on, as `<stage>-<status>`, or "" when every gate is
+// settled. It is the one-token form of Next, for a display that has room for a label and not a sentence.
+func FirstUnsettled(record Record) string {
+	for i, definition := range Stages {
+		if row := record.Rows[i]; !settled(row.Status) {
+			return string(definition.Stage) + "-" + string(row.Status)
+		}
+	}
+	return ""
+}
+
 func Next(record Record) string {
 	for i, definition := range Stages {
 		row := record.Rows[i]

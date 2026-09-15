@@ -98,6 +98,9 @@ func TestDerive_everyGateThatRanRendersTheExpectedTable(t *testing.T) {
 	if got := Next(record); got != "CI is pending: Not observed; `pr reconcile` or `pipeline ci` reads the checks. Do: run `sumctl pipeline ci TASK_ID` to read the checks again; sum observes them, it never watches them." {
 		t.Fatalf("next = %q, want the CI gate", got)
 	}
+	if got := FirstUnsettled(record); got != "ci-pending" {
+		t.Fatalf("first unsettled = %q, want ci-pending", got)
+	}
 }
 
 func TestDerive_gatesThatHaveNotRunSayWhichCommandObservesThem(t *testing.T) {
