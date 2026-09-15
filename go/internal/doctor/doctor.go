@@ -75,6 +75,8 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 
 	rows = append(rows, runtimeRevisionCheck(runtimeRoot, installRoot))
 
+	rows = append(rows, clockPinCheck())
+
 	role := ordjson.NewObject()
 	role.Set("tool", "role")
 	role.Set("ok", true)
@@ -194,6 +196,28 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 	result.Set("ok", allOK)
 	result.Set("note", "Observation only: nothing was bound or written. No auth changes or permission bypasses. Authenticate the chosen harness and gh separately.")
 	return result
+}
+
+func clockPinCheck() *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("tool", "clock")
+	raw := os.Getenv(store.ClockPinEnv)
+	pinned, inEffect := store.ClockPin()
+	switch {
+	case raw == "":
+		row.Set("ok", true)
+		row.Set("pinned_at", nil)
+		row.Set("detail", "reading the real clock")
+	case inEffect:
+		row.Set("ok", false)
+		row.Set("pinned_at", pinned.UTC().Format(time.RFC3339))
+		row.Set("detail", store.ClockPinEnv+" pins this pane's clock to "+raw+", so every stamp sum records here freezes at that instant. It is a test-only pin; unset it in a live shell.")
+	default:
+		row.Set("ok", false)
+		row.Set("pinned_at", nil)
+		row.Set("detail", store.ClockPinEnv+" is set to "+raw+", which is not an RFC 3339 stamp, so it is ignored and the real clock is read. It is a test-only pin; unset it in a live shell.")
+	}
+	return row
 }
 
 func ghAttachCheck(runtimeRoot string) *ordjson.Object {

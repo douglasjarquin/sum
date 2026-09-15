@@ -167,7 +167,7 @@ func pendingSummary(s *store.Store) (*ordjson.Object, error) {
 	if oldest != "" {
 		oldestValue = oldest
 		if parsed, parseErr := time.Parse(time.RFC3339, oldest); parseErr == nil {
-			secs := int(time.Since(parsed).Seconds())
+			secs := int(store.NowTime().Sub(parsed).Seconds())
 			if secs < 0 {
 				secs = 0
 			}

@@ -51,6 +51,9 @@ func TestHookStatus_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 		t.Setenv(v, "")
 		os.Unsetenv(v)
 	}
+	// Pending ages are elapsed seconds, so this process and the reference subprocess must read one instant or
+	// they disagree by one whenever a second boundary falls between their two clock reads.
+	t.Setenv("SUM_NOW", "2026-01-02T00:00:00Z")
 
 	t.Run("no health.json", func(t *testing.T) {
 		home := t.TempDir()
@@ -66,7 +69,10 @@ func TestHookStatus_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",
 "questions": [{"id": "q1", "status": "open", "created_at": "2026-01-01T00:00:00+00:00", "text": "which way?"}],
 "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task"}`, baseSha))
-		assertHookMatches(t, reference, home, []string{"hook", "status"})
+		out := assertHookMatches(t, reference, home, []string{"hook", "status"})
+		if !strings.Contains(out, "oldest_age_s: 86400\n") {
+			t.Fatalf("pinned SUM_NOW should make the obligation exactly one day old, got\n%s", out)
+		}
 	})
 
 	t.Run("enabled with plugin_id but no instance identity yet", func(t *testing.T) {
@@ -93,7 +99,7 @@ func TestHookStatus_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 	})
 }
 
-func assertHookMatches(t *testing.T, reference, home string, args []string) {
+func assertHookMatches(t *testing.T, reference, home string, args []string) string {
 	t.Helper()
 	fullArgs := append([]string{"--home", home}, args...)
 	want, err := exec.Command(reference, fullArgs...).Output()
@@ -109,6 +115,7 @@ func assertHookMatches(t *testing.T, reference, home string, args []string) {
 	if stdout.String() != string(want) {
 		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
 	}
+	return stdout.String()
 }
 
 func assertHookFailureMatches(t *testing.T, reference, home string, args []string) {

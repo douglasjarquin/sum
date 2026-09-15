@@ -63,7 +63,7 @@ func herdrEnv(t *testing.T, home string) {
 
 func clearHerdrEnv(t *testing.T) {
 	t.Helper()
-	for _, v := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", "SUM_SESSION"} {
+	for _, v := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", "SUM_SESSION", "SUM_NOW"} {
 		t.Setenv(v, "")
 		os.Unsetenv(v)
 	}
