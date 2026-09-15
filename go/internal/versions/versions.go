@@ -645,8 +645,10 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 		}
 		sumVersionValue, _ := report.Get("sum_version")
 		ev.Set("sum_version", sumVersionValue)
-		ev.Set("verification_policy_changed_since", verificationChanged)
-		ev.Set("note", "Evidence is bound to the candidate and the brief revision it was produced under. A later verification-affecting revision means the evidence needs refresh review, not automatic rejection or approval.")
+		contractMoved := contractChanged(task)
+		ev.Set("contract_changed_since_dispatch", contractMoved)
+		ev.Set("verification_policy_changed_since", verificationChanged || contractMoved)
+		ev.Set("note", "Evidence is bound to the candidate and the brief revision it was produced under. A later verification-affecting revision, or a VERIFY.md that no longer hashes to what dispatch recorded, means the evidence needs refresh review, not automatic rejection or approval.")
 		evidence = ev
 	}
 
@@ -659,4 +661,36 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 	result.Set("report_evidence", evidence)
 	result.Set("note", "Revisions are staged files; the worker keeps reading its current brief until a refresh is explicitly requested and adopted.")
 	return result, nil
+}
+
+// contractChanged compares the VERIFY.md hash the worker's own run saw against the one dispatch
+// recorded. A candidate that edited the gate certifying it is evidence to review, never to accept.
+func contractChanged(task *ordjson.Object) bool {
+	policyValue, _ := task.Get("verification_policy")
+	policy, _ := policyValue.(*ordjson.Object)
+	if policy == nil {
+		return false
+	}
+	dispatchedValue, _ := policy.Get("contract_sha256")
+	dispatched, _ := dispatchedValue.(string)
+	if dispatched == "" {
+		return false
+	}
+	evidenceValue, _ := task.Get("evidence")
+	records, _ := evidenceValue.([]any)
+	for _, raw := range records {
+		record, _ := raw.(*ordjson.Object)
+		if record == nil {
+			continue
+		}
+		kindValue, _ := record.Get("kind")
+		if kind, _ := kindValue.(string); kind != "verification" {
+			continue
+		}
+		ranValue, _ := record.Get("contract_sha256")
+		if ran, _ := ranValue.(string); ran != "" && ran != dispatched {
+			return true
+		}
+	}
+	return false
 }
