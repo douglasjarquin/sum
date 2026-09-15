@@ -13,6 +13,9 @@ Its `environment.dev` block is the task-local environment record: the repository
 ## Verify
 
 Confirm the checkout, branch, candidate SHA, and actual diff. Confirm the reported verification commands and evidence.
+Apply the shared engineering rubric at `.agents/skills/verify/references/engineering-principles.md` when the target carries it.
+Name concrete affected files and invariants, and separate blocking correctness or ownership defects from advisory suggestions.
+The target repository's nearest owner README, canonical example and executable verification command remain authoritative; this rubric adds review procedure, not application architecture.
 The delivery order is fixed. The worker agent ran verification, you run it again yourself, you own the independent review, and the user decides the merge. The second run is intentional, never duplicate work to skip; the worker's run (`evidence_view.verification.worker_run`, source `worker`) is a claim you check against, never your result.
 When the task was dispatched into a standardized checkout (`verification_policy.status: standardized`, also `env show`/`env discover` `verification_contract`), execute the contract under your own run id against the exact candidate: `sumctl verify TASK_ID --candidate SHA --execute` creates a separate detached checkout of that SHA beside the task record, runs `.agents/skills/verify/scripts/verify_run.py --base <task base>` there, keeps `run.json` and `verify.log` under `.sum/tasks/TASK_ID/verification/`, removes the checkout, and records the run; the worker's checkout is never written to and its `.artifacts/` are never read as the result. When you ran the runner yourself instead (in the worker's checkout only while it is stopped, or in a checkout of your own), attach that record with `sumctl verify TASK_ID --candidate SHA --run path/to/run.json`. A run id already on the task is refused; a record for another SHA is refused; a `--check` record is not a run; a dirty-tree run is `inconclusive`.
 Read the record for `outcome`, `certifies`, `not_exercised`, and `requires_root_review`: a candidate that changed `VERIFY.md`, `mise.toml`, `mise-tasks/`, the feature maps, or the verify skill cannot certify itself, and closure then also needs findings recorded with `review --policy-reviewed` after you read those files line by line. A `not-yet-standardized` project keeps its existing commands and the prose record (`--result ... --text ...`). Both forms stay the same public `sumctl verify` command.
@@ -47,6 +50,10 @@ A coordinator verification run that fails parks the task with that evidence (`cl
 `evidence_view.verification` summarizes the current candidate: the worker run, your run, whether their run ids differ, and the review status (`performed` or `not-performed`, with the tool and `policy_reviewed`). Tasks dispatched before the contract was recorded keep the earlier prerequisites; nothing is regenerated or rerun because sum was upgraded.
 
 Repository test scripts execute candidate-controlled code. Keep normal sandbox/credential protections. This MVP does not provide a credential-isolated verification runner; use trusted projects and their existing CI/dev container.
+
+Sum is the normal publication owner for Sum-managed tasks.
+A configured Made executor may contribute one attributable review or verification result through its supported bounded route, but it does not rebase, repair, push, open a PR or watch CI for the same task.
+The native Sum pipeline remains the only publication path, and Made is optional rather than a mandatory project dependency.
 
 ## Publish a PR
 

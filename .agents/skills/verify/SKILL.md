@@ -7,6 +7,7 @@ description: Verify a repository through its project-root VERIFY.md contract - r
 This skill is portable: everything it needs lives inside the repository you are verifying.
 It does not require sum, Herdr, a `.sum` directory, or any absolute path outside this checkout.
 If your harness has no skill discovery, read `VERIFY.md` at the project root and follow it directly; this file only adds procedure.
+Use `.agents/skills/verify/references/engineering-principles.md` as the shared review rubric when the project carries it; it adds procedure and does not replace project-owned architecture or checks.
 
 ## Procedure
 

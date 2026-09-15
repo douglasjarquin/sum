@@ -139,3 +139,58 @@ func TestCheckRefusesLeftoverAlias(t *testing.T) {
 		t.Fatal("skills check ok = true, want false when a leftover alias exists")
 	}
 }
+
+func TestCheckRefusesMissingEngineeringPrinciplesReference(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range sumSkillNames {
+		path := filepath.Join(root, "skills", name)
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + name + "\n---\n"
+		if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, route := range []string{".agents/skills", ".claude/skills"} {
+		if err := os.MkdirAll(filepath.Join(root, route), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range sumSkillNames {
+			if err := os.Symlink("../../skills/"+name, filepath.Join(root, route, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, name := range portableSkillNames {
+		path := filepath.Join(root, ".agents/skills", name)
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + name + "\n---\n"
+		if err := os.WriteFile(filepath.Join(path, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../../.agents/skills/"+name, filepath.Join(root, ".claude/skills", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	view, err := Check(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := view.Get("ok"); ok == true {
+		t.Fatal("skills check ok = true, want false when the engineering principles reference is missing")
+	}
+	found := false
+	for _, msg := range errorStrings(view) {
+		if strings.Contains(msg, "engineering-principles.md") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("errors = %v, want missing engineering-principles.md", errorStrings(view))
+	}
+}
