@@ -44,7 +44,7 @@ func newPublishLab(t *testing.T, ghState map[string]any) publishLab {
 	if _, err := runCLI(t, lab.home, "init"); err != nil {
 		t.Fatalf("coordinator init: %v", err)
 	}
-	comparison := writeEvidenceRun(t, filepath.Join(lab.worktree, "evidence"))
+	comparison := writeEvidenceRun(t, filepath.Join(lab.worktree, "evidence"), evidenceBase, evidenceCandidate)
 	writeTaskFixture(t, lab.home, lab.taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "reported", "repository": %q, "worktree": %q,
 "questions": [], "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "ship", "branch": "sum/t-aaaaaaaaaaaa",
 "report": {"text": "done", "candidate": %q},
@@ -152,14 +152,14 @@ func (lab publishLab) pipelinePublications(t *testing.T) []map[string]any {
 	return rows
 }
 
-func writeEvidenceRun(t *testing.T, root string) string {
+func writeEvidenceRun(t *testing.T, root, base, candidate string) string {
 	t.Helper()
 	scenarioDir := filepath.Join(root, evidenceRun, evidenceScenario)
-	before := writeCapture(t, scenarioDir, "before", evidenceBase, "fail", color.RGBA{220, 40, 40, 255}, 40, 60)
-	after := writeCapture(t, scenarioDir, "after", evidenceCandidate, "pass", color.RGBA{40, 80, 220, 255}, 80, 60)
+	before := writeCapture(t, scenarioDir, "before", base, "fail", color.RGBA{220, 40, 40, 255}, 40, 60)
+	after := writeCapture(t, scenarioDir, "after", candidate, "pass", color.RGBA{40, 80, 220, 255}, 80, 60)
 	comparison := map[string]any{
 		"schema": 1, "run": evidenceRun, "scenario": evidenceScenario,
-		"base": map[string]any{"sha": evidenceBase}, "candidate": map[string]any{"sha": evidenceCandidate},
+		"base": map[string]any{"sha": base}, "candidate": map[string]any{"sha": candidate},
 		"before": before, "after": after, "findings": []any{}, "verdict": "red-green",
 		"label": "the base fails the user path and the candidate passes it", "kind": "bugfix",
 		"visual_proof": "captured", "proves_claim": true,

@@ -5,6 +5,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/pipelinepr"
 	"github.com/douglasjarquin/sum/go/internal/pipelinerun"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -111,7 +112,8 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	pushCmd.Flags().BoolVar(&allowBehind, "allow-behind", false, "")
 	pipelineCmd.AddCommand(pushCmd)
 
-	var rerun, runAllowBehind bool
+	var rerun, runAllowBehind, noPR, runDraft, runAllowNewAfterClosed bool
+	var runTitle, runBodyFile string
 	runCmd := &cobra.Command{
 		Use:  "run TASK",
 		Args: cobra.ExactArgs(1),
@@ -122,6 +124,8 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 			}
 			view, err := pipelinerun.Run(st, ctx, pipelinerun.Args{
 				Task: args[0], Rerun: rerun, AllowBehind: runAllowBehind, RuntimeRoot: o.runtimeRoot,
+				NoPR: noPR, Draft: runDraft, Title: runTitle, BodyFile: runBodyFile,
+				AllowNewAfterClosed: runAllowNewAfterClosed,
 			})
 			if err != nil {
 				return err
@@ -131,7 +135,39 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	}
 	runCmd.Flags().BoolVar(&rerun, "rerun", false, "")
 	runCmd.Flags().BoolVar(&runAllowBehind, "allow-behind", false, "")
+	runCmd.Flags().BoolVar(&noPR, "no-pr", false, "")
+	runCmd.Flags().BoolVar(&runDraft, "draft", false, "")
+	runCmd.Flags().StringVar(&runTitle, "title", "", "")
+	runCmd.Flags().StringVar(&runBodyFile, "body-file", "", "")
+	runCmd.Flags().BoolVar(&runAllowNewAfterClosed, "allow-new-after-closed", false, "")
 	pipelineCmd.AddCommand(runCmd)
+
+	var prDraft, prDryRun, prAllowNewAfterClosed bool
+	var prTitle, prBodyFile string
+	prCmd := &cobra.Command{
+		Use:  "pr TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-pr")
+			if err != nil {
+				return err
+			}
+			view, err := pipelinepr.Run(st, ctx, o.runtimeRoot, pipeline.PRArgs{
+				Task: args[0], Draft: prDraft, Title: prTitle, BodyFile: prBodyFile,
+				DryRun: prDryRun, AllowNewAfterClosed: prAllowNewAfterClosed,
+			})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	prCmd.Flags().BoolVar(&prDraft, "draft", false, "")
+	prCmd.Flags().StringVar(&prTitle, "title", "", "")
+	prCmd.Flags().StringVar(&prBodyFile, "body-file", "", "")
+	prCmd.Flags().BoolVar(&prDryRun, "dry-run", false, "")
+	prCmd.Flags().BoolVar(&prAllowNewAfterClosed, "allow-new-after-closed", false, "")
+	pipelineCmd.AddCommand(prCmd)
 
 	var candidate string
 	documentCmd := &cobra.Command{

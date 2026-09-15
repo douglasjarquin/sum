@@ -15,7 +15,7 @@ var advice = map[Stage]string{
 	StageDocument: "run `sumctl pipeline document TASK_ID`",
 	StageLint:     "run `sumctl pipeline lint TASK_ID`",
 	StagePush:     "run `sumctl pipeline push TASK_ID`",
-	StagePR:       "open the PR with `gh pr create`, then `sumctl pr reconcile TASK_ID --number N`",
+	StagePR:       "run `sumctl pipeline pr TASK_ID`, which opens the PR (or adopts the one already there) and reconciles it",
 	StageCI:       "run `sumctl pipeline ci TASK_ID` to read the checks again; sum observes them, it never watches them",
 }
 

@@ -46,12 +46,12 @@ func Rebase(s *store.Store, ctx *ordjson.Object, args RebaseArgs) (*ordjson.Obje
 	if err != nil {
 		return nil, err
 	}
-	body, summary := observeRebase(repo, dir, candidate, baseBranch(repo, task))
+	body, summary := observeRebase(repo, dir, candidate, BaseBranch(repo, task))
 	return recordGate(s, ctx, args.Task, rebaseGate, candidate, body, summary)
 }
 
-// The reconciled PR is the base the change is actually going to; only without one does the repository's default apply.
-func baseBranch(repo string, task *ordjson.Object) string {
+// BaseBranch is the base the change is actually going to: the reconciled PR's, and only without one the repository's default.
+func BaseBranch(repo string, task *ordjson.Object) string {
 	pr, _ := field(task, "pr").(*ordjson.Object)
 	identity, _ := field(pr, "identity").(*ordjson.Object)
 	if base := stringField(identity, "base_branch"); base != "" {

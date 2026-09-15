@@ -44,14 +44,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	repo := asString(task, "repository")
 	remote := args.Repo
 	if remote == "" {
-		view := exec.Command(gh, "repo", "view", "--json", "nameWithOwner")
-		view.Dir = repo
-		if out, viewErr := view.Output(); viewErr == nil {
-			var payload map[string]any
-			if json.Unmarshal(out, &payload) == nil {
-				remote, _ = payload["nameWithOwner"].(string)
-			}
-		}
+		remote = pipeline.RemoteRepository(gh, repo)
 	}
 	cmd := exec.Command(gh, "pr", "view", fmt.Sprint(args.Number), "--json", "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,statusCheckRollup")
 	if remote != "" {
