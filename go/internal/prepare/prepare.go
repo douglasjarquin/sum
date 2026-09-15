@@ -24,6 +24,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
+	"github.com/douglasjarquin/sum/go/internal/verifycontract"
 )
 
 const MaxText = 256 * 1024
@@ -240,6 +241,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if actualRoot == repo || actualRoot != worktreePath || actualHead != baseSHA || actualBranch != branch {
 		return failPrepare(s, tid, fmt.Errorf("Herdr returned a checkout that does not match the task. Work is preserved; inspect it manually."))
 	}
+	task.Set("verification_policy", verifycontract.PolicyAtDispatch(worktreePath, baseSHA, environment.VerificationContractStatus(worktreePath)))
 	record := graph.InitCheckout(s, args.RuntimeRoot, worktreePath, "task", nil)
 	if err := graph.WriteTaskGraph(s, task, record); err != nil {
 		return failPrepare(s, tid, err)

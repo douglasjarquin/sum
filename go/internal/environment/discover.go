@@ -792,6 +792,13 @@ func miseTaskOrigins(worktree string) *ordjson.Object {
 	return result
 }
 
+// VerificationContractStatus runs `mise tasks ls` and reports whether the checkout carries the
+// portable contract. `standardized` needs VERIFY.md at the root and a `verify` task mise resolves
+// from inside the checkout; a task inherited from a parent directory is another project's command.
+func VerificationContractStatus(worktree string) *ordjson.Object {
+	return verificationContractStatus(worktree, miseTaskOrigins(worktree))
+}
+
 func verificationContractStatus(worktree string, origins *ordjson.Object) *ordjson.Object {
 	present := false
 	if info, err := os.Stat(filepath.Join(worktree, "VERIFY.md")); err == nil && info.Mode().IsRegular() {
