@@ -19,6 +19,7 @@ type gateLab struct {
 	source    string
 	clone     string
 	candidate string
+	ghRoot    string
 }
 
 func newGateLab(t *testing.T) gateLab {
