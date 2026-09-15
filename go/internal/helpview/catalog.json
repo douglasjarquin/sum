@@ -703,6 +703,10 @@
       {
         "name": "--file",
         "help": null
+      },
+      {
+        "name": "--accept-missing-evidence",
+        "help": "Record the user's decision to deliver without the before/after evidence a feature map requires; the waiver is stamped with your endpoint"
       }
     ],
     "subcommands": null,
@@ -727,10 +731,10 @@
     "subcommands": {
       "show": "Print the recorded gates and the table; writes nothing",
       "refresh": "Coordinator only: re-derive every gate from the task record",
-      "run": "Coordinator only: run the gates this pane owns in order (rebase, test, lint, document, push, PR) and stop at the first failure; --no-pr stops after push",
+      "run": "Coordinator only: run the gates this pane owns in order (rebase, test, lint, document, push, PR) and stop at the first failure or a blocked Test; --no-pr stops after push",
       "rebase": "Coordinator only: observe the candidate against its base branch in a throwaway worktree; never rewrites the branch",
       "lint": "Coordinator only: run the lint task the project itself declares against the candidate; a project that declares none is not-declared",
-      "push": "Coordinator only: fast-forward push the recorded branch to origin once the worker has reported and Rebase passes; never forces",
+      "push": "Coordinator only: fast-forward push the recorded branch to origin once the worker has reported, Rebase passes, and no required before/after evidence is missing; never forces",
       "pr": "Coordinator only: open the PR for the pushed candidate, or adopt the one GitHub already has for that branch, then reconcile it; a branch with only closed PRs is refused",
       "document": "Coordinator only: audit the candidate's VERIFY.md and feature maps in a throwaway checkout and record the result",
       "ci": "Coordinator only: read the checks GitHub reports on the reconciled PR and record what they said; observed at this instant, never watched, and republished unless --no-publish",
