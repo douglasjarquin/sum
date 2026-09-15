@@ -242,13 +242,25 @@ func (s *Store) AllTasks() ([]*ordjson.Object, error) {
 	return tasks, nil
 }
 
-// NowTime is the one clock every sum process reads. SUM_NOW, an RFC 3339 stamp, pins it so that two processes
-// whose output is compared observe the same instant; a value that does not parse is ignored.
-func NowTime() time.Time {
-	if pinned := os.Getenv("SUM_NOW"); pinned != "" {
-		if parsed, err := time.Parse(time.RFC3339, pinned); err == nil {
-			return parsed
+// ClockPinEnv names the test-only variable that pins the clock. It is never exported in a live shell.
+const ClockPinEnv = "SUM_NOW"
+
+// ClockPin reports the instant the clock is pinned to. It is not in effect unless ClockPinEnv holds an
+// RFC 3339 stamp, so a value that does not parse leaves the real clock in place.
+func ClockPin() (time.Time, bool) {
+	if raw := os.Getenv(ClockPinEnv); raw != "" {
+		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+			return parsed, true
 		}
+	}
+	return time.Time{}, false
+}
+
+// NowTime is the one clock every sum process reads, so that two processes whose output is compared can be
+// pinned to the same instant instead of racing a second boundary.
+func NowTime() time.Time {
+	if pinned, ok := ClockPin(); ok {
+		return pinned
 	}
 	return time.Now()
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -134,5 +135,43 @@ func TestRuntimeRevision_nonGitInstallationCannotDriftAndStaysOK(t *testing.T) {
 	row := runtimeRevisionCheck(runtime, t.TempDir())
 	if ok, _ := row.Get("ok"); ok != true {
 		t.Fatalf("ok = %v, want true when the installation is not a Git checkout", ok)
+	}
+}
+
+func TestClockPin_absentWithoutTheVariable(t *testing.T) {
+	t.Setenv("SUM_NOW", "")
+	os.Unsetenv("SUM_NOW")
+	row := clockPinCheck()
+	if ok, _ := row.Get("ok"); ok != true {
+		t.Fatalf("ok = %v, want true when the clock is not pinned", ok)
+	}
+	if at, _ := row.Get("pinned_at"); at != nil {
+		t.Fatalf("pinned_at = %v, want nil when the clock is not pinned", at)
+	}
+}
+
+func TestClockPin_warnsAndNamesThePinnedInstant(t *testing.T) {
+	t.Setenv("SUM_NOW", "2026-01-02T00:00:00Z")
+	row := clockPinCheck()
+	if ok, _ := row.Get("ok"); ok != false {
+		t.Fatalf("ok = %v, want false while the clock is pinned", ok)
+	}
+	if at, _ := row.Get("pinned_at"); at != "2026-01-02T00:00:00Z" {
+		t.Fatalf("pinned_at = %v, want the pinned instant", at)
+	}
+	detail, _ := row.Get("detail")
+	if text, _ := detail.(string); !strings.Contains(text, "2026-01-02T00:00:00Z") {
+		t.Fatalf("detail = %q, want it to name the pinned instant", text)
+	}
+}
+
+func TestClockPin_warnsThatAnUnparseablePinIsIgnored(t *testing.T) {
+	t.Setenv("SUM_NOW", "yesterday")
+	row := clockPinCheck()
+	if ok, _ := row.Get("ok"); ok != false {
+		t.Fatalf("ok = %v, want false whenever the variable is set at all", ok)
+	}
+	if at, _ := row.Get("pinned_at"); at != nil {
+		t.Fatalf("pinned_at = %v, want nil because an unparseable value never takes effect", at)
 	}
 }

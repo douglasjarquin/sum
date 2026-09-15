@@ -30,7 +30,8 @@ Move all edits, builds, and tests into that path. Run `./bin/sumctl init` there;
 - Do not share a writable `.deps` or `.local` tree with the installation. mise's read-only tool installs are fine to reuse.
 - Setup never rewrites an existing `.local/bin/herdr-mesh` or retargets a tool link, so a changed Mesh binary is tested by staging a release from a commit of your checkout (`./bin/sumctl release stage --ref <sha>` run with the installation's helper) or by moving the checkout's own `.local/bin/herdr-mesh` aside yourself before re-running setup there.
 - The candidate `bin/sumctl` refuses every write aimed at the installation's state home, including through an inherited `SUM_HOME`. Only `show`, `status`, `inbox`, and `doctor` are allowed there. Use lab state (`--home` under a temporary directory) for everything else.
-- Tests and demos blank inherited `SUM_HOME`, `SUM_SESSION`, and `HERDR_*` values and use a fake Herdr or a named lab session such as `sum-test-<id>`; never the user's `default` session.
+- Tests and demos blank inherited `SUM_HOME`, `SUM_SESSION`, `SUM_NOW`, and `HERDR_*` values and use a fake Herdr or a named lab session such as `sum-test-<id>`; never the user's `default` session.
+- `SUM_NOW` is a test-only clock pin that a test sets explicitly so two processes it compares read one instant; never export it in a live shell, where it would freeze every stamp sum records, and `./bin/sumctl doctor` warns on a `clock` row whenever it is set.
 - If your work is a dispatched task on sum, its brief's callbacks use the installed trusted helper `<installation>/bin/sumctl`; keep using exactly those commands.
 
 ## Verify and ship
