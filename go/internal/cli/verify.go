@@ -8,7 +8,7 @@ import (
 
 func (o *rootOptions) addVerifyCommand(root *cobra.Command) {
 	var candidate, result, run, base, text, file string
-	var execute bool
+	var execute, acceptMissingEvidence bool
 	cmd := &cobra.Command{
 		Use:  "verify TASK",
 		Args: cobra.ExactArgs(1),
@@ -25,15 +25,16 @@ func (o *rootOptions) addVerifyCommand(root *cobra.Command) {
 				return err
 			}
 			view, err := verifycmd.Run(st, ctx, verifycmd.Args{
-				Task:        args[0],
-				Candidate:   candidate,
-				Result:      result,
-				Run:         run,
-				Execute:     execute,
-				Base:        base,
-				Text:        text,
-				File:        file,
-				RuntimeRoot: o.runtimeRoot,
+				Task:                  args[0],
+				Candidate:             candidate,
+				Result:                result,
+				Run:                   run,
+				Execute:               execute,
+				Base:                  base,
+				Text:                  text,
+				File:                  file,
+				RuntimeRoot:           o.runtimeRoot,
+				AcceptMissingEvidence: acceptMissingEvidence,
 			})
 			if err != nil {
 				return err
@@ -48,5 +49,6 @@ func (o *rootOptions) addVerifyCommand(root *cobra.Command) {
 	cmd.Flags().StringVar(&base, "base", "", "")
 	cmd.Flags().StringVar(&text, "text", "", "")
 	cmd.Flags().StringVar(&file, "file", "", "")
+	cmd.Flags().BoolVar(&acceptMissingEvidence, "accept-missing-evidence", false, "")
 	root.AddCommand(cmd)
 }

@@ -74,23 +74,74 @@ func deriveTest(task *ordjson.Object, candidate string) Row {
 	if runID != "" {
 		suffix = fmt.Sprintf(" (`mise run verify`, run %s)", runID)
 	}
-	switch stringField(latest, "result") {
-	case "pass":
+	missing, waived := evidenceGap(latest)
+	result := stringField(latest, "result")
+	switch {
+	case len(missing) > 0 && !waived && (result == "pass" || result == "blocked"):
+		row.Status = Blocked
+		row.Result = "Passed checks; missing before/after evidence for " + strings.Join(missing, ", ") + " (the worker captures with `.agents/skills/evidence/`)" + suffix
+		row.Advice = "The worker captures evidence for " + strings.Join(missing, ", ") + "; send `repair send` with the evidence instruction, or the user waives with `verify --accept-missing-evidence`"
+	case result == "pass":
 		row.Status = Pass
 		row.Result = "Passed" + suffix
-	case "fail":
+		if waived && len(missing) > 0 {
+			row.Result = "Passed; evidence waived for " + strings.Join(missing, ", ") + suffix
+		}
+	case result == "fail":
 		row.Status = Fail
 		row.Result = "Failed" + suffix
 	default:
 		row.Status = Blocked
 		reason := stringField(latest, "blocked_reason")
 		if reason == "" {
-			reason = stringField(latest, "result")
+			reason = result
 		}
 		row.Result = "Blocked" + suffix + ": " + reason
 	}
 	row.Result += verificationCaveats(latest, candidate)
 	return row
+}
+
+// EvidenceGap reports the scenarios this candidate's latest coordinator verification found no before/after comparison
+// for, and whether a coordinator recorded a waiver on that same record.
+func EvidenceGap(task *ordjson.Object, candidate string) ([]string, bool) {
+	return evidenceGap(latestFor(task, "verification", "coordinator", candidate))
+}
+
+// EvidenceWaiverRecorded reports whether any verification of this candidate carries a waiver, not only the latest one.
+// A rerun after the waiver leaves the decision recorded but no longer current, which is what `--allow-missing-evidence` reads.
+func EvidenceWaiverRecorded(task *ordjson.Object, candidate string) bool {
+	for _, record := range records(task) {
+		if stringField(record, "kind") != "verification" || stringField(record, "source") != "coordinator" {
+			continue
+		}
+		if stringField(record, "candidate") != candidate {
+			continue
+		}
+		if waived, _ := field(record, "evidence_waived").(bool); waived {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceGap(record *ordjson.Object) ([]string, bool) {
+	if record == nil {
+		return nil, false
+	}
+	waived, _ := field(record, "evidence_waived").(bool)
+	rows, _ := field(record, "evidence_missing").([]any)
+	var missing []string
+	for _, raw := range rows {
+		row, _ := raw.(*ordjson.Object)
+		if row == nil {
+			continue
+		}
+		if scenario := stringField(row, "scenario"); scenario != "" {
+			missing = append(missing, scenario)
+		}
+	}
+	return missing, waived
 }
 
 // verificationCaveats names what the run itself says is unsettled, so a pass row never reads as more than the run proved.
