@@ -6,13 +6,14 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 var (
-	verdicts = map[string]bool{"approve": true, "changes-requested": true, "blocked": true, "comment": true}
-	sha40        = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	toolNamePat  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`)
+	verdicts    = map[string]bool{"approve": true, "changes-requested": true, "blocked": true, "comment": true}
+	sha40       = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	toolNamePat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`)
 )
 
 func identityEquals(a, b *ordjson.Object) bool {
@@ -111,9 +112,11 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text string, poli
 	if err := s.SaveTask(task); err != nil {
 		return nil, err
 	}
+	note := pipeline.RefreshNote(s, task)
 	result := ordjson.NewObject()
 	result.Set("task", taskID)
 	result.Set("evidence", record)
+	result.Set("pipeline_note", note)
 	reviewer, _ := task.Get("reviewer")
 	result.Set("reviewer", reviewer)
 	result.Set("note", "Findings saved. They do not verify the candidate or close anything; a reviewer pane with saved findings is closable later, one without is not.")

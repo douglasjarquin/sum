@@ -72,6 +72,16 @@ Outcomes are `published`, `unchanged`, `skipped` (the recorded PR is closed or m
 The block says in words that the media is the worker's claim about the candidate build. It changes no closure prerequisite: coordinator verification, the independent review, and the user's merge decision are exactly as before, and nothing here approves, merges, or changes permissions.
 `--dry-run` computes the body and attachments without editing; `--evidence-root` points at a promoted copy when the worker checkout is gone.
 
+### Delivery pipeline
+
+Every task that ends in a PR has nine delivery gates: Intent, Rebase, Review, Test, Document, Lint, Push, PR, CI.
+Five of them run in this release. Intent passes on an approved brief, Test reads your own verification run for the current candidate, Review reads the recorded verdicts, Document reads the audit below, and PR reads the reconciled identity. Rebase, Lint, Push, and CI render as pending and run nothing yet.
+Rows are derived from the task's own records, so you never set a stage by hand. `verify`, `review`, `report`, and `pr reconcile` re-derive them after they save; `sumctl pipeline refresh TASK_ID` re-derives on demand and `sumctl pipeline show TASK_ID` prints them.
+`sumctl pipeline document TASK_ID` runs the runtime's `verify_audit.py` against a throwaway detached checkout of the candidate and records one `documentation` record with the audit id and the findings by kind. Placeholders alone still pass; a stale task, stale path, broken link, coverage claim, or unmapped change fails. A project with no `VERIFY.md` is skipped, never failed. The project keeps owning its contract; the audit reads it and never edits it.
+`pr reconcile` writes the table into the PR itself, under the same `auto_publish` switch as the evidence block, and reports it under `pipeline_publication`. `sumctl pipeline publish TASK_ID` repeats it on demand and takes `--dry-run`.
+The block is the marked `<!-- sum-pipeline:start/end -->` span and nothing else: it sits beside the evidence block, prose outside it is preserved from the body read just before the edit, a second publish is `unchanged`, and a block someone edited by hand is refused until you inspect it and pass `--replace-foreign-block`. Receipts live in `.sum/tasks/TASK_ID/publish/pipeline-receipts.json`, separate from the evidence receipts.
+The table states which gates have run. It is not verification, not review, and not a merge decision; only the user merges.
+
 ## Clean up after the merge
 
 Only the user merges. When they say a PR is merged, run `sumctl cleanup TASK_ID` first: it re-observes that exact PR through `gh`, requires `merged` with a merge commit (closed is not merged), compares the checkout HEAD with the merged head (squash and rebase merges pass; an extra local commit blocks), verifies workspace, pane, checkout, branch, and repository by identity, confirms through `agent get`, `pane process-info`, and an `lsof` cwd scan that the agent and any child in the checkout exited (Herdr `idle`/`done` is not exit), and lists staged, modified, untracked, and non-cache ignored files. Every blocker is named; nothing is removed.

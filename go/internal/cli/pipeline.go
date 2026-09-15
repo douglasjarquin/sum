@@ -1,0 +1,115 @@
+package cli
+
+import (
+	"fmt"
+
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/spf13/cobra"
+)
+
+func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
+	pipelineCmd := &cobra.Command{
+		Use:                "pipeline",
+		DisableSuggestions: true,
+		Args:               cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return fmt.Errorf("command is required")
+		},
+	}
+
+	showCmd := &cobra.Command{
+		Use:  "show TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, err := o.openStore("pipeline-show")
+			if err != nil {
+				return err
+			}
+			view, err := pipeline.Show(st, args[0])
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	pipelineCmd.AddCommand(showCmd)
+
+	refreshCmd := &cobra.Command{
+		Use:  "refresh TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-refresh")
+			if err != nil {
+				return err
+			}
+			view, err := pipeline.RefreshCommand(st, ctx, args[0])
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	pipelineCmd.AddCommand(refreshCmd)
+
+	var candidate string
+	documentCmd := &cobra.Command{
+		Use:  "document TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-document")
+			if err != nil {
+				return err
+			}
+			view, err := pipeline.Document(st, ctx, o.runtimeRoot, pipeline.DocumentArgs{Task: args[0], Candidate: candidate})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	documentCmd.Flags().StringVar(&candidate, "candidate", "", "")
+	pipelineCmd.AddCommand(documentCmd)
+
+	var dryRun, replaceForeignBlock bool
+	var timeout int
+	publishCmd := &cobra.Command{
+		Use:  "publish TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-publish")
+			if err != nil {
+				return err
+			}
+			view, err := pipeline.PublishCommand(st, ctx, o.runtimeRoot, pipeline.PublishArgs{
+				Task:                args[0],
+				DryRun:              dryRun,
+				ReplaceForeignBlock: replaceForeignBlock,
+				Timeout:             timeout,
+			})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	publishCmd.Flags().BoolVar(&dryRun, "dry-run", false, "")
+	publishCmd.Flags().BoolVar(&replaceForeignBlock, "replace-foreign-block", false, "")
+	publishCmd.Flags().IntVar(&timeout, "timeout", 0, "")
+	pipelineCmd.AddCommand(publishCmd)
+
+	root.AddCommand(pipelineCmd)
+}
+
+func (o *rootOptions) coordinatorContext(label string) (*store.Store, *ordjson.Object, error) {
+	st, err := o.openStore(label)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, err := store.Context(o.installRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	return st, ctx, nil
+}

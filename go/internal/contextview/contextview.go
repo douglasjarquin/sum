@@ -20,6 +20,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/pyrepr"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -29,7 +30,7 @@ import (
 )
 
 // ContextSections mirrors CONTEXT_SECTIONS: the section names `--section` accepts, and what `outline.read.sections` reports.
-var ContextSections = []string{"outline", "brief", "decisions", "handoff", "evidence", "execution", "environment", "update", "returns", "notes"}
+var ContextSections = []string{"outline", "brief", "decisions", "handoff", "evidence", "execution", "environment", "update", "returns", "notes", "pipeline"}
 
 var stateFields = []string{"status", "pane", "session", "machine", "parent", "reviewer", "worktree", "branch", "cleanup", "pr", "error"}
 var cursorFields = []string{"questions", "evidence", "answered", "applied", "notes", "refresh", "attention"}
@@ -119,7 +120,7 @@ func pick(o *ordjson.Object, keys []string) *ordjson.Object {
 var roleSectionsMap = map[string][]string{
 	"worker":      {"outline", "decisions", "execution", "environment", "notes"},
 	"reviewer":    {"outline", "brief", "handoff", "evidence", "environment"},
-	"coordinator": {"outline", "decisions", "handoff", "returns", "update"},
+	"coordinator": {"outline", "decisions", "handoff", "returns", "update", "pipeline"},
 }
 
 // roleContract mirrors ROLE_CONTRACT.
@@ -1334,6 +1335,12 @@ func View(s *store.Store, taskID, sumctlPath string, opts Options) (*ordjson.Obj
 				return nil, notesErr
 			}
 			result.Set("notes", notesState)
+		case "pipeline":
+			record, pipelineErr := pipeline.Load(s, taskID)
+			if pipelineErr != nil {
+				return nil, pipelineErr
+			}
+			result.Set("pipeline", pipeline.View(record))
 		}
 	}
 	return result, nil

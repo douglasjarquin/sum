@@ -10,6 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -74,6 +75,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	result.Set("pr", pr)
 	result.Set("evidence", recordID)
 	result.Set("evidence_publication", autoPublish(s, ctx, runtimeRoot, args.Task, pr))
+	result.Set("pipeline_publication", autoPipeline(s, ctx, runtimeRoot, args.Task, pr))
 	result.Set("note", "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains.")
 	return result, nil
 }
@@ -148,6 +150,7 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 	if err := s.SaveTask(task); err != nil {
 		return nil, nil, err
 	}
+	_ = pipeline.RefreshNote(s, task)
 	recordID, _ := record.Get("id")
 	return pr, recordID, nil
 }
@@ -202,6 +205,33 @@ func autoPublish(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string
 		return []any{row}
 	}
 	return publicationRows(publications)
+}
+
+// autoPipeline never fails reconcile: the PR observation is already saved, and a publication failure is its own record.
+func autoPipeline(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, pr *ordjson.Object) any {
+	if asString(pr, "state") != "open" {
+		return nil
+	}
+	loaded, err := settings.LoadSettings(s)
+	if err != nil {
+		return pipelineRow(pipeline.OutcomeSkipped, err.Error())
+	}
+	if !loaded.AutoPublishEvidence() {
+		return nil
+	}
+	publication, err := pipeline.Publish(s, ctx, runtimeRoot, pipeline.PublishArgs{Task: taskID, Trigger: "reconcile"})
+	if err != nil {
+		return pipelineRow(pipeline.OutcomeFailed, err.Error())
+	}
+	return publication.Row()
+}
+
+func pipelineRow(outcome pipeline.Outcome, reason string) *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("block", "pipeline")
+	row.Set("outcome", string(outcome))
+	row.Set("reason", reason)
+	return row
 }
 
 func asObject(v any) *ordjson.Object {

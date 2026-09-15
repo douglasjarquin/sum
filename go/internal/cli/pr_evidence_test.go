@@ -123,7 +123,29 @@ func (lab publishLab) publications(t *testing.T) []map[string]any {
 	}
 	var rows []map[string]any
 	for _, record := range task.Evidence {
-		if record["kind"] == "publication" && record["source"] == "coordinator" {
+		if record["kind"] == "publication" && record["source"] == "coordinator" && record["block"] == nil {
+			rows = append(rows, record)
+		}
+	}
+	return rows
+}
+
+// pipelinePublications are the delivery-pipeline block's records, which share the publication kind with the evidence block's.
+func (lab publishLab) pipelinePublications(t *testing.T) []map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(lab.home, "tasks", lab.taskID, "task.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task struct {
+		Evidence []map[string]any `json:"evidence"`
+	}
+	if err := json.Unmarshal(data, &task); err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	for _, record := range task.Evidence {
+		if record["kind"] == "publication" && record["block"] == "pipeline" {
 			rows = append(rows, record)
 		}
 	}
