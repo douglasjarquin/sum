@@ -677,24 +677,15 @@ func newFleetLab(t *testing.T) *fleetLab {
 		t.Fatal(err)
 	}
 	archive := exec.Command("git", "-C", source, "archive", "--format=tar", "HEAD")
-	extract := exec.Command("tar", "-xf", "-", "-C", install)
-	var extractErr bytes.Buffer
-	extract.Stderr = &extractErr
-	pipe, err := archive.StdoutPipe()
+	archiveData, err := archive.Output()
 	if err != nil {
-		t.Fatal(err)
-	}
-	extract.Stdin = pipe
-	if err := extract.Start(); err != nil {
-		t.Fatal(err)
-	}
-	if err := archive.Start(); err != nil {
-		t.Fatal(err)
-	}
-	if err := archive.Wait(); err != nil {
 		t.Fatalf("git archive: %v", err)
 	}
-	if err := extract.Wait(); err != nil {
+	extract := exec.Command("tar", "-xf", "-", "-C", install)
+	extract.Stdin = bytes.NewReader(archiveData)
+	var extractErr bytes.Buffer
+	extract.Stderr = &extractErr
+	if err := extract.Run(); err != nil {
 		t.Fatalf("tar extract: %v\n%s", err, extractErr.String())
 	}
 

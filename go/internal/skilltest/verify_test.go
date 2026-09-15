@@ -364,7 +364,11 @@ func TestRunnerReportsRequiredEvidence(t *testing.T) {
 		t.Fatalf("outcome %v: the runner reports missing evidence, it never fails the run for it", record["outcome"])
 	}
 
-	promoted := filepath.Join(v.stop, "promoted-evidence")
+	stop, err := filepath.EvalSymlinks(v.stop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	promoted := filepath.Join(stop, "promoted-evidence")
 	writeComparison(t, filepath.Join(promoted, "run-1", scenario, "comparison.json"), scenario, head)
 	_, found, stderr := v.runnerWithEnv(repo, append(v.env, "VERIFY_EVIDENCE_ROOT="+promoted), "--base", head)
 	evidence = asMap(found["evidence"])
