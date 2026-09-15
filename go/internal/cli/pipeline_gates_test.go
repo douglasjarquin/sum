@@ -55,13 +55,13 @@ func newGateLab(t *testing.T) gateLab {
 	return lab
 }
 
-func (lab gateLab) writeTask(t *testing.T, status string) {
+func (lab gateLab) writeTask(t *testing.T, status string, evidence ...string) {
 	t.Helper()
 	base := strings.TrimSpace(gitIn(t, lab.clone, "rev-parse", "HEAD~1"))
 	writeTaskFixture(t, lab.home, gateTaskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": %q, "repository": %q, "worktree": %q,
 "questions": [], "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "ship", "branch": %q,
-"report": {"text": "done", "candidate": %q}, "evidence": []}`,
-		gateTaskID, status, lab.clone, lab.clone, base, gateBranch, lab.candidate))
+"report": {"text": "done", "candidate": %q}, "evidence": [%s]}`,
+		gateTaskID, status, lab.clone, lab.clone, base, gateBranch, lab.candidate, strings.Join(evidence, ",\n")))
 }
 
 // advanceOrigin lands one more commit on origin/main, which is what leaves the candidate behind its base.
@@ -357,5 +357,45 @@ func TestPipelineRun_stopsAtAFailingRebaseAndPushesNothing(t *testing.T) {
 	want := "Rebase is fail: Conflicts with main in: app.txt. Do: run `sumctl pipeline rebase TASK_ID`; a branch that is behind or conflicting is the worker's to rebase."
 	if result["next"] != want {
 		t.Fatalf("next = %v\nwant %q", result["next"], want)
+	}
+}
+
+func TestPipelineRun_skipsWhatIsRecordedAndCarriesOnToThePush(t *testing.T) {
+	requirePython(t)
+	lab := newGateLab(t)
+	lab.writeTask(t, "reported",
+		fmt.Sprintf(`{"schema": 1, "id": "e-1", "kind": "verification", "source": "coordinator",
+"at": "2026-01-01T01:00:00+00:00", "candidate": %q, "result": "pass", "run_id": "20260906T010203Z-abcd",
+"certifies": %q, "requires_root_review": false}`, lab.candidate, lab.candidate),
+		fmt.Sprintf(`{"schema": 1, "id": "e-2", "kind": "lint", "source": "coordinator",
+"at": "2026-01-01T02:00:00+00:00", "candidate": %q, "outcome": "not-declared",
+"summary": "This project declares no lint task"}`, lab.candidate))
+
+	result := runGate(t, lab, "run", gateTaskID)
+
+	want := map[string]string{
+		"rebase":   "ran",
+		"test":     "skipped",
+		"lint":     "skipped",
+		"document": "ran",
+		"push":     "ran",
+	}
+	steps, _ := result["steps"].([]any)
+	for _, raw := range steps {
+		step, _ := raw.(map[string]any)
+		stage, _ := step["stage"].(string)
+		if step["outcome"] != want[stage] {
+			t.Fatalf("step %v, want the %s gate to be %s", step, stage, want[stage])
+		}
+	}
+	if got := lab.remoteSHA(t, gateBranch); got != lab.candidate {
+		t.Fatalf("origin/%s = %s, want the run to have pushed the candidate %s", gateBranch, got, lab.candidate)
+	}
+	if got := lab.row(t, "push")["status"]; got != "pass" {
+		t.Fatalf("push row = %v after a full run, want pass", got)
+	}
+	next, _ := result["next"].(string)
+	if !strings.HasPrefix(next, "Review is pending") {
+		t.Fatalf("next = %q, want the Review gate named as the first unsettled one", next)
 	}
 }

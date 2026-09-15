@@ -474,3 +474,60 @@ func TestVerifyExecute_graphIndexLivesUnderVerificationAndLeavesWithCheckout(t *
 		t.Fatalf("worker index changed\nbefore %s\nafter %s", workerMeta, gotMeta)
 	}
 }
+
+func (v *verifyLab) commitExecutable(name, text string) string {
+	v.t.Helper()
+	path := filepath.Join(v.worktree, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		v.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+		v.t.Fatal(err)
+	}
+	v.git(v.worktree, "add", name)
+	v.git(v.worktree, "commit", "-m", "declare "+name)
+	return v.git(v.worktree, "rev-parse", "HEAD")
+}
+
+func (v *verifyLab) lintRecord(candidate string) map[string]any {
+	v.t.Helper()
+	records, _ := v.taskFile()["evidence"].([]any)
+	var found map[string]any
+	for _, raw := range records {
+		record := asMap(raw)
+		if asString(record["kind"]) == "lint" && asString(record["source"]) == "coordinator" && asString(record["candidate"]) == candidate {
+			found = record
+		}
+	}
+	if found == nil {
+		v.t.Fatalf("no coordinator lint record for %s in %v", candidate, records)
+	}
+	return found
+}
+
+func TestVerifyExecute_alsoRunsTheProjectsLintInTheSameCheckout(t *testing.T) {
+	v := newVerifyLab(t)
+	sha := v.commitExecutable(filepath.Join("mise-tasks", "lint"), "#!/bin/sh\necho \"lint is clean\"\nexit 0\n")
+
+	out := v.ctl(true, "verify", v.taskID, "--candidate", sha, "--execute")
+
+	if asString(v.evidence(out)["result"]) != "pass" {
+		t.Fatalf("verification %v, want a pass", v.evidence(out))
+	}
+	record := v.lintRecord(sha)
+	if asString(record["outcome"]) != "pass" || asString(record["summary"]) != "Passed (`mise run lint`)" {
+		t.Fatalf("lint record = %v, want one command to have produced both the test and the lint evidence", record)
+	}
+}
+
+func TestVerifyExecute_recordsNoLintTaskForAProjectThatDeclaresNone(t *testing.T) {
+	v := newVerifyLab(t)
+	sha := v.commit("NOTES.md", "notes\n")
+
+	v.ctl(true, "verify", v.taskID, "--candidate", sha, "--execute")
+
+	record := v.lintRecord(sha)
+	if asString(record["outcome"]) != "not-declared" || asString(record["summary"]) != "This project declares no lint task" {
+		t.Fatalf("lint record = %v, want not-declared", record)
+	}
+}
