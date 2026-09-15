@@ -43,6 +43,27 @@ def pr():
     return state.setdefault("pr", {})
 
 
+ROLLUP = {"pass": ("COMPLETED", "SUCCESS"), "fail": ("COMPLETED", "FAILURE"), "pending": ("IN_PROGRESS", ""),
+          "skipping": ("COMPLETED", "SKIPPED"), "cancel": ("COMPLETED", "CANCELLED")}
+
+
+def checks(required_only=False):
+    declared = state.get("checks", [])
+    return [c for c in declared if c.get("required")] if required_only else declared
+
+
+def rollup():
+    nodes = []
+    for c in checks():
+        status, conclusion = ROLLUP.get(c.get("bucket", "pending"), ("IN_PROGRESS", ""))
+        node = {"__typename": "CheckRun", "name": c["name"], "status": status, "conclusion": conclusion,
+                "detailsUrl": c.get("link", ""), "workflowName": c.get("workflow", "")}
+        if state.get("rollup_required", True):
+            node["isRequired"] = bool(c.get("required"))
+        nodes.append(node)
+    return nodes
+
+
 def pr_json(fields):
     p = pr()
     repo = state.get("repository", "douglasjarquin/project")
@@ -50,7 +71,8 @@ def pr_json(fields):
     full = {"number": p.get("number", 7), "url": f"https://github.com/{repo}/pull/{p.get('number', 7)}", "state": p.get("state", "OPEN"), "body": p.get("body", ""),
             "headRefName": p.get("head_branch", "sum/t-x"), "headRefOid": p.get("head_sha"), "baseRefName": p.get("base_branch", "main"),
             "headRepository": {"name": name}, "headRepositoryOwner": {"login": owner}, "isCrossRepository": state.get("head_repository", repo) != repo,
-            "mergedAt": p.get("merged_at"), "mergeCommit": {"oid": p["merge_commit"]} if p.get("merge_commit") else None, "closed": p.get("state", "OPEN") != "OPEN"}
+            "mergedAt": p.get("merged_at"), "mergeCommit": {"oid": p["merge_commit"]} if p.get("merge_commit") else None, "closed": p.get("state", "OPEN") != "OPEN",
+            "statusCheckRollup": rollup()}
     return {k: full.get(k) for k in fields.split(",")}
 
 
@@ -98,6 +120,22 @@ if args[:2] == ["repo", "view"] and "--json" in args:
     full = {"nameWithOwner": repo, "visibility": state.get("visibility", "PUBLIC"), "viewerPermission": state.get("viewer_permission", "WRITE")}
     print(json.dumps({k: full.get(k) for k in fields.split(",")}))
     sys.exit(0)
+if args[:2] == ["pr", "checks"]:
+    if "--json" not in args or not state.get("checks_json", True):
+        fail("unknown flag: --json\nUsage:  gh pr checks [<number> | <url> | <branch>] [flags]", 1)
+    number = int(args[2])
+    repo = flag("--repo", state.get("repository", "douglasjarquin/project"))
+    if number != pr().get("number", 7) or repo != state.get("repository", "douglasjarquin/project"):
+        fail("GraphQL: Could not resolve to a PullRequest with the number of %d. (repository.pullRequest)" % number)
+    required_only = "--required" in args
+    selected = checks(required_only)
+    if not selected:
+        branch = pr().get("head_branch", "sum/t-x")
+        fail("no %schecks reported on the '%s' branch" % ("required " if required_only else "", branch), 1)
+    fields = flag("--json").split(",")
+    print(json.dumps([{k: c.get(k, "") for k in fields} for c in selected]))
+    buckets = {c.get("bucket") for c in selected}
+    sys.exit(1 if buckets & {"fail", "cancel"} else 8 if "pending" in buckets else 0)
 if args[:2] == ["pr", "view"] and "--json" in args:
     if state.get("view_fail"):
         fail(state["view_fail"])
