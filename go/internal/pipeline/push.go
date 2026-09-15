@@ -57,13 +57,13 @@ func Push(s *store.Store, ctx *ordjson.Object, args PushArgs) (*ordjson.Object, 
 				rebase.Status, rebase.Result)
 		}
 	}
-	if missing, waived := EvidenceGap(task, candidate); len(missing) > 0 && !waived {
+	if missing, waived := evidenceGap(latestFor(task, "verification", "coordinator", candidate)); len(missing) > 0 && !waived {
 		names := strings.Join(missing, ", ")
 		if !args.AllowMissingEvidence {
 			return nil, fmt.Errorf("the Test gate is blocked: no before/after evidence for %s. The worker captures it with `.agents/skills/evidence/`, or the user waives it with `verify %s --candidate %s --accept-missing-evidence`",
 				names, args.Task, candidate)
 		}
-		if !EvidenceWaiverRecorded(task, candidate) {
+		if !evidenceWaiverRecorded(task, candidate) {
 			return nil, fmt.Errorf("--allow-missing-evidence pushes work whose evidence for %s was never captured, so the waiver must be on the record first: run `verify %s --candidate %s --accept-missing-evidence`",
 				names, args.Task, candidate)
 		}

@@ -102,15 +102,9 @@ func deriveTest(task *ordjson.Object, candidate string) Row {
 	return row
 }
 
-// EvidenceGap reports the scenarios this candidate's latest coordinator verification found no before/after comparison
-// for, and whether a coordinator recorded a waiver on that same record.
-func EvidenceGap(task *ordjson.Object, candidate string) ([]string, bool) {
-	return evidenceGap(latestFor(task, "verification", "coordinator", candidate))
-}
-
-// EvidenceWaiverRecorded reports whether any verification of this candidate carries a waiver, not only the latest one.
+// evidenceWaiverRecorded reports whether any verification of this candidate carries a waiver, not only the latest one.
 // A rerun after the waiver leaves the decision recorded but no longer current, which is what `--allow-missing-evidence` reads.
-func EvidenceWaiverRecorded(task *ordjson.Object, candidate string) bool {
+func evidenceWaiverRecorded(task *ordjson.Object, candidate string) bool {
 	for _, record := range records(task) {
 		if stringField(record, "kind") != "verification" || stringField(record, "source") != "coordinator" {
 			continue
@@ -125,6 +119,7 @@ func EvidenceWaiverRecorded(task *ordjson.Object, candidate string) bool {
 	return false
 }
 
+// evidenceGap reads one verification record: the scenarios it found no before/after comparison for, and its waiver.
 func evidenceGap(record *ordjson.Object) ([]string, bool) {
 	if record == nil {
 		return nil, false
