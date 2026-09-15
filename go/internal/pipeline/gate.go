@@ -137,18 +137,16 @@ func gitEnv() []string {
 func lastLineOf(text string) string {
 	lines := strings.Split(text, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		if trimmed := strings.TrimSpace(lines[i]); trimmed != "" {
-			return clip(trimmed, 300)
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
 		}
+		if len(trimmed) > 300 {
+			return trimmed[:300]
+		}
+		return trimmed
 	}
 	return ""
-}
-
-func clip(text string, limit int) string {
-	if len(text) <= limit {
-		return text
-	}
-	return text[:limit]
 }
 
 func jsonNumber(n int) json.Number {
