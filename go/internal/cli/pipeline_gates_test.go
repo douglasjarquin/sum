@@ -335,7 +335,7 @@ func TestPipelineRun_stopsAtAFailingRebaseAndPushesNothing(t *testing.T) {
 	result := runGate(t, lab, "run", gateTaskID)
 
 	steps, _ := result["steps"].([]any)
-	if len(steps) != 5 {
+	if len(steps) != 6 {
 		t.Fatalf("pipeline run reported %d steps, want one per coordinator gate:\n%v", len(steps), result["steps"])
 	}
 	first, _ := steps[0].(map[string]any)
@@ -360,6 +360,7 @@ func TestPipelineRun_stopsAtAFailingRebaseAndPushesNothing(t *testing.T) {
 	}
 }
 
+// --no-pr is the pre-PR-stage behaviour: the run stops after Push and the coordinator opens the PR itself.
 func TestPipelineRun_skipsWhatIsRecordedAndCarriesOnToThePush(t *testing.T) {
 	requirePython(t)
 	lab := newGateLab(t)
@@ -371,7 +372,7 @@ func TestPipelineRun_skipsWhatIsRecordedAndCarriesOnToThePush(t *testing.T) {
 "at": "2026-01-01T02:00:00+00:00", "candidate": %q, "outcome": "not-declared",
 "summary": "This project declares no lint task"}`, lab.candidate))
 
-	result := runGate(t, lab, "run", gateTaskID)
+	result := runGate(t, lab, "run", gateTaskID, "--no-pr")
 
 	want := map[string]string{
 		"rebase":   "ran",
@@ -379,6 +380,7 @@ func TestPipelineRun_skipsWhatIsRecordedAndCarriesOnToThePush(t *testing.T) {
 		"lint":     "skipped",
 		"document": "ran",
 		"push":     "ran",
+		"pr":       "skipped",
 	}
 	steps, _ := result["steps"].([]any)
 	for _, raw := range steps {

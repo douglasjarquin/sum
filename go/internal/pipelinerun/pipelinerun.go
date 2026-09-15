@@ -9,6 +9,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/pipelinepr"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/verifycmd"
 )
@@ -16,15 +17,21 @@ import (
 var sha40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type Args struct {
-	Task        string
-	Rerun       bool
-	AllowBehind bool
-	RuntimeRoot string
+	Task                string
+	Rerun               bool
+	AllowBehind         bool
+	RuntimeRoot         string
+	NoPR                bool
+	Draft               bool
+	Title               string
+	BodyFile            string
+	AllowNewAfterClosed bool
 }
 
-// Review and PR are absent on purpose: a review belongs to a separately launched reviewer pane, and the PR is the
-// coordinator's own `gh pr create` followed by `pr reconcile`. Neither is something a runner may do on its own.
-var order = []pipeline.Stage{pipeline.StageRebase, pipeline.StageTest, pipeline.StageLint, pipeline.StageDocument, pipeline.StagePush}
+// Review is absent on purpose: it belongs to a separately launched reviewer pane, and no runner may stand in for it.
+var order = []pipeline.Stage{pipeline.StageRebase, pipeline.StageTest, pipeline.StageLint, pipeline.StageDocument, pipeline.StagePush, pipeline.StagePR}
+
+const reviewNote = "Review is the reviewer pane's; only the user merges."
 
 func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
@@ -69,9 +76,38 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 	result.Set("task", args.Task)
 	result.Set("candidate", candidate)
 	result.Set("steps", steps)
+	result.Set("pr", prIdentity(s, args.Task))
 	result.Set("pipeline", pipeline.View(record))
 	result.Set("next", pipeline.Next(record))
+	result.Set("note", reviewNote)
 	return result, nil
+}
+
+// prIdentity is the PR this run left behind, so the coordinator reads the URL without a second command.
+func prIdentity(s *store.Store, taskID string) any {
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil
+	}
+	pr, _ := value(task, "pr").(*ordjson.Object)
+	identity, _ := value(pr, "identity").(*ordjson.Object)
+	if identity == nil {
+		return nil
+	}
+	row := ordjson.NewObject()
+	for _, key := range []string{"number", "url", "base_branch"} {
+		row.Set(key, value(identity, key))
+	}
+	row.Set("state", value(pr, "state"))
+	return row
+}
+
+func value(o *ordjson.Object, key string) any {
+	if o == nil {
+		return nil
+	}
+	v, _ := o.Get(key)
+	return v
 }
 
 func runStage(s *store.Store, ctx *ordjson.Object, args Args, stage pipeline.Stage, candidate string) (string, string) {
@@ -94,6 +130,14 @@ func runStage(s *store.Store, ctx *ordjson.Object, args Args, stage pipeline.Sta
 		return attempt(pipeline.Document(s, ctx, args.RuntimeRoot, pipeline.DocumentArgs{Task: args.Task}))
 	case pipeline.StagePush:
 		return attempt(pipeline.Push(s, ctx, pipeline.PushArgs{Task: args.Task, AllowBehind: args.AllowBehind}))
+	case pipeline.StagePR:
+		if args.NoPR {
+			return "skipped", "--no-pr; opening and reconciling the PR is left to you"
+		}
+		return attempt(pipelinepr.Run(s, ctx, args.RuntimeRoot, pipeline.PRArgs{
+			Task: args.Task, Draft: args.Draft, Title: args.Title, BodyFile: args.BodyFile,
+			AllowNewAfterClosed: args.AllowNewAfterClosed,
+		}))
 	}
 	return "not-run", "unknown gate"
 }
