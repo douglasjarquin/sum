@@ -17,7 +17,10 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-const ContractFile = "VERIFY.md"
+const (
+	ContractFile = "VERIFY.md"
+	RunnerPath   = ".agents/skills/verify/scripts/verify_run.py"
+)
 
 var (
 	requiredHeadings = []string{"Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts"}

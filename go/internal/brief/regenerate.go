@@ -13,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/verifycontract"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
@@ -217,18 +218,43 @@ func verificationContractText(task *ordjson.Object) string {
 	}
 	contractHash := asString(func() any { v, _ := policy.Get("contract_sha256"); return v }())
 	runner := asString(func() any { v, _ := policy.Get("runner"); return v }())
+	if runner == "" {
+		runner = verifycontract.RunnerPath
+	}
 	base := asString(func() any { v, _ := policy.Get("base_sha"); return v }())
-	maps := asString(func() any { v, _ := policy.Get("feature_maps"); return v }())
+	maps := asString(func() any { v, _ := policy.Get("feature_maps_index"); return v }())
 	if maps == "" {
 		maps = "the feature maps"
 	}
-	return strings.Join([]string{
+	lines := []string{
 		fmt.Sprintf("- `standardized`: this checkout carries `VERIFY.md` (sha256 `%s` at the base commit) and a `verify` task it defines. That contract is the project's verification.", contractHash),
 		fmt.Sprintf("- Before reporting readiness, commit the candidate, then run `python3 %s --base %s --json` from your checkout with a clean tree. It executes `mise run verify` and the mapped checks and writes `run.json` with an immutable `run_id`.", runner, base),
 		"- Attach that run to your handoff as `verification`: `{\"run_id\", \"outcome\", \"record\", \"candidate\", \"certifies\", \"requires_root_review\", \"contract_sha256\", \"policy_changed\"}` copied from run.json (`record` is the run.json path). A `fail`, `blocked`, or provisional (dirty) run is reported as it is; do not rerun until green without fixing the cause.",
+	}
+	if required := requiredEvidenceScenarios(policy); len(required) > 0 {
+		lines = append(lines, fmt.Sprintf("- These mapped scenarios name visual proof at the base commit: %s. Before delivery, capture a before/after comparison for each one your change touches with `.agents/skills/evidence/SKILL.md` and list the `comparison.json` path under `artifacts`. The coordinator's Test gate blocks until a comparison for your candidate exists; a green suite does not satisfy such a row.", strings.Join(required, ", ")))
+	}
+	lines = append(lines,
 		"- The coordinator executes the same contract again under its own run id and performs the independent review; your run is a claim, never the gate. Do not reuse or edit a run id.",
 		fmt.Sprintf("- `VERIFY.md`, `mise.toml`, `mise-tasks/`, `%s`, `.agents/skills/verify/`, and `.agents/skills/evidence/` are verification policy. Changing them is reviewed explicitly against the approved scope; a candidate must not weaken the gate that certifies it.", maps),
-	}, "\n")
+	)
+	return strings.Join(lines, "\n")
+}
+
+func requiredEvidenceScenarios(policy *ordjson.Object) []string {
+	raw, _ := policy.Get("evidence_required")
+	rows, _ := raw.([]any)
+	names := make([]string, 0, len(rows))
+	for _, item := range rows {
+		row, _ := item.(*ordjson.Object)
+		if row == nil {
+			continue
+		}
+		if id := asString(func() any { v, _ := row.Get("scenario"); return v }()); id != "" {
+			names = append(names, "`"+id+"`")
+		}
+	}
+	return names
 }
 
 func graphText(s *store.Store, sumctlPath string, task *ordjson.Object) string {
