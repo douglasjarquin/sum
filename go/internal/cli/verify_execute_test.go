@@ -18,6 +18,13 @@ type verifyLab struct {
 
 func newVerifyLab(t *testing.T) *verifyLab {
 	t.Helper()
+	return newVerifyLabWith(t, nil)
+}
+
+// prepare edits the standardized fixture before it becomes the base commit, so a test can start from a project whose
+// own feature maps demand something of every candidate.
+func newVerifyLabWith(t *testing.T, prepare func(repo string)) *verifyLab {
+	t.Helper()
 	root, helper := repoReference(t)
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not on PATH")
@@ -41,9 +48,18 @@ func newVerifyLab(t *testing.T) *verifyLab {
 	git("config", "user.email", "test@example.invalid")
 	copyTree(t, filepath.Join(root, "tests", "fixtures", "verify", "cli"), repo)
 	copyTree(t, filepath.Join(root, ".agents", "skills", "verify"), filepath.Join(repo, ".agents", "skills", "verify"))
+	if prepare != nil {
+		prepare(repo)
+	}
 	git("add", "-A")
 	git("commit", "-m", "standardized fixture")
 	baseSHA := git("rev-parse", "HEAD")
+	origin := filepath.Join(base, "origin.git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", "-b", "main", origin).CombinedOutput(); err != nil {
+		t.Fatalf("bare origin: %v\n%s", err, out)
+	}
+	git("remote", "add", "origin", origin)
+	git("push", "-q", "origin", "main")
 
 	home := filepath.Join(base, "state")
 	if err := os.Mkdir(home, 0o700); err != nil {
