@@ -84,10 +84,12 @@ type Row struct {
 	Result   string
 	At       string
 	Evidence []string
+	// Advice replaces the stage's standing sentence when this particular state needs a different next step.
+	Advice string
 }
 
 func (r Row) same(other Row) bool {
-	if r.Stage != other.Stage || r.Status != other.Status || r.Result != other.Result {
+	if r.Stage != other.Stage || r.Status != other.Status || r.Result != other.Result || r.Advice != other.Advice {
 		return false
 	}
 	if len(r.Evidence) != len(other.Evidence) {

@@ -111,6 +111,9 @@ func executeRootVerification(s *store.Store, runtimeRoot string, task *ordjson.O
 	cmd = exec.CommandContext(runCtx, argv[0], argv[1:]...)
 	cmd.Dir = checkout
 	cmd.Env = proc.ScrubbedEnv()
+	if root := workerEvidenceRoot(task); root != "" {
+		cmd.Env = append(cmd.Env, "VERIFY_EVIDENCE_ROOT="+root)
+	}
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -440,4 +443,37 @@ func teardownVerification(s *store.Store, taskID, worktree, checkout, attemptID 
 func pathExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// workerEvidenceRoot is the directory the worker's handoff captured its comparisons into. The verification checkout is a
+// fresh worktree of the candidate, so the Git-ignored captures are not in it; without this the runner would report every
+// required comparison as missing. Reading them is not re-verifying them: the runner still binds each one to this SHA.
+func workerEvidenceRoot(task *ordjson.Object) string {
+	worktree := asString(task, "worktree")
+	if worktree == "" {
+		return ""
+	}
+	list, _ := func() any { v, _ := task.Get("evidence"); return v }().([]any)
+	for i := len(list) - 1; i >= 0; i-- {
+		record, _ := list[i].(*ordjson.Object)
+		if record == nil || asString(record, "kind") != "handoff" {
+			continue
+		}
+		handoff := objectField(record, "handoff")
+		artifacts, _ := func() any { v, _ := handoff.Get("artifacts"); return v }().([]any)
+		for _, raw := range artifacts {
+			path, _ := raw.(string)
+			if filepath.Base(path) != "comparison.json" {
+				continue
+			}
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(worktree, path)
+			}
+			root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Clean(path))))
+			if info, err := os.Stat(root); err == nil && info.IsDir() {
+				return root
+			}
+		}
+	}
+	return ""
 }

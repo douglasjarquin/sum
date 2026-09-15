@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
@@ -24,15 +26,16 @@ var (
 )
 
 type Args struct {
-	Task        string
-	Candidate   string
-	Result      string
-	Run         string
-	Execute     bool
-	Base        string
-	Text        string
-	File        string
-	RuntimeRoot string
+	Task                  string
+	Candidate             string
+	Result                string
+	Run                   string
+	Execute               bool
+	Base                  string
+	Text                  string
+	File                  string
+	RuntimeRoot           string
+	AcceptMissingEvidence bool
 }
 
 func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error) {
@@ -72,7 +75,7 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 		if execErr != nil {
 			return nil, execErr
 		}
-		fields, evErr := runEvidence(record, args.Candidate, task, kept, "separate-checkout")
+		fields, evErr := runEvidence(record, args.Candidate, task, kept, "separate-checkout", args.AcceptMissingEvidence, ctx)
 		if evErr != nil {
 			return nil, evErr
 		}
@@ -100,7 +103,7 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 				}
 			}
 		}
-		fields, evErr := runEvidence(record, args.Candidate, task, args.Run, isolation)
+		fields, evErr := runEvidence(record, args.Candidate, task, args.Run, isolation, args.AcceptMissingEvidence, ctx)
 		if evErr != nil {
 			return nil, evErr
 		}
@@ -191,7 +194,7 @@ func readRunRecord(path string) (*ordjson.Object, error) {
 	return obj, nil
 }
 
-func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object, recordPath, isolation string) (*ordjson.Object, error) {
+func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object, recordPath, isolation string, acceptMissing bool, ctx *ordjson.Object) (*ordjson.Object, error) {
 	runID := asString(record, "run_id")
 	if !runIDPattern.MatchString(runID) {
 		return nil, fmt.Errorf("run record has no usable run_id")
@@ -224,6 +227,11 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	if dirtyBool && result == "pass" {
 		result = "inconclusive"
 	}
+	gap := evidenceGap(record)
+	blockedForEvidence := len(gap) > 0 && !acceptMissing && result == "pass"
+	if blockedForEvidence {
+		result = "blocked"
+	}
 	body := ordjson.NewObject()
 	body.Set("result", result)
 	body.Set("run_id", runID)
@@ -255,6 +263,16 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	policyBody.Set("changed", boundStringList(policy, "changed", 500, 50))
 	body.Set("policy", policyBody)
 	body.Set("not_exercised", boundStringList(record, "not_exercised", 200, 100))
+	evidenceObj := objectField(record, "evidence")
+	body.Set("evidence_required", boundStringList(evidenceObj, "required", 200, 100))
+	body.Set("evidence_present", presentScenarios(evidenceObj))
+	body.Set("evidence_missing", gap.rows())
+	body.Set("evidence_waived", acceptMissing && len(gap) > 0)
+	if acceptMissing && len(gap) > 0 {
+		body.Set("evidence_waived_by", endpoint(ctx))
+	} else {
+		body.Set("evidence_waived_by", nil)
+	}
 	if execution := objectField(record, "execution"); execution != nil {
 		row := ordjson.NewObject()
 		for _, key := range []string{"exit", "timed_out", "seconds"} {
@@ -265,12 +283,84 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	} else {
 		body.Set("execution", nil)
 	}
-	if reason := asString(record, "blocked_reason"); reason != "" {
+	switch reason := asString(record, "blocked_reason"); {
+	case reason != "":
 		body.Set("blocked_reason", boundString(reason, 500))
-	} else {
+	case blockedForEvidence:
+		body.Set("blocked_reason", boundString(gap.reason(), 500))
+	default:
 		body.Set("blocked_reason", nil)
 	}
 	return body, nil
+}
+
+// A scenario the feature maps say needs a before/after comparison, for which this run found none.
+type missingEvidence struct{ scenario, feature string }
+
+type evidenceGaps []missingEvidence
+
+func (g evidenceGaps) rows() []any {
+	rows := make([]any, 0, len(g))
+	for _, item := range g {
+		row := ordjson.NewObject()
+		row.Set("scenario", item.scenario)
+		row.Set("feature", item.feature)
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func (g evidenceGaps) reason() string {
+	names := make([]string, 0, len(g))
+	for _, item := range g {
+		names = append(names, item.scenario)
+	}
+	return fmt.Sprintf("missing required evidence for %d scenario(s): %s", len(g), strings.Join(names, ", "))
+}
+
+// evidenceGap reads the run's own missing list. An older runner writes ids without the feature beside them.
+func evidenceGap(record *ordjson.Object) evidenceGaps {
+	evidenceObj := objectField(record, "evidence")
+	if evidenceObj == nil {
+		return nil
+	}
+	features := map[string]string{}
+	details, _ := func() any { v, _ := evidenceObj.Get("missing_details"); return v }().([]any)
+	for _, raw := range details {
+		row, _ := raw.(*ordjson.Object)
+		if row == nil {
+			continue
+		}
+		features[asString(row, "scenario")] = asString(row, "feature")
+	}
+	var gaps evidenceGaps
+	for _, id := range boundStringList(evidenceObj, "missing", 200, 100) {
+		scenario := fmt.Sprint(id)
+		gaps = append(gaps, missingEvidence{scenario: scenario, feature: features[scenario]})
+	}
+	return gaps
+}
+
+func presentScenarios(evidenceObj *ordjson.Object) []any {
+	present := objectField(evidenceObj, "present")
+	if present == nil {
+		return []any{}
+	}
+	keys := append([]string(nil), present.Keys()...)
+	sort.Strings(keys)
+	out := make([]any, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, boundString(key, 200))
+	}
+	return out
+}
+
+func endpoint(ctx *ordjson.Object) *ordjson.Object {
+	row := ordjson.NewObject()
+	for _, key := range []string{"machine", "session", "pane"} {
+		row.Set(key, asString(ctx, key))
+	}
+	return row
 }
 
 func boundString(s string, limit int) string {

@@ -17,17 +17,22 @@ import (
 var sha40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type Args struct {
-	Task                string
-	Rerun               bool
-	AllowBehind         bool
-	RuntimeRoot         string
-	NoPR                bool
-	Draft               bool
-	Title               string
-	BodyFile            string
-	AllowNewAfterClosed bool
+	Task                 string
+	Rerun                bool
+	AllowBehind          bool
+	AllowMissingEvidence bool
+	RuntimeRoot          string
+	NoPR                 bool
+	Draft                bool
+	Title                string
+	BodyFile             string
+	AllowNewAfterClosed  bool
 }
 
+// A blocked gate normally leaves the run going, because most blocks are something sum could not observe and a later gate
+// may still be worth recording. Test is the exception: a blocked Test means the candidate changed something a user sees
+// and nobody proved it, and the run stops rather than push that to origin.
+//
 // Review is absent on purpose: it belongs to a separately launched reviewer pane, and no runner may stand in for it.
 var order = []pipeline.Stage{pipeline.StageRebase, pipeline.StageTest, pipeline.StageLint, pipeline.StageDocument, pipeline.StagePush, pipeline.StagePR}
 
@@ -63,8 +68,10 @@ func Run(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error
 		if readErr != nil {
 			return nil, readErr
 		}
-		if pipeline.Derive(current).Get(stage).Status == pipeline.Fail {
+		if status := pipeline.Derive(current).Get(stage).Status; status == pipeline.Fail {
 			stopped = fmt.Sprintf("the %s gate failed", stage)
+		} else if status == pipeline.Blocked && stage == pipeline.StageTest {
+			stopped = fmt.Sprintf("the %s gate is blocked", stage)
 		}
 	}
 
@@ -129,7 +136,7 @@ func runStage(s *store.Store, ctx *ordjson.Object, args Args, stage pipeline.Sta
 	case pipeline.StageDocument:
 		return attempt(pipeline.Document(s, ctx, args.RuntimeRoot, pipeline.DocumentArgs{Task: args.Task}))
 	case pipeline.StagePush:
-		return attempt(pipeline.Push(s, ctx, pipeline.PushArgs{Task: args.Task, AllowBehind: args.AllowBehind}))
+		return attempt(pipeline.Push(s, ctx, pipeline.PushArgs{Task: args.Task, AllowBehind: args.AllowBehind, AllowMissingEvidence: args.AllowMissingEvidence}))
 	case pipeline.StagePR:
 		if args.NoPR {
 			return "skipped", "--no-pr; opening and reconciling the PR is left to you"

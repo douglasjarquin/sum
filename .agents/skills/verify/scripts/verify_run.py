@@ -167,7 +167,7 @@ def load_feature_maps(root: Path, index_relative: str):
                 raise Blocked(f"Scenario id {scenario_id} is defined twice across the feature maps.")
             seen.add(scenario_id)
             evidence_text = cells[driver_column + 1].strip() if driver_column + 1 < len(cells) else ""
-            scenarios.append({"id": scenario_id, "map": str(relative), "driver": "automated" if driver.lower().startswith("automated") else "manual",
+            scenarios.append({"id": scenario_id, "map": str(relative), "feature": Path(relative).stem, "driver": "automated" if driver.lower().startswith("automated") else "manual",
                               "driver_text": driver[:200], "description": (cells[0] if cells else "")[:200],
                               "requires_evidence": bool(EVIDENCE_REQUIRED.search(evidence_text))})
     return maps, scenarios
@@ -240,12 +240,21 @@ def policy_change(root: Path, base: str | None, files):
     return {"checked": True, "base": base, "changed": changed}
 
 
+def evidence_root(root: Path, evidence_relative: str):
+    """evidence_capture.py honours VERIFY_EVIDENCE_ROOT, so the runner reads the same override or it looks where nothing was written."""
+    override = os.environ.get("VERIFY_EVIDENCE_ROOT")
+    if override:
+        return Path(override).expanduser().resolve(), "VERIFY_EVIDENCE_ROOT"
+    return root / evidence_relative, "contract"
+
+
 def evidence_state(root: Path, evidence_relative: str, head: str, scenarios):
     """Comparison manifests written by .agents/skills/evidence for this candidate SHA, and the mapped scenarios that name visual evidence but have none.
     Missing evidence is reported, never invented and never turned into a pass for that scenario."""
     required = [s["id"] for s in scenarios if s.get("requires_evidence")]
+    by_id = {s["id"]: s for s in scenarios}
     present = {}
-    evidence_dir = root / evidence_relative
+    evidence_dir, root_source = evidence_root(root, evidence_relative)
     if evidence_dir.is_dir():
         for manifest in evidence_dir.glob("*/*/comparison.json"):
             try:
@@ -256,8 +265,18 @@ def evidence_state(root: Path, evidence_relative: str, head: str, scenarios):
             declared = (comparison.get("candidate") or {}).get("sha")
             usable = comparison.get("verdict") not in (None, "mismatch", "capture-failed") and after_sha and head.startswith(after_sha[:12]) and (not declared or head.startswith(declared[:12]))
             if comparison.get("scenario") in required and usable:
-                present.setdefault(comparison["scenario"], []).append({"path": str(manifest.relative_to(root)), "verdict": comparison.get("verdict"), "visual_proof": comparison.get("visual_proof")})
-    return {"dir": evidence_relative, "required": required, "present": present, "missing": [i for i in required if i not in present]}
+                present.setdefault(comparison["scenario"], []).append({"path": manifest_path(manifest, root), "verdict": comparison.get("verdict"), "visual_proof": comparison.get("visual_proof")})
+    missing = [i for i in required if i not in present]
+    details = [{"scenario": i, "feature": by_id.get(i, {}).get("feature"), "map": by_id.get(i, {}).get("map")} for i in missing]
+    return {"dir": evidence_relative, "root": str(evidence_dir), "root_source": root_source,
+            "required": required, "present": present, "missing": missing, "missing_details": details}
+
+
+def manifest_path(manifest: Path, root: Path):
+    try:
+        return str(manifest.relative_to(root))
+    except ValueError:
+        return str(manifest)
 
 
 def parse_scenario_args(values):

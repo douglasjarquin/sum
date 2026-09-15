@@ -45,7 +45,11 @@ func Next(record Record) string {
 		if detail == "" {
 			detail = "nothing recorded"
 		}
-		return fmt.Sprintf("%s is %s: %s. Do: %s.", definition.Display, row.Status, detail, advice[definition.Stage])
+		next := row.Advice
+		if next == "" {
+			next = advice[definition.Stage]
+		}
+		return fmt.Sprintf("%s is %s: %s. Do: %s.", definition.Display, row.Status, detail, next)
 	}
 	return "Every gate is settled; the merge decision is the user's."
 }

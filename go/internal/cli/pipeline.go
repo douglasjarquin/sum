@@ -93,7 +93,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	lintCmd.Flags().StringVar(&lintCandidate, "candidate", "", "")
 	pipelineCmd.AddCommand(lintCmd)
 
-	var allowBehind bool
+	var allowBehind, allowMissingEvidence bool
 	pushCmd := &cobra.Command{
 		Use:  "push TASK",
 		Args: cobra.ExactArgs(1),
@@ -102,7 +102,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := pipeline.Push(st, ctx, pipeline.PushArgs{Task: args[0], AllowBehind: allowBehind})
+			view, err := pipeline.Push(st, ctx, pipeline.PushArgs{Task: args[0], AllowBehind: allowBehind, AllowMissingEvidence: allowMissingEvidence})
 			if err != nil {
 				return err
 			}
@@ -110,9 +110,10 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 		},
 	}
 	pushCmd.Flags().BoolVar(&allowBehind, "allow-behind", false, "")
+	pushCmd.Flags().BoolVar(&allowMissingEvidence, "allow-missing-evidence", false, "")
 	pipelineCmd.AddCommand(pushCmd)
 
-	var rerun, runAllowBehind, noPR, runDraft, runAllowNewAfterClosed bool
+	var rerun, runAllowBehind, runAllowMissingEvidence, noPR, runDraft, runAllowNewAfterClosed bool
 	var runTitle, runBodyFile string
 	runCmd := &cobra.Command{
 		Use:  "run TASK",
@@ -123,7 +124,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 				return err
 			}
 			view, err := pipelinerun.Run(st, ctx, pipelinerun.Args{
-				Task: args[0], Rerun: rerun, AllowBehind: runAllowBehind, RuntimeRoot: o.runtimeRoot,
+				Task: args[0], Rerun: rerun, AllowBehind: runAllowBehind, AllowMissingEvidence: runAllowMissingEvidence, RuntimeRoot: o.runtimeRoot,
 				NoPR: noPR, Draft: runDraft, Title: runTitle, BodyFile: runBodyFile,
 				AllowNewAfterClosed: runAllowNewAfterClosed,
 			})
@@ -135,6 +136,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	}
 	runCmd.Flags().BoolVar(&rerun, "rerun", false, "")
 	runCmd.Flags().BoolVar(&runAllowBehind, "allow-behind", false, "")
+	runCmd.Flags().BoolVar(&runAllowMissingEvidence, "allow-missing-evidence", false, "")
 	runCmd.Flags().BoolVar(&noPR, "no-pr", false, "")
 	runCmd.Flags().BoolVar(&runDraft, "draft", false, "")
 	runCmd.Flags().StringVar(&runTitle, "title", "", "")
