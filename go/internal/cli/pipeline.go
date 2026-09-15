@@ -5,6 +5,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/pipelinerun"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -109,6 +110,28 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	}
 	pushCmd.Flags().BoolVar(&allowBehind, "allow-behind", false, "")
 	pipelineCmd.AddCommand(pushCmd)
+
+	var rerun, runAllowBehind bool
+	runCmd := &cobra.Command{
+		Use:  "run TASK",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, ctx, err := o.coordinatorContext("pipeline-run")
+			if err != nil {
+				return err
+			}
+			view, err := pipelinerun.Run(st, ctx, pipelinerun.Args{
+				Task: args[0], Rerun: rerun, AllowBehind: runAllowBehind, RuntimeRoot: o.runtimeRoot,
+			})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	runCmd.Flags().BoolVar(&rerun, "rerun", false, "")
+	runCmd.Flags().BoolVar(&runAllowBehind, "allow-behind", false, "")
+	pipelineCmd.AddCommand(runCmd)
 
 	var candidate string
 	documentCmd := &cobra.Command{

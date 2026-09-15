@@ -327,3 +327,35 @@ func TestPipelinePush_nonFastForwardIsRejectedAndOriginIsUnchanged(t *testing.T)
 		t.Fatalf("origin/%s = %s, want the other commit %s left alone", gateBranch, got, foreign)
 	}
 }
+
+func TestPipelineRun_stopsAtAFailingRebaseAndPushesNothing(t *testing.T) {
+	lab := newGateLab(t)
+	lab.advanceOrigin(t, "app.txt", "someone else's line\n")
+
+	result := runGate(t, lab, "run", gateTaskID)
+
+	steps, _ := result["steps"].([]any)
+	if len(steps) != 5 {
+		t.Fatalf("pipeline run reported %d steps, want one per coordinator gate:\n%v", len(steps), result["steps"])
+	}
+	first, _ := steps[0].(map[string]any)
+	if first["stage"] != "rebase" || first["outcome"] != "ran" {
+		t.Fatalf("first step = %v, want the rebase gate to have run", first)
+	}
+	for _, raw := range steps[1:] {
+		step, _ := raw.(map[string]any)
+		if step["outcome"] != "not-run" {
+			t.Fatalf("step %v ran after the rebase failed, want not-run", step)
+		}
+		if step["detail"] != "the rebase gate failed" {
+			t.Fatalf("step %v does not name the failing gate", step)
+		}
+	}
+	if got := lab.remoteSHA(t, gateBranch); got != "" {
+		t.Fatalf("origin/%s = %s, want nothing pushed after a failing rebase", gateBranch, got)
+	}
+	want := "Rebase is fail: Conflicts with main in: app.txt. Do: run `sumctl pipeline rebase TASK_ID`; a branch that is behind or conflicting is the worker's to rebase."
+	if result["next"] != want {
+		t.Fatalf("next = %v\nwant %q", result["next"], want)
+	}
+}
