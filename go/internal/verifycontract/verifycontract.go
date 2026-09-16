@@ -241,7 +241,7 @@ func ValidateCommittedPolicy(repo string, expected *ordjson.Object) error {
 	base := stringField(expected, "base_sha")
 	root, cleanup, err := MaterializeCommit(repo, base)
 	if err != nil {
-		if stringField(expected, "status") == "not-yet-standardized" && strings.Contains(err.Error(), "exceeds") {
+		if stringField(expected, "status") == "not-yet-standardized" && unavailableSnapshotError(err) {
 			return nil
 		}
 		return err
@@ -289,6 +289,11 @@ func ValidateCommittedPolicy(repo string, expected *ordjson.Object) error {
 		return fmt.Errorf("committed verification policy differs from the dispatch snapshot")
 	}
 	return nil
+}
+
+func unavailableSnapshotError(err error) bool {
+	text := err.Error()
+	return strings.Contains(text, "committed path") || strings.Contains(text, "contract snapshot references more than") || strings.Contains(text, "contract snapshot exceeds")
 }
 
 func SealPolicy(policy *ordjson.Object) {

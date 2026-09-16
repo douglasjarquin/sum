@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -218,6 +219,30 @@ func TestPrepareRecordsOversizedVerificationPolicy(t *testing.T) {
 	}
 	if !strings.Contains(string(brief), "not-yet-standardized") || !strings.Contains(string(brief), asString(policy["snapshot_error"])) {
 		t.Fatalf("brief = %s, want the recorded oversized-contract reason", brief)
+	}
+}
+
+func TestPrepareRecordsOverLimitVerificationPolicy(t *testing.T) {
+	d := newPolicyLab(t)
+	files := map[string]string{
+		"README.md":               "An over-limit-contract project.\n",
+		"mise.toml":               "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":               standardizedContract,
+		"docs/features/README.md": "# Features\n",
+	}
+	var links strings.Builder
+	links.WriteString("# Features\n\n")
+	for i := 0; i < 257; i++ {
+		name := fmt.Sprintf("docs/features/map-%03d.md", i)
+		links.WriteString(fmt.Sprintf("- [Map %03d](map-%03d.md)\n", i, i))
+		files[name] = "# Feature\n"
+	}
+	files["docs/features/README.md"] = links.String()
+	repo := policyProject(t, d.base, "over-limit", files)
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	policy := asMap(task["verification_policy"])
+	if asString(policy["status"]) != "not-yet-standardized" || !strings.Contains(asString(policy["snapshot_error"]), "more than 256") {
+		t.Fatalf("verification policy = %v, want a durable reference-limit reason", policy)
 	}
 }
 
