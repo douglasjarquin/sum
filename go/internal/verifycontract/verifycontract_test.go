@@ -227,6 +227,18 @@ func TestReadRefusesSymlinkedFeatureMapPaths(t *testing.T) {
 	}
 }
 
+func TestReadRefusesSymlinkedTaskOwner(t *testing.T) {
+	contract := strings.Replace(contractBody, "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/verification\"\ntask_owner = \"linked-owner\"", 1)
+	root := checkout(t, map[string]string{"VERIFY.md": contract, "docs/index.md": ""})
+	if err := os.Symlink(".", filepath.Join(root, "linked-owner")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Read(root)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want a symlink refusal", err)
+	}
+}
+
 func TestPolicyAtDispatchDowngradesAMalformedContract(t *testing.T) {
 	root := checkout(t, map[string]string{"VERIFY.md": "# Contract\n\nNo block.\n"})
 	policy := PolicyAtDispatch(root, "abc123", standardizedStatus())

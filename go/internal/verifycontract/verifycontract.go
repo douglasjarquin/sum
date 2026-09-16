@@ -216,6 +216,9 @@ func Read(worktree string) (*Contract, error) {
 		return nil, err
 	}
 	ownerPath := filepath.Join(worktree, filepath.FromSlash(owner))
+	if pathContainsSymlink(worktree, ownerPath) {
+		return nil, fmt.Errorf("%s `task_owner` traverses a symlink", ContractFile)
+	}
 	ownerInfo, err := os.Stat(ownerPath)
 	if err != nil || !ownerInfo.IsDir() {
 		return nil, fmt.Errorf("%s `task_owner` must name an existing directory, found %q", ContractFile, owner)

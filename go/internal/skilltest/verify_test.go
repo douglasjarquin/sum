@@ -557,6 +557,27 @@ func TestRunnerRejectsLinkedMapDirectorySymlink(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsSymlinkedTaskOwner(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "symlinked-task-owner"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "linked-owner")); err != nil {
+		t.Fatal(err)
+	}
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/verification\"\ntask_owner = \"linked-owner\"", 1)
+	mustWrite(t, contract, body)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "reject symlinked task owner")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "symlink") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked symlinked task owner", record, code, stderr)
+	}
+}
+
 func TestGenerationKeepsUserEdits(t *testing.T) {
 	v := newVerifyLab(t)
 	repo := v.rawRepo("service", filepath.Join(v.stop, "custom"))

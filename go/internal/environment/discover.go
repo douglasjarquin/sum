@@ -833,6 +833,10 @@ func passiveMiseTaskOriginsFromFiles(worktree string, result *ordjson.Object) *o
 		result.Set("error", fmt.Sprintf("VERIFY.md task_owner %q is not a relative directory", owner))
 		return result
 	}
+	if link := symlinkedComponent(worktree, owner); link != "" {
+		result.Set("error", fmt.Sprintf("VERIFY.md task_owner %q traverses a symlink (%s)", owner, link))
+		return result
+	}
 	ownerPath := filepath.Join(worktree, filepath.FromSlash(owner))
 	if info, err := os.Stat(ownerPath); err != nil || !info.IsDir() {
 		result.Set("error", fmt.Sprintf("VERIFY.md task_owner %q is not a directory of this repository", owner))

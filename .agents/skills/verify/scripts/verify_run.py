@@ -263,6 +263,12 @@ def check_requirements(requires):
 
 def mise_task(root: Path, owner_relative: str, name="verify"):
     """`mise tasks ls --json` from the root; the selected task's source must live under this repository (or its documented monorepo owner)."""
+    owner_path = root / owner_relative
+    if path_contains_symlink(owner_path, root):
+        raise Blocked(f"task_owner {owner_relative!r} traverses a symlink.")
+    owner = owner_path.resolve()
+    if owner != root and root not in owner.parents:
+        raise Blocked(f"task_owner {owner_relative!r} is not a directory of this repository.")
     binary = shutil.which("mise")
     if binary is None:
         raise Blocked("mise is not on PATH; the canonical entrypoint cannot run.")
@@ -273,8 +279,7 @@ def mise_task(root: Path, owner_relative: str, name="verify"):
         rows = json.loads(result.stdout or "[]")
     except ValueError:
         raise Blocked("mise tasks ls did not return JSON.")
-    owner = (root / owner_relative).resolve()
-    if not owner.is_dir() or (owner != root and root not in owner.parents and owner not in root.parents):
+    if not owner.is_dir():
         raise Blocked(f"task_owner {owner_relative!r} is not a directory of this repository.")
     candidates = [r for r in rows if isinstance(r, dict) and r.get("name") == name]
     if not candidates:
