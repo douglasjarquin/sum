@@ -48,6 +48,10 @@ class Blocked(Exception):
     """The run cannot produce a trustworthy verdict; the reason is recorded, never converted into a pass."""
 
 
+def safe_relative_path(value):
+    return isinstance(value, str) and bool(value) and not Path(value).is_absolute() and "\\" not in value and not any(character in value for character in ":*?[]") and all(part != ".." for part in value.split("/"))
+
+
 def utc_now():
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -92,13 +96,13 @@ def load_contract(root: Path):
         raise Blocked(f"{CONTRACT_FILE} entrypoint must be the literal `mise run verify`, found {entrypoint!r}.")
     for key in ("feature_maps", "artifacts"):
         value = config.get(key)
-        if not isinstance(value, str) or not value or Path(value).is_absolute() or ".." in Path(value).parts:
+        if not safe_relative_path(value):
             raise Blocked(f"{CONTRACT_FILE} `{key}` must be a relative path inside the repository, found {value!r}.")
     evidence = config.get("evidence", ".artifacts/evidence")
-    if not isinstance(evidence, str) or not evidence or Path(evidence).is_absolute() or ".." in Path(evidence).parts:
+    if not safe_relative_path(evidence):
         raise Blocked(f"{CONTRACT_FILE} `evidence` must be a relative path inside the repository, found {evidence!r}.")
     owner = config.get("task_owner", ".")
-    if not isinstance(owner, str) or Path(owner).is_absolute() or ".." in Path(owner).parts:
+    if not safe_relative_path(owner):
         raise Blocked(f"{CONTRACT_FILE} `task_owner` must be a relative directory inside the repository, found {owner!r}.")
     requires = config.get("requires", {})
     freshness = config.get("freshness", {})
@@ -109,7 +113,7 @@ def load_contract(root: Path):
         if not all(isinstance(v, str) for v in requires.get(key, [])):
             raise Blocked(f"{CONTRACT_FILE} `requires.{key}` must be a list of strings.")
     for key in ("inputs", "outputs"):
-        if not all(isinstance(v, str) and not Path(v).is_absolute() and ".." not in Path(v).parts and "\\" not in v for v in freshness.get(key, [])):
+        if not all(safe_relative_path(v) for v in freshness.get(key, [])):
             raise Blocked(f"{CONTRACT_FILE} `freshness.{key}` must be a list of relative paths.")
     timeout = config.get("timeout_seconds", 3600)
     if not isinstance(timeout, int) or timeout <= 0:
@@ -121,7 +125,7 @@ def load_contract(root: Path):
 
 def policy_file_set(extra):
     """The default policy files always count; a candidate's VERIFY.md may add paths but can never remove or shrink the set that governs it."""
-    if not isinstance(extra, list) or not all(isinstance(v, str) and v and not Path(v).is_absolute() and ".." not in Path(v).parts for v in extra):
+    if not isinstance(extra, list) or not all(safe_relative_path(v) for v in extra):
         raise Blocked(f"{CONTRACT_FILE} `policy_files` must be a list of relative paths to add to the defaults.")
     return sorted(set(POLICY_FILES_DEFAULT) | set(extra))
 

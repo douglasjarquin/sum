@@ -156,6 +156,7 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 	delete(policy, "requirements")
 	delete(policy, "scenario_ids")
 	delete(policy, "source_runtime")
+	delete(policy, "prepared_worktree")
 	want := map[string]any{
 		"status":             "standardized",
 		"why":                "VERIFY.md at the root and a `verify` task this checkout defines",

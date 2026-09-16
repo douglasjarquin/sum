@@ -259,6 +259,11 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		Project:     projectObj,
 		Launch:      launchSpec,
 		RuntimeRoot: args.RuntimeRoot,
+		Worktree:    worktreePath,
+		GitRoot:     actualRoot,
+		Head:        actualHead,
+		Branch:      actualBranch,
+		Workspace:   workspaceID,
 	})
 	verifycontract.SealPolicy(policy)
 	task.Set("verification_policy", policy)
@@ -379,11 +384,12 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	}
 	preparedWorktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
 	repository := asString(func() any { v, _ := task.Get("repository"); return v }())
+	recordedWorktree := snapshotObject(asObject(policy), "prepared_worktree")
 	actualRoot, rootErr := runGit("-C", preparedWorktree, "rev-parse", "--show-toplevel")
 	actualHead, headErr := runGit("-C", preparedWorktree, "rev-parse", "HEAD")
 	actualCommon, commonErr := runGit("-C", preparedWorktree, "rev-parse", "--git-common-dir")
 	repositoryCommon, repositoryCommonErr := runGit("-C", repository, "rev-parse", "--git-common-dir")
-	if rootErr != nil || headErr != nil || commonErr != nil || repositoryCommonErr != nil || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon) || actualHead != asString(func() any { v, _ := task.Get("base_sha"); return v }()) {
+	if rootErr != nil || headErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualHead != asString(func() any { v, _ := task.Get("base_sha"); return v }()) || actualHead != asString(policyField(recordedWorktree, "head")) || asString(func() any { v, _ := task.Get("branch"); return v }()) != asString(policyField(recordedWorktree, "branch")) || asString(func() any { v, _ := task.Get("workspace"); return v }()) != asString(policyField(recordedWorktree, "workspace")) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon) {
 		unlock()
 		return nil, fmt.Errorf("The prepared checkout does not match its saved Git identity; start is refused.")
 	}
@@ -571,6 +577,10 @@ func validVerificationSnapshot(value any, task *ordjson.Object) bool {
 		return false
 	}
 	if !snapshotString(policy, "contract_path") || !snapshotString(policy, "repository_path") || !snapshotString(policy, "observed_at") {
+		return false
+	}
+	preparedWorktree := snapshotObject(policy, "prepared_worktree")
+	if preparedWorktree == nil || !snapshotString(preparedWorktree, "path") || !snapshotString(preparedWorktree, "git_root") || !snapshotString(preparedWorktree, "head") || !snapshotString(preparedWorktree, "branch") || !snapshotString(preparedWorktree, "workspace") {
 		return false
 	}
 	snapshotHash, _ := policy.Get("snapshot_sha256")

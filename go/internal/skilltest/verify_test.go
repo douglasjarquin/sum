@@ -312,6 +312,8 @@ func TestRunnerRejectsTraversalInFreshnessPaths(t *testing.T) {
 		{name: "slash", line: "inputs = [\"../outside\"]\n"},
 		{name: "embedded-slash", line: "inputs = [\"inside/../outside\"]\n"},
 		{name: "backslash", line: `inputs = ['..\outside']` + "\n"},
+		{name: "wildcard", line: "inputs = [\"inside/*.txt\"]\n"},
+		{name: "pathspec", line: "inputs = [\":(glob)outside\"]\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := v.rawRepo("cli", filepath.Join(v.stop, "freshness-traversal-"+tc.name))
@@ -327,6 +329,44 @@ func TestRunnerRejectsTraversalInFreshnessPaths(t *testing.T) {
 			code, record, stderr := v.runner(repo, "--base", head)
 			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "freshness.inputs") {
 				t.Fatalf("runner %v code=%d stderr=%s, want a blocked traversal path", record, code, stderr)
+			}
+		})
+	}
+}
+
+func TestRunnerRejectsGitPathspecContractPaths(t *testing.T) {
+	v := newVerifyLab(t)
+	for _, tc := range []struct {
+		name  string
+		field string
+		line  string
+	}{
+		{name: "feature-maps", field: "feature_maps", line: `feature_maps = "docs/*.md"`},
+		{name: "artifacts", field: "artifacts", line: `artifacts = "artifacts/*.log"`},
+		{name: "evidence", field: "evidence", line: `evidence = "evidence:(glob)"`},
+		{name: "task-owner", field: "task_owner", line: `task_owner = '..\outside'`},
+		{name: "policy-files", field: "policy_files", line: `policy_files = ["docs/*.md"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := v.rawRepo("cli", filepath.Join(v.stop, "pathspec-"+tc.name))
+			if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+				t.Fatal(stderr)
+			}
+			contract := filepath.Join(repo, "VERIFY.md")
+			body := readFile(t, contract)
+			fieldPattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(tc.field) + ` = .*$`)
+			if fieldPattern.MatchString(body) {
+				body = fieldPattern.ReplaceAllString(body, tc.line)
+			} else {
+				body = strings.Replace(body, "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n"+tc.line+"\n", 1)
+			}
+			mustWrite(t, contract, body)
+			git(t, repo, "add", "VERIFY.md")
+			git(t, repo, "commit", "-q", "-m", "reject contract pathspec")
+			head := git(t, repo, "rev-parse", "HEAD")
+			code, record, stderr := v.runner(repo, "--base", head)
+			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), tc.field) {
+				t.Fatalf("runner %v code=%d stderr=%s, want a blocked %s path", record, code, stderr, tc.field)
 			}
 		})
 	}

@@ -16,6 +16,11 @@ type DispatchMetadata struct {
 	Project     *ordjson.Object
 	Launch      *ordjson.Object
 	RuntimeRoot string
+	Worktree    string
+	GitRoot     string
+	Head        string
+	Branch      string
+	Workspace   string
 }
 
 func AddDispatchMetadata(policy *ordjson.Object, metadata DispatchMetadata) {
@@ -23,6 +28,13 @@ func AddDispatchMetadata(policy *ordjson.Object, metadata DispatchMetadata) {
 	policy.Set("project_identity", projectIdentity(metadata.Repository, metadata.Project))
 	policy.Set("source_runtime", sourceRuntime(metadata.RuntimeRoot))
 	policy.Set("delivery", delivery(metadata.Launch))
+	worktree := ordjson.NewObject()
+	worktree.Set("path", metadata.Worktree)
+	worktree.Set("git_root", metadata.GitRoot)
+	worktree.Set("head", metadata.Head)
+	worktree.Set("branch", metadata.Branch)
+	worktree.Set("workspace", metadata.Workspace)
+	policy.Set("prepared_worktree", worktree)
 }
 
 func projectIdentity(repository string, project *ordjson.Object) *ordjson.Object {
