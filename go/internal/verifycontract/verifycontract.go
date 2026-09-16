@@ -15,6 +15,7 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
+	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -249,6 +250,11 @@ func ValidateCommittedPolicy(repo string, expected *ordjson.Object) error {
 		}
 		return nil
 	}
+	actualStatus := stringField(environment.VerificationContractStatusAtBase(root), "status")
+	expectedStatus := stringField(expected, "status")
+	if actualStatus != expectedStatus && !(actualStatus == "standardized" && expectedStatus == "not-yet-standardized" && hasMissingRequirements(expected)) {
+		return fmt.Errorf("verification status differs from the dispatch snapshot")
+	}
 	if expectedHash := stringField(expected, "contract_sha256"); expectedHash != "" && expectedHash != contract.SHA256 {
 		return fmt.Errorf("contract hash differs from the dispatch snapshot")
 	}
@@ -315,6 +321,12 @@ func jsonEqual(left, right any) bool {
 	leftJSON, leftErr := ordjson.MarshalSortedCompact(left)
 	rightJSON, rightErr := ordjson.MarshalSortedCompact(right)
 	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
+}
+
+func hasMissingRequirements(policy *ordjson.Object) bool {
+	requirements, _ := field(policy, "requirements").(*ordjson.Object)
+	missing, _ := field(requirements, "missing").([]any)
+	return len(missing) > 0
 }
 
 // policyFileSet adds the contract's declared paths to the defaults; a candidate may widen the set that governs it, never shrink it.

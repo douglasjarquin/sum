@@ -31,6 +31,7 @@ import subprocess
 import time
 import tomllib
 from pathlib import Path
+from typing import Any
 
 SCHEMA = 1
 CONTRACT_FILE = "VERIFY.md"
@@ -108,7 +109,7 @@ def load_contract(root: Path):
         if not all(isinstance(v, str) for v in requires.get(key, [])):
             raise Blocked(f"{CONTRACT_FILE} `requires.{key}` must be a list of strings.")
     for key in ("inputs", "outputs"):
-        if not all(isinstance(v, str) and not Path(v).is_absolute() for v in freshness.get(key, [])):
+        if not all(isinstance(v, str) and not Path(v).is_absolute() and ".." not in Path(v).parts for v in freshness.get(key, [])):
             raise Blocked(f"{CONTRACT_FILE} `freshness.{key}` must be a list of relative paths.")
     timeout = config.get("timeout_seconds", 3600)
     if not isinstance(timeout, int) or timeout <= 0:
@@ -310,7 +311,8 @@ def run_entrypoint(root: Path, run_dir: Path, timeout: int, binary: str):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = (__doc__ or "").splitlines()[0]
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--root", default=".", help="Any directory inside the repository; the Git top level is resolved from it")
     parser.add_argument("--check", action="store_true", help="Validate the contract, maps, task ownership, and requirements without running anything")
     parser.add_argument("--base", help="Commit/ref to compare policy files against; changes to VERIFY.md, maps, or tasks are flagged for root review")
@@ -320,8 +322,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     outcomes = parse_scenario_args(args.scenario)
     run_id = f"{_dt.datetime.now(_dt.timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(4)}"
-    record = {"schema": SCHEMA, "run_id": run_id, "started_at": utc_now(), "runner": {"path": str(Path(__file__).resolve()), "mode": "check" if args.check else "run"},
-              "outcome": None, "blocked_reason": None, "provisional": None, "certifies": None, "requires_root_review": False}
+    record: dict[str, Any] = {"schema": SCHEMA, "run_id": run_id, "started_at": utc_now(), "runner": {"path": str(Path(__file__).resolve()), "mode": "check" if args.check else "run"},
+                              "outcome": None, "blocked_reason": None, "provisional": None, "certifies": None, "requires_root_review": False}
     root = None
     try:
         root = resolve_root(Path(args.root).resolve())
@@ -331,7 +333,7 @@ def main(argv=None):
         record["candidate"] = {"sha": head, "dirty": dirty, "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip() or None,
                                "git_dir_is_file": (root / ".git").is_file()}
         record["provisional"] = dirty
-        contract = load_contract(root)
+        contract: dict[str, Any] = load_contract(root)
         record["contract"] = {"path": CONTRACT_FILE, "sha256": contract["sha256"], "entrypoint": contract["entrypoint"], "task_owner": contract["task_owner"]}
         maps, scenarios = load_feature_maps(root, contract["feature_maps"])
         record["feature_maps"] = maps
@@ -385,9 +387,10 @@ def main(argv=None):
     except Blocked as exc:
         record["outcome"], record["blocked_reason"] = "blocked", str(exc)
     record["ended_at"] = utc_now()
-    if root is not None and record.get("artifacts", {}).get("run_dir"):
-        (root / record["artifacts"]["run_dir"] / "run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-        latest = root / record["artifacts"]["dir"] / "latest.json"
+    artifacts_record = record.get("artifacts")
+    if root is not None and isinstance(artifacts_record, dict) and isinstance(artifacts_record.get("run_dir"), str):
+        (root / artifacts_record["run_dir"] / "run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        latest = root / str(artifacts_record["dir"]) / "latest.json"
         latest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     if args.json:
         print(json.dumps(record, indent=2))
@@ -401,14 +404,18 @@ def main(argv=None):
             for row in record["scenarios"]:
                 counts[row["status"]] = counts.get(row["status"], 0) + 1
             print("scenarios: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) if counts else "scenarios: none mapped")
-        if record.get("requires_root_review") and record.get("policy", {}).get("checked"):
-            print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(record["policy"]["changed"]))
+        policy_record = record.get("policy")
+        if record.get("requires_root_review") and isinstance(policy_record, dict) and policy_record.get("checked"):
+            changed = policy_record.get("changed", [])
+            print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(str(path) for path in changed))
         elif record.get("requires_root_review"):
             print("policy not compared (no --base); the run cannot certify a SHA until VERIFY.md, tasks, and maps are reviewed against a base")
-        if record.get("evidence", {}).get("missing"):
-            print("required evidence missing for: " + ", ".join(record["evidence"]["missing"]) + f" (no comparison for this candidate under {record['evidence']['dir']})")
-        if record.get("artifacts", {}).get("run_dir"):
-            print(f"record: {record['artifacts']['run_dir']}/run.json")
+        evidence_record = record.get("evidence")
+        if isinstance(evidence_record, dict) and evidence_record.get("missing"):
+            missing = evidence_record["missing"]
+            print("required evidence missing for: " + ", ".join(str(scenario) for scenario in missing) + f" (no comparison for this candidate under {evidence_record['dir']})")
+        if isinstance(artifacts_record, dict) and artifacts_record.get("run_dir"):
+            print(f"record: {artifacts_record['run_dir']}/run.json")
     return {"pass": 0, "checked": 0, "fail": 1, "blocked": 2}[record["outcome"]]
 
 

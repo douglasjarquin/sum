@@ -10,6 +10,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/verifycontract"
 )
 
 const standardizedContract = "# Verification contract\n\n" +
@@ -197,6 +200,22 @@ func TestDispatchRecordsNotYetStandardizedWithoutContract(t *testing.T) {
 	}
 }
 
+func TestBriefIncludesReferencesForUnstandardizedPolicy(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "plain-brief", map[string]string{"README.md": "No contract here.\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	body, err := os.ReadFile(asString(task["brief_path"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{"not-yet-standardized", "Shared engineering principles:", "Reviewer procedure:", "cannot claim standardized delivery"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("brief does not contain %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestBriefNamesRequiredEvidenceScenarios(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "standardized", map[string]string{
@@ -285,5 +304,74 @@ func TestStartRefusesTamperedSnapshotSeal(t *testing.T) {
 	result := d.ctl(false, "start", asString(task["id"]))
 	if !strings.Contains(asString(result["error"]), "not intact") {
 		t.Fatalf("start result = %v, want the snapshot seal refusal", result)
+	}
+}
+
+func TestStartRefusesResealedStatusDowngrade(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "resealed", map[string]string{
+		"README.md":                 "A resealed-snapshot project.\n",
+		"mise.toml":                 "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":                 standardizedContract,
+		"docs/features/README.md":   featureIndex,
+		"docs/features/greeting.md": featureMap,
+	})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	taskPath := filepath.Join(d.home, "tasks", asString(task["id"]), "task.json")
+	raw, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := ordjson.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskObject, ok := decoded.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("task = %T, want object", decoded)
+	}
+	policy, ok := taskObject.Get("verification_policy")
+	if !ok {
+		t.Fatal("task has no verification policy")
+	}
+	policyObject, ok := policy.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("verification policy = %T, want object", policy)
+	}
+	policyObject.Set("status", "not-yet-standardized")
+	verifycontract.SealPolicy(policyObject)
+	data, err := ordjson.MarshalIndent(taskObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taskPath, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := d.ctl(false, "start", asString(task["id"]))
+	if !strings.Contains(asString(result["error"]), "does not match its committed base") {
+		t.Fatalf("start result = %v, want the committed-status refusal", result)
+	}
+}
+
+func TestWorkerHandoffCannotReplaceVerificationPolicy(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "handoff", map[string]string{
+		"README.md":                 "A handoff-authority project.\n",
+		"mise.toml":                 "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":                 standardizedContract,
+		"docs/features/README.md":   featureIndex,
+		"docs/features/greeting.md": featureMap,
+	})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	want := asString(asMap(task["verification_policy"])["contract_sha256"])
+	handoff := filepath.Join(d.base, "forged-handoff.json")
+	if err := os.WriteFile(handoff, []byte("{\"outcome\":\"completed\",\"verification_policy\":{\"status\":\"not-yet-standardized\"}}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.ctl(true, "report", asString(task["id"]), "--text", "forged handoff", "--handoff", handoff)
+	reloaded := d.ctl(true, "show", asString(task["id"]))
+	policy := asMap(reloaded["verification_policy"])
+	if asString(policy["status"]) != "standardized" || asString(policy["contract_sha256"]) != want {
+		t.Fatalf("saved policy = %v, want the coordinator snapshot", policy)
 	}
 }

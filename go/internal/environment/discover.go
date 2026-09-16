@@ -20,9 +20,10 @@ import (
 )
 
 const (
-	configMaxBytes = 256 * 1024
-	historyLimit   = 30
-	serviceLimit   = 20
+	configMaxBytes     = 256 * 1024
+	historyLimit       = 30
+	serviceLimit       = 20
+	passiveParentLimit = 64
 )
 
 var (
@@ -797,9 +798,19 @@ func passiveMiseTaskOrigins(worktree, runtimeRoot string) *ordjson.Object {
 	if _, err := toolpath.Find(runtimeRoot, "mise"); err != nil {
 		result.Set("available", false)
 		result.Set("error", err.Error())
-		return result
+	} else {
+		result.Set("available", true)
 	}
+	return passiveMiseTaskOriginsFromFiles(worktree, result)
+}
+
+func passiveMiseTaskOriginsAtBase(worktree string) *ordjson.Object {
+	result := ordjson.NewObject()
 	result.Set("available", true)
+	return passiveMiseTaskOriginsFromFiles(worktree, result)
+}
+
+func passiveMiseTaskOriginsFromFiles(worktree string, result *ordjson.Object) *ordjson.Object {
 	tasks := []any{}
 	owned := map[string]bool{}
 	inherited := passiveInheritedTasks(worktree)
@@ -903,7 +914,8 @@ func passiveMiseTaskOrigins(worktree, runtimeRoot string) *ordjson.Object {
 func passiveInheritedTasks(worktree string) []any {
 	var inherited []any
 	seen := map[string]bool{}
-	for parent := filepath.Dir(worktree); parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
+	parent := filepath.Dir(worktree)
+	for depth := 0; parent != filepath.Dir(parent) && depth < passiveParentLimit; depth++ {
 		for _, relative := range []string{"mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test"} {
 			path := filepath.Join(parent, filepath.FromSlash(relative))
 			info, err := os.Stat(path)
@@ -949,6 +961,7 @@ func passiveInheritedTasks(worktree string) []any {
 				}
 			}
 		}
+		parent = filepath.Dir(parent)
 	}
 	return inherited
 }
@@ -962,6 +975,10 @@ func VerificationContractStatus(worktree string) *ordjson.Object {
 
 func VerificationContractStatusAtDispatch(worktree, runtimeRoot string) *ordjson.Object {
 	return verificationContractStatus(worktree, passiveMiseTaskOrigins(worktree, runtimeRoot))
+}
+
+func VerificationContractStatusAtBase(worktree string) *ordjson.Object {
+	return verificationContractStatus(worktree, passiveMiseTaskOriginsAtBase(worktree))
 }
 
 func verificationContractStatus(worktree string, origins *ordjson.Object) *ordjson.Object {

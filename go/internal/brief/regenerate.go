@@ -214,7 +214,27 @@ func verificationContractText(task *ordjson.Object) string {
 	}
 	if asString(func() any { v, _ := policy.Get("status"); return v }()) != "standardized" {
 		why := asString(func() any { v, _ := policy.Get("why"); return v }())
-		return fmt.Sprintf("- `not-yet-standardized`: %s. Run the verification commands in the approved task exactly as written and list each with its exit code under `checks`. Do not invent a `verify` task or report an inherited one.", why)
+		lines := []string{fmt.Sprintf("- `not-yet-standardized`: %s. Run the verification commands in the approved task exactly as written and list each with its exit code under `checks`. Do not invent a `verify` task or report an inherited one.", why)}
+		if required := requiredEvidenceScenarios(policy); len(required) > 0 {
+			lines = append(lines, fmt.Sprintf("- These mapped scenarios name visual proof at the base commit: %s. Before delivery, capture a before/after comparison for each one your change touches with `.agents/skills/evidence/SKILL.md` and list the `comparison.json` path under `artifacts`.", strings.Join(required, ", ")))
+		}
+		if checks := requiredChecks(policy); len(checks) > 0 {
+			lines = append(lines, fmt.Sprintf("- Required project checks recorded at dispatch: `%s`. This is the approved base snapshot; do not replace it with an inherited task or a worker-selected command.", strings.Join(checks, "`, `")))
+		}
+		if runtime := objectField(policy, "source_runtime"); runtime != nil {
+			if rubric := objectField(runtime, "rubric"); rubric != nil {
+				path := asString(func() any { v, _ := rubric.Get("path"); return v }())
+				hash := asString(func() any { v, _ := rubric.Get("sha256"); return v }())
+				if path != "" {
+					lines = append(lines, fmt.Sprintf("- Shared engineering principles: `%s` (sha256 `%s` at dispatch). Follow this versioned rubric while inspecting the project's current verification path.", path, hash))
+				}
+			}
+			if reviewerPath := asString(func() any { v, _ := runtime.Get("reviewer_skill_path"); return v }()); reviewerPath != "" {
+				lines = append(lines, fmt.Sprintf("- Reviewer procedure: `%s` (captured at dispatch); the independent reviewer uses the same task facts and candidate SHA.", reviewerPath))
+			}
+		}
+		lines = append(lines, "- This task may inspect and onboard an unstandardized project, but it cannot claim standardized delivery or certify a project verification contract.")
+		return strings.Join(lines, "\n")
 	}
 	contractHash := asString(func() any { v, _ := policy.Get("contract_sha256"); return v }())
 	runner := asString(func() any { v, _ := policy.Get("runner"); return v }())
