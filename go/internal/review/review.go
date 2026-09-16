@@ -49,7 +49,7 @@ func endpointRole(task, endpoint *ordjson.Object) string {
 	return "other"
 }
 
-func Run(s *store.Store, taskID, verdict, candidate, toolName, text string, policyReviewed bool, endpoint *ordjson.Object) (*ordjson.Object, error) {
+func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath string, policyReviewed bool, endpoint *ordjson.Object) (*ordjson.Object, error) {
 	if !verdicts[verdict] {
 		return nil, fmt.Errorf("--verdict must be one of ['approve', 'changes-requested', 'blocked', 'comment']")
 	}
@@ -59,6 +59,30 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text string, poli
 	if toolName != "" && !toolNamePat.MatchString(toolName) {
 		return nil, fmt.Errorf("--tool must be a short name of the review facility that produced these findings (for example `made`)")
 	}
+	var made *ordjson.Object
+	if runPath != "" {
+		if toolName == "" {
+			toolName = "made"
+		}
+		if toolName != "made" {
+			return nil, fmt.Errorf("--run is the Made report path; pass --tool made")
+		}
+		report, err := loadMadeReport(runPath)
+		if err != nil {
+			return nil, err
+		}
+		reportCandidate := ""
+		if value, ok := report.Get("candidate"); ok {
+			reportCandidate, _ = value.(string)
+		}
+		if candidate == "" {
+			candidate = reportCandidate
+		}
+		if candidate != reportCandidate {
+			return nil, fmt.Errorf("Made report candidate %s does not match --candidate %s", reportCandidate, candidate)
+		}
+		made = report
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -67,6 +91,23 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text string, poli
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
+	}
+	if made != nil {
+		if repo, ok := made.Get("repository"); ok {
+			if name, _ := repo.(string); name != "" {
+				taskRepo, _ := task.Get("repository")
+				if taskRepo != name {
+					return nil, fmt.Errorf("Made report repository %s does not match task repository %v", name, taskRepo)
+				}
+			}
+		}
+		if blocking, _ := made.Get("blocking"); blocking == true && verdict == "approve" {
+			return nil, fmt.Errorf("Made report has blocking findings; an approve is refused")
+		}
+		if text == "" {
+			runID, _ := made.Get("run_id")
+			text = fmt.Sprintf("Imported Made report %v", runID)
+		}
 	}
 	role := endpointRole(task, endpoint)
 	if role == "worker" {
@@ -100,6 +141,11 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text string, poli
 		body.Set("tool", toolName)
 	}
 	body.Set("policy_reviewed", policyReviewed)
+	if made != nil {
+		body.Set("made", made)
+	} else {
+		body.Set("made", nil)
+	}
 	var cand any
 	if candidate != "" {
 		cand = candidate

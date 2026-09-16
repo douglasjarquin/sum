@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -98,6 +99,61 @@ func TestReviewCommands(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReviewMadeRunBindsCandidateAndDoesNotInvokeMade(t *testing.T) {
+	clearHerdrEnv(t)
+	home, _ := reviewUsageLab(t)
+	bin := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "made-ran")
+	if err := os.WriteFile(filepath.Join(bin, "made"), []byte("#!/bin/sh\necho ran >"+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	candidate := "cccccccccccccccccccccccccccccccccccccccc"
+	report := filepath.Join(t.TempDir(), "made.json")
+	if err := os.WriteFile(report, []byte(`{"repository":"owner/repo","candidate":"`+candidate+`","outcome":"pass","run_id":"made-1","stages":["review"],"findings":[],"limitations":"daemonless"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runReviewCLI(t, home, "review", "t-aaaaaaaaaaaa", "--verdict", "approve", "--candidate", candidate, "--tool", "made", "--run", report)
+	if err != nil {
+		t.Fatalf("err=%v stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("review invoked the made binary")
+	}
+	if !strings.Contains(stdout, "run_id: made-1") || !strings.Contains(stdout, "imported: true") {
+		t.Fatalf("stdout = %s, want the imported Made run_id", stdout)
+	}
+}
+
+func TestReviewMadeRunRefusesWrongCandidate(t *testing.T) {
+	clearHerdrEnv(t)
+	home, before := reviewUsageLab(t)
+	report := filepath.Join(t.TempDir(), "made.json")
+	if err := os.WriteFile(report, []byte(`{"repository":"owner/repo","candidate":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","outcome":"pass","run_id":"made-1"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err := runReviewCLI(t, home, "review", "t-aaaaaaaaaaaa", "--verdict", "approve", "--candidate", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--tool", "made", "--run", report)
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("err=%v stderr=%s, want a candidate mismatch", err, stderr)
+	}
+	assertReviewTaskUnchanged(t, home, before)
+}
+
+func TestReviewMadeRunRefusesApproveWithBlockingFinding(t *testing.T) {
+	clearHerdrEnv(t)
+	home, before := reviewUsageLab(t)
+	candidate := "cccccccccccccccccccccccccccccccccccccccc"
+	report := filepath.Join(t.TempDir(), "made.json")
+	if err := os.WriteFile(report, []byte(`{"repository":"owner/repo","candidate":"`+candidate+`","outcome":"fail","run_id":"made-2","findings":[{"path":"go/x.go","invariant":"single writer","severity":"blocking","detail":"two writers"}]}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err := runReviewCLI(t, home, "review", "t-aaaaaaaaaaaa", "--verdict", "approve", "--candidate", candidate, "--tool", "made", "--run", report)
+	if err == nil || !strings.Contains(err.Error(), "blocking") {
+		t.Fatalf("err=%v stderr=%s, want a blocking-finding refusal", err, stderr)
+	}
+	assertReviewTaskUnchanged(t, home, before)
 }
 
 func reviewUsageLab(t *testing.T) (home, before string) {

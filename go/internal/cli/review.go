@@ -7,7 +7,7 @@ import (
 )
 
 func (o *rootOptions) addReviewCommand(root *cobra.Command) {
-	var verdict, candidate, toolName, text, file string
+	var verdict, candidate, toolName, text, file, runPath string
 	var policyReviewed bool
 	cmd := &cobra.Command{
 		Use:  "review TASK",
@@ -17,11 +17,14 @@ func (o *rootOptions) addReviewCommand(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			body, err := app.TextInput(text, file)
-			if err != nil {
-				return err
+			body := text
+			if file != "" || (text == "" && runPath == "") {
+				body, err = app.TextInput(text, file)
+				if err != nil {
+					return err
+				}
 			}
-			view, err := review.Run(st, args[0], verdict, candidate, toolName, body, policyReviewed, app.OptionalContext(o.installRoot))
+			view, err := review.Run(st, args[0], verdict, candidate, toolName, body, runPath, policyReviewed, app.OptionalContext(o.installRoot))
 			if err != nil {
 				return err
 			}
@@ -34,8 +37,9 @@ func (o *rootOptions) addReviewCommand(root *cobra.Command) {
 	cmd.Flags().BoolVar(&policyReviewed, "policy-reviewed", false, "")
 	cmd.Flags().StringVar(&text, "text", "", "")
 	cmd.Flags().StringVar(&file, "file", "", "")
+	cmd.Flags().StringVar(&runPath, "run", "", "")
 	_ = cmd.MarkFlagRequired("verdict")
-	cmd.MarkFlagsOneRequired("text", "file")
+	cmd.MarkFlagsOneRequired("text", "file", "run")
 	cmd.MarkFlagsMutuallyExclusive("text", "file")
 	root.AddCommand(cmd)
 }

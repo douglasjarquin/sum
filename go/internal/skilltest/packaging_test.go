@@ -148,6 +148,30 @@ func TestScaffoldInspectListsArchitectureFilesAndWritesNothing(t *testing.T) {
 	}
 }
 
+func TestAuditFlagsStaleArchitectureExamplePath(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "stale-arch"))
+	v.scaffold(repo, "--write")
+	v.fill(repo, "cli")
+	mustWrite(t, filepath.Join(repo, "ARCHITECTURE.md"), "The owner example is `docs/missing-example.md`.\n")
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "architecture example")
+	code, audit, stderr := v.audit(repo)
+	if code != 1 || asString(audit["outcome"]) != "findings" {
+		t.Fatalf("audit %v code=%d stderr=%s, want findings", audit, code, stderr)
+	}
+	found := false
+	for _, item := range asSlice(audit["findings"]) {
+		row := asMap(item)
+		if asString(row["kind"]) == "stale-path" && asString(row["file"]) == "ARCHITECTURE.md" && strings.Contains(asString(row["detail"]), "docs/missing-example.md") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("findings = %v, want stale-path on ARCHITECTURE.md", audit["findings"])
+	}
+}
+
 func TestScaffoldReportsVerifyTaskCycle(t *testing.T) {
 	v := newVerifyLab(t)
 	repo := v.rawRepo("cli", filepath.Join(v.stop, "verify-cycle"))

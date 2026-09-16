@@ -30,6 +30,7 @@ const placeholderOnly = "placeholder"
 type DocumentArgs struct {
 	Task      string
 	Candidate string
+	Rationale string
 }
 
 type audit struct {
@@ -82,11 +83,11 @@ func Document(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Docu
 	}
 	defer removeCheckout(worktree, checkout)
 
-	result, summary := runAudit(python, script, checkout, stringField(task, "base_sha"), filepath.Join(dir, "audit.json"))
+	result, summary := runAudit(python, script, checkout, stringField(task, "base_sha"), filepath.Join(dir, "audit.json"), args.Rationale)
 	return recordGate(s, ctx, args.Task, "documentation", candidate, result, summary)
 }
 
-func runAudit(python, script, checkout, base, recordPath string) (*ordjson.Object, string) {
+func runAudit(python, script, checkout, base, recordPath, rationale string) (*ordjson.Object, string) {
 	body := ordjson.NewObject()
 	if info, err := os.Stat(filepath.Join(checkout, contractFile)); err != nil || info.IsDir() {
 		body.Set("result", "skipped")
@@ -98,6 +99,9 @@ func runAudit(python, script, checkout, base, recordPath string) (*ordjson.Objec
 	argv := []string{script, "--root", checkout, "--json", "--no-record"}
 	if sha40.MatchString(base) {
 		argv = append(argv, "--base", base)
+	}
+	if rationale != "" {
+		argv = append(argv, "--rationale", rationale)
 	}
 	runCtx, cancel := context.WithTimeout(context.Background(), auditBound)
 	defer cancel()
