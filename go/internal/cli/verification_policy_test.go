@@ -450,6 +450,27 @@ func TestStartRefusesResealedRepositorySubstitution(t *testing.T) {
 	}
 }
 
+func TestStartRefusesBranchSubstitution(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "branch", map[string]string{
+		"README.md":                 "A branch-attestation project.\n",
+		"mise.toml":                 "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":                 standardizedContract,
+		"docs/features/README.md":   featureIndex,
+		"docs/features/greeting.md": featureMap,
+	})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	worktree := asString(task["worktree"])
+	command := exec.Command("git", "-C", worktree, "checkout", "-q", "-b", "alternate")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("git checkout alternate: %v\n%s", err, output)
+	}
+	result := d.ctl(false, "start", asString(task["id"]))
+	if !strings.Contains(asString(result["error"]), "does not match its saved Git identity") {
+		t.Fatalf("start result = %v, want the branch identity refusal", result)
+	}
+}
+
 func TestWorkerHandoffCannotReplaceVerificationPolicy(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "handoff", map[string]string{
