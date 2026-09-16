@@ -99,7 +99,11 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
   Remote-machine returns use Herdr `machine add`. They do not bind Grok Bot, change `templates/grok-bot/`, or add a Sum SSH enroll path.
   Making Go Mesh the live `bin/herdr-mesh` server does not bind Grok Bot, change `templates/grok-bot/`, or alter Bot commands.
   Keeping overlay sources so a prior helper can stage this tree does not bind Grok Bot.
-  This dictionary binds `templates/grok-bot/`. A platform Bot stays a Bot. Its sum role is coordinator or project agent.
+  This dictionary binds `templates/grok-bot/`.
+  A platform Bot stays a Bot.
+  The published recipe is a coordinator.
+  Worker Bots it signs on are worker agents.
+  The recipe is native to Grok Bot and does not name helper commands.
   Adding `.grok/hooks/` binds Grok project hooks once the folder is trusted (`/hooks-trust` or `--trust`).
   Adding `.codex/hooks.json` binds Codex project hooks once trusted.
   Neither changes `templates/grok-bot/` or Bot commands.

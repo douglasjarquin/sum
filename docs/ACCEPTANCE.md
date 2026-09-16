@@ -109,21 +109,21 @@ Record init and query wall times from `graph.json` attempts and your shell; upst
 ## 13. Grok Bot live canary
 
 This section is unrun until an operator records it.
-The files under `templates/grok-bot/` are the source-controlled static half.
+The files under `templates/grok-bot/` are the source-controlled recipe.
 They are not this canary.
+This repository does not publish a live Bot.
 
-Install from the real native template at https://x.ai/bot/__4FfrkUdvpdMk6-LKg5r.
-Do not publish a Bot from this repository.
-Fill placeholders for instance, Bot IDs, project, and task from the live install.
-Record the installed helper SHA in the operator report.
-The source-controlled pin `0.1.0` is not that SHA.
+Paste `templates/grok-bot/instructions.md` into a new Grok Bot description.
+Save the five skills, the memories, and the worker charter from that directory.
+Connect GitHub, and Cursor if the task is software.
+Do not enable routines yet.
 
-Enroll one scratch project with `./bin/sumctl project enroll owner/repo` for a repository you control.
-Dispatch one approved task.
-Save a question with `sumctl ask` using a stable key.
-Record the user's answer with `sumctl answer` by question ID.
-Confirm the worker submits with `sumctl report`.
-Run worker verification, then a distinct coordinator `sumctl verify --execute` or `sumctl verify --run`.
+Ask the Bot to handle one approved task in a repository you control.
+Confirm it dispatches a worker Bot and does not do the work in the coordinator chat.
+Save a question as a file under `/workspace/sum/` with a stable key.
+Record the user's answer against that key.
+Confirm the worker writes a report file.
+Run worker verification, then a distinct coordinator verification recorded on disk.
 Reading worker logs is not the second run.
 The user merges if anything is published.
 The Bot never merges.
