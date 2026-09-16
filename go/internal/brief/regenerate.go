@@ -237,7 +237,8 @@ func verificationContractText(task *ordjson.Object) string {
 				}
 			}
 			if reviewerPath := asString(func() any { v, _ := runtime.Get("reviewer_skill_path"); return v }()); reviewerPath != "" {
-				lines = append(lines, fmt.Sprintf("- Reviewer procedure: `%s` (captured at dispatch); the independent reviewer uses the same task facts and candidate SHA.", reviewerPath))
+				reviewerHash := asString(func() any { v, _ := runtime.Get("reviewer_skill_sha256"); return v }())
+				lines = append(lines, fmt.Sprintf("- Reviewer procedure: `%s` (sha256 `%s` captured at dispatch); the independent reviewer uses the same task facts and candidate SHA.", reviewerPath, reviewerHash))
 			}
 		}
 		lines = append(lines, "- This task may inspect and onboard an unstandardized project, but it cannot claim standardized delivery or certify a project verification contract.")
@@ -273,7 +274,8 @@ func verificationContractText(task *ordjson.Object) string {
 			}
 		}
 		if reviewerPath := asString(func() any { v, _ := runtime.Get("reviewer_skill_path"); return v }()); reviewerPath != "" {
-			lines = append(lines, fmt.Sprintf("- Reviewer procedure: `%s` (captured at dispatch); the independent reviewer uses the same task facts and candidate SHA.", reviewerPath))
+			reviewerHash := asString(func() any { v, _ := runtime.Get("reviewer_skill_sha256"); return v }())
+			lines = append(lines, fmt.Sprintf("- Reviewer procedure: `%s` (sha256 `%s` captured at dispatch); the independent reviewer uses the same task facts and candidate SHA.", reviewerPath, reviewerHash))
 		}
 	}
 	lines = append(lines,

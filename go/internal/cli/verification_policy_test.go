@@ -261,7 +261,7 @@ func TestBriefIncludesReferencesForUnstandardizedPolicy(t *testing.T) {
 	wants := []string{
 		"`" + asString(policy["status"]) + "`",
 		"`" + asString(rubric["path"]) + "` (sha256 `" + asString(rubric["sha256"]) + "` at dispatch)",
-		"`" + asString(runtime["reviewer_skill_path"]) + "` (captured at dispatch)",
+		"`" + asString(runtime["reviewer_skill_path"]) + "` (sha256 `" + asString(runtime["reviewer_skill_sha256"]) + "` captured at dispatch)",
 	}
 	for _, want := range wants {
 		if !strings.Contains(text, want) {
