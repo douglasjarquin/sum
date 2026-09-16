@@ -27,6 +27,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import time
 import tomllib
@@ -38,6 +39,7 @@ CONTRACT_FILE = "VERIFY.md"
 REQUIRED_HEADINGS = ("Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts")
 SCENARIO_STATUSES = ("pass", "fail", "blocked", "not-run", "not-applicable")
 POLICY_FILES_DEFAULT = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
+MAX_VERIFICATION_FILE_BYTES = 256 * 1024
 FENCE = re.compile(r"^```verify[ \t]*\n(.*?)^```[ \t]*$", re.S | re.M)
 LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
 ROW = re.compile(r"^\|\s*`?([A-Za-z0-9][A-Za-z0-9._:/-]{0,79})`?\s*\|(.*)\|\s*$")
@@ -52,12 +54,25 @@ def safe_relative_path(value):
     return isinstance(value, str) and bool(value) and not Path(value).is_absolute() and "\\" not in value and not any(character in value for character in ":*?[]") and all(part != ".." for part in value.split("/"))
 
 
+def read_bounded(path: Path):
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise Blocked(f"verification file {path} is missing: {exc}")
+    if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_size > MAX_VERIFICATION_FILE_BYTES:
+        raise Blocked(f"verification file {path} exceeds {MAX_VERIFICATION_FILE_BYTES} bytes or is not regular")
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise Blocked(f"verification file {path} is unreadable: {exc}")
+
+
 def utc_now():
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def sha256_file(path: Path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(read_bounded(path)).hexdigest()
 
 
 def git(root: Path, *args, check=True):
@@ -77,9 +92,7 @@ def resolve_root(start: Path):
 
 def load_contract(root: Path):
     path = root / CONTRACT_FILE
-    if not path.is_file():
-        raise Blocked(f"{CONTRACT_FILE} is missing at the project root {root}; this project is not yet standardized.")
-    text = path.read_text(encoding="utf-8")
+    text = read_bounded(path).decode("utf-8")
     match = FENCE.search(text)
     if not match:
         raise Blocked(f"{CONTRACT_FILE} has no ```verify configuration block.")
@@ -133,12 +146,14 @@ def policy_file_set(extra):
 def load_feature_maps(root: Path, index_relative: str):
     """The index links every feature map; each map lists scenarios as table rows `| id | ... | automated|manual ... |`."""
     index = root / index_relative
-    if not index.is_file():
+    try:
+        index_text = read_bounded(index).decode("utf-8")
+    except Blocked:
         raise Blocked(f"Feature-map index {index_relative} is missing.")
     maps = [{"path": index_relative, "sha256": sha256_file(index)}]
     scenarios = []
     seen = set()
-    for link in LINK.findall(index.read_text(encoding="utf-8")):
+    for link in LINK.findall(index_text):
         if link.startswith(("http://", "https://")):
             continue
         target = (index.parent / link).resolve()
@@ -146,11 +161,13 @@ def load_feature_maps(root: Path, index_relative: str):
             relative = target.relative_to(root)
         except ValueError:
             raise Blocked(f"Feature map link {link} in {index_relative} leaves the repository.")
-        if not target.is_file():
+        try:
+            map_text = read_bounded(target).decode("utf-8")
+        except Blocked:
             raise Blocked(f"Feature map {relative} linked from {index_relative} is missing.")
         maps.append({"path": str(relative), "sha256": sha256_file(target)})
         driver_column = None
-        for line in target.read_text(encoding="utf-8").splitlines():
+        for line in map_text.splitlines():
             if not line.lstrip().startswith("|"):
                 driver_column = None  # A table ended; the next one declares its own columns.
                 continue

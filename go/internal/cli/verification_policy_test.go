@@ -471,6 +471,60 @@ func TestStartRefusesBranchSubstitution(t *testing.T) {
 	}
 }
 
+func TestStartRefusesWorkspaceSubstitution(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "workspace", map[string]string{
+		"README.md":                 "A workspace-attestation project.\n",
+		"mise.toml":                 "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":                 standardizedContract,
+		"docs/features/README.md":   featureIndex,
+		"docs/features/greeting.md": featureMap,
+	})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	taskPath := filepath.Join(d.home, "tasks", asString(task["id"]), "task.json")
+	raw, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := ordjson.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskObject, ok := decoded.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("task = %T, want object", decoded)
+	}
+	policy, ok := taskObject.Get("verification_policy")
+	if !ok {
+		t.Fatal("task has no verification policy")
+	}
+	policyObject, ok := policy.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("verification policy = %T, want object", policy)
+	}
+	prepared, ok := policyObject.Get("prepared_worktree")
+	if !ok {
+		t.Fatal("task policy has no prepared worktree")
+	}
+	preparedObject, ok := prepared.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("prepared worktree = %T, want object", prepared)
+	}
+	preparedObject.Set("workspace", "forged-workspace")
+	verifycontract.SealPolicy(policyObject)
+	data, err := ordjson.MarshalIndent(taskObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taskPath, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := d.ctl(false, "start", asString(task["id"]))
+	if !strings.Contains(asString(result["error"]), "does not match its saved Git identity") {
+		t.Fatalf("start result = %v, want the workspace identity refusal", result)
+	}
+}
+
 func TestWorkerHandoffCannotReplaceVerificationPolicy(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "handoff", map[string]string{

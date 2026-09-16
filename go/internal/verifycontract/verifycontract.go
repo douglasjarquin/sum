@@ -489,7 +489,13 @@ func PolicyAtDispatch(worktree, baseSHA string, status *ordjson.Object) *ordjson
 			reason, _ = value.(string)
 		}
 	}
-	contract, err := Read(worktree)
+	var contract *Contract
+	var err error
+	if worktree == "" {
+		err = fmt.Errorf("verification contract snapshot is unavailable")
+	} else {
+		contract, err = Read(worktree)
+	}
 	if err != nil {
 		reason = err.Error()
 		if state == "standardized" {
