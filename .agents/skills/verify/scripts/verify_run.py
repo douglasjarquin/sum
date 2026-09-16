@@ -109,7 +109,7 @@ def load_contract(root: Path):
         if not all(isinstance(v, str) for v in requires.get(key, [])):
             raise Blocked(f"{CONTRACT_FILE} `requires.{key}` must be a list of strings.")
     for key in ("inputs", "outputs"):
-        if not all(isinstance(v, str) and not Path(v).is_absolute() and ".." not in Path(v).parts for v in freshness.get(key, [])):
+        if not all(isinstance(v, str) and not Path(v).is_absolute() and ".." not in Path(v).parts and "\\" not in v for v in freshness.get(key, [])):
             raise Blocked(f"{CONTRACT_FILE} `freshness.{key}` must be a list of relative paths.")
     timeout = config.get("timeout_seconds", 3600)
     if not isinstance(timeout, int) or timeout <= 0:

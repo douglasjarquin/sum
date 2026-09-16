@@ -362,6 +362,65 @@ func TestStartRefusesResealedStatusDowngrade(t *testing.T) {
 	}
 }
 
+func TestStartRefusesResealedRepositorySubstitution(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "original", map[string]string{
+		"README.md":                 "An original project.\n",
+		"mise.toml":                 "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":                 standardizedContract,
+		"docs/features/README.md":   featureIndex,
+		"docs/features/greeting.md": featureMap,
+	})
+	replacement := policyProject(t, d.base, "replacement", map[string]string{
+		"README.md": "A replacement project.\n",
+	})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	taskPath := filepath.Join(d.home, "tasks", asString(task["id"]), "task.json")
+	raw, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := ordjson.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taskObject, ok := decoded.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("task = %T, want object", decoded)
+	}
+	taskObject.Set("repository", replacement)
+	policy, ok := taskObject.Get("verification_policy")
+	if !ok {
+		t.Fatal("task has no verification policy")
+	}
+	policyObject, ok := policy.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("verification policy = %T, want object", policy)
+	}
+	policyObject.Set("repository_path", replacement)
+	identity, ok := policyObject.Get("project_identity")
+	if !ok {
+		t.Fatal("task policy has no project identity")
+	}
+	identityObject, ok := identity.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("project identity = %T, want object", identity)
+	}
+	identityObject.Set("path", replacement)
+	verifycontract.SealPolicy(policyObject)
+	data, err := ordjson.MarshalIndent(taskObject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(taskPath, append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := d.ctl(false, "start", asString(task["id"]))
+	if !strings.Contains(asString(result["error"]), "does not match its saved Git identity") {
+		t.Fatalf("start result = %v, want the checkout identity refusal", result)
+	}
+}
+
 func TestWorkerHandoffCannotReplaceVerificationPolicy(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "handoff", map[string]string{

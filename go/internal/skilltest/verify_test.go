@@ -305,19 +305,29 @@ func TestChangeDetectionAndFailingBranch(t *testing.T) {
 
 func TestRunnerRejectsTraversalInFreshnessPaths(t *testing.T) {
 	v := newVerifyLab(t)
-	repo := v.rawRepo("cli", filepath.Join(v.stop, "freshness-traversal"))
-	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
-		t.Fatal(stderr)
-	}
-	contract := filepath.Join(repo, "VERIFY.md")
-	body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[freshness]\ninputs = [\"../outside\"]\n", 1)
-	mustWrite(t, contract, body)
-	git(t, repo, "add", "VERIFY.md")
-	git(t, repo, "commit", "-q", "-m", "reject traversal freshness path")
-	head := git(t, repo, "rev-parse", "HEAD")
-	code, record, stderr := v.runner(repo, "--base", head)
-	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "freshness.inputs") {
-		t.Fatalf("runner %v code=%d stderr=%s, want a blocked traversal path", record, code, stderr)
+	for _, tc := range []struct {
+		name string
+		line string
+	}{
+		{name: "slash", line: "inputs = [\"../outside\"]\n"},
+		{name: "backslash", line: `inputs = ['..\outside']` + "\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := v.rawRepo("cli", filepath.Join(v.stop, "freshness-traversal-"+tc.name))
+			if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+				t.Fatal(stderr)
+			}
+			contract := filepath.Join(repo, "VERIFY.md")
+			body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[freshness]\n"+tc.line, 1)
+			mustWrite(t, contract, body)
+			git(t, repo, "add", "VERIFY.md")
+			git(t, repo, "commit", "-q", "-m", "reject traversal freshness path")
+			head := git(t, repo, "rev-parse", "HEAD")
+			code, record, stderr := v.runner(repo, "--base", head)
+			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "freshness.inputs") {
+				t.Fatalf("runner %v code=%d stderr=%s, want a blocked traversal path", record, code, stderr)
+			}
+		})
 	}
 }
 

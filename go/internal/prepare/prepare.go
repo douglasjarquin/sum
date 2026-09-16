@@ -55,6 +55,13 @@ func resolvePath(path string) string {
 	return abs
 }
 
+func resolveGitPath(root, value string) string {
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(root, value)
+	}
+	return resolvePath(value)
+}
+
 func newTaskID() (string, error) {
 	buf := make([]byte, 6)
 	if _, err := rand.Read(buf); err != nil {
@@ -370,8 +377,17 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		unlock()
 		return nil, fmt.Errorf("The coordinator-owned verification snapshot is not intact: %w", err)
 	}
+	preparedWorktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
 	repository := asString(func() any { v, _ := task.Get("repository"); return v }())
-	if err := verifycontract.ValidateCommittedPolicy(repository, asObject(policy)); err != nil {
+	actualRoot, rootErr := runGit("-C", preparedWorktree, "rev-parse", "--show-toplevel")
+	actualHead, headErr := runGit("-C", preparedWorktree, "rev-parse", "HEAD")
+	actualCommon, commonErr := runGit("-C", preparedWorktree, "rev-parse", "--git-common-dir")
+	repositoryCommon, repositoryCommonErr := runGit("-C", repository, "rev-parse", "--git-common-dir")
+	if rootErr != nil || headErr != nil || commonErr != nil || repositoryCommonErr != nil || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon) || actualHead != asString(func() any { v, _ := task.Get("base_sha"); return v }()) {
+		unlock()
+		return nil, fmt.Errorf("The prepared checkout does not match its saved Git identity; start is refused.")
+	}
+	if err := verifycontract.ValidateCommittedPolicy(preparedWorktree, asObject(policy)); err != nil {
 		unlock()
 		return nil, fmt.Errorf("The coordinator-owned verification snapshot does not match its committed base: %w", err)
 	}
