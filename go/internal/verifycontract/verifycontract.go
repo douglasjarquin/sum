@@ -273,6 +273,31 @@ func ValidateCommittedPolicy(repo string, expected *ordjson.Object) error {
 	return nil
 }
 
+func SealPolicy(policy *ordjson.Object) {
+	policy.Set("snapshot_sha256", policyDigest(policy))
+}
+
+func ValidatePolicySeal(policy *ordjson.Object) error {
+	want := stringField(policy, "snapshot_sha256")
+	if want == "" || want != policyDigest(policy) {
+		return fmt.Errorf("snapshot seal does not match its coordinator-owned contents")
+	}
+	return nil
+}
+
+func policyDigest(policy *ordjson.Object) string {
+	contents := ordjson.NewObject()
+	for _, key := range policy.Keys() {
+		if key == "snapshot_sha256" || key == "observed_at" {
+			continue
+		}
+		value, _ := policy.Get(key)
+		contents.Set(key, value)
+	}
+	encoded, _ := ordjson.MarshalSortedCompact(contents)
+	return sha256Text(string(encoded))
+}
+
 func field(value *ordjson.Object, key string) any {
 	if value == nil {
 		return nil

@@ -253,6 +253,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		Launch:      launchSpec,
 		RuntimeRoot: args.RuntimeRoot,
 	})
+	verifycontract.SealPolicy(policy)
 	task.Set("verification_policy", policy)
 	if err := s.SaveTask(task); err != nil {
 		return failPrepare(s, tid, err)
@@ -364,6 +365,10 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	if !hasPolicy || !validVerificationSnapshot(policy, task) {
 		unlock()
 		return nil, fmt.Errorf("The task has no coordinator-owned verification snapshot; start is refused.")
+	}
+	if err := verifycontract.ValidatePolicySeal(asObject(policy)); err != nil {
+		unlock()
+		return nil, fmt.Errorf("The coordinator-owned verification snapshot is not intact: %w", err)
 	}
 	repository := asString(func() any { v, _ := task.Get("repository"); return v }())
 	if err := verifycontract.ValidateCommittedPolicy(repository, asObject(policy)); err != nil {
@@ -550,6 +555,12 @@ func validVerificationSnapshot(value any, task *ordjson.Object) bool {
 		return false
 	}
 	if !snapshotString(policy, "contract_path") || !snapshotString(policy, "repository_path") || !snapshotString(policy, "observed_at") {
+		return false
+	}
+	snapshotHash, _ := policy.Get("snapshot_sha256")
+	if hash, ok := snapshotHash.(string); !ok || len(hash) != 64 {
+		return false
+	} else if _, err := hex.DecodeString(hash); err != nil {
 		return false
 	}
 	if !snapshotOptionalString(policy, "contract_sha256") || !snapshotOptionalString(policy, "entrypoint") || !snapshotOptionalString(policy, "task_owner") || !snapshotOptionalString(policy, "feature_maps_index") {

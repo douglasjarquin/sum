@@ -115,10 +115,14 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 	if observed := asString(policy["observed_at"]); observed == "" {
 		t.Fatalf("observed_at = %q", observed)
 	}
+	if snapshot := asString(policy["snapshot_sha256"]); len(snapshot) != 64 {
+		t.Fatalf("snapshot_sha256 = %q, want a 64-character seal", snapshot)
+	}
 	if asString(policy["contract_sha256"]) != sha256Of(standardizedContract) {
 		t.Fatalf("contract_sha256 = %v, want the committed contract hash", policy["contract_sha256"])
 	}
 	delete(policy, "observed_at")
+	delete(policy, "snapshot_sha256")
 	if hashes := asSlice(policy["feature_map_hashes"]); len(hashes) != 2 {
 		t.Fatalf("feature_map_hashes = %v, want both committed map files", hashes)
 	} else if asString(asMap(hashes[1])["sha256"]) != sha256Of(featureMap) {
