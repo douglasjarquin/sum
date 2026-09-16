@@ -240,6 +240,17 @@ func TestReadRefusesSymlinkedTaskOwner(t *testing.T) {
 	}
 }
 
+func TestReadRefusesInvalidUTF8Contract(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ContractFile), []byte("# invalid\xff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Read(root)
+	if err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("err = %v, want invalid UTF-8 refusal", err)
+	}
+}
+
 func TestReadBoundsLinkedFeatureMapSnapshot(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	toml "github.com/pelletier/go-toml/v2"
 
@@ -132,6 +133,9 @@ func Read(worktree string) (*Contract, error) {
 	raw, err := readBounded(filepath.Join(worktree, ContractFile))
 	if err != nil {
 		return nil, fmt.Errorf("%s is missing at the checkout root; this project is not yet standardized", ContractFile)
+	}
+	if !utf8.Valid(raw) {
+		return nil, fmt.Errorf("%s is not valid UTF-8", ContractFile)
 	}
 	text := string(raw)
 	block := fence.FindStringSubmatch(text)
