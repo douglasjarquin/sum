@@ -426,6 +426,36 @@ func TestRunnerRejectsScalarContractLists(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsOversizedContractLists(t *testing.T) {
+	v := newVerifyLab(t)
+	items := strings.Repeat(`"python3",`, 256) + `"python3"`
+	for _, tc := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "too-many", line: "commands = [" + items + "]\n", want: "more than 256 items"},
+		{name: "too-long", line: "commands = [\"" + strings.Repeat("x", 513) + "\"]\n", want: "longer than 512 characters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := v.rawRepo("cli", filepath.Join(v.stop, "oversized-"+tc.name))
+			if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+				t.Fatal(stderr)
+			}
+			contract := filepath.Join(repo, "VERIFY.md")
+			body := regexp.MustCompile(`(?m)^commands = .*$`).ReplaceAllString(readFile(t, contract), strings.TrimSuffix(tc.line, "\n"))
+			mustWrite(t, contract, body)
+			git(t, repo, "add", "VERIFY.md")
+			git(t, repo, "commit", "-q", "-m", "reject oversized contract list")
+			head := git(t, repo, "rev-parse", "HEAD")
+			code, record, stderr := v.runner(repo, "--base", head)
+			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), tc.want) {
+				t.Fatalf("runner %v code=%d stderr=%s, want a blocked oversized list", record, code, stderr)
+			}
+		})
+	}
+}
+
 func TestGenerationKeepsUserEdits(t *testing.T) {
 	v := newVerifyLab(t)
 	repo := v.rawRepo("service", filepath.Join(v.stop, "custom"))

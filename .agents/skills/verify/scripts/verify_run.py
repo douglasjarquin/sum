@@ -40,6 +40,10 @@ REQUIRED_HEADINGS = ("Setup", "Readiness", "Teardown", "Automated checks", "Scen
 SCENARIO_STATUSES = ("pass", "fail", "blocked", "not-run", "not-applicable")
 POLICY_FILES_DEFAULT = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
 MAX_VERIFICATION_FILE_BYTES = 256 * 1024
+MAX_CONTRACT_LIST_ITEMS = 256
+MAX_CONTRACT_ITEM_CHARS = 512
+MAX_CONTRACT_SNAPSHOT_FILES = 256
+MAX_CONTRACT_SNAPSHOT_BYTES = 8 * 1024 * 1024
 FENCE = re.compile(r"^```verify[ \t]*\n(.*?)^```[ \t]*$", re.S | re.M)
 LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
 ROW = re.compile(r"^\|\s*`?([A-Za-z0-9][A-Za-z0-9._:/-]{0,79})`?\s*\|(.*)\|\s*$")
@@ -52,6 +56,19 @@ class Blocked(Exception):
 
 def safe_relative_path(value):
     return isinstance(value, str) and bool(value) and not Path(value).is_absolute() and "\\" not in value and not any(character in value for character in ":*?[]") and all(part != ".." for part in value.split("/"))
+
+
+def bounded_string_list(value, name, paths=False):
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise Blocked(f"{name} must be a list of strings.")
+    if len(value) > MAX_CONTRACT_LIST_ITEMS:
+        raise Blocked(f"{name} has more than {MAX_CONTRACT_LIST_ITEMS} items.")
+    for item in value:
+        if len(item) > MAX_CONTRACT_ITEM_CHARS:
+            raise Blocked(f"{name} contains an item longer than {MAX_CONTRACT_ITEM_CHARS} characters.")
+        if paths and not safe_relative_path(item):
+            raise Blocked(f"{name} must contain only relative paths inside the repository.")
+    return value
 
 
 def read_bounded(path: Path):
@@ -122,15 +139,13 @@ def load_contract(root: Path):
     for name, value in (("requires", requires), ("freshness", freshness)):
         if not isinstance(value, dict):
             raise Blocked(f"{CONTRACT_FILE} `{name}` must be a table.")
-    for key in ("commands",):
-        if not isinstance(requires.get(key, []), list) or not all(isinstance(v, str) for v in requires.get(key, [])):
-            raise Blocked(f"{CONTRACT_FILE} `requires.{key}` must be a list of strings.")
-    for key in ("inputs", "outputs"):
-        if not isinstance(freshness.get(key, []), list) or not all(safe_relative_path(v) for v in freshness.get(key, [])):
-            raise Blocked(f"{CONTRACT_FILE} `freshness.{key}` must be a list of relative paths.")
+    commands = bounded_string_list(requires.get("commands", []), f"{CONTRACT_FILE} `requires.commands`")
+    freshness_inputs = bounded_string_list(freshness.get("inputs", []), f"{CONTRACT_FILE} `freshness.inputs`", paths=True)
+    freshness_outputs = bounded_string_list(freshness.get("outputs", []), f"{CONTRACT_FILE} `freshness.outputs`", paths=True)
     timeout = config.get("timeout_seconds", 3600)
     if not isinstance(timeout, int) or timeout <= 0:
         raise Blocked(f"{CONTRACT_FILE} `timeout_seconds` must be a positive integer.")
+    requires["commands"], freshness["inputs"], freshness["outputs"] = commands, freshness_inputs, freshness_outputs
     return {"path": path, "sha256": sha256_file(path), "entrypoint": entrypoint, "feature_maps": config["feature_maps"], "artifacts": config["artifacts"], "evidence": evidence,
             "task_owner": owner, "requires": requires, "freshness": freshness, "timeout": timeout,
             "policy_files": policy_file_set(config.get("policy_files", []))}
@@ -138,8 +153,7 @@ def load_contract(root: Path):
 
 def policy_file_set(extra):
     """The default policy files always count; a candidate's VERIFY.md may add paths but can never remove or shrink the set that governs it."""
-    if not isinstance(extra, list) or not all(safe_relative_path(v) for v in extra):
-        raise Blocked(f"{CONTRACT_FILE} `policy_files` must be a list of relative paths to add to the defaults.")
+    extra = bounded_string_list(extra, f"{CONTRACT_FILE} `policy_files`", paths=True)
     return sorted(set(POLICY_FILES_DEFAULT) | set(extra))
 
 
@@ -147,10 +161,13 @@ def load_feature_maps(root: Path, index_relative: str):
     """The index links every feature map; each map lists scenarios as table rows `| id | ... | automated|manual ... |`."""
     index = root / index_relative
     try:
-        index_text = read_bounded(index).decode("utf-8")
+        index_bytes = read_bounded(index)
+        index_text = index_bytes.decode("utf-8")
     except Blocked:
         raise Blocked(f"Feature-map index {index_relative} is missing.")
-    maps = [{"path": index_relative, "sha256": sha256_file(index)}]
+    maps = [{"path": index_relative, "sha256": hashlib.sha256(index_bytes).hexdigest()}]
+    snapshot_files = 1
+    snapshot_bytes = len(index_bytes)
     scenarios = []
     seen = set()
     for link in LINK.findall(index_text):
@@ -164,10 +181,17 @@ def load_feature_maps(root: Path, index_relative: str):
         except ValueError:
             raise Blocked(f"Feature map link {link} in {index_relative} leaves the repository.")
         try:
-            map_text = read_bounded(target).decode("utf-8")
+            map_bytes = read_bounded(target)
         except Blocked:
             raise Blocked(f"Feature map {relative} linked from {index_relative} is missing.")
-        maps.append({"path": str(relative), "sha256": sha256_file(target)})
+        snapshot_files += 1
+        if snapshot_files > MAX_CONTRACT_SNAPSHOT_FILES:
+            raise Blocked(f"verification contract snapshot references more than {MAX_CONTRACT_SNAPSHOT_FILES} files")
+        snapshot_bytes += len(map_bytes)
+        if snapshot_bytes > MAX_CONTRACT_SNAPSHOT_BYTES:
+            raise Blocked(f"verification contract snapshot exceeds {MAX_CONTRACT_SNAPSHOT_BYTES} bytes")
+        maps.append({"path": str(relative), "sha256": hashlib.sha256(map_bytes).hexdigest()})
+        map_text = map_bytes.decode("utf-8")
         driver_column = None
         for line in map_text.splitlines():
             if not line.lstrip().startswith("|"):
