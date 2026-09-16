@@ -39,7 +39,8 @@ func TestTestGate_blocksWhenTheCandidatesRequiredEvidenceIsMissing(t *testing.T)
 
 func TestPipelinePush_refusedWhileRequiredEvidenceIsMissing(t *testing.T) {
 	lab := newGateLab(t)
-	lab.writeTask(t, "reported", verificationRecord(lab.candidate, "blocked", []string{"counter.click"}, false))
+	recs := publicationRecords(lab.candidate)
+	lab.writeTask(t, "reported", recs[0], recs[2], recs[3], verificationRecord(lab.candidate, "blocked", []string{"counter.click"}, false))
 	runGate(t, lab, "rebase", gateTaskID)
 
 	_, _, err := runPRCLI(t, lab.home, "pipeline", "push", gateTaskID)
@@ -57,7 +58,8 @@ func TestPipelinePush_refusedWhileRequiredEvidenceIsMissing(t *testing.T) {
 
 func TestPipelinePush_allowMissingEvidenceStillNeedsTheWaiverOnTheRecord(t *testing.T) {
 	lab := newGateLab(t)
-	lab.writeTask(t, "reported", verificationRecord(lab.candidate, "blocked", []string{"counter.click"}, false))
+	recs := publicationRecords(lab.candidate)
+	lab.writeTask(t, "reported", recs[0], recs[2], recs[3], verificationRecord(lab.candidate, "blocked", []string{"counter.click"}, false))
 	runGate(t, lab, "rebase", gateTaskID)
 
 	_, _, err := runPRCLI(t, lab.home, "pipeline", "push", gateTaskID, "--allow-missing-evidence")
@@ -72,7 +74,8 @@ func TestPipelinePush_allowMissingEvidenceStillNeedsTheWaiverOnTheRecord(t *test
 
 func TestTestGate_waivedEvidenceReadsAsWaivedAndLetsThePushThrough(t *testing.T) {
 	lab := newGateLab(t)
-	lab.writeTask(t, "reported", verificationRecord(lab.candidate, "pass", []string{"counter.click"}, true))
+	recs := publicationRecords(lab.candidate)
+	lab.writeTask(t, "reported", recs[0], recs[2], recs[3], verificationRecord(lab.candidate, "pass", []string{"counter.click"}, true))
 	runGate(t, lab, "rebase", gateTaskID)
 
 	row := lab.row(t, "test")
