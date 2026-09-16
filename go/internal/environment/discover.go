@@ -837,26 +837,50 @@ func passiveMiseTaskOrigins(worktree, runtimeRoot string) *ordjson.Object {
 		result.Set("error", fmt.Sprintf("VERIFY.md task_owner %q is not a directory of this repository", owner))
 		return result
 	}
-	for _, relative := range []string{"mise.toml", ".mise.toml", ".mise/config.toml"} {
-		path := filepath.Join(worktree, filepath.FromSlash(relative))
-		info, err := os.Stat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Size() > configMaxBytes {
-			continue
-		}
-		body, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		var config map[string]any
-		if err := toml.Unmarshal(body, &config); err != nil {
-			result.Set("error", fmt.Sprintf("%s: %s", relative, err))
-			continue
-		}
-		declared, _ := config["tasks"].(map[string]any)
-		for name := range declared {
-			if name != "verify" && name != "test" {
+	taskRoots := []string{"."}
+	if owner != "." {
+		taskRoots = append(taskRoots, owner)
+	}
+	for _, taskRoot := range taskRoots {
+		for _, name := range []string{"mise.toml", ".mise.toml", ".mise/config.toml"} {
+			relative := filepath.ToSlash(filepath.Join(taskRoot, name))
+			path := filepath.Join(worktree, filepath.FromSlash(relative))
+			info, err := os.Stat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Size() > configMaxBytes {
 				continue
 			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var config map[string]any
+			if err := toml.Unmarshal(body, &config); err != nil {
+				result.Set("error", fmt.Sprintf("%s: %s", relative, err))
+				continue
+			}
+			declared, _ := config["tasks"].(map[string]any)
+			for name := range declared {
+				if name != "verify" && name != "test" {
+					continue
+				}
+				owned[name] = true
+				entry := ordjson.NewObject()
+				entry.Set("name", name)
+				entry.Set("source", path)
+				entry.Set("owned", true)
+				tasks = append(tasks, entry)
+			}
+		}
+	}
+	for _, taskRoot := range taskRoots {
+		for _, name := range []string{"mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test"} {
+			relative := filepath.ToSlash(filepath.Join(taskRoot, name))
+			path := filepath.Join(worktree, filepath.FromSlash(relative))
+			info, err := os.Stat(path)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			name := filepath.Base(relative)
 			owned[name] = true
 			entry := ordjson.NewObject()
 			entry.Set("name", name)
@@ -864,20 +888,6 @@ func passiveMiseTaskOrigins(worktree, runtimeRoot string) *ordjson.Object {
 			entry.Set("owned", true)
 			tasks = append(tasks, entry)
 		}
-	}
-	for _, relative := range []string{"mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test"} {
-		path := filepath.Join(worktree, filepath.FromSlash(relative))
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
-			continue
-		}
-		name := filepath.Base(relative)
-		owned[name] = true
-		entry := ordjson.NewObject()
-		entry.Set("name", name)
-		entry.Set("source", path)
-		entry.Set("owned", true)
-		tasks = append(tasks, entry)
 	}
 	verification := ordjson.NewObject()
 	verification.Set("verify", owned["verify"])

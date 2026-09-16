@@ -2,7 +2,6 @@ package verifycontract
 
 import (
 	"encoding/json"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -78,7 +77,7 @@ func fileHash(root, relative string) any {
 	if root == "" {
 		return nil
 	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+	data, err := readBounded(filepath.Join(root, filepath.FromSlash(relative)))
 	if err != nil {
 		return nil
 	}

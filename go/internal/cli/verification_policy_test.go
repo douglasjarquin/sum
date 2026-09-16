@@ -220,3 +220,32 @@ func TestBriefNamesRequiredEvidenceScenarios(t *testing.T) {
 		t.Fatalf("brief does not name the runner and base:\n%s", text)
 	}
 }
+
+func TestPrepareSnapshotSurvivesReloadBeforeStart(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "lifecycle", map[string]string{
+		"README.md":                 "A lifecycle project.\n",
+		"mise.toml":                 "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":                 standardizedContract,
+		"docs/features/README.md":   featureIndex,
+		"docs/features/greeting.md": featureMap,
+	})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	taskID := asString(task["id"])
+	wantHash := asString(asMap(task["verification_policy"])["contract_sha256"])
+	reloaded := d.ctl(true, "show", taskID)
+	if asString(asMap(reloaded["verification_policy"])["contract_sha256"]) != wantHash {
+		t.Fatalf("reloaded policy = %v, want hash %q", reloaded["verification_policy"], wantHash)
+	}
+	worker := d.ctlPane(asString(task["pane"]), true, "init")
+	if asString(worker["role"]) != "worker" {
+		t.Fatalf("worker init = %v", worker)
+	}
+	started := d.ctl(true, "start", taskID)
+	if asString(started["status"]) != "running" {
+		t.Fatalf("started task = %v, want running", started)
+	}
+	if asString(asMap(started["verification_policy"])["contract_sha256"]) != wantHash {
+		t.Fatalf("started policy = %v, want hash %q", started["verification_policy"], wantHash)
+	}
+}

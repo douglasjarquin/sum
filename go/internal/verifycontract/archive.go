@@ -73,6 +73,11 @@ func MaterializeCommit(repo, revision string) (string, func(), error) {
 					cleanup()
 					return "", func() {}, err
 				}
+				if owner != "." {
+					for _, relative := range []string{"mise.toml", ".mise.toml", ".mise/config.toml", "mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test"} {
+						paths = append(paths, filepath.ToSlash(filepath.Join(owner, relative)))
+					}
+				}
 			}
 		}
 	}

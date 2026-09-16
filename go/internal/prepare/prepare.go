@@ -547,6 +547,12 @@ func validVerificationSnapshot(value any, task *ordjson.Object) bool {
 	if !snapshotString(policy, "contract_path") || !snapshotString(policy, "repository_path") || !snapshotString(policy, "observed_at") {
 		return false
 	}
+	if !snapshotOptionalString(policy, "contract_sha256") || !snapshotOptionalString(policy, "entrypoint") || !snapshotOptionalString(policy, "task_owner") || !snapshotOptionalString(policy, "feature_maps_index") {
+		return false
+	}
+	if statusText == "standardized" && (!snapshotString(policy, "contract_sha256") || !snapshotString(policy, "entrypoint") || !snapshotString(policy, "task_owner") || !snapshotString(policy, "feature_maps_index")) {
+		return false
+	}
 	if !snapshotStrings(policy, "feature_maps") || !snapshotStrings(policy, "required_checks") || !snapshotStrings(policy, "scenario_ids") || !snapshotStrings(policy, "policy_files") {
 		return false
 	}
@@ -563,6 +569,10 @@ func validVerificationSnapshot(value any, task *ordjson.Object) bool {
 	}
 	identity := snapshotObject(policy, "project_identity")
 	if identity == nil || !snapshotString(identity, "path") {
+		return false
+	}
+	taskRepository, _ := task.Get("repository")
+	if repository, ok := taskRepository.(string); !ok || asString(policyField(identity, "path")) != repository || asString(policyField(policy, "repository_path")) != repository {
 		return false
 	}
 	runtime := snapshotObject(policy, "source_runtime")
@@ -589,6 +599,14 @@ func snapshotObject(value *ordjson.Object, key string) *ordjson.Object {
 	}
 	field, _ := value.Get(key)
 	return asObject(field)
+}
+
+func policyField(value *ordjson.Object, key string) any {
+	if value == nil {
+		return nil
+	}
+	field, _ := value.Get(key)
+	return field
 }
 
 func snapshotString(value *ordjson.Object, key string) bool {
