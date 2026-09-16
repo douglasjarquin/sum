@@ -123,6 +123,24 @@ func TestVerificationContractStatusAtRuntimeDoesNotUseTargetLocalMise(t *testing
 	}
 }
 
+func TestPassiveDiscoveryRejectsSymlinkedMiseConfig(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "VERIFY.md"), []byte("# Verification contract\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "mise.toml"), []byte("[tasks]\nverify = \"true\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "mise.toml"), filepath.Join(root, "mise.toml")); err != nil {
+		t.Fatal(err)
+	}
+	origins := passiveMiseTaskOriginsAtBase(root)
+	if problem, _ := origins.Get("error"); problem == nil {
+		t.Fatalf("origins = %v, want a symlink refusal", origins)
+	}
+}
+
 func TestPassiveDiscoveryBoundsAncestorTraversal(t *testing.T) {
 	base := t.TempDir()
 	root := base

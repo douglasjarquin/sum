@@ -286,6 +286,11 @@ def mise_task(root: Path, owner_relative: str, name="verify"):
         raise Blocked(f"mise defines no `{name}` task for this repository; VERIFY.md names an entrypoint that does not exist.")
     task = candidates[0]
     source = task.get("source") or task.get("file") or ""
+    if source:
+        source_path = Path(source)
+        raw_source = source_path if source_path.is_absolute() else root / source_path
+        if path_contains_symlink(raw_source, root):
+            raise Blocked(f"`mise run {name}` here would execute a task source through a symlink ({source}); it is not a trusted project command.")
     source_path = Path(source).resolve() if source else None
     inside = source_path is not None and (source_path == owner or owner in source_path.parents or source_path == root or root in source_path.parents)
     if not inside:

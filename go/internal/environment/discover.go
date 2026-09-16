@@ -850,6 +850,10 @@ func passiveMiseTaskOriginsFromFiles(worktree string, result *ordjson.Object) *o
 		for _, name := range []string{"mise.toml", ".mise.toml", ".mise/config.toml"} {
 			relative := filepath.ToSlash(filepath.Join(taskRoot, name))
 			path := filepath.Join(worktree, filepath.FromSlash(relative))
+			if link := symlinkedComponent(worktree, relative); link != "" {
+				result.Set("error", fmt.Sprintf("%s: symlink not followed (%s)", relative, link))
+				return result
+			}
 			info, err := os.Stat(path)
 			if err != nil || !info.Mode().IsRegular() || info.Size() > configMaxBytes {
 				continue
@@ -881,6 +885,10 @@ func passiveMiseTaskOriginsFromFiles(worktree string, result *ordjson.Object) *o
 		for _, name := range []string{"mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test"} {
 			relative := filepath.ToSlash(filepath.Join(taskRoot, name))
 			path := filepath.Join(worktree, filepath.FromSlash(relative))
+			if link := symlinkedComponent(worktree, relative); link != "" {
+				result.Set("error", fmt.Sprintf("%s: symlink not followed (%s)", relative, link))
+				return result
+			}
 			info, err := os.Stat(path)
 			if err != nil || info.IsDir() {
 				continue

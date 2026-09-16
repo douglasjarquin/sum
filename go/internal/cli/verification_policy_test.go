@@ -142,8 +142,12 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 	if asString(policy["repository_path"]) == "" || asMap(policy["project_identity"]) == nil {
 		t.Fatalf("project identity = %v, want the repository snapshot identity", policy["project_identity"])
 	}
-	if asMap(policy["source_runtime"]) == nil || asMap(policy["delivery"]) == nil {
+	runtime := asMap(policy["source_runtime"])
+	if runtime == nil || asMap(policy["delivery"]) == nil {
 		t.Fatalf("dispatch metadata = %v, want source runtime and delivery", policy)
+	}
+	if asString(runtime["reviewer_skill_path"]) == "" || asString(runtime["reviewer_skill_sha256"]) == "" {
+		t.Fatalf("reviewer procedure metadata = %v, want path and dispatch hash", runtime)
 	}
 	reloaded := d.ctl(true, "show", asString(task["id"]))
 	if asString(asMap(reloaded["verification_policy"])["contract_sha256"]) != sha256Of(standardizedContract) {
@@ -258,14 +262,15 @@ func TestBriefIncludesReferencesForUnstandardizedPolicy(t *testing.T) {
 	policy := asMap(task["verification_policy"])
 	runtime := asMap(policy["source_runtime"])
 	rubric := asMap(runtime["rubric"])
-	wants := []string{
-		"`" + asString(policy["status"]) + "`",
-		"`" + asString(rubric["path"]) + "` (sha256 `" + asString(rubric["sha256"]) + "` at dispatch)",
-		"`" + asString(runtime["reviewer_skill_path"]) + "` (sha256 `" + asString(runtime["reviewer_skill_sha256"]) + "` captured at dispatch)",
-	}
-	for _, want := range wants {
-		if !strings.Contains(text, want) {
-			t.Fatalf("brief does not contain %q:\n%s", want, text)
+	for _, reference := range []string{
+		asString(policy["status"]),
+		asString(rubric["path"]),
+		asString(rubric["sha256"]),
+		asString(runtime["reviewer_skill_path"]),
+		asString(runtime["reviewer_skill_sha256"]),
+	} {
+		if reference == "" || !strings.Contains(text, reference) {
+			t.Fatalf("brief does not contain dispatch reference %q:\n%s", reference, text)
 		}
 	}
 }
