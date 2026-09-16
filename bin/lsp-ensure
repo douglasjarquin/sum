@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Project PostToolUse hook: install allowlisted LSP binaries.
+# Fail open. Keep stdout empty so Grok and Codex do not parse TOON or help as hook JSON.
+set -u
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+
+has_staged_binary() {
+  local root="$1"
+  local runtime="$root"
+  if [[ -L "$root/.local/current" ]]; then
+    runtime=$(cd -- "$root/.local/current" 2>/dev/null && pwd -P) || return 1
+  fi
+  [[ -x "$runtime/.local/bin/sumctl" || -x "$runtime/.local/bin/sumctl-go" ]]
+}
+
+sumctl_for() {
+  local root="$1"
+  if has_staged_binary "$root" && [[ -x "$root/bin/sumctl" ]]; then
+    printf '%s\n' "$root/bin/sumctl"
+    return 0
+  fi
+  return 1
+}
+
+BINARY=""
+if BINARY=$(sumctl_for "$ROOT"); then
+  :
+else
+  common=$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null) || common=""
+  if [[ -n "$common" ]]; then
+    case "$common" in
+      /*) ;;
+      *) common="$ROOT/$common" ;;
+    esac
+    main=$(cd -- "$common/.." && pwd)
+    if [[ "$main" != "$ROOT" ]]; then
+      BINARY=$(sumctl_for "$main") || BINARY=""
+    fi
+  fi
+fi
+
+if [[ -n "${BINARY}" ]]; then
+  "$BINARY" lsp ensure >/dev/null 2>/dev/null || true
+else
+  cat >/dev/null 2>/dev/null || true
+fi
+exit 0

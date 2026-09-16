@@ -26,7 +26,10 @@ func (o *rootOptions) addLspCommand(root *cobra.Command) {
 			if err != nil {
 				return nil
 			}
-			root := o.installRoot
+			root := lsp.WorkspaceRoot(payload)
+			if root == "" {
+				root = o.installRoot
+			}
 			if root == "" {
 				root = o.runtimeRoot
 			}
