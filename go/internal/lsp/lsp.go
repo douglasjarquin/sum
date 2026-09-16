@@ -64,6 +64,39 @@ func MissingBinaries(payload []byte) []string {
 	return out
 }
 
+func WorkspaceRoot(payload []byte) string {
+	trimmed := bytes.TrimSpace(payload)
+	if len(trimmed) == 0 {
+		return ""
+	}
+	var decoded map[string]any
+	if json.Unmarshal(trimmed, &decoded) != nil {
+		return ""
+	}
+	for _, key := range []string{"workspaceRoot", "workspace_root", "cwd"} {
+		value, ok := decoded[key].(string)
+		if !ok {
+			continue
+		}
+		if root := existingDir(value); root != "" {
+			return root
+		}
+	}
+	return ""
+}
+
+func existingDir(path string) string {
+	if path == "" || !filepath.IsAbs(path) || strings.ContainsRune(path, 0) {
+		return ""
+	}
+	cleaned := filepath.Clean(path)
+	info, err := os.Stat(cleaned)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	return cleaned
+}
+
 func Ensure(root string, payload []byte) error {
 	if root == "" {
 		return nil

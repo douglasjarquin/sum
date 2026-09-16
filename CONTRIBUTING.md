@@ -101,8 +101,10 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
   Keeping overlay sources so a prior helper can stage this tree does not bind Grok Bot.
   This dictionary binds `templates/grok-bot/`. A platform Bot stays a Bot. Its sum role is coordinator or project agent.
   Adding `.grok/hooks/` binds Grok project hooks once the folder is trusted (`/hooks-trust` or `--trust`).
-  `sumctl lsp ensure` installs allowlisted LSP binaries only.
-  It does not change `templates/grok-bot/` or Bot commands.
+  Adding `.codex/hooks.json` binds Codex project hooks once trusted.
+  Neither changes `templates/grok-bot/` or Bot commands.
+  `bin/lsp-ensure` and `sumctl lsp ensure` install allowlisted LSP binaries only.
+  They fail open and keep hook stdout empty so a missing worktree runtime is not a harness hook failure.
 - [ ] Update [ATTRIBUTIONS.md](ATTRIBUTIONS.md) when credit is due.
 
 ## Questions
