@@ -209,7 +209,15 @@ func TestBriefIncludesReferencesForUnstandardizedPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(body)
-	for _, want := range []string{"not-yet-standardized", "Shared engineering principles:", "Reviewer procedure:", "cannot claim standardized delivery"} {
+	policy := asMap(task["verification_policy"])
+	runtime := asMap(policy["source_runtime"])
+	rubric := asMap(runtime["rubric"])
+	wants := []string{
+		"`" + asString(policy["status"]) + "`",
+		"`" + asString(rubric["path"]) + "` (sha256 `" + asString(rubric["sha256"]) + "` at dispatch)",
+		"`" + asString(runtime["reviewer_skill_path"]) + "` (captured at dispatch)",
+	}
+	for _, want := range wants {
 		if !strings.Contains(text, want) {
 			t.Fatalf("brief does not contain %q:\n%s", want, text)
 		}
