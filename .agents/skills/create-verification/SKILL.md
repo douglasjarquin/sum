@@ -20,7 +20,10 @@ Run the scaffold in its default inspect mode:
 python3 <path-to-this-skill>/scripts/verify_scaffold.py --root . --json
 ```
 
-It reports, without writing or running anything: guidance files (README, AGENTS, CONTRIBUTING), the repository's own mise tasks against inherited ones, package scripts, make/just targets, declared containers, readiness endpoints and ports the repository already mentions, CLI entrypoints, HTTP routes found in source, test locations, and which driver capabilities are actually installed (`python3`, `node`, `curl`, `docker`, `chrome-devtools-axi`, `playwright`, `tmux`).
+It reports without writing or running anything.
+The report lists guidance files (README, AGENTS, ARCHITECTURE, CONTRIBUTING, CODEOWNERS, CI workflow directories), the repository's own mise tasks against inherited ones, package scripts, make/just targets, declared containers, readiness endpoints and ports the repository already mentions, CLI entrypoints, HTTP routes found in source, test locations, and which driver capabilities are actually installed (`python3`, `node`, `curl`, `docker`, `chrome-devtools-axi`, `playwright`, `tmux`).
+It also lists a `readme_map` of task to owner to example to check (`kind` is `observed` or `gap`), and `verify_cycle` when a `verify` task would call `mise run verify` again.
+File existence is observation, not enforcement.
 Read the guidance files it lists yourself.
 Ask the user only what the repository cannot tell you: which surface is primary when several exist, and where a fixture or seed data comes from when nothing documents it.
 Never invent a selector, command, flag, port, or credential; if the repository does not state it, the map says `manual` or carries a placeholder.
@@ -43,8 +46,26 @@ The scaffold creates only what is missing and never overwrites:
 - `.artifacts/` added to `.gitignore`.
 
 An existing file is never rewritten. One without `TODO(verify)` placeholders is yours and is reported `kept`. A draft that still has placeholders but that the inspection would now generate differently (a renamed task, a new route) is reported as a `conflict`: yours is kept and the proposal is written under `.artifacts/verification/scaffold/<stamp>/` so you can compare the two. A newly found feature gets a new file beside the index; the audit then reports it `unlinked-map` until you link it.
-Exit code 1 means a problem that needs a person: no reusable check was found, a `verify` task is only inherited from a parent directory, or mise is absent.
+Exit code 1 means a problem that needs a person: no reusable check was found, a `verify` task is only inherited from a parent directory, a `verify` task runs `mise run verify` again, or mise is absent.
 Re-running on a completed repository reports every file `unchanged` and writes nothing.
+`--write` records copied skill files in `.agents/skills/.verification-provenance.json` with the source commit when `--revision` is a 40-character SHA (or this skill's git HEAD).
+
+## 2b. Update from a named revision
+
+```sh
+python3 <path-to-this-skill>/scripts/verify_scaffold.py --root . --update --revision <40-character-sha>
+```
+
+`--revision` must be an immutable commit in the skill git repository. `main`, `latest`, `HEAD`, and short SHAs are refused.
+Unchanged stock copies of `verify`, `evidence`, and `maintain-verification` may be replaced from that commit.
+A locally edited skill file is kept and listed as `conflict`.
+`VERIFY.md`, README facts, tasks, CI, and project-authored tests are never overwritten.
+Re-running the same revision after it is adopted writes nothing.
+Inspect and `--inspect` still write nothing and run no target command.
+
+The lifecycle is inspect, then a reviewed onboarding or update PR, then local and CI proof, then a human merge.
+New tasks see the adopted revision.
+In-flight tasks keep the `verification_policy` snapshot recorded at prepare.
 
 ## 3. Fill the map from observation
 
