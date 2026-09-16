@@ -424,6 +424,7 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []st
 	}
 	paths := []string{indexRelative}
 	hashes := []FileHash{{Path: indexRelative, SHA256: sha256Text(string(body))}}
+	snapshotBytes := len(body)
 	var scenarioIDs []string
 	var scenarios []Scenario
 	seen := map[string]bool{}
@@ -452,7 +453,14 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []st
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("Feature map %s linked from %s is missing", relative, indexRelative)
 		}
+		if len(paths)+1 > commitSnapshotMaxFiles {
+			return nil, nil, nil, nil, fmt.Errorf("verification contract snapshot references more than %d files", commitSnapshotMaxFiles)
+		}
+		if snapshotBytes+len(mapBody) > commitSnapshotMaxSize {
+			return nil, nil, nil, nil, fmt.Errorf("verification contract snapshot exceeds %d bytes", commitSnapshotMaxSize)
+		}
 		paths = append(paths, relative)
+		snapshotBytes += len(mapBody)
 		hashes = append(hashes, FileHash{Path: relative, SHA256: sha256Text(string(mapBody))})
 		ids, rows, err := mapScenarios(relative, string(mapBody), seen)
 		if err != nil {

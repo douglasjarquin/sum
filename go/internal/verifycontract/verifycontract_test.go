@@ -1,6 +1,7 @@
 package verifycontract
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,6 +237,35 @@ func TestReadRefusesSymlinkedTaskOwner(t *testing.T) {
 	_, err := Read(root)
 	if err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("err = %v, want a symlink refusal", err)
+	}
+}
+
+func TestReadBoundsLinkedFeatureMapSnapshot(t *testing.T) {
+	tests := []struct {
+		name      string
+		mapCount  int
+		mapBytes  int
+		wantError string
+	}{
+		{name: "files", mapCount: commitSnapshotMaxFiles, mapBytes: 1, wantError: "more than 256 files"},
+		{name: "bytes", mapCount: 33, mapBytes: commitFileMaxBytes, wantError: "exceeds 8388608 bytes"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"VERIFY.md": contractBody}
+			var index strings.Builder
+			index.WriteString("# Maps\n\n")
+			for i := 0; i < tc.mapCount; i++ {
+				name := fmt.Sprintf("map-%03d.md", i)
+				index.WriteString(fmt.Sprintf("- [Map %03d](%s)\n", i, name))
+				files[filepath.ToSlash(filepath.Join("docs", name))] = strings.Repeat("x", tc.mapBytes)
+			}
+			files["docs/index.md"] = index.String()
+			_, err := Read(checkout(t, files))
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("err = %v, want %q", err, tc.wantError)
+			}
+		})
 	}
 }
 
