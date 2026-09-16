@@ -1,0 +1,5 @@
+ts	phase	decision	why	evidence	result
+2026-09-16T19:40:00Z	frame	replace the sumctl binding with a native Grok Bot recipe	templates cannot carry helper commands, MCP, or custom code, so a shareable Bot has to be instructions, skills, memories, and routines	templates/grok-bot/fields.md (removed)	open
+2026-09-16T19:41:00Z	harness	rewrite tests/test_operating_files.py before the recipe files	the old test required the word sumctl, which encoded the wrong premise	tests/test_operating_files.py	red, missing recipe files
+2026-09-16T19:48:00Z	recipe	add instructions, five Grok Bot skills, worker charter, memories, routines, README	Firstmate keeps a short GROK_BOT.md separate from the local distro, and official skills use six fields	templates/grok-bot/	tests.test_operating_files OK
+2026-09-16T19:50:00Z	docs	retarget coordination.md, ACCEPTANCE section 13, CONTRIBUTING, ATTRIBUTIONS	the canary installed someone else's template, and the map claimed helper commands	docs/features/coordination.md, docs/ACCEPTANCE.md	audit: clean
