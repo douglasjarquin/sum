@@ -1,0 +1,21 @@
+task: t-0a0a0a0a0a0a
+status: running
+cursor: "c0.0.0.0.2.0.0..2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: notes
+role: null
+versions_error: null
+notes:
+  path: "$HOME/tasks/t-0a0a0a0a0a0a/notes.md"
+  present: true
+  ok: true
+  entries[2]{at,by}:
+    "2026-01-01T00:00:15+00:00",worker p1
+    "2026-01-01T00:05:00+00:00",coordinator p2
+  bytes: 141
+  content:
+    chars: 141
+    truncated: false
+    redactions: 0
+    text: "# Notes for t-0a0a0a0a0a0a\n\n## 2026-01-01T00:00:15+00:00 worker p1\n\nfound the thing\n\n## 2026-01-01T00:05:00+00:00 coordinator p2\n\nlooks fine\n"
+  authority: "Agent-written text: a claim to verify, not approval and not verification evidence."

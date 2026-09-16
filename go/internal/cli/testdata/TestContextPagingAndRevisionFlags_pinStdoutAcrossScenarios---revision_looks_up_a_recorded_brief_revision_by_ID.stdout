@@ -1,0 +1,39 @@
+task: t-2f2f2f2f2f2f
+status: running
+cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: brief
+role: null
+versions_error: null
+brief:
+  approved:
+    chars: 12
+    truncated: false
+    redactions: 0
+    text: do the thing
+  fingerprint:
+    sha256: 12422cebeadd97366c31ee59300562cc3b9bca05e01005cc7a4a0945265c4472
+    base_sha: 
+    repository: owner/repoX
+    kind: task
+  brief_path: brief.md
+  active_revision: r1
+  requested_revision: null
+  revision:
+    id: r1
+    status: active
+    created_at: "2026-01-01T00:00:00+00:00"
+    policy:
+      sum_version: 0.1.0
+      brief_schema: 1
+    summary[1]: initial brief
+    verification_affected: false
+    legacy: null
+    path: $HOME/tasks/t-2f2f2f2f2f2f/contracts/r1.md
+    ok: true
+    sha256: 95ab324c3f712ce50affdfc268d077b715a637947f39674aef71c5df553e1a66
+    content:
+      chars: 16
+      truncated: false
+      redactions: 0
+      text: revision content

@@ -1,0 +1,15 @@
+topic: ask
+help: "Worker: save a question before waiting; the parent is notified only after it is saved"
+arguments[4]:
+  - name: task
+    help: null
+    required: true
+  - name: "--key"
+    help: Stable question key for idempotent re-submission
+  - name: "--text"
+    help: null
+  - name: "--file"
+    help: null
+subcommands: null
+read_only: false
+read_only_subcommands: []

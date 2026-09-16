@@ -1,0 +1,56 @@
+task: t-0d0d0d0d0d0d
+status: running
+cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: execution
+role: null
+versions_error: null
+execution:
+  repository: owner/repoJ
+  worktree: null
+  branch: task-branch
+  base_sha: 
+  kind: task
+  harness: claude
+  status: running
+  created_at: "2026-01-01T00:00:00+00:00"
+  started_at: "2026-01-01T00:01:00+00:00"
+  launch:
+    harness: claude
+    model: opus
+    reasoning: high
+    preset: null
+    argv[1]: claude
+    observed:
+      status: running
+  admission:
+    decision: admitted
+    at: "2026-01-01T00:00:30+00:00"
+  graph:
+    present: true
+    ok: true
+    path: "$HOME/tasks/t-0d0d0d0d0d0d/graph.json"
+    state: ready
+    index_path: /tmp/checkout/.codegraph
+    tool_version: 1.5.0
+    indexed_head: abc123
+    pinned: 1.5.0
+    attempts: 1
+    failures: 0
+    last_action: init
+    seconds: 3.5
+    files: 42
+    nodes: 1000
+    error: null
+    updated_at: "2026-01-01T00:00:45+00:00"
+    commands:
+      explore: codegraph explore
+      sync: codegraph sync
+    freshness:
+      pendingChanges: false
+    fallback: Read and search the source with your normal tools; a graph that is not `ready` or a result that contradicts a file is never a structural conclusion.
+    authority: Tool observation recorded by sum; a graph result is never verification evidence.
+  endpoints[3:]{machine,session,pane}:
+    worker: m1,s1,p1
+    parent: m1,s1,p0
+    reviewer: m1,s1,p2

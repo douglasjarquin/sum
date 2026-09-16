@@ -1,0 +1,9 @@
+task: t-aaaaaaaaaaaa
+environment:
+  present: false
+  ok: true
+  commands:
+    discover: $ROOT/bin/sumctl --home $HOME env discover t-aaaaaaaaaaaa
+    record: "$ROOT/bin/sumctl --home $HOME env record t-aaaaaaaaaaaa --url http://127.0.0.1:PORT"
+    inspect: $ROOT/bin/sumctl --home $HOME env inspect t-aaaaaaaaaaaa
+  note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container."

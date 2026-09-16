@@ -1,0 +1,49 @@
+task: t-1d1d1d1d1d1d
+status: reported
+cursor: "c0.1.0.0.0.0.0..2026-01-01T00:10:00+00:00"
+read_at: "<at>"
+sections[1]: environment
+role: reviewer
+versions_error: null
+contract[3]: Review the current candidate SHA in the task checkout against the approved task; the worker's handoff is a claim.,Record findings with `review --verdict ... --candidate SHA`. Findings verify nothing and close nothing.,"Do not edit the checkout, answer questions, or record verification; only the coordinator verifies."
+authority: "Agent-written text: a claim to verify, not approval and not verification evidence."
+environment:
+  commands:
+    ask: "$ROOT/bin/sumctl --home $HOME ask t-1d1d1d1d1d1d --key short-question-name --text 'Your exact question and recommendation'"
+    show: "$ROOT/bin/sumctl --home $HOME show t-1d1d1d1d1d1d"
+    resolve: "$ROOT/bin/sumctl --home $HOME resolve t-1d1d1d1d1d1d QUESTION_ID"
+    report: "$ROOT/bin/sumctl --home $HOME report t-1d1d1d1d1d1d --file /absolute/path/to/report.md"
+    brief: "$ROOT/bin/sumctl --home $HOME brief list t-1d1d1d1d1d1d"
+    context: "$ROOT/bin/sumctl --home $HOME context t-1d1d1d1d1d1d --role worker"
+  brief_path: brief.md
+  revisions[1]{id,status,path,ok}:
+    legacy,active,"$HOME/tasks/t-1d1d1d1d1d1d/brief.md",false
+  notes:
+    path: "$HOME/tasks/t-1d1d1d1d1d1d/notes.md"
+    present: false
+    ok: true
+  skills:
+    files[1]{skill,path,bytes,sha256}:
+      sum-delivery,$ROOT/skills/sum-delivery/SKILL.md,27920,cf2012f3a5903430
+    helper: $ROOT/bin/sumctl
+    instruction: "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout."
+  runtime:
+    path: $ROOT
+    sum_version: 0.1.0
+  help: "$ROOT/bin/sumctl --home $HOME help TOPIC"
+  dev:
+    present: false
+    ok: true
+    commands:
+      discover: "$ROOT/bin/sumctl --home $HOME env discover t-1d1d1d1d1d1d"
+      record: "$ROOT/bin/sumctl --home $HOME env record t-1d1d1d1d1d1d --url http://127.0.0.1:PORT"
+      inspect: "$ROOT/bin/sumctl --home $HOME env inspect t-1d1d1d1d1d1d"
+    note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container."
+  note: Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout. `dev` is the task-local environment record as last observed.
+  artifacts:
+    items[4]{artifact,handoff,scope,redactions}:
+      README.md,e-0000000001,checkout,0
+      ../outside.md,e-0000000001,outside-checkout,0
+      /etc/passwd,e-0000000001,outside-checkout,0
+      ~/secret,e-0000000001,outside-checkout,0
+    note: "String classification only: no path here was stat'ed, resolved, or opened, and a checkout symlink is not followed. Read a `checkout` artifact yourself, from the recorded worktree, if you need it."

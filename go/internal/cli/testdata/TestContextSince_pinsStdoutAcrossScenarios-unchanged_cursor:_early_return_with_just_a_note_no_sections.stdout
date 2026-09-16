@@ -1,0 +1,39 @@
+task: t-1e1e1e1e1e1e
+status: running
+cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections: []
+role: null
+versions_error: null
+changes:
+  since:
+    questions: 0
+    evidence: 0
+    answered: 0
+    applied: 0
+    notes: 0
+    refresh: 0
+    attention: 0
+    state: 60f25fe0fff5
+    at: "2026-01-01T00:00:00+00:00"
+  now:
+    questions: 0
+    evidence: 0
+    answered: 0
+    applied: 0
+    notes: 0
+    refresh: 0
+    attention: 0
+  new_questions: []
+  changed_questions: []
+  new_evidence: []
+  report_changed: false
+  pr_changed: false
+  refresh_events: []
+  attention: []
+  notes_entries_since: 0
+  status: running
+  outstanding_decisions: []
+  state_changed: false
+  unchanged: true
+note: Nothing changed since that cursor; no sections were rendered. Pass --section to read one anyway.

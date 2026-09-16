@@ -1,0 +1,22 @@
+task: t-2e2e2e2e2e2e
+status: running
+cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: brief
+role: null
+versions_error: null
+brief:
+  approved:
+    chars: 42
+    truncated: true
+    redactions: 0
+    text: a brief th
+    note: First 10 of 42 characters; pass --max-chars 0 or a larger value for the rest.
+  fingerprint:
+    sha256: f37fca34ae70ea9745ac3252d625575d4b92bae1a5eefb6f59fd0a70dc65b7a7
+    base_sha: 
+    repository: owner/repoW
+    kind: task
+  brief_path: brief.md
+  active_revision: legacy
+  requested_revision: null

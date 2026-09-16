@@ -1,0 +1,68 @@
+task: t-cccccccccccc
+status: running
+cursor: "c2.0.1.1.1.0.1..2026-01-01T00:02:00+00:00"
+read_at: "<at>"
+sections[1]: outline
+role: null
+versions_error: null
+outline:
+  id: t-cccccccccccc
+  status: running
+  kind: task
+  repository: owner/repoC
+  branch: null
+  worktree: null
+  harness: null
+  error: null
+  approved:
+    chars: 8
+    sha256: 32cd1980334fb802
+    base_sha: 
+  decisions:
+    total: 2
+    outstanding[1]{id,key,status,created_at}:
+      q1,approach,open,"2026-01-01T00:00:30+00:00"
+  evidence:
+    records: 0
+    current_candidate: null
+    latest_handoff: null
+    closure_missing[3]: current structured handoff,complete PR identity from `pr reconcile`,coordinator verification of the current candidate
+    verification:
+      contract: legacy
+      worker_run: null
+      root_run: null
+      distinct_run_ids: false
+      review:
+        status: not-performed
+        current: false
+        verdict: null
+        tool: null
+        policy_reviewed: false
+        reviewer_pane: null
+      note: Worker and coordinator runs are separate executions with their own run ids; neither the worker's run nor a review substitutes for the coordinator's. Records for another SHA are historical.
+  verification_policy: null
+  report: null
+  brief:
+    active: legacy
+    requested: null
+  returns_open: 2
+  attention_open: 1
+  cleanup: null
+  notes:
+    present: true
+    ok: true
+    entries: 1
+  environment:
+    present: true
+    updated_at: "2026-01-01T00:01:00+00:00"
+    config_stale: true
+    endpoints:
+      observed: 1
+    logs_missing: 0
+    resources: 0
+    services:
+      running: 1
+  graph: null
+  read:
+    sections[11]: outline,brief,decisions,handoff,evidence,execution,environment,update,returns,notes,pipeline
+    example: $ROOT/bin/sumctl --home $HOME context t-cccccccccccc --section decisions --section handoff

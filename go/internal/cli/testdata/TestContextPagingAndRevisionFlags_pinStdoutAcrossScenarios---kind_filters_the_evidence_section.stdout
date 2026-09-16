@@ -1,0 +1,27 @@
+task: t-2d2d2d2d2d2d
+status: reported
+cursor: "c0.3.0.0.0.0.0..2026-01-01T00:10:00+00:00"
+read_at: "<at>"
+sections[1]: evidence
+role: null
+versions_error: null
+evidence:
+  total: 1
+  after: 0
+  returned: 1
+  omitted: 0
+  next_after: null
+  items[1]{id,kind,source,at,candidate,current,brief_revision,verdict,result,outcome}:
+    e-0000000002,verification,coordinator,"2026-01-01T00:08:00+00:00",,true,null,null,pass,all green
+  kinds:
+    handoff: 1
+    verification: 1
+    review: 1
+  current_candidate: 
+  closure:
+    prerequisites_met: false
+    missing[1]: complete PR identity from `pr reconcile`
+    merged_for_task: false
+    note: Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged.
+  pr: null
+  note: Only `verification` (coordinator) and `publication` (github) records are verification evidence; worker and reviewer records are claims and findings.

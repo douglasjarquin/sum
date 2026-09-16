@@ -1,0 +1,47 @@
+task: t-aaaaaaaaaaaa
+environment:
+  present: true
+  ok: true
+  path: $HOME/tasks/t-aaaaaaaaaaaa/environment.json
+  updated_at: "2026-01-01T00:05:00+00:00"
+  stale: false
+  discovery:
+    observed_at: "2026-01-01T00:00:00+00:00"
+    head: abc123
+    config_revision: r1
+    current_revision: r1
+    stale: false
+    stale_reason: null
+    checked_at: "2026-01-01T00:00:00+00:00"
+    summary: []
+    problems: []
+    task_origins: []
+    verification_contract: VERIFY.md
+    sources: []
+    commands[1]:
+      - name: dev
+        kind: service
+        source: mise.toml
+        description: null
+        image: null
+        declared_ports: []
+        command:
+          chars: 215
+          truncated: true
+          redactions: 0
+          text: npm run dev -- xxxxxxxxxxxxxxxxxxxxxxxxx
+          note: First 40 of 215 characters; pass --max-chars 0 or a larger value for the rest.
+        redactions: 0
+  endpoints: []
+  logs: []
+  resources: []
+  services: []
+  history: []
+  commands:
+    discover: $ROOT/bin/sumctl --home $HOME env discover t-aaaaaaaaaaaa
+    record: "$ROOT/bin/sumctl --home $HOME env record t-aaaaaaaaaaaa --url http://127.0.0.1:PORT"
+    inspect: $ROOT/bin/sumctl --home $HOME env inspect t-aaaaaaaaaaaa
+    start: "$ROOT/bin/sumctl --home $HOME env start t-aaaaaaaaaaaa --command NAME --url http://127.0.0.1:PORT"
+    stop: $ROOT/bin/sumctl --home $HOME env stop t-aaaaaaaaaaaa
+  authority: "Agent-written text: a claim to verify, not approval and not verification evidence."
+  note: "Recorded from declared configuration and one-shot observation; commands are references, never executed by sum, and no port is bound or reserved by being written here. Re-inspect with `env inspect`; nothing polls or restarts."

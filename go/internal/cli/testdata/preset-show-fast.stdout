@@ -1,0 +1,15 @@
+name: fast
+revision: 3
+preset:
+  harness: codex
+  model: gpt-5
+  reasoning: high
+  args[1]: "--flag"
+  revision: 3
+launch:
+  harness: codex
+  model: gpt-5
+  reasoning: high
+  argv[5]: "-m",gpt-5,"-c",model_reasoning_effort=high,"--flag"
+used_by[1]: worker default
+note: "`launch.argv` is exactly what `dispatch --preset` appends after the harness executable; a model here is CLI-requested, never runtime-verified."

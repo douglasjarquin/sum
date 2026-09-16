@@ -1,0 +1,70 @@
+schema: 1
+id: t-bbbbbbbbbbbb
+status: reported
+repository: owner/repoB
+questions: []
+evidence: []
+notice: null
+attention: []
+brief: do thing
+base_sha: 
+kind: task
+brief_path: brief.md
+report:
+  text: done
+  submitted_at: "2026-01-01T00:30:00+00:00"
+  brief_revision: legacy
+  sum_version: 0.1.0
+versions:
+  schema: 1
+  legacy: true
+  runtime:
+    sum_version: 0.1.0
+    assumed: true
+  brief_schema: 1
+  approved:
+    sha256: 32cd1980334fb8022f797b3eded95c4f90e35afdb04f000787bea79a282ca4c4
+    base_sha: 
+    repository: owner/repoB
+    kind: task
+  active: legacy
+  requested: null
+  refresh: []
+  revisions[1]{id,status,created_at,policy{sum_version,brief_schema},summary,verification_affected,legacy,path,ok,error}:
+    legacy,active,null,0.1.0,1,null,null,true,$HOME/tasks/t-bbbbbbbbbbbb/brief.md,false,"Revision legacy is not usable: file is missing. Do not request it; regenerate a new revision instead."
+  report_evidence:
+    brief_revision: legacy
+    sum_version: 0.1.0
+    contract_changed_since_dispatch: false
+    verification_policy_changed_since: false
+    note: "Evidence is bound to the candidate and the brief revision it was produced under. A later verification-affecting revision, or a VERIFY.md that no longer hashes to what dispatch recorded, means the evidence needs refresh review, not automatic rejection or approval."
+  note: Revisions are staged files; the worker keeps reading its current brief until a refresh is explicitly requested and adopted.
+evidence_view:
+  current_candidate: null
+  records[1]{schema,id,kind,source,legacy,at,candidate,brief_revision,current,note}:
+    null,null,report,worker,true,"2026-01-01T00:30:00+00:00",null,legacy,null,Legacy prose report recorded before scoped evidence existed; unstructured worker claim.
+  reviewer: null
+  pr: null
+  verification:
+    contract: legacy
+    worker_run: null
+    root_run: null
+    distinct_run_ids: false
+    review:
+      status: not-performed
+      current: false
+      verdict: null
+      tool: null
+      policy_reviewed: false
+      reviewer_pane: null
+    note: Worker and coordinator runs are separate executions with their own run ids; neither the worker's run nor a review substitutes for the coordinator's. Records for another SHA are historical.
+  closure:
+    prerequisites_met: false
+    missing[3]: current structured handoff,complete PR identity from `pr reconcile`,coordinator verification of the current candidate
+    merged_for_task: false
+    note: Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged.
+returns:
+  open[1]{id,kind,ref,recipient,since,obligation,route{role,session,pane},notification{state,attempts,reason}}:
+    "report:legacy",report,legacy,parent,"2026-01-01T00:30:00+00:00",open,coordinator,null,null,pending,0,no delivery attempted to this recipient yet
+  deliveries: []
+  note: Obligations come from the records; a submitted or presented notice closes none of them. `closed` names obligations a later record has since settled.

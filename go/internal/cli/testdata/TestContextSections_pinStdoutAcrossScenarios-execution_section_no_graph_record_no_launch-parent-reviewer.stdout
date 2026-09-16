@@ -1,0 +1,36 @@
+task: t-0c0c0c0c0c0c
+status: running
+cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: execution
+role: null
+versions_error: null
+execution:
+  repository: owner/repoI
+  worktree: null
+  branch: task-branch
+  base_sha: 
+  kind: task
+  harness: claude
+  status: running
+  created_at: "2026-01-01T00:00:00+00:00"
+  started_at: null
+  launch:
+    harness: null
+    model: null
+    reasoning: null
+    preset: null
+    argv: null
+    observed: null
+  admission: null
+  graph:
+    present: false
+    ok: true
+    note: "No graph record; the task was dispatched before sum initialized graphs, or the checkout was never created."
+  endpoints:
+    worker:
+      machine: m1
+      session: s1
+      pane: p1
+    parent: null
+    reviewer: null

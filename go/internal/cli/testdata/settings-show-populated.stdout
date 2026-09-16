@@ -1,0 +1,24 @@
+limits:
+  global: 3
+  per_repository: 1
+worker:
+  harness: claude
+  model: sonnet
+source: settings.json
+occupied:
+  global: 0
+  by_repository:
+presets:
+  fast:
+    harness: codex
+    model: null
+    reasoning: null
+    args: []
+    revision: 2
+reviewer:
+  preset: fast
+evidence:
+  auto_publish: true
+  source: default
+worker_note: Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.
+note: Each recorded execution reservation holds a slot until a conclusive stop observation releases it; legacy non-archived tasks remain conservatively held.

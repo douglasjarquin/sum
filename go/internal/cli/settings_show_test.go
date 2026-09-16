@@ -1,84 +1,56 @@
 package cli
 
 import (
-	"bytes"
-	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
-func runPythonSettingsShow(t *testing.T, reference, home string) []byte {
-	t.Helper()
-	out, err := exec.Command(reference, "--home", home, "settings", "show").Output()
-	if err != nil {
-		t.Fatalf("python reference failed: %v", err)
-	}
-	return out
-}
-
-func runGoSettingsShow(t *testing.T, reference, home string) (string, string) {
-	t.Helper()
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs([]string{"--home", home, "settings", "show"})
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("go settings show failed: %v (stderr=%s)", err, stderr.String())
-	}
-	return stdout.String(), stderr.String()
-}
-
-func TestSettingsShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
-
+func TestSettingsShow_pinsStdoutAcrossScenarios(t *testing.T) {
 	cases := []struct {
-		name  string
-		files map[string]string
+		name   string
+		golden string
+		files  map[string]string
 	}{
-		{name: "fresh store, no settings.json"},
+		{name: "fresh store, no settings.json", golden: "settings-show-fresh"},
 		{
-			name: "populated settings",
+			name:   "populated settings",
+			golden: "settings-show-populated",
 			files: map[string]string{
 				"settings.json": `{"schema": 1, "capacity": {"global": 3}, "worker": {"harness": "claude", "model": "sonnet"}, "presets": {"fast": {"harness": "codex", "revision": 2}}, "reviewer": {"preset": "fast"}}`,
 			},
 		},
 		{
-			name: "invalid capacity value",
+			name:   "invalid capacity value",
+			golden: "settings-show-invalid-capacity",
 			files: map[string]string{
 				"settings.json": `{"schema": 1, "capacity": {"global": 0}}`,
 			},
 		},
 		{
-			name: "unknown preset reference",
+			name:   "unknown preset reference",
+			golden: "settings-show-unknown-preset",
 			files: map[string]string{
 				"settings.json": `{"schema": 1, "worker": {"preset": "missing"}}`,
 			},
 		},
 		{
-			name: "unknown capacity key",
+			name:   "unknown capacity key",
+			golden: "settings-show-unknown-capacity-key",
 			files: map[string]string{
 				"settings.json": `{"schema": 1, "capacity": {"global": 5, "bogus": 1}}`,
 			},
 		},
 		{
-			name: "preset arg conflicts with resolved model",
+			name:   "preset arg conflicts with resolved model",
+			golden: "settings-show-preset-arg-conflict",
 			files: map[string]string{
 				"settings.json": `{"schema": 1, "presets": {"fast": {"harness": "claude", "model": "sonnet", "args": ["--model", "haiku"]}}}`,
 			},
 		},
 		{
-			name: "occupancy across active and archived tasks",
+			name:   "occupancy across active and archived tasks",
+			golden: "settings-show-occupancy",
 			files: map[string]string{
 				"tasks/t-aaaaaaaaaaaa/task.json": `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo"}`,
 				"tasks/t-bbbbbbbbbbbb/task.json": `{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "archived", "repository": "owner/repo"}`,
@@ -98,11 +70,7 @@ func TestSettingsShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			want := runPythonSettingsShow(t, reference, home)
-			got, _ := runGoSettingsShow(t, reference, home)
-			if got != string(want) {
-				t.Fatalf("go output =\n%s\nwant (python reference)\n%s", got, want)
-			}
+			assertStdoutGolden(t, home, []string{"settings", "show"}, tc.golden)
 		})
 	}
 }

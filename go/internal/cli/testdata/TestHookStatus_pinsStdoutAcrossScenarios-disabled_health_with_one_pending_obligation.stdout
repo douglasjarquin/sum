@@ -1,0 +1,27 @@
+enabled: false
+plugin_id: null
+last_event: pane.exited
+last_error: boom
+events: 3
+handled: 2
+ignored: 1
+errors: 1
+pending:
+  count: 1
+  oldest_since: "2026-01-01T00:00:00+00:00"
+  oldest_age_s: 86400
+degraded: true
+reason: native event delivery is not enabled; `inbox --live` remains the delivery path
+health:
+  plugin_id: null
+  manifest_path: null
+  command: null
+  linked_at: null
+  disabled_at: null
+  updated_at: null
+  warnings: null
+  manifest_sha256: null
+errors_log[1]{at,stage,error,event}:
+  "2026-01-01T00:00:00+00:00",dispatch,boom,pane.exited
+supported_events[5]: pane.agent_status_changed,pane.agent_detected,pane.exited,pane.closed,workspace.closed
+note: "Health is what this instance recorded; the registry row is what Herdr reports now. Degraded or disabled means the synchronous path and `inbox --live` are the delivery path; nothing is lost, only not pushed."

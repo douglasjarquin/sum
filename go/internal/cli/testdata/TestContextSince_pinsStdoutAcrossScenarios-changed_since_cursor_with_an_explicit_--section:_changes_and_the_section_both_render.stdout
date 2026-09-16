@@ -1,0 +1,55 @@
+task: t-2a2a2a2a2a2a
+status: running
+cursor: "c1.0.0.0.0.0.0..2026-01-01T00:01:00+00:00"
+read_at: "<at>"
+sections[1]: decisions
+role: null
+versions_error: null
+changes:
+  since:
+    questions: 0
+    evidence: 0
+    answered: 0
+    applied: 0
+    notes: 0
+    refresh: 0
+    attention: 0
+    state: 60f25fe0fff5
+    at: "2026-01-01T00:00:00+00:00"
+  now:
+    questions: 1
+    evidence: 0
+    answered: 0
+    applied: 0
+    notes: 0
+    refresh: 0
+    attention: 0
+  new_questions[1]: q1
+  changed_questions: []
+  new_evidence: []
+  report_changed: false
+  pr_changed: false
+  refresh_events: []
+  attention: []
+  notes_entries_since: 0
+  status: running
+  outstanding_decisions[1]{id,key,status,created_at}:
+    q1,approach,open,"2026-01-01T00:00:30+00:00"
+  state_changed: false
+  unchanged: false
+decisions:
+  total: 1
+  after: 0
+  returned: 1
+  omitted: 0
+  next_after: null
+  items[1]{id,key,status,created_at,answered_at,applied_at,text{chars,truncated,redactions,text},answer}:
+    q1,approach,open,"2026-01-01T00:00:30+00:00",null,null,10,false,0,which way?,null
+  filter: null
+  counts:
+    open: 1
+    answered: 0
+    applied: 0
+  outstanding[1]{id,key,status,created_at}:
+    q1,approach,open,"2026-01-01T00:00:30+00:00"
+  note: `outstanding` lists every unapplied decision regardless of paging. Answers are recorded human decisions; question text is a worker claim.

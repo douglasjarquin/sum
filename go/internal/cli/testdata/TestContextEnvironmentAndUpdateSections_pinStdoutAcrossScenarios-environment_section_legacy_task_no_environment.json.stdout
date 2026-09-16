@@ -1,0 +1,43 @@
+task: t-0e0e0e0e0e0e
+status: running
+cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: environment
+role: null
+versions_error: null
+environment:
+  commands:
+    ask: $ROOT/bin/sumctl --home $HOME ask t-0e0e0e0e0e0e --key short-question-name --text 'Your exact question and recommendation'
+    show: $ROOT/bin/sumctl --home $HOME show t-0e0e0e0e0e0e
+    resolve: $ROOT/bin/sumctl --home $HOME resolve t-0e0e0e0e0e0e QUESTION_ID
+    report: $ROOT/bin/sumctl --home $HOME report t-0e0e0e0e0e0e --file /absolute/path/to/report.md
+    brief: $ROOT/bin/sumctl --home $HOME brief list t-0e0e0e0e0e0e
+    context: $ROOT/bin/sumctl --home $HOME context t-0e0e0e0e0e0e --role worker
+  brief_path: brief.md
+  revisions[1]{id,status,path,ok}:
+    legacy,active,$HOME/tasks/t-0e0e0e0e0e0e/brief.md,false
+  notes:
+    path: $HOME/tasks/t-0e0e0e0e0e0e/notes.md
+    present: false
+    ok: true
+  skills:
+    files[4]{skill,path,bytes,sha256}:
+      sum-worker,$ROOT/skills/sum-worker/SKILL.md,15537,20c2af392b974add
+      sum-delivery,$ROOT/skills/sum-delivery/SKILL.md,27920,cf2012f3a5903430
+      sum-rundown,$ROOT/skills/sum-rundown/SKILL.md,9578,0307dbb80552114f
+      sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,14106,96eb91a49484bff8
+    helper: $ROOT/bin/sumctl
+    instruction: "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout."
+  runtime:
+    path: $ROOT
+    sum_version: 0.1.0
+  help: $ROOT/bin/sumctl --home $HOME help TOPIC
+  dev:
+    present: false
+    ok: true
+    commands:
+      discover: $ROOT/bin/sumctl --home $HOME env discover t-0e0e0e0e0e0e
+      record: "$ROOT/bin/sumctl --home $HOME env record t-0e0e0e0e0e0e --url http://127.0.0.1:PORT"
+      inspect: $ROOT/bin/sumctl --home $HOME env inspect t-0e0e0e0e0e0e
+    note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container."
+  note: Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout. `dev` is the task-local environment record as last observed.

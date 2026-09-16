@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,18 +21,7 @@ func writeEnvironmentFixture(t *testing.T, home, taskID, environmentJSON string)
 	}
 }
 
-func TestEnvShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
+func TestEnvShow_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	baseSha := "0123456789abcdef0123456789abcdef01234567"
 	taskFixture := fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha)
@@ -41,7 +29,7 @@ func TestEnvShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 	t.Run("no environment record", func(t *testing.T) {
 		home := t.TempDir()
 		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
-		assertEnvShowMatches(t, reference, home, []string{"env", "show", "t-aaaaaaaaaaaa"})
+		assertEnvShowMatches(t, home, []string{"env", "show", "t-aaaaaaaaaaaa"})
 	})
 
 	t.Run("present record with discovery, secret-shaped command, endpoints, logs, resources, services", func(t *testing.T) {
@@ -99,7 +87,7 @@ func TestEnvShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
   ]
 }`
 		writeEnvironmentFixture(t, home, "t-aaaaaaaaaaaa", environmentJSON)
-		assertEnvShowMatches(t, reference, home, []string{"env", "show", "t-aaaaaaaaaaaa"})
+		assertEnvShowMatches(t, home, []string{"env", "show", "t-aaaaaaaaaaaa"})
 	})
 
 	t.Run("--max-chars truncates a long discovered command", func(t *testing.T) {
@@ -118,7 +106,7 @@ func TestEnvShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
   "endpoints": [], "logs": [], "resources": [], "services": [], "history": []
 }`, longCommand)
 		writeEnvironmentFixture(t, home, "t-aaaaaaaaaaaa", environmentJSON)
-		assertEnvShowMatches(t, reference, home, []string{"env", "show", "t-aaaaaaaaaaaa", "--max-chars", "40"})
+		assertEnvShowMatches(t, home, []string{"env", "show", "t-aaaaaaaaaaaa", "--max-chars", "40"})
 	})
 
 	t.Run("--max-chars 0 is unbounded", func(t *testing.T) {
@@ -137,33 +125,20 @@ func TestEnvShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
   "endpoints": [], "logs": [], "resources": [], "services": [], "history": []
 }`, longCommand)
 		writeEnvironmentFixture(t, home, "t-aaaaaaaaaaaa", environmentJSON)
-		assertEnvShowMatches(t, reference, home, []string{"env", "show", "t-aaaaaaaaaaaa", "--max-chars", "0"})
+		assertEnvShowMatches(t, home, []string{"env", "show", "t-aaaaaaaaaaaa", "--max-chars", "0"})
 	})
 
 	t.Run("malformed sidecar: schema mismatch surfaces as present:false, ok:false", func(t *testing.T) {
 		home := t.TempDir()
 		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
 		writeEnvironmentFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 2, "task": "t-aaaaaaaaaaaa"}`)
-		assertEnvShowMatches(t, reference, home, []string{"env", "show", "t-aaaaaaaaaaaa"})
+		assertEnvShowMatches(t, home, []string{"env", "show", "t-aaaaaaaaaaaa"})
 	})
 }
 
-func assertEnvShowMatches(t *testing.T, reference, home string, args []string) {
+func assertEnvShowMatches(t *testing.T, home string, args []string) {
 	t.Helper()
-	fullArgs := append([]string{"--home", home}, args...)
-	want, err := exec.Command(reference, fullArgs...).Output()
-	if err != nil {
-		t.Fatalf("python reference failed: %v", err)
-	}
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs(fullArgs)
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
-	}
-	if stdout.String() != string(want) {
-		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
-	}
+	assertStdoutGolden(t, home, args, scenarioGolden(t))
 }
 
 func TestEnvDiscover_requiresRecordedTask(t *testing.T) {

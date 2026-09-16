@@ -1,0 +1,6 @@
+presets:
+worker: null
+reviewer: null
+source: unlimited
+path: $HOME/settings.json
+note: "Presets are dispatch shortcuts expanded at prepare; each task keeps the specification it was prepared with. Nothing here is a running agent, a role, or a default until you say so."

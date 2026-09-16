@@ -1,0 +1,30 @@
+task: t-aaaaaaaaaaaa
+brief_path: brief.md
+schema: 1
+legacy: false
+runtime:
+  sum_version: 0.1.0
+brief_schema: 1
+approved:
+  sha256: abc
+  base_sha: 
+  repository: owner/repoA
+  kind: task
+active: r1
+requested: null
+refresh: []
+revisions[1]:
+  - id: r1
+    status: active
+    created_at: "2026-01-01T00:00:00+00:00"
+    policy:
+      sum_version: 0.1.0
+      brief_schema: 1
+    summary[1]: initial brief
+    verification_affected: false
+    legacy: null
+    path: $HOME/tasks/t-aaaaaaaaaaaa/contracts/r1.md
+    ok: true
+    sha256: 95ab324c3f712ce50affdfc268d077b715a637947f39674aef71c5df553e1a66
+report_evidence: null
+note: Revisions are staged files; the worker keeps reading its current brief until a refresh is explicitly requested and adopted.

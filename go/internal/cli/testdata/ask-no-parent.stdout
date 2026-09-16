@@ -1,0 +1,16 @@
+question:
+  id: q-ID
+  key: null
+  text: Keep going?
+  status: open
+  created_at: "<at>"
+  answer: null
+notice:
+  at: "<at>"
+  recipient: parent
+  reason: a decision is waiting
+  status: pending
+  returns:
+    recipients: []
+    prompts: 0
+    note: "One bounded pass over saved returns: at most one prompt per recipient identity, nothing slept or polled, no obligation deleted."

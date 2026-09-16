@@ -1,0 +1,11 @@
+harness: cursor
+format: json
+target: .cursor/mcp.json in the checkout
+snippet: "{\n  \"mcpServers\": {\n    \"codegraph\": {\n      \"type\": \"stdio\",\n      \"command\": \"\",\n      \"args\": [\n        \"serve\",\n        \"--mcp\",\n        \"--path\",\n        \"${workspaceFolder}\"\n      ]\n    }\n  }\n}"
+tool:
+  pinned: 1.5.0
+  path: 
+  available: true
+  version: 1.5.0
+  reason: null
+note: "Printed only; sum wrote no file, changed no permission list, and did not run `codegraph install`. The server this starts watches only the project it is started in; it is that harness session's process, and cleanup reports it as an occupant of the checkout until the session exits."
