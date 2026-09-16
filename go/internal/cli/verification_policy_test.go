@@ -3,6 +3,7 @@ package cli
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -251,5 +252,38 @@ func TestPrepareSnapshotSurvivesReloadBeforeStart(t *testing.T) {
 	}
 	if asString(asMap(started["verification_policy"])["contract_sha256"]) != wantHash {
 		t.Fatalf("started policy = %v, want hash %q", started["verification_policy"], wantHash)
+	}
+}
+
+func TestStartRefusesTamperedSnapshotSeal(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "tampered", map[string]string{
+		"README.md":                 "A tampered-snapshot project.\n",
+		"mise.toml":                 "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":                 standardizedContract,
+		"docs/features/README.md":   featureIndex,
+		"docs/features/greeting.md": featureMap,
+	})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	raw, err := os.ReadFile(filepath.Join(d.home, "tasks", asString(task["id"]), "task.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var taskFile map[string]any
+	if err := json.Unmarshal(raw, &taskFile); err != nil {
+		t.Fatal(err)
+	}
+	policy := asMap(taskFile["verification_policy"])
+	policy["why"] = "forged policy"
+	data, err := json.Marshal(taskFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d.home, "tasks", asString(task["id"]), "task.json"), append(data, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := d.ctl(false, "start", asString(task["id"]))
+	if !strings.Contains(asString(result["error"]), "not intact") {
+		t.Fatalf("start result = %v, want the snapshot seal refusal", result)
 	}
 }

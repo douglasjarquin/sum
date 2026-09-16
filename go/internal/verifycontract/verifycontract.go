@@ -288,7 +288,7 @@ func ValidatePolicySeal(policy *ordjson.Object) error {
 func policyDigest(policy *ordjson.Object) string {
 	contents := ordjson.NewObject()
 	for _, key := range policy.Keys() {
-		if key == "snapshot_sha256" || key == "observed_at" {
+		if key == "snapshot_sha256" {
 			continue
 		}
 		value, _ := policy.Get(key)
