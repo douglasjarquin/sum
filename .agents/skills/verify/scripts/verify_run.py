@@ -182,9 +182,10 @@ def policy_file_set(extra):
 def load_feature_maps(root: Path, index_relative: str):
     """The index links every feature map; each map lists scenarios as table rows `| id | ... | automated|manual ... |`."""
     index = root / index_relative
+    if path_contains_symlink(index, root):
+        raise Blocked(f"Feature-map index {index_relative} traverses a symlink.")
     try:
         index_bytes = read_bounded(index)
-        index_text = index_bytes.decode("utf-8")
     except Blocked:
         raise Blocked(f"Feature-map index {index_relative} is missing.")
     try:

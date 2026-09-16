@@ -94,6 +94,28 @@ func relativeInside(value string) bool {
 	return true
 }
 
+func pathContainsSymlink(root, target string) bool {
+	relative, err := filepath.Rel(root, target)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return false
+	}
+	current := root
+	for _, part := range strings.Split(relative, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func stringAt(config map[string]any, key, fallback string) (string, bool) {
 	value, present := config[key]
 	if !present {
@@ -385,14 +407,17 @@ func policyFileSet(declared any) ([]string, error) {
 }
 
 func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []string, []Scenario, error) {
-	index := filepath.Join(worktree, filepath.FromSlash(indexRelative))
-	body, err := readBounded(index)
-	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("Feature-map index %s is missing", indexRelative)
-	}
 	root, err := filepath.EvalSymlinks(worktree)
 	if err != nil {
 		root = worktree
+	}
+	index := filepath.Join(root, filepath.FromSlash(indexRelative))
+	if pathContainsSymlink(root, index) {
+		return nil, nil, nil, nil, fmt.Errorf("Feature-map index %s traverses a symlink", indexRelative)
+	}
+	body, err := readBounded(index)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("Feature-map index %s is missing", indexRelative)
 	}
 	paths := []string{indexRelative}
 	hashes := []FileHash{{Path: indexRelative, SHA256: sha256Text(string(body))}}
@@ -407,7 +432,11 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []st
 		if !relativeInside(target) {
 			return nil, nil, nil, nil, fmt.Errorf("Feature map link %s in %s is not a safe repository path", target, indexRelative)
 		}
-		resolved, err := filepath.EvalSymlinks(filepath.Join(filepath.Dir(index), filepath.FromSlash(target)))
+		rawTarget := filepath.Join(filepath.Dir(index), filepath.FromSlash(target))
+		if pathContainsSymlink(root, rawTarget) {
+			return nil, nil, nil, nil, fmt.Errorf("Feature map link %s in %s traverses a symlink", target, indexRelative)
+		}
+		resolved, err := filepath.EvalSymlinks(rawTarget)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("Feature map %s linked from %s is missing", target, indexRelative)
 		}

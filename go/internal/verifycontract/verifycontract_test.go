@@ -183,6 +183,50 @@ func TestReadRefusesMalformedContracts(t *testing.T) {
 	}
 }
 
+func TestReadRefusesSymlinkedFeatureMapPaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		contract   string
+		files      map[string]string
+		link, dest string
+	}{
+		{
+			name:     "index directory",
+			contract: strings.Replace(contractBody, "docs/index.md", "docs/linked/index.md", 1),
+			files: map[string]string{
+				"docs/real/index.md": "- [Map](map.md)\n",
+				"docs/real/map.md":   "| ID | Scenario | Driver | Evidence |\n| --- | --- | --- | --- |\n| `map.x` | X | manual | - |\n",
+			},
+			link: "docs/linked", dest: "real",
+		},
+		{
+			name:     "linked map",
+			contract: contractBody,
+			files: map[string]string{
+				"docs/index.md": "- [Map](linked.md)\n",
+				"docs/real.md":  "| ID | Scenario | Driver | Evidence |\n| --- | --- | --- | --- |\n| `map.x` | X | manual | - |\n",
+			},
+			link: "docs/linked.md", dest: "real.md",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"VERIFY.md": tc.contract}
+			for path, body := range tc.files {
+				files[path] = body
+			}
+			root := checkout(t, files)
+			if err := os.Symlink(tc.dest, filepath.Join(root, filepath.FromSlash(tc.link))); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Read(root)
+			if err == nil || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("err = %v, want a symlink refusal", err)
+			}
+		})
+	}
+}
+
 func TestPolicyAtDispatchDowngradesAMalformedContract(t *testing.T) {
 	root := checkout(t, map[string]string{"VERIFY.md": "# Contract\n\nNo block.\n"})
 	policy := PolicyAtDispatch(root, "abc123", standardizedStatus())

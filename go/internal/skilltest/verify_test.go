@@ -521,6 +521,42 @@ func TestRunnerRejectsLinkedMapSymlink(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsLinkedMapDirectorySymlink(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "linked-directory-symlink"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	features := filepath.Join(repo, "docs/features")
+	realFeatures := filepath.Join(repo, "docs/real-features")
+	if err := os.MkdirAll(realFeatures, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(features)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		mustWrite(t, filepath.Join(realFeatures, entry.Name()), readFile(t, filepath.Join(features, entry.Name())))
+	}
+	if err := os.Symlink("real-features", filepath.Join(repo, "docs/linked-features")); err != nil {
+		t.Fatal(err)
+	}
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "docs/features/README.md", "docs/linked-features/README.md", 1)
+	mustWrite(t, contract, body)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "reject linked feature directory symlink")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "symlink") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked linked-directory symlink", record, code, stderr)
+	}
+}
+
 func TestGenerationKeepsUserEdits(t *testing.T) {
 	v := newVerifyLab(t)
 	repo := v.rawRepo("service", filepath.Join(v.stop, "custom"))
