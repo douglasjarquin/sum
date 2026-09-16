@@ -122,3 +122,39 @@ func TestVerificationContractStatusAtRuntimeDoesNotUseTargetLocalMise(t *testing
 		t.Fatal("runtime mise was executed during passive discovery")
 	}
 }
+
+func TestPassiveDiscoveryBoundsAncestorTraversal(t *testing.T) {
+	base := t.TempDir()
+	root := base
+	for i := 0; i < passiveParentLimit+1; i++ {
+		root = filepath.Join(root, fmt.Sprintf("level-%02d", i))
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "VERIFY.md"), []byte("# Verification contract\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inherited := filepath.Join(base, "mise-tasks", "verify")
+	if err := os.MkdirAll(filepath.Dir(inherited), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(inherited, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runtime := t.TempDir()
+	mise := filepath.Join(runtime, ".local", "bin", "mise")
+	if err := os.MkdirAll(filepath.Dir(mise), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mise, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	status := VerificationContractStatusAtDispatch(root, runtime)
+	if value, _ := status.Get("status"); value != "not-yet-standardized" {
+		t.Fatalf("status = %v, want not-yet-standardized", value)
+	}
+	if why, _ := status.Get("why"); strings.Contains(fmt.Sprint(why), "inherited") {
+		t.Fatalf("why = %v, want the bounded scan not to reach the distant parent", why)
+	}
+}

@@ -252,6 +252,10 @@ func ValidateCommittedPolicy(repo string, expected *ordjson.Object) error {
 	}
 	actualStatus := stringField(environment.VerificationContractStatusAtBase(root), "status")
 	expectedStatus := stringField(expected, "status")
+	requirements, _ := field(expected, "requirements").(*ordjson.Object)
+	if !jsonEqual(field(requirements, "missing"), strings2any(missingCommands(contract.RequiredChecks))) {
+		return fmt.Errorf("unavailable verification requirements differ from the dispatch snapshot")
+	}
 	if actualStatus != expectedStatus && !(actualStatus == "standardized" && expectedStatus == "not-yet-standardized" && hasMissingRequirements(expected)) {
 		return fmt.Errorf("verification status differs from the dispatch snapshot")
 	}

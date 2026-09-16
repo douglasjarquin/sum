@@ -339,6 +339,15 @@ func TestStartRefusesResealedStatusDowngrade(t *testing.T) {
 		t.Fatalf("verification policy = %T, want object", policy)
 	}
 	policyObject.Set("status", "not-yet-standardized")
+	requirements, ok := policyObject.Get("requirements")
+	if !ok {
+		t.Fatal("task policy has no requirements")
+	}
+	requirementObject, ok := requirements.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("requirements = %T, want object", requirements)
+	}
+	requirementObject.Set("missing", []any{"forged-command"})
 	verifycontract.SealPolicy(policyObject)
 	data, err := ordjson.MarshalIndent(taskObject)
 	if err != nil {
