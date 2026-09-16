@@ -18,11 +18,13 @@ func TestVerificationContractStatusTrustsTargetConfig(t *testing.T) {
 	}
 	marker := filepath.Join(t.TempDir(), "trust-bypass")
 	mise := filepath.Join(root, "mise")
-	script := fmt.Sprintf("#!/bin/sh\nif [ -n \"$MISE_TRUSTED_CONFIG_PATHS\" ]; then : > \"%s\"; fi\nprintf '%%s\\n' '[{\"name\":\"verify\",\"source\":\"%s\"}]'\n", marker, filepath.Join(root, "mise.toml"))
+	script := fmt.Sprintf("#!/bin/sh\nif [ -n \"$MISE_TRUSTED_CONFIG_PATHS\" ] || [ -n \"$MISE_YES\" ]; then : > \"%s\"; fi\nprintf '%%s\\n' '[{\"name\":\"verify\",\"source\":\"%s\"}]'\n", marker, filepath.Join(root, "mise.toml"))
 	if err := os.WriteFile(mise, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SUM_MISE_BIN", mise)
+	t.Setenv("MISE_TRUSTED_CONFIG_PATHS", filepath.Join(root, "mise.toml"))
+	t.Setenv("MISE_YES", "1")
 
 	status := VerificationContractStatus(root)
 	value, _ := status.Get("status")

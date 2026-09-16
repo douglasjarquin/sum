@@ -669,7 +669,15 @@ func miseTaskOrigins(worktree string) *ordjson.Object {
 		return result
 	}
 	result.Set("available", true)
-	env := proc.ScrubbedEnv()
+	scrubbed := proc.ScrubbedEnv()
+	env := make([]string, 0, len(scrubbed)+1)
+	for _, entry := range scrubbed {
+		key, _, _ := strings.Cut(entry, "=")
+		if key == "MISE_TRUSTED_CONFIG_PATHS" || key == "MISE_YES" {
+			continue
+		}
+		env = append(env, entry)
+	}
 	env = append(env, "MISE_QUIET=1")
 	run, runErr := proc.Run([]string{binary, "tasks", "ls", "--json"}, worktree, 30*time.Second, false, env)
 	warnings := strings.TrimSpace(run.Stderr)
