@@ -372,6 +372,38 @@ func TestRunnerRejectsGitPathspecContractPaths(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsScalarContractLists(t *testing.T) {
+	v := newVerifyLab(t)
+	for _, tc := range []struct {
+		name string
+		body func(string) string
+		want string
+	}{
+		{name: "requires-commands", body: func(body string) string {
+			return regexp.MustCompile(`(?m)^commands = .*$`).ReplaceAllString(body, `commands = "python3"`)
+		}, want: "requires.commands"},
+		{name: "freshness-inputs", body: func(body string) string {
+			return strings.Replace(body, "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[freshness]\ninputs = \"inside\"\n", 1)
+		}, want: "freshness.inputs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := v.rawRepo("cli", filepath.Join(v.stop, "scalar-"+tc.name))
+			if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+				t.Fatal(stderr)
+			}
+			contract := filepath.Join(repo, "VERIFY.md")
+			mustWrite(t, contract, tc.body(readFile(t, contract)))
+			git(t, repo, "add", "VERIFY.md")
+			git(t, repo, "commit", "-q", "-m", "reject scalar contract list")
+			head := git(t, repo, "rev-parse", "HEAD")
+			code, record, stderr := v.runner(repo, "--base", head)
+			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), tc.want) {
+				t.Fatalf("runner %v code=%d stderr=%s, want a blocked %s value", record, code, stderr, tc.want)
+			}
+		})
+	}
+}
+
 func TestGenerationKeepsUserEdits(t *testing.T) {
 	v := newVerifyLab(t)
 	repo := v.rawRepo("service", filepath.Join(v.stop, "custom"))

@@ -537,6 +537,15 @@ func PolicyAtDispatch(worktree, baseSHA string, status *ordjson.Object) *ordjson
 	return policy
 }
 
+func PolicyAtDispatchUnavailable(baseSHA, reason string) *ordjson.Object {
+	policy := PolicyAtDispatch("", baseSHA, nil)
+	policy.Set("status", "not-yet-standardized")
+	policy.Set("why", "verification contract snapshot unavailable at dispatch")
+	policy.Set("reason", reason)
+	policy.Set("snapshot_error", reason)
+	return policy
+}
+
 func missingCommands(commands []string) []string {
 	missing := make([]string, 0)
 	for _, command := range commands {

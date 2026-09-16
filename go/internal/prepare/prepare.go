@@ -251,8 +251,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	contractRoot, cleanupContract, err := verifycontract.MaterializeCommit(repo, baseSHA)
 	var policy *ordjson.Object
 	if err != nil {
-		policy = verifycontract.PolicyAtDispatch(worktreePath, baseSHA, environment.VerificationContractStatusAtDispatch(worktreePath, args.RuntimeRoot))
-		policy.Set("snapshot_error", err.Error())
+		policy = verifycontract.PolicyAtDispatchUnavailable(baseSHA, err.Error())
 	} else {
 		defer cleanupContract()
 		policy = verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, args.RuntimeRoot))
