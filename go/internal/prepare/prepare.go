@@ -365,6 +365,11 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		unlock()
 		return nil, fmt.Errorf("The task has no coordinator-owned verification snapshot; start is refused.")
 	}
+	repository := asString(func() any { v, _ := task.Get("repository"); return v }())
+	if err := verifycontract.ValidateCommittedPolicy(repository, asObject(policy)); err != nil {
+		unlock()
+		return nil, fmt.Errorf("The coordinator-owned verification snapshot does not match its committed base: %w", err)
+	}
 	worker, err := reservations.Worker(task)
 	if err != nil {
 		unlock()
@@ -587,7 +592,8 @@ func validVerificationSnapshot(value any, task *ordjson.Object) bool {
 		return false
 	}
 	delivery := snapshotObject(policy, "delivery")
-	if delivery == nil || !snapshotString(delivery, "mode") || snapshotObject(delivery, "tool") == nil {
+	tool := snapshotObject(delivery, "tool")
+	if delivery == nil || !snapshotString(delivery, "mode") || tool == nil || !snapshotString(tool, "harness") || snapshotObject(tool, "source") == nil {
 		return false
 	}
 	return true

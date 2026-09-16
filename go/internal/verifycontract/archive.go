@@ -11,7 +11,11 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 )
 
-const commitFileMaxBytes = 256 * 1024
+const (
+	commitFileMaxBytes     = 256 * 1024
+	commitSnapshotMaxSize  = 8 * 1024 * 1024
+	commitSnapshotMaxFiles = 256
+)
 
 func readBounded(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
@@ -82,9 +86,14 @@ func MaterializeCommit(repo, revision string) (string, func(), error) {
 		}
 	}
 	seen := map[string]bool{}
+	totalBytes := 0
 	for _, relative := range paths {
 		if seen[relative] || !relativeInside(relative) {
 			continue
+		}
+		if len(seen) >= commitSnapshotMaxFiles {
+			cleanup()
+			return "", func() {}, fmt.Errorf("contract snapshot references more than %d files", commitSnapshotMaxFiles)
 		}
 		seen[relative] = true
 		data, found, err := commitFile(repo, revision, relative)
@@ -94,6 +103,11 @@ func MaterializeCommit(repo, revision string) (string, func(), error) {
 		}
 		if !found {
 			continue
+		}
+		totalBytes += len(data)
+		if totalBytes > commitSnapshotMaxSize {
+			cleanup()
+			return "", func() {}, fmt.Errorf("contract snapshot exceeds %d bytes", commitSnapshotMaxSize)
 		}
 		target := filepath.Join(root, filepath.FromSlash(relative))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {

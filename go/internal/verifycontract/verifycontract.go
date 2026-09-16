@@ -36,6 +36,8 @@ var (
 	driverDeclared = regexp.MustCompile(`(?i)^(automated|manual)\b`)
 )
 
+const maxContractListItems = 256
+
 // Scenario is a feature-map row whose Evidence cell names visual proof.
 type Scenario struct {
 	ID      string
@@ -199,11 +201,17 @@ func stringList(value any, name string) ([]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("%s must be a list of strings", name)
 	}
+	if len(list) > maxContractListItems {
+		return nil, fmt.Errorf("%s has more than %d items", name, maxContractListItems)
+	}
 	result := make([]string, 0, len(list))
 	for _, item := range list {
 		text, ok := item.(string)
 		if !ok {
 			return nil, fmt.Errorf("%s must be a list of strings", name)
+		}
+		if len([]rune(text)) > 512 {
+			return nil, fmt.Errorf("%s contains an item longer than 512 characters", name)
 		}
 		result = append(result, text)
 	}
@@ -223,6 +231,67 @@ func relativeStringList(value any, name string) ([]string, error) {
 	return values, nil
 }
 
+func ValidateCommittedPolicy(repo string, expected *ordjson.Object) error {
+	base := stringField(expected, "base_sha")
+	root, cleanup, err := MaterializeCommit(repo, base)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	contract, readErr := Read(root)
+	if readErr != nil {
+		if stringField(expected, "status") == "standardized" {
+			return fmt.Errorf("committed policy is no longer standardized: %w", readErr)
+		}
+		reason := stringField(expected, "reason")
+		if reason != "" && !strings.Contains(reason, readErr.Error()) {
+			return fmt.Errorf("committed policy reason does not match the base contract")
+		}
+		return nil
+	}
+	if expectedHash := stringField(expected, "contract_sha256"); expectedHash != "" && expectedHash != contract.SHA256 {
+		return fmt.Errorf("contract hash differs from the dispatch snapshot")
+	}
+	for key, actual := range map[string]string{"entrypoint": contract.Entrypoint, "task_owner": contract.TaskOwner, "feature_maps_index": contract.FeatureMapsIndex} {
+		if expectedValue := stringField(expected, key); expectedValue != "" && expectedValue != actual {
+			return fmt.Errorf("%s differs from the dispatch snapshot", key)
+		}
+	}
+	freshness := ordjson.NewObject()
+	freshness.Set("inputs", strings2any(contract.FreshnessInputs))
+	freshness.Set("outputs", strings2any(contract.FreshnessOutputs))
+	freshness.Set("timeout_seconds", json.Number(fmt.Sprint(contract.TimeoutSeconds)))
+	if !jsonEqual(field(expected, "feature_maps"), strings2any(contract.FeatureMaps)) ||
+		!jsonEqual(field(expected, "feature_map_hashes"), fileHashes2any(contract.FeatureMapHashes)) ||
+		!jsonEqual(field(expected, "required_checks"), strings2any(contract.RequiredChecks)) ||
+		!jsonEqual(field(expected, "scenario_ids"), strings2any(contract.ScenarioIDs)) ||
+		!jsonEqual(field(expected, "freshness"), freshness) ||
+		!jsonEqual(field(expected, "policy_files"), strings2any(contract.PolicyFiles)) ||
+		!jsonEqual(field(expected, "evidence_required"), evidence2any(contract.EvidenceRequired)) {
+		return fmt.Errorf("committed verification policy differs from the dispatch snapshot")
+	}
+	return nil
+}
+
+func field(value *ordjson.Object, key string) any {
+	if value == nil {
+		return nil
+	}
+	field, _ := value.Get(key)
+	return field
+}
+
+func stringField(value *ordjson.Object, key string) string {
+	text, _ := field(value, key).(string)
+	return text
+}
+
+func jsonEqual(left, right any) bool {
+	leftJSON, leftErr := ordjson.MarshalSortedCompact(left)
+	rightJSON, rightErr := ordjson.MarshalSortedCompact(right)
+	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
+}
+
 // policyFileSet adds the contract's declared paths to the defaults; a candidate may widen the set that governs it, never shrink it.
 func policyFileSet(declared any) ([]string, error) {
 	set := map[string]bool{}
@@ -234,10 +303,16 @@ func policyFileSet(declared any) ([]string, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s `policy_files` must be a list of relative paths to add to the defaults", ContractFile)
 		}
+		if len(list) > maxContractListItems {
+			return nil, fmt.Errorf("%s `policy_files` has more than %d items", ContractFile, maxContractListItems)
+		}
 		for _, item := range list {
 			value, ok := item.(string)
 			if !ok || !relativeInside(value) {
 				return nil, fmt.Errorf("%s `policy_files` must be a list of relative paths to add to the defaults", ContractFile)
+			}
+			if len([]rune(value)) > 512 {
+				return nil, fmt.Errorf("%s `policy_files` contains an item longer than 512 characters", ContractFile)
 			}
 			set[value] = true
 		}
@@ -402,15 +477,7 @@ func PolicyAtDispatch(worktree, baseSHA string, status *ordjson.Object) *ordjson
 	requirements.Set("missing", strings2any(missing))
 	policy.Set("requirements", requirements)
 	policy.Set("policy_files", strings2any(contract.PolicyFiles))
-	required := make([]any, 0, len(contract.EvidenceRequired))
-	for _, scenario := range contract.EvidenceRequired {
-		item := ordjson.NewObject()
-		item.Set("scenario", scenario.ID)
-		item.Set("feature", scenario.Feature)
-		item.Set("map", scenario.Map)
-		required = append(required, item)
-	}
-	policy.Set("evidence_required", required)
+	policy.Set("evidence_required", evidence2any(contract.EvidenceRequired))
 	if len(missing) > 0 {
 		state = "not-yet-standardized"
 		policy.Set("status", state)
@@ -452,6 +519,18 @@ func fileHashes2any(values []FileHash) []any {
 		item := ordjson.NewObject()
 		item.Set("path", value.Path)
 		item.Set("sha256", value.SHA256)
+		out = append(out, item)
+	}
+	return out
+}
+
+func evidence2any(values []Scenario) []any {
+	out := make([]any, 0, len(values))
+	for _, scenario := range values {
+		item := ordjson.NewObject()
+		item.Set("scenario", scenario.ID)
+		item.Set("feature", scenario.Feature)
+		item.Set("map", scenario.Map)
 		out = append(out, item)
 	}
 	return out
