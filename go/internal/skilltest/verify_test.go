@@ -456,6 +456,71 @@ func TestRunnerRejectsOversizedContractLists(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsInvalidUTF8Contract(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "invalid-utf8"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "VERIFY.md"), []byte("# invalid\xff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "VERIFY.md")
+	git(t, repo, "commit", "-q", "-m", "reject invalid contract text")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "UTF-8") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked invalid UTF-8 contract", record, code, stderr)
+	}
+}
+
+func TestRunnerRejectsNULContractPath(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "nul-path"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/\\u0000verification\"", 1)
+	mustWrite(t, contract, body)
+	git(t, repo, "add", "VERIFY.md")
+	git(t, repo, "commit", "-q", "-m", "reject NUL contract path")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "artifacts") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked NUL path", record, code, stderr)
+	}
+}
+
+func TestRunnerRejectsLinkedMapSymlink(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "linked-symlink"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	mapDir := filepath.Join(repo, "docs/features")
+	index := filepath.Join(mapDir, "README.md")
+	body := readFile(t, index)
+	pattern := regexp.MustCompile(`\]\(([^)\s]+\.md)\)`)
+	match := pattern.FindStringSubmatch(body)
+	if len(match) != 2 {
+		t.Fatal("generated feature index has no linked map")
+	}
+	mustWrite(t, filepath.Join(mapDir, "real.md"), readFile(t, filepath.Join(mapDir, match[1])))
+	body = pattern.ReplaceAllString(body, `](linked.md)`)
+	mustWrite(t, index, body)
+	if err := os.Symlink("real.md", filepath.Join(mapDir, "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "reject linked map symlink")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "symlink") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked linked-map symlink", record, code, stderr)
+	}
+}
+
 func TestGenerationKeepsUserEdits(t *testing.T) {
 	v := newVerifyLab(t)
 	repo := v.rawRepo("service", filepath.Join(v.stop, "custom"))

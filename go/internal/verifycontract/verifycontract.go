@@ -76,6 +76,11 @@ func relativeInside(value string) bool {
 	if value == "" || strings.ContainsAny(value, `\:*?[]`) || path.IsAbs(value) || filepath.IsAbs(value) {
 		return false
 	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
 	for _, part := range strings.Split(value, "/") {
 		if part == ".." {
 			return false

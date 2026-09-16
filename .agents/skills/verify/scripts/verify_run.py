@@ -55,7 +55,10 @@ class Blocked(Exception):
 
 
 def safe_relative_path(value):
-    return isinstance(value, str) and bool(value) and not Path(value).is_absolute() and "\\" not in value and not any(character in value for character in ":*?[]") and all(part != ".." for part in value.split("/"))
+    return (isinstance(value, str) and bool(value) and not Path(value).is_absolute() and "\\" not in value
+            and not any(character in value for character in ":*?[]")
+            and not any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+            and all(part != ".." for part in value.split("/")))
 
 
 def bounded_string_list(value, name, paths=False):
@@ -84,6 +87,22 @@ def read_bounded(path: Path):
         raise Blocked(f"verification file {path} is unreadable: {exc}")
 
 
+def path_contains_symlink(path: Path, root: Path):
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return False
+    current = root
+    for part in parts:
+        current /= part
+        try:
+            if stat.S_ISLNK(current.lstat().st_mode):
+                return True
+        except OSError:
+            return False
+    return False
+
+
 def utc_now():
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
@@ -109,7 +128,10 @@ def resolve_root(start: Path):
 
 def load_contract(root: Path):
     path = root / CONTRACT_FILE
-    text = read_bounded(path).decode("utf-8")
+    try:
+        text = read_bounded(path).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Blocked(f"{CONTRACT_FILE} is not valid UTF-8: {exc}")
     match = FENCE.search(text)
     if not match:
         raise Blocked(f"{CONTRACT_FILE} has no ```verify configuration block.")
@@ -165,6 +187,10 @@ def load_feature_maps(root: Path, index_relative: str):
         index_text = index_bytes.decode("utf-8")
     except Blocked:
         raise Blocked(f"Feature-map index {index_relative} is missing.")
+    try:
+        index_text = index_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Blocked(f"Feature-map index {index_relative} is not valid UTF-8: {exc}")
     maps = [{"path": index_relative, "sha256": hashlib.sha256(index_bytes).hexdigest()}]
     snapshot_files = 1
     snapshot_bytes = len(index_bytes)
@@ -175,7 +201,10 @@ def load_feature_maps(root: Path, index_relative: str):
             continue
         if not safe_relative_path(link):
             raise Blocked(f"Feature map link {link} in {index_relative} is not a safe repository path.")
-        target = (index.parent / link).resolve()
+        raw_target = index.parent / link
+        if path_contains_symlink(raw_target, root):
+            raise Blocked(f"Feature map link {link} in {index_relative} traverses a symlink.")
+        target = raw_target.resolve()
         try:
             relative = target.relative_to(root)
         except ValueError:
@@ -191,7 +220,10 @@ def load_feature_maps(root: Path, index_relative: str):
         if snapshot_bytes > MAX_CONTRACT_SNAPSHOT_BYTES:
             raise Blocked(f"verification contract snapshot exceeds {MAX_CONTRACT_SNAPSHOT_BYTES} bytes")
         maps.append({"path": str(relative), "sha256": hashlib.sha256(map_bytes).hexdigest()})
-        map_text = map_bytes.decode("utf-8")
+        try:
+            map_text = map_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise Blocked(f"Feature map {relative} is not valid UTF-8: {exc}")
         driver_column = None
         for line in map_text.splitlines():
             if not line.lstrip().startswith("|"):
