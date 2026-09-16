@@ -220,9 +220,10 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	contractObj := objectField(record, "contract")
 	contractSHA := asString(contractObj, "sha256")
 	contractChanged := asString(dispatch, "contract_sha256") != "" && contractSHA != "" && contractSHA != asString(dispatch, "contract_sha256")
+	snapshotChanged, snapshotReason := dispatchPolicyChanged(dispatch, record)
 	checked, _ := policy.Get("checked")
 	requiresReview, _ := record.Get("requires_root_review")
-	requires := requiresReview == true || contractChanged || checked != true
+	requires := requiresReview == true || contractChanged || snapshotChanged || checked != true
 	result := runOutcomeMap[outcome]
 	if dirtyBool && result == "pass" {
 		result = "inconclusive"
@@ -253,6 +254,8 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	body.Set("requires_root_review", requires)
 	body.Set("contract_sha256", contractSHA)
 	body.Set("contract_changed_since_dispatch", contractChanged)
+	body.Set("policy_changed_since_dispatch", snapshotChanged)
+	body.Set("policy_change_reason", snapshotReason)
 	policyBody := ordjson.NewObject()
 	policyBody.Set("checked", checked == true)
 	if policyBase, ok := policy.Get("base"); ok {
@@ -292,6 +295,57 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 		body.Set("blocked_reason", nil)
 	}
 	return body, nil
+}
+
+func dispatchPolicyChanged(dispatch, record *ordjson.Object) (bool, string) {
+	if dispatch == nil {
+		return false, ""
+	}
+	if !sameJSON(field(dispatch, "feature_map_hashes"), field(record, "feature_maps")) {
+		return true, "feature map paths or hashes differ from the dispatch snapshot"
+	}
+	requirements := objectField(record, "requirements")
+	if !sameJSON(field(dispatch, "required_checks"), field(requirements, "commands")) {
+		return true, "required checks differ from the dispatch snapshot"
+	}
+	if !sameJSON(field(dispatch, "scenario_ids"), scenarioIDs(record)) {
+		return true, "scenario IDs differ from the dispatch snapshot"
+	}
+	return false, ""
+}
+
+func scenarioIDs(record *ordjson.Object) []any {
+	rows, _ := field(record, "scenarios").([]any)
+	ids := make([]any, 0, len(rows))
+	for _, raw := range rows {
+		row := objectValue(raw)
+		if row == nil {
+			continue
+		}
+		if id := asString(row, "id"); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func field(object *ordjson.Object, key string) any {
+	if object == nil {
+		return nil
+	}
+	value, _ := object.Get(key)
+	return value
+}
+
+func objectValue(value any) *ordjson.Object {
+	object, _ := value.(*ordjson.Object)
+	return object
+}
+
+func sameJSON(left, right any) bool {
+	leftJSON, leftErr := ordjson.MarshalSortedCompact(left)
+	rightJSON, rightErr := ordjson.MarshalSortedCompact(right)
+	return leftErr == nil && rightErr == nil && string(leftJSON) == string(rightJSON)
 }
 
 // A scenario the feature maps say needs a before/after comparison, for which this run found none.

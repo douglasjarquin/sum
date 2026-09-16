@@ -55,6 +55,13 @@ func resolvePath(path string) string {
 	return abs
 }
 
+func resolveGitPath(root, value string) string {
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(root, value)
+	}
+	return resolvePath(value)
+}
+
 func newTaskID() (string, error) {
 	buf := make([]byte, 6)
 	if _, err := rand.Read(buf); err != nil {
@@ -241,7 +248,30 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if actualRoot == repo || actualRoot != worktreePath || actualHead != baseSHA || actualBranch != branch {
 		return failPrepare(s, tid, fmt.Errorf("Herdr returned a checkout that does not match the task. Work is preserved; inspect it manually."))
 	}
-	task.Set("verification_policy", verifycontract.PolicyAtDispatch(worktreePath, baseSHA, environment.VerificationContractStatus(worktreePath)))
+	contractRoot, cleanupContract, err := verifycontract.MaterializeCommit(repo, baseSHA)
+	var policy *ordjson.Object
+	if err != nil {
+		policy = verifycontract.PolicyAtDispatchUnavailable(baseSHA, err.Error())
+	} else {
+		defer cleanupContract()
+		policy = verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, args.RuntimeRoot))
+	}
+	verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{
+		Repository:  repo,
+		Project:     projectObj,
+		Launch:      launchSpec,
+		RuntimeRoot: args.RuntimeRoot,
+		Worktree:    worktreePath,
+		GitRoot:     actualRoot,
+		Head:        actualHead,
+		Branch:      actualBranch,
+		Workspace:   workspaceID,
+	})
+	verifycontract.SealPolicy(policy)
+	task.Set("verification_policy", policy)
+	if err := s.SaveTask(task); err != nil {
+		return failPrepare(s, tid, err)
+	}
 	record := graph.InitCheckout(s, args.RuntimeRoot, worktreePath, "task", nil)
 	if err := graph.WriteTaskGraph(s, task, record); err != nil {
 		return failPrepare(s, tid, err)
@@ -344,6 +374,31 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	if status != "prepared" {
 		unlock()
 		return nil, fmt.Errorf("Only a prepared task can be started. sum never retries an uncertain launch automatically.")
+	}
+	policy, hasPolicy := task.Get("verification_policy")
+	if !hasPolicy || !validVerificationSnapshot(policy, task) {
+		unlock()
+		return nil, fmt.Errorf("The task has no coordinator-owned verification snapshot; start is refused.")
+	}
+	if err := verifycontract.ValidatePolicySeal(asObject(policy)); err != nil {
+		unlock()
+		return nil, fmt.Errorf("The coordinator-owned verification snapshot is not intact: %w", err)
+	}
+	preparedWorktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
+	repository := asString(func() any { v, _ := task.Get("repository"); return v }())
+	recordedWorktree := snapshotObject(asObject(policy), "prepared_worktree")
+	actualRoot, rootErr := runGit("-C", preparedWorktree, "rev-parse", "--show-toplevel")
+	actualHead, headErr := runGit("-C", preparedWorktree, "rev-parse", "HEAD")
+	actualBranch, branchErr := runGit("-C", preparedWorktree, "branch", "--show-current")
+	actualCommon, commonErr := runGit("-C", preparedWorktree, "rev-parse", "--git-common-dir")
+	repositoryCommon, repositoryCommonErr := runGit("-C", repository, "rev-parse", "--git-common-dir")
+	if rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualHead != asString(func() any { v, _ := task.Get("base_sha"); return v }()) || actualHead != asString(policyField(recordedWorktree, "head")) || actualBranch != asString(policyField(recordedWorktree, "branch")) || asString(func() any { v, _ := task.Get("workspace"); return v }()) != asString(policyField(recordedWorktree, "workspace")) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon) {
+		unlock()
+		return nil, fmt.Errorf("The prepared checkout does not match its saved Git identity; start is refused.")
+	}
+	if err := verifycontract.ValidateCommittedPolicy(preparedWorktree, asObject(policy)); err != nil {
+		unlock()
+		return nil, fmt.Errorf("The coordinator-owned verification snapshot does not match its committed base: %w", err)
 	}
 	worker, err := reservations.Worker(task)
 	if err != nil {
@@ -506,6 +561,181 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	}
 	result.Set("confirmation", launch.Confirmation(currentLaunch))
 	return result, nil
+}
+
+func validVerificationSnapshot(value any, task *ordjson.Object) bool {
+	policy := asObject(value)
+	if policy == nil {
+		return false
+	}
+	status, _ := policy.Get("status")
+	base, _ := policy.Get("base_sha")
+	statusText, statusOK := status.(string)
+	baseText, baseOK := base.(string)
+	if !statusOK || (statusText != "standardized" && statusText != "not-yet-standardized") || !baseOK || strings.TrimSpace(baseText) == "" {
+		return false
+	}
+	taskBase, _ := task.Get("base_sha")
+	if taskBaseText, ok := taskBase.(string); !ok || baseText != taskBaseText {
+		return false
+	}
+	if !snapshotString(policy, "contract_path") || !snapshotString(policy, "repository_path") || !snapshotString(policy, "observed_at") {
+		return false
+	}
+	preparedWorktree := snapshotObject(policy, "prepared_worktree")
+	if preparedWorktree == nil || !snapshotString(preparedWorktree, "path") || !snapshotString(preparedWorktree, "git_root") || !snapshotString(preparedWorktree, "head") || !snapshotString(preparedWorktree, "branch") || !snapshotString(preparedWorktree, "workspace") {
+		return false
+	}
+	snapshotHash, _ := policy.Get("snapshot_sha256")
+	if hash, ok := snapshotHash.(string); !ok || len(hash) != 64 {
+		return false
+	} else if _, err := hex.DecodeString(hash); err != nil {
+		return false
+	}
+	if !snapshotOptionalString(policy, "contract_sha256") || !snapshotOptionalString(policy, "entrypoint") || !snapshotOptionalString(policy, "task_owner") || !snapshotOptionalString(policy, "feature_maps_index") {
+		return false
+	}
+	if statusText == "standardized" && (!snapshotString(policy, "contract_sha256") || !snapshotString(policy, "entrypoint") || !snapshotString(policy, "task_owner") || !snapshotString(policy, "feature_maps_index")) {
+		return false
+	}
+	if !snapshotStrings(policy, "feature_maps") || !snapshotStrings(policy, "required_checks") || !snapshotStrings(policy, "scenario_ids") || !snapshotStrings(policy, "policy_files") {
+		return false
+	}
+	if !snapshotObjects(policy, "feature_map_hashes", []string{"path", "sha256"}) || !snapshotObjects(policy, "evidence_required", []string{"scenario", "feature", "map"}) {
+		return false
+	}
+	requirements := snapshotObject(policy, "requirements")
+	if requirements == nil || !snapshotStrings(requirements, "commands") || !snapshotStrings(requirements, "missing") {
+		return false
+	}
+	freshness := snapshotObject(policy, "freshness")
+	if freshness == nil || !snapshotStrings(freshness, "inputs") || !snapshotStrings(freshness, "outputs") || !snapshotPositiveNumber(freshness, "timeout_seconds") {
+		return false
+	}
+	identity := snapshotObject(policy, "project_identity")
+	if identity == nil || !snapshotString(identity, "path") {
+		return false
+	}
+	taskRepository, _ := task.Get("repository")
+	if repository, ok := taskRepository.(string); !ok || asString(policyField(identity, "path")) != repository || asString(policyField(policy, "repository_path")) != repository {
+		return false
+	}
+	runtime := snapshotObject(policy, "source_runtime")
+	if runtime == nil || !snapshotString(runtime, "sum_version") || !snapshotString(runtime, "worker_skill_path") || !snapshotString(runtime, "reviewer_skill_path") {
+		return false
+	}
+	if !snapshotNumber(runtime, "brief_schema") || !snapshotOptionalString(runtime, "runtime_revision") || !snapshotString(runtime, "worker_skill_sha256") || !snapshotString(runtime, "reviewer_skill_sha256") {
+		return false
+	}
+	rubric := snapshotObject(runtime, "rubric")
+	if rubric == nil || !snapshotString(rubric, "path") || !snapshotString(rubric, "sha256") {
+		return false
+	}
+	delivery := snapshotObject(policy, "delivery")
+	tool := snapshotObject(delivery, "tool")
+	if delivery == nil || !snapshotString(delivery, "mode") || tool == nil || !snapshotString(tool, "harness") || snapshotObject(tool, "source") == nil {
+		return false
+	}
+	return true
+}
+
+func snapshotObject(value *ordjson.Object, key string) *ordjson.Object {
+	if value == nil {
+		return nil
+	}
+	field, _ := value.Get(key)
+	return asObject(field)
+}
+
+func policyField(value *ordjson.Object, key string) any {
+	if value == nil {
+		return nil
+	}
+	field, _ := value.Get(key)
+	return field
+}
+
+func snapshotString(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	text, textOK := field.(string)
+	return ok && textOK && strings.TrimSpace(text) != ""
+}
+
+func snapshotStrings(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	values, listOK := field.([]any)
+	if !ok || !listOK {
+		return false
+	}
+	for _, item := range values {
+		if text, textOK := item.(string); !textOK || strings.TrimSpace(text) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func snapshotObjects(value *ordjson.Object, key string, required []string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	values, listOK := field.([]any)
+	if !ok || !listOK {
+		return false
+	}
+	for _, item := range values {
+		object := asObject(item)
+		if object == nil {
+			return false
+		}
+		for _, requiredKey := range required {
+			if !snapshotString(object, requiredKey) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func snapshotPositiveNumber(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	number, numberOK := field.(json.Number)
+	if !ok || !numberOK {
+		return false
+	}
+	parsed, err := number.Int64()
+	return err == nil && parsed > 0
+}
+
+func snapshotNumber(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	_, numberOK := field.(json.Number)
+	return ok && numberOK
+}
+
+func snapshotOptionalString(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	if !ok || field == nil {
+		return true
+	}
+	_, stringOK := field.(string)
+	return stringOK
 }
 
 func failStart(s *store.Store, taskID string, cause error) (*ordjson.Object, error) {

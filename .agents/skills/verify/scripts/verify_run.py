@@ -27,16 +27,24 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import subprocess
 import time
 import tomllib
 from pathlib import Path
+from typing import Any
 
 SCHEMA = 1
 CONTRACT_FILE = "VERIFY.md"
 REQUIRED_HEADINGS = ("Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts")
 SCENARIO_STATUSES = ("pass", "fail", "blocked", "not-run", "not-applicable")
 POLICY_FILES_DEFAULT = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
+SNAPSHOT_BASE_PATHS = ("VERIFY.md", "mise.toml", ".mise.toml", ".mise/config.toml", "mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test")
+MAX_VERIFICATION_FILE_BYTES = 256 * 1024
+MAX_CONTRACT_LIST_ITEMS = 256
+MAX_CONTRACT_ITEM_CHARS = 512
+MAX_CONTRACT_SNAPSHOT_FILES = 256
+MAX_CONTRACT_SNAPSHOT_BYTES = 8 * 1024 * 1024
 FENCE = re.compile(r"^```verify[ \t]*\n(.*?)^```[ \t]*$", re.S | re.M)
 LINK = re.compile(r"\]\(([^)\s]+\.md)\)")
 ROW = re.compile(r"^\|\s*`?([A-Za-z0-9][A-Za-z0-9._:/-]{0,79})`?\s*\|(.*)\|\s*$")
@@ -47,12 +55,61 @@ class Blocked(Exception):
     """The run cannot produce a trustworthy verdict; the reason is recorded, never converted into a pass."""
 
 
+def safe_relative_path(value):
+    return (isinstance(value, str) and bool(value) and not Path(value).is_absolute() and "\\" not in value
+            and not any(character in value for character in ":*?[]")
+            and not any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+            and all(part != ".." for part in value.split("/")))
+
+
+def bounded_string_list(value, name, paths=False):
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise Blocked(f"{name} must be a list of strings.")
+    if len(value) > MAX_CONTRACT_LIST_ITEMS:
+        raise Blocked(f"{name} has more than {MAX_CONTRACT_LIST_ITEMS} items.")
+    for item in value:
+        if len(item) > MAX_CONTRACT_ITEM_CHARS:
+            raise Blocked(f"{name} contains an item longer than {MAX_CONTRACT_ITEM_CHARS} characters.")
+        if paths and not safe_relative_path(item):
+            raise Blocked(f"{name} must contain only relative paths inside the repository.")
+    return value
+
+
+def read_bounded(path: Path):
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise Blocked(f"verification file {path} is missing: {exc}")
+    if path.is_symlink() or not stat.S_ISREG(info.st_mode) or info.st_size > MAX_VERIFICATION_FILE_BYTES:
+        raise Blocked(f"verification file {path} exceeds {MAX_VERIFICATION_FILE_BYTES} bytes or is not regular")
+    try:
+        return path.read_bytes()
+    except OSError as exc:
+        raise Blocked(f"verification file {path} is unreadable: {exc}")
+
+
+def path_contains_symlink(path: Path, root: Path):
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return False
+    current = root
+    for part in parts:
+        current /= part
+        try:
+            if stat.S_ISLNK(current.lstat().st_mode):
+                return True
+        except OSError:
+            return False
+    return False
+
+
 def utc_now():
     return _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def sha256_file(path: Path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return hashlib.sha256(read_bounded(path)).hexdigest()
 
 
 def git(root: Path, *args, check=True):
@@ -72,9 +129,10 @@ def resolve_root(start: Path):
 
 def load_contract(root: Path):
     path = root / CONTRACT_FILE
-    if not path.is_file():
-        raise Blocked(f"{CONTRACT_FILE} is missing at the project root {root}; this project is not yet standardized.")
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = read_bounded(path).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Blocked(f"{CONTRACT_FILE} is not valid UTF-8: {exc}")
     match = FENCE.search(text)
     if not match:
         raise Blocked(f"{CONTRACT_FILE} has no ```verify configuration block.")
@@ -91,28 +149,26 @@ def load_contract(root: Path):
         raise Blocked(f"{CONTRACT_FILE} entrypoint must be the literal `mise run verify`, found {entrypoint!r}.")
     for key in ("feature_maps", "artifacts"):
         value = config.get(key)
-        if not isinstance(value, str) or not value or Path(value).is_absolute() or ".." in Path(value).parts:
+        if not safe_relative_path(value):
             raise Blocked(f"{CONTRACT_FILE} `{key}` must be a relative path inside the repository, found {value!r}.")
     evidence = config.get("evidence", ".artifacts/evidence")
-    if not isinstance(evidence, str) or not evidence or Path(evidence).is_absolute() or ".." in Path(evidence).parts:
+    if not safe_relative_path(evidence):
         raise Blocked(f"{CONTRACT_FILE} `evidence` must be a relative path inside the repository, found {evidence!r}.")
     owner = config.get("task_owner", ".")
-    if not isinstance(owner, str) or Path(owner).is_absolute() or ".." in Path(owner).parts:
+    if not safe_relative_path(owner):
         raise Blocked(f"{CONTRACT_FILE} `task_owner` must be a relative directory inside the repository, found {owner!r}.")
     requires = config.get("requires", {})
     freshness = config.get("freshness", {})
     for name, value in (("requires", requires), ("freshness", freshness)):
         if not isinstance(value, dict):
             raise Blocked(f"{CONTRACT_FILE} `{name}` must be a table.")
-    for key in ("commands",):
-        if not all(isinstance(v, str) for v in requires.get(key, [])):
-            raise Blocked(f"{CONTRACT_FILE} `requires.{key}` must be a list of strings.")
-    for key in ("inputs", "outputs"):
-        if not all(isinstance(v, str) and not Path(v).is_absolute() for v in freshness.get(key, [])):
-            raise Blocked(f"{CONTRACT_FILE} `freshness.{key}` must be a list of relative paths.")
+    commands = bounded_string_list(requires.get("commands", []), f"{CONTRACT_FILE} `requires.commands`")
+    freshness_inputs = bounded_string_list(freshness.get("inputs", []), f"{CONTRACT_FILE} `freshness.inputs`", paths=True)
+    freshness_outputs = bounded_string_list(freshness.get("outputs", []), f"{CONTRACT_FILE} `freshness.outputs`", paths=True)
     timeout = config.get("timeout_seconds", 3600)
     if not isinstance(timeout, int) or timeout <= 0:
         raise Blocked(f"{CONTRACT_FILE} `timeout_seconds` must be a positive integer.")
+    requires["commands"], freshness["inputs"], freshness["outputs"] = commands, freshness_inputs, freshness_outputs
     return {"path": path, "sha256": sha256_file(path), "entrypoint": entrypoint, "feature_maps": config["feature_maps"], "artifacts": config["artifacts"], "evidence": evidence,
             "task_owner": owner, "requires": requires, "freshness": freshness, "timeout": timeout,
             "policy_files": policy_file_set(config.get("policy_files", []))}
@@ -120,32 +176,86 @@ def load_contract(root: Path):
 
 def policy_file_set(extra):
     """The default policy files always count; a candidate's VERIFY.md may add paths but can never remove or shrink the set that governs it."""
-    if not isinstance(extra, list) or not all(isinstance(v, str) and v and not Path(v).is_absolute() and ".." not in Path(v).parts for v in extra):
-        raise Blocked(f"{CONTRACT_FILE} `policy_files` must be a list of relative paths to add to the defaults.")
+    extra = bounded_string_list(extra, f"{CONTRACT_FILE} `policy_files`", paths=True)
     return sorted(set(POLICY_FILES_DEFAULT) | set(extra))
 
 
-def load_feature_maps(root: Path, index_relative: str):
+def snapshot_file_bytes(root: Path, paths):
+    total = 0
+    for relative in paths:
+        path = root / relative
+        try:
+            info = path.lstat()
+        except OSError:
+            continue
+        if path.is_symlink() or not stat.S_ISREG(info.st_mode):
+            continue
+        if info.st_size > MAX_VERIFICATION_FILE_BYTES:
+            raise Blocked(f"committed path {relative} exceeds {MAX_VERIFICATION_FILE_BYTES} bytes")
+        total += info.st_size
+        if total > MAX_CONTRACT_SNAPSHOT_BYTES:
+            raise Blocked(f"verification contract snapshot exceeds {MAX_CONTRACT_SNAPSHOT_BYTES} bytes")
+    return total
+
+
+def load_feature_maps(root: Path, index_relative: str, owner_relative: str = "."):
     """The index links every feature map; each map lists scenarios as table rows `| id | ... | automated|manual ... |`."""
     index = root / index_relative
-    if not index.is_file():
+    if path_contains_symlink(index, root):
+        raise Blocked(f"Feature-map index {index_relative} traverses a symlink.")
+    snapshot_paths: set[str] = set(SNAPSHOT_BASE_PATHS)
+    snapshot_paths.add(index_relative)
+    if owner_relative != ".":
+        snapshot_paths.update(str(Path(owner_relative) / relative) for relative in SNAPSHOT_BASE_PATHS[1:])
+    if len(snapshot_paths) > MAX_CONTRACT_SNAPSHOT_FILES:
+        raise Blocked(f"verification contract snapshot references more than {MAX_CONTRACT_SNAPSHOT_FILES} files")
+    snapshot_bytes = snapshot_file_bytes(root, snapshot_paths)
+    try:
+        index_bytes = read_bounded(index)
+    except Blocked:
         raise Blocked(f"Feature-map index {index_relative} is missing.")
-    maps = [{"path": index_relative, "sha256": sha256_file(index)}]
+    try:
+        index_text = index_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise Blocked(f"Feature-map index {index_relative} is not valid UTF-8: {exc}")
+    maps = [{"path": index_relative, "sha256": hashlib.sha256(index_bytes).hexdigest()}]
+    snapshot_files = len(snapshot_paths)
     scenarios = []
     seen = set()
-    for link in LINK.findall(index.read_text(encoding="utf-8")):
+    for link in LINK.findall(index_text):
         if link.startswith(("http://", "https://")):
             continue
-        target = (index.parent / link).resolve()
+        if not safe_relative_path(link):
+            raise Blocked(f"Feature map link {link} in {index_relative} is not a safe repository path.")
+        raw_target = index.parent / link
+        if path_contains_symlink(raw_target, root):
+            raise Blocked(f"Feature map link {link} in {index_relative} traverses a symlink.")
+        target = raw_target.resolve()
         try:
             relative = target.relative_to(root)
         except ValueError:
             raise Blocked(f"Feature map link {link} in {index_relative} leaves the repository.")
-        if not target.is_file():
+        try:
+            map_bytes = read_bounded(target)
+        except Blocked:
             raise Blocked(f"Feature map {relative} linked from {index_relative} is missing.")
-        maps.append({"path": str(relative), "sha256": sha256_file(target)})
+        relative_text = str(relative)
+        is_new = relative_text not in snapshot_paths
+        snapshot_files += int(is_new)
+        if is_new and snapshot_files > MAX_CONTRACT_SNAPSHOT_FILES:
+            raise Blocked(f"verification contract snapshot references more than {MAX_CONTRACT_SNAPSHOT_FILES} files")
+        if is_new and snapshot_bytes + len(map_bytes) > MAX_CONTRACT_SNAPSHOT_BYTES:
+            raise Blocked(f"verification contract snapshot exceeds {MAX_CONTRACT_SNAPSHOT_BYTES} bytes")
+        if is_new:
+            snapshot_paths.add(relative_text)
+            snapshot_bytes += len(map_bytes)
+        maps.append({"path": relative_text, "sha256": hashlib.sha256(map_bytes).hexdigest()})
+        try:
+            map_text = map_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise Blocked(f"Feature map {relative} is not valid UTF-8: {exc}")
         driver_column = None
-        for line in target.read_text(encoding="utf-8").splitlines():
+        for line in map_text.splitlines():
             if not line.lstrip().startswith("|"):
                 driver_column = None  # A table ended; the next one declares its own columns.
                 continue
@@ -182,6 +292,12 @@ def check_requirements(requires):
 
 def mise_task(root: Path, owner_relative: str, name="verify"):
     """`mise tasks ls --json` from the root; the selected task's source must live under this repository (or its documented monorepo owner)."""
+    owner_path = root / owner_relative
+    if path_contains_symlink(owner_path, root):
+        raise Blocked(f"task_owner {owner_relative!r} traverses a symlink.")
+    owner = owner_path.resolve()
+    if owner != root and root not in owner.parents:
+        raise Blocked(f"task_owner {owner_relative!r} is not a directory of this repository.")
     binary = shutil.which("mise")
     if binary is None:
         raise Blocked("mise is not on PATH; the canonical entrypoint cannot run.")
@@ -192,14 +308,18 @@ def mise_task(root: Path, owner_relative: str, name="verify"):
         rows = json.loads(result.stdout or "[]")
     except ValueError:
         raise Blocked("mise tasks ls did not return JSON.")
-    owner = (root / owner_relative).resolve()
-    if not owner.is_dir() or (owner != root and root not in owner.parents and owner not in root.parents):
+    if not owner.is_dir():
         raise Blocked(f"task_owner {owner_relative!r} is not a directory of this repository.")
     candidates = [r for r in rows if isinstance(r, dict) and r.get("name") == name]
     if not candidates:
         raise Blocked(f"mise defines no `{name}` task for this repository; VERIFY.md names an entrypoint that does not exist.")
     task = candidates[0]
     source = task.get("source") or task.get("file") or ""
+    if source:
+        source_path = Path(source)
+        raw_source = source_path if source_path.is_absolute() else root / source_path
+        if path_contains_symlink(raw_source, root):
+            raise Blocked(f"`mise run {name}` here would execute a task source through a symlink ({source}); it is not a trusted project command.")
     source_path = Path(source).resolve() if source else None
     inside = source_path is not None and (source_path == owner or owner in source_path.parents or source_path == root or root in source_path.parents)
     if not inside:
@@ -215,11 +335,32 @@ def freshness_state(root: Path, freshness):
 
     def newest(paths):
         stamp = None
+        file_count = 0
+        total_bytes = 0
         for relative in paths:
             path = root / relative
-            files = [p for p in path.rglob("*") if p.is_file()] if path.is_dir() else ([path] if path.is_file() else [])
+            if path_contains_symlink(path, root):
+                raise Blocked(f"freshness path {relative} traverses a symlink")
+            try:
+                files = [p for p in path.rglob("*") if p.is_file()] if path.is_dir() else ([path] if path.is_file() else [])
+            except OSError as exc:
+                raise Blocked(f"freshness path {relative} is unreadable: {exc}")
             for f in files:
-                stamp = max(stamp or 0, f.stat().st_mtime)
+                if path_contains_symlink(f, root):
+                    raise Blocked(f"freshness path {relative} traverses a symlink")
+                try:
+                    info = f.lstat()
+                except OSError as exc:
+                    raise Blocked(f"freshness path {relative} is unreadable: {exc}")
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                file_count += 1
+                total_bytes += info.st_size
+                if file_count > MAX_CONTRACT_SNAPSHOT_FILES:
+                    raise Blocked(f"freshness path {relative} contains more than {MAX_CONTRACT_SNAPSHOT_FILES} files")
+                if total_bytes > MAX_CONTRACT_SNAPSHOT_BYTES:
+                    raise Blocked(f"freshness path {relative} exceeds {MAX_CONTRACT_SNAPSHOT_BYTES} bytes")
+                stamp = max(stamp or 0, info.st_mtime)
         return stamp
 
     out, inp = newest(outputs), newest(inputs)
@@ -310,7 +451,8 @@ def run_entrypoint(root: Path, run_dir: Path, timeout: int, binary: str):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    description = (__doc__ or "").splitlines()[0]
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--root", default=".", help="Any directory inside the repository; the Git top level is resolved from it")
     parser.add_argument("--check", action="store_true", help="Validate the contract, maps, task ownership, and requirements without running anything")
     parser.add_argument("--base", help="Commit/ref to compare policy files against; changes to VERIFY.md, maps, or tasks are flagged for root review")
@@ -320,8 +462,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     outcomes = parse_scenario_args(args.scenario)
     run_id = f"{_dt.datetime.now(_dt.timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(4)}"
-    record = {"schema": SCHEMA, "run_id": run_id, "started_at": utc_now(), "runner": {"path": str(Path(__file__).resolve()), "mode": "check" if args.check else "run"},
-              "outcome": None, "blocked_reason": None, "provisional": None, "certifies": None, "requires_root_review": False}
+    record: dict[str, Any] = {"schema": SCHEMA, "run_id": run_id, "started_at": utc_now(), "runner": {"path": str(Path(__file__).resolve()), "mode": "check" if args.check else "run"},
+                              "outcome": None, "blocked_reason": None, "provisional": None, "certifies": None, "requires_root_review": False}
     root = None
     try:
         root = resolve_root(Path(args.root).resolve())
@@ -331,9 +473,9 @@ def main(argv=None):
         record["candidate"] = {"sha": head, "dirty": dirty, "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip() or None,
                                "git_dir_is_file": (root / ".git").is_file()}
         record["provisional"] = dirty
-        contract = load_contract(root)
+        contract: dict[str, Any] = load_contract(root)
         record["contract"] = {"path": CONTRACT_FILE, "sha256": contract["sha256"], "entrypoint": contract["entrypoint"], "task_owner": contract["task_owner"]}
-        maps, scenarios = load_feature_maps(root, contract["feature_maps"])
+        maps, scenarios = load_feature_maps(root, contract["feature_maps"], contract["task_owner"])
         record["feature_maps"] = maps
         unknown = sorted(set(outcomes) - {s["id"] for s in scenarios})
         if unknown:
@@ -385,9 +527,10 @@ def main(argv=None):
     except Blocked as exc:
         record["outcome"], record["blocked_reason"] = "blocked", str(exc)
     record["ended_at"] = utc_now()
-    if root is not None and record.get("artifacts", {}).get("run_dir"):
-        (root / record["artifacts"]["run_dir"] / "run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
-        latest = root / record["artifacts"]["dir"] / "latest.json"
+    artifacts_record = record.get("artifacts")
+    if root is not None and isinstance(artifacts_record, dict) and isinstance(artifacts_record.get("run_dir"), str):
+        (root / artifacts_record["run_dir"] / "run.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        latest = root / str(artifacts_record["dir"]) / "latest.json"
         latest.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     if args.json:
         print(json.dumps(record, indent=2))
@@ -401,14 +544,18 @@ def main(argv=None):
             for row in record["scenarios"]:
                 counts[row["status"]] = counts.get(row["status"], 0) + 1
             print("scenarios: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) if counts else "scenarios: none mapped")
-        if record.get("requires_root_review") and record.get("policy", {}).get("checked"):
-            print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(record["policy"]["changed"]))
+        policy_record = record.get("policy")
+        if record.get("requires_root_review") and isinstance(policy_record, dict) and policy_record.get("checked"):
+            changed = policy_record.get("changed", [])
+            print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(str(path) for path in changed))
         elif record.get("requires_root_review"):
             print("policy not compared (no --base); the run cannot certify a SHA until VERIFY.md, tasks, and maps are reviewed against a base")
-        if record.get("evidence", {}).get("missing"):
-            print("required evidence missing for: " + ", ".join(record["evidence"]["missing"]) + f" (no comparison for this candidate under {record['evidence']['dir']})")
-        if record.get("artifacts", {}).get("run_dir"):
-            print(f"record: {record['artifacts']['run_dir']}/run.json")
+        evidence_record = record.get("evidence")
+        if isinstance(evidence_record, dict) and evidence_record.get("missing"):
+            missing = evidence_record["missing"]
+            print("required evidence missing for: " + ", ".join(str(scenario) for scenario in missing) + f" (no comparison for this candidate under {evidence_record['dir']})")
+        if isinstance(artifacts_record, dict) and artifacts_record.get("run_dir"):
+            print(f"record: {artifacts_record['run_dir']}/run.json")
     return {"pass": 0, "checked": 0, "fail": 1, "blocked": 2}[record["outcome"]]
 
 

@@ -1,6 +1,7 @@
 package verifycontract
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,6 +74,29 @@ func TestReadCollectsMapsAndEvidenceRequirements(t *testing.T) {
 	}
 }
 
+func TestReadRecordsCommittedRequirementsAndMapHashes(t *testing.T) {
+	body := strings.Replace(contractBody, "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[requires]\ncommands = [\"go\", \"python3\"]\n", 1)
+	root := checkout(t, map[string]string{
+		"VERIFY.md":     body,
+		"docs/index.md": "- [Alpha](features/alpha.md)\n",
+		"docs/features/alpha.md": "| ID | Scenario | Driver | Evidence |\n| --- | --- | --- | --- |\n" +
+			"| `alpha.paint` | Repaints | manual | before/after screenshot |\n",
+	})
+	contract, err := Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(contract.RequiredChecks, ",") != "go,python3" {
+		t.Fatalf("RequiredChecks = %v, want the declared commands", contract.RequiredChecks)
+	}
+	if strings.Join(contract.ScenarioIDs, ",") != "alpha.paint" {
+		t.Fatalf("ScenarioIDs = %v, want every mapped scenario", contract.ScenarioIDs)
+	}
+	if len(contract.FeatureMapHashes) != 2 || contract.FeatureMapHashes[0].SHA256 == "" || contract.FeatureMapHashes[1].SHA256 == "" {
+		t.Fatalf("FeatureMapHashes = %v, want hashes for the index and linked map", contract.FeatureMapHashes)
+	}
+}
+
 func TestReadRefusesMalformedContracts(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -100,6 +124,31 @@ func TestReadRefusesMalformedContracts(t *testing.T) {
 			name:  "escaping feature maps",
 			files: map[string]string{"VERIFY.md": strings.Replace(contractBody, "docs/index.md", "../elsewhere/index.md", 1)},
 			want:  "`feature_maps` must be a relative path",
+		},
+		{
+			name:  "backslash escaping feature maps",
+			files: map[string]string{"VERIFY.md": strings.Replace(contractBody, "feature_maps = \"docs/index.md\"", "feature_maps = '..\\elsewhere/index.md'", 1)},
+			want:  "`feature_maps` must be a relative path",
+		},
+		{
+			name:  "wildcard feature maps",
+			files: map[string]string{"VERIFY.md": strings.Replace(contractBody, "feature_maps = \"docs/index.md\"", "feature_maps = \"docs/*.md\"", 1)},
+			want:  "`feature_maps` must be a relative path",
+		},
+		{
+			name:  "embedded traversal feature maps",
+			files: map[string]string{"VERIFY.md": strings.Replace(contractBody, "feature_maps = \"docs/index.md\"", "feature_maps = \"safe/../other.md\"", 1)},
+			want:  "`feature_maps` must be a relative path",
+		},
+		{
+			name:  "unsafe linked map",
+			files: map[string]string{"VERIFY.md": contractBody, "docs/index.md": "- [Unsafe](safe/../outside.md)\n"},
+			want:  "is not a safe repository path",
+		},
+		{
+			name:  "embedded task owner traversal",
+			files: map[string]string{"VERIFY.md": strings.Replace(contractBody, "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/verification\"\ntask_owner = \"safe/../owner\"", 1)},
+			want:  "`task_owner` must be a relative directory",
 		},
 		{
 			name:  "missing index",
@@ -130,6 +179,102 @@ func TestReadRefusesMalformedContracts(t *testing.T) {
 			_, err := Read(checkout(t, tc.files))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestReadRefusesSymlinkedFeatureMapPaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		contract   string
+		files      map[string]string
+		link, dest string
+	}{
+		{
+			name:     "index directory",
+			contract: strings.Replace(contractBody, "docs/index.md", "docs/linked/index.md", 1),
+			files: map[string]string{
+				"docs/real/index.md": "- [Map](map.md)\n",
+				"docs/real/map.md":   "| ID | Scenario | Driver | Evidence |\n| --- | --- | --- | --- |\n| `map.x` | X | manual | - |\n",
+			},
+			link: "docs/linked", dest: "real",
+		},
+		{
+			name:     "linked map",
+			contract: contractBody,
+			files: map[string]string{
+				"docs/index.md": "- [Map](linked.md)\n",
+				"docs/real.md":  "| ID | Scenario | Driver | Evidence |\n| --- | --- | --- | --- |\n| `map.x` | X | manual | - |\n",
+			},
+			link: "docs/linked.md", dest: "real.md",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"VERIFY.md": tc.contract}
+			for path, body := range tc.files {
+				files[path] = body
+			}
+			root := checkout(t, files)
+			if err := os.Symlink(tc.dest, filepath.Join(root, filepath.FromSlash(tc.link))); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Read(root)
+			if err == nil || !strings.Contains(err.Error(), "symlink") {
+				t.Fatalf("err = %v, want a symlink refusal", err)
+			}
+		})
+	}
+}
+
+func TestReadRefusesSymlinkedTaskOwner(t *testing.T) {
+	contract := strings.Replace(contractBody, "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/verification\"\ntask_owner = \"linked-owner\"", 1)
+	root := checkout(t, map[string]string{"VERIFY.md": contract, "docs/index.md": ""})
+	if err := os.Symlink(".", filepath.Join(root, "linked-owner")); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Read(root)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want a symlink refusal", err)
+	}
+}
+
+func TestReadRefusesInvalidUTF8Contract(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ContractFile), []byte("# invalid\xff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Read(root)
+	if err == nil || !strings.Contains(err.Error(), "UTF-8") {
+		t.Fatalf("err = %v, want invalid UTF-8 refusal", err)
+	}
+}
+
+func TestReadBoundsLinkedFeatureMapSnapshot(t *testing.T) {
+	tests := []struct {
+		name      string
+		mapCount  int
+		mapBytes  int
+		wantError string
+	}{
+		{name: "files", mapCount: commitSnapshotMaxFiles, mapBytes: 1, wantError: "more than 256 files"},
+		{name: "bytes", mapCount: 33, mapBytes: commitFileMaxBytes, wantError: "exceeds 8388608 bytes"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"VERIFY.md": contractBody}
+			var index strings.Builder
+			index.WriteString("# Maps\n\n")
+			for i := 0; i < tc.mapCount; i++ {
+				name := fmt.Sprintf("map-%03d.md", i)
+				index.WriteString(fmt.Sprintf("- [Map %03d](%s)\n", i, name))
+				files[filepath.ToSlash(filepath.Join("docs", name))] = strings.Repeat("x", tc.mapBytes)
+			}
+			files["docs/index.md"] = index.String()
+			_, err := Read(checkout(t, files))
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("err = %v, want %q", err, tc.wantError)
 			}
 		})
 	}
@@ -181,5 +326,34 @@ func TestPolicyAtDispatchKeepsStatusForAnUnstandardizedCheckout(t *testing.T) {
 	}
 	if sha, _ := policy.Get("contract_sha256"); sha == nil {
 		t.Fatal("contract_sha256 = nil, want the hash of a contract that parsed")
+	}
+}
+
+func TestPolicyAtDispatchBlocksUnavailableRequiredCommands(t *testing.T) {
+	body := strings.Replace(contractBody, "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[requires]\ncommands = [\"sum-command-does-not-exist\"]\n", 1)
+	root := checkout(t, map[string]string{
+		"VERIFY.md":     body,
+		"docs/index.md": "- [Alpha](features/alpha.md)\n",
+		"docs/features/alpha.md": "| ID | Scenario | Driver | Evidence |\n| --- | --- | --- | --- |\n" +
+			"| `alpha.x` | X | automated | offline suite |\n",
+	})
+	policy := PolicyAtDispatch(root, "abc123", standardizedStatus())
+	if status, _ := policy.Get("status"); status != "not-yet-standardized" {
+		t.Fatalf("status = %v, want not-yet-standardized", status)
+	}
+	reason, _ := policy.Get("reason")
+	reasonText, _ := reason.(string)
+	if !strings.Contains(reasonText, "sum-command-does-not-exist") {
+		t.Fatalf("reason = %v, want the missing command", reason)
+	}
+	requirements, _ := policy.Get("requirements")
+	requirementObject, ok := requirements.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("requirements = %v, want a structured availability record", requirements)
+	}
+	missing, _ := requirementObject.Get("missing")
+	missingCommands, _ := missing.([]any)
+	if len(missingCommands) != 1 || missingCommands[0] != "sum-command-does-not-exist" {
+		t.Fatalf("requirements.missing = %v, want the unavailable command", missing)
 	}
 }

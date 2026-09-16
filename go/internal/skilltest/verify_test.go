@@ -303,6 +303,309 @@ func TestChangeDetectionAndFailingBranch(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsTraversalInFreshnessPaths(t *testing.T) {
+	v := newVerifyLab(t)
+	for _, tc := range []struct {
+		name string
+		line string
+	}{
+		{name: "slash", line: "inputs = [\"../outside\"]\n"},
+		{name: "embedded-slash", line: "inputs = [\"inside/../outside\"]\n"},
+		{name: "backslash", line: `inputs = ['..\outside']` + "\n"},
+		{name: "wildcard", line: "inputs = [\"inside/*.txt\"]\n"},
+		{name: "pathspec", line: "inputs = [\":(glob)outside\"]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := v.rawRepo("cli", filepath.Join(v.stop, "freshness-traversal-"+tc.name))
+			if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+				t.Fatal(stderr)
+			}
+			contract := filepath.Join(repo, "VERIFY.md")
+			body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[freshness]\n"+tc.line, 1)
+			mustWrite(t, contract, body)
+			git(t, repo, "add", "VERIFY.md")
+			git(t, repo, "commit", "-q", "-m", "reject traversal freshness path")
+			head := git(t, repo, "rev-parse", "HEAD")
+			code, record, stderr := v.runner(repo, "--base", head)
+			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "freshness.inputs") {
+				t.Fatalf("runner %v code=%d stderr=%s, want a blocked traversal path", record, code, stderr)
+			}
+		})
+	}
+}
+
+func TestRunnerRejectsGitPathspecContractPaths(t *testing.T) {
+	v := newVerifyLab(t)
+	for _, tc := range []struct {
+		name  string
+		field string
+		line  string
+	}{
+		{name: "feature-maps", field: "feature_maps", line: `feature_maps = "docs/*.md"`},
+		{name: "artifacts", field: "artifacts", line: `artifacts = "artifacts/*.log"`},
+		{name: "evidence", field: "evidence", line: `evidence = "evidence:(glob)"`},
+		{name: "task-owner", field: "task_owner", line: `task_owner = '..\outside'`},
+		{name: "policy-files", field: "policy_files", line: `policy_files = ["docs/*.md"]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := v.rawRepo("cli", filepath.Join(v.stop, "pathspec-"+tc.name))
+			if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+				t.Fatal(stderr)
+			}
+			contract := filepath.Join(repo, "VERIFY.md")
+			body := readFile(t, contract)
+			fieldPattern := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(tc.field) + ` = .*$`)
+			if fieldPattern.MatchString(body) {
+				body = fieldPattern.ReplaceAllString(body, tc.line)
+			} else {
+				body = strings.Replace(body, "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n"+tc.line+"\n", 1)
+			}
+			mustWrite(t, contract, body)
+			git(t, repo, "add", "VERIFY.md")
+			git(t, repo, "commit", "-q", "-m", "reject contract pathspec")
+			head := git(t, repo, "rev-parse", "HEAD")
+			code, record, stderr := v.runner(repo, "--base", head)
+			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), tc.field) {
+				t.Fatalf("runner %v code=%d stderr=%s, want a blocked %s path", record, code, stderr, tc.field)
+			}
+		})
+	}
+}
+
+func TestRunnerRejectsUnsafeLinkedFeatureMapPath(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "linked-pathspec"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	index := filepath.Join(repo, "docs/features/README.md")
+	body := readFile(t, index)
+	pattern := regexp.MustCompile(`\]\([^)]*\.md\)`)
+	if !pattern.MatchString(body) {
+		t.Fatal("generated feature index has no linked map")
+	}
+	mustWrite(t, index, pattern.ReplaceAllString(body, `](safe/../outside.md)`))
+	git(t, repo, "add", "docs/features/README.md")
+	git(t, repo, "commit", "-q", "-m", "reject linked map traversal")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "Feature map link") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked linked-map path", record, code, stderr)
+	}
+}
+
+func TestRunnerRejectsScalarContractLists(t *testing.T) {
+	v := newVerifyLab(t)
+	for _, tc := range []struct {
+		name string
+		body func(string) string
+		want string
+	}{
+		{name: "requires-commands", body: func(body string) string {
+			return regexp.MustCompile(`(?m)^commands = .*$`).ReplaceAllString(body, `commands = "python3"`)
+		}, want: "requires.commands"},
+		{name: "freshness-inputs", body: func(body string) string {
+			return strings.Replace(body, "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[freshness]\ninputs = \"inside\"\n", 1)
+		}, want: "freshness.inputs"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := v.rawRepo("cli", filepath.Join(v.stop, "scalar-"+tc.name))
+			if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+				t.Fatal(stderr)
+			}
+			contract := filepath.Join(repo, "VERIFY.md")
+			mustWrite(t, contract, tc.body(readFile(t, contract)))
+			git(t, repo, "add", "VERIFY.md")
+			git(t, repo, "commit", "-q", "-m", "reject scalar contract list")
+			head := git(t, repo, "rev-parse", "HEAD")
+			code, record, stderr := v.runner(repo, "--base", head)
+			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), tc.want) {
+				t.Fatalf("runner %v code=%d stderr=%s, want a blocked %s value", record, code, stderr, tc.want)
+			}
+		})
+	}
+}
+
+func TestRunnerRejectsOversizedContractLists(t *testing.T) {
+	v := newVerifyLab(t)
+	items := strings.Repeat(`"python3",`, 256) + `"python3"`
+	for _, tc := range []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "too-many", line: "commands = [" + items + "]\n", want: "more than 256 items"},
+		{name: "too-long", line: "commands = [\"" + strings.Repeat("x", 513) + "\"]\n", want: "longer than 512 characters"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := v.rawRepo("cli", filepath.Join(v.stop, "oversized-"+tc.name))
+			if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+				t.Fatal(stderr)
+			}
+			contract := filepath.Join(repo, "VERIFY.md")
+			body := regexp.MustCompile(`(?m)^commands = .*$`).ReplaceAllString(readFile(t, contract), strings.TrimSuffix(tc.line, "\n"))
+			mustWrite(t, contract, body)
+			git(t, repo, "add", "VERIFY.md")
+			git(t, repo, "commit", "-q", "-m", "reject oversized contract list")
+			head := git(t, repo, "rev-parse", "HEAD")
+			code, record, stderr := v.runner(repo, "--base", head)
+			if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), tc.want) {
+				t.Fatalf("runner %v code=%d stderr=%s, want a blocked oversized list", record, code, stderr)
+			}
+		})
+	}
+}
+
+func TestRunnerRejectsInvalidUTF8Contract(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "invalid-utf8"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "VERIFY.md"), []byte("# invalid\xff\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "VERIFY.md")
+	git(t, repo, "commit", "-q", "-m", "reject invalid contract text")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "UTF-8") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked invalid UTF-8 contract", record, code, stderr)
+	}
+}
+
+func TestRunnerRejectsNULContractPath(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "nul-path"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/\\u0000verification\"", 1)
+	mustWrite(t, contract, body)
+	git(t, repo, "add", "VERIFY.md")
+	git(t, repo, "commit", "-q", "-m", "reject NUL contract path")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "artifacts") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked NUL path", record, code, stderr)
+	}
+}
+
+func TestRunnerRejectsLinkedMapSymlink(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "linked-symlink"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	mapDir := filepath.Join(repo, "docs/features")
+	index := filepath.Join(mapDir, "README.md")
+	body := readFile(t, index)
+	pattern := regexp.MustCompile(`\]\(([^)\s]+\.md)\)`)
+	match := pattern.FindStringSubmatch(body)
+	if len(match) != 2 {
+		t.Fatal("generated feature index has no linked map")
+	}
+	mustWrite(t, filepath.Join(mapDir, "real.md"), readFile(t, filepath.Join(mapDir, match[1])))
+	body = pattern.ReplaceAllString(body, `](linked.md)`)
+	mustWrite(t, index, body)
+	if err := os.Symlink("real.md", filepath.Join(mapDir, "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "reject linked map symlink")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "symlink") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked linked-map symlink", record, code, stderr)
+	}
+}
+
+func TestRunnerRejectsLinkedMapDirectorySymlink(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "linked-directory-symlink"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	features := filepath.Join(repo, "docs/features")
+	realFeatures := filepath.Join(repo, "docs/real-features")
+	if err := os.MkdirAll(realFeatures, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(features)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		mustWrite(t, filepath.Join(realFeatures, entry.Name()), readFile(t, filepath.Join(features, entry.Name())))
+	}
+	if err := os.Symlink("real-features", filepath.Join(repo, "docs/linked-features")); err != nil {
+		t.Fatal(err)
+	}
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "docs/features/README.md", "docs/linked-features/README.md", 1)
+	mustWrite(t, contract, body)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "reject linked feature directory symlink")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "symlink") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked linked-directory symlink", record, code, stderr)
+	}
+}
+
+func TestRunnerRejectsSymlinkedTaskOwner(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "symlinked-task-owner"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "linked-owner")); err != nil {
+		t.Fatal(err)
+	}
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/verification\"\ntask_owner = \"linked-owner\"", 1)
+	mustWrite(t, contract, body)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "reject symlinked task owner")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "symlink") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked symlinked task owner", record, code, stderr)
+	}
+}
+
+func TestRunnerRejectsSymlinkedFreshnessPath(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "symlinked-freshness"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	outside := filepath.Join(v.stop, "outside-freshness")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "state.txt"), []byte("external\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "external-state")); err != nil {
+		t.Fatal(err)
+	}
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/verification\"\n[freshness]\noutputs = [\"external-state\"]", 1)
+	mustWrite(t, contract, body)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "reject symlinked freshness path")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "symlink") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked symlinked freshness path", record, code, stderr)
+	}
+}
+
 func TestGenerationKeepsUserEdits(t *testing.T) {
 	v := newVerifyLab(t)
 	repo := v.rawRepo("service", filepath.Join(v.stop, "custom"))
