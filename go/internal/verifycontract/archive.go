@@ -89,6 +89,9 @@ func MaterializeCommit(repo, revision string) (string, func(), error) {
 						if strings.HasPrefix(match[1], "http://") || strings.HasPrefix(match[1], "https://") {
 							continue
 						}
+						if !relativeInside(match[1]) {
+							continue
+						}
 						relative := filepath.ToSlash(filepath.Join(filepath.Dir(maps), match[1]))
 						if relativeInside(relative) {
 							paths = append(paths, relative)

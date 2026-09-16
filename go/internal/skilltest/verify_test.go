@@ -372,6 +372,28 @@ func TestRunnerRejectsGitPathspecContractPaths(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsUnsafeLinkedFeatureMapPath(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "linked-pathspec"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	index := filepath.Join(repo, "docs/features/README.md")
+	body := readFile(t, index)
+	pattern := regexp.MustCompile(`\]\([^)]*\.md\)`)
+	if !pattern.MatchString(body) {
+		t.Fatal("generated feature index has no linked map")
+	}
+	mustWrite(t, index, pattern.ReplaceAllString(body, `](safe/../outside.md)`))
+	git(t, repo, "add", "docs/features/README.md")
+	git(t, repo, "commit", "-q", "-m", "reject linked map traversal")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "Feature map link") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked linked-map path", record, code, stderr)
+	}
+}
+
 func TestRunnerRejectsScalarContractLists(t *testing.T) {
 	v := newVerifyLab(t)
 	for _, tc := range []struct {

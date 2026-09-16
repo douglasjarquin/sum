@@ -156,6 +156,8 @@ def load_feature_maps(root: Path, index_relative: str):
     for link in LINK.findall(index_text):
         if link.startswith(("http://", "https://")):
             continue
+        if not safe_relative_path(link):
+            raise Blocked(f"Feature map link {link} in {index_relative} is not a safe repository path.")
         target = (index.parent / link).resolve()
         try:
             relative = target.relative_to(root)

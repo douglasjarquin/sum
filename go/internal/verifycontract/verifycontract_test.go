@@ -140,6 +140,16 @@ func TestReadRefusesMalformedContracts(t *testing.T) {
 			want:  "`feature_maps` must be a relative path",
 		},
 		{
+			name:  "unsafe linked map",
+			files: map[string]string{"VERIFY.md": contractBody, "docs/index.md": "- [Unsafe](safe/../outside.md)\n"},
+			want:  "is not a safe repository path",
+		},
+		{
+			name:  "embedded task owner traversal",
+			files: map[string]string{"VERIFY.md": strings.Replace(contractBody, "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/verification\"\ntask_owner = \"safe/../owner\"", 1)},
+			want:  "`task_owner` must be a relative directory",
+		},
+		{
 			name:  "missing index",
 			files: map[string]string{"VERIFY.md": contractBody},
 			want:  "Feature-map index docs/index.md is missing",

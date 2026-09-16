@@ -144,7 +144,7 @@ func Read(worktree string) (*Contract, error) {
 		return nil, fmt.Errorf("%s `evidence` must be a relative path inside the repository, found %v", ContractFile, config["evidence"])
 	}
 	owner, ok := stringAt(config, "task_owner", ".")
-	if !ok || filepath.IsAbs(owner) || !relativeInside(path.Join(".", owner)) {
+	if !ok || !relativeInside(owner) {
 		return nil, fmt.Errorf("%s `task_owner` must be a relative directory inside the repository, found %v", ContractFile, config["task_owner"])
 	}
 	requires, ok := config["requires"].(map[string]any)
@@ -398,6 +398,9 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []st
 		target := found[1]
 		if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
 			continue
+		}
+		if !relativeInside(target) {
+			return nil, nil, nil, nil, fmt.Errorf("Feature map link %s in %s is not a safe repository path", target, indexRelative)
 		}
 		resolved, err := filepath.EvalSymlinks(filepath.Join(filepath.Dir(index), filepath.FromSlash(target)))
 		if err != nil {
