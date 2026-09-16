@@ -517,29 +517,23 @@ func ensureActivationState(s *store.Store, root string, current *ordjson.Object)
 	currentDesc := selectionDescriptor(current)
 	if state != nil {
 		pending := asObject(func() any { v, _ := state.Get("pending"); return v }())
-		if pending == nil && !descriptorsEqual(asObject(func() any { v, _ := state.Get("known_good"); return v }()), currentDesc) {
-			return nil, fmt.Errorf("The selected runtime differs from committed known-good activation state; refusing to overwrite recovery history.")
+		if pending != nil {
+			return state, nil
 		}
-		return state, nil
-	}
-	target, resolveErr := resolveDescriptor(root, currentDesc)
-	if resolveErr != nil {
-		return nil, resolveErr
-	}
-	compat, _, validErr := ValidateTarget(s, root, target, current)
-	if validErr != nil {
-		blocking := ""
-		if compat != nil {
-			blocking = joinBlocking(func() any { v, _ := compat.Get("blocking"); return v }())
+		if descriptorsEqual(asObject(func() any { v, _ := state.Get("known_good"); return v }()), currentDesc) {
+			return state, nil
 		}
-		if blocking == "" {
-			blocking = validErr.Error()
+		if err := verifyCurrentKnownGood(s, root, current, currentDesc); err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("The current runtime cannot be established as known-good: %s", blocking)
+		state.Set("known_good", currentDesc)
+		if writeErr := writeActivationState(s, root, state); writeErr != nil {
+			return nil, writeErr
+		}
+		return readActivationState(s, root)
 	}
-	check := postCheck(s, root)
-	if ok, _ := check.Get("ok"); ok != true {
-		return nil, fmt.Errorf("The current stable entrypoint cannot be established as known-good: %v", func() any { v, _ := check.Get("detail"); return v }())
+	if err := verifyCurrentKnownGood(s, root, current, currentDesc); err != nil {
+		return nil, err
 	}
 	payload := ordjson.NewObject()
 	payload.Set("generation", nil)
@@ -551,6 +545,29 @@ func ensureActivationState(s *store.Store, root string, current *ordjson.Object)
 		return nil, writeErr
 	}
 	return readActivationState(s, root)
+}
+
+func verifyCurrentKnownGood(s *store.Store, root string, current, currentDesc *ordjson.Object) error {
+	target, resolveErr := resolveDescriptor(root, currentDesc)
+	if resolveErr != nil {
+		return resolveErr
+	}
+	compat, _, validErr := ValidateTarget(s, root, target, current)
+	if validErr != nil {
+		blocking := ""
+		if compat != nil {
+			blocking = joinBlocking(func() any { v, _ := compat.Get("blocking"); return v }())
+		}
+		if blocking == "" {
+			blocking = validErr.Error()
+		}
+		return fmt.Errorf("The current runtime cannot be established as known-good: %s", blocking)
+	}
+	check := postCheck(s, root)
+	if ok, _ := check.Get("ok"); ok != true {
+		return fmt.Errorf("The current stable entrypoint cannot be established as known-good: %v", func() any { v, _ := check.Get("detail"); return v }())
+	}
+	return nil
 }
 
 func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Object, error) {
