@@ -73,7 +73,7 @@ func sha256Text(text string) string {
 }
 
 func relativeInside(value string) bool {
-	if value == "" || path.IsAbs(value) || filepath.IsAbs(value) {
+	if value == "" || strings.Contains(value, `\`) || path.IsAbs(value) || filepath.IsAbs(value) {
 		return false
 	}
 	for _, part := range strings.Split(path.Clean(value), "/") {

@@ -125,6 +125,11 @@ func TestReadRefusesMalformedContracts(t *testing.T) {
 			want:  "`feature_maps` must be a relative path",
 		},
 		{
+			name:  "backslash escaping feature maps",
+			files: map[string]string{"VERIFY.md": strings.Replace(contractBody, "feature_maps = \"docs/index.md\"", "feature_maps = '..\\elsewhere/index.md'", 1)},
+			want:  "`feature_maps` must be a relative path",
+		},
+		{
 			name:  "missing index",
 			files: map[string]string{"VERIFY.md": contractBody},
 			want:  "Feature-map index docs/index.md is missing",
