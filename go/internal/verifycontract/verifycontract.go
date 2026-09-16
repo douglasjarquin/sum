@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -41,12 +42,20 @@ type Scenario struct {
 	Map     string
 }
 
+type FileHash struct {
+	Path   string
+	SHA256 string
+}
+
 type Contract struct {
 	SHA256           string
 	Entrypoint       string
 	TaskOwner        string
 	FeatureMapsIndex string
 	FeatureMaps      []string
+	FeatureMapHashes []FileHash
+	RequiredChecks   []string
+	ScenarioIDs      []string
 	PolicyFiles      []string
 	EvidenceRequired []Scenario
 }
@@ -126,16 +135,47 @@ func Read(worktree string) (*Contract, error) {
 	if !ok || filepath.IsAbs(owner) || !relativeInside(path.Join(".", owner)) {
 		return nil, fmt.Errorf("%s `task_owner` must be a relative directory inside the repository, found %v", ContractFile, config["task_owner"])
 	}
+	requires, ok := config["requires"].(map[string]any)
+	if config["requires"] != nil && !ok {
+		return nil, fmt.Errorf("%s `requires` must be a table", ContractFile)
+	}
+	if !ok {
+		requires = map[string]any{}
+	}
+	requiredChecks, err := stringList(requires["commands"], "requires.commands")
+	if err != nil {
+		return nil, err
+	}
 	policyFiles, err := policyFileSet(config["policy_files"])
 	if err != nil {
 		return nil, err
 	}
-	paths, scenarios, err := readFeatureMaps(worktree, maps)
+	paths, hashes, scenarioIDs, scenarios, err := readFeatureMaps(worktree, maps)
 	if err != nil {
 		return nil, err
 	}
 	return &Contract{SHA256: sha256Text(text), Entrypoint: entrypoint, TaskOwner: owner, FeatureMapsIndex: maps,
-		FeatureMaps: paths, PolicyFiles: policyFiles, EvidenceRequired: scenarios}, nil
+		FeatureMaps: paths, FeatureMapHashes: hashes, RequiredChecks: requiredChecks, ScenarioIDs: scenarioIDs,
+		PolicyFiles: policyFiles, EvidenceRequired: scenarios}, nil
+}
+
+func stringList(value any, name string) ([]string, error) {
+	if value == nil {
+		return []string{}, nil
+	}
+	list, ok := value.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be a list of strings", name)
+	}
+	result := make([]string, 0, len(list))
+	for _, item := range list {
+		text, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be a list of strings", name)
+		}
+		result = append(result, text)
+	}
+	return result, nil
 }
 
 // policyFileSet adds the contract's declared paths to the defaults; a candidate may widen the set that governs it, never shrink it.
@@ -165,17 +205,19 @@ func policyFileSet(declared any) ([]string, error) {
 	return out, nil
 }
 
-func readFeatureMaps(worktree, indexRelative string) ([]string, []Scenario, error) {
+func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []string, []Scenario, error) {
 	index := filepath.Join(worktree, filepath.FromSlash(indexRelative))
 	body, err := os.ReadFile(index)
 	if err != nil {
-		return nil, nil, fmt.Errorf("Feature-map index %s is missing", indexRelative)
+		return nil, nil, nil, nil, fmt.Errorf("Feature-map index %s is missing", indexRelative)
 	}
 	root, err := filepath.EvalSymlinks(worktree)
 	if err != nil {
 		root = worktree
 	}
 	paths := []string{indexRelative}
+	hashes := []FileHash{{Path: indexRelative, SHA256: sha256Text(string(body))}}
+	var scenarioIDs []string
 	var scenarios []Scenario
 	seen := map[string]bool{}
 	for _, found := range link.FindAllStringSubmatch(string(body), -1) {
@@ -185,29 +227,32 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []Scenario, erro
 		}
 		resolved, err := filepath.EvalSymlinks(filepath.Join(filepath.Dir(index), filepath.FromSlash(target)))
 		if err != nil {
-			return nil, nil, fmt.Errorf("Feature map %s linked from %s is missing", target, indexRelative)
+			return nil, nil, nil, nil, fmt.Errorf("Feature map %s linked from %s is missing", target, indexRelative)
 		}
 		relative, err := filepath.Rel(root, resolved)
 		if err != nil || strings.HasPrefix(relative, "..") {
-			return nil, nil, fmt.Errorf("Feature map link %s in %s leaves the repository", target, indexRelative)
+			return nil, nil, nil, nil, fmt.Errorf("Feature map link %s in %s leaves the repository", target, indexRelative)
 		}
 		relative = filepath.ToSlash(relative)
 		mapBody, err := os.ReadFile(resolved)
 		if err != nil {
-			return nil, nil, fmt.Errorf("Feature map %s linked from %s is missing", relative, indexRelative)
+			return nil, nil, nil, nil, fmt.Errorf("Feature map %s linked from %s is missing", relative, indexRelative)
 		}
 		paths = append(paths, relative)
-		rows, err := mapScenarios(relative, string(mapBody), seen)
+		hashes = append(hashes, FileHash{Path: relative, SHA256: sha256Text(string(mapBody))})
+		ids, rows, err := mapScenarios(relative, string(mapBody), seen)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, nil, err
 		}
+		scenarioIDs = append(scenarioIDs, ids...)
 		scenarios = append(scenarios, rows...)
 	}
-	return paths, scenarios, nil
+	return paths, hashes, scenarioIDs, scenarios, nil
 }
 
-func mapScenarios(relative, body string, seen map[string]bool) ([]Scenario, error) {
+func mapScenarios(relative, body string, seen map[string]bool) ([]string, []Scenario, error) {
 	driverColumn := -1
+	var scenarioIDs []string
 	var scenarios []Scenario
 	for _, line := range strings.Split(body, "\n") {
 		if !strings.HasPrefix(strings.TrimLeft(line, " \t"), "|") {
@@ -238,12 +283,13 @@ func mapScenarios(relative, body string, seen map[string]bool) ([]Scenario, erro
 			continue
 		}
 		if !driverDeclared.MatchString(columns[driverColumn]) {
-			return nil, fmt.Errorf("Scenario %s in %s has driver %q; it must start with `automated` or `manual`", cells[1], relative, columns[driverColumn])
+			return nil, nil, fmt.Errorf("Scenario %s in %s has driver %q; it must start with `automated` or `manual`", cells[1], relative, columns[driverColumn])
 		}
 		if seen[cells[1]] {
-			return nil, fmt.Errorf("Scenario id %s is defined twice across the feature maps", cells[1])
+			return nil, nil, fmt.Errorf("Scenario id %s is defined twice across the feature maps", cells[1])
 		}
 		seen[cells[1]] = true
+		scenarioIDs = append(scenarioIDs, cells[1])
 		evidence := ""
 		if driverColumn+1 < len(columns) {
 			evidence = columns[driverColumn+1]
@@ -252,7 +298,7 @@ func mapScenarios(relative, body string, seen map[string]bool) ([]Scenario, erro
 			scenarios = append(scenarios, Scenario{ID: cells[1], Feature: strings.TrimSuffix(path.Base(relative), ".md"), Map: relative})
 		}
 	}
-	return scenarios, nil
+	return scenarioIDs, scenarios, nil
 }
 
 // PolicyAtDispatch is the task's `verification_policy`: the contract as it stands at
@@ -294,6 +340,14 @@ func PolicyAtDispatch(worktree, baseSHA string, status *ordjson.Object) *ordjson
 	policy.Set("task_owner", optional(contract.TaskOwner))
 	policy.Set("feature_maps_index", optional(contract.FeatureMapsIndex))
 	policy.Set("feature_maps", strings2any(contract.FeatureMaps))
+	policy.Set("feature_map_hashes", fileHashes2any(contract.FeatureMapHashes))
+	policy.Set("required_checks", strings2any(contract.RequiredChecks))
+	policy.Set("scenario_ids", strings2any(contract.ScenarioIDs))
+	missing := missingCommands(contract.RequiredChecks)
+	requirements := ordjson.NewObject()
+	requirements.Set("commands", strings2any(contract.RequiredChecks))
+	requirements.Set("missing", strings2any(missing))
+	policy.Set("requirements", requirements)
 	policy.Set("policy_files", strings2any(contract.PolicyFiles))
 	required := make([]any, 0, len(contract.EvidenceRequired))
 	for _, scenario := range contract.EvidenceRequired {
@@ -304,7 +358,24 @@ func PolicyAtDispatch(worktree, baseSHA string, status *ordjson.Object) *ordjson
 		required = append(required, item)
 	}
 	policy.Set("evidence_required", required)
+	if len(missing) > 0 {
+		state = "not-yet-standardized"
+		policy.Set("status", state)
+		message := fmt.Sprintf("required command(s) are unavailable: %s", strings.Join(missing, ", "))
+		policy.Set("reason", message)
+		policy.Set("why", why+"; "+message)
+	}
 	return policy
+}
+
+func missingCommands(commands []string) []string {
+	missing := make([]string, 0)
+	for _, command := range commands {
+		if _, err := exec.LookPath(command); err != nil {
+			missing = append(missing, command)
+		}
+	}
+	return missing
 }
 
 func optional(value string) any {
@@ -318,6 +389,17 @@ func strings2any(values []string) []any {
 	out := make([]any, 0, len(values))
 	for _, value := range values {
 		out = append(out, value)
+	}
+	return out
+}
+
+func fileHashes2any(values []FileHash) []any {
+	out := make([]any, 0, len(values))
+	for _, value := range values {
+		item := ordjson.NewObject()
+		item.Set("path", value.Path)
+		item.Set("sha256", value.SHA256)
+		out = append(out, item)
 	}
 	return out
 }

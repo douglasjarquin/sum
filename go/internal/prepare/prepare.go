@@ -241,7 +241,19 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if actualRoot == repo || actualRoot != worktreePath || actualHead != baseSHA || actualBranch != branch {
 		return failPrepare(s, tid, fmt.Errorf("Herdr returned a checkout that does not match the task. Work is preserved; inspect it manually."))
 	}
-	task.Set("verification_policy", verifycontract.PolicyAtDispatch(worktreePath, baseSHA, environment.VerificationContractStatus(worktreePath)))
+	contractRoot, cleanupContract, err := verifycontract.MaterializeCommit(repo, baseSHA)
+	if err != nil {
+		return failPrepare(s, tid, err)
+	}
+	defer cleanupContract()
+	policy := verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatus(contractRoot))
+	verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{
+		Repository:  repo,
+		Project:     projectObj,
+		Launch:      launchSpec,
+		RuntimeRoot: args.RuntimeRoot,
+	})
+	task.Set("verification_policy", policy)
 	record := graph.InitCheckout(s, args.RuntimeRoot, worktreePath, "task", nil)
 	if err := graph.WriteTaskGraph(s, task, record); err != nil {
 		return failPrepare(s, tid, err)
@@ -344,6 +356,11 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	if status != "prepared" {
 		unlock()
 		return nil, fmt.Errorf("Only a prepared task can be started. sum never retries an uncertain launch automatically.")
+	}
+	policy, hasPolicy := task.Get("verification_policy")
+	if !hasPolicy || asObject(policy) == nil {
+		unlock()
+		return nil, fmt.Errorf("The task has no coordinator-owned verification snapshot; start is refused.")
 	}
 	worker, err := reservations.Worker(task)
 	if err != nil {

@@ -36,8 +36,8 @@ var (
 	verificationNames = regexp.MustCompile(`(?i)^(test|tests|lint|check|verify|ci|typecheck|fmt-check|format-check|e2e|smoke|coverage)(?:[:_-].*)?$`)
 	serviceNames      = regexp.MustCompile(`(?i)^(dev|serve|start|run|up|watch|preview|server)(?:[:_-].*)?$`)
 	urlUserinfo       = regexp.MustCompile(`(://)[^/\s@:]+:[^/\s@]*@`)
-	makeTarget = regexp.MustCompile(`(?m)^([A-Za-z0-9][A-Za-z0-9_./-]*)\s*:`)
-	justTarget = regexp.MustCompile(`(?m)^(?:@)?([a-zA-Z_][A-Za-z0-9_-]*)(?:\s+[^:\n]*)?:\s*(?:[^\n]*)?$`)
+	makeTarget        = regexp.MustCompile(`(?m)^([A-Za-z0-9][A-Za-z0-9_./-]*)\s*:`)
+	justTarget        = regexp.MustCompile(`(?m)^(?:@)?([a-zA-Z_][A-Za-z0-9_-]*)(?:\s+[^:\n]*)?:\s*(?:[^\n]*)?$`)
 	procfileLine      = regexp.MustCompile(`(?m)^([A-Za-z0-9_-]+):\s*(.+)$`)
 	portToken         = regexp.MustCompile(`["']?([0-9.:\[\]a-fA-F-]+(?:/(?:tcp|udp))?)["']?`)
 	exposeLine        = regexp.MustCompile(`(?im)^\s*EXPOSE\s+(.+)$`)
@@ -670,6 +670,16 @@ func miseTaskOrigins(worktree string) *ordjson.Object {
 	result.Set("available", true)
 	env := append([]string{}, os.Environ()...)
 	env = append(env, "MISE_QUIET=1")
+	var trustedConfigs []string
+	for _, relative := range []string{"mise.toml", ".mise.toml", ".mise/config.toml"} {
+		config := filepath.Join(worktree, filepath.FromSlash(relative))
+		if info, err := os.Stat(config); err == nil && info.Mode().IsRegular() {
+			trustedConfigs = append(trustedConfigs, config)
+		}
+	}
+	if len(trustedConfigs) > 0 {
+		env = append(env, "MISE_TRUSTED_CONFIG_PATHS="+strings.Join(trustedConfigs, string(os.PathListSeparator)))
+	}
 	run, runErr := proc.Run([]string{binary, "tasks", "ls", "--json"}, worktree, 30*time.Second, false, env)
 	warnings := strings.TrimSpace(run.Stderr)
 	if len(warnings) > 400 {

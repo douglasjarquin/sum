@@ -234,6 +234,9 @@ func verificationContractText(task *ordjson.Object) string {
 	if required := requiredEvidenceScenarios(policy); len(required) > 0 {
 		lines = append(lines, fmt.Sprintf("- These mapped scenarios name visual proof at the base commit: %s. Before delivery, capture a before/after comparison for each one your change touches with `.agents/skills/evidence/SKILL.md` and list the `comparison.json` path under `artifacts`. The coordinator's Test gate blocks until a comparison for your candidate exists; a green suite does not satisfy such a row.", strings.Join(required, ", ")))
 	}
+	if checks := requiredChecks(policy); len(checks) > 0 {
+		lines = append(lines, fmt.Sprintf("- Required project checks recorded at dispatch: `%s`. This is the approved base snapshot; do not replace it with an inherited task or a worker-selected command.", strings.Join(checks, "`, `")))
+	}
 	lines = append(lines,
 		"- The coordinator executes the same contract again under its own run id and performs the independent review; your run is a claim, never the gate. Do not reuse or edit a run id.",
 		fmt.Sprintf("- `VERIFY.md`, `mise.toml`, `mise-tasks/`, `%s`, `.agents/skills/verify/`, and `.agents/skills/evidence/` are verification policy. Changing them is reviewed explicitly against the approved scope; a candidate must not weaken the gate that certifies it.", maps),
@@ -255,6 +258,25 @@ func requiredEvidenceScenarios(policy *ordjson.Object) []string {
 		}
 	}
 	return names
+}
+
+func requiredChecks(policy *ordjson.Object) []string {
+	return stringListField(policy, "required_checks")
+}
+
+func stringListField(policy *ordjson.Object, key string) []string {
+	if policy == nil {
+		return nil
+	}
+	value, _ := policy.Get(key)
+	rows, _ := value.([]any)
+	result := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if text, ok := row.(string); ok && text != "" {
+			result = append(result, text)
+		}
+	}
+	return result
 }
 
 func graphText(s *store.Store, sumctlPath string, task *ordjson.Object) string {

@@ -73,6 +73,29 @@ func TestReadCollectsMapsAndEvidenceRequirements(t *testing.T) {
 	}
 }
 
+func TestReadRecordsCommittedRequirementsAndMapHashes(t *testing.T) {
+	body := strings.Replace(contractBody, "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[requires]\ncommands = [\"go\", \"python3\"]\n", 1)
+	root := checkout(t, map[string]string{
+		"VERIFY.md":     body,
+		"docs/index.md": "- [Alpha](features/alpha.md)\n",
+		"docs/features/alpha.md": "| ID | Scenario | Driver | Evidence |\n| --- | --- | --- | --- |\n" +
+			"| `alpha.paint` | Repaints | manual | before/after screenshot |\n",
+	})
+	contract, err := Read(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(contract.RequiredChecks, ",") != "go,python3" {
+		t.Fatalf("RequiredChecks = %v, want the declared commands", contract.RequiredChecks)
+	}
+	if strings.Join(contract.ScenarioIDs, ",") != "alpha.paint" {
+		t.Fatalf("ScenarioIDs = %v, want every mapped scenario", contract.ScenarioIDs)
+	}
+	if len(contract.FeatureMapHashes) != 2 || contract.FeatureMapHashes[0].SHA256 == "" || contract.FeatureMapHashes[1].SHA256 == "" {
+		t.Fatalf("FeatureMapHashes = %v, want hashes for the index and linked map", contract.FeatureMapHashes)
+	}
+}
+
 func TestReadRefusesMalformedContracts(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -181,5 +204,34 @@ func TestPolicyAtDispatchKeepsStatusForAnUnstandardizedCheckout(t *testing.T) {
 	}
 	if sha, _ := policy.Get("contract_sha256"); sha == nil {
 		t.Fatal("contract_sha256 = nil, want the hash of a contract that parsed")
+	}
+}
+
+func TestPolicyAtDispatchBlocksUnavailableRequiredCommands(t *testing.T) {
+	body := strings.Replace(contractBody, "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\n[requires]\ncommands = [\"sum-command-does-not-exist\"]\n", 1)
+	root := checkout(t, map[string]string{
+		"VERIFY.md":     body,
+		"docs/index.md": "- [Alpha](features/alpha.md)\n",
+		"docs/features/alpha.md": "| ID | Scenario | Driver | Evidence |\n| --- | --- | --- | --- |\n" +
+			"| `alpha.x` | X | automated | offline suite |\n",
+	})
+	policy := PolicyAtDispatch(root, "abc123", standardizedStatus())
+	if status, _ := policy.Get("status"); status != "not-yet-standardized" {
+		t.Fatalf("status = %v, want not-yet-standardized", status)
+	}
+	reason, _ := policy.Get("reason")
+	reasonText, _ := reason.(string)
+	if !strings.Contains(reasonText, "sum-command-does-not-exist") {
+		t.Fatalf("reason = %v, want the missing command", reason)
+	}
+	requirements, _ := policy.Get("requirements")
+	requirementObject, ok := requirements.(*ordjson.Object)
+	if !ok {
+		t.Fatalf("requirements = %v, want a structured availability record", requirements)
+	}
+	missing, _ := requirementObject.Get("missing")
+	missingCommands, _ := missing.([]any)
+	if len(missingCommands) != 1 || missingCommands[0] != "sum-command-does-not-exist" {
+		t.Fatalf("requirements.missing = %v, want the unavailable command", missing)
 	}
 }

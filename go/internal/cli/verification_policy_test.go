@@ -19,6 +19,7 @@ const standardizedContract = "# Verification contract\n\n" +
 	"evidence = \".artifacts/evidence\"\n" +
 	"task_owner = \".\"\n" +
 	"policy_files = [\"docs/features/\"]\n" +
+	"\n[requires]\ncommands = [\"go\", \"python3\"]\n" +
 	"```\n\n" +
 	"## Setup\n\nNone.\n\n## Readiness\n\nNone.\n\n## Automated checks\n\n`mise run verify`.\n\n" +
 	"## Scenarios\n\nSee the maps.\n\n## Isolation\n\nTemp dirs.\n\n## Artifacts\n\n`.artifacts/verification/`.\n\n## Teardown\n\nNone.\n"
@@ -112,6 +113,29 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 		t.Fatalf("observed_at = %q", observed)
 	}
 	delete(policy, "observed_at")
+	if hashes := asSlice(policy["feature_map_hashes"]); len(hashes) != 2 {
+		t.Fatalf("feature_map_hashes = %v, want both committed map files", hashes)
+	}
+	if scenarios := asSlice(policy["scenario_ids"]); len(scenarios) != 2 {
+		t.Fatalf("scenario_ids = %v, want every mapped scenario", scenarios)
+	}
+	if checks := asSlice(policy["required_checks"]); len(checks) != 2 {
+		t.Fatalf("required_checks = %v, want the committed requirements", checks)
+	}
+	if asString(policy["repository_path"]) == "" || asMap(policy["project_identity"]) == nil {
+		t.Fatalf("project identity = %v, want the repository snapshot identity", policy["project_identity"])
+	}
+	if asMap(policy["source_runtime"]) == nil || asMap(policy["delivery"]) == nil {
+		t.Fatalf("dispatch metadata = %v, want source runtime and delivery", policy)
+	}
+	delete(policy, "delivery")
+	delete(policy, "feature_map_hashes")
+	delete(policy, "project_identity")
+	delete(policy, "repository_path")
+	delete(policy, "required_checks")
+	delete(policy, "requirements")
+	delete(policy, "scenario_ids")
+	delete(policy, "source_runtime")
 	want := map[string]any{
 		"status":             "standardized",
 		"why":                "VERIFY.md at the root and a `verify` task this checkout defines",

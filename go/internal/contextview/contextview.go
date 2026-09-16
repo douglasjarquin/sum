@@ -1109,6 +1109,7 @@ func sectionOutline(s *store.Store, task *ordjson.Object, taskID, sumctlPath str
 	evidenceOutline.Set("closure_missing", getField(closure, "missing"))
 	evidenceOutline.Set("verification", getField(view, "verification"))
 	outlineObj.Set("evidence", evidenceOutline)
+	outlineObj.Set("verification_policy", getField(task, "verification_policy"))
 
 	if reportValue := getField(task, "report"); truthy(reportValue) {
 		report := asObject(reportValue)
