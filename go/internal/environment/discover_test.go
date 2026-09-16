@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,19 @@ func TestVerificationContractStatusDoesNotAdoptInheritedTask(t *testing.T) {
 	if value != "not-yet-standardized" {
 		t.Fatalf("status = %v, want not-yet-standardized", value)
 	}
+	runtime := t.TempDir()
+	misePath := filepath.Join(runtime, ".local", "bin", "mise")
+	if err := os.MkdirAll(filepath.Dir(misePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(misePath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	passive := VerificationContractStatusAtDispatch(root, runtime)
+	passiveWhy, _ := passive.Get("why")
+	if !strings.Contains(fmt.Sprint(passiveWhy), "inherited") {
+		t.Fatalf("passive why = %v, want inherited-task explanation", passiveWhy)
+	}
 }
 
 func TestVerificationContractStatusAtRuntimeDoesNotUseTargetLocalMise(t *testing.T) {
@@ -92,7 +106,7 @@ func TestVerificationContractStatusAtRuntimeDoesNotUseTargetLocalMise(t *testing
 		}
 	}
 
-	status := VerificationContractStatusAtDispatch(root)
+	status := VerificationContractStatusAtDispatch(root, runtime)
 	value, _ := status.Get("status")
 	if value != "standardized" {
 		t.Fatalf("status = %v, want standardized", value)

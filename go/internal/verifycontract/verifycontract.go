@@ -94,7 +94,7 @@ func stringAt(config map[string]any, key, fallback string) (string, bool) {
 // does, running nothing. A missing file, an unreadable fence, or a value the runner would refuse
 // comes back as an error naming the cause. The runner stays the authority at verification time.
 func Read(worktree string) (*Contract, error) {
-	raw, err := os.ReadFile(filepath.Join(worktree, ContractFile))
+	raw, err := readBounded(filepath.Join(worktree, ContractFile))
 	if err != nil {
 		return nil, fmt.Errorf("%s is missing at the checkout root; this project is not yet standardized", ContractFile)
 	}
@@ -252,7 +252,7 @@ func policyFileSet(declared any) ([]string, error) {
 
 func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []string, []Scenario, error) {
 	index := filepath.Join(worktree, filepath.FromSlash(indexRelative))
-	body, err := os.ReadFile(index)
+	body, err := readBounded(index)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("Feature-map index %s is missing", indexRelative)
 	}
@@ -279,7 +279,7 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []st
 			return nil, nil, nil, nil, fmt.Errorf("Feature map link %s in %s leaves the repository", target, indexRelative)
 		}
 		relative = filepath.ToSlash(relative)
-		mapBody, err := os.ReadFile(resolved)
+		mapBody, err := readBounded(resolved)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("Feature map %s linked from %s is missing", relative, indexRelative)
 		}

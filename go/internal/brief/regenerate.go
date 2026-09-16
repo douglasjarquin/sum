@@ -245,6 +245,9 @@ func verificationContractText(task *ordjson.Object) string {
 				lines = append(lines, fmt.Sprintf("- Shared engineering principles: `%s` (sha256 `%s` at dispatch). Follow this versioned rubric together with the project's `VERIFY.md` procedure.", path, hash))
 			}
 		}
+		if reviewerPath := asString(func() any { v, _ := runtime.Get("reviewer_skill_path"); return v }()); reviewerPath != "" {
+			lines = append(lines, fmt.Sprintf("- Reviewer procedure: `%s` (captured at dispatch); the independent reviewer uses the same task facts and candidate SHA.", reviewerPath))
+		}
 	}
 	lines = append(lines,
 		"- The coordinator executes the same contract again under its own run id and performs the independent review; your run is a claim, never the gate. Do not reuse or edit a run id.",

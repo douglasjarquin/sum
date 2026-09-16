@@ -802,13 +802,47 @@ func miseTaskOrigins(worktree string) *ordjson.Object {
 	return result
 }
 
-func passiveMiseTaskOrigins(worktree string) *ordjson.Object {
+func passiveMiseTaskOrigins(worktree, runtimeRoot string) *ordjson.Object {
 	result := ordjson.NewObject()
+	if _, err := toolpath.Find(runtimeRoot, "mise"); err != nil {
+		result.Set("available", false)
+		result.Set("error", err.Error())
+		return result
+	}
 	result.Set("available", true)
 	tasks := []any{}
 	owned := map[string]bool{}
+	inherited := passiveInheritedTasks(worktree)
+	owner := "."
+	contractPath := filepath.Join(worktree, "VERIFY.md")
+	if info, err := os.Stat(contractPath); err == nil && info.Mode().IsRegular() && info.Size() <= configMaxBytes {
+		if contract, err := os.ReadFile(contractPath); err == nil {
+			matches := regexp.MustCompile("(?sm)^```verify[ \\t]*\\n(.*?)^```[ \\t]*$").FindStringSubmatch(string(contract))
+			if len(matches) > 1 {
+				config := map[string]any{}
+				if err := toml.Unmarshal([]byte(matches[1]), &config); err == nil {
+					if declared, ok := config["task_owner"].(string); ok {
+						owner = declared
+					}
+				}
+			}
+		}
+	}
+	if owner == "" || filepath.IsAbs(owner) || strings.HasPrefix(filepath.Clean(filepath.FromSlash(owner)), ".."+string(os.PathSeparator)) || owner == ".." {
+		result.Set("error", fmt.Sprintf("VERIFY.md task_owner %q is not a relative directory", owner))
+		return result
+	}
+	ownerPath := filepath.Join(worktree, filepath.FromSlash(owner))
+	if info, err := os.Stat(ownerPath); err != nil || !info.IsDir() {
+		result.Set("error", fmt.Sprintf("VERIFY.md task_owner %q is not a directory of this repository", owner))
+		return result
+	}
 	for _, relative := range []string{"mise.toml", ".mise.toml", ".mise/config.toml"} {
 		path := filepath.Join(worktree, filepath.FromSlash(relative))
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > configMaxBytes {
+			continue
+		}
 		body, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -848,11 +882,75 @@ func passiveMiseTaskOrigins(worktree string) *ordjson.Object {
 	verification := ordjson.NewObject()
 	verification.Set("verify", owned["verify"])
 	verification.Set("test", owned["test"])
-	verification.Set("inherited_verification", []any{})
+	inheritedVerification := []any{}
+	for _, raw := range inherited {
+		entry, _ := raw.(*ordjson.Object)
+		name := stringField(entry, "name")
+		if name == "verify" || name == "test" {
+			inheritedVerification = append(inheritedVerification, name)
+		}
+	}
+	verification.Set("inherited_verification", inheritedVerification)
 	result.Set("tasks", tasks)
-	result.Set("inherited", []any{})
+	result.Set("inherited", inherited)
 	result.Set("verification", verification)
+	if len(inherited) > 0 {
+		result.Set("problem", "verification task(s) are inherited from a parent directory and are not owned by this checkout")
+	}
 	return result
+}
+
+func passiveInheritedTasks(worktree string) []any {
+	var inherited []any
+	seen := map[string]bool{}
+	for parent := filepath.Dir(worktree); parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
+		for _, relative := range []string{"mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test"} {
+			path := filepath.Join(parent, filepath.FromSlash(relative))
+			info, err := os.Stat(path)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			name := filepath.Base(relative)
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			entry := ordjson.NewObject()
+			entry.Set("name", name)
+			entry.Set("source", path)
+			entry.Set("owned", false)
+			inherited = append(inherited, entry)
+		}
+		for _, relative := range []string{"mise.toml", ".mise.toml", ".mise/config.toml"} {
+			path := filepath.Join(parent, filepath.FromSlash(relative))
+			info, err := os.Stat(path)
+			if err != nil || !info.Mode().IsRegular() || info.Size() > configMaxBytes {
+				continue
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var config map[string]any
+			if toml.Unmarshal(body, &config) != nil {
+				continue
+			}
+			declared, _ := config["tasks"].(map[string]any)
+			for _, name := range []string{"verify", "test"} {
+				if !seen[name] {
+					if _, ok := declared[name]; ok {
+						seen[name] = true
+						entry := ordjson.NewObject()
+						entry.Set("name", name)
+						entry.Set("source", path)
+						entry.Set("owned", false)
+						inherited = append(inherited, entry)
+					}
+				}
+			}
+		}
+	}
+	return inherited
 }
 
 // VerificationContractStatus runs `mise tasks ls` and reports whether the checkout carries the
@@ -862,8 +960,8 @@ func VerificationContractStatus(worktree string) *ordjson.Object {
 	return verificationContractStatus(worktree, miseTaskOrigins(worktree))
 }
 
-func VerificationContractStatusAtDispatch(worktree string) *ordjson.Object {
-	return verificationContractStatus(worktree, passiveMiseTaskOrigins(worktree))
+func VerificationContractStatusAtDispatch(worktree, runtimeRoot string) *ordjson.Object {
+	return verificationContractStatus(worktree, passiveMiseTaskOrigins(worktree, runtimeRoot))
 }
 
 func verificationContractStatus(worktree string, origins *ordjson.Object) *ordjson.Object {
@@ -873,15 +971,21 @@ func verificationContractStatus(worktree string, origins *ordjson.Object) *ordjs
 	}
 	verification := objectField(origins, "verification")
 	ownedVerify := false
+	inheritedVerification := []any{}
 	if verification != nil {
 		v, _ := verification.Get("verify")
 		ownedVerify, _ = v.(bool)
+		v, _ = verification.Get("inherited_verification")
+		inheritedVerification, _ = v.([]any)
 	}
 	status, why := "not-yet-standardized", "no VERIFY.md at the checkout root; the project keeps its current verification path"
 	if present && ownedVerify {
 		status, why = "standardized", "VERIFY.md at the root and a `verify` task this checkout defines"
 	} else if present {
 		status, why = "not-yet-standardized", "VERIFY.md exists but mise resolves no `verify` task owned by this checkout"
+		if len(inheritedVerification) > 0 {
+			why = "VERIFY.md exists but its `verify` task is inherited from a parent directory"
+		}
 	}
 	var runner any
 	if info, err := os.Stat(filepath.Join(worktree, ".agents", "skills", "verify", "scripts", "verify_run.py")); err == nil && info.Mode().IsRegular() {

@@ -246,7 +246,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		return failPrepare(s, tid, err)
 	}
 	defer cleanupContract()
-	policy := verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatusAtDispatch(contractRoot))
+	policy := verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, args.RuntimeRoot))
 	verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{
 		Repository:  repo,
 		Project:     projectObj,
@@ -537,19 +537,141 @@ func validVerificationSnapshot(value any, task *ordjson.Object) bool {
 	base, _ := policy.Get("base_sha")
 	statusText, statusOK := status.(string)
 	baseText, baseOK := base.(string)
-	if !statusOK || strings.TrimSpace(statusText) == "" || !baseOK || strings.TrimSpace(baseText) == "" {
+	if !statusOK || (statusText != "standardized" && statusText != "not-yet-standardized") || !baseOK || strings.TrimSpace(baseText) == "" {
 		return false
 	}
 	taskBase, _ := task.Get("base_sha")
 	if taskBaseText, ok := taskBase.(string); !ok || baseText != taskBaseText {
 		return false
 	}
-	for _, key := range []string{"contract_path", "feature_maps", "feature_map_hashes", "required_checks", "scenario_ids", "requirements", "freshness", "policy_files", "evidence_required", "repository_path", "project_identity", "source_runtime", "delivery"} {
-		if field, ok := policy.Get(key); !ok || field == nil {
+	if !snapshotString(policy, "contract_path") || !snapshotString(policy, "repository_path") || !snapshotString(policy, "observed_at") {
+		return false
+	}
+	if !snapshotStrings(policy, "feature_maps") || !snapshotStrings(policy, "required_checks") || !snapshotStrings(policy, "scenario_ids") || !snapshotStrings(policy, "policy_files") {
+		return false
+	}
+	if !snapshotObjects(policy, "feature_map_hashes", []string{"path", "sha256"}) || !snapshotObjects(policy, "evidence_required", []string{"scenario", "feature", "map"}) {
+		return false
+	}
+	requirements := snapshotObject(policy, "requirements")
+	if requirements == nil || !snapshotStrings(requirements, "commands") || !snapshotStrings(requirements, "missing") {
+		return false
+	}
+	freshness := snapshotObject(policy, "freshness")
+	if freshness == nil || !snapshotStrings(freshness, "inputs") || !snapshotStrings(freshness, "outputs") || !snapshotPositiveNumber(freshness, "timeout_seconds") {
+		return false
+	}
+	identity := snapshotObject(policy, "project_identity")
+	if identity == nil || !snapshotString(identity, "path") {
+		return false
+	}
+	runtime := snapshotObject(policy, "source_runtime")
+	if runtime == nil || !snapshotString(runtime, "sum_version") || !snapshotString(runtime, "worker_skill_path") || !snapshotString(runtime, "reviewer_skill_path") {
+		return false
+	}
+	if !snapshotNumber(runtime, "brief_schema") || !snapshotOptionalString(runtime, "runtime_revision") || !snapshotString(runtime, "worker_skill_sha256") || !snapshotString(runtime, "reviewer_skill_sha256") {
+		return false
+	}
+	rubric := snapshotObject(runtime, "rubric")
+	if rubric == nil || !snapshotString(rubric, "path") || !snapshotString(rubric, "sha256") {
+		return false
+	}
+	delivery := snapshotObject(policy, "delivery")
+	if delivery == nil || !snapshotString(delivery, "mode") || snapshotObject(delivery, "tool") == nil {
+		return false
+	}
+	return true
+}
+
+func snapshotObject(value *ordjson.Object, key string) *ordjson.Object {
+	if value == nil {
+		return nil
+	}
+	field, _ := value.Get(key)
+	return asObject(field)
+}
+
+func snapshotString(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	text, textOK := field.(string)
+	return ok && textOK && strings.TrimSpace(text) != ""
+}
+
+func snapshotStrings(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	values, listOK := field.([]any)
+	if !ok || !listOK {
+		return false
+	}
+	for _, item := range values {
+		if text, textOK := item.(string); !textOK || strings.TrimSpace(text) == "" {
 			return false
 		}
 	}
 	return true
+}
+
+func snapshotObjects(value *ordjson.Object, key string, required []string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	values, listOK := field.([]any)
+	if !ok || !listOK {
+		return false
+	}
+	for _, item := range values {
+		object := asObject(item)
+		if object == nil {
+			return false
+		}
+		for _, requiredKey := range required {
+			if !snapshotString(object, requiredKey) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func snapshotPositiveNumber(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	number, numberOK := field.(json.Number)
+	if !ok || !numberOK {
+		return false
+	}
+	parsed, err := number.Int64()
+	return err == nil && parsed > 0
+}
+
+func snapshotNumber(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	_, numberOK := field.(json.Number)
+	return ok && numberOK
+}
+
+func snapshotOptionalString(value *ordjson.Object, key string) bool {
+	if value == nil {
+		return false
+	}
+	field, ok := value.Get(key)
+	if !ok || field == nil {
+		return true
+	}
+	_, stringOK := field.(string)
+	return stringOK
 }
 
 func failStart(s *store.Store, taskID string, cause error) (*ordjson.Object, error) {

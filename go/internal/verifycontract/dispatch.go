@@ -47,6 +47,8 @@ func sourceRuntime(root string) *ordjson.Object {
 	result.Set("runtime_revision", gitRevision(root))
 	result.Set("worker_skill_path", "skills/sum-worker/SKILL.md")
 	result.Set("worker_skill_sha256", fileHash(root, "skills/sum-worker/SKILL.md"))
+	result.Set("reviewer_skill_path", "skills/sum-delivery/SKILL.md")
+	result.Set("reviewer_skill_sha256", fileHash(root, "skills/sum-delivery/SKILL.md"))
 	rubric := ordjson.NewObject()
 	rubric.Set("path", ".agents/skills/verify/references/engineering-principles.md")
 	rubric.Set("sha256", fileHash(root, ".agents/skills/verify/references/engineering-principles.md"))
