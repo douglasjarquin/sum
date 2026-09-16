@@ -445,6 +445,11 @@ func pathExists(path string) bool {
 	return err == nil
 }
 
+func pathContained(path, root string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
 // workerEvidenceRoot is the directory the worker's handoff captured its comparisons into. The verification checkout is a
 // fresh worktree of the candidate, so the Git-ignored captures are not in it; without this the runner would report every
 // required comparison as missing. Reading them is not re-verifying them: the runner still binds each one to this SHA.
@@ -469,10 +474,16 @@ func workerEvidenceRoot(task *ordjson.Object) string {
 			if !filepath.IsAbs(path) {
 				path = filepath.Join(worktree, path)
 			}
-			root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Clean(path))))
-			if info, err := os.Stat(root); err == nil && info.IsDir() {
-				return root
+			path = filepath.Clean(path)
+			root := filepath.Dir(filepath.Dir(filepath.Dir(path)))
+			info, err := os.Lstat(root)
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				continue
 			}
+			if !pathContained(root, worktree) {
+				continue
+			}
+			return root
 		}
 	}
 	return ""

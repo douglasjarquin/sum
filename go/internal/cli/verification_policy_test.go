@@ -179,7 +179,9 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 		},
 		"policy_files": []any{
 			".agents/skills/create-verification/", ".agents/skills/evidence/", ".agents/skills/maintain-verification/",
-			".agents/skills/verify/", ".mise.toml", "VERIFY.md", "docs/features/", "mise-tasks/", "mise.toml",
+			".agents/skills/verify/", ".github/CODEOWNERS", ".github/workflows/", ".mise.toml",
+			"AGENTS.md", "ARCHITECTURE.md", "Agents.md", "CODEOWNERS", "VERIFY.md",
+			"docs/ARCHITECTURE.md", "docs/features/", "mise-tasks/", "mise.toml",
 		},
 		"evidence_required": []any{
 			map[string]any{"scenario": "greeting.render", "feature": "greeting", "map": "docs/features/greeting.md"},
