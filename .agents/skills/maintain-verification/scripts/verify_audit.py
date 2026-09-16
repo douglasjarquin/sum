@@ -4,7 +4,7 @@
 Findings (each fails the audit until resolved):
   placeholder        a `TODO(verify)` left by the scaffold: the map or contract is still a draft
   stale-task         `mise run NAME` mentioned in VERIFY.md or a map, but this repository defines no such task
-  stale-path         a backticked path in VERIFY.md or a map that no longer exists
+  stale-path         a backticked path in VERIFY.md, a map, ARCHITECTURE.md, or CODEOWNERS that no longer exists
   unlinked-map       a Markdown file beside the index that the index does not link
   missing-link       an index link to a map that does not exist
   coverage-claim     an `automated` scenario row that names no test/command path, or names one that is missing or contains no test
@@ -48,6 +48,7 @@ TASK_REF = re.compile(r"\bmise run ([A-Za-z0-9_:.-]+)")
 TODO = "TODO(verify)"
 PATH_SUFFIXES = (".py", ".md", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".toml", ".json", ".sh", ".yaml", ".yml", ".html", ".go", ".rs", ".rb", ".txt", ".css")
 CODE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".rs", ".rb", ".sh", ".html", ".css", ".in", ".toml", ".json", ".yaml", ".yml")
+GUIDANCE = ("ARCHITECTURE.md", "docs/ARCHITECTURE.md", "CODEOWNERS", ".github/CODEOWNERS")
 NOT_CODE_PREFIXES = (".artifacts/", ".agents/", ".claude/", ".cursor/", ".github/", "docs/")
 NOT_CODE_NAMES = ("VERIFY.md", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore", "LICENSE", "mise.toml", ".mise.toml", "package-lock.json")
 
@@ -277,6 +278,10 @@ def main(argv=None):
             if path.resolve() != index.resolve():
                 scenarios.extend(scenarios_of(root, path, seen, findings))
             refs[str(path.relative_to(root))] = sorted(references(root, path))
+        for name in GUIDANCE:
+            guidance = root / name
+            if guidance.is_file():
+                check_paths(root, guidance, findings)
         map_shas = {str(p.relative_to(root)): sha256_file(p) for p in map_files}
         record["authored"] = {"contract": {"path": "VERIFY.md", "sha256": sha256_file(contract_path)}, "feature_maps": map_shas, "scenarios": scenarios, "references": refs,
                               "inventory_incomplete": bool(index.is_file() and re.search(r"inventory:\s*\*{0,2}incomplete", index.read_text(encoding="utf-8"), re.I))}

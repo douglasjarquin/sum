@@ -171,7 +171,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	prCmd.Flags().BoolVar(&prAllowNewAfterClosed, "allow-new-after-closed", false, "")
 	pipelineCmd.AddCommand(prCmd)
 
-	var candidate string
+	var candidate, documentRationale string
 	documentCmd := &cobra.Command{
 		Use:  "document TASK",
 		Args: cobra.ExactArgs(1),
@@ -180,7 +180,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := pipeline.Document(st, ctx, o.runtimeRoot, pipeline.DocumentArgs{Task: args[0], Candidate: candidate})
+			view, err := pipeline.Document(st, ctx, o.runtimeRoot, pipeline.DocumentArgs{Task: args[0], Candidate: candidate, Rationale: documentRationale})
 			if err != nil {
 				return err
 			}
@@ -188,6 +188,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 		},
 	}
 	documentCmd.Flags().StringVar(&candidate, "candidate", "", "")
+	documentCmd.Flags().StringVar(&documentRationale, "rationale", "", "")
 	pipelineCmd.AddCommand(documentCmd)
 
 	var noPublish bool

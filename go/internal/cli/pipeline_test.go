@@ -314,6 +314,37 @@ func TestPipelineDocument_recordsTheAuditOfTheCandidatesOwnContract(t *testing.T
 	}
 }
 
+func TestPipelineDocument_passesUnmappedInternalChangeWithRationale(t *testing.T) {
+	requirePython(t)
+	lab := newPublishLab(t, map[string]any{})
+	base, candidate := writeAuditFixture(t, lab.worktree)
+	if err := os.WriteFile(filepath.Join(lab.worktree, "util.py"), []byte("def helper():\n    return 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, lab.worktree, "add", "util.py")
+	gitIn(t, lab.worktree, "commit", "-q", "-m", "internal helper")
+	candidate = strings.TrimSpace(gitIn(t, lab.worktree, "rev-parse", "HEAD"))
+	lab.rewriteTask(t, base, candidate)
+
+	stdout, stderr, err := runPRCLI(t, lab.home, "pipeline", "document", lab.taskID)
+	if err != nil {
+		t.Fatalf("document without rationale: %v stderr=%s", err, stderr)
+	}
+	failed, _ := decodeObject(t, stdout)["evidence"].(map[string]any)
+	if failed["result"] != "fail" {
+		t.Fatalf("documentation record = %v, want fail without rationale", failed)
+	}
+
+	stdout, stderr, err = runPRCLI(t, lab.home, "pipeline", "document", lab.taskID, "--rationale", "util.py is an internal helper")
+	if err != nil {
+		t.Fatalf("document --rationale: %v stderr=%s", err, stderr)
+	}
+	record, _ := decodeObject(t, stdout)["evidence"].(map[string]any)
+	if record["result"] != "pass" {
+		t.Fatalf("documentation record = %v, want pass with rationale", record)
+	}
+}
+
 func TestPipelineDocument_skipsAProjectThatDeclaresNoContract(t *testing.T) {
 	requirePython(t)
 	lab := newPublishLab(t, map[string]any{})
