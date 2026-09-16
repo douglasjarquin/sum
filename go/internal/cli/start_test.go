@@ -43,6 +43,23 @@ func TestStartRefusesEmptyVerificationSnapshot(t *testing.T) {
 	}
 }
 
+func TestStartRefusesVerificationSnapshotForDifferentBase(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	if _, err := runCLI(t, home, "init"); err != nil {
+		t.Fatal(err)
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFixture(t, home, "t-aaaaaaaaaaac", `{"schema": 1, "id": "t-aaaaaaaaaaac", "status": "prepared", "machine": "`+host+`", "repository": "owner/repo", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief": "do the thing", "verification_policy": {"status":"not-yet-standardized","base_sha":"fedcba9876543210fedcba9876543210fedcba98","contract_path":"VERIFY.md","feature_maps":[],"feature_map_hashes":[],"required_checks":[],"scenario_ids":[],"requirements":{},"freshness":{},"policy_files":[],"evidence_required":[],"repository_path":"/repo","project_identity":{},"source_runtime":{},"delivery":{}}}`)
+	_, _, err = runStartCLI(t, home, "start", "t-aaaaaaaaaaac")
+	if err == nil || !strings.Contains(err.Error(), "verification snapshot") {
+		t.Fatalf("err = %v, want the wrong-base snapshot refusal", err)
+	}
+}
+
 func TestStartUnknownFlagsAreUsageErrorsBeforeStart(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -92,7 +92,7 @@ func TestVerificationContractStatusAtRuntimeDoesNotUseTargetLocalMise(t *testing
 		}
 	}
 
-	status := VerificationContractStatusAtRuntime(root, runtime)
+	status := VerificationContractStatusAtDispatch(root)
 	value, _ := status.Get("status")
 	if value != "standardized" {
 		t.Fatalf("status = %v, want standardized", value)
@@ -100,7 +100,7 @@ func TestVerificationContractStatusAtRuntimeDoesNotUseTargetLocalMise(t *testing
 	if _, err := os.Stat(targetMarker); err == nil {
 		t.Fatal("target-local mise was executed")
 	}
-	if _, err := os.Stat(runtimeMarker); err != nil {
-		t.Fatalf("runtime mise was not executed: %v", err)
+	if _, err := os.Stat(runtimeMarker); err == nil {
+		t.Fatal("runtime mise was executed during passive discovery")
 	}
 }

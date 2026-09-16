@@ -16,28 +16,38 @@ func MaterializeCommit(repo, revision string) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("create contract snapshot: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(root) }
-	command := exec.Command("git", "-C", repo, "archive", "--format=tar", revision)
-	stdout, err := command.StdoutPipe()
+	archive, err := os.CreateTemp(filepath.Dir(repo), ".sum-contract-archive-")
 	if err != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("read contract snapshot: %w", err)
+		return "", func() {}, fmt.Errorf("create contract archive: %w", err)
 	}
-	if err := command.Start(); err != nil {
+	archivePath := archive.Name()
+	defer os.Remove(archivePath)
+	command := exec.Command("git", "-C", repo, "archive", "--format=tar", revision)
+	command.Stdout = archive
+	if err := command.Run(); err != nil {
+		_ = archive.Close()
 		cleanup()
-		return "", func() {}, fmt.Errorf("start contract snapshot: %w", err)
+		return "", func() {}, fmt.Errorf("git archive %s: %w", revision, err)
 	}
-	extractErr := extractArchive(stdout, root)
-	if extractErr != nil && command.Process != nil {
-		_ = command.Process.Kill()
+	if err := archive.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("close contract archive: %w", err)
 	}
-	waitErr := command.Wait()
+	input, err := os.Open(archivePath)
+	if err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("read contract archive: %w", err)
+	}
+	extractErr := extractArchive(input, root)
+	closeErr := input.Close()
 	if extractErr != nil {
 		cleanup()
 		return "", func() {}, fmt.Errorf("extract contract snapshot: %w", extractErr)
 	}
-	if waitErr != nil {
+	if closeErr != nil {
 		cleanup()
-		return "", func() {}, fmt.Errorf("git archive %s: %w", revision, waitErr)
+		return "", func() {}, fmt.Errorf("close contract archive: %w", closeErr)
 	}
 	return root, cleanup, nil
 }

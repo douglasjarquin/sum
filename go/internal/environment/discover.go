@@ -652,16 +652,12 @@ func discoverPyproject(relative, text string) ([]*ordjson.Object, []any) {
 }
 
 func miseTaskOrigins(worktree string) *ordjson.Object {
-	return miseTaskOriginsAt(worktree, worktree)
-}
-
-func miseTaskOriginsAt(worktree, runtimeRoot string) *ordjson.Object {
 	result := ordjson.NewObject()
 	result.Set("available", false)
 	result.Set("tasks", []any{})
 	result.Set("inherited", []any{})
 	result.Set("verification", nil)
-	binary, err := toolpath.Find(runtimeRoot, "mise")
+	binary, err := toolpath.Find(worktree, "mise")
 	if err != nil {
 		result.Set("error", err.Error())
 		return result
@@ -806,6 +802,59 @@ func miseTaskOriginsAt(worktree, runtimeRoot string) *ordjson.Object {
 	return result
 }
 
+func passiveMiseTaskOrigins(worktree string) *ordjson.Object {
+	result := ordjson.NewObject()
+	result.Set("available", true)
+	tasks := []any{}
+	owned := map[string]bool{}
+	for _, relative := range []string{"mise.toml", ".mise.toml", ".mise/config.toml"} {
+		path := filepath.Join(worktree, filepath.FromSlash(relative))
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var config map[string]any
+		if err := toml.Unmarshal(body, &config); err != nil {
+			result.Set("error", fmt.Sprintf("%s: %s", relative, err))
+			continue
+		}
+		declared, _ := config["tasks"].(map[string]any)
+		for name := range declared {
+			if name != "verify" && name != "test" {
+				continue
+			}
+			owned[name] = true
+			entry := ordjson.NewObject()
+			entry.Set("name", name)
+			entry.Set("source", path)
+			entry.Set("owned", true)
+			tasks = append(tasks, entry)
+		}
+	}
+	for _, relative := range []string{"mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test"} {
+		path := filepath.Join(worktree, filepath.FromSlash(relative))
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		name := filepath.Base(relative)
+		owned[name] = true
+		entry := ordjson.NewObject()
+		entry.Set("name", name)
+		entry.Set("source", path)
+		entry.Set("owned", true)
+		tasks = append(tasks, entry)
+	}
+	verification := ordjson.NewObject()
+	verification.Set("verify", owned["verify"])
+	verification.Set("test", owned["test"])
+	verification.Set("inherited_verification", []any{})
+	result.Set("tasks", tasks)
+	result.Set("inherited", []any{})
+	result.Set("verification", verification)
+	return result
+}
+
 // VerificationContractStatus runs `mise tasks ls` and reports whether the checkout carries the
 // portable contract. `standardized` needs VERIFY.md at the root and a `verify` task mise resolves
 // from inside the checkout; a task inherited from a parent directory is another project's command.
@@ -813,8 +862,8 @@ func VerificationContractStatus(worktree string) *ordjson.Object {
 	return verificationContractStatus(worktree, miseTaskOrigins(worktree))
 }
 
-func VerificationContractStatusAtRuntime(worktree, runtimeRoot string) *ordjson.Object {
-	return verificationContractStatus(worktree, miseTaskOriginsAt(worktree, runtimeRoot))
+func VerificationContractStatusAtDispatch(worktree string) *ordjson.Object {
+	return verificationContractStatus(worktree, passiveMiseTaskOrigins(worktree))
 }
 
 func verificationContractStatus(worktree string, origins *ordjson.Object) *ordjson.Object {
@@ -845,6 +894,7 @@ func verificationContractStatus(worktree string, origins *ordjson.Object) *ordjs
 	result.Set("why", why)
 	if discoveryError := stringField(origins, "error"); discoveryError != "" {
 		result.Set("why", "verification discovery unavailable: "+discoveryError)
+		result.Set("error", discoveryError)
 	}
 	result.Set("runner", runner)
 	return result
