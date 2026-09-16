@@ -237,6 +237,15 @@ func verificationContractText(task *ordjson.Object) string {
 	if checks := requiredChecks(policy); len(checks) > 0 {
 		lines = append(lines, fmt.Sprintf("- Required project checks recorded at dispatch: `%s`. This is the approved base snapshot; do not replace it with an inherited task or a worker-selected command.", strings.Join(checks, "`, `")))
 	}
+	if runtime := objectField(policy, "source_runtime"); runtime != nil {
+		if rubric := objectField(runtime, "rubric"); rubric != nil {
+			path := asString(func() any { v, _ := rubric.Get("path"); return v }())
+			hash := asString(func() any { v, _ := rubric.Get("sha256"); return v }())
+			if path != "" {
+				lines = append(lines, fmt.Sprintf("- Shared engineering principles: `%s` (sha256 `%s` at dispatch). Follow this versioned rubric together with the project's `VERIFY.md` procedure.", path, hash))
+			}
+		}
+	}
 	lines = append(lines,
 		"- The coordinator executes the same contract again under its own run id and performs the independent review; your run is a claim, never the gate. Do not reuse or edit a run id.",
 		fmt.Sprintf("- `VERIFY.md`, `mise.toml`, `mise-tasks/`, `%s`, `.agents/skills/verify/`, and `.agents/skills/evidence/` are verification policy. Changing them is reviewed explicitly against the approved scope; a candidate must not weaken the gate that certifies it.", maps),

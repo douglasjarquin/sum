@@ -27,6 +27,9 @@ func MaterializeCommit(repo, revision string) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("start contract snapshot: %w", err)
 	}
 	extractErr := extractArchive(stdout, root)
+	if extractErr != nil && command.Process != nil {
+		_ = command.Process.Kill()
+	}
 	waitErr := command.Wait()
 	if extractErr != nil {
 		cleanup()
@@ -76,17 +79,7 @@ func extractArchive(input io.Reader, root string) error {
 				return closeErr
 			}
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			link := filepath.FromSlash(header.Linkname)
-			resolved := filepath.Clean(filepath.Join(filepath.Dir(target), link))
-			if filepath.IsAbs(link) || (resolved != root && !strings.HasPrefix(resolved, root+string(os.PathSeparator))) {
-				return fmt.Errorf("archive link %q leaves the snapshot", header.Linkname)
-			}
-			if err := os.Symlink(link, target); err != nil {
-				return err
-			}
+			continue
 		}
 	}
 }

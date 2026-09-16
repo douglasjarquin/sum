@@ -3,6 +3,7 @@ package verifycontract
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -56,6 +57,9 @@ type Contract struct {
 	FeatureMapHashes []FileHash
 	RequiredChecks   []string
 	ScenarioIDs      []string
+	FreshnessInputs  []string
+	FreshnessOutputs []string
+	TimeoutSeconds   int64
 	PolicyFiles      []string
 	EvidenceRequired []Scenario
 }
@@ -146,6 +150,28 @@ func Read(worktree string) (*Contract, error) {
 	if err != nil {
 		return nil, err
 	}
+	freshness, ok := config["freshness"].(map[string]any)
+	if config["freshness"] != nil && !ok {
+		return nil, fmt.Errorf("%s `freshness` must be a table", ContractFile)
+	}
+	if !ok {
+		freshness = map[string]any{}
+	}
+	freshnessInputs, err := relativeStringList(freshness["inputs"], "freshness.inputs")
+	if err != nil {
+		return nil, err
+	}
+	freshnessOutputs, err := relativeStringList(freshness["outputs"], "freshness.outputs")
+	if err != nil {
+		return nil, err
+	}
+	timeoutSeconds := int64(3600)
+	if rawTimeout, present := config["timeout_seconds"]; present {
+		timeoutSeconds, ok = rawTimeout.(int64)
+		if !ok || timeoutSeconds <= 0 {
+			return nil, fmt.Errorf("%s `timeout_seconds` must be a positive integer", ContractFile)
+		}
+	}
 	policyFiles, err := policyFileSet(config["policy_files"])
 	if err != nil {
 		return nil, err
@@ -154,8 +180,14 @@ func Read(worktree string) (*Contract, error) {
 	if err != nil {
 		return nil, err
 	}
+	ownerPath := filepath.Join(worktree, filepath.FromSlash(owner))
+	ownerInfo, err := os.Stat(ownerPath)
+	if err != nil || !ownerInfo.IsDir() {
+		return nil, fmt.Errorf("%s `task_owner` must name an existing directory, found %q", ContractFile, owner)
+	}
 	return &Contract{SHA256: sha256Text(text), Entrypoint: entrypoint, TaskOwner: owner, FeatureMapsIndex: maps,
 		FeatureMaps: paths, FeatureMapHashes: hashes, RequiredChecks: requiredChecks, ScenarioIDs: scenarioIDs,
+		FreshnessInputs: freshnessInputs, FreshnessOutputs: freshnessOutputs, TimeoutSeconds: timeoutSeconds,
 		PolicyFiles: policyFiles, EvidenceRequired: scenarios}, nil
 }
 
@@ -176,6 +208,19 @@ func stringList(value any, name string) ([]string, error) {
 		result = append(result, text)
 	}
 	return result, nil
+}
+
+func relativeStringList(value any, name string) ([]string, error) {
+	values, err := stringList(value, name)
+	if err != nil {
+		return nil, err
+	}
+	for _, value := range values {
+		if !relativeInside(value) {
+			return nil, fmt.Errorf("%s must contain only relative paths inside the repository", name)
+		}
+	}
+	return values, nil
 }
 
 // policyFileSet adds the contract's declared paths to the defaults; a candidate may widen the set that governs it, never shrink it.
@@ -307,6 +352,7 @@ func mapScenarios(relative, body string, seen map[string]bool) ([]string, []Scen
 // `verify` task this checkout owns. Nothing is run and no error escapes.
 func PolicyAtDispatch(worktree, baseSHA string, status *ordjson.Object) *ordjson.Object {
 	state, why, runner := "not-yet-standardized", "no VERIFY.md at the checkout root; the project keeps its current verification path", any(nil)
+	var reason any
 	if status != nil {
 		if value, ok := status.Get("status"); ok {
 			state, _ = value.(string)
@@ -315,16 +361,18 @@ func PolicyAtDispatch(worktree, baseSHA string, status *ordjson.Object) *ordjson
 			why, _ = value.(string)
 		}
 		runner, _ = status.Get("runner")
+		if value, ok := status.Get("error"); ok {
+			reason, _ = value.(string)
+		}
 	}
 	contract, err := Read(worktree)
-	var reason any
 	if err != nil {
 		reason = err.Error()
 		if state == "standardized" {
 			state = "not-yet-standardized"
 			why = why + "; " + err.Error()
 		}
-		contract = &Contract{PolicyFiles: append([]string{}, defaultPolicy...)}
+		contract = &Contract{PolicyFiles: append([]string{}, defaultPolicy...), TimeoutSeconds: 3600}
 		sort.Strings(contract.PolicyFiles)
 	}
 	policy := ordjson.NewObject()
@@ -343,6 +391,11 @@ func PolicyAtDispatch(worktree, baseSHA string, status *ordjson.Object) *ordjson
 	policy.Set("feature_map_hashes", fileHashes2any(contract.FeatureMapHashes))
 	policy.Set("required_checks", strings2any(contract.RequiredChecks))
 	policy.Set("scenario_ids", strings2any(contract.ScenarioIDs))
+	freshness := ordjson.NewObject()
+	freshness.Set("inputs", strings2any(contract.FreshnessInputs))
+	freshness.Set("outputs", strings2any(contract.FreshnessOutputs))
+	freshness.Set("timeout_seconds", json.Number(fmt.Sprint(contract.TimeoutSeconds)))
+	policy.Set("freshness", freshness)
 	missing := missingCommands(contract.RequiredChecks)
 	requirements := ordjson.NewObject()
 	requirements.Set("commands", strings2any(contract.RequiredChecks))

@@ -104,6 +104,9 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 		"docs/features/README.md":   featureIndex,
 		"docs/features/greeting.md": featureMap,
 	})
+	if err := os.WriteFile(filepath.Join(repo, "VERIFY.md"), []byte("dirty working copy\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
 	policy := asMap(task["verification_policy"])
 	if policy == nil {
@@ -112,14 +115,19 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 	if observed := asString(policy["observed_at"]); observed == "" {
 		t.Fatalf("observed_at = %q", observed)
 	}
+	if asString(policy["contract_sha256"]) != sha256Of(standardizedContract) {
+		t.Fatalf("contract_sha256 = %v, want the committed contract hash", policy["contract_sha256"])
+	}
 	delete(policy, "observed_at")
 	if hashes := asSlice(policy["feature_map_hashes"]); len(hashes) != 2 {
 		t.Fatalf("feature_map_hashes = %v, want both committed map files", hashes)
+	} else if asString(asMap(hashes[1])["sha256"]) != sha256Of(featureMap) {
+		t.Fatalf("feature_map_hashes = %v, want the committed feature map hash", hashes)
 	}
-	if scenarios := asSlice(policy["scenario_ids"]); len(scenarios) != 2 {
+	if scenarios := asSlice(policy["scenario_ids"]); !reflect.DeepEqual(scenarios, []any{"greeting.render", "greeting.exit-code"}) {
 		t.Fatalf("scenario_ids = %v, want every mapped scenario", scenarios)
 	}
-	if checks := asSlice(policy["required_checks"]); len(checks) != 2 {
+	if checks := asSlice(policy["required_checks"]); !reflect.DeepEqual(checks, []any{"go", "python3"}) {
 		t.Fatalf("required_checks = %v, want the committed requirements", checks)
 	}
 	if asString(policy["repository_path"]) == "" || asMap(policy["project_identity"]) == nil {
@@ -127,6 +135,10 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 	}
 	if asMap(policy["source_runtime"]) == nil || asMap(policy["delivery"]) == nil {
 		t.Fatalf("dispatch metadata = %v, want source runtime and delivery", policy)
+	}
+	reloaded := d.ctl(true, "show", asString(task["id"]))
+	if asString(asMap(reloaded["verification_policy"])["contract_sha256"]) != sha256Of(standardizedContract) {
+		t.Fatalf("reloaded verification policy = %v, want the committed contract hash", reloaded["verification_policy"])
 	}
 	delete(policy, "delivery")
 	delete(policy, "feature_map_hashes")
@@ -148,6 +160,9 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 		"task_owner":         ".",
 		"feature_maps_index": "docs/features/README.md",
 		"feature_maps":       []any{"docs/features/README.md", "docs/features/greeting.md"},
+		"freshness": map[string]any{
+			"inputs": []any{}, "outputs": []any{}, "timeout_seconds": float64(3600),
+		},
 		"policy_files": []any{
 			".agents/skills/create-verification/", ".agents/skills/evidence/", ".agents/skills/maintain-verification/",
 			".agents/skills/verify/", ".mise.toml", "VERIFY.md", "docs/features/", "mise-tasks/", "mise.toml",

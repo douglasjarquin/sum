@@ -246,7 +246,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		return failPrepare(s, tid, err)
 	}
 	defer cleanupContract()
-	policy := verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatus(contractRoot))
+	policy := verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatusAtRuntime(contractRoot, args.RuntimeRoot))
 	verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{
 		Repository:  repo,
 		Project:     projectObj,
@@ -254,6 +254,9 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		RuntimeRoot: args.RuntimeRoot,
 	})
 	task.Set("verification_policy", policy)
+	if err := s.SaveTask(task); err != nil {
+		return failPrepare(s, tid, err)
+	}
 	record := graph.InitCheckout(s, args.RuntimeRoot, worktreePath, "task", nil)
 	if err := graph.WriteTaskGraph(s, task, record); err != nil {
 		return failPrepare(s, tid, err)
@@ -358,7 +361,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		return nil, fmt.Errorf("Only a prepared task can be started. sum never retries an uncertain launch automatically.")
 	}
 	policy, hasPolicy := task.Get("verification_policy")
-	if !hasPolicy || asObject(policy) == nil {
+	if !hasPolicy || !validVerificationSnapshot(policy) {
 		unlock()
 		return nil, fmt.Errorf("The task has no coordinator-owned verification snapshot; start is refused.")
 	}
@@ -523,6 +526,26 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	}
 	result.Set("confirmation", launch.Confirmation(currentLaunch))
 	return result, nil
+}
+
+func validVerificationSnapshot(value any) bool {
+	policy := asObject(value)
+	if policy == nil {
+		return false
+	}
+	status, _ := policy.Get("status")
+	base, _ := policy.Get("base_sha")
+	statusText, statusOK := status.(string)
+	baseText, baseOK := base.(string)
+	if !statusOK || strings.TrimSpace(statusText) == "" || !baseOK || strings.TrimSpace(baseText) == "" {
+		return false
+	}
+	for _, key := range []string{"contract_path", "feature_maps", "feature_map_hashes", "required_checks", "scenario_ids", "requirements", "freshness", "policy_files", "evidence_required", "repository_path", "project_identity", "source_runtime", "delivery"} {
+		if field, ok := policy.Get(key); !ok || field == nil {
+			return false
+		}
+	}
+	return true
 }
 
 func failStart(s *store.Store, taskID string, cause error) (*ordjson.Object, error) {

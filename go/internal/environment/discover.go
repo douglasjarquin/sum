@@ -652,12 +652,16 @@ func discoverPyproject(relative, text string) ([]*ordjson.Object, []any) {
 }
 
 func miseTaskOrigins(worktree string) *ordjson.Object {
+	return miseTaskOriginsAt(worktree, worktree)
+}
+
+func miseTaskOriginsAt(worktree, runtimeRoot string) *ordjson.Object {
 	result := ordjson.NewObject()
 	result.Set("available", false)
 	result.Set("tasks", []any{})
 	result.Set("inherited", []any{})
 	result.Set("verification", nil)
-	binary, err := toolpath.Find(worktree, "mise")
+	binary, err := toolpath.Find(runtimeRoot, "mise")
 	if err != nil {
 		result.Set("error", err.Error())
 		return result
@@ -668,7 +672,7 @@ func miseTaskOrigins(worktree string) *ordjson.Object {
 		return result
 	}
 	result.Set("available", true)
-	env := append([]string{}, os.Environ()...)
+	env := proc.ScrubbedEnv()
 	env = append(env, "MISE_QUIET=1")
 	var trustedConfigs []string
 	for _, relative := range []string{"mise.toml", ".mise.toml", ".mise/config.toml"} {
@@ -809,6 +813,10 @@ func VerificationContractStatus(worktree string) *ordjson.Object {
 	return verificationContractStatus(worktree, miseTaskOrigins(worktree))
 }
 
+func VerificationContractStatusAtRuntime(worktree, runtimeRoot string) *ordjson.Object {
+	return verificationContractStatus(worktree, miseTaskOriginsAt(worktree, runtimeRoot))
+}
+
 func verificationContractStatus(worktree string, origins *ordjson.Object) *ordjson.Object {
 	present := false
 	if info, err := os.Stat(filepath.Join(worktree, "VERIFY.md")); err == nil && info.Mode().IsRegular() {
@@ -835,6 +843,9 @@ func verificationContractStatus(worktree string, origins *ordjson.Object) *ordjs
 	result.Set("verify_md", present)
 	result.Set("verify_task_owned", ownedVerify)
 	result.Set("why", why)
+	if discoveryError := stringField(origins, "error"); discoveryError != "" {
+		result.Set("why", "verification discovery unavailable: "+discoveryError)
+	}
 	result.Set("runner", runner)
 	return result
 }

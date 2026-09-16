@@ -58,3 +58,49 @@ func TestVerificationContractStatusDoesNotAdoptInheritedTask(t *testing.T) {
 		t.Fatalf("status = %v, want not-yet-standardized", value)
 	}
 }
+
+func TestVerificationContractStatusAtRuntimeDoesNotUseTargetLocalMise(t *testing.T) {
+	root := t.TempDir()
+	runtime := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "VERIFY.md"), []byte("# Verification contract\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "mise.toml"), []byte("[tasks]\nverify = \"true\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	targetMarker := filepath.Join(t.TempDir(), "target-ran")
+	runtimeMarker := filepath.Join(t.TempDir(), "runtime-ran")
+	t.Setenv("SUM_TARGET_MISE_MARKER", targetMarker)
+	t.Setenv("SUM_RUNTIME_MISE_MARKER", runtimeMarker)
+	t.Setenv("SUM_MISE_TASKS_OUTPUT", fmt.Sprintf(`[{"name":"verify","source":%q}]`, filepath.Join(root, "mise.toml")))
+	t.Setenv("SUM_MISE_BIN", "")
+	targetMise := filepath.Join(root, ".local", "bin", "mise")
+	runtimeMise := filepath.Join(runtime, ".local", "bin", "mise")
+	for _, entry := range []struct {
+		path   string
+		marker string
+	}{
+		{path: targetMise, marker: "$SUM_TARGET_MISE_MARKER"},
+		{path: runtimeMise, marker: "$SUM_RUNTIME_MISE_MARKER"},
+	} {
+		if err := os.MkdirAll(filepath.Dir(entry.path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		script := fmt.Sprintf("#!/bin/sh\n: > \"%s\"\nprintf '%%s\\n' \"$SUM_MISE_TASKS_OUTPUT\"\n", entry.marker)
+		if err := os.WriteFile(entry.path, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	status := VerificationContractStatusAtRuntime(root, runtime)
+	value, _ := status.Get("status")
+	if value != "standardized" {
+		t.Fatalf("status = %v, want standardized", value)
+	}
+	if _, err := os.Stat(targetMarker); err == nil {
+		t.Fatal("target-local mise was executed")
+	}
+	if _, err := os.Stat(runtimeMarker); err != nil {
+		t.Fatalf("runtime mise was not executed: %v", err)
+	}
+}

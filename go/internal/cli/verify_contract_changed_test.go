@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +74,28 @@ func TestVerifyDoesNotFlagAnUntouchedContract(t *testing.T) {
 	}
 	if asString(ev["contract_sha256"]) != dispatched {
 		t.Fatalf("contract_sha256 = %v, want the dispatched %v", ev["contract_sha256"], dispatched)
+	}
+}
+
+func TestVerifyFlagsAFeatureMapChangedSinceDispatch(t *testing.T) {
+	v := newVerifyLab(t)
+	mapPath := filepath.Join(v.worktree, "docs", "features", "cli.md")
+	body, err := os.ReadFile(mapPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sha := v.commit("docs/features/cli.md", string(body)+"\nA changed policy note.\n")
+	v.report(t, sha)
+
+	ev := v.evidence(v.ctl(true, "verify", v.taskID, "--candidate", sha, "--execute"))
+	if ev["policy_changed_since_dispatch"] != true {
+		t.Fatalf("policy_changed_since_dispatch = %v, want true after the feature map changed", ev["policy_changed_since_dispatch"])
+	}
+	if !strings.Contains(asString(ev["policy_change_reason"]), "feature map") {
+		t.Fatalf("policy_change_reason = %v, want a feature-map explanation", ev["policy_change_reason"])
+	}
+	if ev["requires_root_review"] != true {
+		t.Fatalf("requires_root_review = %v, want true after the feature map changed", ev["requires_root_review"])
 	}
 }
 
