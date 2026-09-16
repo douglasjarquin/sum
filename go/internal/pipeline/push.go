@@ -51,22 +51,8 @@ func Push(s *store.Store, ctx *ordjson.Object, args PushArgs) (*ordjson.Object, 
 		return nil, fmt.Errorf("%s is at %q in the task repository, not at the candidate %s; nothing is pushed until the recorded branch and the candidate agree",
 			branch, local, candidate)
 	}
-	if !args.AllowBehind {
-		if rebase := Derive(task).Get(StageRebase); rebase.Status != Pass {
-			return nil, fmt.Errorf("the Rebase gate is %s (%s); run `pipeline rebase`, let the worker rebase, or pass --allow-behind to push anyway",
-				rebase.Status, rebase.Result)
-		}
-	}
-	if missing, waived := evidenceGap(latestFor(task, "verification", "coordinator", candidate)); len(missing) > 0 && !waived {
-		names := strings.Join(missing, ", ")
-		if !args.AllowMissingEvidence {
-			return nil, fmt.Errorf("the Test gate is blocked: no before/after evidence for %s. The worker captures it with `.agents/skills/evidence/`, or the user waives it with `verify %s --candidate %s --accept-missing-evidence`",
-				names, args.Task, candidate)
-		}
-		if !evidenceWaiverRecorded(task, candidate) {
-			return nil, fmt.Errorf("--allow-missing-evidence pushes work whose evidence for %s was never captured, so the waiver must be on the record first: run `verify %s --candidate %s --accept-missing-evidence`",
-				names, args.Task, candidate)
-		}
+	if err := RequirePush(task, PushAdmission{AllowBehind: args.AllowBehind, AllowMissingEvidence: args.AllowMissingEvidence}); err != nil {
+		return nil, err
 	}
 	body, summary := pushBranch(repo, branch, candidate)
 	return recordGate(s, ctx, args.Task, pushGate, candidate, body, summary)

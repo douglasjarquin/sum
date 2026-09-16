@@ -20,17 +20,12 @@ func prLab(t *testing.T) gateLab {
 	t.Setenv("FAKE_GH_ROOT", lab.ghRoot)
 	lab.writeGitHub(t, nil)
 	comparison := writeEvidenceRun(t, filepath.Join(lab.clone, "evidence"), lab.baseSHA(t), lab.candidate)
-	lab.writeTask(t, "reported",
-		fmt.Sprintf(`{"schema": 1, "id": "e-1", "kind": "handoff", "source": "worker",
+	lab.writeTask(t, "reported", append([]string{
+		fmt.Sprintf(`{"schema": 1, "id": "e-hand", "kind": "handoff", "source": "worker",
 "at": "2026-01-01T00:00:00+00:00", "candidate": %q, "handoff": {"artifacts": [%q],
 "changes": "Taught the delivery pipeline to open the PR.", "limitations": "Review is still a separate pane."}}`,
 			lab.candidate, comparison),
-		fmt.Sprintf(`{"schema": 1, "id": "e-2", "kind": "verification", "source": "coordinator",
-"at": "2026-01-01T01:00:00+00:00", "candidate": %q, "result": "pass", "run_id": "20260906T010203Z-abcd",
-"certifies": %q, "requires_root_review": false}`, lab.candidate, lab.candidate),
-		fmt.Sprintf(`{"schema": 1, "id": "e-3", "kind": "lint", "source": "coordinator",
-"at": "2026-01-01T02:00:00+00:00", "candidate": %q, "outcome": "not-declared",
-"summary": "This project declares no lint task"}`, lab.candidate))
+	}, publicationRecords(lab.candidate)...)...)
 	return lab
 }
 

@@ -52,6 +52,7 @@ func TestVerifyExecute_blocksWhenTheCandidateProvesNothingItWasAskedToProve(t *t
 	if status := asString(v.pipelineRow(t, "test")["status"]); status != "blocked" {
 		t.Fatalf("test row status %q, want blocked", status)
 	}
+	v.ctl(true, "review", v.taskID, "--verdict", "approve", "--candidate", sha, "--text", "code ok")
 	refused := v.ctl(false, "pipeline", "push", v.taskID, "--allow-behind")
 	if !strings.Contains(asString(refused["error"]), evidenceScenario) {
 		t.Fatalf("push error %v, want a refusal naming the scenario", refused["error"])

@@ -95,6 +95,7 @@ func TestPipelinePush_waiverForOneCandidateDoesNotUnlockAnother(t *testing.T) {
 	second := v.commit("NOTES.md", "second\n")
 	v.report(t, second)
 	v.ctl(true, "verify", v.taskID, "--candidate", second, "--execute")
+	v.ctl(true, "review", v.taskID, "--verdict", "approve", "--candidate", second, "--text", "code ok")
 	refused := v.ctl(false, "pipeline", "push", v.taskID, "--allow-behind", "--allow-missing-evidence")
 	if !strings.Contains(asString(refused["error"]), "--accept-missing-evidence") && !strings.Contains(asString(refused["error"]), evidenceScenario) {
 		t.Fatalf("push error %v, want a refusal until SHA %s has its own waiver", refused["error"], second)

@@ -243,8 +243,38 @@ func TestPipelineLint_projectsOwnLintFailsAndQuotesItsLastLine(t *testing.T) {
 	}
 }
 
+func publicationRecords(candidate string) []string {
+	return []string{
+		fmt.Sprintf(`{"schema": 1, "id": "e-rev", "kind": "review", "source": "reviewer", "at": "2026-01-01T00:30:00+00:00",
+"candidate": %q, "verdict": "approve", "text": "looks good", "policy_reviewed": false}`, candidate),
+		fmt.Sprintf(`{"schema": 1, "id": "e-1", "kind": "verification", "source": "coordinator",
+"at": "2026-01-01T01:00:00+00:00", "candidate": %q, "result": "pass", "run_id": "20260906T010203Z-abcd",
+"certifies": %q, "requires_root_review": false}`, candidate, candidate),
+		fmt.Sprintf(`{"schema": 1, "id": "e-doc", "kind": "documentation", "source": "coordinator",
+"at": "2026-01-01T01:30:00+00:00", "candidate": %q, "result": "skipped", "summary": "No VERIFY.md"}`, candidate),
+		fmt.Sprintf(`{"schema": 1, "id": "e-2", "kind": "lint", "source": "coordinator",
+"at": "2026-01-01T02:00:00+00:00", "candidate": %q, "outcome": "not-declared",
+"summary": "This project declares no lint task"}`, candidate),
+	}
+}
+
+func TestPipelinePush_refusedUntilReviewPasses(t *testing.T) {
+	lab := newGateLab(t)
+	runGate(t, lab, "rebase", gateTaskID)
+
+	_, _, err := runPRCLI(t, lab.home, "pipeline", "push", gateTaskID)
+
+	if err == nil || !strings.Contains(err.Error(), "Review") {
+		t.Fatalf("error = %v, want a Review refusal before any remote write", err)
+	}
+	if got := lab.remoteSHA(t, gateBranch); got != "" {
+		t.Fatalf("origin/%s = %s, want nothing pushed", gateBranch, got)
+	}
+}
+
 func TestPipelinePush_landsTheCandidateOnOrigin(t *testing.T) {
 	lab := newGateLab(t)
+	lab.writeTask(t, "reported", publicationRecords(lab.candidate)...)
 	runGate(t, lab, "rebase", gateTaskID)
 
 	result := runGate(t, lab, "push", gateTaskID)
@@ -306,6 +336,7 @@ func TestPipelinePush_refusedWhileTheRebaseGateIsNotPassing(t *testing.T) {
 
 func TestPipelinePush_nonFastForwardIsRejectedAndOriginIsUnchanged(t *testing.T) {
 	lab := newGateLab(t)
+	lab.writeTask(t, "reported", publicationRecords(lab.candidate)...)
 	runGate(t, lab, "rebase", gateTaskID)
 	gitIn(t, lab.source, "checkout", "-q", "-b", gateBranch)
 	writeFile(t, filepath.Join(lab.source, "app.txt"), "someone else pushed first\n")
@@ -365,13 +396,7 @@ func TestPipelineRun_stopsAtAFailingRebaseAndPushesNothing(t *testing.T) {
 func TestPipelineRun_skipsWhatIsRecordedAndCarriesOnToThePush(t *testing.T) {
 	requirePython(t)
 	lab := newGateLab(t)
-	lab.writeTask(t, "reported",
-		fmt.Sprintf(`{"schema": 1, "id": "e-1", "kind": "verification", "source": "coordinator",
-"at": "2026-01-01T01:00:00+00:00", "candidate": %q, "result": "pass", "run_id": "20260906T010203Z-abcd",
-"certifies": %q, "requires_root_review": false}`, lab.candidate, lab.candidate),
-		fmt.Sprintf(`{"schema": 1, "id": "e-2", "kind": "lint", "source": "coordinator",
-"at": "2026-01-01T02:00:00+00:00", "candidate": %q, "outcome": "not-declared",
-"summary": "This project declares no lint task"}`, lab.candidate))
+	lab.writeTask(t, "reported", publicationRecords(lab.candidate)...)
 
 	result := runGate(t, lab, "run", gateTaskID, "--no-pr")
 
@@ -398,7 +423,7 @@ func TestPipelineRun_skipsWhatIsRecordedAndCarriesOnToThePush(t *testing.T) {
 		t.Fatalf("push row = %v after a full run, want pass", got)
 	}
 	next, _ := result["next"].(string)
-	if !strings.HasPrefix(next, "Review is pending") {
-		t.Fatalf("next = %q, want the Review gate named as the first unsettled one", next)
+	if !strings.HasPrefix(next, "PR is pending") {
+		t.Fatalf("next = %q, want the PR gate after a successful push", next)
 	}
 }

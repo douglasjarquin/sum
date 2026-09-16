@@ -61,9 +61,8 @@ func PR(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PRArgs) (*
 	if status := stringField(task, "status"); status != "reported" {
 		return nil, fmt.Errorf("this task is %q; the PR is opened on the worker's reported candidate", status)
 	}
-	if push := Derive(task).Get(StagePush); push.Status != Pass {
-		return nil, fmt.Errorf("the Push gate is %s (%s); the branch must be on origin at the candidate before a PR can point at it",
-			push.Status, push.Result)
+	if err := RequirePR(task, PushAdmission{}); err != nil {
+		return nil, err
 	}
 	branch := stringField(task, "branch")
 	if branch == "" {
