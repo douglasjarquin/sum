@@ -14,7 +14,9 @@ For an investigation, deliver findings and evidence.
 Do not turn an investigation into implementation.
 
 For a change, implement the smallest complete solution.
+You may drive Cursor Cloud Agents for isolated code work.
 Run the repository's own checks.
+Write the commands and exit results into the report.
 Commit on the task branch.
 
 Before you wait, save a question as a file under the task with a stable key.

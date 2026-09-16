@@ -15,7 +15,8 @@ Idle is not done.
 
 The task brief, the report, and the actual diff or findings.
 The repository's own verification commands.
-A checkout or Cursor Cloud Agent that is not the worker's still-writing session.
+A checkout of the candidate that is not the worker's still-writing session.
+Do not call a Cursor Cloud Agent.
 
 ## Sequence of work
 

@@ -47,8 +47,8 @@ This recipe is native to Grok Bot.
 1. Open Bot settings and choose Share as Template.
 2. Inspect the draft.
    Strip API keys, internal URLs, and anything you would not put in a public document.
-3. Confirm the Firstmate share URL is not in the draft.
-   This recipe is Sum, not someone else's Bot.
+3. Confirm the draft does not attach another author's share URL.
+   This recipe is Sum.
 4. Publish for your team or as a public link.
 5. Keep this directory as the source of truth when the contract changes.
 

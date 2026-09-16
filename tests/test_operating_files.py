@@ -85,6 +85,13 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("You are not the coordinator", text)
         self.assertIn("The user merges", text)
         self.assertIn("Do not message the user", text)
+        self.assertIn("Write the commands and exit results into the report", text)
+
+    def test_grok_bot_verify_does_not_drive_cloud_agents(self):
+        text = (GROK_BOT / "skills" / "verify" / "SKILL.md").read_text()
+        self.assertIn("Do not call a Cursor Cloud Agent", text)
+        persist = (GROK_BOT / "skills" / "persist" / "SKILL.md").read_text()
+        self.assertIn("Do not author or overwrite that claim", persist)
 
     def test_operating_files_reject_themed_role_titles(self):
         paths = [

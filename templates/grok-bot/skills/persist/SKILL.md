@@ -21,7 +21,7 @@ Create it if it is missing.
 2. For new approved work, allocate the next task id `t-N` by counting existing task directories, then write `/workspace/sum/tasks/t-N/brief.md` from the user's words.
 3. For a question, write `/workspace/sum/tasks/<id>/questions/<key>.md` with the choice, evidence, and recommendation. Set status to open. Add a line to `inbox.md`.
 4. For the user's answer, open that question file, write their actual words, and set status to answered.
-5. For a worker result, write `/workspace/sum/tasks/<id>/report.md`. Leave it a claim. Add a line to `inbox.md` that verify is owed.
+5. For a worker result, require `/workspace/sum/tasks/<id>/report.md` written by the worker. Do not author or overwrite that claim. Add a line to `inbox.md` that verify is owed.
 6. After your verification run, write `/workspace/sum/tasks/<id>/verification.md` as that run, distinct from the report.
 
 ## How to validate the result
