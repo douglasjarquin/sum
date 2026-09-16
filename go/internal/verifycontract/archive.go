@@ -1,6 +1,7 @@
 package verifycontract
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +30,29 @@ func readBounded(path string) ([]byte, error) {
 		return nil, fmt.Errorf("verification file %s exceeds %d bytes or is not regular", path, commitFileMaxBytes)
 	}
 	return os.ReadFile(path)
+}
+
+type boundedOutput struct {
+	bytes.Buffer
+	limit int
+}
+
+func (b *boundedOutput) Write(data []byte) (int, error) {
+	if b.Len()+len(data) > b.limit {
+		return 0, fmt.Errorf("output exceeds %d bytes", b.limit)
+	}
+	return b.Buffer.Write(data)
+}
+
+func gitOutputBounded(limit int, args ...string) ([]byte, error) {
+	var output boundedOutput
+	output.limit = limit
+	command := exec.Command("git", args...)
+	command.Stdout = &output
+	if err := command.Run(); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
 }
 
 func MaterializeCommit(repo, revision string) (string, func(), error) {
@@ -123,7 +147,7 @@ func MaterializeCommit(repo, revision string) (string, func(), error) {
 }
 
 func commitFile(repo, revision, relative string) ([]byte, bool, error) {
-	listing, err := exec.Command("git", "-C", repo, "ls-tree", "-z", revision, "--", relative).Output()
+	listing, err := gitOutputBounded(commitFileMaxBytes, "-C", repo, "ls-tree", "-z", revision, "--", relative)
 	if err != nil {
 		return nil, false, fmt.Errorf("inspect committed path %s: %w", relative, err)
 	}
@@ -150,7 +174,7 @@ func commitFile(repo, revision, relative string) ([]byte, bool, error) {
 	if size > commitFileMaxBytes {
 		return nil, false, fmt.Errorf("committed path %s exceeds %d bytes", relative, commitFileMaxBytes)
 	}
-	data, err := exec.Command("git", "-C", repo, "show", revision+":"+relative).Output()
+	data, err := gitOutputBounded(commitFileMaxBytes, "-C", repo, "show", revision+":"+relative)
 	if err != nil {
 		return nil, false, fmt.Errorf("read committed path %s: %w", relative, err)
 	}
@@ -164,7 +188,7 @@ func materializeDirectory(repo, revision, relative, root string) error {
 	if relative == "." {
 		return nil
 	}
-	listing, err := exec.Command("git", "-C", repo, "ls-tree", "-d", "-z", revision, "--", relative).Output()
+	listing, err := gitOutputBounded(commitFileMaxBytes, "-C", repo, "ls-tree", "-d", "-z", revision, "--", relative)
 	if err != nil {
 		return fmt.Errorf("inspect committed directory %s: %w", relative, err)
 	}

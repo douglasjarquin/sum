@@ -310,6 +310,7 @@ func TestRunnerRejectsTraversalInFreshnessPaths(t *testing.T) {
 		line string
 	}{
 		{name: "slash", line: "inputs = [\"../outside\"]\n"},
+		{name: "embedded-slash", line: "inputs = [\"inside/../outside\"]\n"},
 		{name: "backslash", line: `inputs = ['..\outside']` + "\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
