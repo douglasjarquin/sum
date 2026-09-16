@@ -201,6 +201,26 @@ func TestDispatchRecordsNotYetStandardizedWithoutContract(t *testing.T) {
 	}
 }
 
+func TestPrepareRecordsOversizedVerificationPolicy(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "oversized", map[string]string{
+		"README.md": "An oversized-contract project.\n",
+		"VERIFY.md": strings.Repeat("x", 256*1024+1),
+	})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	policy := asMap(task["verification_policy"])
+	if asString(policy["status"]) != "not-yet-standardized" || !strings.Contains(asString(policy["snapshot_error"]), "exceeds") {
+		t.Fatalf("verification policy = %v, want a durable oversized-contract reason", policy)
+	}
+	brief, err := os.ReadFile(asString(task["brief_path"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(brief), "not-yet-standardized") || !strings.Contains(string(brief), asString(policy["snapshot_error"])) {
+		t.Fatalf("brief = %s, want the recorded oversized-contract reason", brief)
+	}
+}
+
 func TestBriefIncludesReferencesForUnstandardizedPolicy(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "plain-brief", map[string]string{"README.md": "No contract here.\n"})

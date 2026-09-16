@@ -249,11 +249,14 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		return failPrepare(s, tid, fmt.Errorf("Herdr returned a checkout that does not match the task. Work is preserved; inspect it manually."))
 	}
 	contractRoot, cleanupContract, err := verifycontract.MaterializeCommit(repo, baseSHA)
+	var policy *ordjson.Object
 	if err != nil {
-		return failPrepare(s, tid, err)
+		policy = verifycontract.PolicyAtDispatch(worktreePath, baseSHA, environment.VerificationContractStatusAtDispatch(worktreePath, args.RuntimeRoot))
+		policy.Set("snapshot_error", err.Error())
+	} else {
+		defer cleanupContract()
+		policy = verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, args.RuntimeRoot))
 	}
-	defer cleanupContract()
-	policy := verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, args.RuntimeRoot))
 	verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{
 		Repository:  repo,
 		Project:     projectObj,

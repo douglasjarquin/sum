@@ -241,6 +241,9 @@ func ValidateCommittedPolicy(repo string, expected *ordjson.Object) error {
 	base := stringField(expected, "base_sha")
 	root, cleanup, err := MaterializeCommit(repo, base)
 	if err != nil {
+		if stringField(expected, "status") == "not-yet-standardized" && strings.Contains(err.Error(), "exceeds") {
+			return nil
+		}
 		return err
 	}
 	defer cleanup()

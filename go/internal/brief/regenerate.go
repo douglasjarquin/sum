@@ -221,6 +221,13 @@ func verificationContractText(task *ordjson.Object) string {
 		if checks := requiredChecks(policy); len(checks) > 0 {
 			lines = append(lines, fmt.Sprintf("- Required project checks recorded at dispatch: `%s`. This is the approved base snapshot; do not replace it with an inherited task or a worker-selected command.", strings.Join(checks, "`, `")))
 		}
+		reason := asString(func() any { v, _ := policy.Get("snapshot_error"); return v }())
+		if reason == "" {
+			reason = asString(func() any { v, _ := policy.Get("reason"); return v }())
+		}
+		if reason != "" {
+			lines = append(lines, fmt.Sprintf("- Dispatch recorded this reason for the unstandardized status: %s", reason))
+		}
 		if runtime := objectField(policy, "source_runtime"); runtime != nil {
 			if rubric := objectField(runtime, "rubric"); rubric != nil {
 				path := asString(func() any { v, _ := rubric.Get("path"); return v }())
