@@ -17,6 +17,8 @@ import (
 
 const Version = "1.5.25"
 
+const engineeringPrinciplesReference = ".agents/skills/verify/references/engineering-principles.md"
+
 var (
 	sumSkillNames      = []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker"}
 	portableSkillNames = []string{"create-verification", "evidence", "maintain-verification", "verify"}
@@ -78,6 +80,10 @@ func inventory(root string) (*ordjson.Object, error) {
 			if exists(path) {
 				errors = append(errors, fmt.Sprintf("leftover unprefixed skill alias: %s", path))
 			}
+		}
+		referencePath := filepath.Join(root, engineeringPrinciplesReference)
+		if !isFile(referencePath) {
+			errors = append(errors, fmt.Sprintf("missing portable reference: %s", referencePath))
 		}
 	}
 
