@@ -38,7 +38,7 @@ SCHEMA = 1
 CONTRACT_FILE = "VERIFY.md"
 REQUIRED_HEADINGS = ("Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts")
 SCENARIO_STATUSES = ("pass", "fail", "blocked", "not-run", "not-applicable")
-POLICY_FILES_DEFAULT = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
+POLICY_FILES_DEFAULT = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/", "AGENTS.md", "Agents.md", "ARCHITECTURE.md", "docs/ARCHITECTURE.md", "CODEOWNERS", ".github/CODEOWNERS", ".github/workflows/")
 SNAPSHOT_BASE_PATHS = ("VERIFY.md", "mise.toml", ".mise.toml", ".mise/config.toml", "mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test")
 MAX_VERIFICATION_FILE_BYTES = 256 * 1024
 MAX_CONTRACT_LIST_ITEMS = 256
@@ -371,12 +371,35 @@ def freshness_state(root: Path, freshness):
     return {"fresh": True, "reason": None}
 
 
+def extras_from_verify_text(text: str):
+    match = FENCE.search(text)
+    if not match:
+        return []
+    try:
+        config = tomllib.loads(match.group(1))
+    except tomllib.TOMLDecodeError:
+        return []
+    extra = config.get("policy_files", [])
+    try:
+        return bounded_string_list(extra, f"{CONTRACT_FILE} `policy_files`", paths=True)
+    except Blocked:
+        return []
+
+
+def policy_files_at_ref(root: Path, ref: str):
+    shown = git(root, "show", f"{ref}:{CONTRACT_FILE}", check=False)
+    if shown.returncode:
+        return []
+    return extras_from_verify_text(shown.stdout)
+
+
 def policy_change(root: Path, base: str | None, files):
     if not base:
         return {"checked": False, "base": None, "changed": []}
     if git(root, "rev-parse", "--verify", "--quiet", base + "^{commit}", check=False).returncode:
         raise Blocked(f"--base {base!r} is not a commit in this repository.")
-    result = git(root, "diff", "--name-only", f"{base}...HEAD", "--", *files)
+    protected = sorted(set(files) | set(POLICY_FILES_DEFAULT) | set(policy_files_at_ref(root, base)))
+    result = git(root, "diff", "--name-only", f"{base}...HEAD", "--", *protected)
     changed = [line for line in result.stdout.splitlines() if line.strip()]
     return {"checked": True, "base": base, "changed": changed}
 
@@ -482,7 +505,7 @@ def main(argv=None):
             raise SystemExit(f"--scenario names id(s) not present in any feature map: {', '.join(unknown)}")
         record["requirements"] = check_requirements(contract["requires"])
         record["task"] = mise_task(root, contract["task_owner"])
-        record["policy"] = policy_change(root, args.base, [*contract["policy_files"], *(m["path"] for m in maps)])  # Maps are policy too.
+        record["policy"] = policy_change(root, args.base, [*contract["policy_files"], *(m["path"] for m in maps)])  # Maps are policy too. Base extras stay protected even if HEAD drops them.
         artifacts = root / contract["artifacts"]
         ignored = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(artifacts)], capture_output=True).returncode == 0
         record["artifacts"] = {"dir": contract["artifacts"], "git_ignored": ignored}

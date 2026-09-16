@@ -28,7 +28,7 @@ const (
 
 var (
 	requiredHeadings = []string{"Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts"}
-	defaultPolicy    = []string{"VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/"}
+	defaultPolicy    = []string{"VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/", "AGENTS.md", "Agents.md", "ARCHITECTURE.md", "docs/ARCHITECTURE.md", "CODEOWNERS", ".github/CODEOWNERS", ".github/workflows/"}
 
 	fence          = regexp.MustCompile("(?sm)^```verify[ \t]*\n(.*?)^```[ \t]*$")
 	heading        = regexp.MustCompile(`(?m)^#{2,3}\s+(.+?)\s*$`)

@@ -687,6 +687,72 @@ func TestRunnerReportsRequiredEvidence(t *testing.T) {
 	}
 }
 
+func TestRunnerFlagsAgentsMdAsPolicyChange(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "agents-policy"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	v.fill(repo, "cli")
+	mustWrite(t, filepath.Join(repo, "AGENTS.md"), "# Agents\nbase instructions\n")
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "base with AGENTS.md")
+	base := git(t, repo, "rev-parse", "HEAD")
+	mustWrite(t, filepath.Join(repo, "AGENTS.md"), "# Agents\nchanged instructions\n")
+	git(t, repo, "add", "AGENTS.md")
+	git(t, repo, "commit", "-q", "-m", "change AGENTS.md")
+	_, record, stderr := v.runner(repo, "--base", base)
+	changed := asSlice(asMap(record["policy"])["changed"])
+	found := false
+	for _, item := range changed {
+		if asString(item) == "AGENTS.md" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("policy.changed = %v stderr=%s, want AGENTS.md", asMap(record["policy"])["changed"], stderr)
+	}
+	if record["requires_root_review"] != true {
+		t.Fatalf("requires_root_review = %v, want true", record["requires_root_review"])
+	}
+}
+
+func TestRunnerKeepsDroppedBasePolicyFileProtected(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "dropped-policy"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	v.fill(repo, "cli")
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"\n", "artifacts = \".artifacts/verification\"\npolicy_files = [\"docs/architecture.md\"]\n", 1)
+	mustWrite(t, contract, body)
+	mustWrite(t, filepath.Join(repo, "docs", "architecture.md"), "# Architecture\nbase\n")
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "base lists architecture.md as policy")
+	base := git(t, repo, "rev-parse", "HEAD")
+	mustWrite(t, contract, strings.Replace(readFile(t, contract), "policy_files = [\"docs/architecture.md\"]\n", "", 1))
+	mustWrite(t, filepath.Join(repo, "docs", "architecture.md"), "# Architecture\nweakened\n")
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "drop policy_files and edit architecture.md")
+	_, record, stderr := v.runner(repo, "--base", base)
+	changed := asSlice(asMap(record["policy"])["changed"])
+	found := false
+	for _, item := range changed {
+		if asString(item) == "docs/architecture.md" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("policy.changed = %v stderr=%s, want docs/architecture.md after it was dropped from policy_files", asMap(record["policy"])["changed"], stderr)
+	}
+	if record["requires_root_review"] != true {
+		t.Fatalf("requires_root_review = %v, want true", record["requires_root_review"])
+	}
+}
+
 func (v *verifyLab) runnerWithEnv(repo string, env []string, args ...string) (int, map[string]any, string) {
 	script := filepath.Join(repo, ".agents/skills/verify/scripts/verify_run.py")
 	code, rec, _, stderr := runPy(v.t, env, script, repo, append([]string{"--json"}, args...)...)
