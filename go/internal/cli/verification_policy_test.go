@@ -291,8 +291,13 @@ func TestBriefNamesRequiredEvidenceScenarios(t *testing.T) {
 	if strings.Contains(text, "`greeting.exit-code`") {
 		t.Fatal("brief names a scenario that requires no comparison")
 	}
-	if !strings.Contains(text, "Before delivery, capture a before/after comparison") {
-		t.Fatalf("brief does not require the comparison before delivery:\n%s", text)
+	required := asSlice(asMap(task["verification_policy"])["evidence_required"])
+	if len(required) != 1 || !reflect.DeepEqual(asMap(required[0]), map[string]any{
+		"scenario": "greeting.render",
+		"feature":  "greeting",
+		"map":      "docs/features/greeting.md",
+	}) {
+		t.Fatalf("evidence_required = %v, want the mapped comparison requirement", required)
 	}
 	if !strings.Contains(text, "python3 .agents/skills/verify/scripts/verify_run.py --base "+asString(task["base_sha"])) {
 		t.Fatalf("brief does not name the runner and base:\n%s", text)
