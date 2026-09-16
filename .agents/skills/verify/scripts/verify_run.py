@@ -39,6 +39,7 @@ CONTRACT_FILE = "VERIFY.md"
 REQUIRED_HEADINGS = ("Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts")
 SCENARIO_STATUSES = ("pass", "fail", "blocked", "not-run", "not-applicable")
 POLICY_FILES_DEFAULT = ("VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/", ".agents/skills/create-verification/", ".agents/skills/maintain-verification/")
+SNAPSHOT_BASE_PATHS = ("VERIFY.md", "mise.toml", ".mise.toml", ".mise/config.toml", "mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test")
 MAX_VERIFICATION_FILE_BYTES = 256 * 1024
 MAX_CONTRACT_LIST_ITEMS = 256
 MAX_CONTRACT_ITEM_CHARS = 512
@@ -179,11 +180,36 @@ def policy_file_set(extra):
     return sorted(set(POLICY_FILES_DEFAULT) | set(extra))
 
 
-def load_feature_maps(root: Path, index_relative: str):
+def snapshot_file_bytes(root: Path, paths):
+    total = 0
+    for relative in paths:
+        path = root / relative
+        try:
+            info = path.lstat()
+        except OSError:
+            continue
+        if path.is_symlink() or not stat.S_ISREG(info.st_mode):
+            continue
+        if info.st_size > MAX_VERIFICATION_FILE_BYTES:
+            raise Blocked(f"committed path {relative} exceeds {MAX_VERIFICATION_FILE_BYTES} bytes")
+        total += info.st_size
+        if total > MAX_CONTRACT_SNAPSHOT_BYTES:
+            raise Blocked(f"verification contract snapshot exceeds {MAX_CONTRACT_SNAPSHOT_BYTES} bytes")
+    return total
+
+
+def load_feature_maps(root: Path, index_relative: str, owner_relative: str = "."):
     """The index links every feature map; each map lists scenarios as table rows `| id | ... | automated|manual ... |`."""
     index = root / index_relative
     if path_contains_symlink(index, root):
         raise Blocked(f"Feature-map index {index_relative} traverses a symlink.")
+    snapshot_paths: set[str] = set(SNAPSHOT_BASE_PATHS)
+    snapshot_paths.add(index_relative)
+    if owner_relative != ".":
+        snapshot_paths.update(str(Path(owner_relative) / relative) for relative in SNAPSHOT_BASE_PATHS[1:])
+    if len(snapshot_paths) > MAX_CONTRACT_SNAPSHOT_FILES:
+        raise Blocked(f"verification contract snapshot references more than {MAX_CONTRACT_SNAPSHOT_FILES} files")
+    snapshot_bytes = snapshot_file_bytes(root, snapshot_paths)
     try:
         index_bytes = read_bounded(index)
     except Blocked:
@@ -193,8 +219,7 @@ def load_feature_maps(root: Path, index_relative: str):
     except UnicodeDecodeError as exc:
         raise Blocked(f"Feature-map index {index_relative} is not valid UTF-8: {exc}")
     maps = [{"path": index_relative, "sha256": hashlib.sha256(index_bytes).hexdigest()}]
-    snapshot_files = 1
-    snapshot_bytes = len(index_bytes)
+    snapshot_files = len(snapshot_paths)
     scenarios = []
     seen = set()
     for link in LINK.findall(index_text):
@@ -214,13 +239,17 @@ def load_feature_maps(root: Path, index_relative: str):
             map_bytes = read_bounded(target)
         except Blocked:
             raise Blocked(f"Feature map {relative} linked from {index_relative} is missing.")
-        snapshot_files += 1
-        if snapshot_files > MAX_CONTRACT_SNAPSHOT_FILES:
+        relative_text = str(relative)
+        is_new = relative_text not in snapshot_paths
+        snapshot_files += int(is_new)
+        if is_new and snapshot_files > MAX_CONTRACT_SNAPSHOT_FILES:
             raise Blocked(f"verification contract snapshot references more than {MAX_CONTRACT_SNAPSHOT_FILES} files")
-        snapshot_bytes += len(map_bytes)
-        if snapshot_bytes > MAX_CONTRACT_SNAPSHOT_BYTES:
+        if is_new and snapshot_bytes + len(map_bytes) > MAX_CONTRACT_SNAPSHOT_BYTES:
             raise Blocked(f"verification contract snapshot exceeds {MAX_CONTRACT_SNAPSHOT_BYTES} bytes")
-        maps.append({"path": str(relative), "sha256": hashlib.sha256(map_bytes).hexdigest()})
+        if is_new:
+            snapshot_paths.add(relative_text)
+            snapshot_bytes += len(map_bytes)
+        maps.append({"path": relative_text, "sha256": hashlib.sha256(map_bytes).hexdigest()})
         try:
             map_text = map_bytes.decode("utf-8")
         except UnicodeDecodeError as exc:
@@ -306,11 +335,32 @@ def freshness_state(root: Path, freshness):
 
     def newest(paths):
         stamp = None
+        file_count = 0
+        total_bytes = 0
         for relative in paths:
             path = root / relative
-            files = [p for p in path.rglob("*") if p.is_file()] if path.is_dir() else ([path] if path.is_file() else [])
+            if path_contains_symlink(path, root):
+                raise Blocked(f"freshness path {relative} traverses a symlink")
+            try:
+                files = [p for p in path.rglob("*") if p.is_file()] if path.is_dir() else ([path] if path.is_file() else [])
+            except OSError as exc:
+                raise Blocked(f"freshness path {relative} is unreadable: {exc}")
             for f in files:
-                stamp = max(stamp or 0, f.stat().st_mtime)
+                if path_contains_symlink(f, root):
+                    raise Blocked(f"freshness path {relative} traverses a symlink")
+                try:
+                    info = f.lstat()
+                except OSError as exc:
+                    raise Blocked(f"freshness path {relative} is unreadable: {exc}")
+                if not stat.S_ISREG(info.st_mode):
+                    continue
+                file_count += 1
+                total_bytes += info.st_size
+                if file_count > MAX_CONTRACT_SNAPSHOT_FILES:
+                    raise Blocked(f"freshness path {relative} contains more than {MAX_CONTRACT_SNAPSHOT_FILES} files")
+                if total_bytes > MAX_CONTRACT_SNAPSHOT_BYTES:
+                    raise Blocked(f"freshness path {relative} exceeds {MAX_CONTRACT_SNAPSHOT_BYTES} bytes")
+                stamp = max(stamp or 0, info.st_mtime)
         return stamp
 
     out, inp = newest(outputs), newest(inputs)
@@ -425,7 +475,7 @@ def main(argv=None):
         record["provisional"] = dirty
         contract: dict[str, Any] = load_contract(root)
         record["contract"] = {"path": CONTRACT_FILE, "sha256": contract["sha256"], "entrypoint": contract["entrypoint"], "task_owner": contract["task_owner"]}
-        maps, scenarios = load_feature_maps(root, contract["feature_maps"])
+        maps, scenarios = load_feature_maps(root, contract["feature_maps"], contract["task_owner"])
         record["feature_maps"] = maps
         unknown = sorted(set(outcomes) - {s["id"] for s in scenarios})
         if unknown:

@@ -18,6 +18,11 @@ const (
 	commitSnapshotMaxFiles = 256
 )
 
+var snapshotBaselinePaths = []string{
+	ContractFile, "mise.toml", ".mise.toml", ".mise/config.toml",
+	"mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test",
+}
+
 func readBounded(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -64,7 +69,7 @@ func MaterializeCommit(repo, revision string) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("create contract snapshot: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(root) }
-	paths := []string{ContractFile, "mise.toml", ".mise.toml", ".mise/config.toml", "mise-tasks/verify", ".mise/tasks/verify", "mise-tasks/test", ".mise/tasks/test"}
+	paths := append([]string{}, snapshotBaselinePaths...)
 	contract, found, err := commitFile(repo, revision, ContractFile)
 	if err != nil {
 		cleanup()

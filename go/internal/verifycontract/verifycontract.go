@@ -211,7 +211,7 @@ func Read(worktree string) (*Contract, error) {
 	if err != nil {
 		return nil, err
 	}
-	paths, hashes, scenarioIDs, scenarios, err := readFeatureMaps(worktree, maps)
+	paths, hashes, scenarioIDs, scenarios, err := readFeatureMaps(worktree, maps, owner)
 	if err != nil {
 		return nil, err
 	}
@@ -409,7 +409,7 @@ func policyFileSet(declared any) ([]string, error) {
 	return out, nil
 }
 
-func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []string, []Scenario, error) {
+func readFeatureMaps(worktree, indexRelative, owner string) ([]string, []FileHash, []string, []Scenario, error) {
 	root, err := filepath.EvalSymlinks(worktree)
 	if err != nil {
 		root = worktree
@@ -418,13 +418,29 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []st
 	if pathContainsSymlink(root, index) {
 		return nil, nil, nil, nil, fmt.Errorf("Feature-map index %s traverses a symlink", indexRelative)
 	}
+	planned := map[string]bool{}
+	for _, relative := range snapshotBaselinePaths {
+		planned[relative] = true
+	}
+	planned[indexRelative] = true
+	if owner != "." {
+		for _, relative := range snapshotBaselinePaths[1:] {
+			planned[filepath.ToSlash(filepath.Join(owner, relative))] = true
+		}
+	}
+	if len(planned) > commitSnapshotMaxFiles {
+		return nil, nil, nil, nil, fmt.Errorf("verification contract snapshot references more than %d files", commitSnapshotMaxFiles)
+	}
 	body, err := readBounded(index)
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("Feature-map index %s is missing", indexRelative)
 	}
+	snapshotBytes, err := snapshotBytesAt(worktree, planned)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 	paths := []string{indexRelative}
 	hashes := []FileHash{{Path: indexRelative, SHA256: sha256Text(string(body))}}
-	snapshotBytes := len(body)
 	var scenarioIDs []string
 	var scenarios []Scenario
 	seen := map[string]bool{}
@@ -453,14 +469,18 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []st
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("Feature map %s linked from %s is missing", relative, indexRelative)
 		}
-		if len(paths)+1 > commitSnapshotMaxFiles {
+		isNew := !planned[relative]
+		if isNew && len(planned)+1 > commitSnapshotMaxFiles {
 			return nil, nil, nil, nil, fmt.Errorf("verification contract snapshot references more than %d files", commitSnapshotMaxFiles)
 		}
-		if snapshotBytes+len(mapBody) > commitSnapshotMaxSize {
+		if isNew && snapshotBytes+len(mapBody) > commitSnapshotMaxSize {
 			return nil, nil, nil, nil, fmt.Errorf("verification contract snapshot exceeds %d bytes", commitSnapshotMaxSize)
 		}
+		planned[relative] = true
 		paths = append(paths, relative)
-		snapshotBytes += len(mapBody)
+		if isNew {
+			snapshotBytes += len(mapBody)
+		}
 		hashes = append(hashes, FileHash{Path: relative, SHA256: sha256Text(string(mapBody))})
 		ids, rows, err := mapScenarios(relative, string(mapBody), seen)
 		if err != nil {
@@ -470,6 +490,32 @@ func readFeatureMaps(worktree, indexRelative string) ([]string, []FileHash, []st
 		scenarios = append(scenarios, rows...)
 	}
 	return paths, hashes, scenarioIDs, scenarios, nil
+}
+
+func snapshotBytesAt(root string, paths map[string]bool) (int, error) {
+	total := 0
+	for relative := range paths {
+		path := filepath.Join(root, filepath.FromSlash(relative))
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("inspect committed path %s: %w", relative, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			continue
+		}
+		body, err := readBounded(path)
+		if err != nil {
+			return 0, fmt.Errorf("read committed path %s: %w", relative, err)
+		}
+		total += len(body)
+		if total > commitSnapshotMaxSize {
+			return 0, fmt.Errorf("verification contract snapshot exceeds %d bytes", commitSnapshotMaxSize)
+		}
+	}
+	return total, nil
 }
 
 func mapScenarios(relative, body string, seen map[string]bool) ([]string, []Scenario, error) {

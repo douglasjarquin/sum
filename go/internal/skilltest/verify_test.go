@@ -578,6 +578,34 @@ func TestRunnerRejectsSymlinkedTaskOwner(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsSymlinkedFreshnessPath(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "symlinked-freshness"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	outside := filepath.Join(v.stop, "outside-freshness")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "state.txt"), []byte("external\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repo, "external-state")); err != nil {
+		t.Fatal(err)
+	}
+	contract := filepath.Join(repo, "VERIFY.md")
+	body := strings.Replace(readFile(t, contract), "artifacts = \".artifacts/verification\"", "artifacts = \".artifacts/verification\"\n[freshness]\noutputs = [\"external-state\"]", 1)
+	mustWrite(t, contract, body)
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "reject symlinked freshness path")
+	head := git(t, repo, "rev-parse", "HEAD")
+	code, record, stderr := v.runner(repo, "--base", head)
+	if code != 2 || asString(record["outcome"]) != "blocked" || !strings.Contains(asString(record["blocked_reason"]), "symlink") {
+		t.Fatalf("runner %v code=%d stderr=%s, want a blocked symlinked freshness path", record, code, stderr)
+	}
+}
+
 func TestGenerationKeepsUserEdits(t *testing.T) {
 	v := newVerifyLab(t)
 	repo := v.rawRepo("service", filepath.Join(v.stop, "custom"))
