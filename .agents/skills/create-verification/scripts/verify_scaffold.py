@@ -9,8 +9,10 @@ that the inspection would now generate differently is kept too, with the proposa
 conflict listed. A vendored skill file that differs from the shipped copy is a conflict as well. An explicitly declared `feature_maps` location in an existing VERIFY.md is preserved.
 
 Usage:
-  verify_scaffold.py [--root DIR] [--inspect] [--write] [--surface web|cli|service]... [--json]
-  --inspect (default) prints what was found and what would be generated; --write creates the missing files.
+  verify_scaffold.py [--root DIR] [--inspect] [--write] [--update] [--revision SHA] [--surface web|cli|service]... [--json]
+  --inspect (default) prints what was found and what would be generated and writes nothing.
+  --write creates the missing files.
+  --update --revision SHA copies unchanged stock skill files from that immutable commit. It never overwrites VERIFY.md or local edits.
 Exit codes: 0 ok, 1 conflicts or nothing verifiable found (the repository still needs a person), 2 not a repository, 3 usage.
 Works in any clone with Git and Python 3.11+; no sum, Herdr, or path outside this skill directory and the target repository.
 """
@@ -24,6 +26,7 @@ if sys.version_info < (3, 11):
 
 import argparse
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -38,6 +41,9 @@ VENDORED = ("verify", "evidence", "maintain-verification")
 HARNESS_ALIAS_DIR = ".claude/skills"
 DEFAULT_MAPS = "docs/features/README.md"
 ARTIFACTS = ".artifacts/verification"
+PROVENANCE = ".agents/skills/.verification-provenance.json"
+IMMUTABLE_SHA = re.compile(r"^[0-9a-f]{40}$")
+README_GAP_TASKS = ("lint",)
 FENCE = re.compile(r"^```verify[ \t]*\n(.*?)^```[ \t]*$", re.S | re.M)
 TODO = "TODO(verify)"
 CHECK_TASK_NAMES = ("test", "tests", "check", "lint", "typecheck", "build", "unit", "e2e", "spec")
@@ -217,7 +223,231 @@ def existing_contract(root: Path):
 
 
 def guidance_files(root: Path):
-    return [n for n in ("README.md", "AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md", "VERIFY.md", "docs/README.md") if (root / n).is_file()]
+    names = (
+        "README.md", "AGENTS.md", "Agents.md", "CLAUDE.md", "CONTRIBUTING.md", "VERIFY.md",
+        "docs/README.md", "ARCHITECTURE.md", "docs/ARCHITECTURE.md", "CODEOWNERS", ".github/CODEOWNERS",
+    )
+    found = [n for n in names if (root / n).is_file()]
+    if (root / ".github" / "workflows").is_dir():
+        found.append(".github/workflows/")
+    return found
+
+
+def verify_run_cycle(root: Path):
+    """True when a `verify` task would invoke `mise run verify` again."""
+    for name in ("mise.toml", ".mise.toml"):
+        text = read(root / name)
+        if re.search(r'(?m)^verify\s*=\s*["\'].*mise run verify', text):
+            return True
+        if re.search(r'(?ms)^\[tasks\.verify\].*?^run\s*=\s*["\'].*mise run verify', text):
+            return True
+    return False
+
+
+def skill_git_root():
+    result = subprocess.run(["git", "-C", str(SKILL_DIR), "rev-parse", "--show-toplevel"], text=True, capture_output=True)
+    if result.returncode:
+        return None
+    return Path(result.stdout.strip()).resolve()
+
+
+def sha256_bytes(data: bytes):
+    return hashlib.sha256(data).hexdigest()
+
+
+def resolve_revision(requested, git_root, problems):
+    """A source revision is a 40-character commit SHA. Branch names and latest are refused."""
+    if requested is None:
+        if git_root is None:
+            return None
+        head = subprocess.run(["git", "-C", str(git_root), "rev-parse", "HEAD"], text=True, capture_output=True)
+        return head.stdout.strip() if head.returncode == 0 else None
+    if not IMMUTABLE_SHA.fullmatch(requested):
+        problems.append("source revision must be an immutable 40-character commit SHA, not a branch name or latest")
+        return None
+    if git_root is None:
+        problems.append("source revision must be an immutable commit in the skill git repository")
+        return None
+    probe = subprocess.run(["git", "-C", str(git_root), "cat-file", "-t", requested], text=True, capture_output=True)
+    if probe.returncode != 0 or probe.stdout.strip() != "commit":
+        problems.append("source revision must be an immutable commit in the skill git repository")
+        return None
+    return requested
+
+
+def owner_for(root: Path, info, task):
+    for entry in info["mise"]["own"]:
+        if entry["name"] != task:
+            continue
+        source = entry.get("source")
+        if not source:
+            break
+        path = Path(source)
+        try:
+            return str(path.resolve().relative_to(root))
+        except ValueError:
+            return path.name
+    if task in info["package_scripts"]:
+        return "package.json"
+    for target in info["make_targets"]:
+        if target["name"] == task:
+            return "Justfile" if target["runner"] == "just" else "Makefile"
+    return None
+
+
+def example_for(info, task):
+    if task in ("test", "tests", "unit", "spec", "e2e", "check"):
+        for location in info["tests"]:
+            if location.get("examples"):
+                return location["examples"][0]
+        if info["cli_entrypoints"]:
+            return info["cli_entrypoints"][0]
+    return None
+
+
+def readme_map(root: Path, info):
+    """Observed task -> owner -> example -> check. Missing cells stay null. File existence is not enforcement."""
+    rows = []
+    seen = set()
+    for name in info["check_tasks"]:
+        owner = owner_for(root, info, name)
+        example = example_for(info, name)
+        check = f"mise run {name}"
+        observed = bool(owner and example and check)
+        rows.append({
+            "task": name,
+            "owner": owner if observed else None,
+            "example": example if observed else None,
+            "check": check if observed else None,
+            "kind": "observed" if observed else "gap",
+        })
+        seen.add(name)
+    for script in info["package_scripts"]:
+        if script in CHECK_TASK_NAMES and script not in seen:
+            example = example_for(info, script)
+            check = f"npm run {script}"
+            observed = bool(example)
+            rows.append({
+                "task": script,
+                "owner": "package.json" if observed else None,
+                "example": example if observed else None,
+                "check": check if observed else None,
+                "kind": "observed" if observed else "gap",
+            })
+            seen.add(script)
+    for target in info["make_targets"]:
+        name = target["name"]
+        if name in CHECK_TASK_NAMES and name not in seen:
+            example = example_for(info, name)
+            check = f"{target['runner']} {name}"
+            observed = bool(example)
+            rows.append({
+                "task": name,
+                "owner": ("Justfile" if target["runner"] == "just" else "Makefile") if observed else None,
+                "example": example if observed else None,
+                "check": check if observed else None,
+                "kind": "observed" if observed else "gap",
+            })
+            seen.add(name)
+    for name in README_GAP_TASKS:
+        if name not in seen:
+            rows.append({"task": name, "owner": None, "example": None, "check": None, "kind": "gap"})
+    return rows
+
+
+def stock_files(git_root: Path, revision: str):
+    files = {}
+    if git_root is None or not revision:
+        return files
+    prefixes = [f".agents/skills/{name}" for name in VENDORED]
+    listed = subprocess.run(["git", "-C", str(git_root), "ls-tree", "-r", "--name-only", revision, "--", *prefixes], text=True, capture_output=True)
+    if listed.returncode:
+        return files
+    for rel in listed.stdout.splitlines():
+        if not rel or "__pycache__" in rel.split("/"):
+            continue
+        shown = subprocess.run(["git", "-C", str(git_root), "show", f"{revision}:{rel}"], capture_output=True)
+        if shown.returncode == 0:
+            files[rel] = shown.stdout
+    return files
+
+
+def load_provenance(root: Path):
+    try:
+        data = json.loads(read(root / PROVENANCE) or "")
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_provenance(root: Path, git_root, revision, files):
+    remote = ""
+    if git_root is not None:
+        shown = subprocess.run(["git", "-C", str(git_root), "remote", "get-url", "origin"], text=True, capture_output=True)
+        remote = (shown.stdout or "").strip()
+    payload = {"schema": 1, "source_repository": remote, "source_revision": revision or "", "at": utc_now(), "files": files}
+    path = root / PROVENANCE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def provenance_files_from_tree(root: Path):
+    files = []
+    for name in VENDORED:
+        dest = root / ".agents/skills" / name
+        if not dest.is_dir():
+            continue
+        for path in sorted(p for p in dest.rglob("*") if p.is_file() and "__pycache__" not in p.parts):
+            files.append({"path": str(path.relative_to(root)), "sha256": sha256_bytes(path.read_bytes())})
+    return files
+
+
+def apply_update(root: Path, revision: str, git_root: Path, write: bool):
+    """Replace unchanged stock copies from the named revision. Local edits and VERIFY.md stay."""
+    previous = {row["path"]: row["sha256"] for row in load_provenance(root).get("files") or [] if isinstance(row, dict) and row.get("path") and row.get("sha256")}
+    stock = stock_files(git_root, revision)
+    results = []
+    recorded = []
+    for rel, data in sorted(stock.items()):
+        dest = root / rel
+        source_hash = sha256_bytes(data)
+        if dest.exists():
+            current = dest.read_bytes()
+            current_hash = sha256_bytes(current)
+            prior = previous.get(rel)
+            if current == data:
+                results.append({"path": rel, "status": "unchanged"})
+                recorded.append({"path": rel, "sha256": source_hash})
+                continue
+            if prior is None or current_hash != prior:
+                results.append({"path": rel, "status": "conflict", "note": "locally edited; kept"})
+                if prior:
+                    recorded.append({"path": rel, "sha256": prior})
+                continue
+            if write:
+                dest.write_bytes(data)
+            results.append({"path": rel, "status": "updated" if write else "would-update"})
+            recorded.append({"path": rel, "sha256": source_hash})
+            continue
+        if write:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+        results.append({"path": rel, "status": "vendored" if write else "would-vendor"})
+        recorded.append({"path": rel, "sha256": source_hash})
+    for rel, prior in previous.items():
+        if rel in stock:
+            continue
+        dest = root / rel
+        if dest.is_file() and sha256_bytes(dest.read_bytes()) == prior:
+            results.append({"path": rel, "status": "would-delete", "note": "unchanged stock absent from the named revision; not removed"})
+            recorded.append({"path": rel, "sha256": prior})
+        elif dest.is_file():
+            results.append({"path": rel, "status": "kept", "note": "project-authored or locally edited; not removed"})
+            recorded.append({"path": rel, "sha256": sha256_bytes(dest.read_bytes())})
+    changed = any(r["status"] in ("updated", "vendored") for r in results)
+    if write and (changed or not (root / PROVENANCE).is_file()):
+        write_provenance(root, git_root, revision, recorded)
+    return results
 
 
 def inspect(root: Path, surfaces_requested):
@@ -251,6 +481,7 @@ def inspect(root: Path, surfaces_requested):
         "has_verify_task": any(t["name"] == "verify" for t in tasks["own"]),
         "mentions_dist": "dist" in "\n".join(blobs),
         "inherited_verify": any(t["name"] == "verify" for t in tasks["inherited"]),
+        "verify_cycle": verify_run_cycle(root),
     }
 
 
@@ -562,24 +793,48 @@ def main(argv=None):
     parser.add_argument("--root", default=".", help="Any directory inside the target repository")
     parser.add_argument("--inspect", action="store_true", help="Report findings and the plan without writing (default)")
     parser.add_argument("--write", action="store_true", help="Create missing files; never overwrite existing ones")
+    parser.add_argument("--update", action="store_true", help="Replace unchanged stock skill files from --revision; never overwrite VERIFY.md or local edits")
+    parser.add_argument("--revision", default=None, help="Immutable 40-character source commit SHA")
     parser.add_argument("--surface", action="append", choices=("web", "cli", "service"), help="Declare a surface the inspection cannot see")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     root = resolve_root(Path(args.root).resolve())
     info = inspect(root, args.surface)
     planned = plan(root, info)
-    results = apply(root, planned, write=args.write)
     problems = []
+    git_root = skill_git_root()
+    if args.update:
+        mode = "update"
+        if not args.revision:
+            problems.append("source revision must be an immutable 40-character commit SHA, not a branch name or latest")
+            results = []
+        else:
+            revision = resolve_revision(args.revision, git_root, problems)
+            if problems or not revision:
+                if not problems:
+                    problems.append("source revision must be an immutable 40-character commit SHA, not a branch name or latest")
+                results = []
+            else:
+                results = apply_update(root, revision, git_root, write=True)
+    else:
+        mode = "write" if args.write else "inspect"
+        results = apply(root, planned, write=args.write)
+        if args.write:
+            revision = resolve_revision(args.revision, git_root, problems)
+            if not problems:
+                write_provenance(root, git_root, revision, provenance_files_from_tree(root))
     if not planned["commands"] and not info["has_verify_task"]:
         problems.append("no existing check was found (no test/lint/check task, package script, make target, or test directory); VERIFY.md names no runnable entrypoint until you declare one. "
                         "A `verify` task that merely succeeds is refused.")
     if info["inherited_verify"] and not info["has_verify_task"]:
         problems.append("a `verify` task is inherited from a parent directory; it belongs to another project and the runner will block on it until this repository defines its own.")
+    if info.get("verify_cycle"):
+        problems.append("the `verify` task runs `mise run verify`; that cycle is refused. Point verify at the checks the repository already declares.")
     if not info["mise"]["available"]:
         problems.append("mise is not on PATH; task ownership could not be checked.")
     conflicts = [r for r in results if r["status"] == "conflict"]
-    record = {"schema": 1, "at": utc_now(), "mode": "write" if args.write else "inspect", "inspection": info, "plan": {k: v for k, v in planned.items() if k != "files"},
-              "planned_files": sorted(planned["files"]), "results": results, "conflicts": conflicts, "problems": problems,
+    record = {"schema": 1, "at": utc_now(), "mode": mode, "inspection": info, "plan": {k: v for k, v in planned.items() if k != "files"},
+              "planned_files": sorted(planned["files"]), "readme_map": readme_map(root, info), "results": results, "conflicts": conflicts, "problems": problems,
               "next": ["python3 .agents/skills/verify/scripts/verify_run.py --check", "resolve every TODO(verify) placeholder from what you observed, not from guesses",
                        "python3 .agents/skills/maintain-verification/scripts/verify_audit.py", "python3 .agents/skills/verify/scripts/verify_run.py --base <merge-base>",
                        "drive one mapped feature and capture evidence with verify_capture.py, then run the teardown and confirm the evidence is still there"]}

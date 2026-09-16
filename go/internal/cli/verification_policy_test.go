@@ -340,6 +340,38 @@ func TestPrepareSnapshotSurvivesReloadBeforeStart(t *testing.T) {
 	}
 }
 
+func TestInFlightTaskKeepsPinnedPolicyAfterAdoptedRevision(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "pinned", map[string]string{
+		"README.md":                 "A pinned-policy project.\n",
+		"mise.toml":                 "[tasks]\nverify = \"true\"\n",
+		"VERIFY.md":                 standardizedContract,
+		"docs/features/README.md":   featureIndex,
+		"docs/features/greeting.md": featureMap,
+	})
+	first := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	firstHash := asString(asMap(first["verification_policy"])["contract_sha256"])
+	adopted := strings.Replace(standardizedContract, "None.", "Adopted setup.", 1)
+	if err := os.WriteFile(filepath.Join(repo, "VERIFY.md"), []byte(adopted), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", repo, "commit", "-qam", "adopted revision").CombinedOutput(); err != nil {
+		t.Fatalf("commit adopted: %v\n%s", err, out)
+	}
+	held := d.ctl(true, "show", asString(first["id"]))
+	if asString(asMap(held["verification_policy"])["contract_sha256"]) != firstHash {
+		t.Fatalf("in-flight policy = %v, want the dispatch hash %q", held["verification_policy"], firstHash)
+	}
+	second := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	secondHash := asString(asMap(second["verification_policy"])["contract_sha256"])
+	if secondHash != sha256Of(adopted) {
+		t.Fatalf("new task contract_sha256 = %q, want the adopted hash", secondHash)
+	}
+	if secondHash == firstHash {
+		t.Fatal("new task saw the in-flight snapshot instead of the adopted revision")
+	}
+}
+
 func TestStartRefusesTamperedSnapshotSeal(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "tampered", map[string]string{
