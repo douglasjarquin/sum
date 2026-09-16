@@ -678,8 +678,12 @@ func TestRunnerReportsRequiredEvidence(t *testing.T) {
 	if len(asSlice(evidence["missing"])) != 0 {
 		t.Fatalf("missing after promoting the capture %v %s", evidence["missing"], stderr)
 	}
-	if asString(evidence["root_source"]) != "VERIFY_EVIDENCE_ROOT" || asString(evidence["root"]) != promoted {
-		t.Fatalf("root %v %v", evidence["root_source"], evidence["root"])
+	wantRoot, err := filepath.EvalSymlinks(promoted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(evidence["root_source"]) != "VERIFY_EVIDENCE_ROOT" || asString(evidence["root"]) != wantRoot {
+		t.Fatalf("root %v %v want %s", evidence["root_source"], evidence["root"], wantRoot)
 	}
 }
 

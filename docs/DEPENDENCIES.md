@@ -11,7 +11,9 @@ No global Node package installation is required.
 LSP binaries come from those mise pins.
 `mise run setup` links `.local/bin/basedpyright-langserver` and `.local/bin/gopls` once.
 An existing link is never retargeted.
-Project Grok and Cursor PostToolUse hooks run `sumctl lsp ensure`.
+Project Grok, Cursor, and Codex PostToolUse hooks run `bin/lsp-ensure`.
+That wrapper fails open with empty stdout when the staged helper is missing (a Herdr worktree) or when a lagging helper prints TOON or help.
+It calls `sumctl lsp ensure` when a staged helper exists.
 That command installs only allowlisted missing binaries the same way.
 Unknown binaries are refused.
 
@@ -152,11 +154,15 @@ A release tree contains no `.sum`, and running its `bin/sumctl` directly is refu
 Only `refs/remotes/origin/*` are fetched; remotes are never rewritten and there is no second fetch.
 Under the lock it validates the manifest, the installation state schema, each non-archived task's brief schema, the installed Herdr CLI version against `release.json`, the pinned tool links, and a read-only run of the candidate helper (`--version`, `status`, `show`) against the records; then it creates the new symlink under a private name and renames it over `.local/current`.
 After that selection succeeds, a clean installation clone is fast-forwarded to the selected SHA when that SHA is already an ancestor of `origin/<default branch>` and the move is a fast-forward.
+HEAD already at the selected SHA is a no-op, not a recovery-history conflict.
 A dirty tree, a conflicting untracked file, or a non-fast-forward is left in place and reported as `deferred: checkout-instructions` with the refuse reason.
+Those cases refuse Git mutation only; the symlink still switches when the candidate is otherwise compatible.
 Development checkouts and task worktrees are not edited.
 `.local/approvals.json` records installation-bound source approval; plain `release stage` does not approve a release.
 Existing approval receipts allow compatible immutable rollback without fetching or retaining historical Git objects.
 `.local/activation.json` records committed known-good selection and any pending generation; `.local/updates.jsonl` is diagnostic history, not the recovery source of truth.
+After a successful apply, known-good is the new default and matches the serving symlink.
+If the serving default already passed its entrypoint check, pending is empty, and known-good is stale, apply records that verified default as known-good and continues; it does not refuse.
 Activation state and the independent recovery record are bound to the exact canonical state-home path as well as the installation and instance.
 Pending state is cleared only after the successful selection or recovery audit write, so a failed audit remains explicitly recoverable.
 Before switching, SUM records `pending.recovery.argv` pointing at the hash-checked prior known-good helper (`<runtime>/.local/bin/sumctl`) and checks that helper with `--version`.

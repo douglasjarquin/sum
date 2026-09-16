@@ -959,7 +959,7 @@
     "help": "Install allowlisted LSP binaries through mise into .local/bin; unknown binaries are refused; an existing link is never retargeted",
     "arguments": [],
     "subcommands": {
-      "ensure": "Read a Grok or Cursor PostToolUse event from stdin and install an allowlisted missing LSP binary; fails open"
+      "ensure": "Read a Grok, Cursor, or Codex PostToolUse event from stdin and install an allowlisted missing LSP binary; fails open"
     },
     "read_only": false,
     "read_only_subcommands": []
@@ -1791,7 +1791,7 @@
   },
   "lsp-ensure": {
     "topic": "lsp-ensure",
-    "help": "Read a Grok or Cursor PostToolUse event from stdin and install an allowlisted missing LSP binary; fails open",
+    "help": "Read a Grok, Cursor, or Codex PostToolUse event from stdin and install an allowlisted missing LSP binary; fails open",
     "arguments": [],
     "subcommands": null,
     "read_only": false,

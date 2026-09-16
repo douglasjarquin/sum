@@ -72,6 +72,77 @@ func TestEnsure_refusesUnknownBinary(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRoot_readsGrokAndCodexPayloads(t *testing.T) {
+	grokDir := t.TempDir()
+	codexDir := t.TempDir()
+	missing := filepath.Join(t.TempDir(), "gone")
+	cases := []struct {
+		name    string
+		payload string
+		want    string
+	}{
+		{
+			name: "grok workspaceRoot",
+			payload: `{
+  "hookEventName": "post_tool_use",
+  "hook_event_name": "PostToolUse",
+  "workspaceRoot": "` + grokDir + `",
+  "cwd": "` + grokDir + `",
+  "toolName": "read_file",
+  "toolInput": {"target_file": "go/internal/cli/lsp.go"}
+}`,
+			want: grokDir,
+		},
+		{
+			name: "codex cwd",
+			payload: `{
+  "hook_event_name": "PostToolUse",
+  "cwd": "` + codexDir + `",
+  "tool_name": "Bash",
+  "tool_input": {"command": "ls"},
+  "tool_response": "ok"
+}`,
+			want: codexDir,
+		},
+		{
+			name:    "relative cwd ignored",
+			payload: `{"cwd":"relative/path"}`,
+			want:    "",
+		},
+		{
+			name:    "missing path ignored",
+			payload: `{"workspaceRoot":"` + missing + `"}`,
+			want:    "",
+		},
+		{
+			name:    "empty",
+			payload: "",
+			want:    "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := WorkspaceRoot([]byte(tc.payload))
+			if got != tc.want {
+				t.Fatalf("WorkspaceRoot = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMissingBinaries_readsCodexToolResponse(t *testing.T) {
+	payload := []byte(`{
+  "hook_event_name": "PostToolUse",
+  "cwd": "/workspace",
+  "tool_name": "Bash",
+  "tool_response": "LSP server 'basedpyright' is configured but NOT INSTALLED.\nCommand not found: basedpyright-langserver\n"
+}`)
+	got := MissingBinaries(payload)
+	if len(got) != 1 || got[0] != "basedpyright-langserver" {
+		t.Fatalf("MissingBinaries = %v, want [basedpyright-langserver]", got)
+	}
+}
+
 func TestEnsure_doesNotRetargetExistingLink(t *testing.T) {
 	root, logPath := setupFakeMise(t)
 	link := filepath.Join(root, ".local", "bin", "basedpyright-langserver")

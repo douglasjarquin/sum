@@ -25,6 +25,9 @@ func TestLspEnsure_installsMissingAllowlistedBinary(t *testing.T) {
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("lsp ensure failed: %v (stderr=%s)", err, stderr.String())
 	}
+	if stdout.String() != "" {
+		t.Fatalf("hook stdout must be empty, got %q", stdout.String())
+	}
 	link := filepath.Join(root, ".local", "bin", "basedpyright-langserver")
 	if _, err := os.Lstat(link); err != nil {
 		t.Fatalf("link missing: %v", err)
@@ -44,6 +47,9 @@ func TestLspEnsure_refusesUnknownBinary(t *testing.T) {
 	cmd.SetArgs([]string{"lsp", "ensure"})
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("lsp ensure should fail open, got %v", err)
+	}
+	if stdout.String() != "" {
+		t.Fatalf("hook stdout must be empty, got %q", stdout.String())
 	}
 	if _, err := os.Lstat(filepath.Join(root, ".local", "bin", "evil-langserver")); !os.IsNotExist(err) {
 		t.Fatalf("unknown binary was linked: %v", err)
@@ -118,6 +124,9 @@ func TestLspEnsure_doesNotRetargetExistingLink(t *testing.T) {
 	if err := cmd.ExecuteContext(context.Background()); err != nil {
 		t.Fatalf("lsp ensure failed: %v", err)
 	}
+	if stdout.String() != "" {
+		t.Fatalf("hook stdout must be empty, got %q", stdout.String())
+	}
 	got, err := os.Readlink(link)
 	if err != nil {
 		t.Fatal(err)
@@ -127,6 +136,91 @@ func TestLspEnsure_doesNotRetargetExistingLink(t *testing.T) {
 	}
 	if logBody := readLspFile(t, logPath); logBody != "" {
 		t.Fatalf("mise was invoked despite an existing link: %q", logBody)
+	}
+}
+
+func TestLspEnsure_grokPostToolUsePayload(t *testing.T) {
+	root, logPath, helper := setupLspCheckout(t)
+	payload := `{
+  "hookEventName": "post_tool_use",
+  "hook_event_name": "PostToolUse",
+  "workspaceRoot": "` + root + `",
+  "cwd": "` + root + `",
+  "toolName": "lsp_diagnostics",
+  "toolResponse": "LSP server 'basedpyright' is configured but NOT INSTALLED.\nCommand not found: basedpyright-langserver\n"
+}`
+	var stdout, stderr bytes.Buffer
+	cmd := NewRoot(helper, &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(payload))
+	cmd.SetArgs([]string{"lsp", "ensure"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("lsp ensure failed: %v (stderr=%s)", err, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("hook stdout must be empty, got %q", stdout.String())
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".local", "bin", "basedpyright-langserver")); err != nil {
+		t.Fatalf("link missing: %v", err)
+	}
+	if logBody := readLspFile(t, logPath); !strings.Contains(logBody, "install pipx:basedpyright@") {
+		t.Fatalf("mise log = %q", logBody)
+	}
+}
+
+func TestLspEnsure_codexPostToolUsePayload(t *testing.T) {
+	root, logPath, helper := setupLspCheckout(t)
+	payload := `{
+  "hook_event_name": "PostToolUse",
+  "cwd": "` + root + `",
+  "tool_name": "Bash",
+  "tool_input": {"command": "gopls version"},
+  "tool_response": "Command not found: gopls\nLSP server gopls is NOT INSTALLED\n"
+}`
+	var stdout, stderr bytes.Buffer
+	cmd := NewRoot(helper, &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(payload))
+	cmd.SetArgs([]string{"lsp", "ensure"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("lsp ensure failed: %v (stderr=%s)", err, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("hook stdout must be empty, got %q", stdout.String())
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".local", "bin", "gopls")); err != nil {
+		t.Fatalf("link missing: %v", err)
+	}
+	if logBody := readLspFile(t, logPath); !strings.Contains(logBody, "install go:golang.org/x/tools/gopls@") {
+		t.Fatalf("mise log = %q", logBody)
+	}
+}
+
+func TestLspEnsure_usesPayloadWorkspaceNotInstallRoot(t *testing.T) {
+	installRoot, logPath, helper := setupLspCheckout(t)
+	workspace := t.TempDir()
+	payload := `{
+  "hookEventName": "post_tool_use",
+  "workspaceRoot": "` + workspace + `",
+  "cwd": "` + workspace + `",
+  "toolResponse": "Command not found: basedpyright-langserver\nNOT INSTALLED\n"
+}`
+	var stdout, stderr bytes.Buffer
+	cmd := NewRoot(helper, &stdout, &stderr)
+	cmd.SetIn(strings.NewReader(payload))
+	cmd.SetArgs([]string{"lsp", "ensure"})
+	if err := cmd.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("lsp ensure failed: %v (stderr=%s)", err, stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("hook stdout must be empty, got %q", stdout.String())
+	}
+	if _, err := os.Lstat(filepath.Join(workspace, ".local", "bin", "basedpyright-langserver")); err != nil {
+		t.Fatalf("workspace link missing: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(installRoot, ".local", "bin", "basedpyright-langserver")); !os.IsNotExist(err) {
+		t.Fatalf("install root was mutated: %v", err)
+	}
+	if logBody := readLspFile(t, logPath); !strings.Contains(logBody, "install pipx:basedpyright@") {
+		t.Fatalf("mise log = %q", logBody)
 	}
 }
 

@@ -362,6 +362,144 @@ func TestApply_refusesWhileActivationPending(t *testing.T) {
 	}
 }
 
+func TestApply_reconcilesStaleKnownGoodWhenHeadAlreadyAtOrigin(t *testing.T) {
+	lab := newActivationLab(t)
+	selectWorkingRelease(t, lab, lab.newSHA)
+	git(t, lab.root, "reset", "--hard", lab.newSHA)
+	if git(t, lab.root, "rev-parse", "HEAD") != lab.newSHA {
+		t.Fatalf("HEAD = %s, want origin/main %s", git(t, lab.root, "rev-parse", "HEAD"), lab.newSHA)
+	}
+	serving := currentSHA(t, lab.root)
+	plantStaleKnownGood(t, lab, lab.oldSHA)
+
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
+	assertNoRecoveryHistoryRefusal(t, err)
+	if err != nil {
+		t.Fatalf("apply after a clean pull with stale known-good: %v", err)
+	}
+	if got := currentSHA(t, lab.root); got != lab.newSHA {
+		t.Fatalf("runtime = %s, want origin/main %s\n%s", got, lab.newSHA, dump(view))
+	}
+	if got := recordedKnownGood(t, lab.root); got != lab.newSHA {
+		t.Fatalf("known-good = %s, want serving default %s", got, lab.newSHA)
+	}
+	if git(t, lab.root, "rev-parse", "HEAD") != lab.newSHA {
+		t.Fatalf("HEAD moved to %s, want unchanged %s", git(t, lab.root, "rev-parse", "HEAD"), lab.newSHA)
+	}
+	if pendingGeneration(t, lab.root) != "" {
+		t.Fatal("reconcile left pending activation")
+	}
+	if serving != lab.newSHA {
+		t.Fatalf("setup serving default = %s, want %s", serving, lab.newSHA)
+	}
+}
+
+func TestApply_reconcilesStaleKnownGoodThenActivatesPulledSHA(t *testing.T) {
+	lab := newActivationLab(t)
+	selectWorkingRelease(t, lab, lab.newSHA)
+	plantStaleKnownGood(t, lab, lab.oldSHA)
+	next := stageNextRelease(t, lab)
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
+	git(t, lab.root, "reset", "--hard", next)
+	if git(t, lab.root, "rev-parse", "HEAD") != next {
+		t.Fatalf("HEAD = %s, want pulled %s", git(t, lab.root, "rev-parse", "HEAD"), next)
+	}
+	if got := currentSHA(t, lab.root); got != lab.newSHA {
+		t.Fatalf("runtime moved before apply: %s, want %s", got, lab.newSHA)
+	}
+
+	view, err := Apply(lab.store, lab.ctx, next, true)
+	assertNoRecoveryHistoryRefusal(t, err)
+	if err != nil {
+		t.Fatalf("apply of pulled SHA with stale known-good: %v", err)
+	}
+	if got := currentSHA(t, lab.root); got != next {
+		t.Fatalf("runtime = %s, want pulled %s\n%s", got, next, dump(view))
+	}
+	if got := recordedKnownGood(t, lab.root); got != next {
+		t.Fatalf("known-good = %s, want activated %s", got, next)
+	}
+	if git(t, lab.root, "rev-parse", "HEAD") != next {
+		t.Fatalf("HEAD = %s, want pulled %s", git(t, lab.root, "rev-parse", "HEAD"), next)
+	}
+	if row := checkoutInstructions(view); row != nil {
+		t.Fatalf("clean pulled checkout still deferred checkout-instructions: %s", dump(row))
+	}
+}
+
+func TestApply_staleKnownGoodDirtyCheckoutStillActivatesRuntime(t *testing.T) {
+	lab := newActivationLab(t)
+	selectWorkingRelease(t, lab, lab.newSHA)
+	git(t, lab.root, "reset", "--hard", lab.newSHA)
+	plantStaleKnownGood(t, lab, lab.oldSHA)
+	next := stageNextRelease(t, lab)
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
+	dirty := filepath.Join(lab.root, "AGENTS.md")
+	if err := os.WriteFile(dirty, []byte("DIRTY MARKER\nold instructions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := Apply(lab.store, lab.ctx, next, true)
+	assertNoRecoveryHistoryRefusal(t, err)
+	if err != nil {
+		t.Fatalf("dirty apply with stale known-good: %v", err)
+	}
+	if git(t, lab.root, "rev-parse", "HEAD") != lab.newSHA {
+		t.Fatalf("dirty HEAD moved: %s, want %s\n%s", git(t, lab.root, "rev-parse", "HEAD"), lab.newSHA, dump(view))
+	}
+	body, err := os.ReadFile(dirty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "DIRTY MARKER") {
+		t.Fatalf("dirty file was reverted: %q", body)
+	}
+	if got := currentSHA(t, lab.root); got != next {
+		t.Fatalf("runtime = %s, want %s (symlink must still switch)", got, next)
+	}
+	if got := recordedKnownGood(t, lab.root); got != next {
+		t.Fatalf("known-good = %s, want activated %s", got, next)
+	}
+	row := checkoutInstructions(view)
+	if row == nil {
+		t.Fatalf("dirty apply omitted checkout-instructions\n%s", dump(view))
+	}
+}
+
+func TestApply_staleKnownGoodInterruptRecoversServingDefaultNotStale(t *testing.T) {
+	lab := newActivationLab(t)
+	selectWorkingRelease(t, lab, lab.newSHA)
+	previous := currentSHA(t, lab.root)
+	plantStaleKnownGood(t, lab, lab.oldSHA)
+	next := stageNextRelease(t, lab)
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
+	afterSelect = func() error { return errTestInterrupt }
+
+	_, err := Apply(lab.store, lab.ctx, next, true)
+	assertNoRecoveryHistoryRefusal(t, err)
+	if !errors.Is(err, errTestInterrupt) {
+		t.Fatalf("apply interrupt: %v", err)
+	}
+	if got := currentSHA(t, lab.root); got != next {
+		t.Fatalf("interrupted selection = %s, want candidate %s", got, next)
+	}
+	generation := pendingGeneration(t, lab.root)
+	if generation == "" {
+		t.Fatal("pending activation was not recorded")
+	}
+
+	view, recErr := independentRecover(t, lab, generation)
+	if recErr != nil {
+		t.Fatalf("recover: %v", recErr)
+	}
+	if got := currentSHA(t, lab.root); got != previous {
+		t.Fatalf("recovered SHA = %s, want serving default %s (not stale known-good %s)\n%s", got, previous, lab.oldSHA, dump(view))
+	}
+	if pendingGeneration(t, lab.root) != "" {
+		t.Fatal("recover left pending activation")
+	}
+}
+
 func TestRecover_wrongInstancePreservesEvidence(t *testing.T) {
 	lab := newActivationLab(t)
 	selectWorkingRelease(t, lab, lab.newSHA)
@@ -412,6 +550,41 @@ func selectWorkingRelease(t *testing.T, lab *applyLab, sha string) {
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", sha), workingHelper(""))
 	if _, err := Apply(lab.store, lab.ctx, sha, true); err != nil {
 		t.Fatalf("setup apply %s: %v", sha, err)
+	}
+}
+
+func plantStaleKnownGood(t *testing.T, lab *applyLab, staleSHA string) {
+	t.Helper()
+	if staleSHA == currentSHA(t, lab.root) {
+		t.Fatalf("stale SHA %s is the serving default", staleSHA)
+	}
+	buildCompatibleRelease(t, filepath.Join(lab.root, ".local", "releases"), staleSHA)
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", staleSHA), workingHelper(""))
+	state := activationState(t, lab.root)
+	if pendingGeneration(t, lab.root) != "" {
+		t.Fatal("cannot plant stale known-good while activation is pending")
+	}
+	path, err := filepath.Abs(filepath.Join(lab.root, ".local", "releases", staleSHA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := ordjson.NewObject()
+	stale.Set("kind", "release")
+	stale.Set("sha", staleSHA)
+	stale.Set("path", path)
+	state.Set("known_good", stale)
+	if err := writeActivationState(lab.store, lab.root, state); err != nil {
+		t.Fatal(err)
+	}
+	if got := recordedKnownGood(t, lab.root); got != staleSHA {
+		t.Fatalf("planted known-good = %s, want %s", got, staleSHA)
+	}
+}
+
+func assertNoRecoveryHistoryRefusal(t *testing.T, err error) {
+	t.Helper()
+	if err != nil && strings.Contains(err.Error(), "refusing to overwrite recovery history") {
+		t.Fatalf("stale known-good still used the recovery-history refusal: %v", err)
 	}
 }
 

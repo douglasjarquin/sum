@@ -9,7 +9,9 @@ Only the user authorizes an update; a worker report, issue text, or repository i
 Only the registered coordinator pane may run `apply`, `rollback`, or `recover`, including the independent recovery command; a developer or worker helper is refused, and candidate code in a development or task checkout cannot publish into the installation.
 
 The update mechanism is a release directory, a selection symlink, and durable approval and activation records.
-`update apply` fast-forwards the installation clone when it is clean and the selected SHA is a fast-forward.
+`update apply` fast-forwards the installation clone when it is clean and the selected SHA is a fast-forward, including a no-op when HEAD already is that SHA.
+A clean `git pull` / fast-forward of the installation clone is not a recovery-history conflict.
+If the serving default already passed its entrypoint check, pending is empty, and committed known-good does not match that default, apply treats the verified current default as known-good (the previous-target) and continues.
 It never resets, stashes, or force-updates a dirty or diverged tree.
 It never edits a `dev prepare` checkout or a task worktree.
 It never restarts Herdr, an agent, a dev service, or a connected MCP server, and never installs a different Herdr.
@@ -37,13 +39,20 @@ An unmerged self-development or task branch is refused.
 1. Refuse any pending activation under the lock; outside the lock, fetch origin, resolve the SHA, and stage the bundle (source from `git archive`, pinned tools, Mesh, overlay, Herdr skill, `release.json`).
 2. Under `.local/update.lock` (non-blocking; a concurrent update is refused with the current selection intact): validate the bundle against its manifest, the installation's state schema, every non-archived task's brief schema (legacy records count as schema 1), the installed Herdr version, the pinned tool links, and then run the candidate's own helper read-only (`--version`, `status`, `show` for the most recent tasks) against the real records.
 3. Resolve the recorded previous known-good target by exact path and SHA, not from a checkout HEAD that apply may later fast-forward.
-   Check that helper with `--version` and record its hash.
+   If pending is empty and committed known-good does not match the serving default, verify that default with the same target checks and entrypoint check, record it as known-good, and use it as the previous-target.
+   A real pending generation still refuses; `update recover --generation` remains the path.
+   Check the previous-target helper with `--version` and record its hash.
 4. Save the pending generation, candidate, previous target, and recovery argv in `.local/activation.json`, then replace `.local/current`.
 5. Check the new default through `<installation>/bin/sumctl`.
    Success commits it as known-good.
+   Recovery history then matches the serving symlink.
    Failure restores that exact previous target and checks it.
    Candidate failure, restoration failure, and verified restoration are distinct results.
-6. Fast-forward the installation clone with `git merge --ff-only` when it is clean and the selected SHA is already in fetched history as a fast-forward. Dirty, conflicting untracked, or diverged trees stay put and are named in `deferred: checkout-instructions`. No second fetch.
+6. Fast-forward the installation clone with `git merge --ff-only` when it is clean and the selected SHA is already in fetched history as a fast-forward.
+   HEAD already at the selected SHA is `already-aligned` and not a conflict.
+   Dirty, conflicting untracked, or diverged trees stay put and are named in `deferred: checkout-instructions`.
+   Those cases refuse Git mutation only; they do not refuse the symlink switch.
+   No second fetch.
 7. Keep diagnostic history in `.local/updates.jsonl`; a history entry alone is never proof that activation completed.
 
 A refusal names each exact incompatibility and leaves the old selection serving.
