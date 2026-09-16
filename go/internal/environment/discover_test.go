@@ -16,8 +16,9 @@ func TestVerificationContractStatusTrustsTargetConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "mise.toml"), []byte("[tasks]\nverify = \"true\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	marker := filepath.Join(t.TempDir(), "trust-bypass")
 	mise := filepath.Join(root, "mise")
-	script := fmt.Sprintf("#!/bin/sh\nif [ -z \"$MISE_TRUSTED_CONFIG_PATHS\" ]; then\n  printf 'config is not trusted\\n' >&2\n  exit 1\nfi\nprintf '%%s\\n' '[{\"name\":\"verify\",\"source\":\"%s\"}]'\n", filepath.Join(root, "mise.toml"))
+	script := fmt.Sprintf("#!/bin/sh\nif [ -n \"$MISE_TRUSTED_CONFIG_PATHS\" ]; then : > \"%s\"; fi\nprintf '%%s\\n' '[{\"name\":\"verify\",\"source\":\"%s\"}]'\n", marker, filepath.Join(root, "mise.toml"))
 	if err := os.WriteFile(mise, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -27,6 +28,9 @@ func TestVerificationContractStatusTrustsTargetConfig(t *testing.T) {
 	value, _ := status.Get("status")
 	if value != "standardized" {
 		t.Fatalf("status = %v, want standardized", value)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("target configuration was trusted")
 	}
 }
 
@@ -47,7 +51,7 @@ func TestVerificationContractStatusDoesNotAdoptInheritedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	mise := filepath.Join(parent, "mise")
-	script := fmt.Sprintf("#!/bin/sh\nif [ -z \"$MISE_TRUSTED_CONFIG_PATHS\" ]; then exit 1; fi\nprintf '%%s\\n' '[{\"name\":\"verify\",\"source\":\"%s\"}]'\n", source)
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' '[{\"name\":\"verify\",\"source\":\"%s\"}]'\n", source)
 	if err := os.WriteFile(mise, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
