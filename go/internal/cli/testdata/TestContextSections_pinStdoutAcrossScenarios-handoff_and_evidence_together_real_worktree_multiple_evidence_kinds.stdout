@@ -1,0 +1,123 @@
+task: t-ffffffffffff
+status: reported
+cursor: "c0.3.0.0.0.0.0.$CURSOR.2026-01-01T00:10:00+00:00"
+read_at: "<at>"
+sections[2]: handoff,evidence
+role: null
+versions_error: null
+handoff:
+  current_candidate: $SHA
+  handoff:
+    id: e-0000000001
+    at: "2026-01-01T00:05:00+00:00"
+    source: worker
+    candidate: $SHA
+    brief_revision: null
+    endpoint: null
+    current: true
+    outcome: done
+    review: null
+    candidate_claimed: null
+    task_ref: null
+    next_action:
+      chars: 9
+      truncated: false
+      redactions: 0
+      text: review it
+    review_ref: null
+    files:
+      count: 2
+      items[2]{chars,truncated,redactions,text}:
+        4,false,0,a.go
+        4,false,0,b.go
+      redactions: 0
+    artifacts:
+      count: 0
+      items: []
+      redactions: 0
+    decisions_unresolved:
+      count: 0
+      items: []
+      redactions: 0
+    checks[1]{command{chars,truncated,redactions,text},exit,note{chars,truncated,redactions,text}}:
+      13,false,0,go test ./...,0,9,false,0,all green
+    pr: null
+  report:
+    submitted_at: "2026-01-01T00:20:00+00:00"
+    brief_revision: legacy
+    candidate: $SHA
+    text:
+      chars: 4
+      truncated: false
+      redactions: 0
+      text: done
+  authority: "Agent-written text: a claim to verify, not approval and not verification evidence."
+evidence:
+  total: 4
+  after: 0
+  returned: 4
+  omitted: 0
+  next_after: null
+  items[4]:
+    - id: null
+      kind: report
+      source: worker
+      at: "2026-01-01T00:20:00+00:00"
+      candidate: null
+      current: null
+      brief_revision: legacy
+      verdict: null
+      result: null
+      outcome: null
+    - id: e-0000000001
+      kind: handoff
+      source: worker
+      at: "2026-01-01T00:05:00+00:00"
+      candidate: $SHA
+      current: true
+      brief_revision: null
+      verdict: null
+      result: null
+      outcome: null
+      handoff:
+        outcome: done
+        candidate: null
+        review: null
+        next_action:
+          chars: 9
+          truncated: false
+          redactions: 0
+          text: review it
+    - id: e-0000000002
+      kind: verification
+      source: coordinator
+      at: "2026-01-01T00:08:00+00:00"
+      candidate: $SHA
+      current: true
+      brief_revision: null
+      verdict: null
+      result: pass
+      outcome: all green
+    - id: e-0000000003
+      kind: review
+      source: reviewer
+      at: "2026-01-01T00:09:00+00:00"
+      candidate: $SHA
+      current: true
+      brief_revision: null
+      verdict: approve
+      result: null
+      outcome: null
+  kinds:
+    report: 1
+    handoff: 1
+    verification: 1
+    review: 1
+  current_candidate: $SHA
+  closure:
+    prerequisites_met: false
+    missing[1]: complete PR identity from `pr reconcile`
+    merged_for_task: false
+    note: Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged.
+  pr: null
+  note: Only `verification` (coordinator) and `publication` (github) records are verification evidence; worker and reviewer records are claims and findings.

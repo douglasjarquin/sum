@@ -1,0 +1,71 @@
+schema: 1
+id: t-cccccccccccc
+status: running
+repository: owner/repoC
+questions: []
+notice: null
+attention: []
+brief: do thing
+base_sha: $SHA
+kind: task
+brief_path: brief.md
+report: null
+worktree: $TMP
+evidence[1]{schema,id,kind,source,at,candidate,brief_revision,sum_version,endpoint,run_id,result,outcome}:
+  1,e-0000000001,verification,coordinator,"2026-01-01T00:10:00+00:00",$SHA,null,0.1.0,null,r1,fail,failing scenarios
+versions:
+  schema: 1
+  legacy: true
+  runtime:
+    sum_version: 0.1.0
+    assumed: true
+  brief_schema: 1
+  approved:
+    sha256: 32cd1980334fb8022f797b3eded95c4f90e35afdb04f000787bea79a282ca4c4
+    base_sha: $SHA
+    repository: owner/repoC
+    kind: task
+  active: legacy
+  requested: null
+  refresh: []
+  revisions[1]{id,status,created_at,policy{sum_version,brief_schema},summary,verification_affected,legacy,path,ok,error}:
+    legacy,active,null,0.1.0,1,null,null,true,$HOME/tasks/t-cccccccccccc/brief.md,false,"Revision legacy is not usable: file is missing. Do not request it; regenerate a new revision instead."
+  report_evidence: null
+  note: Revisions are staged files; the worker keeps reading its current brief until a refresh is explicitly requested and adopted.
+evidence_view:
+  current_candidate: $SHA
+  records[1]{schema,id,kind,source,at,candidate,brief_revision,sum_version,endpoint,run_id,result,outcome,current}:
+    1,e-0000000001,verification,coordinator,"2026-01-01T00:10:00+00:00",$SHA,null,0.1.0,null,r1,fail,failing scenarios,true
+  reviewer: null
+  pr: null
+  verification:
+    contract: legacy
+    worker_run: null
+    root_run:
+      id: e-0000000001
+      run_id: r1
+      result: fail
+      outcome: failing scenarios
+      candidate: $SHA
+      current: true
+      certifies: null
+      requires_root_review: null
+      isolation: null
+    distinct_run_ids: false
+    review:
+      status: not-performed
+      current: false
+      verdict: null
+      tool: null
+      policy_reviewed: false
+      reviewer_pane: null
+    note: Worker and coordinator runs are separate executions with their own run ids; neither the worker's run nor a review substitutes for the coordinator's. Records for another SHA are historical.
+  closure:
+    prerequisites_met: false
+    missing[3]: current structured handoff,complete PR identity from `pr reconcile`,coordinator verification of the current candidate passed (latest root run r1 was fail); the task is parked with that evidence
+    merged_for_task: false
+    note: Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged.
+returns:
+  open: []
+  deliveries: []
+  note: Obligations come from the records; a submitted or presented notice closes none of them. `closed` names obligations a later record has since settled.

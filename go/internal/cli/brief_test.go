@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -37,25 +36,13 @@ func writeRevisionFile(t *testing.T, home, taskID, relPath, content string) stri
 	return hex.EncodeToString(sum[:])
 }
 
-func TestBriefList_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
-
+func TestBriefList_pinsStdoutAcrossScenarios(t *testing.T) {
 	baseSha := "0123456789abcdef0123456789abcdef01234567"
 
 	t.Run("legacy task, no versions.json", func(t *testing.T) {
 		home := t.TempDir()
 		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
-		assertBriefListMatches(t, reference, home, "t-aaaaaaaaaaaa")
+		assertStdoutGolden(t, home, []string{"brief", "list", "t-aaaaaaaaaaaa"}, "brief-list-legacy")
 	})
 
 	t.Run("real versions.json with an intact revision", func(t *testing.T) {
@@ -69,7 +56,7 @@ func TestBriefList_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(home, "tasks", "t-aaaaaaaaaaaa", "versions.json"), []byte(versionsJSON), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		assertBriefListMatches(t, reference, home, "t-aaaaaaaaaaaa")
+		assertStdoutGolden(t, home, []string{"brief", "list", "t-aaaaaaaaaaaa"}, "brief-list-revision")
 	})
 
 	t.Run("report made under a superseded revision, later one verification-affecting", func(t *testing.T) {
@@ -88,26 +75,8 @@ func TestBriefList_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(home, "tasks", "t-bbbbbbbbbbbb", "versions.json"), []byte(versionsJSON), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		assertBriefListMatches(t, reference, home, "t-bbbbbbbbbbbb")
+		assertStdoutGolden(t, home, []string{"brief", "list", "t-bbbbbbbbbbbb"}, "brief-list-superseded")
 	})
-}
-
-func assertBriefListMatches(t *testing.T, reference, home, taskID string) {
-	t.Helper()
-	args := []string{"--home", home, "brief", "list", taskID}
-	want, err := exec.Command(reference, args...).Output()
-	if err != nil {
-		t.Fatalf("python reference failed: %v", err)
-	}
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs(args)
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
-	}
-	if stdout.String() != string(want) {
-		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
-	}
 }
 
 func TestBriefRegenerate_requiresCoordinator(t *testing.T) {

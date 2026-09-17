@@ -1,0 +1,47 @@
+task: t-bbbbbbbbbbbb
+brief_path: brief.md
+schema: 1
+legacy: false
+runtime:
+  sum_version: 0.1.0
+brief_schema: 1
+approved:
+  sha256: abc
+  base_sha: $SHA
+  repository: owner/repoB
+  kind: task
+active: r2
+requested: null
+refresh: []
+revisions[2]:
+  - id: r1
+    status: superseded
+    created_at: "2026-01-01T00:00:00+00:00"
+    policy:
+      sum_version: 0.1.0
+      brief_schema: 1
+    summary[1]: initial brief
+    verification_affected: false
+    legacy: null
+    path: $HOME/tasks/t-bbbbbbbbbbbb/contracts/r1.md
+    ok: true
+    sha256: 65f2a8cca4cdb6eac59b4d2da16c22c085f7fe4842a68efb2151e47119b31d1e
+  - id: r2
+    status: active
+    created_at: "2026-01-01T01:00:00+00:00"
+    policy:
+      sum_version: 0.1.0
+      brief_schema: 1
+    summary[1]: revised
+    verification_affected: true
+    legacy: null
+    path: $HOME/tasks/t-bbbbbbbbbbbb/contracts/r2.md
+    ok: true
+    sha256: ff8bec98733a5ad4bb6c1ae447659eea5e9dc68fce27e456206ae472c362f735
+report_evidence:
+  brief_revision: r1
+  sum_version: 0.1.0
+  contract_changed_since_dispatch: false
+  verification_policy_changed_since: true
+  note: "Evidence is bound to the candidate and the brief revision it was produced under. A later verification-affecting revision, or a VERIFY.md that no longer hashes to what dispatch recorded, means the evidence needs refresh review, not automatic rejection or approval."
+note: Revisions are staged files; the worker keeps reading its current brief until a refresh is explicitly requested and adopted.

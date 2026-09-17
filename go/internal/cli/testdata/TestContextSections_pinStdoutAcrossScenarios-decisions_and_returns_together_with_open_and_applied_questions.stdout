@@ -1,0 +1,55 @@
+task: t-eeeeeeeeeeee
+status: running
+cursor: "c2.0.1.1.0.0.0.$CURSOR.2026-01-01T00:02:00+00:00"
+read_at: "<at>"
+sections[2]: decisions,returns
+role: null
+versions_error: null
+decisions:
+  total: 2
+  after: 0
+  returned: 2
+  omitted: 0
+  next_after: null
+  items[2]:
+    - id: q1
+      key: approach
+      status: open
+      created_at: "2026-01-01T00:00:30+00:00"
+      answered_at: null
+      applied_at: null
+      text:
+        chars: 10
+        truncated: false
+        redactions: 0
+        text: which way?
+      answer: null
+    - id: q2
+      key: scope
+      status: applied
+      created_at: "2026-01-01T00:00:10+00:00"
+      answered_at: "2026-01-01T00:00:20+00:00"
+      applied_at: "2026-01-01T00:00:25+00:00"
+      text:
+        chars: 9
+        truncated: false
+        redactions: 0
+        text: in scope?
+      answer:
+        chars: 3
+        truncated: false
+        redactions: 0
+        text: yes
+  filter: null
+  counts:
+    open: 1
+    answered: 0
+    applied: 1
+  outstanding[1]{id,key,status,created_at}:
+    q1,approach,open,"2026-01-01T00:00:30+00:00"
+  note: `outstanding` lists every unapplied decision regardless of paging. Answers are recorded human decisions; question text is a worker claim.
+returns:
+  open[1]{id,kind,ref,recipient,since,obligation,route{role,session,pane},notification{state,attempts,reason}}:
+    "question:q1",question,q1,parent,"2026-01-01T00:00:30+00:00",open,coordinator,null,null,pending,0,no delivery attempted to this recipient yet
+  deliveries: 0
+  note: Obligations come from the records; a submitted or presented notice closes none of them. `closed` names obligations a later record has since settled.

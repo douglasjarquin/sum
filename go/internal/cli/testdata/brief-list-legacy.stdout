@@ -1,0 +1,20 @@
+task: t-aaaaaaaaaaaa
+brief_path: brief.md
+schema: 1
+legacy: true
+runtime:
+  sum_version: 0.1.0
+  assumed: true
+brief_schema: 1
+approved:
+  sha256: 12422cebeadd97366c31ee59300562cc3b9bca05e01005cc7a4a0945265c4472
+  base_sha: $SHA
+  repository: owner/repoA
+  kind: task
+active: legacy
+requested: null
+refresh: []
+revisions[1]{id,status,created_at,policy{sum_version,brief_schema},summary,verification_affected,legacy,path,ok,error}:
+  legacy,active,null,0.1.0,1,null,null,true,"$HOME/tasks/t-aaaaaaaaaaaa/brief.md",false,"Revision legacy is not usable: file is missing. Do not request it; regenerate a new revision instead."
+report_evidence: null
+note: Revisions are staged files; the worker keeps reading its current brief until a refresh is explicitly requested and adopted.

@@ -1,0 +1,8 @@
+limits: null
+worker: null
+source: invalid
+error: "Invalid $HOME/settings.json: capacity.global must be an integer between 1 and 64, got 0. Fix or remove the file; nothing was admitted or changed, and existing tasks keep running. Only an explicit capacity block configures admission."
+occupied:
+  global: 0
+  by_repository:
+note: Admission is refused until settings.json is fixed; every recorded task keeps its slot and callbacks.

@@ -49,28 +49,17 @@ func writeExecutionFixtures(t *testing.T, home string) {
 	}
 }
 
-func TestStatusAndInbox_matchThePythonReferenceAcrossOccupancyScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
-
+func TestStatusAndInbox_pinStdoutAcrossOccupancyScenarios(t *testing.T) {
 	cases := []struct {
 		name    string
+		golden  string
 		fixture bool
 		args    []string
 	}{
-		{name: "status on empty store", args: []string{"status"}},
-		{name: "inbox on empty store", args: []string{"inbox"}},
-		{name: "status with legacy/reservation/archived tasks", fixture: true, args: []string{"status"}},
-		{name: "inbox with legacy/reservation/archived tasks", fixture: true, args: []string{"inbox"}},
+		{name: "status on empty store", golden: "status-empty", args: []string{"status"}},
+		{name: "inbox on empty store", golden: "inbox-empty", args: []string{"inbox"}},
+		{name: "status with legacy/reservation/archived tasks", golden: "status-fixture", fixture: true, args: []string{"status"}},
+		{name: "inbox with legacy/reservation/archived tasks", golden: "inbox-fixture", fixture: true, args: []string{"inbox"}},
 	}
 
 	for _, tc := range cases {
@@ -79,40 +68,12 @@ func TestStatusAndInbox_matchThePythonReferenceAcrossOccupancyScenarios(t *testi
 			if tc.fixture {
 				writeExecutionFixtures(t, home)
 			}
-			fullArgs := append([]string{"--home", home}, tc.args...)
-
-			want, err := exec.Command(reference, fullArgs...).Output()
-			if err != nil {
-				t.Fatalf("python reference failed: %v", err)
-			}
-
-			var stdout, stderr bytes.Buffer
-			root := NewRoot(reference, &stdout, &stderr)
-			root.SetArgs(fullArgs)
-			if err := root.ExecuteContext(context.Background()); err != nil {
-				t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
-			}
-
-			if stdout.String() != string(want) {
-				t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
-			}
+			assertStdoutGolden(t, home, tc.args, tc.golden)
 		})
 	}
 }
 
-func TestStatus_malformedReservationMatchesPythonReference(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
-
+func TestStatus_malformedReservationPinsSettingsShow(t *testing.T) {
 	home := t.TempDir()
 	taskDir := filepath.Join(home, "tasks", "t-dddddddddddd")
 	if err := os.MkdirAll(taskDir, 0o700); err != nil {
@@ -127,22 +88,7 @@ func TestStatus_malformedReservationMatchesPythonReference(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(taskDir, "task.json"), []byte(malformed), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	fullArgs := []string{"--home", home, "settings", "show"}
-	want, err := exec.Command(reference, fullArgs...).Output()
-	if err != nil {
-		t.Fatalf("python reference failed: %v", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs(fullArgs)
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
-	}
-	if stdout.String() != string(want) {
-		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
-	}
+	assertStdoutGolden(t, home, []string{"settings", "show"}, "settings-show-malformed-reservation")
 }
 
 func TestStatusUnknownFlagsAreUsageErrors(t *testing.T) {

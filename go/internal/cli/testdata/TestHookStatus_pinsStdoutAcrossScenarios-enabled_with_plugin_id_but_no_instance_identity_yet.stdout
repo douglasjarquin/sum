@@ -1,0 +1,27 @@
+enabled: true
+plugin_id: sum.returns.deadbeefcafe
+last_event: pane.agent_detected
+last_error: null
+events: 5
+handled: 5
+ignored: 0
+errors: 0
+pending:
+  count: 0
+  oldest_since: null
+  oldest_age_s: null
+degraded: false
+reason: null
+health:
+  plugin_id: sum.returns.deadbeefcafe
+  manifest_path: /tmp/plugin/herdr-plugin.toml
+  command: null
+  linked_at: "2026-01-01T00:00:00+00:00"
+  disabled_at: null
+  updated_at: null
+  warnings: null
+  manifest_sha256: abc123
+errors_log: []
+supported_events[5]: pane.agent_status_changed,pane.agent_detected,pane.exited,pane.closed,workspace.closed
+expected_manifest_current: null
+note: "Health is what this instance recorded; the registry row is what Herdr reports now. Degraded or disabled means the synchronous path and `inbox --live` are the delivery path; nothing is lost, only not pushed."

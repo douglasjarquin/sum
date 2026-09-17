@@ -1,0 +1,7 @@
+topic: skills-check
+help: "Refuse mismatched names, missing references, or namespace collisions"
+arguments[1]{name,help,default}:
+  "--root",Checkout or release tree to inspect,$ROOT
+subcommands: null
+read_only: true
+read_only_subcommands: null

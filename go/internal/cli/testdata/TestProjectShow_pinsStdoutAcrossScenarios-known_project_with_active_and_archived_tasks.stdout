@@ -1,0 +1,27 @@
+project:
+  name: owner/clean-proj
+  host: github.com
+  owner: owner
+  repo: clean-proj
+  kind: managed
+  path: $TMP
+  remote: "https://github.com/owner/clean-proj.git"
+  enrolled_at: "2026-01-01T00:00:00+00:00"
+  enrolled_by:
+    machine: m1
+    session: s1
+    pane: p1
+  canonical_path: $TMP
+  note: null
+  observed:
+    path: $TMP
+    present: true
+    git: true
+    remote_matches: true
+    dirty: false
+    head: null
+    linked_worktrees: []
+    remote: "https://github.com/owner/clean-proj.git"
+active_tasks[1]{task,status,worktree}:
+  t-aaaaaaaaaaaa,running,/tmp/worktree-a
+registry: $HOME/projects.json

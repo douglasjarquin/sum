@@ -4,24 +4,12 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestMetadataSnippet_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
+func TestMetadataSnippet_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	cases := []struct {
 		name string
@@ -43,23 +31,7 @@ func TestMetadataSnippet_matchesThePythonReferenceAcrossScenarios(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			clearHerdrEnv(t)
 			home := tc.home(t)
-			fullArgs := append([]string{"--home", home}, tc.args...)
-
-			want, err := exec.Command(reference, fullArgs...).Output()
-			if err != nil {
-				t.Fatalf("python reference failed: %v", err)
-			}
-
-			var stdout, stderr bytes.Buffer
-			root := NewRoot(reference, &stdout, &stderr)
-			root.SetArgs(fullArgs)
-			if err := root.ExecuteContext(context.Background()); err != nil {
-				t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
-			}
-
-			if stdout.String() != string(want) {
-				t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
-			}
+			assertStdoutGolden(t, home, tc.args, scenarioGolden(t))
 		})
 	}
 }

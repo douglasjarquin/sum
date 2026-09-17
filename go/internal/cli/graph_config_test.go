@@ -4,25 +4,12 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
-func TestGraphConfig_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
-
-	installationReleases := filepath.Join(repoRoot, "..", "..", "..", ".local", "releases")
+func TestGraphConfig_pinsStdoutAcrossScenarios(t *testing.T) {
+	installationReleases := filepath.Join(repoRoot(t), "..", "..", "..", ".local", "releases")
 	pinned := findPinnedCodegraph(t, installationReleases)
 	if pinned == "" {
 		t.Skip("no pinned codegraph release found to exercise the available-tool path")
@@ -44,29 +31,11 @@ func TestGraphConfig_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			fullArgs := append([]string{"--home", home}, tc.args...)
-
-			pythonCmd := exec.Command(reference, fullArgs...)
-			pythonCmd.Env = append(os.Environ(), tc.env...)
-			want, err := pythonCmd.Output()
-			if err != nil {
-				t.Fatalf("python reference failed: %v", err)
-			}
-
 			for _, kv := range tc.env {
 				parts := splitEnv(kv)
 				t.Setenv(parts[0], parts[1])
 			}
-			var stdout, stderr bytes.Buffer
-			root := NewRoot(reference, &stdout, &stderr)
-			root.SetArgs(fullArgs)
-			if err := root.ExecuteContext(context.Background()); err != nil {
-				t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
-			}
-
-			if stdout.String() != string(want) {
-				t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
-			}
+			assertStdoutGolden(t, home, tc.args, scenarioGolden(t))
 		})
 	}
 }

@@ -1,0 +1,6 @@
+limits: null
+worker: null
+source: invalid
+error: "Malformed execution reservation for t-dddddddddddd: worker reservation has an invalid id. Admission and release are refused."
+occupied: null
+note: Admission and release are refused until the malformed execution record is repaired from exact ownership evidence.

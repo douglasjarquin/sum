@@ -1,0 +1,19 @@
+presets:
+  fast:
+    harness: codex
+    model: gpt-5
+    reasoning: high
+    args[1]: "--flag"
+    revision: 3
+  slow:
+    harness: claude
+    model: null
+    reasoning: null
+    args: []
+    revision: 1
+worker:
+  preset: fast
+reviewer: null
+source: settings.json
+path: $HOME/settings.json
+note: "Presets are dispatch shortcuts expanded at prepare; each task keeps the specification it was prepared with. Nothing here is a running agent, a role, or a default until you say so."

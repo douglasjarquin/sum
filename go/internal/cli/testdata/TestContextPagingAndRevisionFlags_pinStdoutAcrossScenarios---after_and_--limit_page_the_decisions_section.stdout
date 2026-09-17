@@ -1,0 +1,25 @@
+task: t-2c2c2c2c2c2c
+status: running
+cursor: "c3.0.0.0.0.0.0.$CURSOR.2026-01-01T00:02:00+00:00"
+read_at: "<at>"
+sections[1]: decisions
+role: null
+versions_error: null
+decisions:
+  total: 3
+  after: 1
+  returned: 1
+  omitted: 2
+  next_after: 2
+  items[1]{id,key,status,created_at,answered_at,applied_at,text{chars,truncated,redactions,text},answer}:
+    q2,b,open,"2026-01-01T00:00:20+00:00",null,null,4,false,0,two?,null
+  filter: null
+  counts:
+    open: 3
+    answered: 0
+    applied: 0
+  outstanding[3]{id,key,status,created_at}:
+    q1,a,open,"2026-01-01T00:00:10+00:00"
+    q2,b,open,"2026-01-01T00:00:20+00:00"
+    q3,c,open,"2026-01-01T00:00:30+00:00"
+  note: `outstanding` lists every unapplied decision regardless of paging. Answers are recorded human decisions; question text is a worker claim.

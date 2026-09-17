@@ -1,0 +1,14 @@
+task: t-0b0b0b0b0b0b
+status: running
+cursor: "c0.0.0.0.0.0.0.$CURSOR.2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: notes
+role: null
+versions_error: null
+notes:
+  path: "$HOME/tasks/t-0b0b0b0b0b0b/notes.md"
+  present: false
+  ok: true
+  entries: []
+  bytes: 0
+  note: No notes artifact. `sumctl notes TASK_ID --text ...` creates it when an investigation needs one.

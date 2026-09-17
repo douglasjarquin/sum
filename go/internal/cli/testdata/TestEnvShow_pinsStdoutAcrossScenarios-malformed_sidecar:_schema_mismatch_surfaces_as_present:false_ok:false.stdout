@@ -1,0 +1,5 @@
+task: t-aaaaaaaaaaaa
+environment:
+  present: false
+  ok: false
+  error: "Environment record schema/identity mismatch; inspect the sidecar, it is not rewritten."

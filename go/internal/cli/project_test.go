@@ -44,22 +44,11 @@ func projectRecordJSON(name, host, owner, repo, kind, path, remote string) strin
 "canonical_path": %q, "note": null}`, name, host, owner, repo, kind, path, remote, path)
 }
 
-func TestProjectList_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
+func TestProjectList_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("no registry file", func(t *testing.T) {
 		home := t.TempDir()
-		assertProjectMatches(t, reference, home, []string{"project", "list"})
+		assertProjectMatches(t, home, []string{"project", "list"})
 	})
 
 	t.Run("clean, dirty, mismatched-remote, and missing clones", func(t *testing.T) {
@@ -92,22 +81,11 @@ func TestProjectList_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 			projectRecordJSON("owner/missing-proj", "github.com", "owner", "missing-proj", "managed", missingPath, "https://github.com/owner/missing-proj.git"),
 		)
 		writeProjectsRegistry(t, home, registry)
-		assertProjectMatches(t, reference, home, []string{"project", "list"})
+		assertProjectMatches(t, home, []string{"project", "list"})
 	})
 }
 
-func TestProjectShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	reference := filepath.Join(repoRoot, "bin", "sumctl")
-	if _, statErr := os.Stat(reference); statErr != nil {
-		t.Skipf("reference bin/sumctl not found: %v", statErr)
-	}
+func TestProjectShow_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("known project with active and archived tasks", func(t *testing.T) {
 		home := t.TempDir()
@@ -124,54 +102,24 @@ func TestProjectShow_matchesThePythonReferenceAcrossScenarios(t *testing.T) {
 		writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fmt.Sprintf(`{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "archived", "repository": %q, "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do thing b", "base_sha": %q, "kind": "task"}`, cleanPath, baseSha))
 		writeTaskFixture(t, home, "t-cccccccccccc", fmt.Sprintf(`{"schema": 1, "id": "t-cccccccccccc", "status": "running", "repository": "/tmp/unrelated", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "unrelated", "base_sha": %q, "kind": "task"}`, baseSha))
 
-		assertProjectMatches(t, reference, home, []string{"project", "show", "owner/clean-proj"})
+		assertProjectMatches(t, home, []string{"project", "show", "owner/clean-proj"})
 	})
 
 	t.Run("unknown project is a command-level failure", func(t *testing.T) {
 		home := t.TempDir()
 		writeProjectsRegistry(t, home, `{"schema": 1, "projects": {}}`)
-		assertProjectFailureMatches(t, reference, home, []string{"project", "show", "owner/nope"})
+		assertProjectFailureMatches(t, home, []string{"project", "show", "owner/nope"})
 	})
 }
 
-func assertProjectMatches(t *testing.T, reference, home string, args []string) {
+func assertProjectMatches(t *testing.T, home string, args []string) {
 	t.Helper()
-	fullArgs := append([]string{"--home", home}, args...)
-	want, err := exec.Command(reference, fullArgs...).Output()
-	if err != nil {
-		t.Fatalf("python reference failed: %v", err)
-	}
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs(fullArgs)
-	if err := root.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("go command failed: %v (stderr=%s)", err, stderr.String())
-	}
-	if stdout.String() != string(want) {
-		t.Fatalf("go output =\n%s\nwant (python reference)\n%s", stdout.String(), want)
-	}
+	assertStdoutGolden(t, home, args, scenarioGolden(t))
 }
 
-func assertProjectFailureMatches(t *testing.T, reference, home string, args []string) {
+func assertProjectFailureMatches(t *testing.T, home string, args []string) {
 	t.Helper()
-	fullArgs := append([]string{"--home", home}, args...)
-	cmd := exec.Command(reference, fullArgs...)
-	var pyStderr bytes.Buffer
-	cmd.Stderr = &pyStderr
-	if err := cmd.Run(); err == nil {
-		t.Fatalf("expected python reference to fail, got success with stderr=%s", pyStderr.String())
-	}
-	want := decodeCLIError(t, pyStderr.Bytes())
-	var stdout, stderr bytes.Buffer
-	root := NewRoot(reference, &stdout, &stderr)
-	root.SetArgs(fullArgs)
-	err := root.ExecuteContext(context.Background())
-	if err == nil {
-		t.Fatalf("expected go command to fail, got success with stdout=%s", stdout.String())
-	}
-	if err.Error() != want {
-		t.Fatalf("go error = %q, want (python reference) %q", err.Error(), want)
-	}
+	assertErrorGolden(t, home, args, scenarioGolden(t))
 }
 
 func TestProjectEnroll_requiresCoordinator(t *testing.T) {

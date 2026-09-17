@@ -1,0 +1,1 @@
+Unsupported hook health schema in $HOME/hook/health.json; inspect it, sum never migrates it in place.

@@ -1,0 +1,10 @@
+task: t-aaaaaaaaaaaa
+execution:
+  schema: 1
+  worker:
+    id: "legacy:t-aaaaaaaaaaaa"
+    kind: worker
+    state: held
+  verifiers: []
+legacy: true
+note: This legacy task has no execution metadata and remains held while non-archived.

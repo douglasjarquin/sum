@@ -1,0 +1,72 @@
+task: t-bbbbbbbbbbbb
+status: reported
+cursor: "c0.2.0.0.0.0.0.$CURSOR.2026-01-01T00:10:00+00:00"
+read_at: "<at>"
+sections[1]: outline
+role: null
+versions_error: null
+outline:
+  id: t-bbbbbbbbbbbb
+  status: reported
+  kind: task
+  repository: owner/repoB
+  branch: null
+  worktree: $TMP
+  harness: null
+  error: null
+  approved:
+    chars: 8
+    sha256: 32cd1980334fb802
+    base_sha: $SHA
+  decisions:
+    total: 0
+    outstanding: []
+  evidence:
+    records: 2
+    current_candidate: $SHA
+    latest_handoff:
+      id: e-0000000001
+      outcome: done
+      candidate: $SHA
+      current: true
+    closure_missing[1]: complete PR identity from `pr reconcile`
+    verification:
+      contract: legacy
+      worker_run: null
+      root_run:
+        id: e-0000000002
+        run_id: run-root-1
+        result: pass
+        outcome: all green
+        candidate: $SHA
+        current: true
+        certifies: null
+        requires_root_review: null
+        isolation: null
+      distinct_run_ids: false
+      review:
+        status: not-performed
+        current: false
+        verdict: null
+        tool: null
+        policy_reviewed: false
+        reviewer_pane: null
+      note: Worker and coordinator runs are separate executions with their own run ids; neither the worker's run nor a review substitutes for the coordinator's. Records for another SHA are historical.
+  verification_policy: null
+  report: null
+  brief:
+    active: legacy
+    requested: null
+  returns_open: 0
+  attention_open: 0
+  cleanup: null
+  notes:
+    present: false
+    ok: true
+    entries: 0
+  environment:
+    present: false
+  graph: null
+  read:
+    sections[11]: outline,brief,decisions,handoff,evidence,execution,environment,update,returns,notes,pipeline
+    example: $ROOT/bin/sumctl --home $HOME context t-bbbbbbbbbbbb --section decisions --section handoff

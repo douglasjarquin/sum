@@ -1,0 +1,24 @@
+task: t-1a1a1a1a1a1a
+status: running
+cursor: "c0.0.0.0.0.0.0.$CURSOR.2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: update
+role: null
+versions_error: null
+update:
+  recorded_runtime:
+    sum_version: 0.1.0
+    brief_schema: null
+    sha: null
+    assumed: true
+  active_runtime:
+    sum_version: 0.1.0
+    brief_schema: 1
+    path: $ROOT
+  brief:
+    active: legacy
+    requested: null
+  refresh: null
+  report_evidence: null
+  installation_default:
+    unavailable: $HOME is not a sum installation's state home; run dev and release commands with the installation's ./bin/sumctl.

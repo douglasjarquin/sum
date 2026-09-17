@@ -1,0 +1,12 @@
+name: slow
+revision: 1
+preset:
+  harness: claude
+  revision: 1
+launch:
+  harness: claude
+  model: null
+  reasoning: null
+  argv: []
+used_by: []
+note: "`launch.argv` is exactly what `dispatch --preset` appends after the harness executable; a model here is CLI-requested, never runtime-verified."

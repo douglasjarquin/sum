@@ -1,0 +1,21 @@
+task: t-aaaaaaaaaaaa
+status: running
+cursor: "c0.0.0.0.0.0.0.$CURSOR.2026-01-01T00:00:00+00:00"
+read_at: "<at>"
+sections[1]: brief
+role: null
+versions_error: null
+brief:
+  approved:
+    chars: 12
+    truncated: false
+    redactions: 0
+    text: do the thing
+  fingerprint:
+    sha256: 12422cebeadd97366c31ee59300562cc3b9bca05e01005cc7a4a0945265c4472
+    base_sha: $SHA
+    repository: owner/repoA
+    kind: task
+  brief_path: brief.md
+  active_revision: legacy
+  requested_revision: null

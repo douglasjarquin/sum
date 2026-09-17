@@ -1,0 +1,50 @@
+commands:
+  doctor: "Observe setup, Herdr context, and this pane's registered role; writes nothing"
+  quota: Advisory provider quota. Codex uses Remainder. Other providers use quota-axi. Never switches accounts
+  "release-contract": Print this runtime's release contract; writes nothing
+  init: Explicitly register this pane's role in this instance; the first eligible pane claims coordinator
+  status: All recorded tasks
+  inbox: "Only tasks that need attention: questions, reports, errors, cleanup"
+  skills: Check Sum-owned skill projections or copy explicit third-party skills into one project
+  prepare: "Coordinator only: record an approved task and create its isolated worktree (no launch)"
+  dispatch: "Coordinator only: record an approved task and create its isolated worktree; then launch the worker"
+  start: "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch"
+  execution: "Show, park, or explicitly resume task-local execution reservations"
+  repair: Coordinator-controlled corrective worker instructions
+  help: "Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments"
+  context: "Bounded selective read of one task: outline by default, --section for parts, --role for a role view, --since CURSOR for changes"
+  notes: "Append one timestamped entry to the task's optional notes.md (a claim, backed up with the records; credentials refused)"
+  env: "Task-local environment record: declared dev commands, observed URLs/ports, log paths, pane/container references; observes and records only"
+  show: "Full task record plus versions, evidence_view, and returns (unchanged shape; use `context` for a bounded read)"
+  notice: Explicit single retry of the pending notice toward one recipient
+  archive: "Coordinator only: archive a task after every execution reservation was separately released"
+  ask: "Worker: save a question before waiting; the parent is notified only after it is saved"
+  answer: "Coordinator: record the user's actual decision for one question"
+  report: "Worker: submit the report (and --handoff) as a claim for the coordinator to verify"
+  resolve: "Worker: mark an answered question applied"
+  review: "Reviewer pane: append independent findings for one candidate; never replaces the worker report"
+  verify: "Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)"
+  pr: Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names
+  pipeline: "The delivery gates one task has passed, and the status table sum owns in its PR body"
+  cleanup: "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay"
+  pump: "One bounded delivery pass over saved pending returns: at most one coalesced notice per recipient; nothing sleeps, polls, or is deleted"
+  hook: "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon"
+  metadata: "Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle"
+  attention: "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays"
+  bind: "Coordinator only: rebind this pane as a task's parent or adopt an existing worker pane; never launches"
+  backup: "Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code"
+  settings: Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited
+  preset: "Named launch presets in .sum/settings.json: validated harness/model/argv shortcuts expanded at dispatch, not agents or roles"
+  project: "Managed project clones: enroll exactly one repository under <installation>/projects/<owner>/<repo>, list, show, or inspect a migration; never a shared task checkout"
+  herdr: Session-scoped native CLI bridge for Mesh; no protocol reimplementation
+  graph: "Per-checkout code graph (pinned codegraph): retry/resume one task's initialization, observe its freshness, or print an MCP snippet; never installs or configures globally"
+  lsp: Install allowlisted LSP binaries through mise into .local/bin; unknown binaries are refused; an existing link is never retargeted
+  dev: "Prepare, list, or remove isolated self-development checkouts of this installation"
+  brief: "Inspect, regenerate, request, or adopt versioned worker brief revisions; the brief a worker reads is never rewritten"
+  refresh: "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status"
+  release: "Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates"
+  update: "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running"
+read_only[26]: brief-list,context,doctor,env-show,execution-show,graph-config,graph-status,help,hook-status,inbox,metadata-snippet,metadata-status,preset-list,preset-show,project-list,project-show,quota,refresh-status,release-contract,release-list,release-show,settings-show,show,skills-check,status,update-status
+usage: sumctl help TOPIC for one command's arguments and subcommands
+context: "sumctl context TASK_ID [--section NAME ...] [--role worker|reviewer|coordinator] [--since CURSOR]"
+note: Generated from the CLI definition; no manual to page through. Herdr CLI facts come from `herdr --skill`.

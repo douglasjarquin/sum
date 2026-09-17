@@ -1,0 +1,4 @@
+projects: []
+registry: $HOME/projects.json
+projects_dir: $ROOT/projects
+note: "Registrations and one bounded observation each; nothing was fetched, moved, or cleaned. Task checkouts are separate Herdr worktrees."

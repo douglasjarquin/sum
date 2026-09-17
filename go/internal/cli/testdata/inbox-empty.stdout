@@ -1,0 +1,29 @@
+tasks: []
+live: false
+capacity:
+  limits: null
+  worker: null
+  source: unlimited
+  occupied:
+    global: 0
+    by_repository:
+  presets:
+  reviewer: null
+  evidence:
+    auto_publish: true
+    source: default
+  worker_note: Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.
+  note: Each recorded execution reservation holds a slot until a conclusive stop observation releases it; legacy non-archived tasks remain conservatively held.
+guarantee: Saved records only. Open attention includes the recorded excerpt. No background monitoring.
+metadata:
+  enabled: false
+  notify: false
+  source: null
+  capabilities:
+  resources: 0
+  last_pass: null
+  last_notification: null
+  errors: 0
+  last_error: null
+  degraded: true
+  reason: native metadata projection is not enabled; `inbox --live` remains the authoritative view
