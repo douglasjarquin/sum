@@ -41,6 +41,24 @@ class OperatingFilesTest(unittest.TestCase):
         for name in RECIPE_FILES:
             path = GROK_BOT / name
             self.assertTrue(path.is_file(), path)
+        self.assertTrue((ROOT / "GROK_SUM.md").is_file())
+
+    def test_grok_sum_installer_clones_public_sum(self):
+        text = (ROOT / "GROK_SUM.md").read_text()
+        self.assertIn("This file is an installer.", text)
+        self.assertIn("https://github.com/douglasjarquin/sum.git", text)
+        self.assertIn("/home/box/agent-data/sum/src/", text)
+        for skill in ("Dispatch", "Persist", "Verify", "Rundown", "Deliver"):
+            self.assertIn(skill, text)
+        self.assertNotIn("Paste `templates/grok-bot/instructions.md`", text)
+        self.assertNotIn("Save each skill from `skills/`", text)
+        self.assertNotIn("sumctl", text)
+
+    def test_grok_bot_readme_does_not_ask_for_a_hand_paste(self):
+        text = (GROK_BOT / "README.md").read_text()
+        self.assertIn("GROK_SUM.md", text)
+        self.assertNotIn("What you paste", text)
+        self.assertNotIn("Paste `instructions.md`", text)
 
     def test_removed_helper_binding_files_are_gone(self):
         for name in REMOVED_BINDINGS:
@@ -49,7 +67,8 @@ class OperatingFilesTest(unittest.TestCase):
 
     def test_grok_bot_recipe_is_not_a_helper_binding(self):
         self.assertTrue(GROK_BOT.is_dir(), GROK_BOT)
-        for path in _grok_bot_markdown():
+        paths = [*_grok_bot_markdown(), ROOT / "GROK_SUM.md"]
+        for path in paths:
             text = path.read_text()
             self.assertNotIn("sumctl", text, path)
             self.assertNotIn("lib/sumctl.py", text, path)
@@ -101,6 +120,7 @@ class OperatingFilesTest(unittest.TestCase):
             ROOT / "AGENTS.md",
             ROOT / "README.md",
             ROOT / "CONTRIBUTING.md",
+            ROOT / "GROK_SUM.md",
             ROOT / "templates" / "task.md",
             *_grok_bot_markdown(),
         ]

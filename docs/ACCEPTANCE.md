@@ -110,11 +110,12 @@ Record init and query wall times from `graph.json` attempts and your shell; upst
 
 This section is unrun until an operator records it.
 The files under `templates/grok-bot/` are the source-controlled recipe.
+`GROK_SUM.md` is the installer.
 They are not this canary.
 This repository does not publish a live Bot.
 
-Paste `templates/grok-bot/instructions.md` into a new Grok Bot description.
-Save the five skills, the memories, and the worker procedure from that directory.
+Tell any Grok Bot to follow `GROK_SUM.md`.
+Confirm it clones `https://github.com/douglasjarquin/sum.git` onto the shared computer and loads the five skills from that tree.
 Connect GitHub, and Cursor if the task is software.
 Do not enable routines yet.
 
