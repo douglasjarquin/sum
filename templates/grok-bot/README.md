@@ -13,7 +13,7 @@ You do not need a SUM installation.
 | `instructions.md` | Bot description |
 | `memories.md` | Memories included in the template |
 | `worker-procedure.md` | A memory named Worker procedure |
-| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, and Delivery |
+| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, and Deliver |
 | `routines.md` | A paused Inbox rundown routine after two good manual runs |
 
 Do not paste helper commands, instance ids, or Bot ids into those fields.

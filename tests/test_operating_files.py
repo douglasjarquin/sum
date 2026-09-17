@@ -19,7 +19,7 @@ RECIPE_FILES = (
     "skills/persist/SKILL.md",
     "skills/verify/SKILL.md",
     "skills/rundown/SKILL.md",
-    "skills/delivery/SKILL.md",
+    "skills/deliver/SKILL.md",
 )
 SKILL_HEADINGS = (
     "## When to use it",

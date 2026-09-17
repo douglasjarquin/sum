@@ -1,9 +1,9 @@
 ---
-name: delivery
+name: deliver
 description: Prepare a reviewable PR from a verified candidate. Use after coordinator verification, never to merge.
 ---
 
-# Delivery
+# Deliver
 
 ## When to use it
 
