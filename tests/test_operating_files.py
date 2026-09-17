@@ -4,14 +4,17 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-FORBIDDEN = re.compile(r"\b(consigliere|capo|soldier|crewmate)\b|first mate|root session", re.I)
+FORBIDDEN = re.compile(
+    r"\b(consigliere|capo|soldier|crewmate|charter)\b|first mate|root session",
+    re.I,
+)
 GROK_BOT = ROOT / "templates" / "grok-bot"
 RECIPE_FILES = (
     "README.md",
     "instructions.md",
     "memories.md",
     "routines.md",
-    "worker-charter.md",
+    "worker-procedure.md",
     "skills/dispatch/SKILL.md",
     "skills/persist/SKILL.md",
     "skills/verify/SKILL.md",
@@ -80,8 +83,8 @@ class OperatingFilesTest(unittest.TestCase):
             for heading in SKILL_HEADINGS:
                 self.assertIn(heading, text, f"{name} missing {heading}")
 
-    def test_grok_bot_worker_charter_stays_a_worker(self):
-        text = (GROK_BOT / "worker-charter.md").read_text()
+    def test_grok_bot_worker_procedure_stays_a_worker(self):
+        text = (GROK_BOT / "worker-procedure.md").read_text()
         self.assertIn("You are not the coordinator", text)
         self.assertIn("The user merges", text)
         self.assertIn("Do not message the user", text)

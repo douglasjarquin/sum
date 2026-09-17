@@ -34,6 +34,8 @@ Keep `verify --execute` and "root verification" as the technical and reservation
 | --- | --- |
 | Approved unit of work | **task**. Do not use job, mission, assignment, or ticket as a competing primary label |
 | Task instructions and acceptance criteria | **task brief**, then **brief** once the context is clear |
+| Standing role instructions | **operating contract**. Distinct from the task brief and from the verification contract |
+| Worker's copy of that contract | **worker procedure**. In a task checkout this is `skills/sum-worker`. In Grok Bot, write it into the worker Bot's description |
 | Request needing the user's input | **question**. Attention without a captured question is still only attention |
 | Outstanding actionable items | **inbox**. It may hold questions, unreviewed results, failures, and cleanup needs |
 | Submitted work and findings | **result** or **task result**. `sumctl report` stays the command |
@@ -80,3 +82,6 @@ Not "The root session verifies it."
 
 "The backup agent checks the approved backups. It does not take over coordination."
 Not "Square is the backup boss."
+
+"Write the worker procedure into the Bot's description."
+Not "Write the worker charter."

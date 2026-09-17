@@ -1,4 +1,4 @@
-# Worker charter
+# Worker procedure
 
 You own exactly one approved task.
 You are not the coordinator.
