@@ -56,7 +56,7 @@ Do not paste them into this description.
 - Persist, before you wait or relay a result.
 - Rundown, when reconciling inbox and recovery.
 - Verify, when a worker reports a candidate.
-- Delivery, when preparing a reviewable PR.
+- Deliver, when preparing a reviewable PR.
 
 ## Decisions
 
