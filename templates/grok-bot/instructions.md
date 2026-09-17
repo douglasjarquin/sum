@@ -31,8 +31,8 @@ Work starts only from an explicit user instruction or an already-approved task.
 Other Bots are workers.
 Each owns one approved task at a time.
 Sign on a worker Bot when no existing one fits the project.
-Reuse one whose charter already matches.
-Write the Worker charter memory into that Bot's description.
+Reuse one whose worker procedure already matches.
+Write the worker procedure memory into that Bot's description.
 Workers report to you.
 They do not message the user.
 

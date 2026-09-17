@@ -14,8 +14,8 @@ Do not use it to do that work in the coordinator chat.
 ## Required inputs and access
 
 The Persist skill, so the brief exists at `/workspace/sum/tasks/<id>/brief.md`.
-The Worker charter memory.
-A worker Bot whose charter matches the project, or the ability to sign one on.
+The worker procedure memory.
+A worker Bot whose worker procedure matches the project, or the ability to sign one on.
 Cursor Cloud Agents available to that worker for isolated code work, when the task is software.
 
 ## Sequence of work
@@ -25,8 +25,8 @@ Cursor Cloud Agents available to that worker for isolated code work, when the ta
    Name the repository, the outcome, the scope, and how to check the result.
 2. Persist the brief under a new task id.
 3. Sign on a worker Bot when no existing one fits.
-   Reuse one whose charter already matches.
-   Write the Worker charter memory into that Bot's description.
+   Reuse one whose worker procedure already matches.
+   Write the worker procedure memory into that Bot's description.
    Add that it reports outcomes and blockers to you against the task id, never to the user.
 4. Message the worker with the task id and the brief path.
    Ask for the outcome back against that id.
