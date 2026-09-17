@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	tmpPathPattern  = regexp.MustCompile(`(?i)(?:/private)?/var/folders/[^\s"'\\]+`)
+	tmpPathPattern  = regexp.MustCompile(`(?i)(?:/private)?(?:/var/folders/[^\s"'\\]+|/tmp/Test[^\s"'\\]+)`)
 	gitSHAPattern   = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
 	cursorHashPat   = regexp.MustCompile(`\.[0-9a-f]{12}\.`)
 	codegraphPat    = regexp.MustCompile(`/[^\s"']+/\.local/releases/[^\s"']*codegraph`)
@@ -43,6 +43,18 @@ func pathAliases(p string) []string {
 	return out
 }
 
+func TestNormalizeCLIOutputKeepsTokens(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	in := "worktree: /tmp/TestFoo/002/checkout\ncandidate: " + sha + "\ncursor: c0.1.abcdefabcdef.2026-01-01T00:00:00+00:00\n"
+	got := normalizeCLIOutput(in, "", "")
+	if !strings.Contains(got, "$TMP") || !strings.Contains(got, "$SHA") || !strings.Contains(got, ".$CURSOR.") {
+		t.Fatalf("normalized = %q, want $TMP $SHA and .$CURSOR. tokens", got)
+	}
+	if strings.Contains(got, sha) || strings.Contains(got, "/tmp/TestFoo") {
+		t.Fatalf("normalized leaked a volatile value: %q", got)
+	}
+}
+
 func normalizeCLIOutput(s, home, root string) string {
 	for _, alias := range pathAliases(home) {
 		s = strings.ReplaceAll(s, alias, "$HOME")
@@ -50,10 +62,10 @@ func normalizeCLIOutput(s, home, root string) string {
 	for _, alias := range pathAliases(root) {
 		s = strings.ReplaceAll(s, alias, "$ROOT")
 	}
-	s = tmpPathPattern.ReplaceAllString(s, "$TMP")
-	s = codegraphPat.ReplaceAllString(s, "$CODEGRAPH")
-	s = gitSHAPattern.ReplaceAllString(s, "$SHA")
-	s = cursorHashPat.ReplaceAllString(s, ".$CURSOR.")
+	s = tmpPathPattern.ReplaceAllString(s, "$$TMP")
+	s = codegraphPat.ReplaceAllString(s, "$$CODEGRAPH")
+	s = gitSHAPattern.ReplaceAllString(s, "$$SHA")
+	s = cursorHashPat.ReplaceAllString(s, ".$$CURSOR.")
 	return s
 }
 

@@ -2,7 +2,7 @@
   "mcpServers": {
     "codegraph": {
       "type": "stdio",
-      "command": "",
+      "command": "$CODEGRAPH",
       "args": [
         "serve",
         "--mcp"

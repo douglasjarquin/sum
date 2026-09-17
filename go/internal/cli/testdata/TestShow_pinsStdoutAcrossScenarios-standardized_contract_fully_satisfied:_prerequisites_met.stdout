@@ -6,11 +6,11 @@ questions: []
 notice: null
 attention: []
 brief: do thing
-base_sha: 
+base_sha: $SHA
 kind: task
 brief_path: brief.md
 report: null
-worktree: 
+worktree: $TMP
 verification_policy:
   status: standardized
 pr:
@@ -19,7 +19,7 @@ pr:
   identity:
     repository: owner/repoD
     number: 1
-    head_sha: 
+    head_sha: $SHA
     head_repository: owner/repoD
     head_branch: task-branch
 reviewer:
@@ -32,7 +32,7 @@ evidence[4]:
     kind: handoff
     source: worker
     at: "2026-01-01T00:05:00+00:00"
-    candidate: 
+    candidate: $SHA
     brief_revision: null
     sum_version: 0.1.0
     endpoint: null
@@ -42,7 +42,7 @@ evidence[4]:
     kind: verification
     source: worker
     at: "2026-01-01T00:06:00+00:00"
-    candidate: 
+    candidate: $SHA
     brief_revision: null
     sum_version: 0.1.0
     endpoint: null
@@ -54,7 +54,7 @@ evidence[4]:
     kind: verification
     source: coordinator
     at: "2026-01-01T00:10:00+00:00"
-    candidate: 
+    candidate: $SHA
     brief_revision: null
     sum_version: 0.1.0
     endpoint: null
@@ -67,7 +67,7 @@ evidence[4]:
     kind: review
     source: reviewer
     at: "2026-01-01T00:12:00+00:00"
-    candidate: 
+    candidate: $SHA
     brief_revision: null
     sum_version: 0.1.0
     endpoint: null
@@ -83,7 +83,7 @@ versions:
   brief_schema: 1
   approved:
     sha256: 32cd1980334fb8022f797b3eded95c4f90e35afdb04f000787bea79a282ca4c4
-    base_sha: 
+    base_sha: $SHA
     repository: owner/repoD
     kind: task
   active: legacy
@@ -94,14 +94,14 @@ versions:
   report_evidence: null
   note: Revisions are staged files; the worker keeps reading its current brief until a refresh is explicitly requested and adopted.
 evidence_view:
-  current_candidate: 
+  current_candidate: $SHA
   records[4]:
     - schema: 1
       id: e-0000000001
       kind: handoff
       source: worker
       at: "2026-01-01T00:05:00+00:00"
-      candidate: 
+      candidate: $SHA
       brief_revision: null
       sum_version: 0.1.0
       endpoint: null
@@ -112,7 +112,7 @@ evidence_view:
       kind: verification
       source: worker
       at: "2026-01-01T00:06:00+00:00"
-      candidate: 
+      candidate: $SHA
       brief_revision: null
       sum_version: 0.1.0
       endpoint: null
@@ -125,7 +125,7 @@ evidence_view:
       kind: verification
       source: coordinator
       at: "2026-01-01T00:10:00+00:00"
-      candidate: 
+      candidate: $SHA
       brief_revision: null
       sum_version: 0.1.0
       endpoint: null
@@ -139,7 +139,7 @@ evidence_view:
       kind: review
       source: reviewer
       at: "2026-01-01T00:12:00+00:00"
-      candidate: 
+      candidate: $SHA
       brief_revision: null
       sum_version: 0.1.0
       endpoint: null
@@ -157,7 +157,7 @@ evidence_view:
     identity:
       repository: owner/repoD
       number: 1
-      head_sha: 
+      head_sha: $SHA
       head_repository: owner/repoD
       head_branch: task-branch
   verification:
@@ -167,7 +167,7 @@ evidence_view:
       run_id: run-worker-1
       result: pass
       outcome: all green
-      candidate: 
+      candidate: $SHA
       current: true
       certifies: null
       requires_root_review: null
@@ -176,7 +176,7 @@ evidence_view:
       run_id: run-root-1
       result: pass
       outcome: all green
-      candidate: 
+      candidate: $SHA
       current: true
       certifies: null
       requires_root_review: false

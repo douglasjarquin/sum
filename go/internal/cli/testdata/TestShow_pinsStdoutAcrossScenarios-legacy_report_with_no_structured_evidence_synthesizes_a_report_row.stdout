@@ -7,7 +7,7 @@ evidence: []
 notice: null
 attention: []
 brief: do thing
-base_sha: 
+base_sha: $SHA
 kind: task
 brief_path: brief.md
 report:
@@ -24,7 +24,7 @@ versions:
   brief_schema: 1
   approved:
     sha256: 32cd1980334fb8022f797b3eded95c4f90e35afdb04f000787bea79a282ca4c4
-    base_sha: 
+    base_sha: $SHA
     repository: owner/repoB
     kind: task
   active: legacy

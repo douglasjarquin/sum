@@ -1,6 +1,6 @@
 task: t-2d2d2d2d2d2d
 status: reported
-cursor: "c0.3.0.0.0.0.0..2026-01-01T00:10:00+00:00"
+cursor: "c0.3.0.0.0.0.0.$CURSOR.2026-01-01T00:10:00+00:00"
 read_at: "<at>"
 sections[1]: evidence
 role: null
@@ -12,12 +12,12 @@ evidence:
   omitted: 0
   next_after: null
   items[1]{id,kind,source,at,candidate,current,brief_revision,verdict,result,outcome}:
-    e-0000000002,verification,coordinator,"2026-01-01T00:08:00+00:00",,true,null,null,pass,all green
+    e-0000000002,verification,coordinator,"2026-01-01T00:08:00+00:00",$SHA,true,null,null,pass,all green
   kinds:
     handoff: 1
     verification: 1
     review: 1
-  current_candidate: 
+  current_candidate: $SHA
   closure:
     prerequisites_met: false
     missing[1]: complete PR identity from `pr reconcile`

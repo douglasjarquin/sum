@@ -1,6 +1,6 @@
 task: t-1e1e1e1e1e1e
 status: running
-cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+cursor: "c0.0.0.0.0.0.0.$CURSOR.2026-01-01T00:00:00+00:00"
 read_at: "<at>"
 sections: []
 role: null

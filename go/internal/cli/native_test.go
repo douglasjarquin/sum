@@ -99,6 +99,8 @@ func TestAsk_pinsStdoutWhenTheParentHasNoPane(t *testing.T) {
 
 func TestSettingsSet_requiresCoordinator(t *testing.T) {
 	home := t.TempDir()
+	herdrEnv(t, home)
+	t.Setenv("HERDR_PANE_ID", "w-other:p1")
 	assertErrorGolden(t, home, []string{"settings", "set", "--global", "3"}, "settings-set-requires-coordinator")
 }
 

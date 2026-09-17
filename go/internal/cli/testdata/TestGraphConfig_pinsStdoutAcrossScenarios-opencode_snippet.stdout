@@ -1,10 +1,10 @@
 harness: opencode
 format: json
 target: opencode.json in the checkout
-snippet: "{\n  \"mcp\": {\n    \"codegraph\": {\n      \"type\": \"local\",\n      \"command\": [\n        \"\",\n        \"serve\",\n        \"--mcp\"\n      ],\n      \"enabled\": true\n    }\n  }\n}"
+snippet: "{\n  \"mcp\": {\n    \"codegraph\": {\n      \"type\": \"local\",\n      \"command\": [\n        \"$CODEGRAPH\",\n        \"serve\",\n        \"--mcp\"\n      ],\n      \"enabled\": true\n    }\n  }\n}"
 tool:
   pinned: 1.5.0
-  path: 
+  path: $CODEGRAPH
   available: true
   version: 1.5.0
   reason: null

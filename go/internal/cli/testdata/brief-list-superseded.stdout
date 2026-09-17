@@ -7,7 +7,7 @@ runtime:
 brief_schema: 1
 approved:
   sha256: abc
-  base_sha: 
+  base_sha: $SHA
   repository: owner/repoB
   kind: task
 active: r2

@@ -4,17 +4,17 @@ project:
   owner: owner
   repo: clean-proj
   kind: managed
-  path: 
+  path: $TMP
   remote: "https://github.com/owner/clean-proj.git"
   enrolled_at: "2026-01-01T00:00:00+00:00"
   enrolled_by:
     machine: m1
     session: s1
     pane: p1
-  canonical_path: 
+  canonical_path: $TMP
   note: null
   observed:
-    path: 
+    path: $TMP
     present: true
     git: true
     remote_matches: true

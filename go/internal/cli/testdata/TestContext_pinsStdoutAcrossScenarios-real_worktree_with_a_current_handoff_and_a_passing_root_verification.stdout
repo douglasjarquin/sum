@@ -1,6 +1,6 @@
 task: t-bbbbbbbbbbbb
 status: reported
-cursor: "c0.2.0.0.0.0.0..2026-01-01T00:10:00+00:00"
+cursor: "c0.2.0.0.0.0.0.$CURSOR.2026-01-01T00:10:00+00:00"
 read_at: "<at>"
 sections[1]: outline
 role: null
@@ -11,23 +11,23 @@ outline:
   kind: task
   repository: owner/repoB
   branch: null
-  worktree: 
+  worktree: $TMP
   harness: null
   error: null
   approved:
     chars: 8
     sha256: 32cd1980334fb802
-    base_sha: 
+    base_sha: $SHA
   decisions:
     total: 0
     outstanding: []
   evidence:
     records: 2
-    current_candidate: 
+    current_candidate: $SHA
     latest_handoff:
       id: e-0000000001
       outcome: done
-      candidate: 
+      candidate: $SHA
       current: true
     closure_missing[1]: complete PR identity from `pr reconcile`
     verification:
@@ -38,7 +38,7 @@ outline:
         run_id: run-root-1
         result: pass
         outcome: all green
-        candidate: 
+        candidate: $SHA
         current: true
         certifies: null
         requires_root_review: null

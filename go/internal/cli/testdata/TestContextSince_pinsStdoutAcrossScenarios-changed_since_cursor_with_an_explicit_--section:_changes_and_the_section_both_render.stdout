@@ -1,6 +1,6 @@
 task: t-2a2a2a2a2a2a
 status: running
-cursor: "c1.0.0.0.0.0.0..2026-01-01T00:01:00+00:00"
+cursor: "c1.0.0.0.0.0.0.$CURSOR.2026-01-01T00:01:00+00:00"
 read_at: "<at>"
 sections[1]: decisions
 role: null

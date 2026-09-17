@@ -1,6 +1,6 @@
 task: t-0d0d0d0d0d0d
 status: running
-cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+cursor: "c0.0.0.0.0.0.0.$CURSOR.2026-01-01T00:00:00+00:00"
 read_at: "<at>"
 sections[1]: execution
 role: null
@@ -9,7 +9,7 @@ execution:
   repository: owner/repoJ
   worktree: null
   branch: task-branch
-  base_sha: 
+  base_sha: $SHA
   kind: task
   harness: claude
   status: running

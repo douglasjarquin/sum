@@ -1,17 +1,17 @@
 task: t-ffffffffffff
 status: reported
-cursor: "c0.3.0.0.0.0.0..2026-01-01T00:10:00+00:00"
+cursor: "c0.3.0.0.0.0.0.$CURSOR.2026-01-01T00:10:00+00:00"
 read_at: "<at>"
 sections[2]: handoff,evidence
 role: null
 versions_error: null
 handoff:
-  current_candidate: 
+  current_candidate: $SHA
   handoff:
     id: e-0000000001
     at: "2026-01-01T00:05:00+00:00"
     source: worker
-    candidate: 
+    candidate: $SHA
     brief_revision: null
     endpoint: null
     current: true
@@ -45,7 +45,7 @@ handoff:
   report:
     submitted_at: "2026-01-01T00:20:00+00:00"
     brief_revision: legacy
-    candidate: 
+    candidate: $SHA
     text:
       chars: 4
       truncated: false
@@ -73,7 +73,7 @@ evidence:
       kind: handoff
       source: worker
       at: "2026-01-01T00:05:00+00:00"
-      candidate: 
+      candidate: $SHA
       current: true
       brief_revision: null
       verdict: null
@@ -92,7 +92,7 @@ evidence:
       kind: verification
       source: coordinator
       at: "2026-01-01T00:08:00+00:00"
-      candidate: 
+      candidate: $SHA
       current: true
       brief_revision: null
       verdict: null
@@ -102,7 +102,7 @@ evidence:
       kind: review
       source: reviewer
       at: "2026-01-01T00:09:00+00:00"
-      candidate: 
+      candidate: $SHA
       current: true
       brief_revision: null
       verdict: approve
@@ -113,7 +113,7 @@ evidence:
     handoff: 1
     verification: 1
     review: 1
-  current_candidate: 
+  current_candidate: $SHA
   closure:
     prerequisites_met: false
     missing[1]: complete PR identity from `pr reconcile`

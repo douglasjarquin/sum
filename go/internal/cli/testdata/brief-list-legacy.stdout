@@ -8,7 +8,7 @@ runtime:
 brief_schema: 1
 approved:
   sha256: 12422cebeadd97366c31ee59300562cc3b9bca05e01005cc7a4a0945265c4472
-  base_sha: 
+  base_sha: $SHA
   repository: owner/repoA
   kind: task
 active: legacy

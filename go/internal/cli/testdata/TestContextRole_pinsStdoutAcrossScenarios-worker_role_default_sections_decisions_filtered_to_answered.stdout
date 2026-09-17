@@ -1,6 +1,6 @@
 task: t-1b1b1b1b1b1b
 status: running
-cursor: "c2.0.1.0.0.0.0..2026-01-01T00:02:00+00:00"
+cursor: "c2.0.1.0.0.0.0.$CURSOR.2026-01-01T00:02:00+00:00"
 read_at: "<at>"
 sections[5]: outline,decisions,execution,environment,notes
 role: worker
@@ -19,7 +19,7 @@ outline:
   approved:
     chars: 8
     sha256: 32cd1980334fb802
-    base_sha: 
+    base_sha: $SHA
   decisions:
     total: 2
     outstanding[2]{id,key,status,created_at}:
@@ -82,7 +82,7 @@ execution:
   repository: owner/repoN
   worktree: null
   branch: null
-  base_sha: 
+  base_sha: $SHA
   kind: task
   harness: null
   status: running

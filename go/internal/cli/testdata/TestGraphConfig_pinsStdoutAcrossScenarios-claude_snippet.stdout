@@ -1,10 +1,10 @@
 harness: claude
 format: json
 target: .mcp.json in the checkout (project scope)
-snippet: "{\n  \"mcpServers\": {\n    \"codegraph\": {\n      \"type\": \"stdio\",\n      \"command\": \"\",\n      \"args\": [\n        \"serve\",\n        \"--mcp\"\n      ]\n    }\n  }\n}"
+snippet: "{\n  \"mcpServers\": {\n    \"codegraph\": {\n      \"type\": \"stdio\",\n      \"command\": \"$CODEGRAPH\",\n      \"args\": [\n        \"serve\",\n        \"--mcp\"\n      ]\n    }\n  }\n}"
 tool:
   pinned: 1.5.0
-  path: 
+  path: $CODEGRAPH
   available: true
   version: 1.5.0
   reason: null

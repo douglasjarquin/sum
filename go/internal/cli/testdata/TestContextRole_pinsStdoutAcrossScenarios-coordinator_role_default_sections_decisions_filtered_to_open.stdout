@@ -1,6 +1,6 @@
 task: t-1c1c1c1c1c1c
 status: running
-cursor: "c2.0.1.0.0.0.0..2026-01-01T00:02:00+00:00"
+cursor: "c2.0.1.0.0.0.0.$CURSOR.2026-01-01T00:02:00+00:00"
 read_at: "<at>"
 sections[6]: outline,decisions,handoff,returns,update,pipeline
 role: coordinator
@@ -19,7 +19,7 @@ outline:
   approved:
     chars: 8
     sha256: 32cd1980334fb802
-    base_sha: 
+    base_sha: $SHA
   decisions:
     total: 2
     outstanding[2]{id,key,status,created_at}:

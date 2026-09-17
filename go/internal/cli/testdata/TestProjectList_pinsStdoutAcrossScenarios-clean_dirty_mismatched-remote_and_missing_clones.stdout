@@ -4,17 +4,17 @@ projects[4]:
     owner: owner
     repo: clean-proj
     kind: managed
-    path: ""
+    path: "$TMP"
     remote: "https://github.com/owner/clean-proj.git"
     enrolled_at: "2026-01-01T00:00:00+00:00"
     enrolled_by:
       machine: m1
       session: s1
       pane: p1
-    canonical_path: ""
+    canonical_path: "$TMP"
     note: null
     observed:
-      path: ""
+      path: "$TMP"
       present: true
       git: true
       remote_matches: true
@@ -27,17 +27,17 @@ projects[4]:
     owner: owner
     repo: dirty-proj
     kind: managed
-    path: ""
+    path: "$TMP"
     remote: "https://github.com/owner/dirty-proj.git"
     enrolled_at: "2026-01-01T00:00:00+00:00"
     enrolled_by:
       machine: m1
       session: s1
       pane: p1
-    canonical_path: ""
+    canonical_path: "$TMP"
     note: null
     observed:
-      path: ""
+      path: "$TMP"
       present: true
       git: true
       remote_matches: true
@@ -50,17 +50,17 @@ projects[4]:
     owner: owner
     repo: mismatched-proj
     kind: managed
-    path: ""
+    path: "$TMP"
     remote: "https://github.com/owner/mismatched-proj.git"
     enrolled_at: "2026-01-01T00:00:00+00:00"
     enrolled_by:
       machine: m1
       session: s1
       pane: p1
-    canonical_path: ""
+    canonical_path: "$TMP"
     note: null
     observed:
-      path: ""
+      path: "$TMP"
       present: true
       git: true
       remote_matches: false
@@ -74,17 +74,17 @@ projects[4]:
     owner: owner
     repo: missing-proj
     kind: managed
-    path: ""
+    path: "$TMP"
     remote: "https://github.com/owner/missing-proj.git"
     enrolled_at: "2026-01-01T00:00:00+00:00"
     enrolled_by:
       machine: m1
       session: s1
       pane: p1
-    canonical_path: ""
+    canonical_path: "$TMP"
     note: null
     observed:
-      path: ""
+      path: "$TMP"
       present: false
       git: false
       remote_matches: null

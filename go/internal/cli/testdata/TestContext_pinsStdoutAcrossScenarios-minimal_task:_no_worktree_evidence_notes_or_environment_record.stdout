@@ -1,6 +1,6 @@
 task: t-aaaaaaaaaaaa
 status: running
-cursor: "c0.0.0.0.0.0.0..2026-01-01T00:00:00+00:00"
+cursor: "c0.0.0.0.0.0.0.$CURSOR.2026-01-01T00:00:00+00:00"
 read_at: "<at>"
 sections[1]: outline
 role: null
@@ -17,7 +17,7 @@ outline:
   approved:
     chars: 12
     sha256: 12422cebeadd9736
-    base_sha: 
+    base_sha: $SHA
   decisions:
     total: 0
     outstanding: []

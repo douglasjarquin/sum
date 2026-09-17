@@ -6,13 +6,13 @@ questions: []
 notice: null
 attention: []
 brief: do thing
-base_sha: 
+base_sha: $SHA
 kind: task
 brief_path: brief.md
 report: null
-worktree: 
+worktree: $TMP
 evidence[1]{schema,id,kind,source,at,candidate,brief_revision,sum_version,endpoint,run_id,result,outcome}:
-  1,e-0000000001,verification,coordinator,"2026-01-01T00:10:00+00:00",,null,0.1.0,null,r1,fail,failing scenarios
+  1,e-0000000001,verification,coordinator,"2026-01-01T00:10:00+00:00",$SHA,null,0.1.0,null,r1,fail,failing scenarios
 versions:
   schema: 1
   legacy: true
@@ -22,7 +22,7 @@ versions:
   brief_schema: 1
   approved:
     sha256: 32cd1980334fb8022f797b3eded95c4f90e35afdb04f000787bea79a282ca4c4
-    base_sha: 
+    base_sha: $SHA
     repository: owner/repoC
     kind: task
   active: legacy
@@ -33,9 +33,9 @@ versions:
   report_evidence: null
   note: Revisions are staged files; the worker keeps reading its current brief until a refresh is explicitly requested and adopted.
 evidence_view:
-  current_candidate: 
+  current_candidate: $SHA
   records[1]{schema,id,kind,source,at,candidate,brief_revision,sum_version,endpoint,run_id,result,outcome,current}:
-    1,e-0000000001,verification,coordinator,"2026-01-01T00:10:00+00:00",,null,0.1.0,null,r1,fail,failing scenarios,true
+    1,e-0000000001,verification,coordinator,"2026-01-01T00:10:00+00:00",$SHA,null,0.1.0,null,r1,fail,failing scenarios,true
   reviewer: null
   pr: null
   verification:
@@ -46,7 +46,7 @@ evidence_view:
       run_id: r1
       result: fail
       outcome: failing scenarios
-      candidate: 
+      candidate: $SHA
       current: true
       certifies: null
       requires_root_review: null
