@@ -114,7 +114,7 @@ They are not this canary.
 This repository does not publish a live Bot.
 
 Paste `templates/grok-bot/instructions.md` into a new Grok Bot description.
-Save the five skills, the memories, and the worker charter from that directory.
+Save the five skills, the memories, and the worker procedure from that directory.
 Connect GitHub, and Cursor if the task is software.
 Do not enable routines yet.
 

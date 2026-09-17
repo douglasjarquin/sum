@@ -12,7 +12,7 @@ You do not need a SUM installation.
 | --- | --- |
 | `instructions.md` | Bot description |
 | `memories.md` | Memories included in the template |
-| `worker-charter.md` | A memory named Worker charter |
+| `worker-procedure.md` | A memory named Worker procedure |
 | `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, and Delivery |
 | `routines.md` | A paused Inbox rundown routine after two good manual runs |
 
@@ -25,7 +25,7 @@ This recipe is native to Grok Bot.
 2. Name it Sum.
 3. Paste `instructions.md` into the description.
 4. Save each skill from `skills/` with the six fields intact.
-5. Save `memories.md` and `worker-charter.md` as memories.
+5. Save `memories.md` and `worker-procedure.md` as memories.
 6. Connect GitHub.
 7. Connect Cursor if the Bot will dispatch software work.
 8. Do not enable routines yet.
