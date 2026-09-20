@@ -25,6 +25,9 @@ type StopProof struct {
 }
 
 func ObserveStop(s *store.Store, runtimeRoot string, task, attempt *ordjson.Object) StopProof {
+	if stringField(attempt, "state") == "released" {
+		return StopProof{Outcome: OutcomeStopped, Observation: lastObservation(attempt)}
+	}
 	kind := stringField(attempt, "kind")
 	if kind == "worker" {
 		return observeWorker(s, runtimeRoot, task, attempt)
@@ -80,7 +83,6 @@ func observeVerifier(attempt *ordjson.Object) StopProof {
 }
 
 func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Object) StopProof {
-	released := stringField(attempt, "state") == "released"
 	session := stringField(task, "session")
 	envSession, err := store.SessionFromEnv()
 	if err != nil {
@@ -121,7 +123,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 		return unknown(err.Error())
 	}
 	if pane == nil {
-		if !herdrclient.IsAbsent(code) && !released {
+		if !herdrclient.IsAbsent(code) {
 			return unknown(fmt.Sprintf("Worker pane cannot prove exit (%s); an unobservable pane does not release capacity.", code))
 		}
 	} else {

@@ -226,7 +226,7 @@ func (l *lab) saveTask(raw string) {
 	}
 }
 
-func (l *lab) taskJSON(verifierExtra string) string {
+func (l *lab) taskJSON(verifierState, verifierExtra string) string {
 	return fmt.Sprintf(`{
 "schema": 1, "id": %q, "status": "running", "repository": %q,
 "machine": %q, "session": "sum-test", "pane": "w-worker:p1", "workspace": "w-worker",
@@ -238,10 +238,10 @@ func (l *lab) taskJSON(verifierExtra string) string {
   "worker": {"id": %q, "kind": "worker", "state": "released", "generation": 1,
              "owner": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}, "checkout": %q,
              "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []},
-  "verifiers": [{"id": %q, "kind": "verifier", "state": "running", "generation": 1,
+  "verifiers": [{"id": %q, "kind": "verifier", "state": %q, "generation": 1,
              "owner": {"machine": %q, "session": "sum-test", "pane": "w-rev:p1"}, "checkout": %q,
              "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []%s}]
-}}`, taskID, l.repo, l.host, l.checkout, workerID, l.host, l.checkout, verifierID, l.host, l.checkout, verifierExtra)
+}}`, taskID, l.repo, l.host, l.checkout, workerID, l.host, l.checkout, verifierID, verifierState, l.host, l.checkout, verifierExtra)
 }
 
 func (l *lab) attemptState(id string) string {
@@ -315,7 +315,7 @@ func TestCleanup_deadVerifierChildBlocksDestructiveCleanup(t *testing.T) {
 	argvJSON, _ := json.Marshal(argv)
 	extra := fmt.Sprintf(`, "operation_pid": %d, "occupant": {"machine": %q, "pid": %d, "argv": %s, "checkout": %q}`,
 		parent, l.host, parent, argvJSON, l.checkout)
-	l.saveTask(l.taskJSON(extra))
+	l.saveTask(l.taskJSON("running", extra))
 	if _, err := execution.Park(l.store, l.ctx, l.runtime, taskID, verifierID); err == nil {
 		t.Fatal("park released a dead parent with a surviving child")
 	}
@@ -339,10 +339,50 @@ func TestCleanup_deadVerifierChildBlocksDestructiveCleanup(t *testing.T) {
 	}
 }
 
+func TestCleanup_releasedAttemptsAreNotReobserved(t *testing.T) {
+	l := newLab(t)
+	l.writeWorkerPane()
+	// A live agent in the released worker's pane and a released verifier without
+	// operation_pid: re-observing either attempt reports an execution blocker.
+	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	panes := state["panes"].(map[string]any)
+	worker := panes["w-worker:p1"].(map[string]any)
+	worker["agent"] = "claude"
+	worker["agent_status"] = "running"
+	out, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.saveTask(l.taskJSON("released", ""))
+	plan := l.inspect()
+	if hasCode(blockerCodes(plan), "execution") {
+		t.Fatalf("released attempts were re-observed: %v", blockerDetails(plan))
+	}
+	view := asObject(func() any { v, _ := plan.Get("execution"); return v }())
+	for _, item := range asList(func() any { v, _ := view.Get("attempts"); return v }()) {
+		row := asObject(item)
+		if stringField(row, "outcome") != "stopped" {
+			id, _ := row.Get("id")
+			outcome, _ := row.Get("outcome")
+			t.Fatalf("released attempt %v outcome = %v, want stopped", id, outcome)
+		}
+	}
+}
+
 func TestCleanup_agreesWithParkOnUncertainStopEvidence(t *testing.T) {
 	l := newLab(t)
 	l.writeWorkerPane()
-	l.saveTask(l.taskJSON(""))
+	l.saveTask(l.taskJSON("running", ""))
 	parkErr := error(nil)
 	_, parkErr = execution.Park(l.store, l.ctx, l.runtime, taskID, verifierID)
 	if parkErr == nil {
@@ -366,7 +406,7 @@ func TestCleanup_applyRefusesUncertainStop(t *testing.T) {
 	l.writeWorkerPane()
 	child := startCheckoutWriter(t, l.checkout)
 	l.plantLsof([]map[string]any{{"pid": child, "cwd": l.checkout}})
-	l.saveTask(l.taskJSON(""))
+	l.saveTask(l.taskJSON("running", ""))
 	result, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true})
 	if err == nil {
 		t.Fatal("cleanup --apply succeeded without stop evidence")
