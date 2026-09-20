@@ -14,6 +14,7 @@ Existing repository commands, expected test coverage, and independent-review exp
 
 ## Decisions and constraints
 Known compatibility requirements, risk areas, account/harness restrictions, and what requires asking the user.
+When this task implements a prior investigation, cite that task id and `report.md` and do not redo the investigation.
 
 ## Deliverable
 A committed candidate and evidence-bearing report, or an investigation report for a scout task.

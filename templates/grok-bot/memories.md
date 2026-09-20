@@ -26,3 +26,10 @@ Isolated code work uses Cursor Cloud Agents driven by the worker.
 The coordinator never calls a Cursor Cloud Agent.
 
 Do not store instance ids, Bot ids, API keys, or machine paths in memories that will be shared.
+
+Secrets are per-bot.
+Workers request their own secret cards.
+The coordinator never holds, pastes, or forwards secrets in chat or in worker-description amendments.
+Do not keep work in the coordinator chat to avoid a handoff.
+After verified fails or repeated worker mistakes, the coordinator may amend that worker's description with short learning notes.
+Learning notes never include secrets or secret-card values.
