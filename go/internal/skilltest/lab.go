@@ -106,11 +106,13 @@ func labEnv(t *testing.T, root, stop string) []string {
 		return filepath.Dir(p)
 	}
 	path := strings.Join([]string{bin, pythonDir, "/usr/bin", "/bin"}, string(os.PathListSeparator))
+	// Extra tool dirs are fallbacks only: appended last so they never shadow the
+	// fake mise or the pinned python3.
 	if dir := toolDir("node"); dir != "" {
-		path = dir + string(os.PathListSeparator) + path
+		path += string(os.PathListSeparator) + dir
 	}
 	if dir := toolDir("ffmpeg"); dir != "" {
-		path = dir + string(os.PathListSeparator) + path
+		path += string(os.PathListSeparator) + dir
 	}
 	env = append(env, "PATH="+path, "FAKE_MISE_STOP="+stop, "MISE_QUIET=1")
 	return env
