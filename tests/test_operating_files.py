@@ -1,4 +1,5 @@
-"""Operating files keep the Group 1 dictionary and a native Grok Bot recipe."""
+"""Operating files keep the Group 1 dictionary and native Grok Bot recipes."""
+from hashlib import sha256
 from pathlib import Path
 import re
 import unittest
@@ -8,7 +9,16 @@ FORBIDDEN = re.compile(
     r"\b(consigliere|capo|soldier|crewmate|charter|sitdown)\b|first mate|root session",
     re.I,
 )
-GROK_BOT = ROOT / "templates" / "grok-bot"
+SUM_PACK = ROOT / "templates" / "sum"
+SQUARE_PACK = ROOT / "templates" / "square"
+GROK_BOT = SUM_PACK
+SUM_AVATAR_SHA256 = "66aaeac37e3f2f1934ece8a3ee09bcef0a13bbbc54c29bc281fb32d3705d7766"
+STRIPPED_INSTANCE_MARKERS = (
+    "720991aa",
+    "1302415",
+    "a23a41e7",
+    "e3b1081f",
+)
 RECIPE_FILES = (
     "README.md",
     "instructions.md",
@@ -23,6 +33,14 @@ RECIPE_FILES = (
     "skills/recap/SKILL.md",
     "skills/deliver/SKILL.md",
     "skills/sweep/SKILL.md",
+)
+SQUARE_RECIPE_FILES = (
+    "README.md",
+    "instructions.md",
+    "memories.md",
+    "routines.md",
+    "worker-procedure.md",
+    "avatar.png",
 )
 PACK_SKILLS = (
     "Dispatch",
@@ -54,8 +72,20 @@ SKILL_HEADINGS = (
 REMOVED_BINDINGS = ("sum.md", "project.md", "fields.md")
 
 
+def _sum_pack_markdown():
+    return sorted(path for path in SUM_PACK.rglob("*.md") if path.is_file())
+
+
+def _square_pack_markdown():
+    return sorted(path for path in SQUARE_PACK.rglob("*.md") if path.is_file())
+
+
 def _grok_bot_markdown():
-    return sorted(path for path in GROK_BOT.rglob("*.md") if path.is_file())
+    return _sum_pack_markdown()
+
+
+def _pack_installers():
+    return (ROOT / "GROK_SUM.md", ROOT / "GROK_SQUARE.md")
 
 
 class OperatingFilesTest(unittest.TestCase):
@@ -64,6 +94,7 @@ class OperatingFilesTest(unittest.TestCase):
             path = GROK_BOT / name
             self.assertTrue(path.is_file(), path)
         self.assertTrue((ROOT / "GROK_SUM.md").is_file())
+        self.assertFalse((ROOT / "templates" / "grok-bot").exists())
 
     def test_grok_sum_installer_clones_public_sum(self):
         text = (ROOT / "GROK_SUM.md").read_text()
@@ -72,17 +103,19 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("/home/box/agent-data/sum/src/", text)
         for skill in PACK_SKILLS:
             self.assertIn(skill, text)
+        self.assertIn("templates/sum/", text)
         self.assertNotIn("Paste `templates/grok-bot/instructions.md`", text)
+        self.assertNotIn("templates/grok-bot/", text)
         self.assertNotIn("Save each skill from `skills/`", text)
         self.assertNotIn("sumctl", text)
 
     def test_grok_bot_readme_does_not_ask_for_a_hand_paste(self):
         text = (GROK_BOT / "README.md").read_text()
         self.assertIn("GROK_SUM.md", text)
+        self.assertIn("| `avatar.jpg` | GrokBot profile image |", text)
+        self.assertIn("Recap, Deliver, and Sweep", text)
         self.assertNotIn("What you paste", text)
         self.assertNotIn("Paste `instructions.md`", text)
-        self.assertIn("Recap, Deliver, and Sweep", text)
-        self.assertIn("| `avatar.jpg` | GrokBot profile image |", text)
 
     def test_removed_helper_binding_files_are_gone(self):
         for name in REMOVED_BINDINGS:
@@ -91,7 +124,11 @@ class OperatingFilesTest(unittest.TestCase):
 
     def test_grok_bot_recipe_is_not_a_helper_binding(self):
         self.assertTrue(GROK_BOT.is_dir(), GROK_BOT)
-        paths = [*_grok_bot_markdown(), ROOT / "GROK_SUM.md"]
+        paths = [
+            *_sum_pack_markdown(),
+            *_square_pack_markdown(),
+            *_pack_installers(),
+        ]
         for path in paths:
             text = path.read_text()
             self.assertNotIn("sumctl", text, path)
@@ -145,8 +182,10 @@ class OperatingFilesTest(unittest.TestCase):
             ROOT / "README.md",
             ROOT / "CONTRIBUTING.md",
             ROOT / "GROK_SUM.md",
+            ROOT / "GROK_SQUARE.md",
             ROOT / "templates" / "task.md",
-            *_grok_bot_markdown(),
+            *_sum_pack_markdown(),
+            *_square_pack_markdown(),
         ]
         for path in paths:
             hits = FORBIDDEN.findall(path.read_text())
@@ -239,11 +278,86 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("forbid redoing the investigation", text)
 
     def test_pack_omits_out_of_scope_firstmate_items(self):
-        paths = [*_grok_bot_markdown(), ROOT / "GROK_SUM.md"]
+        paths = [
+            *_sum_pack_markdown(),
+            *_square_pack_markdown(),
+            *_pack_installers(),
+        ]
         for path in paths:
             text = path.read_text()
             for phrase in OUT_OF_SCOPE_PHRASES:
                 self.assertNotIn(phrase, text, path)
+
+    def test_sum_pack_avatar_matches_pr_188(self):
+        path = SUM_PACK / "avatar.jpg"
+        self.assertTrue(path.is_file(), path)
+        digest = sha256(path.read_bytes()).hexdigest()
+        self.assertEqual(digest, SUM_AVATAR_SHA256)
+
+    def test_square_pack_recipe_files_exist(self):
+        self.assertTrue(SQUARE_PACK.is_dir(), SQUARE_PACK)
+        for name in SQUARE_RECIPE_FILES:
+            path = SQUARE_PACK / name
+            self.assertTrue(path.is_file(), path)
+        self.assertTrue((ROOT / "GROK_SQUARE.md").is_file())
+        self.assertTrue((ROOT / "templates" / "README.md").is_file())
+        self.assertFalse((SQUARE_PACK / "skills").exists())
+
+    def test_grok_square_installer_clones_public_sum(self):
+        text = (ROOT / "GROK_SQUARE.md").read_text()
+        self.assertIn("This file is an installer.", text)
+        self.assertIn("https://github.com/douglasjarquin/sum.git", text)
+        self.assertIn("/home/box/agent-data/sum/src/", text)
+        self.assertIn("templates/square/", text)
+        self.assertIn("/workspace/square/", text)
+        self.assertNotIn("Paste `templates/square/instructions.md`", text)
+        self.assertNotIn("sumctl", text)
+        self.assertNotIn("templates/grok-bot/", text)
+
+    def test_square_readme_does_not_ask_for_a_hand_paste(self):
+        text = (SQUARE_PACK / "README.md").read_text()
+        self.assertIn("GROK_SQUARE.md", text)
+        self.assertIn("`avatar.png`", text)
+        self.assertNotIn("What you paste", text)
+        self.assertNotIn("Paste `instructions.md`", text)
+
+    def test_square_instructions_encode_the_steward_role(self):
+        text = (SQUARE_PACK / "instructions.md").read_text()
+        self.assertIn("You take commands from Sum", text)
+        self.assertIn("/workspace/square/", text)
+        self.assertIn("SQUARE-ORG-YYYY-MM-DD", text)
+        self.assertIn("You are not the coordinator", text)
+        self.assertIn("Never force-push", text)
+
+    def test_square_worker_procedure_stays_a_steward(self):
+        text = (SQUARE_PACK / "worker-procedure.md").read_text()
+        self.assertIn("You are Square", text)
+        self.assertIn("You are not the coordinator", text)
+        self.assertIn("Do not message the user unless Sum asks", text)
+        self.assertIn("The user merges", text)
+
+    def test_square_routines_preserve_schedules(self):
+        text = (SQUARE_PACK / "routines.md").read_text()
+        self.assertIn("0 8 * * 1-5", text)
+        self.assertIn("0 9-17 * * 1-5", text)
+        self.assertIn("0 9 * * 1", text)
+        self.assertIn("You are Square", text)
+        self.assertIn("report the review to Sum", text)
+
+    def test_square_pack_strips_live_instance_ids(self):
+        paths = [*_square_pack_markdown(), ROOT / "GROK_SQUARE.md"]
+        for path in paths:
+            text = path.read_text()
+            for marker in STRIPPED_INSTANCE_MARKERS:
+                self.assertNotIn(marker, text, path)
+
+    def test_templates_index_lists_both_packs(self):
+        text = (ROOT / "templates" / "README.md").read_text()
+        self.assertIn("[`sum/`](sum/)", text)
+        self.assertIn("[`square/`](square/)", text)
+        self.assertIn("GROK_SUM.md", text)
+        self.assertIn("GROK_SQUARE.md", text)
+        self.assertIn("`templates/grok-bot/` is gone", text)
 
 
 if __name__ == "__main__":

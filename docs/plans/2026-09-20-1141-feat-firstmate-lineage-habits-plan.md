@@ -13,7 +13,7 @@ origin: https://github.com/douglasjarquin/sum/issues/185
 ## Goal Capsule
 
 - **Objective:** A fresh Grok Bot install of this pack loads Sitdown, cheap-routines, and adversarial-review the same way it loads Dispatch / Persist / Rundown / Verify / Deliver, and the coordinator follows the issue 185 adopt habits (history-only recap, armed Inbox rundown, standing-sweep worker, per-bot secrets, learning notes, role-worker reuse, default independent review, cite prior investigation).
-- **Means:** Encode each adopt item as explicit coordinator-facing sentences in `templates/grok-bot/` plus three Sum-native pack skills the installer loads by name, locked by `tests/test_operating_files.py` against the shipped files (KTD1–KTD3).
+- **Means:** Encode each adopt item as explicit coordinator-facing sentences in `templates/sum/` plus three Sum-native pack skills the installer loads by name, locked by `tests/test_operating_files.py` against the shipped files (KTD1–KTD3).
 - **Authority:** Issue 185 adopt list, then this plan, then existing pack heading and dictionary tests.
 - **Stop:** Do not add Lavish, forge-agnostic Deliver, or always-reply restatement. Do not paste Firstmate themed copy. Do not write the word `charter`. Do not edit live `.sum/` state or run the live Grok Bot canary.
 - **Execution profile:** Lightweight pack-text change. Proof is string tests on shipped files, not a live Bot install.
@@ -65,7 +65,7 @@ The pack today lists only Dispatch / Persist / Rundown / Verify / Deliver, and i
 
 ### Scope Boundaries
 
-In scope: `templates/grok-bot/` (instructions, memories, routines, Dispatch, Deliver, new Sitdown / cheap-routines / adversarial-review skills), `GROK_SUM.md`, `tests/test_operating_files.py`, and `docs/features/coordination.md` row `grok-bot.static` if the scenario text must name the new habits.
+In scope: `templates/sum/` (instructions, memories, routines, Dispatch, Deliver, new Sitdown / cheap-routines / adversarial-review skills), `GROK_SUM.md`, `tests/test_operating_files.py`, and `docs/features/coordination.md` row `grok-bot.static` if the scenario text must name the new habits.
 
 Out of scope: issue 185 items 8, 10, and 11; casino/boss theming; `factory.db` as source of truth; triage auto-merge; Bot merges; recreating Firstmate or Consigliere; changing `AGENTS.md` / `skills/sum-dispatch` / `skills/sum-delivery` except a Group 1 dictionary alignment; live Grok Bot canary; copying Firstmate skill text.
 
@@ -80,7 +80,7 @@ Out of scope: issue 185 items 8, 10, and 11; casino/boss theming; `factory.db` a
 
 ### Key Technical Decisions
 
-- KTD1. Add three pack skills under `templates/grok-bot/skills/{sitdown,cheap-routines,adversarial-review}/SKILL.md`, each with the six existing skill headings, written in Sum-native Group 1 language from the issue's must-have terms. (session-settled: user-approved — chosen over pointing at Firstmate disk skills: those files are not in this repo and use themed titles.) Instantiates R1, R2, R5, R6, R12.
+- KTD1. Add three pack skills under `templates/sum/skills/{sitdown,cheap-routines,adversarial-review}/SKILL.md`, each with the six existing skill headings, written in Sum-native Group 1 language from the issue's must-have terms. (session-settled: user-approved — chosen over pointing at Firstmate disk skills: those files are not in this repo and use themed titles.) Instantiates R1, R2, R5, R6, R12.
 - KTD2. Put the remaining adopt sentences in the existing coordinator-facing files (`instructions.md`, `memories.md`, `routines.md`, `README.md`, `skills/dispatch/SKILL.md`, `skills/deliver/SKILL.md`) rather than a new memory file. Instantiates R3, R4, R7–R12.
 - KTD3. Extend `tests/test_operating_files.py` so it reads those shipped paths and asserts the must-have phrases; add the new skill paths to the recipe and heading scan. Absence of Lavish, forge-agnostic Deliver, and always-reply restatement is an absence assert on shipped files. The merge-base pack diff stays a Verification Contract row, not a unittest. Instantiates R13–R15.
 - KTD4. Keep Deliver GitHub-only. Do not add Lavish, forge-agnostic forge wording, or an always-reply restatement. Instantiates R12's out-of-scope companion.
@@ -105,18 +105,18 @@ U3's assertions can be written first so U1 and U2 have a failing target.
 - **Requirements:** R1, R2, R5, R6, R12, R13, R15. KTD1.
 - **Dependencies:** none
 - **Files:**
-  - `templates/grok-bot/skills/sitdown/SKILL.md` (create)
-  - `templates/grok-bot/skills/cheap-routines/SKILL.md` (create)
-  - `templates/grok-bot/skills/adversarial-review/SKILL.md` (create)
+  - `templates/sum/skills/sitdown/SKILL.md` (create)
+  - `templates/sum/skills/cheap-routines/SKILL.md` (create)
+  - `templates/sum/skills/adversarial-review/SKILL.md` (create)
   - `GROK_SUM.md` (modify)
-  - `templates/grok-bot/README.md` (modify if it lists skills)
+  - `templates/sum/README.md` (modify if it lists skills)
 - **Approach:**
   1. Write each skill with YAML `name`/`description` and the six headings already required of Dispatch and Deliver.
   2. Sitdown: load on recap/"sitdown"; recap saved history under `/workspace/sum/` only; do not invent live fleet state.
   3. cheap-routines: dedicated worker plus routine for standing sweeps other than the weekday Inbox rundown; coarsest useful cadence; event listeners only for integration-backed events; local-file sweeps such as `inbox.md` use the coarsest useful schedule; coordinator stays the liaison.
   4. adversarial-review: independent reviewer in a fresh context after Verify, before opening or updating the PR; say so if skipped; user still merges.
   5. Point `GROK_SUM.md` at every pack skill the instructions will name; stop saying "five global workflows" if the count is no longer five.
-- **Patterns to follow:** `templates/grok-bot/skills/dispatch/SKILL.md` and `templates/grok-bot/skills/deliver/SKILL.md` for heading shape and tone.
+- **Patterns to follow:** `templates/sum/skills/dispatch/SKILL.md` and `templates/sum/skills/deliver/SKILL.md` for heading shape and tone.
 - **Execution note:** Keep every sentence free of `sumctl`, themed titles, and `charter`.
 - **Test scenarios:** Covered by U3 assertions against these files. This unit creates the files those tests will read.
 - **Verification:** Each new skill file has all six headings. `GROK_SUM.md` lists Sitdown, cheap-routines, and adversarial-review beside Dispatch / Persist / Verify / Rundown / Deliver.
@@ -127,12 +127,12 @@ U3's assertions can be written first so U1 and U2 have a failing target.
 - **Requirements:** R1, R3, R4, R7–R12. KTD2.
 - **Dependencies:** U1
 - **Files:**
-  - `templates/grok-bot/instructions.md`
-  - `templates/grok-bot/memories.md`
-  - `templates/grok-bot/routines.md`
-  - `templates/grok-bot/README.md`
-  - `templates/grok-bot/skills/dispatch/SKILL.md`
-  - `templates/grok-bot/skills/deliver/SKILL.md`
+  - `templates/sum/instructions.md`
+  - `templates/sum/memories.md`
+  - `templates/sum/routines.md`
+  - `templates/sum/README.md`
+  - `templates/sum/skills/dispatch/SKILL.md`
+  - `templates/sum/skills/deliver/SKILL.md`
 - **Approach:**
   1. Instructions Skills list: add Sitdown (recap/"sitdown"), cheap-routines (standing sweeps other than weekday Inbox rundown), adversarial-review (software Deliver after Verify). Keep "Load by name."
   2. Instructions or memories: secrets per-bot; workers request their own secret cards; coordinator never holds, pastes, or forwards secrets in chat or in worker-description amendments; do not keep work in the coordinator chat to avoid a handoff; learning notes on that worker's description after verified fails or repeated mistakes, never including secrets or secret-card values.
