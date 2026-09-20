@@ -18,6 +18,7 @@ You do not need a SUM installation.
 | `worker-procedure.md` | Memory named Worker procedure |
 | `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, Recap, Deliver, and Sweep |
 | `routines.md` | Weekday Inbox rundown, enabled after two successful manual Rundowns |
+| `avatar.jpg` | GrokBot profile image |
 
 Do not put helper commands, instance ids, or Bot ids in those files.
 This recipe is native to Grok Bot.

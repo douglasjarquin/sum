@@ -15,6 +15,7 @@ RECIPE_FILES = (
     "memories.md",
     "routines.md",
     "worker-procedure.md",
+    "avatar.jpg",
     "skills/dispatch/SKILL.md",
     "skills/persist/SKILL.md",
     "skills/verify/SKILL.md",
@@ -80,6 +81,8 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("GROK_SUM.md", text)
         self.assertNotIn("What you paste", text)
         self.assertNotIn("Paste `instructions.md`", text)
+        self.assertIn("Recap, Deliver, and Sweep", text)
+        self.assertIn("| `avatar.jpg` | GrokBot profile image |", text)
 
     def test_removed_helper_binding_files_are_gone(self):
         for name in REMOVED_BINDINGS:
