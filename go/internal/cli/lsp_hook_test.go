@@ -143,8 +143,15 @@ func TestProjectHookFiles_pointAtLspEnsure(t *testing.T) {
 		t.Fatal("grok hook missing PostToolUse command")
 	}
 	g := grok.Hooks.PostToolUse[0].Hooks[0]
-	if g.Command != "./bin/lsp-ensure" || g.Timeout != 120 || g.Type != "command" {
+	if g.Timeout != 120 || g.Type != "command" {
 		t.Fatalf("grok hook = %+v", g)
+	}
+	hookDir := filepath.Join(repo, ".grok", "hooks")
+	if resolved, under := commandResolvesUnderDir(g.Command, hookDir); under {
+		t.Fatalf("grok hook command %q resolves under .grok/hooks/ as %s", g.Command, resolved)
+	}
+	if !strings.Contains(g.Command, "bin/lsp-ensure") || !strings.Contains(g.Command, "git rev-parse --show-toplevel") {
+		t.Fatalf("grok hook command = %q, want git toplevel bin/lsp-ensure", g.Command)
 	}
 
 	var cursor struct {
@@ -156,8 +163,15 @@ func TestProjectHookFiles_pointAtLspEnsure(t *testing.T) {
 		} `json:"hooks"`
 	}
 	decodeJSONFile(t, filepath.Join(repo, ".cursor", "hooks.json"), &cursor)
-	if len(cursor.Hooks.PostToolUse) == 0 || cursor.Hooks.PostToolUse[0].Command != "./bin/lsp-ensure" {
+	if len(cursor.Hooks.PostToolUse) == 0 {
+		t.Fatal("cursor hook missing postToolUse command")
+	}
+	cursorCmd := cursor.Hooks.PostToolUse[0].Command
+	if cursorCmd != "./bin/lsp-ensure" {
 		t.Fatalf("cursor hook = %+v", cursor.Hooks.PostToolUse)
+	}
+	if _, err := os.Stat(filepath.Join(repo, cursorCmd)); err != nil {
+		t.Fatalf("cursor hook command %q not found from repo root: %v", cursorCmd, err)
 	}
 
 	var codex grokHook
@@ -172,6 +186,22 @@ func TestProjectHookFiles_pointAtLspEnsure(t *testing.T) {
 	if c.Timeout != 120 {
 		t.Fatalf("codex timeout = %d", c.Timeout)
 	}
+	if g.Command != c.Command {
+		t.Fatalf("grok hook command %q, want same as codex %q", g.Command, c.Command)
+	}
+}
+
+func commandResolvesUnderDir(command, dir string) (resolved string, under bool) {
+	// Grok treats a command with whitespace as an inline shell string, not a path relative to the JSON file.
+	if strings.ContainsAny(command, " \t") {
+		return "", false
+	}
+	resolved = filepath.Clean(filepath.Join(dir, command))
+	rel, err := filepath.Rel(dir, resolved)
+	if err != nil {
+		return resolved, false
+	}
+	return resolved, rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func copyLspEnsureHook(t *testing.T, root string) string {

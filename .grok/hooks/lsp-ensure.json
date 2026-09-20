@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./bin/lsp-ensure",
+            "command": "sh -c 'root=$(git rev-parse --show-toplevel 2>/dev/null || pwd); if [ -x \"$root/bin/lsp-ensure\" ]; then exec \"$root/bin/lsp-ensure\"; fi; exit 0'",
             "timeout": 120
           }
         ]
