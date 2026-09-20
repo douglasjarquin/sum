@@ -93,13 +93,13 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
 - [ ] Run `mise run test-live` only when that live scenario applies; otherwise say it was not run.
 - [ ] Note deployment or release impact when it exists.
 - [ ] Use [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) in new first-party instructions and user-visible text.
-- [ ] Assess Grok Bot deployment impact for every new feature or changed contract, and update `templates/sum/` and `templates/square/` references and tests or record an explicit no-impact or deferred rationale.
-  Remainder integration is advisory quota only (`sumctl quota`). It does not bind Grok Bot, change `templates/sum/` or `templates/square/`, or alter Bot commands.
+- [ ] Assess Grok Bot deployment impact for every new feature or changed contract, and update `grok-bots/sum/` and `grok-bots/square/` references and tests or record an explicit no-impact or deferred rationale.
+  Remainder integration is advisory quota only (`sumctl quota`). It does not bind Grok Bot, change `grok-bots/sum/` or `grok-bots/square/`, or alter Bot commands.
   Default TOON stdout does not bind Grok Bot templates. Agents read TOON. jq callers pass `--format json`.
-  Remote-machine returns use Herdr `machine add`. They do not bind Grok Bot, change `templates/sum/` or `templates/square/`, or add a Sum SSH enroll path.
-  Making Go Mesh the live `bin/herdr-mesh` server does not bind Grok Bot, change `templates/sum/` or `templates/square/`, or alter Bot commands.
+  Remote-machine returns use Herdr `machine add`. They do not bind Grok Bot, change `grok-bots/sum/` or `grok-bots/square/`, or add a Sum SSH enroll path.
+  Making Go Mesh the live `bin/herdr-mesh` server does not bind Grok Bot, change `grok-bots/sum/` or `grok-bots/square/`, or alter Bot commands.
   Keeping overlay sources so a prior helper can stage this tree does not bind Grok Bot.
-  This dictionary binds `templates/sum/` and `templates/square/`.
+  This dictionary binds `grok-bots/sum/` and `grok-bots/square/`.
   A platform Bot stays a Bot.
   The published Sum recipe is a coordinator.
   Square is the backup agent.
@@ -107,7 +107,7 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
   The recipes are native to Grok Bot and do not name helper commands.
   Adding `.grok/hooks/` binds Grok project hooks once the folder is trusted (`/hooks-trust` or `--trust`).
   Adding `.codex/hooks.json` binds Codex project hooks once trusted.
-  Neither changes `templates/sum/`, `templates/square/`, or Bot commands.
+  Neither changes `grok-bots/sum/`, `grok-bots/square/`, or Bot commands.
   `bin/lsp-ensure` and `sumctl lsp ensure` install allowlisted LSP binaries only.
   They fail open and keep hook stdout empty so a missing worktree runtime is not a harness hook failure.
 - [ ] Update [ATTRIBUTIONS.md](ATTRIBUTIONS.md) when credit is due.

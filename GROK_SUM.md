@@ -29,9 +29,9 @@ If that directory already exists, fetch and update it.
 If the user named a commit SHA, check that SHA out.
 Otherwise stay on the default branch.
 
-The recipe is `templates/sum/` in that clone.
+The recipe is `grok-bots/sum/` in that clone.
 Every later reference to a pack file means that directory.
-The Square steward pack is `templates/square/`. Install it with `GROK_SQUARE.md`.
+The Square steward pack is `grok-bots/square/`. Install it with `GROK_SQUARE.md`.
 
 Do not invent skill text.
 Read the files.

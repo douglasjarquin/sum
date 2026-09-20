@@ -109,8 +109,8 @@ Record init and query wall times from `graph.json` attempts and your shell; upst
 ## 13. Grok Bot live canary
 
 This section is unrun until an operator records it.
-The files under `templates/sum/` are the source-controlled Sum coordinator recipe.
-The files under `templates/square/` are the source-controlled Square steward recipe.
+The files under `grok-bots/sum/` are the source-controlled Sum coordinator recipe.
+The files under `grok-bots/square/` are the source-controlled Square steward recipe.
 `GROK_SUM.md` and `GROK_SQUARE.md` are the installers.
 They are not this canary.
 This repository does not publish a live Bot.

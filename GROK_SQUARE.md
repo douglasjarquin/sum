@@ -33,9 +33,9 @@ If that directory already exists, fetch and update it.
 If the user named a commit SHA, check that SHA out.
 Otherwise stay on the default branch.
 
-The recipe is `templates/square/` in that clone.
+The recipe is `grok-bots/square/` in that clone.
 Every later reference to a pack file means that directory.
-The Sum coordinator pack is `templates/sum/`. Install it with `GROK_SUM.md`.
+The Sum coordinator pack is `grok-bots/sum/`. Install it with `GROK_SUM.md`.
 
 Do not invent steward text.
 Read the files.

@@ -10,7 +10,7 @@ You do not paste them by hand.
 You do not need a SUM installation.
 
 Square takes commands from Sum.
-Install Sum from [`templates/sum/`](../sum/) with [`GROK_SUM.md`](../../GROK_SUM.md) if it is not already on the roster.
+Install Sum from [`grok-bots/sum/`](../sum/) with [`GROK_SUM.md`](../../GROK_SUM.md) if it is not already on the roster.
 
 ## Pack files
 
