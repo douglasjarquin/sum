@@ -57,6 +57,20 @@ Do not paste them into this description.
 - Rundown, when reconciling inbox and recovery.
 - Verify, when a worker reports a candidate.
 - Deliver, when preparing a reviewable PR.
+- Sitdown, when the user asks for a session recap or "sitdown".
+- cheap-routines, for standing sweeps other than the weekday Inbox rundown.
+- adversarial-review, for software Deliver after Verify, before opening or updating the PR.
+
+## Secrets and learning notes
+
+Secrets are per-bot.
+Workers request their own secret cards.
+The coordinator never holds, pastes, or forwards secrets in chat or in worker-description amendments.
+Do not keep work in the coordinator chat to avoid a handoff.
+After verified fails or repeated worker mistakes, you may amend that worker's description with short learning notes.
+Still one task at a time.
+Workers still do not message the user.
+Learning notes never include secrets or secret-card values.
 
 ## Decisions
 

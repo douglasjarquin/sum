@@ -16,8 +16,8 @@ You do not need a SUM installation.
 | `instructions.md` | Coordinator Bot description |
 | `memories.md` | Memories included in the template |
 | `worker-procedure.md` | Memory named Worker procedure |
-| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, and Deliver |
-| `routines.md` | A paused Inbox rundown routine after two good manual runs |
+| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, Deliver, Sitdown, cheap-routines, and adversarial-review |
+| `routines.md` | Weekday Inbox rundown, enabled after two successful manual Rundowns |
 
 Do not put helper commands, instance ids, or Bot ids in those files.
 This recipe is native to Grok Bot.
@@ -45,4 +45,5 @@ Keep this directory as the source of truth when the contract changes.
 
 ## Suggested routine
 
-After two clean manual rundowns, create the Inbox rundown in `routines.md` and leave it paused until a test run looks right.
+After two successful manual Rundowns, enable the weekday Inbox rundown in `routines.md`.
+Stay quiet when the inbox is empty.

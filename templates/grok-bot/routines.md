@@ -1,6 +1,7 @@
 # Suggested routines
 
-Do not enable a routine until two manual runs look right.
+Do not enable a routine until two successful manual Rundowns look right.
+After two successful manual Rundowns, enable the weekday Inbox rundown.
 A routine performs real work.
 Keep write actions behind approval.
 

@@ -20,9 +20,9 @@ The user merges.
 ## Sequence of work
 
 1. Confirm verification.md is your run for this candidate, not the worker's claim.
-2. Arrange an independent review in a fresh context when the stakes warrant it.
+2. Default to a fresh adversarial-review, or an equivalent independent reviewer, in a fresh context before opening or updating the PR.
    The worker Bot cannot review its own candidate.
-   If independent review did not happen, say so.
+   If that review did not happen, say so if skipped.
 3. Push the recorded branch without force.
 4. Open a PR or adopt the one GitHub already has for that branch.
    Do not open a new PR when the only pull requests for the branch are closed, unless the user says to.
