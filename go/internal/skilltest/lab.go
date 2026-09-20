@@ -95,12 +95,22 @@ func labEnv(t *testing.T, root, stop string) []string {
 		}
 		env = append(env, e)
 	}
-	path := strings.Join([]string{bin, pythonDir, "/usr/bin", "/bin"}, string(os.PathListSeparator))
-	if node, err := exec.LookPath("node"); err == nil {
-		path = filepath.Dir(node) + string(os.PathListSeparator) + path
+	toolDir := func(name string) string {
+		p, err := exec.LookPath(name)
+		if err != nil {
+			return ""
+		}
+		if resolved, err := filepath.EvalSymlinks(p); err == nil && filepath.Base(resolved) == "mise" {
+			return "" // A mise shim cannot resolve once the lab strips MISE_* variables.
+		}
+		return filepath.Dir(p)
 	}
-	if ffmpeg, err := exec.LookPath("ffmpeg"); err == nil {
-		path = filepath.Dir(ffmpeg) + string(os.PathListSeparator) + path
+	path := strings.Join([]string{bin, pythonDir, "/usr/bin", "/bin"}, string(os.PathListSeparator))
+	if dir := toolDir("node"); dir != "" {
+		path = dir + string(os.PathListSeparator) + path
+	}
+	if dir := toolDir("ffmpeg"); dir != "" {
+		path = dir + string(os.PathListSeparator) + path
 	}
 	env = append(env, "PATH="+path, "FAKE_MISE_STOP="+stop, "MISE_QUIET=1")
 	return env
