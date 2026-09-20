@@ -35,6 +35,7 @@ A free slot is never a reason to dispatch; work starts only from an explicit app
 
 Identify the repository, outcome, scope/non-goals, acceptance criteria, and verification commands from the user's words. A direct user request can be the approval; an unapproved issue cannot.
 Do not research, plan, or implement in this pane to fill those fields.
+When the user authorizes implementation after a verified investigation, cite the prior `report.md` / task id in the brief and forbid redoing the investigation.
 Use `templates/task.md` as a checklist, not an excuse to make the user rewrite a clear request.
 For a missing local clone, enroll the exact user-named repository: `./bin/sumctl project enroll owner/repo` clones exactly it under the Git-ignored `<installation>/projects/<owner>/<repo>` (a non-default host gets its own level: `--host gitlab.example.com` gives `projects/gitlab.example.com/owner/repo`), records host/owner/repo, the verified remote, and the path in `.sum/projects.json`, and is idempotent; never guess a similarly named project, and never clone everything an account can reach.
 A clone the earlier procedure made under `.sum/projects/<owner>/<repo>` or a checkout the user names with `--path` is adopted where it is (`kind: legacy` or `external`) after its origin is verified; nothing is moved, re-cloned, or overwritten, and a dirty tree or different remote at the target is a refusal, not a replacement. Enrolling sum itself registers the installation (`kind: installation`), never a nested copy.

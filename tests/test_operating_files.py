@@ -5,7 +5,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN = re.compile(
-    r"\b(consigliere|capo|soldier|crewmate|charter)\b|first mate|root session",
+    r"\b(consigliere|capo|soldier|crewmate|charter|sitdown)\b|first mate|root session",
     re.I,
 )
 GROK_BOT = ROOT / "templates" / "grok-bot"
@@ -19,7 +19,28 @@ RECIPE_FILES = (
     "skills/persist/SKILL.md",
     "skills/verify/SKILL.md",
     "skills/rundown/SKILL.md",
+    "skills/recap/SKILL.md",
     "skills/deliver/SKILL.md",
+    "skills/sweep/SKILL.md",
+)
+PACK_SKILLS = (
+    "Dispatch",
+    "Persist",
+    "Verify",
+    "Rundown",
+    "Recap",
+    "Deliver",
+    "Sweep",
+)
+REMOVED_SKILLS = (
+    "sitdown",
+    "cheap-routines",
+    "adversarial-review",
+)
+OUT_OF_SCOPE_PHRASES = (
+    "Lavish",
+    "forge-agnostic",
+    "always-reply",
 )
 SKILL_HEADINGS = (
     "## When to use it",
@@ -48,7 +69,7 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("This file is an installer.", text)
         self.assertIn("https://github.com/douglasjarquin/sum.git", text)
         self.assertIn("/home/box/agent-data/sum/src/", text)
-        for skill in ("Dispatch", "Persist", "Verify", "Rundown", "Deliver"):
+        for skill in PACK_SKILLS:
             self.assertIn(skill, text)
         self.assertNotIn("Paste `templates/grok-bot/instructions.md`", text)
         self.assertNotIn("Save each skill from `skills/`", text)
@@ -128,6 +149,100 @@ class OperatingFilesTest(unittest.TestCase):
             hits = FORBIDDEN.findall(path.read_text())
             self.assertEqual(hits, [], path)
 
+    def test_grok_sum_installer_names_every_pack_skill(self):
+        text = (ROOT / "GROK_SUM.md").read_text()
+        for skill in PACK_SKILLS:
+            self.assertIn(skill, text)
+        self.assertNotIn("Write five global workflows", text)
+
+    def test_grok_bot_instructions_load_recap_and_sweep_by_name(self):
+        text = (GROK_BOT / "instructions.md").read_text()
+        self.assertIn("Recap", text)
+        self.assertIn("Sweep", text)
+        self.assertNotIn("adversarial-review", text)
+        self.assertIn("Load by name", text)
+
+    def test_recap_is_history_only_and_does_not_invent_fleet_state(self):
+        text = (GROK_BOT / "skills" / "recap" / "SKILL.md").read_text()
+        self.assertIn("history-only", text)
+        self.assertIn("do not invent live fleet state", text.casefold())
+        self.assertIn("recap", text.casefold())
+
+    def test_routines_arm_inbox_rundown_after_two_manual_runs(self):
+        routines = (GROK_BOT / "routines.md").read_text()
+        readme = (GROK_BOT / "README.md").read_text()
+        self.assertIn("two successful manual Rundowns", routines)
+        self.assertIn("enable", routines.lower())
+        self.assertIn("empty inbox", routines.lower())
+        self.assertNotIn("leave it paused until a test run looks right", readme)
+
+    def test_sweep_uses_a_dedicated_worker_and_liaison(self):
+        text = (GROK_BOT / "skills" / "sweep" / "SKILL.md").read_text()
+        self.assertIn("dedicated", text)
+        self.assertIn("Sweep", text)
+        self.assertIn("coarsest useful cadence", text)
+        self.assertIn("event listeners", text)
+        self.assertIn("liaison", text)
+
+    def test_secrets_are_per_bot_and_never_forwarded(self):
+        instructions = (GROK_BOT / "instructions.md").read_text()
+        memories = (GROK_BOT / "memories.md").read_text()
+        combined = instructions + "\n" + memories
+        folded = combined.casefold()
+        self.assertIn("per-bot", folded)
+        self.assertIn("workers request their own secret cards", folded)
+        self.assertIn("never holds, pastes, or forwards secrets", folded)
+        self.assertIn("do not keep work in the coordinator chat to avoid a handoff", folded)
+        self.assertIn("learning notes never include secrets", folded)
+
+    def test_learning_notes_amend_worker_descriptions(self):
+        combined = (
+            (GROK_BOT / "instructions.md").read_text()
+            + "\n"
+            + (GROK_BOT / "memories.md").read_text()
+        )
+        self.assertIn("learning notes", combined)
+        self.assertIn("description", combined)
+        self.assertIn("verified fails", combined)
+
+    def test_dispatch_reuses_role_workers_and_cites_prior_investigation(self):
+        text = (GROK_BOT / "skills" / "dispatch" / "SKILL.md").read_text()
+        for name in ("Marketing", "Security", "Personal", "Operations", "Square"):
+            self.assertIn(name, text)
+        self.assertIn("non-software work", text)
+        self.assertIn("do not recreate square/cleaner or atlas", text.casefold())
+        self.assertIn("report.md", text)
+        self.assertIn("task id", text)
+        self.assertIn("forbid redoing the investigation", text)
+
+    def test_deliver_defaults_to_compound_engineering_review_and_says_if_skipped(self):
+        text = (GROK_BOT / "skills" / "deliver" / "SKILL.md").read_text()
+        self.assertIn("Compound Engineering", text)
+        self.assertIn("independent review", text)
+        self.assertNotIn("adversarial-review", text)
+        self.assertIn("default", text.lower())
+        self.assertIn("say so if skipped", text)
+        self.assertIn("The user merges", text)
+
+    def test_removed_pack_skills_are_gone(self):
+        for name in REMOVED_SKILLS:
+            path = GROK_BOT / "skills" / name
+            self.assertFalse(path.exists(), path)
+
+    def test_sum_dispatch_cites_prior_investigation_on_promote(self):
+        text = (ROOT / "skills" / "sum-dispatch" / "SKILL.md").read_text()
+        self.assertIn("report.md", text)
+        self.assertIn("task id", text)
+        self.assertIn("forbid redoing the investigation", text)
+
+    def test_pack_omits_out_of_scope_firstmate_items(self):
+        paths = [*_grok_bot_markdown(), ROOT / "GROK_SUM.md"]
+        for path in paths:
+            text = path.read_text()
+            for phrase in OUT_OF_SCOPE_PHRASES:
+                self.assertNotIn(phrase, text, path)
+
 
 if __name__ == "__main__":
     unittest.main()
+

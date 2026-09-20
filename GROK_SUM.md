@@ -10,7 +10,7 @@ You do not need a SUM installation on the user's computer.
 ## What you are installing
 
 - A coordinator Bot named Sum that the user talks to from then on
-- Global skills: Dispatch, Persist, Verify, Rundown, Deliver
+- Global skills: Dispatch, Persist, Verify, Rundown, Recap, Deliver, Sweep
 - Memories: the coordinator memory and the worker procedure
 - Task files under `/workspace/sum/` after the first persist
 
@@ -44,8 +44,10 @@ Read the files.
 - `skills/persist/SKILL.md`
 - `skills/verify/SKILL.md`
 - `skills/rundown/SKILL.md`
+- `skills/recap/SKILL.md`
 - `skills/deliver/SKILL.md`
-- `routines.md` — Inbox rundown, left paused until two clean manual runs
+- `skills/sweep/SKILL.md`
+- `routines.md` — Inbox rundown, enabled after two successful manual Rundowns
 
 ## Steps
 
@@ -59,13 +61,15 @@ Read the files.
    CreateAgent name `Sum` with that description.
    If you are already Sum, keep your name and update your description.
 
-4. Write five global workflows from the skill files.
+4. Write global workflows from the skill files.
    Names:
    - Dispatch
    - Persist
    - Verify
    - Rundown
+   - Recap
    - Deliver
+   - Sweep
    Use each skill's description line as the workflow description.
    Keep the six fields in each skill file intact.
    Do not install extra plugins without a yes from the user.

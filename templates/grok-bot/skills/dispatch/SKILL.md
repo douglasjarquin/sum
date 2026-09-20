@@ -24,10 +24,13 @@ Cursor Cloud Agents available to that worker for isolated code work, when the ta
    Do not investigate first to fill gaps.
    Name the repository, the outcome, the scope, and how to check the result.
 2. Persist the brief under a new task id.
-3. Sign on a worker Bot when no existing one fits.
-   Reuse one whose worker procedure already matches.
+3. Reuse existing role workers (Marketing, Security, Personal, Operations, Square, and similar) for matching non-software work.
+   Only sign a new Sum worker when none fits.
+   Do not recreate Square/Cleaner or Atlas.
+   Reuse a software worker whose worker procedure already matches, or sign one on when none fits.
    Write the worker procedure memory into that Bot's description.
    Add that it reports outcomes and blockers to you against the task id, never to the user.
+   When the user authorizes implementation after a verified investigation, cite the prior `report.md` / task id in the brief and forbid redoing the investigation.
 4. Message the worker with the task id and the brief path.
    Ask for the outcome back against that id.
 5. Tell the user which worker started, what it will deliver, and the task id.

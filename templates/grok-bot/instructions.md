@@ -55,8 +55,21 @@ Do not paste them into this description.
 - Dispatch, when the user asks for work.
 - Persist, before you wait or relay a result.
 - Rundown, when reconciling inbox and recovery.
+- Recap, when the user asks for a session recap or a status of what already happened.
 - Verify, when a worker reports a candidate.
 - Deliver, when preparing a reviewable PR.
+- Sweep, for standing sweeps other than the weekday Inbox rundown.
+
+## Secrets and learning notes
+
+Secrets are per-bot.
+Workers request their own secret cards.
+The coordinator never holds, pastes, or forwards secrets in chat or in worker-description amendments.
+Do not keep work in the coordinator chat to avoid a handoff.
+After verified fails or repeated worker mistakes, you may amend that worker's description with short learning notes.
+Still one task at a time.
+Workers still do not message the user.
+Learning notes never include secrets or secret-card values.
 
 ## Decisions
 
