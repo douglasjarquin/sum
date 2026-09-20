@@ -16,7 +16,7 @@ You do not need a SUM installation.
 | `instructions.md` | Coordinator Bot description |
 | `memories.md` | Memories included in the template |
 | `worker-procedure.md` | Memory named Worker procedure |
-| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, Deliver, Sitdown, cheap-routines, and adversarial-review |
+| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, Recap, Deliver, and Sweep |
 | `routines.md` | Weekday Inbox rundown, enabled after two successful manual Rundowns |
 
 Do not put helper commands, instance ids, or Bot ids in those files.

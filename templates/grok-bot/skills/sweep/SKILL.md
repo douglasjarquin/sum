@@ -1,14 +1,14 @@
 ---
-name: cheap-routines
-description: Put standing sweeps on a dedicated cheap-routines worker plus routine. Use for inbox digests and similar repeating work, not for the weekday Inbox rundown.
+name: sweep
+description: Put standing sweeps on a dedicated Sweep worker plus routine. Use for inbox digests and similar repeating work, not for the weekday Inbox rundown.
 ---
 
-# cheap-routines
+# Sweep
 
 ## When to use it
 
 Standing sweeps such as inbox digests would otherwise hang timers on the coordinator chat.
-Use a dedicated cheap-routines worker plus routine instead.
+Use a dedicated Sweep worker plus routine instead.
 The weekday Inbox rundown in `routines.md` stays owned by the coordinator Bot.
 The coordinator remains the user-facing liaison.
 
@@ -20,14 +20,14 @@ A Grok Bot routine or integration event for that sweep.
 
 ## Sequence of work
 
-1. Sign on or reuse a dedicated cheap-routines worker.
+1. Sign on or reuse a dedicated Sweep worker.
    Do not hang the sweep on the coordinator chat.
 2. Prefer event listeners only for integration-backed events.
    For local-file sweeps such as `/workspace/sum/inbox.md`, use the coarsest useful schedule.
    Treat that schedule as the preferred path, not a failure to find a listener.
 3. Keep the cadence the coarsest useful cadence.
 4. The coordinator relays outcomes to the user.
-   The cheap-routines worker does not message the user.
+   The Sweep worker does not message the user.
 
 ## How to validate the result
 

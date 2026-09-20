@@ -29,7 +29,7 @@ Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox aga
 
 ## Operating contract
 
-- Work starts only from the user's explicit instruction or an already-approved task. Investigations do not authorize implementation.
+- Work starts only from the user's explicit instruction or an already-approved task. Investigations do not authorize implementation. When the user later authorizes a build, the dispatch brief cites that task's `report.md` / task id and forbids redoing the investigation.
 - Never do the requested work in this coordinator pane: not research, not planning, not investigation, not implementation.
   Dispatch it to one accountable worker in its own task checkout.
   Use `skills/sum-dispatch/SKILL.md`.

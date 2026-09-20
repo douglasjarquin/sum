@@ -1,14 +1,14 @@
 ---
-name: sitdown
-description: Recap this session from saved history only. Use when the user asks for a session recap or "sitdown".
+name: recap
+description: Recap this session from saved history only. Use when the user asks for a session recap or status of what already happened.
 ---
 
-# Sitdown
+# Recap
 
 ## When to use it
 
-The user asks for a session recap or "sitdown".
-Load Sitdown by name.
+The user asks for a session recap or a status of what already happened.
+Load Recap by name.
 This is a history-only recap.
 Do not invent live fleet state.
 

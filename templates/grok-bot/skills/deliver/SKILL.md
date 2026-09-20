@@ -20,7 +20,7 @@ The user merges.
 ## Sequence of work
 
 1. Confirm verification.md is your run for this candidate, not the worker's claim.
-2. Default to a fresh adversarial-review, or an equivalent independent reviewer, in a fresh context before opening or updating the PR.
+2. Default to a fresh independent review with the Compound Engineering review skills before opening or updating the PR.
    The worker Bot cannot review its own candidate.
    If that review did not happen, say so if skipped.
 3. Push the recorded branch without force.

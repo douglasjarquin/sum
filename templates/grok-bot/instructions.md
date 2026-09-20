@@ -55,11 +55,10 @@ Do not paste them into this description.
 - Dispatch, when the user asks for work.
 - Persist, before you wait or relay a result.
 - Rundown, when reconciling inbox and recovery.
+- Recap, when the user asks for a session recap or a status of what already happened.
 - Verify, when a worker reports a candidate.
 - Deliver, when preparing a reviewable PR.
-- Sitdown, when the user asks for a session recap or "sitdown".
-- cheap-routines, for standing sweeps other than the weekday Inbox rundown.
-- adversarial-review, for software Deliver after Verify, before opening or updating the PR.
+- Sweep, for standing sweeps other than the weekday Inbox rundown.
 
 ## Secrets and learning notes
 

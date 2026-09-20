@@ -5,7 +5,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN = re.compile(
-    r"\b(consigliere|capo|soldier|crewmate|charter)\b|first mate|root session",
+    r"\b(consigliere|capo|soldier|crewmate|charter|sitdown)\b|first mate|root session",
     re.I,
 )
 GROK_BOT = ROOT / "templates" / "grok-bot"
@@ -19,18 +19,21 @@ RECIPE_FILES = (
     "skills/persist/SKILL.md",
     "skills/verify/SKILL.md",
     "skills/rundown/SKILL.md",
+    "skills/recap/SKILL.md",
     "skills/deliver/SKILL.md",
-    "skills/sitdown/SKILL.md",
-    "skills/cheap-routines/SKILL.md",
-    "skills/adversarial-review/SKILL.md",
+    "skills/sweep/SKILL.md",
 )
 PACK_SKILLS = (
     "Dispatch",
     "Persist",
     "Verify",
     "Rundown",
+    "Recap",
     "Deliver",
-    "Sitdown",
+    "Sweep",
+)
+REMOVED_SKILLS = (
+    "sitdown",
     "cheap-routines",
     "adversarial-review",
 )
@@ -152,18 +155,18 @@ class OperatingFilesTest(unittest.TestCase):
             self.assertIn(skill, text)
         self.assertNotIn("Write five global workflows", text)
 
-    def test_grok_bot_instructions_load_sitdown_by_name(self):
+    def test_grok_bot_instructions_load_recap_and_sweep_by_name(self):
         text = (GROK_BOT / "instructions.md").read_text()
-        self.assertIn("Sitdown", text)
-        self.assertIn("cheap-routines", text)
-        self.assertIn("adversarial-review", text)
+        self.assertIn("Recap", text)
+        self.assertIn("Sweep", text)
+        self.assertNotIn("adversarial-review", text)
         self.assertIn("Load by name", text)
 
-    def test_sitdown_is_history_only_and_does_not_invent_fleet_state(self):
-        text = (GROK_BOT / "skills" / "sitdown" / "SKILL.md").read_text()
+    def test_recap_is_history_only_and_does_not_invent_fleet_state(self):
+        text = (GROK_BOT / "skills" / "recap" / "SKILL.md").read_text()
         self.assertIn("history-only", text)
         self.assertIn("do not invent live fleet state", text.casefold())
-        self.assertIn("sitdown", text.casefold())
+        self.assertIn("recap", text.casefold())
 
     def test_routines_arm_inbox_rundown_after_two_manual_runs(self):
         routines = (GROK_BOT / "routines.md").read_text()
@@ -173,10 +176,10 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("empty inbox", routines.lower())
         self.assertNotIn("leave it paused until a test run looks right", readme)
 
-    def test_cheap_routines_use_a_dedicated_worker_and_liaison(self):
-        text = (GROK_BOT / "skills" / "cheap-routines" / "SKILL.md").read_text()
+    def test_sweep_uses_a_dedicated_worker_and_liaison(self):
+        text = (GROK_BOT / "skills" / "sweep" / "SKILL.md").read_text()
         self.assertIn("dedicated", text)
-        self.assertIn("cheap-routines", text)
+        self.assertIn("Sweep", text)
         self.assertIn("coarsest useful cadence", text)
         self.assertIn("event listeners", text)
         self.assertIn("liaison", text)
@@ -212,12 +215,25 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("task id", text)
         self.assertIn("forbid redoing the investigation", text)
 
-    def test_deliver_defaults_to_adversarial_review_and_says_if_skipped(self):
+    def test_deliver_defaults_to_compound_engineering_review_and_says_if_skipped(self):
         text = (GROK_BOT / "skills" / "deliver" / "SKILL.md").read_text()
-        self.assertIn("adversarial-review", text)
+        self.assertIn("Compound Engineering", text)
+        self.assertIn("independent review", text)
+        self.assertNotIn("adversarial-review", text)
         self.assertIn("default", text.lower())
         self.assertIn("say so if skipped", text)
         self.assertIn("The user merges", text)
+
+    def test_removed_pack_skills_are_gone(self):
+        for name in REMOVED_SKILLS:
+            path = GROK_BOT / "skills" / name
+            self.assertFalse(path.exists(), path)
+
+    def test_sum_dispatch_cites_prior_investigation_on_promote(self):
+        text = (ROOT / "skills" / "sum-dispatch" / "SKILL.md").read_text()
+        self.assertIn("report.md", text)
+        self.assertIn("task id", text)
+        self.assertIn("forbid redoing the investigation", text)
 
     def test_pack_omits_out_of_scope_firstmate_items(self):
         paths = [*_grok_bot_markdown(), ROOT / "GROK_SUM.md"]
