@@ -77,6 +77,7 @@ Herdr's optional native integrations can be installed separately, for example `h
 | Pinned codegraph per checkout (`sumctl graph`) | `@colbymchenry/codegraph` 1.5.0 from the mise pin, run in CLI mode once in every checkout sum creates (task, coordinator verification, self-development) after its Git identity is validated; one `.codegraph/` index local to that checkout, kept out of `git status` through the repository-local exclude; exact commands and the source fallback in the brief; bounded retries, bounded concurrency, no daemon, no global configuration |
 | Offline tests and a demo | Test behavior without model credentials, a real Herdr installation, or GitHub writes |
 | Explicit live smoke test | Validate the real Herdr API in an isolated named session |
+| Grok Bot packs | Native recipes under [`grok-bots/sum/`](grok-bots/sum/) (coordinator) and [`grok-bots/square/`](grok-bots/square/) (backup agent). Install with [`GROK_SUM.md`](GROK_SUM.md) and [`GROK_SQUARE.md`](GROK_SQUARE.md). Index: [`grok-bots/README.md`](grok-bots/README.md) |
 
 The helper is called `sumctl` to avoid shadowing the Unix `sum` command. Normally you talk to the harness, not the helper.
 

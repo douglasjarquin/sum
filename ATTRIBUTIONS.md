@@ -49,7 +49,8 @@ The shared engineering principles reference is authored for sum and builds on th
 ## Bot deployment
 
 **[Grok Ship](https://github.com/kunchenguid/grok-ship)** and the [Firstmate Grok Bot template](https://x.ai/bot/__4FfrkUdvpdMk6-LKg5r) showed that an agent distro can be a native Grok Bot recipe rather than a helper binding.
-The live Sum recipe is `templates/grok-bot/` and is not that URL.
+The live Sum recipe is `grok-bots/sum/` and is not that URL.
+The live Square recipe is `grok-bots/square/`.
 The historical reference stays.
 
 **[Grok Ship Steward](https://github.com/douglasjarquin/grok-ship-steward)** inspired square, sum's scoped backup/recovery stewardship companion. Any upstream credit Grok Ship Steward itself carries is retained where its material is adapted.
