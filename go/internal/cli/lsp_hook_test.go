@@ -192,6 +192,7 @@ func TestProjectHookFiles_pointAtLspEnsure(t *testing.T) {
 }
 
 func commandResolvesUnderDir(command, dir string) (resolved string, under bool) {
+	// Grok treats a command with whitespace as an inline shell string, not a path relative to the JSON file.
 	if strings.ContainsAny(command, " \t") {
 		return "", false
 	}
