@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -63,6 +64,13 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 		})
 		if pumpErr != nil {
 			return nil, pumpErr
+		}
+		owner, ownerErr := s.Owner()
+		if ownerErr != nil {
+			return nil, ownerErr
+		}
+		if sweep := lifecycle.Sweep(s, owner, runtimeRoot, nil); len(sweep) > 0 {
+			result.Set("lifecycle", sweep)
 		}
 		row := ordjson.NewObject()
 		row.Set("at", store.Now())
@@ -162,9 +170,12 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 		}); err != nil {
 			return nil, err
 		}
+		lifecycle.Sweep(s, owner, runtimeRoot, nil)
 	}
+	var matchedIDs []string
 	for _, task := range matched {
 		id := asString(func() any { v, _ := task.Get("id"); return v }())
+		matchedIDs = append(matchedIDs, id)
 		if event == "pane.agent_status_changed" && (status == "idle" || status == "done" || status == "blocked") {
 			if _, err := returns.Pump(s, returns.PumpOpts{
 				RuntimeRoot:  runtimeRoot,
@@ -176,6 +187,12 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 				return nil, err
 			}
 		}
+	}
+	// One bounded cleanup/observe pass over the tasks this event touched, as the
+	// coordinator identity that installed this plugin. Pane exit, pane close, and
+	// workspace close are exactly the moments a merged task's resources free up.
+	if len(matchedIDs) > 0 {
+		lifecycle.Sweep(s, owner, runtimeRoot, matchedIDs)
 	}
 	row.Set("outcome", "handled")
 	row.Set("handler_ms", jsonInt(int(time.Since(started).Milliseconds())))

@@ -251,7 +251,7 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 		open := 0
 		for _, raw := range asList(func() any { v, _ := task.Get("questions"); return v }()) {
 			q := asObject(raw)
-			if asString(func() any { x, _ := q.Get("status"); return x }()) != "applied" {
+			if s := asString(func() any { x, _ := q.Get("status"); return x }()); s != "applied" && s != "settled" {
 				open++
 			}
 		}

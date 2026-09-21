@@ -13,8 +13,21 @@ if args == ["-a", "-d", "cwd", "-Fpn", "-w"]:
     if scenario.get("fail"):
         print(scenario["fail"], file=sys.stderr); sys.exit(1)
     rows = [{"pid": os.getpid(), "cwd": os.getcwd()}, *scenario.get("processes", [])]
+    # Entries that opt in with "alive": true are listed only while the pid really
+    # exists, so a test can watch a real process disappear after it is stopped.
+    def alive(row):
+        if not row.get("alive"):
+            return True
+        try:
+            os.kill(int(row["pid"]), 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
     for row in rows:
-        print(f"p{row['pid']}\nn{row['cwd']}")
+        if alive(row):
+            print(f"p{row['pid']}\nn{row['cwd']}")
     sys.exit(0)
 if args == ["-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn", "-w"]:
     if scenario.get("fail_listeners"):

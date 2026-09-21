@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -165,9 +166,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 		result.Set("note", "Cleanup already completed; nothing was observed or changed.")
 		return result, nil
 	}
-	if err := repair.RefuseDuringCleanup(task, "Cleanup"); err != nil && args.Apply {
-		return nil, err
-	}
+	savedIntent := asObject(func() any { v, _ := record.Get("intent"); return v }())
 	scope := "task"
 	if args.ReviewerOnly {
 		scope = "reviewer"
@@ -189,6 +188,22 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 		plan.Set("note", "Inspection only; nothing was removed. `cleanup TASK --apply` removes the verified workspace with native Herdr operations and archives the record only when no blocker remains.")
 		return plan, nil
 	}
+	var orphansStopped []any
+	if len(asList(func() any { v, _ := plan.Get("blockers"); return v }())) > 0 && orphansAreOnlyBlockers(plan) {
+		// The only thing holding this cleanup is a set of processes whose owner
+		// pane and workspace are both verified dead. Stop each one explicitly,
+		// verify exit, and take one fresh inspection; a survivor leaves the named
+		// blockers exactly where they were.
+		stopped, stopErr := stopOrphans(task, plan)
+		if stopErr != nil {
+			return nil, stopErr
+		}
+		orphansStopped = stopped
+		plan, err = inspectTask(s, task, ctx, runtimeRoot, args.Number, scope)
+		if err != nil {
+			return nil, err
+		}
+	}
 	blockers := asList(func() any { v, _ := plan.Get("blockers"); return v }())
 	if len(blockers) > 0 {
 		changes := ordjson.NewObject()
@@ -206,6 +221,24 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	}
 	pr := asObject(func() any { v, _ := plan.Get("pr"); return v }())
 	mergedHead := stringField(pr, "head_sha")
+	execRow := asObject(func() any { v, _ := plan.Get("execution"); return v }())
+	var attempts any
+	if execRow != nil {
+		attempts, _ = execRow.Get("attempts")
+	}
+	intentReconciled := "fresh"
+	if savedIntent != nil {
+		if intentMatches(savedIntent, task, plan, mergedHead, attempts) {
+			intentReconciled = "continued"
+		} else {
+			intentReconciled = "re-derived"
+		}
+	}
+	if settle := asList(func() any { v, _ := plan.Get("settled_questions"); return v }()); len(settle) > 0 {
+		if err := settleAnsweredQuestions(s, args.Task, settle, ctx); err != nil {
+			return nil, err
+		}
+	}
 	intent := ordjson.NewObject()
 	intent.Set("workspace", func() any { v, _ := task.Get("workspace"); return v }())
 	intent.Set("pane", func() any { v, _ := task.Get("pane"); return v }())
@@ -217,11 +250,6 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	intent.Set("merge_commit", func() any { v, _ := pr.Get("merge_commit"); return v }())
 	intent.Set("pr", func() any { v, _ := pr.Get("number"); return v }())
 	intent.Set("at", store.Now())
-	execRow := asObject(func() any { v, _ := plan.Get("execution"); return v }())
-	var attempts any
-	if execRow != nil {
-		attempts, _ = execRow.Get("attempts")
-	}
 	if err := saveCleanupIntent(s, args.Task, intent, attempts, asObject(func() any { v, _ := plan.Get("resources"); return v }())); err != nil {
 		return nil, err
 	}
@@ -231,6 +259,9 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	}
 	removed := ordjson.NewObject()
 	removed.Set("performed", false)
+	if len(orphansStopped) > 0 {
+		removed.Set("orphans_stopped", orphansStopped)
+	}
 	resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
 	if asString(func() any { v, _ := resources.Get("workspace"); return v }()) == "present" {
 		changes := ordjson.NewObject()
@@ -262,7 +293,21 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 			}
 		}
 	} else if asString(func() any { v, _ := resources.Get("worktree"); return v }()) == "present" {
-		return nil, fmt.Errorf("Cleanup of %s refused: no Herdr workspace owns the remaining checkout %s.", args.Task, stringField(task, "worktree"))
+		// Pane-closed-then-cleanup is the normal end state: a checkout whose
+		// recorded path still verifies as this task's worktree (clean, registered,
+		// branch-matched, no live processes — all blocker-checked above) is
+		// adopted and removed through git without force once the workspace and
+		// pane are both proven absent.
+		if asString(func() any { v, _ := resources.Get("workspace"); return v }()) != "absent" ||
+			asString(func() any { v, _ := resources.Get("pane"); return v }()) != "absent" {
+			return nil, fmt.Errorf("Cleanup of %s refused: no Herdr workspace owns the remaining checkout %s.", args.Task, stringField(task, "worktree"))
+		}
+		if err := adoptCheckout(task); err != nil {
+			return nil, err
+		}
+		removed.Set("performed", true)
+		removed.Set("path", stringField(task, "worktree"))
+		removed.Set("adopted", true)
 	}
 	gone, detail, err := resourcesAbsent(task, runtimeRoot, stringField(ctx, "session"))
 	if err != nil {
@@ -300,6 +345,9 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	result.Set("state", "complete")
 	result.Set("archived", true)
 	result.Set("removed", removedOut)
+	result.Set("intent", intentReconciled)
+	result.Set("settled_questions", func() any { v, _ := plan.Get("settled_questions"); return v }())
+	result.Set("orphans", func() any { v, _ := plan.Get("orphans"); return v }())
 	kept := ordjson.NewObject()
 	kept.Set("branch", func() any { v, _ := task.Get("branch"); return v }())
 	path, _ := s.TaskPath(args.Task)
@@ -307,6 +355,212 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	result.Set("kept", kept)
 	result.Set("note", "Only the verified task workspace and its clean checkout were removed, through native Herdr without force. The branch, brief revisions, decisions, reports, and PR evidence stay.")
 	return result, nil
+}
+
+// intentMatches reports whether a saved cleanup intent still describes the same
+// workspace, pane, worktree, branch, merge evidence, and recorded execution
+// attempts that fresh inspection just produced. When it does, a previously
+// interrupted apply may continue; when it does not, the fresh plan replaces the
+// saved intent so a stale snapshot can never wedge the task or authorize removal
+// of resources it no longer describes.
+func intentMatches(saved *ordjson.Object, task, plan *ordjson.Object, mergedHead string, attempts any) bool {
+	for _, key := range []string{"workspace", "pane", "worktree", "branch"} {
+		want, _ := task.Get(key)
+		got, _ := saved.Get(key)
+		if fmt.Sprint(want) != fmt.Sprint(got) {
+			return false
+		}
+	}
+	pr := asObject(func() any { v, _ := plan.Get("pr"); return v }())
+	if stringField(saved, "head") != stringField(plan, "head") ||
+		stringField(saved, "merged_head") != mergedHead ||
+		stringField(saved, "merge_commit") != stringField(pr, "merge_commit") ||
+		fmt.Sprint(func() any { v, _ := saved.Get("pr"); return v }()) != fmt.Sprint(func() any { v, _ := pr.Get("number"); return v }()) {
+		return false
+	}
+	savedAttempts := asList(func() any { v, _ := saved.Get("attempts"); return v }())
+	freshAttempts := asList(attempts)
+	if len(savedAttempts) != len(freshAttempts) {
+		return false
+	}
+	freshByID := map[string]*ordjson.Object{}
+	for _, raw := range freshAttempts {
+		if row := asObject(raw); row != nil {
+			freshByID[stringField(row, "id")] = row
+		}
+	}
+	for _, raw := range savedAttempts {
+		row := asObject(raw)
+		fresh := freshByID[stringField(row, "id")]
+		if fresh == nil ||
+			stringField(row, "outcome") != stringField(fresh, "outcome") ||
+			fmt.Sprint(func() any { v, _ := row.Get("generation"); return v }()) != fmt.Sprint(func() any { v, _ := fresh.Get("generation"); return v }()) {
+			return false
+		}
+	}
+	return true
+}
+
+// settleAnsweredQuestions marks answered questions settled once every attempt
+// that could apply them has verified stop evidence. It uses one conditional
+// write inside the existing task lock so a concurrent `resolve` can never lose
+// its applied status to a settle that raced it.
+func settleAnsweredQuestions(s *store.Store, taskID string, ids []any, ctx *ordjson.Object) error {
+	settle := map[string]bool{}
+	for _, raw := range ids {
+		if id, ok := raw.(string); ok && id != "" {
+			settle[id] = true
+		}
+	}
+	if len(settle) == 0 {
+		return nil
+	}
+	actor := "sum:" + stringField(ctx, "session") + ":cleanup"
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	t, err := s.ReadTask(taskID)
+	if err != nil {
+		return err
+	}
+	raw, _ := t.Get("questions")
+	rows, _ := raw.([]any)
+	changed := false
+	for _, qraw := range rows {
+		q, _ := qraw.(*ordjson.Object)
+		if q == nil {
+			continue
+		}
+		qid, _ := q.Get("id")
+		status, _ := q.Get("status")
+		if id, _ := qid.(string); settle[id] && status == "answered" {
+			q.Set("status", "settled")
+			q.Set("settled_at", store.Now())
+			q.Set("settled_by", actor)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	t.Set("updated_at", store.Now())
+	return s.SaveTask(t)
+}
+
+// orphansAreOnlyBlockers reports whether every remaining blocker is a live
+// process whose owner pane and workspace are both verified absent. That is the
+// one case where apply may act on a blocker itself: each named orphan is
+// terminated and the task is re-inspected once. Any other blocker code, or a
+// live pane/workspace that could still own the process, keeps the refuse path.
+func orphansAreOnlyBlockers(plan *ordjson.Object) bool {
+	orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }())
+	if len(orphans) == 0 {
+		return false
+	}
+	resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
+	if asString(func() any { v, _ := resources.Get("pane"); return v }()) != "absent" ||
+		asString(func() any { v, _ := resources.Get("workspace"); return v }()) != "absent" {
+		return false
+	}
+	for _, raw := range asList(func() any { v, _ := plan.Get("blockers"); return v }()) {
+		code := stringField(asObject(raw), "code")
+		if code != "occupant" && code != "execution" {
+			return false
+		}
+	}
+	return true
+}
+
+// stopOrphans terminates processes the inspection plan proved are orphans: cwd
+// inside the checkout while every recorded pane that could own them is dead.
+// One SIGTERM per process, then a re-scan; anything still alive (sum never
+// force-kills) keeps its reservation and leaves a fresh intent for the next
+// bounded pass.
+func stopOrphans(task, plan *ordjson.Object) ([]any, error) {
+	worktree := stringField(task, "worktree")
+	if worktree == "" {
+		return nil, nil
+	}
+	var stopped []any
+	for _, raw := range asList(func() any { v, _ := plan.Get("orphans"); return v }()) {
+		row := asObject(raw)
+		if row == nil {
+			continue
+		}
+		pid, _ := row.Get("pid")
+		n, _ := pid.(json.Number)
+		i, _ := n.Int64()
+		p := int(i)
+		if p <= 0 {
+			continue
+		}
+		if err := proc.Terminate(p); err != nil {
+			return nil, fmt.Errorf("Cleanup could not stop orphan pid %d in %s: %s", p, worktree, err)
+		}
+		stopped = append(stopped, fmt.Sprint(p))
+	}
+	if len(stopped) == 0 {
+		return nil, nil
+	}
+	var inside []any
+	var errorText string
+	for i := 0; i < 40; i++ {
+		inside, errorText = processesIn(worktree, map[int]bool{})
+		if errorText != "" {
+			return nil, fmt.Errorf("Cleanup could not verify orphan exit in %s: %s", worktree, errorText)
+		}
+		if len(inside) == 0 {
+			return stopped, nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	p := asObject(inside[0])
+	pid, _ := p.Get("pid")
+	return nil, fmt.Errorf("Cleanup terminated orphan processes in %s but pid %v is still alive; the reservation stays held and the intent is refreshed for the next pass", worktree, pid)
+}
+
+// adoptCheckout removes a checkout that inspection proved safe when no Herdr
+// workspace remains to perform the removal. It re-verifies registration and
+// cleanliness at removal time, then asks git to remove the worktree without
+// force; the branch is kept like every other cleanup, and every failure leaves
+// the checkout untouched and the intent saved for the next bounded pass.
+func adoptCheckout(task *ordjson.Object) error {
+	worktree := stringField(task, "worktree")
+	repository := stringField(task, "repository")
+	branch := stringField(task, "branch")
+	registered, err := worktreePaths(repository)
+	if err != nil {
+		return fmt.Errorf("Cleanup could not adopt %s: %s", worktree, err)
+	}
+	found := false
+	for _, p := range registered {
+		if samePath(p, worktree) {
+			found = true
+		}
+	}
+	if !found {
+		return fmt.Errorf("Cleanup refused to adopt %s: the checkout is not a registered worktree of %s", worktree, repository)
+	}
+	branchShow, err := proc.Run([]string{"git", "-C", worktree, "branch", "--show-current"}, "", 20*time.Second, true, nil)
+	if err != nil {
+		return fmt.Errorf("Cleanup could not adopt %s: %s", worktree, err)
+	}
+	if strings.TrimSpace(branchShow.Stdout) != branch {
+		return fmt.Errorf("Cleanup refused to adopt %s: the checkout is on %q, not %q", worktree, strings.TrimSpace(branchShow.Stdout), branch)
+	}
+	statusOut, err := proc.Run([]string{"git", "-C", worktree, "status", "--porcelain", "--untracked-files=all"}, "", 30*time.Second, true, nil)
+	if err != nil {
+		return fmt.Errorf("Cleanup could not adopt %s: %s", worktree, err)
+	}
+	if strings.TrimSpace(statusOut.Stdout) != "" {
+		return fmt.Errorf("Cleanup refused to adopt %s: the checkout is not clean", worktree)
+	}
+	if _, err := proc.Run([]string{"git", "-C", repository, "worktree", "remove", worktree}, "", 30*time.Second, true, nil); err != nil {
+		return fmt.Errorf("Cleanup could not remove adopted checkout %s: %s", worktree, err)
+	}
+	return nil
 }
 
 func stringsJoin(parts []string, sep string) string {

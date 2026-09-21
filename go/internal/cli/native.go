@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
+	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/quota"
@@ -330,7 +331,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			opts.Tasks = pumpTasks
 			opts.Force = pumpForce
 			opts.Inline = true
-			view, err := returns.Pump(st, opts)
+			view, err := lifecycle.PumpAndSweep(st, opts)
 			if err != nil {
 				return err
 			}

@@ -71,6 +71,19 @@ func trimDetail(stderr, stdout string) string {
 	return detail
 }
 
+// Terminate sends one SIGTERM for a graceful stop of a process that has no pane
+// to interrupt through. Orphaned daemons routinely ignore SIGINT (backgrounded
+// processes inherit it ignored), so TERM is the correct signal here; sum never
+// sends SIGKILL. A process already gone (ESRCH) is not an error; EPERM and every
+// other failure are reported so the caller can keep the reservation held.
+func Terminate(pid int) error {
+	err := syscall.Kill(pid, syscall.SIGTERM)
+	if err == nil || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return err
+}
+
 func PIDRunning(pid int) (bool, error) {
 	err := syscall.Kill(pid, 0)
 	if err == nil {
