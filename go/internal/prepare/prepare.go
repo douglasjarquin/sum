@@ -29,6 +29,14 @@ import (
 
 const MaxText = 256 * 1024
 
+// A freshly created pane can report agent_pane_busy while its shell is still
+// coming up. That refusal is definite (nothing launched), so a bounded retry
+// is safe; uncertain launch errors are never retried.
+var (
+	agentPaneBusyWait = 15 * time.Second
+	agentPaneBusyPoll = 250 * time.Millisecond
+)
+
 func jsonInt(n int) json.Number { return json.Number(fmt.Sprint(n)) }
 
 func asString(v any) string { s, _ := v.(string); return s }
@@ -450,7 +458,19 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		startArgs = append(startArgs, "--")
 		startArgs = append(startArgs, argv...)
 	}
-	started, startErr := herdrclient.Call(herdrPath, session, 40*time.Second, startArgs...)
+	// agent_pane_busy means the pane is not an available shell yet, so nothing
+	// launched and retrying is safe. Any other error (timeout, unknown) may
+	// follow a launch with uncertain effects and never retries.
+	var started any
+	var startErr error
+	deadline := time.Now().Add(agentPaneBusyWait)
+	for {
+		started, startErr = herdrclient.Call(herdrPath, session, 40*time.Second, startArgs...)
+		if startErr == nil || !strings.Contains(startErr.Error(), "agent_pane_busy") || !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(agentPaneBusyPoll)
+	}
 	if startErr != nil {
 		return failStart(s, taskID, startErr)
 	}

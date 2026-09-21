@@ -65,6 +65,12 @@ if args[:2] == ["agent", "start"]:
     if "--pane" not in args or "--kind" not in args or "--cwd" in args: fail("obsolete agent-start syntax")
     pane = arg("--pane")
     if pane not in state["panes"] or state["panes"][pane]["agent"]: fail("pane is not an available shell")
+    busy = os.environ.get("FAKE_START_BUSY")
+    if busy:  # The first N agent starts refuse like a pane whose shell has not come up yet; nothing is marked launched.
+        counter_path = root / "start_busy_count"
+        n = int(counter_path.read_text()) + 1 if counter_path.exists() else 1
+        counter_path.write_text(str(n))
+        if n <= int(busy): fail("agent_pane_busy", "agent target pane %s is not an available shell" % pane)
     # agent_pid is this invocation's real pid: dead on exit, so recorded occupants never collide with a live host process.
     state["panes"][pane].update(agent=arg("--kind"), name=args[2], agent_status="idle", agent_pid=os.getpid())
     save()
