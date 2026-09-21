@@ -135,7 +135,13 @@ func TestDerive_aReconciledPRHeadProvesTheCandidateReachedOrigin(t *testing.T) {
 func TestDerive_reviewOnlyCommentsStaysPendingAndRepairsCountAsRemediation(t *testing.T) {
 	task := taskFrom(t, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "brief": "b",
 "report": {"candidate": "cccccccccccccccccccccccccccccccccccccccc"},
-"repairs": {"schema": 1, "default_allowance": 2, "consumed": 2, "operations": [], "grants": []},
+"repairs": {"schema": 1, "default_allowance": 2, "consumed": 1, "operations": [
+{"id": "r-aaaaaaaaaaa1", "kind": "send", "key": "k1", "attempt": "x-aaaaaaaaaaaa", "text": "fix it",
+"class": "expansion", "reason": "outside the brief", "created_at": "2026-01-01T00:00:00+00:00", "state": "submitted", "pid": 1},
+{"id": "r-aaaaaaaaaaa2", "kind": "send", "key": "k2", "attempt": "x-aaaaaaaaaaaa", "text": "rebase",
+"class": "in-scope", "created_at": "2026-01-01T00:00:00+00:00", "state": "submitted", "pid": 1},
+{"id": "r-aaaaaaaaaaa3", "kind": "resume", "key": "resume-1", "attempt": "x-aaaaaaaaaaaa", "text": "resume",
+"class": "in-scope", "created_at": "2026-01-01T00:00:00+00:00", "state": "reserved", "pid": 1}], "grants": []},
 "evidence": [{"schema": 1, "id": "e-1", "kind": "review", "source": "reviewer", "at": "2026-01-01T01:00:00+00:00",
 "candidate": "cccccccccccccccccccccccccccccccccccccccc", "verdict": "comment", "text": "a thought"}]}`)
 
@@ -144,7 +150,7 @@ func TestDerive_reviewOnlyCommentsStaysPendingAndRepairsCountAsRemediation(t *te
 		t.Fatalf("review row = %+v", row)
 	}
 	if got := RemediationPasses(task); got != 2 {
-		t.Fatalf("remediation passes = %d, want 2 from the consumed repairs", got)
+		t.Fatalf("remediation passes = %d, want 2 from the two sends; a resume is not a pass", got)
 	}
 }
 

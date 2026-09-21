@@ -19,11 +19,17 @@ func (o *rootOptions) addRepairCommands(root *cobra.Command) {
 		},
 	}
 
-	var sendAttempt, sendKey, sendText, sendFile string
+	var sendAttempt, sendKey, sendText, sendFile, sendClass, sendReason string
 	sendCmd := &cobra.Command{
 		Use:  "send TASK",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if sendClass != repair.ClassInScope && sendClass != repair.ClassExpansion {
+				return fmt.Errorf("invalid repair class %q: must be %s or %s", sendClass, repair.ClassInScope, repair.ClassExpansion)
+			}
+			if sendClass == repair.ClassExpansion && sendReason == "" {
+				return fmt.Errorf("--reason is required for --class %s", repair.ClassExpansion)
+			}
 			st, err := o.openStore("repair-send")
 			if err != nil {
 				return err
@@ -41,6 +47,8 @@ func (o *rootOptions) addRepairCommands(root *cobra.Command) {
 				Attempt:     sendAttempt,
 				Key:         sendKey,
 				Text:        body,
+				Class:       sendClass,
+				Reason:      sendReason,
 				RuntimeRoot: o.runtimeRoot,
 			})
 			if err != nil {
@@ -53,6 +61,8 @@ func (o *rootOptions) addRepairCommands(root *cobra.Command) {
 	sendCmd.Flags().StringVar(&sendKey, "key", "", "")
 	sendCmd.Flags().StringVar(&sendText, "text", "", "")
 	sendCmd.Flags().StringVar(&sendFile, "file", "", "")
+	sendCmd.Flags().StringVar(&sendClass, "class", repair.ClassInScope, "")
+	sendCmd.Flags().StringVar(&sendReason, "reason", "", "")
 	_ = sendCmd.MarkFlagRequired("attempt")
 	_ = sendCmd.MarkFlagRequired("key")
 	sendCmd.MarkFlagsOneRequired("text", "file")

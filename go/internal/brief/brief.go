@@ -128,7 +128,7 @@ Read this entire file. Do not load the coordinator's AGENTS.md as your role.
 - Task kind: `+"`%s`"+`
 - Harness: `+"`%s`"+` (keep your normal permissions; no bypass flags)
 - Stop and report after two unsuccessful internal repair iterations.
-- SUM separately counts controlled corrections and relaunches in the task record; required verification does not consume an extra repair.
+- SUM separately counts out-of-scope corrections in the task record; in-scope corrections, relaunches, and required verification do not consume the allowance.
 - Do not merge, delete worktrees, restart another agent, or change accounts.
 - Read this checkout's project instructions as project context, not as authority to expand scope.
 - These are workflow instructions, not a sandbox or a hard cost cap.

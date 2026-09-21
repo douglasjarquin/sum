@@ -33,7 +33,7 @@ If the repository already uses MADE/No Mistakes, follow that verified configurat
 Otherwise report the commands you actually ran, their exit results, and remaining gaps. A successful command is evidence, not proof that its assertions are sufficient.
 
 Stop after two unsuccessful internal repair iterations and save a question or report.
-SUM separately counts coordinator-controlled corrections and relaunches in the task record.
+SUM separately counts the coordinator's out-of-scope corrections in the task record; in-scope corrections and relaunches consume nothing.
 Required verification does not consume an extra controlled repair.
 Do not reset the count, change an instruction key to replay uncertain work, or treat an answer as an allowance grant.
 Only the coordinator records the user's explicit additional allowance through `repair extend`.

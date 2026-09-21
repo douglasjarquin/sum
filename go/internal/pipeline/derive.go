@@ -1,7 +1,6 @@
 package pipeline
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -218,7 +217,7 @@ func decisiveReview(reviews []*ordjson.Object) *ordjson.Object {
 	return nil
 }
 
-// RemediationPasses counts the candidates sent back before the approving one, plus the controlled repairs the coordinator spent.
+// RemediationPasses counts the candidates sent back before the approving one, plus the corrective instructions sent to the worker.
 func RemediationPasses(task *ordjson.Object) int {
 	seen := map[string]bool{}
 	for _, record := range records(task) {
@@ -228,13 +227,15 @@ func RemediationPasses(task *ordjson.Object) int {
 		seen[stringField(record, "candidate")] = true
 	}
 	repairs, _ := field(task, "repairs").(*ordjson.Object)
-	consumed := 0
-	if number, isNumber := field(repairs, "consumed").(json.Number); isNumber {
-		if value, err := number.Int64(); err == nil && value > 0 {
-			consumed = int(value)
+	sends := 0
+	operations, _ := field(repairs, "operations").([]any)
+	for _, raw := range operations {
+		op, _ := raw.(*ordjson.Object)
+		if stringField(op, "kind") == "send" {
+			sends++
 		}
 	}
-	return len(seen) + consumed
+	return len(seen) + sends
 }
 
 func deriveDocument(task *ordjson.Object, candidate string) Row {

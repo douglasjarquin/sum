@@ -201,7 +201,7 @@ The preset is expanded at `prepare` and the resolved specification is persisted 
 A model in a preset is CLI-requested, never runtime-verified, and presets change nothing about authorization, accounts, or the advisory quota checks.
 
 Admission is unlimited until a capacity block is configured; see [capacity](#capacity) for the optional settings file.
-SUM enforces a task allowance for controlled corrections and relaunches, not spending or wall-clock limits.
+SUM enforces a task allowance for out-of-scope corrections, not spending or wall-clock limits.
 
 ### Capacity
 
@@ -253,24 +253,33 @@ Rundown and refresh over a fleet are one bounded pass: one `herdr agent list` sn
 
 ### Controlled repairs
 
-Each task starts with an allowance of two SUM-controlled repair iterations.
+Each task starts with an allowance of two SUM-controlled repair iterations, spent only on out-of-scope corrections.
 Send a correction to its settled worker with the current attempt ID and a stable instruction key:
 
 ```sh
 ./bin/sumctl repair send TASK_ID --attempt ATTEMPT_ID --key correction-1 --file /absolute/path/to/correction.md
 ```
 
-The command records the iteration before delivery and refuses a busy worker or a changed attempt.
+Every send carries a class.
+The default `in-scope` covers whatever the worker needs to satisfy its approved brief - a rebase behind a moving main, CI, lint, documentation, or verification failures, push divergence, conflict resolution after upstream merges, malformed-report re-reports - and consumes nothing.
+A send for work outside the approved brief is an `expansion` and needs a recorded reason; only those sends consume the allowance:
+
+```sh
+./bin/sumctl repair send TASK_ID --attempt ATTEMPT_ID --key correction-2 --class expansion --reason "the extra endpoint the user asked for" --file /absolute/path/to/correction.md
+```
+
+The command records the instruction before delivery and refuses a busy worker or a changed attempt.
 Repeating the same key and instruction reads the saved outcome without sending or charging again.
-An uncertain delivery stays charged, including when the helper exits after saving its intent.
+A delivery Herdr refuses before it reaches the worker records nothing and charges nothing.
+An uncertain expansion delivery stays charged, including when the helper exits after saving its intent; a queued or mid-turn delivery counts as delivered.
 Use a new key only for an explicitly requested new iteration.
 
-Every `execution resume` also consumes one iteration, including an infrastructure relaunch.
+`execution resume` relaunches already-approved work and consumes nothing.
 Initial dispatch, observations, notifications, required worker and coordinator verification, and brief refresh do not consume extra iterations.
 Candidate, harness, and runtime changes do not reset the task record.
-Read the `repairs` field in `sumctl show TASK_ID` for consumed operations and grants.
+Read the `repairs` field in `sumctl show TASK_ID` for classified operations, the consumed count, and grants.
 
-Exhaustion refuses another correction or relaunch and saves one budget decision in the task's questions.
+Expansion exhaustion refuses another expansion send - in-scope sends are never blocked - and saves one budget decision in the task's questions.
 It stops no worker, frees no slot, and preserves other obligations.
 Only after the user approves an additional allowance, record that decision from the coordinator pane:
 

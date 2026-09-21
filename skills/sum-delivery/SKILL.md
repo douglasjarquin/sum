@@ -39,9 +39,10 @@ Check `sumctl brief list TASK_ID`: the report is bound to a brief revision, and 
 Tie the review to the exact candidate SHA. Re-run required checks for later candidates; review the intervening changes rather than treating the previous SHA's approval as current.
 A nit is not automatically a blocker. Limit repair cycles; escalate repeated failure rather than opening an endless review/fix loop.
 Use `repair send TASK_ID --attempt ID --key KEY --file FILE` for a controlled corrective instruction to a settled worker.
-Corrections and execution resumes consume the task's persisted allowance; mandatory worker verification, coordinator verification, and independent review remain separate requirements.
-An uncertain send stays charged and its key is never automatically replayed.
-At exhaustion, present the saved budget decision instead of launching another repair.
+The default `in-scope` class covers whatever the worker needs to satisfy its approved brief and consumes nothing; `--class expansion --reason TEXT` is for work outside the brief and consumes the task's persisted allowance.
+Execution resumes consume no allowance.
+An uncertain expansion send stays charged and its key is never automatically replayed; a send Herdr refuses before delivery records nothing and charges nothing.
+At exhaustion, present the saved budget decision instead of launching another expansion repair.
 Record additional iterations only after the user's explicit approval, using `repair extend` with that question ID and the actual decision text.
 A reviewer pane saves its findings with `sumctl review TASK_ID --verdict approve|changes-requested|blocked|comment --candidate SHA --file findings.md`; the first such pane becomes the task's recorded reviewer endpoint, and saved findings are the prerequisite for closing that pane later. The worker pane cannot review its own candidate.
 Record what you verified yourself with `sumctl verify TASK_ID --candidate SHA --result pass|fail|inconclusive --text '...'`, or with `--run`/`--execute` as above. A newer candidate marks earlier records as not current; it deletes nothing and restarts nothing.
