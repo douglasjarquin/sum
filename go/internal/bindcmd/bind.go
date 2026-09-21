@@ -36,7 +36,12 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
+	released := false
+	defer func() {
+		if !released {
+			_ = unlock()
+		}
+	}()
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
@@ -86,6 +91,10 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	if err := s.SaveTask(task); err != nil {
 		return nil, err
 	}
+	if err := unlock(); err != nil {
+		return nil, err
+	}
+	released = true
 	opts := pump
 	opts.Ctx = ctx
 	opts.Tasks = []string{taskID}

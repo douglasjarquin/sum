@@ -157,7 +157,12 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
+	released := false
+	defer func() {
+		if !released {
+			_ = unlock()
+		}
+	}()
 
 	statePath := filepath.Join(s.Home, "state.json")
 	stateValue, err := ordjson.ReadFile(statePath)
@@ -292,6 +297,10 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := unlock(); err != nil {
+		return nil, err
+	}
+	released = true
 
 	if role == "coordinator" {
 		result.Set("contract", versions.ContractState(s))
