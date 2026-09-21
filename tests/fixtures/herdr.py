@@ -65,7 +65,8 @@ if args[:2] == ["agent", "start"]:
     if "--pane" not in args or "--kind" not in args or "--cwd" in args: fail("obsolete agent-start syntax")
     pane = arg("--pane")
     if pane not in state["panes"] or state["panes"][pane]["agent"]: fail("pane is not an available shell")
-    state["panes"][pane].update(agent=arg("--kind"), name=args[2], agent_status="idle")
+    # agent_pid is this invocation's real pid: dead on exit, so recorded occupants never collide with a live host process.
+    state["panes"][pane].update(agent=arg("--kind"), name=args[2], agent_status="idle", agent_pid=os.getpid())
     save()
     if os.environ.get("FAKE_START_UNCERTAIN"): fail("agent_not_ready: simulated trust prompt")
     emit({"agent": state["panes"][pane]})
@@ -221,7 +222,7 @@ if args[:2] == ["pane", "process-info"]:
     # A pane's process list is scenario data written by the test; the default is an idle shell in the pane cwd.
     foreground = pane.get("processes", [{"pid": shell, "name": "bash", "argv0": "bash", "argv": ["-bash"], "cwd": pane["cwd"]}])
     if pane.get("agent") and "processes" not in pane:  # A live agent occupies the foreground until the scenario clears it.
-        foreground = [{"pid": shell + 1, "name": pane["agent"], "argv0": pane["agent"], "argv": [pane["agent"]], "cwd": pane["cwd"]}]
+        foreground = [{"pid": pane.get("agent_pid", shell + 1), "name": pane["agent"], "argv0": pane["agent"], "argv": [pane["agent"]], "cwd": pane["cwd"]}]
     emit({"process_info": {"pane_id": pane["pane_id"], "shell_pid": shell, "foreground_process_group_id": foreground[0]["pid"] if foreground else shell,
                            "foreground_processes": foreground}})
 # --- issue #17 service surface: split, run, interrupt, wait-output. Processes are scenario data; a run makes one appear ---------

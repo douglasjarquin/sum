@@ -575,6 +575,31 @@ func TestPark_stoppedExecutionReleasesOnceAndKeepsObligations(t *testing.T) {
 	}
 }
 
+func TestObserveStop_releasedAttemptsAreNotReobserved(t *testing.T) {
+	l := newLab(t)
+	// A live agent in the worker pane and no verifier process identity:
+	// re-observing either released attempt would report unknown.
+	l.writeWorkerPane("claude", []map[string]any{
+		{"pid": 4242, "name": "bash", "argv0": "bash", "argv": []any{"-bash"}, "cwd": l.checkout},
+	})
+	l.saveTask(l.taskJSON("released", "released", ""))
+	task, err := l.store.ReadTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := reservations.GetExecution(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, attempt := range append([]*ordjson.Object{value.Worker}, value.Verifiers...) {
+		proof := ObserveStop(l.store, l.runtime, task, attempt)
+		if proof.Outcome != OutcomeStopped {
+			id, _ := attempt.Get("id")
+			t.Fatalf("released attempt %v was re-observed: %s", id, proof.Reason)
+		}
+	}
+}
+
 func TestPark_refusesWrongIdentityAndStaleAttempt(t *testing.T) {
 	t.Run("wrong checkout", func(t *testing.T) {
 		l := newLab(t)
