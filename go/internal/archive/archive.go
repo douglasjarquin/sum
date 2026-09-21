@@ -26,7 +26,7 @@ func Run(s *store.Store, taskID string, acknowledge bool) (*ordjson.Object, erro
 			for _, q := range list {
 				question, _ := q.(*ordjson.Object)
 				status, _ := question.Get("status")
-				if status != "applied" {
+				if status != "applied" && status != "settled" {
 					return nil, fmt.Errorf("Outstanding questions must be answered and applied before archiving.")
 				}
 			}

@@ -12,6 +12,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
+	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/project"
@@ -322,7 +323,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			}
 		}
 		result.Set("cleanup_pending", pending)
-		pumped, pumpErr := returns.Pump(s, returns.PumpOpts{
+		pumped, pumpErr := lifecycle.PumpAndSweep(s, returns.PumpOpts{
 			RuntimeRoot: opts.RuntimeRoot,
 			SumctlPath:  opts.SumctlPath,
 			Ctx:         ctx,

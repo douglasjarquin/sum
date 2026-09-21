@@ -114,7 +114,7 @@ func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 		if list, ok := questionsValue.([]any); ok {
 			for _, q := range list {
 				question, _ := q.(*ordjson.Object)
-				if status, _ := question.Get("status"); status != "applied" {
+				if status, _ := question.Get("status"); status != "applied" && status != "settled" {
 					openQuestions = append(openQuestions, question)
 				}
 			}

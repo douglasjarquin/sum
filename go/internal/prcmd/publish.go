@@ -191,6 +191,9 @@ func discoverRuns(task *ordjson.Object, args PublishArgs) ([]Run, error) {
 			continue
 		}
 		handoff := asObject(func() any { v, _ := record.Get("handoff"); return v }())
+		if handoff == nil {
+			continue
+		}
 		for _, item := range asList(func() any { v, _ := handoff.Get("artifacts"); return v }()) {
 			path, _ := item.(string)
 			if filepath.Base(path) != "comparison.json" {

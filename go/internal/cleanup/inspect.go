@@ -341,15 +341,19 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 }
 
 type inspection struct {
-	store       *store.Store
-	task        *ordjson.Object
-	ctx         *ordjson.Object
-	runtimeRoot string
-	blockers    []any
-	resources   *ordjson.Object
-	view        *ordjson.Object
-	stoppable   []any
-	environment *ordjson.Object
+	store         *store.Store
+	task          *ordjson.Object
+	ctx           *ordjson.Object
+	runtimeRoot   string
+	blockers      []any
+	resources     *ordjson.Object
+	view          *ordjson.Object
+	stoppable     []any
+	environment   *ordjson.Object
+	orphans       []any
+	orphanPIDs    map[int]bool
+	workerStopped bool
+	settleable    []any
 }
 
 func newInspection(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string) *inspection {
@@ -381,6 +385,38 @@ func (ins *inspection) block(code, detail string) {
 	row.Set("code", code)
 	row.Set("detail", detail)
 	ins.blockers = append(ins.blockers, row)
+}
+
+// paneGone reports whether the recorded task pane and its workspace are both
+// verified absent, which is the point where a surviving checkout process has no
+// recorded owner left and can be named an orphan.
+func (ins *inspection) paneGone() bool {
+	return asString(func() any { v, _ := ins.resources.Get("pane"); return v }()) == "absent" &&
+		asString(func() any { v, _ := ins.resources.Get("workspace"); return v }()) == "absent"
+}
+
+// addOrphans records a process with a cwd inside the checkout whose owner pane is
+// verified dead. Orphans stay named blockers in the plan and are additionally
+// listed here so apply can terminate each one explicitly and re-inspect instead
+// of assuming a closed pane emptied the checkout.
+func (ins *inspection) addOrphans(inside []any) {
+	if ins.orphanPIDs == nil {
+		ins.orphanPIDs = map[int]bool{}
+	}
+	for _, raw := range inside {
+		row := asObject(raw)
+		if row == nil {
+			continue
+		}
+		pid, _ := row.Get("pid")
+		n, _ := pid.(json.Number)
+		i, _ := n.Int64()
+		if ins.orphanPIDs[int(i)] {
+			continue
+		}
+		ins.orphanPIDs[int(i)] = true
+		ins.orphans = append(ins.orphans, raw)
+	}
 }
 
 func (ins *inspection) hostname() string {
@@ -605,7 +641,19 @@ func (ins *inspection) obligations() string {
 	var openIDs []string
 	for _, raw := range asList(func() any { v, _ := ins.task.Get("questions"); return v }()) {
 		q := asObject(raw)
-		if stringField(q, "status") != "applied" {
+		switch stringField(q, "status") {
+		case "applied", "settled":
+			continue
+		case "answered":
+			// A worker-only `resolve` can never run once every attempt that could
+			// consume the answer has verified stop evidence. The recorded answer
+			// then settles durably during apply instead of blocking archive forever.
+			if ins.workerStopped {
+				ins.settleable = append(ins.settleable, stringField(q, "id"))
+				continue
+			}
+			openIDs = append(openIDs, stringField(q, "id"))
+		default:
 			openIDs = append(openIDs, stringField(q, "id"))
 		}
 	}
@@ -776,6 +824,13 @@ func (ins *inspection) occupancy() error {
 		if errorText != "" {
 			ins.block("occupant", "processes with a cwd in the checkout cannot be established: "+errorText)
 		} else if len(inside) > 0 {
+			// A live process in the checkout is always a named blocker. When the
+			// pane and workspace are both proven absent the same processes are also
+			// listed as orphans, which is what lets apply stop them explicitly
+			// rather than assuming pane closure emptied the checkout.
+			if ins.paneGone() {
+				ins.addOrphans(inside)
+			}
 			var parts []string
 			for i, raw := range inside {
 				if i >= 10 {
@@ -869,6 +924,16 @@ func (ins *inspection) plan() *ordjson.Object {
 	result.Set("blockers", ins.blockers)
 	result.Set("resources", ins.resources)
 	result.Set("stoppable", ins.stoppable)
+	orphans := ins.orphans
+	if orphans == nil {
+		orphans = []any{}
+	}
+	result.Set("orphans", orphans)
+	settleable := ins.settleable
+	if settleable == nil {
+		settleable = []any{}
+	}
+	result.Set("settled_questions", settleable)
 	return result
 }
 
@@ -883,6 +948,12 @@ func inspectTask(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string, 
 			return nil, err
 		}
 		return ins.plan(), nil
+	}
+	if err := ins.herdr(); err != nil {
+		return nil, err
+	}
+	if err := ins.git(); err != nil {
+		return nil, err
 	}
 	if err := repair.RefuseActive(task, false); err != nil {
 		ins.block("execution", err.Error())
@@ -901,12 +972,6 @@ func inspectTask(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string, 
 				ins.block("execution", "worker launch is in progress; its checkout cannot be removed")
 			}
 		}
-	}
-	if err := ins.herdr(); err != nil {
-		return nil, err
-	}
-	if err := ins.git(); err != nil {
-		return nil, err
 	}
 	ins.obligations()
 	pr, err := ins.github(number)
@@ -945,7 +1010,23 @@ func executionStopProof(ins *inspection, execVal *reservations.Execution) []any 
 			item.Set("reason", proof.Reason)
 		}
 		rows = append(rows, item)
+		isWorker := stringField(row, "kind") == "worker"
+		if isWorker && (proof.Outcome == execution.OutcomeStopped || len(proof.Orphans) > 0) {
+			// The worker pane is verified absent; surviving checkout processes are
+			// orphans, not a consuming worker. No live attempt can apply an answer.
+			ins.workerStopped = true
+		}
 		if proof.Outcome != execution.OutcomeStopped {
+			if isWorker && len(proof.Orphans) > 0 && ins.paneGone() {
+				var inside []any
+				for _, p := range proof.Orphans {
+					item := ordjson.NewObject()
+					item.Set("pid", json.Number(fmt.Sprint(p.PID)))
+					item.Set("cwd", p.CWD)
+					inside = append(inside, item)
+				}
+				ins.addOrphans(inside)
+			}
 			ins.block("execution", proof.Reason)
 		}
 	}

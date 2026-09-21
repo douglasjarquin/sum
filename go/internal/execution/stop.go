@@ -22,6 +22,11 @@ type StopProof struct {
 	Outcome     string
 	Reason      string
 	Observation *ordjson.Object
+	// Orphans lists surviving processes whose cwd is inside the task checkout,
+	// populated only when the worker pane is verified absent (pane_not_found or
+	// agent_not_found). The attempt outcome stays unknown for callers like park;
+	// cleanup may stop orphans once pane death is proven.
+	Orphans []proc.CWDProcess
 }
 
 func ObserveStop(s *store.Store, runtimeRoot string, task, attempt *ordjson.Object) StopProof {
@@ -195,7 +200,9 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 			return unknown("Worker checkout processes cannot be inspected; reservation remains held. " + cwdErr.Error())
 		}
 		if len(inside) > 0 {
-			return unknown(fmt.Sprintf("Worker still has an owned process in its checkout (pid %d); reservation remains held.", inside[0].PID))
+			proof := unknown(fmt.Sprintf("Worker still has an owned process in its checkout (pid %d); reservation remains held.", inside[0].PID))
+			proof.Orphans = inside
+			return proof
 		}
 	}
 	env, err := environment.Read(s, stringField(task, "id"))

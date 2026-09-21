@@ -235,7 +235,7 @@ func allApplied(task *ordjson.Object) bool {
 	for _, q := range list {
 		question, _ := q.(*ordjson.Object)
 		status, _ := question.Get("status")
-		if status != "applied" {
+		if status != "applied" && status != "settled" {
 			return false
 		}
 	}
