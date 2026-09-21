@@ -35,6 +35,7 @@ var (
 type adapter struct {
 	Model     []string
 	Reasoning []string
+	Worker    []string
 }
 
 var adapters = map[string]adapter{
@@ -45,6 +46,9 @@ var adapters = map[string]adapter{
 	"cursor":  {Model: []string{"--model"}},
 	"pi":      {Model: []string{"--model"}},
 	"omp":     {Model: []string{"--model="}},
+	// devin's interactive trust gate swallows the prompt sum injects at start; workers run in
+	// isolated per-task worktrees, so skipping it adds no exposure (verified in `devin --help`).
+	"devin": {Worker: []string{"--permission-mode", "dangerous", "--respect-workspace-trust", "false"}},
 }
 
 func adapterPrefix(harness, field string) ([]string, bool) {
@@ -611,6 +615,16 @@ func CapacityView(s *store.Store) (*ordjson.Object, error) {
 	result.Set("worker_note", "Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.")
 	result.Set("note", "Each recorded execution reservation holds a slot until a conclusive stop observation releases it; legacy non-archived tasks remain conservatively held.")
 	return result, nil
+}
+
+// WorkerArgv returns the fixed arguments every sum-launched worker of this harness kind
+// needs, verified from the installed CLI's help; nil when the harness needs none.
+func WorkerArgv(harness string) []string {
+	a, ok := adapters[harness]
+	if !ok {
+		return nil
+	}
+	return append([]string{}, a.Worker...)
 }
 
 func AdapterArgv(harness, field string, value string) []string {

@@ -297,6 +297,7 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		}
 	}
 	argv := []any{}
+	argv = append(argv, anySlice(settings.WorkerArgv(harness))...)
 	if model, ok := values["model"].(string); ok && model != "" {
 		argv = append(argv, anySlice(adapterArgv(harness, "model", model))...)
 	}
