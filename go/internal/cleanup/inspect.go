@@ -239,7 +239,11 @@ func boundDetail(raw any) string {
 	return fmt.Sprintf("pid %v at %v", pid, cwd)
 }
 
-func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Object, error) {
+// paneOccupancy observes one pane. When worktree is set it also lists the
+// processes bound to that checkout besides the pane's own shell and the
+// endpointShells of the task's other recorded panes, which close through
+// their own path.
+func paneOccupancy(runtimeRoot, session, paneID, worktree string, endpointShells map[int]bool) (*ordjson.Object, error) {
 	view := ordjson.NewObject()
 	view.Set("pane", paneID)
 	view.Set("agent", nil)
@@ -274,7 +278,7 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 			blockers = append(blockers, fmt.Sprintf("process observation for pane %s is uncertain (%s)", paneID, code))
 		}
 		if worktree != "" {
-			inside, errorText := processesBoundTo(worktree, map[int]bool{})
+			inside, errorText := processesBoundTo(worktree, endpointShells)
 			if errorText != "" {
 				blockers = append(blockers, "processes bound to the checkout cannot be established: "+errorText)
 			} else if len(inside) > 0 {
@@ -328,6 +332,9 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 	}
 	if worktree != "" {
 		exclude := map[int]bool{}
+		for pid := range endpointShells {
+			exclude[pid] = true
+		}
 		if num, ok := shell.(json.Number); ok {
 			if n, convErr := num.Int64(); convErr == nil {
 				exclude[int(n)] = true
@@ -368,6 +375,7 @@ type inspection struct {
 	descendantsFailed bool
 	workerStopped     bool
 	settleable        []any
+	shells            map[int]bool
 }
 
 func newInspection(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string) *inspection {
@@ -399,6 +407,15 @@ func (ins *inspection) block(code, detail string) {
 	row.Set("code", code)
 	row.Set("detail", detail)
 	ins.blockers = append(ins.blockers, row)
+}
+
+// endpointShells is the observed shell pid of each other pane the task
+// records (the reviewer), read once per inspection.
+func (ins *inspection) endpointShells() map[int]bool {
+	if ins.shells == nil {
+		ins.shells = execution.EndpointShells(ins.runtimeRoot, ins.task)
+	}
+	return ins.shells
 }
 
 // paneDead reports whether the recorded task pane is verified absent, which is
@@ -444,10 +461,11 @@ func attemptRecordedPIDs(attempt *ordjson.Object) []int {
 }
 
 // ownedDescendants returns the pids that are still descendants of a recorded
-// pane, shell, or attempt pid. A bound process in that set has a live recorded
-// owner and stays a named blocker rather than an orphan. The second result is
-// false when the process tree cannot be inspected; callers must then leave
-// every candidate unclassified.
+// pane, shell, or attempt pid, or of another recorded endpoint's shell. A
+// bound process in that set has a live recorded owner and stays a named
+// blocker rather than an orphan. The second result is false when the process
+// tree cannot be inspected; callers must then leave every candidate
+// unclassified.
 func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
 	if ins.descendants != nil {
 		return ins.descendants, true
@@ -461,18 +479,23 @@ func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
 		ins.descendantsFailed = true
 		return nil, false
 	}
+	var roots []int
+	for pid := range ins.endpointShells() {
+		roots = append(roots, pid)
+	}
 	if execVal != nil {
 		for _, attempt := range append([]*ordjson.Object{execVal.Worker}, execVal.Verifiers...) {
-			for _, pid := range attemptRecordedPIDs(attempt) {
-				kids, err := proc.Descendants(pid)
-				if err != nil {
-					ins.descendantsFailed = true
-					return nil, false
-				}
-				for _, k := range kids {
-					owned[k] = true
-				}
-			}
+			roots = append(roots, attemptRecordedPIDs(attempt)...)
+		}
+	}
+	for _, pid := range roots {
+		kids, err := proc.Descendants(pid)
+		if err != nil {
+			ins.descendantsFailed = true
+			return nil, false
+		}
+		for _, k := range kids {
+			owned[k] = true
 		}
 	}
 	ins.descendants = owned
@@ -897,7 +920,7 @@ func (ins *inspection) occupancy() error {
 		if asString(func() any { v, _ := ins.resources.Get("worktree"); return v }()) == "present" {
 			worktree = stringField(ins.task, "worktree")
 		}
-		view, err := paneOccupancy(ins.runtimeRoot, stringField(ins.ctx, "session"), stringField(ins.task, "pane"), worktree)
+		view, err := paneOccupancy(ins.runtimeRoot, stringField(ins.ctx, "session"), stringField(ins.task, "pane"), worktree, ins.endpointShells())
 		if err != nil {
 			return err
 		}
@@ -906,7 +929,7 @@ func (ins *inspection) occupancy() error {
 			ins.block("occupant", fmt.Sprint(detail))
 		}
 	} else if asString(func() any { v, _ := ins.resources.Get("worktree"); return v }()) == "present" {
-		inside, errorText := processesBoundTo(stringField(ins.task, "worktree"), map[int]bool{})
+		inside, errorText := processesBoundTo(stringField(ins.task, "worktree"), ins.endpointShells())
 		if errorText != "" {
 			ins.block("occupant", "processes bound to the checkout cannot be established: "+errorText)
 		} else if len(inside) > 0 {
@@ -981,7 +1004,7 @@ func (ins *inspection) reviewer() error {
 		return nil
 	}
 	ins.resources.Set("reviewer_pane", "present")
-	view, err := paneOccupancy(ins.runtimeRoot, stringField(ins.ctx, "session"), stringField(reviewer, "pane"), "")
+	view, err := paneOccupancy(ins.runtimeRoot, stringField(ins.ctx, "session"), stringField(reviewer, "pane"), "", nil)
 	if err != nil {
 		return err
 	}

@@ -174,7 +174,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 		if len(list) > 0 {
 			return unknown("Worker pane still has foreground processes besides its shell; reservation remains held.")
 		}
-		exclude := map[int]bool{}
+		exclude := EndpointShells(runtimeRoot, task)
 		if n, ok := pidField(info, "shell_pid"); ok {
 			exclude[n] = true
 		}
@@ -197,7 +197,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 		}
 	}
 	if pane == nil {
-		inside, cwdErr := proc.ProcessesBoundTo(worktree, nil)
+		inside, cwdErr := proc.ProcessesBoundTo(worktree, EndpointShells(runtimeRoot, task))
 		if cwdErr != nil {
 			return unknown("Worker checkout processes cannot be inspected; reservation remains held. " + cwdErr.Error())
 		}
@@ -234,6 +234,34 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 		obs.Set("workspace", workspace)
 		obs.Set("checkout", worktree)
 	})
+}
+
+// EndpointShells returns the shell pid Herdr currently reports for each other
+// pane the task records as its own endpoint (the reviewer pane). That shell
+// is accounted for by the endpoint's own close path, so it is neither a
+// worker occupant nor an orphan. Only the exact observed shell pid qualifies:
+// anything it runs is a separate pid and still binds the checkout. An
+// endpoint on another machine or session, or one Herdr cannot report, yields
+// nothing, so its processes keep blocking.
+func EndpointShells(runtimeRoot string, task *ordjson.Object) map[int]bool {
+	shells := map[int]bool{}
+	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
+	paneID := stringField(reviewer, "pane")
+	session := stringField(task, "session")
+	if paneID == "" || paneID == stringField(task, "pane") || stringField(reviewer, "session") != session {
+		return shells
+	}
+	if host, err := os.Hostname(); err != nil || stringField(reviewer, "machine") != host {
+		return shells
+	}
+	info, _, err := environment.PaneProcesses(runtimeRoot, session, paneID)
+	if err != nil || info == nil {
+		return shells
+	}
+	if n, ok := pidField(info, "shell_pid"); ok {
+		shells[n] = true
+	}
+	return shells
 }
 
 func inspectRecordedPIDs(pids []int, occupant *ordjson.Object, occupantPID int) StopProof {
