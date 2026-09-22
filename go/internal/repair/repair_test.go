@@ -90,6 +90,41 @@ func TestLedger_refusesInconsistentRecords(t *testing.T) {
 	}
 }
 
+// Lifecycle: a grant was recorded against an answered question, the worker
+// died, and cleanup settled the question. The grant must still match its
+// recorded decision so park, cleanup, and archive can run; an open or
+// mismatched question still refuses.
+func TestLedger_grantMatchesSettledDecision(t *testing.T) {
+	grant := `{"question": "q-aaaaaaaaaa", "additional": 1, "text": "add one",
+"at": "2026-01-01T00:00:00+00:00", "by": {"machine": "m", "session": "s", "pane": "p"}}`
+	repairs := fmt.Sprintf(`"repairs": {"schema": 1, "default_allowance": 2, "consumed": 2,
+"operations": [%s], "grants": [%s]}`,
+		sendOp("r-aaaaaaaaaaa1", "k1", ClassExpansion, "out")+","+sendOp("r-aaaaaaaaaaa2", "k2", ClassExpansion, "out"),
+		grant)
+	question := func(status, answer string) string {
+		return fmt.Sprintf(`{"id": "q-aaaaaaaaaa", "key": null, "text": "extend?", "status": %q,
+"created_at": "2026-01-01T00:00:00+00:00", "answer": %q,
+"decision": {"kind": "repair-allowance", "allowance": 2}}`, status, answer)
+	}
+	task := func(questions string) *ordjson.Object {
+		return decode(t, fmt.Sprintf(`{"schema": 1, "id": %q, "questions": [%s], %s}`, testTaskID, questions, repairs))
+	}
+	for _, status := range []string{"answered", "applied", "settled"} {
+		if _, err := Ledger(task(question(status, "add one"))); err != nil {
+			t.Fatalf("grant against %s question refused: %v", status, err)
+		}
+	}
+	if _, err := Ledger(task(question("settled", "different text"))); err == nil {
+		t.Fatal("grant matched a settled question whose answer differs")
+	}
+	if _, err := Ledger(task(question("open", "add one"))); err == nil {
+		t.Fatal("grant matched an open question")
+	}
+	if _, err := Ledger(task(`{"id": "q-bbbbbbbbbb", "key": null, "text": "other?", "status": "settled", "answer": "add one", "decision": {"kind": "repair-allowance", "allowance": 2}}`)); err == nil {
+		t.Fatal("grant matched an unrelated question")
+	}
+}
+
 func TestLedger_refusesEmptyReasonField(t *testing.T) {
 	op := `{"id": "r-aaaaaaaaaaa1", "kind": "send", "key": "k1", "attempt": "x-aaaaaaaaaaaa", "text": "fix",
 "created_at": "2026-01-01T00:00:00+00:00", "state": "submitted", "pid": 4242, "class": "in-scope", "reason": ""}`

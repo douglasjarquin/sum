@@ -210,19 +210,33 @@ func commitsNotCovered(worktree, mergedHead string) (string, []any, error) {
 	return head, extra, nil
 }
 
-func processesIn(worktree string, exclude map[int]bool) ([]any, string) {
-	found, err := proc.ProcessesIn(worktree, exclude)
+func processesBoundTo(worktree string, exclude map[int]bool) ([]any, string) {
+	found, err := proc.ProcessesBoundTo(worktree, exclude)
 	if err != nil {
 		return nil, err.Error()
 	}
-	var inside []any
+	var bound []any
 	for _, row := range found {
 		item := ordjson.NewObject()
 		item.Set("pid", json.Number(fmt.Sprint(row.PID)))
 		item.Set("cwd", row.CWD)
-		inside = append(inside, item)
+		item.Set("bound", row.Bound)
+		bound = append(bound, item)
 	}
-	return inside, ""
+	return bound, ""
+}
+
+// boundDetail describes one bound process in a blocker: `pid N at <cwd>` for a
+// process inside the checkout, or `pid N bound to the checkout by argv` for a
+// detached daemon (like `serve --mcp --path <checkout>`) running elsewhere.
+func boundDetail(raw any) string {
+	row := asObject(raw)
+	pid := func() any { v, _ := row.Get("pid"); return v }()
+	cwd := func() any { v, _ := row.Get("cwd"); return v }()
+	if asString(func() any { v, _ := row.Get("bound"); return v }()) == "argv" {
+		return fmt.Sprintf("pid %v bound to the checkout by argv (cwd %v)", pid, cwd)
+	}
+	return fmt.Sprintf("pid %v at %v", pid, cwd)
 }
 
 func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Object, error) {
@@ -260,9 +274,9 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 			blockers = append(blockers, fmt.Sprintf("process observation for pane %s is uncertain (%s)", paneID, code))
 		}
 		if worktree != "" {
-			inside, errorText := processesIn(worktree, map[int]bool{})
+			inside, errorText := processesBoundTo(worktree, map[int]bool{})
 			if errorText != "" {
-				blockers = append(blockers, "processes with a cwd in the checkout cannot be established: "+errorText)
+				blockers = append(blockers, "processes bound to the checkout cannot be established: "+errorText)
 			} else if len(inside) > 0 {
 				view.Set("detached", inside)
 				var parts []string
@@ -270,10 +284,9 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 					if i >= 10 {
 						break
 					}
-					p := asObject(raw)
-					parts = append(parts, fmt.Sprintf("pid %v at %v", func() any { v, _ := p.Get("pid"); return v }(), func() any { v, _ := p.Get("cwd"); return v }()))
+					parts = append(parts, boundDetail(raw))
 				}
-				blockers = append(blockers, "processes still run inside the checkout (detached from the pane or another pane): "+strings.Join(parts, ", "))
+				blockers = append(blockers, "processes still bound to the checkout (detached from the pane or another pane): "+strings.Join(parts, ", "))
 			}
 		}
 		view.Set("blockers", blockers)
@@ -320,9 +333,9 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 				exclude[int(n)] = true
 			}
 		}
-		inside, errorText := processesIn(worktree, exclude)
+		inside, errorText := processesBoundTo(worktree, exclude)
 		if errorText != "" {
-			blockers = append(blockers, "processes with a cwd in the checkout cannot be established: "+errorText)
+			blockers = append(blockers, "processes bound to the checkout cannot be established: "+errorText)
 		} else if len(inside) > 0 {
 			view.Set("detached", inside)
 			var parts []string
@@ -330,10 +343,9 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 				if i >= 10 {
 					break
 				}
-				p := asObject(raw)
-				parts = append(parts, fmt.Sprintf("pid %v at %v", func() any { v, _ := p.Get("pid"); return v }(), func() any { v, _ := p.Get("cwd"); return v }()))
+				parts = append(parts, boundDetail(raw))
 			}
-			blockers = append(blockers, "processes still run inside the checkout (detached from the pane or another pane): "+strings.Join(parts, ", "))
+			blockers = append(blockers, "processes still bound to the checkout (detached from the pane or another pane): "+strings.Join(parts, ", "))
 		}
 	}
 	view.Set("blockers", blockers)
@@ -341,19 +353,21 @@ func paneOccupancy(runtimeRoot, session, paneID, worktree string) (*ordjson.Obje
 }
 
 type inspection struct {
-	store         *store.Store
-	task          *ordjson.Object
-	ctx           *ordjson.Object
-	runtimeRoot   string
-	blockers      []any
-	resources     *ordjson.Object
-	view          *ordjson.Object
-	stoppable     []any
-	environment   *ordjson.Object
-	orphans       []any
-	orphanPIDs    map[int]bool
-	workerStopped bool
-	settleable    []any
+	store             *store.Store
+	task              *ordjson.Object
+	ctx               *ordjson.Object
+	runtimeRoot       string
+	blockers          []any
+	resources         *ordjson.Object
+	view              *ordjson.Object
+	stoppable         []any
+	environment       *ordjson.Object
+	orphans           []any
+	orphanPIDs        map[int]bool
+	descendants       map[int]bool
+	descendantsFailed bool
+	workerStopped     bool
+	settleable        []any
 }
 
 func newInspection(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string) *inspection {
@@ -387,22 +401,94 @@ func (ins *inspection) block(code, detail string) {
 	ins.blockers = append(ins.blockers, row)
 }
 
-// paneGone reports whether the recorded task pane and its workspace are both
-// verified absent, which is the point where a surviving checkout process has no
-// recorded owner left and can be named an orphan.
-func (ins *inspection) paneGone() bool {
-	return asString(func() any { v, _ := ins.resources.Get("pane"); return v }()) == "absent" &&
-		asString(func() any { v, _ := ins.resources.Get("workspace"); return v }()) == "absent"
+// paneDead reports whether the recorded task pane is verified absent, which is
+// the point where a surviving checkout-bound process has no recorded owner left
+// and can be named an orphan. The workspace may still be present — it persists
+// until cleanup removes it — so it does not gate orphan classification; any
+// live pane inside it is already a named blocker.
+func (ins *inspection) paneDead() bool {
+	return asString(func() any { v, _ := ins.resources.Get("pane"); return v }()) == "absent"
 }
 
-// addOrphans records a process with a cwd inside the checkout whose owner pane is
-// verified dead. Orphans stay named blockers in the plan and are additionally
-// listed here so apply can terminate each one explicitly and re-inspect instead
-// of assuming a closed pane emptied the checkout.
+// intField reads a pid-sized json.Number field.
+func intField(o *ordjson.Object, key string) (int, bool) {
+	v, has := o.Get(key)
+	if !has {
+		return 0, false
+	}
+	n, ok := v.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	i, err := n.Int64()
+	return int(i), err == nil && i > 0
+}
+
+// attemptRecordedPIDs returns the process identities an attempt record claims:
+// the operation/observer pids and the occupant's pid and shell pid.
+func attemptRecordedPIDs(attempt *ordjson.Object) []int {
+	var pids []int
+	for _, key := range []string{"operation_pid", "observer_pid"} {
+		if n, ok := intField(attempt, key); ok {
+			pids = append(pids, n)
+		}
+	}
+	if occupant := asObject(func() any { v, _ := attempt.Get("occupant"); return v }()); occupant != nil {
+		for _, key := range []string{"pid", "shell_pid"} {
+			if n, ok := intField(occupant, key); ok {
+				pids = append(pids, n)
+			}
+		}
+	}
+	return pids
+}
+
+// ownedDescendants returns the pids that are still descendants of a recorded
+// pane, shell, or attempt pid. A bound process in that set has a live recorded
+// owner and stays a named blocker rather than an orphan. The second result is
+// false when the process tree cannot be inspected; callers must then leave
+// every candidate unclassified.
+func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
+	if ins.descendants != nil {
+		return ins.descendants, true
+	}
+	if ins.descendantsFailed {
+		return nil, false
+	}
+	owned := map[int]bool{}
+	execVal, err := reservations.GetExecution(ins.task)
+	if err != nil {
+		ins.descendantsFailed = true
+		return nil, false
+	}
+	if execVal != nil {
+		for _, attempt := range append([]*ordjson.Object{execVal.Worker}, execVal.Verifiers...) {
+			for _, pid := range attemptRecordedPIDs(attempt) {
+				kids, err := proc.Descendants(pid)
+				if err != nil {
+					ins.descendantsFailed = true
+					return nil, false
+				}
+				for _, k := range kids {
+					owned[k] = true
+				}
+			}
+		}
+	}
+	ins.descendants = owned
+	return owned, true
+}
+
+// addOrphans records a bound checkout process whose owner pane is verified dead
+// and which is not a descendant of a still-live recorded pane or shell pid.
+// Orphans stay named blockers in the plan and are additionally listed here so
+// apply can terminate each one explicitly and re-inspect instead of assuming a
+// closed pane emptied the checkout.
 func (ins *inspection) addOrphans(inside []any) {
 	if ins.orphanPIDs == nil {
 		ins.orphanPIDs = map[int]bool{}
 	}
+	owned, proven := ins.ownedDescendants()
 	for _, raw := range inside {
 		row := asObject(raw)
 		if row == nil {
@@ -411,7 +497,7 @@ func (ins *inspection) addOrphans(inside []any) {
 		pid, _ := row.Get("pid")
 		n, _ := pid.(json.Number)
 		i, _ := n.Int64()
-		if ins.orphanPIDs[int(i)] {
+		if ins.orphanPIDs[int(i)] || !proven || owned[int(i)] {
 			continue
 		}
 		ins.orphanPIDs[int(i)] = true
@@ -820,15 +906,17 @@ func (ins *inspection) occupancy() error {
 			ins.block("occupant", fmt.Sprint(detail))
 		}
 	} else if asString(func() any { v, _ := ins.resources.Get("worktree"); return v }()) == "present" {
-		inside, errorText := processesIn(stringField(ins.task, "worktree"), map[int]bool{})
+		inside, errorText := processesBoundTo(stringField(ins.task, "worktree"), map[int]bool{})
 		if errorText != "" {
-			ins.block("occupant", "processes with a cwd in the checkout cannot be established: "+errorText)
+			ins.block("occupant", "processes bound to the checkout cannot be established: "+errorText)
 		} else if len(inside) > 0 {
-			// A live process in the checkout is always a named blocker. When the
-			// pane and workspace are both proven absent the same processes are also
-			// listed as orphans, which is what lets apply stop them explicitly
-			// rather than assuming pane closure emptied the checkout.
-			if ins.paneGone() {
+			// A live process bound to the checkout is always a named blocker.
+			// Once the pane is proven absent the same processes are also listed
+			// as orphans — except descendants of a still-live recorded pane or
+			// shell pid, which keep a live recorded owner — which is what lets
+			// apply stop them explicitly rather than assuming pane closure
+			// emptied the checkout.
+			if ins.paneDead() {
 				ins.addOrphans(inside)
 			}
 			var parts []string
@@ -836,10 +924,9 @@ func (ins *inspection) occupancy() error {
 				if i >= 10 {
 					break
 				}
-				p := asObject(raw)
-				parts = append(parts, fmt.Sprintf("pid %v at %v", func() any { v, _ := p.Get("pid"); return v }(), func() any { v, _ := p.Get("cwd"); return v }()))
+				parts = append(parts, boundDetail(raw))
 			}
-			ins.block("occupant", "processes still run inside the checkout: "+strings.Join(parts, ", "))
+			ins.block("occupant", "processes still bound to the checkout: "+strings.Join(parts, ", "))
 		}
 	}
 	return nil
@@ -1017,12 +1104,13 @@ func executionStopProof(ins *inspection, execVal *reservations.Execution) []any 
 			ins.workerStopped = true
 		}
 		if proof.Outcome != execution.OutcomeStopped {
-			if isWorker && len(proof.Orphans) > 0 && ins.paneGone() {
+			if isWorker && len(proof.Orphans) > 0 && ins.paneDead() {
 				var inside []any
 				for _, p := range proof.Orphans {
 					item := ordjson.NewObject()
 					item.Set("pid", json.Number(fmt.Sprint(p.PID)))
 					item.Set("cwd", p.CWD)
+					item.Set("bound", p.Bound)
 					inside = append(inside, item)
 				}
 				ins.addOrphans(inside)

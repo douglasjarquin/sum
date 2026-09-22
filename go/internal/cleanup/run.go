@@ -450,18 +450,22 @@ func settleAnsweredQuestions(s *store.Store, taskID string, ids []any, ctx *ordj
 }
 
 // orphansAreOnlyBlockers reports whether every remaining blocker is a live
-// process whose owner pane and workspace are both verified absent. That is the
-// one case where apply may act on a blocker itself: each named orphan is
-// terminated and the task is re-inspected once. Any other blocker code, or a
-// live pane/workspace that could still own the process, keeps the refuse path.
+// process bound to the checkout whose owner pane is verified absent. That is
+// the one case where apply may act on a blocker itself: each named orphan is
+// terminated and the task is re-inspected once. A present workspace is fine —
+// it persists until this apply removes it, and any live pane inside it is
+// already a blocker of another code. An unproven pane or workspace, or any
+// other blocker code, keeps the refuse path.
 func orphansAreOnlyBlockers(plan *ordjson.Object) bool {
 	orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }())
 	if len(orphans) == 0 {
 		return false
 	}
 	resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
-	if asString(func() any { v, _ := resources.Get("pane"); return v }()) != "absent" ||
-		asString(func() any { v, _ := resources.Get("workspace"); return v }()) != "absent" {
+	if asString(func() any { v, _ := resources.Get("pane"); return v }()) != "absent" {
+		return false
+	}
+	if ws := asString(func() any { v, _ := resources.Get("workspace"); return v }()); ws != "present" && ws != "absent" {
 		return false
 	}
 	for _, raw := range asList(func() any { v, _ := plan.Get("blockers"); return v }()) {
@@ -473,8 +477,8 @@ func orphansAreOnlyBlockers(plan *ordjson.Object) bool {
 	return true
 }
 
-// stopOrphans terminates processes the inspection plan proved are orphans: cwd
-// inside the checkout while every recorded pane that could own them is dead.
+// stopOrphans terminates processes the inspection plan proved are orphans:
+// bound to the checkout while every recorded pane that could own them is dead.
 // One SIGTERM per process, then a re-scan; anything still alive (sum never
 // force-kills) keeps its reservation and leaves a fresh intent for the next
 // bounded pass.
@@ -507,7 +511,7 @@ func stopOrphans(task, plan *ordjson.Object) ([]any, error) {
 	var inside []any
 	var errorText string
 	for i := 0; i < 40; i++ {
-		inside, errorText = processesIn(worktree, map[int]bool{})
+		inside, errorText = processesBoundTo(worktree, map[int]bool{})
 		if errorText != "" {
 			return nil, fmt.Errorf("Cleanup could not verify orphan exit in %s: %s", worktree, errorText)
 		}

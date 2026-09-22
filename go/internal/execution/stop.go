@@ -22,11 +22,13 @@ type StopProof struct {
 	Outcome     string
 	Reason      string
 	Observation *ordjson.Object
-	// Orphans lists surviving processes whose cwd is inside the task checkout,
-	// populated only when the worker pane is verified absent (pane_not_found or
-	// agent_not_found). The attempt outcome stays unknown for callers like park;
-	// cleanup may stop orphans once pane death is proven.
-	Orphans []proc.CWDProcess
+	// Orphans lists surviving processes provably bound to the task checkout
+	// (cwd inside it or argv naming it, as with a detached
+	// `serve --mcp --path <checkout>` daemon), populated only when the worker
+	// pane is verified absent (pane_not_found or agent_not_found). The attempt
+	// outcome stays unknown for callers like park; cleanup may stop orphans
+	// once pane death is proven.
+	Orphans []proc.BoundProcess
 }
 
 func ObserveStop(s *store.Store, runtimeRoot string, task, attempt *ordjson.Object) StopProof {
@@ -72,12 +74,12 @@ func observeVerifier(attempt *ordjson.Object) StopProof {
 	if proof := inspectRecordedPIDs([]int{opPID, occPID}, occupant, occPID); proof.Outcome != OutcomeStopped {
 		return proof
 	}
-	inside, err := proc.ProcessesIn(checkout, nil)
+	inside, err := proc.ProcessesBoundTo(checkout, nil)
 	if err != nil {
 		return unknown("Verifier checkout processes cannot be inspected; reservation remains held. " + err.Error())
 	}
 	if len(inside) > 0 {
-		return unknown(fmt.Sprintf("Verifier still has an owned process in its checkout (pid %d); reservation remains held.", inside[0].PID))
+		return unknown(fmt.Sprintf("Verifier still has an owned process bound to its checkout (pid %d); reservation remains held.", inside[0].PID))
 	}
 	return stopped(func(obs *ordjson.Object) {
 		obs.Set("pid", jsonNumber(occPID))
@@ -186,21 +188,21 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 				}
 			}
 		}
-		inside, cwdErr := proc.ProcessesIn(worktree, exclude)
+		inside, cwdErr := proc.ProcessesBoundTo(worktree, exclude)
 		if cwdErr != nil {
 			return unknown("Worker checkout processes cannot be inspected; reservation remains held. " + cwdErr.Error())
 		}
 		if len(inside) > 0 {
-			return unknown(fmt.Sprintf("Worker still has an owned process in its checkout (pid %d); reservation remains held.", inside[0].PID))
+			return unknown(fmt.Sprintf("Worker still has an owned process bound to its checkout (pid %d); reservation remains held.", inside[0].PID))
 		}
 	}
 	if pane == nil {
-		inside, cwdErr := proc.ProcessesIn(worktree, nil)
+		inside, cwdErr := proc.ProcessesBoundTo(worktree, nil)
 		if cwdErr != nil {
 			return unknown("Worker checkout processes cannot be inspected; reservation remains held. " + cwdErr.Error())
 		}
 		if len(inside) > 0 {
-			proof := unknown(fmt.Sprintf("Worker still has an owned process in its checkout (pid %d); reservation remains held.", inside[0].PID))
+			proof := unknown(fmt.Sprintf("Worker still has an owned process bound to its checkout (pid %d); reservation remains held.", inside[0].PID))
 			proof.Orphans = inside
 			return proof
 		}
