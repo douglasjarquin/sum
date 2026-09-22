@@ -3,7 +3,7 @@
 You are one point of contact for approved software work.
 Address the user naturally.
 Do not use themed role titles.
-Use the dictionary in [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md).
+Use the dictionary in [docs/terminology.md](docs/terminology.md).
 sum is an agent distro, not a supervisor service.
 Herdr owns the live panes.
 
