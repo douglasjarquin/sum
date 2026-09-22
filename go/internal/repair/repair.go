@@ -23,13 +23,19 @@ import (
 const Schema = 1
 const DefaultAllowance = 2
 
+const (
+	ClassInScope   = "in-scope"
+	ClassExpansion = "expansion"
+)
+
 var (
-	keyPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-	operationIDPat  = regexp.MustCompile(`^r-[0-9a-f]{12}$`)
-	attemptIDPat    = regexp.MustCompile(`^x-[0-9a-f]{12}$`)
-	operationKinds  = map[string]bool{"send": true, "resume": true}
-	operationStates = map[string]bool{"reserved": true, "in-flight": true, "submitted": true, "uncertain": true}
-	grantStatuses   = map[string]bool{"answered": true, "applied": true}
+	keyPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+	operationIDPat   = regexp.MustCompile(`^r-[0-9a-f]{12}$`)
+	attemptIDPat     = regexp.MustCompile(`^x-[0-9a-f]{12}$`)
+	operationKinds   = map[string]bool{"send": true, "resume": true}
+	operationStates  = map[string]bool{"reserved": true, "in-flight": true, "submitted": true, "uncertain": true}
+	operationClasses = map[string]bool{ClassInScope: true, ClassExpansion: true}
+	grantStatuses    = map[string]bool{"answered": true, "applied": true}
 )
 
 func ValidKey(value string) bool {
@@ -133,12 +139,13 @@ func Ledger(task *ordjson.Object) (*ordjson.Object, error) {
 		v, _ := obj.Get("grants")
 		return v
 	}())
-	valid := obj != nil && schemaOK && schemaN == Schema && allowanceOK && allowanceN == DefaultAllowance && consumedOK && operations != nil && grants != nil && consumedN == int64(len(operations))
+	valid := obj != nil && schemaOK && schemaN == Schema && allowanceOK && allowanceN == DefaultAllowance && consumedOK && operations != nil && grants != nil
 	if !valid {
 		return nil, fmt.Errorf("Malformed repair accounting; corrective work is refused.")
 	}
 	keys := map[string]bool{}
 	ids := map[string]bool{}
+	consuming := int64(0)
 	for _, raw := range operations {
 		op := asObject(raw)
 		kind := asString(func() any {
@@ -183,6 +190,20 @@ func Ledger(task *ordjson.Object) (*ordjson.Object, error) {
 			v, _ := op.Get("text")
 			return v
 		}())
+		classValue, hasClass := func() (any, bool) {
+			if op == nil {
+				return nil, false
+			}
+			return op.Get("class")
+		}()
+		class := asString(classValue)
+		reasonValue, hasReason := func() (any, bool) {
+			if op == nil {
+				return nil, false
+			}
+			return op.Get("reason")
+		}()
+		reason := asString(reasonValue)
 		created := func() any {
 			if op == nil {
 				return nil
@@ -201,8 +222,23 @@ func Ledger(task *ordjson.Object) (*ordjson.Object, error) {
 		if op == nil || !ValidKey(key) || !operationKinds[kind] || keys[pair] || !operationStates[state] || !timestamp(created) || !pidOK || pidN <= 0 || id == "" || attempt == "" || text == "" || asString(created) == "" || !operationIDPat.MatchString(id) || !attemptIDPat.MatchString(attempt) || ids[id] {
 			return nil, fmt.Errorf("Malformed repair operation; corrective work is refused.")
 		}
+		if hasClass && !operationClasses[class] {
+			return nil, fmt.Errorf("Malformed repair operation; corrective work is refused.")
+		}
+		if hasReason && reason == "" {
+			return nil, fmt.Errorf("Malformed repair operation; corrective work is refused.")
+		}
+		if class == ClassExpansion && reason == "" {
+			return nil, fmt.Errorf("Malformed repair operation; corrective work is refused.")
+		}
+		if !hasClass || class == ClassExpansion {
+			consuming++
+		}
 		keys[pair] = true
 		ids[id] = true
+	}
+	if consumedN != consuming {
+		return nil, fmt.Errorf("Malformed repair accounting; corrective work is refused.")
 	}
 	questionsSeen := map[string]bool{}
 	questionsValue, _ := task.Get("questions")
@@ -403,7 +439,7 @@ func exhaustion(task *ordjson.Object) error {
 		question = ordjson.NewObject()
 		question.Set("id", id)
 		question.Set("key", nil)
-		question.Set("text", "The controlled repair allowance is exhausted. Decide whether to authorize additional iterations.")
+		question.Set("text", "The expansion repair allowance is exhausted. Decide whether to authorize additional out-of-scope iterations.")
 		question.Set("status", "open")
 		question.Set("created_at", store.Now())
 		question.Set("answer", nil)
@@ -452,13 +488,12 @@ func RecordResume(task, successor *ordjson.Object) error {
 	attempt, _ := successor.Get("id")
 	operation.Set("attempt", attempt)
 	operation.Set("text", "Resume the approved task.")
+	operation.Set("class", ClassInScope)
 	operation.Set("created_at", store.Now())
 	operation.Set("state", "reserved")
 	operation.Set("pid", jsonInt(os.Getpid()))
 	ops := asList(func() any { v, _ := value.Get("operations"); return v }())
 	value.Set("operations", append(ops, operation))
-	consumed, _ := intOf(func() any { v, _ := value.Get("consumed"); return v }())
-	value.Set("consumed", jsonInt(int(consumed+1)))
 	successor.Set("repair", id)
 	return nil
 }
@@ -602,11 +637,13 @@ func Extend(s *store.Store, ctx *ordjson.Object, args ExtendArgs) (*ordjson.Obje
 }
 
 type SendArgs struct {
-	TaskID       string
-	Attempt      string
-	Key          string
-	Text         string
-	RuntimeRoot  string
+	TaskID      string
+	Attempt     string
+	Key         string
+	Text        string
+	Class       string
+	Reason      string
+	RuntimeRoot string
 }
 
 func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, error) {
@@ -615,6 +652,15 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	}
 	if !ValidKey(args.Key) {
 		return nil, fmt.Errorf("Repair key must be a bounded stable identifier.")
+	}
+	if args.Class == "" {
+		args.Class = ClassInScope
+	}
+	if !operationClasses[args.Class] {
+		return nil, fmt.Errorf("Repair class must be %s or %s.", ClassInScope, ClassExpansion)
+	}
+	if args.Class == ClassExpansion && args.Reason == "" {
+		return nil, fmt.Errorf("An expansion repair requires --reason describing the out-of-scope work.")
 	}
 	deliverUnlock, err := s.DeliveryLock()
 	if err != nil {
@@ -647,7 +693,11 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 		if kind == "send" && key == args.Key {
 			attempt, _ := op.Get("attempt")
 			text, _ := op.Get("text")
-			if attempt != args.Attempt || text != args.Text {
+			class, _ := op.Get("class")
+			reason, _ := op.Get("reason")
+			classStr, _ := class.(string)
+			reasonStr, _ := reason.(string)
+			if attempt != args.Attempt || text != args.Text || classStr != args.Class || reasonStr != args.Reason {
 				unlock()
 				return nil, fmt.Errorf("Repair key already identifies another instruction or attempt.")
 			}
@@ -660,9 +710,11 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 			return result, nil
 		}
 	}
-	if err := CheckAllowance(s, task); err != nil {
-		unlock()
-		return nil, err
+	if args.Class == ClassExpansion {
+		if err := CheckAllowance(s, task); err != nil {
+			unlock()
+			return nil, err
+		}
 	}
 	if err := RefuseDuringCleanup(task, "Repair"); err != nil {
 		unlock()
@@ -749,13 +801,19 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	operation.Set("key", args.Key)
 	operation.Set("attempt", args.Attempt)
 	operation.Set("text", args.Text)
+	operation.Set("class", args.Class)
+	if args.Reason != "" {
+		operation.Set("reason", args.Reason)
+	}
 	operation.Set("created_at", store.Now())
 	operation.Set("state", "in-flight")
 	operation.Set("pid", jsonInt(os.Getpid()))
 	ops := asList(func() any { v, _ := value.Get("operations"); return v }())
 	value.Set("operations", append(ops, operation))
-	consumed, _ := intOf(func() any { v, _ := value.Get("consumed"); return v }())
-	value.Set("consumed", jsonInt(int(consumed+1)))
+	if args.Class == ClassExpansion {
+		consumed, _ := intOf(func() any { v, _ := value.Get("consumed"); return v }())
+		value.Set("consumed", jsonInt(int(consumed+1)))
+	}
 	if err := s.SaveTask(current); err != nil {
 		unlock()
 		return nil, err
@@ -764,12 +822,18 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 
 	herdrPath, err := toolpath.Find(args.RuntimeRoot, "herdr")
 	var sendErr error
+	var refuseErr error
 	if err != nil {
-		sendErr = err
+		refuseErr = err
 	} else {
 		session := asString(func() any { v, _ := route.Get("session"); return v }())
 		pane := asString(func() any { v, _ := route.Get("pane"); return v }())
-		_, sendErr = herdrclient.Call(herdrPath, session, 5*time.Second, "agent", "prompt", pane, args.Text)
+		var code string
+		_, code, sendErr = herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "prompt", pane, args.Text)
+		if sendErr == nil && code != "" {
+			refuseErr = fmt.Errorf("Herdr refused the prompt: %s", code)
+			sendErr = nil
+		}
 	}
 
 	unlock, err = s.Lock()
@@ -797,7 +861,20 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	if saved == nil {
 		return nil, fmt.Errorf("Repair operation %s is missing after delivery.", opID)
 	}
-	if sendErr != nil {
+	if refuseErr != nil {
+		ops := asList(func() any { v, _ := value.Get("operations"); return v }())
+		kept := make([]any, 0, len(ops))
+		for _, raw := range ops {
+			if asObject(raw) != saved {
+				kept = append(kept, raw)
+			}
+		}
+		value.Set("operations", kept)
+		if args.Class == ClassExpansion {
+			consumed, _ := intOf(func() any { v, _ := value.Get("consumed"); return v }())
+			value.Set("consumed", jsonInt(int(consumed-1)))
+		}
+	} else if sendErr != nil {
 		saved.Set("state", "uncertain")
 	} else {
 		saved.Set("state", "submitted")
@@ -805,8 +882,14 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	if err := s.SaveTask(current); err != nil {
 		return nil, err
 	}
+	if refuseErr != nil {
+		return nil, fmt.Errorf("Corrective delivery was refused before reaching the worker; nothing is recorded or charged: %s", refuseErr)
+	}
 	if sendErr != nil {
-		return nil, fmt.Errorf("Corrective delivery is uncertain and remains charged: %s", sendErr)
+		if args.Class == ClassExpansion {
+			return nil, fmt.Errorf("Corrective delivery is uncertain and remains charged: %s", sendErr)
+		}
+		return nil, fmt.Errorf("Corrective delivery is uncertain and remains recorded: %s", sendErr)
 	}
 	result := ordjson.NewObject()
 	result.Set("task", args.TaskID)

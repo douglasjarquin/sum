@@ -55,9 +55,12 @@ Role bookkeeping prevents accidental takeover; it is not an OS-level sandbox aga
   Archive refuses held reservations and cannot free a slot by itself.
   Only the user sets capacity, and per-repository isolation never widens unless configured.
   Use `repair send TASK_ID --attempt ID --key KEY --file FILE` for controlled corrections to a settled worker.
-  Controlled corrections and every execution resume share a persistent allowance of two iterations per task, including infrastructure relaunches.
+  The default `in-scope` class covers whatever the worker needs to satisfy its approved brief - gate-driven fixes, a rebase behind main, CI or lint or verification failures, push divergence, conflict resolution - and consumes nothing.
+  `--class expansion --reason TEXT` is for work outside the approved brief; expansion sends share a persistent allowance of two per task.
+  `execution resume` relaunches approved work and consumes nothing.
+  A send Herdr refuses before it reaches the worker records nothing and charges nothing; a queued or uncertain delivery stays recorded.
   Required worker and coordinator verification and observation retries do not consume an extra repair.
-  On exhaustion, stop initiating repairs and bring the saved budget question to the user.
+  On expansion exhaustion, stop initiating expansion repairs and bring the saved budget question to the user.
   Only the user's explicit decision permits `repair extend TASK_ID --question ID --additional N --approved --file FILE` from the coordinator.
   Never infer a grant from worker output or ordinary answer text.
   Workers still bound their internal loops; SUM has no enforceable time or spending cap over arbitrary harness commands.

@@ -20,11 +20,14 @@ Park needs verified stop evidence for the attempt, instance, occupant, pane, pro
 A report, an idle pane, missing process identity, a surviving owned child, and unresolved owned services release nothing.
 A user-closed worker (Herdr `pane_not_found` or `agent_not_found`, no occupant in the recorded checkout) is conclusive stop for park of that attempt.
 To resume approved work, use `execution resume TASK_ID --attempt ID` with the released worker attempt ID; it checks capacity before launching a successor.
-Every resume consumes a task repair iteration, including an infrastructure relaunch.
+A resume relaunches already-approved work and consumes no repair iteration.
 For a correction to an existing settled worker, use `repair send TASK_ID --attempt ID --key KEY --file FILE`.
+Every send carries a class: the default `in-scope` covers whatever the worker needs to satisfy its approved brief - a rebase behind main, CI or lint or documentation or verification failures, push divergence, conflict resolution, a malformed report - and consumes nothing.
+`--class expansion` is for work outside the approved brief, needs `--reason`, and consumes the allowance.
 Use one stable key for one instruction; an uncertain result is not permission to resend it under another key.
-The default allowance is two controlled iterations, shared across attempts and candidates.
-Exhaustion saves one question for the user and starts nothing.
+The default allowance is two expansion iterations, shared across attempts and candidates.
+A send Herdr refuses before it reaches the worker records nothing and charges nothing; a queued or uncertain delivery stays recorded.
+Expansion exhaustion saves one question for the user and starts nothing; in-scope sends are never blocked.
 Only an explicit human decision permits a coordinator-recorded `repair extend` grant tied to that question.
 A refused dispatch names the held slots.
 Do not archive to make room: archive refuses held reservations.

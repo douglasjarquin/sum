@@ -340,7 +340,7 @@
     "help": "Coordinator-controlled corrective worker instructions",
     "arguments": [],
     "subcommands": {
-      "send": "Charge one task repair iteration before sending to the exact settled worker",
+      "send": "Send a classified correction to the exact settled worker; only expansion sends consume the task allowance",
       "extend": "Record the human's explicit additional allowance for an exhausted task"
     },
     "read_only": false,
@@ -1135,7 +1135,7 @@
   },
   "repair-send": {
     "topic": "repair-send",
-    "help": "Charge one task repair iteration before sending to the exact settled worker",
+    "help": "Send a classified correction to the exact settled worker; only expansion sends consume the task allowance",
     "arguments": [
       {
         "name": "task",
@@ -1151,6 +1151,18 @@
         "name": "--key",
         "help": null,
         "required": true
+      },
+      {
+        "name": "--class",
+        "help": "in-scope (default, free) or expansion (consumes the allowance)",
+        "choices": [
+          "in-scope",
+          "expansion"
+        ]
+      },
+      {
+        "name": "--reason",
+        "help": "Required for --class expansion: describes the out-of-scope work"
       },
       {
         "name": "--text",
