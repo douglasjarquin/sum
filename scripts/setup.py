@@ -127,7 +127,7 @@ def main():
     for note in notes:
         print("note: " + note, file=sys.stderr)
     print("\n" + ("Local configuration generated; dependencies were not installed." if args.configure_only else "Setup complete.") + " No global harness configs, credentials, or Herdr settings were changed.")
-    print("Inside Herdr: cd into sum, optionally run ./bin/sumctl doctor (observation only), then launch codex, claude, grok, cursor-agent, pi, or another configured harness.")
+    print("Inside Herdr: cd into sum, optionally run ./bin/sumctl doctor (observation only), then launch codex, claude, grok, cursor-agent, pi, devin, or another configured harness.")
     print("The harness runs ./bin/sumctl init itself: the first pane claims coordinator; later panes here are developers unless dispatched.")
     print("Accept the harness's project/MCP trust prompt. For a harness without native project instructions, paste: Read AGENTS.md and initialize sum.")
     print("No installed harness? Re-run mise run setup -- --install-codex, then authenticate Codex normally.")

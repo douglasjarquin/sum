@@ -34,7 +34,7 @@ Prerequisites: **mise**, Git, and an authenticated coding harness available on t
 
 ### Recommended harnesses
 
-`codex` can be `claude`, `grok`, `cursor-agent`, `pi`, or `opencode`.
+`codex` can be `claude`, `grok`, `cursor-agent`, `pi`, `opencode`, or `devin`.
 
 Accept the harness's normal project/MCP trust prompt. Do not bypass permissions. Codex, Claude, and Cursor receive repository-local MCP configuration; OpenCode receives `opencode.json`. Other shell-capable harnesses can use the same native Herdr CLI skill without MCP.
 
@@ -51,7 +51,7 @@ herdr
 cd /path/to/sum
 mise trust
 mise run setup
-codex                         # or claude, grok, cursor-agent, pi, opencode, ...
+codex                         # or claude, grok, cursor-agent, pi, opencode, devin, ...
 ```
 
 If Herdr is not installed yet, run `mise trust && mise run setup` in the clone first, then `mise exec -- herdr`. If mise is not activated in your shell, launch the harness with `mise exec -- codex` instead of bare `codex`.
