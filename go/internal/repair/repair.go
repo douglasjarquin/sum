@@ -35,7 +35,7 @@ var (
 	operationKinds   = map[string]bool{"send": true, "resume": true}
 	operationStates  = map[string]bool{"reserved": true, "in-flight": true, "submitted": true, "uncertain": true}
 	operationClasses = map[string]bool{ClassInScope: true, ClassExpansion: true}
-	grantStatuses    = map[string]bool{"answered": true, "applied": true}
+	grantStatuses    = map[string]bool{"answered": true, "applied": true, "settled": true}
 )
 
 func ValidKey(value string) bool {

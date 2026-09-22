@@ -17,6 +17,16 @@ type CWDProcess struct {
 	CWD string
 }
 
+// BoundProcess is a live process provably bound to a checkout: its cwd is
+// inside it, or its argv names the checkout path (for example a detached
+// `serve --mcp --path <checkout>` daemon whose cwd lies elsewhere). Bound is
+// "cwd" or "argv".
+type BoundProcess struct {
+	PID   int
+	CWD   string
+	Bound string
+}
+
 func Descendants(pid int) ([]int, error) {
 	if pid <= 0 {
 		return nil, fmt.Errorf("invalid pid")
@@ -74,10 +84,7 @@ func ProcessArgv(pid int) ([]string, error) {
 	return strings.Fields(line), nil
 }
 
-func ProcessesIn(worktree string, exclude map[int]bool) ([]CWDProcess, error) {
-	if worktree == "" {
-		return nil, fmt.Errorf("checkout path is missing")
-	}
+func cwdProcesses() ([]CWDProcess, error) {
 	lsof, err := toolpath.Find("", "lsof")
 	if err != nil {
 		return nil, err
@@ -88,7 +95,6 @@ func ProcessesIn(worktree string, exclude map[int]bool) ([]CWDProcess, error) {
 	}
 	var rows []CWDProcess
 	var pid int
-	self := os.Getpid()
 	for _, line := range strings.Split(out.Stdout, "\n") {
 		if strings.HasPrefix(line, "p") {
 			fmt.Sscanf(line[1:], "%d", &pid)
@@ -103,23 +109,109 @@ func ProcessesIn(worktree string, exclude map[int]bool) ([]CWDProcess, error) {
 		}
 		return nil, fmt.Errorf("lsof exited %d without a process table: %s", out.Code, detail)
 	}
+	return rows, nil
+}
+
+func checkoutRoots(worktree string) []string {
 	roots := []string{worktree}
 	if real, err := filepath.EvalSymlinks(worktree); err == nil {
 		roots = append(roots, real)
 	}
+	return roots
+}
+
+func pathWithinRoots(path string, roots []string) bool {
+	for _, root := range roots {
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func ProcessesIn(worktree string, exclude map[int]bool) ([]CWDProcess, error) {
+	if worktree == "" {
+		return nil, fmt.Errorf("checkout path is missing")
+	}
+	rows, err := cwdProcesses()
+	if err != nil {
+		return nil, err
+	}
+	roots := checkoutRoots(worktree)
+	self := os.Getpid()
 	var inside []CWDProcess
 	for _, row := range rows {
 		if row.PID == self || exclude[row.PID] {
 			continue
 		}
-		for _, root := range roots {
-			if row.CWD == root || strings.HasPrefix(row.CWD, root+"/") {
-				inside = append(inside, row)
+		if pathWithinRoots(row.CWD, roots) {
+			inside = append(inside, row)
+		}
+	}
+	return inside, nil
+}
+
+// ProcessesBoundTo returns live processes provably bound to the checkout: a cwd
+// inside it, or an argv field that names the checkout path or a path inside it
+// (the `serve --mcp --path <checkout>` form, including the `--path=<checkout>`
+// spelling). Cwd-bound rows come first; argv-bound rows repeat their cwd when
+// the process table reports one.
+func ProcessesBoundTo(worktree string, exclude map[int]bool) ([]BoundProcess, error) {
+	if worktree == "" {
+		return nil, fmt.Errorf("checkout path is missing")
+	}
+	rows, err := cwdProcesses()
+	if err != nil {
+		return nil, err
+	}
+	roots := checkoutRoots(worktree)
+	self := os.Getpid()
+	cwdOf := map[int]string{}
+	for _, row := range rows {
+		cwdOf[row.PID] = row.CWD
+	}
+	var bound []BoundProcess
+	seen := map[int]bool{}
+	for _, row := range rows {
+		if row.PID == self || exclude[row.PID] {
+			continue
+		}
+		if pathWithinRoots(row.CWD, roots) {
+			bound = append(bound, BoundProcess{PID: row.PID, CWD: row.CWD, Bound: "cwd"})
+			seen[row.PID] = true
+		}
+	}
+	out, err := exec.Command("ps", "-ax", "-o", "pid=,args=").Output()
+	if err != nil {
+		return nil, fmt.Errorf("process table cannot be inspected: %s", err)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, convErr := strconv.Atoi(fields[0])
+		if convErr != nil || pid <= 0 || pid == self || exclude[pid] || seen[pid] {
+			continue
+		}
+		for _, field := range fields[1:] {
+			if pathWithinRoots(field, roots) || pathWithinRoots(argValue(field), roots) {
+				bound = append(bound, BoundProcess{PID: pid, CWD: cwdOf[pid], Bound: "argv"})
+				seen[pid] = true
 				break
 			}
 		}
 	}
-	return inside, nil
+	return bound, nil
+}
+
+// argValue returns the value half of a `--flag=value` argv field so a daemon
+// spelling its checkout as `--path=<checkout>` binds like `--path <checkout>`.
+func argValue(field string) string {
+	if i := strings.IndexByte(field, '='); i >= 0 {
+		return field[i+1:]
+	}
+	return ""
 }
 
 func ArgvEqual(recorded any, live []string) bool {
