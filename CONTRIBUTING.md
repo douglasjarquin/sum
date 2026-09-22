@@ -70,7 +70,7 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
 - **Tools.** [mise.toml](mise.toml) pins Go, Python, and Node. Verification requires `git`, `mise`, `go`, `python3`, and `node`. Use those pins. Do not add a competing toolchain to make the checks easier to pass.
 - **Helper.** The CLI is `./bin/sumctl` (or `sumctl` after setup). That name exists so this project does not shadow the Unix `sum` command.
 - **Roles.** A harness session in a sum checkout starts with `./bin/sumctl init` and follows the role it returns: `coordinator`, `worker`, or `developer`. Read [AGENTS.md](AGENTS.md). Sending a pull request does not require becoming a coordinator. If another pane already owns coordination, or you are in a development checkout, stay a developer.
-- **Terminology.** New first-party instructions and user-visible text use [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md). Address the user naturally. Do not use themed role titles. Keep technical identifiers (`sumctl report`, `--role worker`, JSON keys) unchanged.
+- **Terminology.** New first-party instructions and user-visible text use [docs/terminology.md](docs/terminology.md). Address the user naturally. Do not use themed role titles. Keep technical identifiers (`sumctl report`, `--role worker`, JSON keys) unchanged.
 - **Live installs.** The checkout where setup ran serves live work. Change sum from an isolated checkout:
 
   ```sh
@@ -92,7 +92,7 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
 - [ ] Run the [VERIFY.md](VERIFY.md) entrypoint (or the runner with `--base`) and keep the candidate-bound record.
 - [ ] Run `mise run test-live` only when that live scenario applies; otherwise say it was not run.
 - [ ] Note deployment or release impact when it exists.
-- [ ] Use [docs/TERMINOLOGY.md](docs/TERMINOLOGY.md) in new first-party instructions and user-visible text.
+- [ ] Use [docs/terminology.md](docs/terminology.md) in new first-party instructions and user-visible text.
 - [ ] Assess Grok Bot deployment impact for every new feature or changed contract, and update `grok-bots/sum/` and `grok-bots/square/` references and tests or record an explicit no-impact or deferred rationale.
   Remainder integration is advisory quota only (`sumctl quota`). It does not bind Grok Bot, change `grok-bots/sum/` or `grok-bots/square/`, or alter Bot commands.
   Default TOON stdout does not bind Grok Bot templates. Agents read TOON. jq callers pass `--format json`.
