@@ -241,17 +241,18 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 // is accounted for by the endpoint's own close path, so it is neither a
 // worker occupant nor an orphan. Only the exact observed shell pid qualifies,
 // and only while it sits in the pane's foreground as a known shell and the
-// live pane's cwd is the one the reviewer endpoint recorded: anything it runs
-// is a separate pid and still binds the checkout. An endpoint on another
-// machine or session, one Herdr cannot report, or one whose identity changed
-// yields nothing, so its processes keep blocking.
+// live pane's cwd is the task checkout: anything it runs is a separate pid and
+// still binds the checkout. The reviewer's recorded cwd is the installation
+// root the review command ran from, not the pane's, so it is not compared. An
+// endpoint on another machine or session, one Herdr cannot report, or one
+// whose identity changed yields nothing, so its processes keep blocking.
 func EndpointShells(runtimeRoot string, task *ordjson.Object) map[int]bool {
 	shells := map[int]bool{}
 	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
 	paneID := stringField(reviewer, "pane")
 	session := stringField(task, "session")
-	recordedCwd := stringField(reviewer, "cwd")
-	if paneID == "" || paneID == stringField(task, "pane") || stringField(reviewer, "session") != session || recordedCwd == "" {
+	worktree := stringField(task, "worktree")
+	if paneID == "" || paneID == stringField(task, "pane") || stringField(reviewer, "session") != session || worktree == "" {
 		return shells
 	}
 	if host, err := os.Hostname(); err != nil || stringField(reviewer, "machine") != host {
@@ -266,7 +267,7 @@ func EndpointShells(runtimeRoot string, task *ordjson.Object) map[int]bool {
 		return shells
 	}
 	paneObj := unwrapField(asObject(pane), "pane")
-	if resolve(stringField(paneObj, "cwd")) != resolve(recordedCwd) {
+	if resolve(stringField(paneObj, "cwd")) != resolve(worktree) {
 		return shells
 	}
 	info, _, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "process-info", "--pane", paneID)

@@ -14,6 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/review"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -589,30 +590,22 @@ func (l *lab) removeWorkerPane() {
 	}
 }
 
-// workerWithReviewerJSON is workerRunningJSON plus a recorded reviewer
-// endpoint on w-worker:p2 that has saved its findings.
-func (l *lab) workerWithReviewerJSON() string {
-	value, err := ordjson.Decode([]byte(l.workerRunningJSON()))
-	if err != nil {
+// saveTaskWithReviewer saves workerRunningJSON, then records w-worker:p2 as its
+// reviewer endpoint through review.Run from the lab context, so the reviewer
+// carries the cwd production records (the installation root) and has saved
+// its findings.
+func (l *lab) saveTaskWithReviewer() {
+	l.t.Helper()
+	l.saveTask(l.workerRunningJSON())
+	endpoint := ordjson.NewObject()
+	for _, key := range []string{"session", "machine", "cwd"} {
+		v, _ := l.ctx.Get(key)
+		endpoint.Set(key, v)
+	}
+	endpoint.Set("pane", "w-worker:p2")
+	if _, err := review.Run(l.store, taskID, "approve", "", "", "no findings", "", false, endpoint); err != nil {
 		l.t.Fatal(err)
 	}
-	task := value.(*ordjson.Object)
-	reviewer := ordjson.NewObject()
-	reviewer.Set("machine", l.host)
-	reviewer.Set("session", "sum-test")
-	reviewer.Set("pane", "w-worker:p2")
-	reviewer.Set("cwd", l.checkout)
-	task.Set("reviewer", reviewer)
-	review := ordjson.NewObject()
-	review.Set("kind", "review")
-	review.Set("source", "reviewer")
-	review.Set("text", "no findings")
-	task.Set("evidence", []any{review})
-	raw, err := ordjson.MarshalCompact(task)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	return string(raw)
 }
 
 func TestCleanup_reviewerShellInCheckoutIsNotWorkerOccupant(t *testing.T) {
@@ -621,7 +614,7 @@ func TestCleanup_reviewerShellInCheckoutIsNotWorkerOccupant(t *testing.T) {
 	l.writeWorkerPane()
 	l.addReviewerPane(4343)
 	l.plantLsof([]map[string]any{{"pid": 4242, "cwd": l.checkout}, {"pid": 4343, "cwd": l.checkout}})
-	l.saveTask(l.workerWithReviewerJSON())
+	l.saveTaskWithReviewer()
 	plan := l.inspect()
 	for _, detail := range blockerDetails(plan) {
 		if strings.Contains(detail, "4343") {
@@ -662,7 +655,7 @@ func TestCleanup_strayProcessBesideReviewerShellStillBlocks(t *testing.T) {
 		{"pid": child, "cwd": l.checkout},
 		{"pid": stray, "cwd": l.checkout},
 	})
-	l.saveTask(l.workerWithReviewerJSON())
+	l.saveTaskWithReviewer()
 	if _, err := execution.Park(l.store, l.ctx, l.runtime, taskID, workerID); err == nil {
 		t.Fatal("park released the worker with processes still in the checkout")
 	}
@@ -694,7 +687,7 @@ func TestCleanup_reviewerShellIsNotOrphanWhenWorkerPaneGone(t *testing.T) {
 	l.addReviewerPane(4343)
 	l.removeWorkerPane()
 	l.plantLsof([]map[string]any{{"pid": 4343, "cwd": l.checkout}})
-	l.saveTask(l.workerWithReviewerJSON())
+	l.saveTaskWithReviewer()
 	plan := l.inspect()
 	if orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }()); len(orphans) > 0 {
 		t.Fatalf("orphans = %v; the reviewer shell would be terminated by apply", orphans)
@@ -718,7 +711,7 @@ func TestCleanup_reviewerShellChildIsNotOrphanWhenWorkerPaneGone(t *testing.T) {
 		{"pid": shell, "cwd": l.checkout},
 		{"pid": child, "cwd": l.checkout},
 	})
-	l.saveTask(l.workerWithReviewerJSON())
+	l.saveTaskWithReviewer()
 	plan := l.inspect()
 	if orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }()); len(orphans) > 0 {
 		t.Fatalf("orphans = %v; apply would terminate the reviewer shell's child %d", orphans, child)
@@ -737,5 +730,53 @@ func TestCleanup_reviewerShellChildIsNotOrphanWhenWorkerPaneGone(t *testing.T) {
 	}
 	if !named {
 		t.Fatalf("reviewer shell child %d is not a named blocker: %v", child, blockerDetails(plan))
+	}
+}
+
+// failWorkerProcessInfo makes fake Herdr list the worker pane w-worker:p1 but
+// fail to read its processes.
+func (l *lab) failWorkerProcessInfo() {
+	l.t.Helper()
+	path := filepath.Join(l.herdr, "state.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		l.t.Fatal(err)
+	}
+	state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)["process_info_error"] = "server_unavailable"
+	out, err := json.Marshal(state)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+func TestCleanup_reviewerShellIsNotDetachedWhenWorkerProcessInfoUnreadable(t *testing.T) {
+	l := newLab(t)
+	l.writeSettings(1, 1)
+	l.writeWorkerPane()
+	l.addReviewerPane(4343)
+	l.failWorkerProcessInfo()
+	l.plantLsof([]map[string]any{{"pid": 4242, "cwd": l.checkout}, {"pid": 4343, "cwd": l.checkout}})
+	l.saveTaskWithReviewer()
+	plan := l.inspect()
+	// Without the worker's process-info its own shell cannot be excluded, so it
+	// stays detached; the reviewer shell is still the reviewer's.
+	occupancy := asObject(func() any { v, _ := plan.Get("occupancy"); return v }())
+	detached := map[string]bool{}
+	for _, raw := range asList(func() any { v, _ := occupancy.Get("detached"); return v }()) {
+		pid, _ := asObject(raw).Get("pid")
+		detached[fmt.Sprint(pid)] = true
+	}
+	if !detached["4242"] || detached["4343"] {
+		t.Fatalf("detached = %v, want the worker shell 4242 and not the reviewer shell 4343", detached)
+	}
+	if !hasCode(blockerCodes(plan), "occupant") {
+		t.Fatalf("cleanup blockers = %v details=%v, want occupant", blockerCodes(plan), blockerDetails(plan))
 	}
 }
