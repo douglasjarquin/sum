@@ -2,6 +2,7 @@ package cleanup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,11 @@ import (
 )
 
 var disposableIgnored = []string{"__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".DS_Store", ".artifacts", ".codegraph"}
+
+// generatedIgnored maps each exact checkout-relative file sum's own build writes into a sum checkout
+// to the tracked source that rebuilds it: mise run test, verify, and demo compile .local/bin/sumctl
+// from go/cmd/sumctl. Any other file beside it keeps the ignored entry preserved.
+var generatedIgnored = map[string]string{".local/bin/sumctl": "go/cmd/sumctl"}
 
 var shells = map[string]bool{
 	"bash": true, "zsh": true, "sh": true, "fish": true, "dash": true, "ksh": true, "tcsh": true, "csh": true, "nu": true, "pwsh": true,
@@ -137,6 +143,36 @@ func disposable(relative string) bool {
 	return false
 }
 
+// regenerable reports whether an ignored entry holds only files in generatedIgnored, each a regular
+// file whose source the checkout tracks. A directory entry is walked without following symlinks.
+func regenerable(worktree, relative string) bool {
+	root := filepath.Join(worktree, filepath.FromSlash(strings.TrimSuffix(relative, "/")))
+	generated := 0
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(worktree, path)
+		if err != nil {
+			return err
+		}
+		source, known := generatedIgnored[filepath.ToSlash(rel)]
+		if !known || !entry.Type().IsRegular() || !tracked(worktree, source) {
+			return errForeign
+		}
+		generated++
+		return nil
+	})
+	return err == nil && generated > 0
+}
+
+var errForeign = errors.New("not a file sum generates")
+
+func tracked(worktree, source string) bool {
+	out, err := proc.Run([]string{"git", "-C", worktree, "ls-files", "--", source}, "", 20*time.Second, true, nil)
+	return err == nil && strings.TrimSpace(out.Stdout) != ""
+}
+
 func worktreeArtifacts(worktree string) (*ordjson.Object, error) {
 	out, err := proc.Run([]string{"git", "-C", worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"}, "", 30*time.Second, true, nil)
 	if err != nil {
@@ -160,7 +196,7 @@ func worktreeArtifacts(worktree string) (*ordjson.Object, error) {
 		}
 		switch code {
 		case "!!":
-			if disposable(path) {
+			if disposable(path) || regenerable(worktree, path) {
 				ignoredDisposable = append(ignoredDisposable, path)
 			} else {
 				ignoredPreserved = append(ignoredPreserved, path)
