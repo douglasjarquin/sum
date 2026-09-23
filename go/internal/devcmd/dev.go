@@ -13,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -99,7 +100,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 		paneObj.Set("pane", asString(rootPane, "pane_id"))
 		paneObj.Set("workspace", asString(workspace, "workspace_id"))
 		paneObj.Set("session", session)
-		host, _ := os.Hostname()
+		host, _ := machine.ID()
 		paneObj.Set("machine", host)
 		paneObj.Set("at", store.Now())
 		panes := listField(existing, "panes")

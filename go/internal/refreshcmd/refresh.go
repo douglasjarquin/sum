@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/brief"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
@@ -258,9 +259,8 @@ func samePath(a, b string) bool {
 	return ra == rb
 }
 
-func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd, hostname string) (string, string, error) {
-	machine := asString(func() any { v, _ := endpoint.Get("machine"); return v }())
-	if machine != hostname {
+func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd string, host machine.Identity) (string, string, error) {
+	if !host.Is(asString(func() any { v, _ := endpoint.Get("machine"); return v }())) {
 		return "pending-unreachable", "Recipient is on another machine.", nil
 	}
 	session := asString(func() any { v, _ := endpoint.Get("session"); return v }())
@@ -292,8 +292,8 @@ func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd, host
 	return "submitted-unconfirmed", status, nil
 }
 
-func attemptDelivery(sn *snapshots, endpoint *ordjson.Object, expectedCwd, message, hostname string) *ordjson.Object {
-	state, reason, err := observeRecipient(sn, endpoint, expectedCwd, hostname)
+func attemptDelivery(sn *snapshots, endpoint *ordjson.Object, expectedCwd, message string, host machine.Identity) *ordjson.Object {
+	state, reason, err := observeRecipient(sn, endpoint, expectedCwd, host)
 	row := ordjson.NewObject()
 	if err != nil {
 		row.Set("state", "pending-unreachable")
@@ -346,16 +346,16 @@ func recordDelivery(versionsObj *ordjson.Object, revisionID string, event *ordjs
 	versionsObj.Set("refresh", list)
 }
 
-func identityEquals(a, b *ordjson.Object) bool {
+func identityEquals(host machine.Identity, a, b *ordjson.Object) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return asString(func() any { v, _ := a.Get("machine"); return v }()) == asString(func() any { v, _ := b.Get("machine"); return v }()) &&
+	return host.Same(asString(func() any { v, _ := a.Get("machine"); return v }()), asString(func() any { v, _ := b.Get("machine"); return v }())) &&
 		asString(func() any { v, _ := a.Get("session"); return v }()) == asString(func() any { v, _ := b.Get("session"); return v }()) &&
 		asString(func() any { v, _ := a.Get("pane"); return v }()) == asString(func() any { v, _ := b.Get("pane"); return v }())
 }
 
-func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runtimeRoot, sumctlPath, hostname string) (*ordjson.Object, error) {
+func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runtimeRoot, sumctlPath string, host machine.Identity) (*ordjson.Object, error) {
 	id := asString(func() any { v, _ := task.Get("id"); return v }())
 	row := ordjson.NewObject()
 	row.Set("target", "task")
@@ -463,13 +463,13 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 	endpoint.Set("session", func() any { v, _ := task.Get("session"); return v }())
 	endpoint.Set("machine", func() any { v, _ := task.Get("machine"); return v }())
 	var event *ordjson.Object
-	if identityEquals(endpoint, ctx) {
+	if identityEquals(host, endpoint, ctx) {
 		event = ordjson.NewObject()
 		event.Set("state", "pending-busy")
 		event.Set("reason", "the target is the calling pane; read the revision and adopt it at this turn boundary")
 	} else {
 		worktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
-		event = attemptDelivery(sn, endpoint, worktree, message, hostname)
+		event = attemptDelivery(sn, endpoint, worktree, message, host)
 	}
 	unlock, err = s.Lock()
 	if err != nil {
@@ -665,7 +665,7 @@ func markRequested(versionsObj, target *ordjson.Object) {
 	versionsObj.Set("requested", id)
 }
 
-func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runtimeRoot, sumctlPath, hostname string) (*ordjson.Object, error) {
+func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runtimeRoot, sumctlPath string, host machine.Identity) (*ordjson.Object, error) {
 	row := ordjson.NewObject()
 	row.Set("target", "coordinator")
 	row.Set("deferred", []any{})
@@ -726,7 +726,7 @@ func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runt
 	unlock()
 	state := versions.RevisionView(filepath.Join(s.Home, versions.ContractDir), target)
 	var event *ordjson.Object
-	if owner == nil || identityEquals(owner, ctx) {
+	if owner == nil || identityEquals(host, owner, ctx) {
 		event = ordjson.NewObject()
 		event.Set("state", "pending-busy")
 		event.Set("reason", "the coordinator is the calling pane; read the contract revision and run `refresh adopt --coordinator` at this turn boundary")
@@ -747,7 +747,7 @@ func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runt
 		session := asString(func() any { v, _ := owner.Get("session"); return v }())
 		message := fmt.Sprintf("sum refresh coordinator: operating contract revision %s is requested (sum %s, runtime %s). Changes: %s. At your next safe point read %s, then run %s and continue coordination from saved state. Do not restart or re-dispatch.",
 			latest, contract.SumVersion, sha, strings.Join(parts, "; "), path, shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", latest))
-		event = attemptDelivery(sn, owner, cwd, message, hostname)
+		event = attemptDelivery(sn, owner, cwd, message, host)
 		_ = session
 	}
 	unlock, err = s.Lock()
@@ -875,13 +875,16 @@ func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator 
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
-	hostname, _ := os.Hostname()
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
 	sn := newSnapshots(runtimeRoot)
 	everything := len(taskIDs) == 0 && !coordinator
 	var rows []any
 	var excluded []any
 	if everything || coordinator {
-		row, err := refreshCoordinator(s, ctx, sn, runtimeRoot, sumctlPath, hostname)
+		row, err := refreshCoordinator(s, ctx, sn, runtimeRoot, sumctlPath, host)
 		if err != nil {
 			return nil, err
 		}
@@ -903,8 +906,7 @@ func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator 
 			continue
 		}
 		seen[id] = true
-		machine := asString(func() any { v, _ := task.Get("machine"); return v }())
-		if machine != hostname {
+		if !host.Is(asString(func() any { v, _ := task.Get("machine"); return v }())) {
 			row := ordjson.NewObject()
 			row.Set("target", "task")
 			row.Set("task", id)
@@ -915,7 +917,7 @@ func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator 
 			rows = append(rows, row)
 			continue
 		}
-		row, rErr := refreshTask(s, task, ctx, sn, runtimeRoot, sumctlPath, hostname)
+		row, rErr := refreshTask(s, task, ctx, sn, runtimeRoot, sumctlPath, host)
 		if rErr != nil {
 			return nil, rErr
 		}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -39,10 +40,10 @@ func ObserveStop(s *store.Store, runtimeRoot string, task, attempt *ordjson.Obje
 	if kind == "worker" {
 		return observeWorker(s, runtimeRoot, task, attempt)
 	}
-	return observeVerifier(attempt)
+	return observeVerifier(s, attempt)
 }
 
-func observeVerifier(attempt *ordjson.Object) StopProof {
+func observeVerifier(s *store.Store, attempt *ordjson.Object) StopProof {
 	checkout := stringField(attempt, "checkout")
 	if checkout == "" {
 		return unknown("Verifier checkout identity is missing; reservation remains held.")
@@ -60,11 +61,11 @@ func observeVerifier(attempt *ordjson.Object) StopProof {
 	if normalizeRecordedArgv(argv) == nil {
 		return unknown("Verifier occupant argv is missing; reservation remains held.")
 	}
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return unknown("Verifier instance cannot be inspected; reservation remains held.")
 	}
-	if stringField(occupant, "machine") != host {
+	if !host.Is(stringField(occupant, "machine")) {
 		return unknown("Verifier occupant instance does not match this machine; reservation remains held.")
 	}
 	occCheckout := stringField(occupant, "checkout")
@@ -104,11 +105,11 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 	if paneID == "" || workspace == "" || worktree == "" {
 		return unknown("Worker pane, workspace, or checkout identity is missing; reservation remains held.")
 	}
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return unknown("Worker instance cannot be inspected; reservation remains held.")
 	}
-	if stringField(task, "machine") != host {
+	if !host.Is(stringField(task, "machine")) {
 		return unknown("Worker instance does not match this machine; reservation remains held.")
 	}
 	occupant := asObject(func() any { v, _ := attempt.Get("occupant"); return v }())
@@ -117,7 +118,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 		if occCheckout != "" && resolve(occCheckout) != resolve(worktree) {
 			return unknown("Worker occupant checkout does not match the task checkout; reservation remains held.")
 		}
-		if machine := stringField(occupant, "machine"); machine != "" && machine != host {
+		if recorded := stringField(occupant, "machine"); recorded != "" && !host.Is(recorded) {
 			return unknown("Worker occupant instance does not match this machine; reservation remains held.")
 		}
 	}
@@ -174,7 +175,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 		if len(list) > 0 {
 			return unknown("Worker pane still has foreground processes besides its shell; reservation remains held.")
 		}
-		exclude := EndpointShells(runtimeRoot, task)
+		exclude := EndpointShells(host, runtimeRoot, task)
 		if n, ok := pidField(info, "shell_pid"); ok {
 			exclude[n] = true
 		}
@@ -197,7 +198,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 		}
 	}
 	if pane == nil {
-		inside, cwdErr := proc.ProcessesBoundTo(worktree, EndpointShells(runtimeRoot, task))
+		inside, cwdErr := proc.ProcessesBoundTo(worktree, EndpointShells(host, runtimeRoot, task))
 		if cwdErr != nil {
 			return unknown("Worker checkout processes cannot be inspected; reservation remains held. " + cwdErr.Error())
 		}
@@ -246,7 +247,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 // root the review command ran from, not the pane's, so it is not compared. An
 // endpoint on another machine or session, one Herdr cannot report, or one
 // whose identity changed yields nothing, so its processes keep blocking.
-func EndpointShells(runtimeRoot string, task *ordjson.Object) map[int]bool {
+func EndpointShells(host machine.Identity, runtimeRoot string, task *ordjson.Object) map[int]bool {
 	shells := map[int]bool{}
 	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
 	paneID := stringField(reviewer, "pane")
@@ -255,7 +256,7 @@ func EndpointShells(runtimeRoot string, task *ordjson.Object) map[int]bool {
 	if paneID == "" || paneID == stringField(task, "pane") || stringField(reviewer, "session") != session || worktree == "" {
 		return shells
 	}
-	if host, err := os.Hostname(); err != nil || stringField(reviewer, "machine") != host {
+	if !host.Is(stringField(reviewer, "machine")) {
 		return shells
 	}
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")

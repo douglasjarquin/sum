@@ -134,9 +134,11 @@ func matchingTask(s *store.Store, endpoint store.Endpoint) (*ordjson.Object, err
 		if status == "archived" {
 			continue
 		}
-		machineValue, _ := task.Get("machine")
-		sessionValue, _ := task.Get("session")
-		if machineValue == endpoint.Machine && sessionValue == endpoint.Session && pane == endpoint.Pane {
+		matches, err := s.Matches(task, endpoint)
+		if err != nil {
+			return nil, err
+		}
+		if matches {
 			return task, nil
 		}
 	}

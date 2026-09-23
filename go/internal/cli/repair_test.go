@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
 func TestRepairUnknownFlagsAreUsageErrorsBeforeRepair(t *testing.T) {
@@ -197,7 +199,7 @@ func repairSendLab(t *testing.T) (home, worktree string) {
 	if err := os.WriteFile(filepath.Join(fakeRoot, "state.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}

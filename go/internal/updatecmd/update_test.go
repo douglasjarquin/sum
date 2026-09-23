@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -143,7 +144,7 @@ func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 	}
 	writeFile(t, filepath.Join(home, "state.json"), `{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n")
 	plantNativeHelper(t, root, workingHelper(""))
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}

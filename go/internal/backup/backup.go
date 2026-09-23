@@ -125,7 +125,7 @@ func Run(s *store.Store, destination string) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,8 @@ func Run(s *store.Store, destination string) (*ordjson.Object, error) {
 	manifest.Set("includes_worktree_code", false)
 	manifest.Set("credential_files_included", false)
 	manifest.Set("content_redaction", "none; task text may be sensitive")
-	manifest.Set("machine", host)
+	manifest.Set("machine", host.ID)
+	manifest.Set("hostname", host.Hostname)
 	manifest.Set("worktrees_not_captured", worktrees)
 	manifest.Set("brief_revisions_included", true)
 	manifest.Set("environment_records_included", true)

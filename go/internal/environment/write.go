@@ -88,7 +88,7 @@ func Discover(s *store.Store, taskID string, endpoint *ordjson.Object, sumctlPat
 			record.Set("resources", append(listField(record, "resources"), own))
 		}
 	}
-	role := endpointRole(task, endpoint)
+	role := endpointRole(s, task, endpoint)
 	if role == "" {
 		role = "unattributed"
 	}
@@ -292,7 +292,7 @@ func inside(path, root string) bool {
 }
 
 func taskCheckouts(s *store.Store, taskID string) ([]*ordjson.Object, error) {
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +308,7 @@ func taskCheckouts(s *store.Store, taskID string) ([]*ordjson.Object, error) {
 		if stringField(other, "status") == "archived" {
 			continue
 		}
-		if stringField(other, "worktree") == "" || stringField(other, "machine") != host {
+		if stringField(other, "worktree") == "" || !host.Is(stringField(other, "machine")) {
 			continue
 		}
 		rows = append(rows, other)
@@ -817,7 +817,7 @@ func Record(s *store.Store, args RecordArgs, endpoint *ordjson.Object) (*ordjson
 	if err != nil {
 		return nil, err
 	}
-	role := endpointRole(task, endpoint)
+	role := endpointRole(s, task, endpoint)
 	if role == "" {
 		role = "unattributed"
 	}
@@ -983,7 +983,7 @@ func Inspect(s *store.Store, args InspectArgs, endpoint *ordjson.Object) (*ordjs
 	if record == nil {
 		return nil, fmt.Errorf("Task %s has no environment record yet; run `env discover` or `env record` first.", args.Task)
 	}
-	role := endpointRole(task, endpoint)
+	role := endpointRole(s, task, endpoint)
 	if role == "" {
 		role = "unattributed"
 	}

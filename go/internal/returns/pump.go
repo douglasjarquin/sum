@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
@@ -76,7 +77,7 @@ func Notify(s *store.Store, opts PumpOpts, taskID, recipient, reason string, for
 }
 
 func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +99,7 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 				return nil, err
 			}
 			route := ReturnRoute(task, opts.Recipient)
-			scope[identity(route)] = true
+			scope[identity(host, route)] = true
 		}
 	}
 	taskFilter := map[string]bool{}
@@ -110,7 +111,7 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 		machine, _ := task.Get("machine")
 		id, _ := task.Get("id")
 		idStr, _ := id.(string)
-		if status == "archived" || machine != host || (len(opts.Tasks) > 0 && scope == nil && !taskFilter[idStr]) {
+		if status == "archived" || !host.Is(machine) || (len(opts.Tasks) > 0 && scope == nil && !taskFilter[idStr]) {
 			continue
 		}
 		obligations, err := OpenObligations(s, task)
@@ -124,10 +125,10 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 				continue
 			}
 			route := ReturnRoute(task, recipStr)
-			if scope != nil && !scope[identity(route)] {
+			if scope != nil && !scope[identity(host, route)] {
 				continue
 			}
-			key := fmt.Sprintf("%v:%v", RouteKey(route), routeValue(route, "role"))
+			key := fmt.Sprintf("%v:%v", bucketKey(host, route), routeValue(route, "role"))
 			b := buckets[key]
 			if b == nil {
 				b = &bucket{route: route}
@@ -163,6 +164,10 @@ func deliver(s *store.Store, opts PumpOpts, route *ordjson.Object, items [][2]*o
 		return nil, err
 	}
 	defer unlock()
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
 	key := RouteKey(route)
 	listing := []any{}
 	for _, pair := range items {
@@ -316,7 +321,7 @@ func deliver(s *store.Store, opts PumpOpts, route *ordjson.Object, items [][2]*o
 		return row, nil
 	}
 	message := noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), mentioned, len(withheld))
-	if opts.Inline && opts.Ctx != nil && identity(route) == identity(opts.Ctx) {
+	if opts.Inline && opts.Ctx != nil && identity(host, route) == identity(host, opts.Ctx) {
 		if err := stampDelivery(s, sendItems, delivery, map[string]any{"state": "submitted", "via": "inline", "reason": "presented in the recipient's own command output", "finished_at": store.Now()}); err != nil {
 			return nil, err
 		}
@@ -355,13 +360,17 @@ func deliver(s *store.Store, opts PumpOpts, route *ordjson.Object, items [][2]*o
 
 func promptRecipient(s *store.Store, opts PumpOpts, route *ordjson.Object, items, mentioned [][2]*ordjson.Object, sendable map[[2]string]bool, message string, withheld int) (state, detail, errStr string) {
 	cwd := routeValue(route, "cwd")
-	if err := ObserveRecipient(opts.RuntimeRoot, route, fmt.Sprint(cwd)); err != nil {
+	if err := ObserveRecipient(s, opts.RuntimeRoot, route, fmt.Sprint(cwd)); err != nil {
 		if u, ok := err.(*unreachableError); ok {
 			if u.state == versions.RefreshUnreachable {
 				_ = stampRefreshGone(s, items, u.msg)
 			}
 			return "not-delivered", u.msg, u.msg
 		}
+		return "not-delivered", "prompt was not accepted: " + err.Error(), err.Error()
+	}
+	host, err := s.Machine()
+	if err != nil {
 		return "not-delivered", "prompt was not accepted: " + err.Error(), err.Error()
 	}
 	endpoint := store.EndpointFromContext(routeObject(route))
@@ -375,7 +384,7 @@ func promptRecipient(s *store.Store, opts PumpOpts, route *ordjson.Object, items
 	}
 	role := fmt.Sprint(routeValue(route, "role"))
 	if role == "coordinator" {
-		if owner == nil || identity(owner) != identity(route) {
+		if owner == nil || identity(host, owner) != identity(host, route) {
 			msg := "Recipient pane is not this instance's registered coordinator; rebind the task with `bind --parent-only` from the pane that is."
 			return "not-delivered", msg, msg
 		}
@@ -412,12 +421,12 @@ func promptRecipient(s *store.Store, opts PumpOpts, route *ordjson.Object, items
 	return "submitted", "notice submitted while the recipient was settled; nothing is acknowledged, read, or applied by that", ""
 }
 
-func ObserveRecipient(runtimeRoot string, route *ordjson.Object, expectedCwd string) error {
-	host, err := os.Hostname()
+func ObserveRecipient(s *store.Store, runtimeRoot string, route *ordjson.Object, expectedCwd string) error {
+	host, err := s.Machine()
 	if err != nil {
 		return err
 	}
-	if routeValue(route, "machine") != host {
+	if !host.Is(routeValue(route, "machine")) {
 		return &unreachableError{state: "pending-unreachable", msg: "Recipient is on another machine."}
 	}
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
@@ -622,11 +631,20 @@ func noticeText(s *store.Store, sumctlPath, role string, items [][2]*ordjson.Obj
 	return text
 }
 
-func identity(obj *ordjson.Object) [3]string {
+func identity(host machine.Identity, obj *ordjson.Object) [3]string {
 	if obj == nil {
 		return [3]string{}
 	}
-	return [3]string{fmt.Sprint(routeValue(obj, "machine")), fmt.Sprint(routeValue(obj, "session")), fmt.Sprint(routeValue(obj, "pane"))}
+	return [3]string{host.Canonical(routeValue(obj, "machine")), fmt.Sprint(routeValue(obj, "session")), fmt.Sprint(routeValue(obj, "pane"))}
+}
+
+// bucketKey groups routes to one recipient, reading this host's legacy
+// hostname as this host; routes without a complete endpoint share one bucket.
+func bucketKey(host machine.Identity, route *ordjson.Object) any {
+	if RouteKey(route) == nil {
+		return nil
+	}
+	return identity(host, route)
 }
 
 func routeValue(obj *ordjson.Object, key string) any {

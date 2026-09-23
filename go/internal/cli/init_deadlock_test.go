@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
 // Regression: init and bind used to hold .sum/.lock across returns.Pump, whose
@@ -33,7 +35,7 @@ func TestInitAndBindDeliveryPassDoNotSelfDeadlock(t *testing.T) {
 		t.Fatalf("init role = %v, want coordinator", got)
 	}
 
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}

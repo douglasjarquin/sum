@@ -5,6 +5,7 @@ import (
 	"regexp"
 
 	"github.com/douglasjarquin/sum/go/internal/evidence"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -16,7 +17,7 @@ var (
 	toolNamePat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`)
 )
 
-func identityEquals(a, b *ordjson.Object) bool {
+func identityEquals(host machine.Identity, a, b *ordjson.Object) bool {
 	if a == nil || b == nil {
 		return false
 	}
@@ -26,23 +27,23 @@ func identityEquals(a, b *ordjson.Object) bool {
 	bs, _ := b.Get("session")
 	ap, _ := a.Get("pane")
 	bp, _ := b.Get("pane")
-	return am == bm && as == bs && ap == bp
+	return host.Same(am, bm) && as == bs && ap == bp
 }
 
-func endpointRole(task, endpoint *ordjson.Object) string {
+func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string {
 	if endpoint == nil {
 		return ""
 	}
-	if pane, ok := task.Get("pane"); ok && pane != nil && identityEquals(task, endpoint) {
+	if pane, ok := task.Get("pane"); ok && pane != nil && identityEquals(host, task, endpoint) {
 		return "worker"
 	}
 	if parent, ok := task.Get("parent"); ok {
-		if p, is := parent.(*ordjson.Object); is && identityEquals(p, endpoint) {
+		if p, is := parent.(*ordjson.Object); is && identityEquals(host, p, endpoint) {
 			return "coordinator"
 		}
 	}
 	if reviewer, ok := task.Get("reviewer"); ok {
-		if r, is := reviewer.(*ordjson.Object); is && identityEquals(r, endpoint) {
+		if r, is := reviewer.(*ordjson.Object); is && identityEquals(host, r, endpoint) {
 			return "reviewer"
 		}
 	}
@@ -109,7 +110,11 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath str
 			text = fmt.Sprintf("Imported Made report %v", runID)
 		}
 	}
-	role := endpointRole(task, endpoint)
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
+	role := endpointRole(host, task, endpoint)
 	if role == "worker" {
 		return nil, fmt.Errorf("The worker pane cannot record independent review of its own candidate. Save findings from the reviewer pane, or record `verify` as the coordinator.")
 	}

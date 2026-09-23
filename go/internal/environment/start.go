@@ -818,7 +818,7 @@ func Start(s *store.Store, args StartArgs, endpoint *ordjson.Object) (*ordjson.O
 	if _, n := Redact(label); n > 0 {
 		return nil, fmt.Errorf("The label contains credential-shaped text.")
 	}
-	role := endpointRole(task, endpoint)
+	role := endpointRole(s, task, endpoint)
 	if role == "" {
 		role = "unattributed"
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"regexp"
 
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
@@ -40,25 +41,25 @@ func Context(root string) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	hostname, err := os.Hostname()
+	id, err := machine.ID()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("identify machine: %w", err)
 	}
 	ctx := ordjson.NewObject()
 	ctx.Set("session", session)
 	ctx.Set("pane", os.Getenv("HERDR_PANE_ID"))
-	ctx.Set("machine", hostname)
+	ctx.Set("machine", id)
 	ctx.Set("cwd", root)
 	ctx.Set("at", Now())
 	return ctx, nil
 }
 
 func EndpointFromContext(ctx *ordjson.Object) Endpoint {
-	machine, _ := ctx.Get("machine")
+	machineValue, _ := ctx.Get("machine")
 	session, _ := ctx.Get("session")
 	pane, _ := ctx.Get("pane")
 	cwd, _ := ctx.Get("cwd")
-	m, _ := machine.(string)
+	m, _ := machineValue.(string)
 	s, _ := session.(string)
 	p, _ := pane.(string)
 	c, _ := cwd.(string)

@@ -2,14 +2,110 @@ package store
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
+// The reference values are hashlib.sha256(f"{machine}\n{session}\n{pane}".encode()).hexdigest()[:16].
 func TestRegistrationKey_matchesThePythonReferenceHash(t *testing.T) {
-	got := RegistrationKey(Endpoint{Machine: "m1", Session: "s1", Pane: "p1"})
-	want := "293c980b4e6c2341"
-	if got != want {
-		t.Fatalf("RegistrationKey = %q, want %q", got, want)
+	for _, tc := range []struct {
+		endpoint Endpoint
+		want     string
+	}{
+		{Endpoint{Machine: "m1", Session: "s1", Pane: "p1"}, "293c980b4e6c2341"},
+		{Endpoint{Machine: "m-0123456789abcdef0123456789abcdef", Session: "s1", Pane: "p1"}, "10227e7c9283413e"},
+	} {
+		if got := RegistrationKey(tc.endpoint); got != tc.want {
+			t.Fatalf("RegistrationKey(%+v) = %q, want %q", tc.endpoint, got, tc.want)
+		}
+	}
+}
+
+func TestRegistration_findsASessionFileKeyedByALegacyHostnameAndRekeysIt(t *testing.T) {
+	home := t.TempDir()
+	s, err := Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(machine.Pin("0123456789abcdef0123456789abcdef", "dev"))
+	if err := machine.Record(home); err != nil {
+		t.Fatal(err)
+	}
+	legacy := Endpoint{Machine: "dev", Session: "s1", Pane: "w-worker:p1"}
+	legacyPath := filepath.Join(home, "sessions", RegistrationKey(legacy)+".json")
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, []byte(`{"schema": 1, "role": "worker", "task": "t-aaaaaaaaaaaa", "machine": "dev", "session": "s1", "pane": "w-worker:p1", "registered_at": "2026-01-01T00:00:00+00:00"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(machine.Pin("0123456789abcdef0123456789abcdef", "renamed"))
+	s, err = Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := s.Machine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := Endpoint{Machine: host.ID, Session: "s1", Pane: "w-worker:p1"}
+	found, err := s.Registration(endpoint)
+	if err != nil || found == nil {
+		t.Fatalf("Registration after rename = %v, %v; want the legacy worker registration", found, err)
+	}
+	if role, _ := found.Get("role"); role != "worker" {
+		t.Fatalf("role = %v, want worker", role)
+	}
+
+	rekeyed, err := s.Register(endpoint, "worker", "t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if at, _ := rekeyed.Get("registered_at"); at != "2026-01-01T00:00:00+00:00" {
+		t.Fatalf("registered_at = %v, want the legacy registration's", at)
+	}
+	if m, _ := rekeyed.Get("machine"); m != host.ID {
+		t.Fatalf("re-registered machine = %v, want %s", m, host.ID)
+	}
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy session file still present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "sessions", RegistrationKey(endpoint)+".json")); err != nil {
+		t.Fatalf("re-keyed session file: %v", err)
+	}
+}
+
+func TestRegistration_ignoresASessionFileKeyedByAnotherHostsName(t *testing.T) {
+	home := t.TempDir()
+	s, err := Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(machine.Pin("0123456789abcdef0123456789abcdef", "here"))
+	other := Endpoint{Machine: "elsewhere", Session: "s1", Pane: "w-parent:p1"}
+	path := filepath.Join(home, "sessions", RegistrationKey(other)+".json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"schema": 1, "role": "coordinator", "machine": "elsewhere", "session": "s1", "pane": "w-parent:p1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	host, err := s.Machine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := s.Registration(Endpoint{Machine: host.ID, Session: "s1", Pane: "w-parent:p1"})
+	if err != nil || found != nil {
+		t.Fatalf("Registration = %v, %v; another host's session must not resolve here", found, err)
 	}
 }
 

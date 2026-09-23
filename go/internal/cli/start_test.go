@@ -3,10 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
 func TestStartRefusesPreparedTaskWithoutVerificationSnapshot(t *testing.T) {
@@ -15,7 +16,7 @@ func TestStartRefusesPreparedTaskWithoutVerificationSnapshot(t *testing.T) {
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatal(err)
 	}
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +33,7 @@ func TestStartRefusesEmptyVerificationSnapshot(t *testing.T) {
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatal(err)
 	}
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestStartRefusesVerificationSnapshotForDifferentBase(t *testing.T) {
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatal(err)
 	}
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}

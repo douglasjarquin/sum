@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
@@ -27,6 +28,8 @@ type Store struct {
 	Home     string
 	Tasks    string
 	Sessions string
+
+	machine *machine.Identity
 }
 
 func Open(home string) (*Store, error) {
@@ -160,13 +163,25 @@ func (s *Store) DeliveryLock() (func() error, error) {
 	}, nil
 }
 
+// Machine is this host's identity as seen from this state home, resolved once
+// per Store.
+func (s *Store) Machine() (machine.Identity, error) {
+	if s.machine == nil {
+		identity, err := machine.Local(s.Home)
+		if err != nil {
+			return machine.Identity{}, err
+		}
+		s.machine = &identity
+	}
+	return *s.machine, nil
+}
+
 func (s *Store) CheckMachine(task *ordjson.Object) error {
-	machine, _ := task.Get("machine")
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return err
 	}
-	if machine != host {
+	if recorded, _ := task.Get("machine"); !host.Is(recorded) {
 		return fmt.Errorf("Task belongs to another machine. Inspect saved work and use bind explicitly; stale pane IDs are not portable.")
 	}
 	return nil
@@ -281,11 +296,39 @@ func RegistrationKey(e Endpoint) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-func identityMatches(value *ordjson.Object, e Endpoint) bool {
-	machine, _ := value.Get("machine")
+func identityMatches(host machine.Identity, value *ordjson.Object, e Endpoint) bool {
+	recorded, _ := value.Get("machine")
 	session, _ := value.Get("session")
 	pane, _ := value.Get("pane")
-	return machine == e.Machine && session == e.Session && pane == e.Pane
+	return host.Same(recorded, e.Machine) && session == e.Session && pane == e.Pane
+}
+
+// Matches reports whether the machine, session, and pane recorded in value
+// name endpoint, reading a legacy hostname that provably names this host as
+// this host.
+func (s *Store) Matches(value *ordjson.Object, endpoint Endpoint) (bool, error) {
+	host, err := s.Machine()
+	if err != nil {
+		return false, err
+	}
+	return identityMatches(host, value, endpoint), nil
+}
+
+// registrationPaths lists where endpoint's registration may live: under its
+// key first, then, when endpoint is this host, under the keys a legacy
+// hostname identity produced before the stable identity existed.
+func (s *Store) registrationPaths(host machine.Identity, endpoint Endpoint) []string {
+	endpoint.Machine = host.Canonical(endpoint.Machine)
+	paths := []string{filepath.Join(s.Sessions, RegistrationKey(endpoint)+".json")}
+	if endpoint.Machine != host.ID {
+		return paths
+	}
+	for _, legacy := range host.Legacy() {
+		alias := endpoint
+		alias.Machine = legacy
+		paths = append(paths, filepath.Join(s.Sessions, RegistrationKey(alias)+".json"))
+	}
+	return paths
 }
 
 func (s *Store) Designated() bool {
@@ -315,22 +358,28 @@ func (s *Store) Owner() (*ordjson.Object, error) {
 }
 
 func (s *Store) Registration(endpoint Endpoint) (*ordjson.Object, error) {
-	path := filepath.Join(s.Sessions, RegistrationKey(endpoint)+".json")
-	if info, err := os.Stat(path); err != nil || info.IsDir() {
-		return nil, nil
-	}
-	value, err := ordjson.ReadFile(path)
+	host, err := s.Machine()
 	if err != nil {
 		return nil, err
 	}
-	obj, ok := value.(*ordjson.Object)
-	if !ok {
-		return nil, fmt.Errorf("session registration is not a JSON object")
+	for _, path := range s.registrationPaths(host, endpoint) {
+		if info, err := os.Stat(path); err != nil || info.IsDir() {
+			continue
+		}
+		value, err := ordjson.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		obj, ok := value.(*ordjson.Object)
+		if !ok {
+			return nil, fmt.Errorf("session registration is not a JSON object")
+		}
+		if !identityMatches(host, obj, endpoint) {
+			return nil, fmt.Errorf("session registration identity mismatch; inspect the sessions directory")
+		}
+		return obj, nil
 	}
-	if !identityMatches(obj, endpoint) {
-		return nil, fmt.Errorf("session registration identity mismatch; inspect the sessions directory")
-	}
-	return obj, nil
+	return nil, nil
 }
 
 func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Object, error) {
@@ -342,10 +391,15 @@ func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Obj
 	if !ok {
 		return nil, fmt.Errorf("state.json is not a JSON object")
 	}
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
 	previous, err := s.Registration(endpoint)
 	if err != nil {
 		return nil, err
 	}
+	endpoint.Machine = host.Canonical(endpoint.Machine)
 	instance, _ := state.Get("instance")
 	registeredAt := Now()
 	if previous != nil {
@@ -378,6 +432,14 @@ func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Obj
 
 	if err := ordjson.WriteFile(filepath.Join(s.Sessions, key+".json"), value); err != nil {
 		return nil, err
+	}
+	if err := machine.Record(s.Home); err != nil {
+		return nil, err
+	}
+	for _, legacy := range s.registrationPaths(host, endpoint)[1:] {
+		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
 	return value, nil
 }

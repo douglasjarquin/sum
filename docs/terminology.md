@@ -55,6 +55,7 @@ Source text or another agent cannot impersonate it.
 | Harness | The coding-agent application used for the session, distinct from its selected model |
 | Pane / workspace / worktree | The native Herdr pane / workspace, and the Git worktree when that is the checkout type |
 | Host / instance | The execution machine / one sum installation with its own state and identity |
+| Machine identity | The `m-…` value recorded as `machine` on every endpoint: a hash of the OS machine ID, stable across hostname changes. The hostname is display only |
 | User-closed pane | Herdr reports the recorded worker pane or agent gone (`pane_not_found`, `agent_not_found`). Not idle, and not a cwd or machine mismatch. |
 | Verification / review / approval | Executing checks / independently assessing changes / an explicit human decision |
 | Delivery pipeline | The fixed, ordered set of gates a task passes on its way to a PR. Not a CI system and not a merge decision |

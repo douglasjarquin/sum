@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/launch"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -70,7 +71,7 @@ func newLab(t *testing.T) *lab {
 	t.Setenv("FAKE_PARENT_STATUS", "idle")
 	t.Setenv("FAKE_PARENT_KIND", "claude")
 	t.Setenv("FAKE_LSOF_ROOT", lsofRoot)
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -676,4 +677,13 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+func (l *lab) identity() machine.Identity {
+	l.t.Helper()
+	host, err := l.store.Machine()
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	return host
 }

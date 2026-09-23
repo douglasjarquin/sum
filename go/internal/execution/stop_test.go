@@ -86,7 +86,7 @@ func TestEndpointShells_onlyTheObservedIdleShellOfTheRecordedReviewerIsExempt(t 
 				t.Fatal(err)
 			}
 
-			shells := EndpointShells(l.runtime, task)
+			shells := EndpointShells(l.identity(), l.runtime, task)
 			if got := shells[reviewerShell]; got != tc.exempt || len(shells) > 1 {
 				t.Fatalf("EndpointShells = %v, want shell %d exempt=%v", shells, reviewerShell, tc.exempt)
 			}
@@ -149,7 +149,7 @@ func TestEndpointShells_reviewerRecordedByReviewRunIsExempt(t *testing.T) {
 	if cwd := stringField(reviewer, "cwd"); cwd != l.home {
 		t.Fatalf("review.Run recorded reviewer cwd %q, want the installation root %q", cwd, l.home)
 	}
-	if shells := EndpointShells(l.runtime, task); !shells[reviewerShell] || len(shells) != 1 {
+	if shells := EndpointShells(l.identity(), l.runtime, task); !shells[reviewerShell] || len(shells) != 1 {
 		t.Fatalf("EndpointShells = %v, want only the reviewer shell %d", shells, reviewerShell)
 	}
 	if _, err := l.park(workerID); err != nil {
