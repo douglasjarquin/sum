@@ -541,6 +541,54 @@ func (l *lab) addReviewerPane(shellPID int) {
 	}
 }
 
+// startReviewerShell starts a real reviewer shell in the checkout running a
+// real background child, and returns both pids.
+func startReviewerShell(t *testing.T, checkout string) (shell, child int) {
+	t.Helper()
+	cmd := exec.Command("bash", "-c", "sleep 120 & wait")
+	cmd.Dir = checkout
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+	})
+	for i := 0; i < 100 && child == 0; i++ {
+		kids, _ := exec.Command("pgrep", "-P", fmt.Sprint(cmd.Process.Pid)).Output()
+		fmt.Sscan(string(kids), &child)
+	}
+	if child == 0 {
+		t.Fatal("reviewer shell child did not start")
+	}
+	return cmd.Process.Pid, child
+}
+
+// removeWorkerPane closes the worker pane w-worker:p1 in fake Herdr, so the
+// worker is verified absent and surviving checkout processes are classified
+// as owned or orphaned.
+func (l *lab) removeWorkerPane() {
+	l.t.Helper()
+	path := filepath.Join(l.herdr, "state.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		l.t.Fatal(err)
+	}
+	delete(state["panes"].(map[string]any), "w-worker:p1")
+	out, err := json.Marshal(state)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
 // workerWithReviewerJSON is workerRunningJSON plus a recorded reviewer
 // endpoint on w-worker:p2 that has saved its findings.
 func (l *lab) workerWithReviewerJSON() string {
@@ -553,6 +601,7 @@ func (l *lab) workerWithReviewerJSON() string {
 	reviewer.Set("machine", l.host)
 	reviewer.Set("session", "sum-test")
 	reviewer.Set("pane", "w-worker:p2")
+	reviewer.Set("cwd", l.checkout)
 	task.Set("reviewer", reviewer)
 	review := ordjson.NewObject()
 	review.Set("kind", "review")
@@ -602,32 +651,14 @@ func TestCleanup_strayProcessBesideReviewerShellStillBlocks(t *testing.T) {
 	l := newLab(t)
 	l.writeSettings(1, 1)
 	l.writeWorkerPane()
-	// A real reviewer shell with a real child in the checkout: only the shell
-	// pid Herdr reports is the reviewer's; its child and an unrelated process
-	// still bind the checkout.
-	shell := exec.Command("bash", "-c", "sleep 120 & wait")
-	shell.Dir = l.checkout
-	shell.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := shell.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = syscall.Kill(-shell.Process.Pid, syscall.SIGKILL)
-		_ = shell.Wait()
-	})
-	var child int
-	for i := 0; i < 100 && child == 0; i++ {
-		kids, _ := exec.Command("pgrep", "-P", fmt.Sprint(shell.Process.Pid)).Output()
-		fmt.Sscan(string(kids), &child)
-	}
-	if child == 0 {
-		t.Fatal("reviewer shell child did not start")
-	}
+	// Only the shell pid Herdr reports is the reviewer's; its child and an
+	// unrelated process still bind the checkout.
+	shell, child := startReviewerShell(t, l.checkout)
 	stray := startCheckoutWriter(t, l.checkout)
-	l.addReviewerPane(shell.Process.Pid)
+	l.addReviewerPane(shell)
 	l.plantLsof([]map[string]any{
 		{"pid": 4242, "cwd": l.checkout},
-		{"pid": shell.Process.Pid, "cwd": l.checkout},
+		{"pid": shell, "cwd": l.checkout},
 		{"pid": child, "cwd": l.checkout},
 		{"pid": stray, "cwd": l.checkout},
 	})
@@ -651,8 +682,8 @@ func TestCleanup_strayProcessBesideReviewerShellStillBlocks(t *testing.T) {
 	if !detached[fmt.Sprint(child)] || !detached[fmt.Sprint(stray)] {
 		t.Fatalf("detached = %v, want the reviewer shell's child %d and the stray %d", detached, child, stray)
 	}
-	if detached[fmt.Sprint(shell.Process.Pid)] {
-		t.Fatalf("detached = %v lists the reviewer shell %d", detached, shell.Process.Pid)
+	if detached[fmt.Sprint(shell)] {
+		t.Fatalf("detached = %v lists the reviewer shell %d", detached, shell)
 	}
 }
 
@@ -661,23 +692,7 @@ func TestCleanup_reviewerShellIsNotOrphanWhenWorkerPaneGone(t *testing.T) {
 	l.writeSettings(1, 1)
 	l.writeWorkerPane()
 	l.addReviewerPane(4343)
-	path := filepath.Join(l.herdr, "state.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	delete(state["panes"].(map[string]any), "w-worker:p1")
-	out, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	l.removeWorkerPane()
 	l.plantLsof([]map[string]any{{"pid": 4343, "cwd": l.checkout}})
 	l.saveTask(l.workerWithReviewerJSON())
 	plan := l.inspect()
@@ -689,5 +704,38 @@ func TestCleanup_reviewerShellIsNotOrphanWhenWorkerPaneGone(t *testing.T) {
 	}
 	if _, err := execution.Park(l.store, l.ctx, l.runtime, taskID, workerID); err != nil {
 		t.Fatalf("park held the closed worker on the reviewer shell: %v", err)
+	}
+}
+
+func TestCleanup_reviewerShellChildIsNotOrphanWhenWorkerPaneGone(t *testing.T) {
+	l := newLab(t)
+	l.writeSettings(1, 1)
+	l.writeWorkerPane()
+	shell, child := startReviewerShell(t, l.checkout)
+	l.addReviewerPane(shell)
+	l.removeWorkerPane()
+	l.plantLsof([]map[string]any{
+		{"pid": shell, "cwd": l.checkout},
+		{"pid": child, "cwd": l.checkout},
+	})
+	l.saveTask(l.workerWithReviewerJSON())
+	plan := l.inspect()
+	if orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }()); len(orphans) > 0 {
+		t.Fatalf("orphans = %v; apply would terminate the reviewer shell's child %d", orphans, child)
+	}
+	if !hasCode(blockerCodes(plan), "occupant") || !hasCode(blockerCodes(plan), "execution") {
+		t.Fatalf("cleanup blockers = %v details=%v, want occupant and execution", blockerCodes(plan), blockerDetails(plan))
+	}
+	named := false
+	for _, detail := range blockerDetails(plan) {
+		if strings.Contains(detail, fmt.Sprint(child)) {
+			named = true
+		}
+		if strings.Contains(detail, fmt.Sprintf("pid %d ", shell)) {
+			t.Fatalf("reviewer shell %d counted against the worker: %v", shell, blockerDetails(plan))
+		}
+	}
+	if !named {
+		t.Fatalf("reviewer shell child %d is not a named blocker: %v", child, blockerDetails(plan))
 	}
 }

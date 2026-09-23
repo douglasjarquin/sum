@@ -239,29 +239,68 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 // EndpointShells returns the shell pid Herdr currently reports for each other
 // pane the task records as its own endpoint (the reviewer pane). That shell
 // is accounted for by the endpoint's own close path, so it is neither a
-// worker occupant nor an orphan. Only the exact observed shell pid qualifies:
-// anything it runs is a separate pid and still binds the checkout. An
-// endpoint on another machine or session, or one Herdr cannot report, yields
-// nothing, so its processes keep blocking.
+// worker occupant nor an orphan. Only the exact observed shell pid qualifies,
+// and only while it sits in the pane's foreground as a known shell and the
+// live pane's cwd is the one the reviewer endpoint recorded: anything it runs
+// is a separate pid and still binds the checkout. An endpoint on another
+// machine or session, one Herdr cannot report, or one whose identity changed
+// yields nothing, so its processes keep blocking.
 func EndpointShells(runtimeRoot string, task *ordjson.Object) map[int]bool {
 	shells := map[int]bool{}
 	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
 	paneID := stringField(reviewer, "pane")
 	session := stringField(task, "session")
-	if paneID == "" || paneID == stringField(task, "pane") || stringField(reviewer, "session") != session {
+	recordedCwd := stringField(reviewer, "cwd")
+	if paneID == "" || paneID == stringField(task, "pane") || stringField(reviewer, "session") != session || recordedCwd == "" {
 		return shells
 	}
 	if host, err := os.Hostname(); err != nil || stringField(reviewer, "machine") != host {
 		return shells
 	}
-	info, _, err := environment.PaneProcesses(runtimeRoot, session, paneID)
+	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
+	if err != nil {
+		return shells
+	}
+	pane, _, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", paneID)
+	if err != nil || pane == nil {
+		return shells
+	}
+	paneObj := unwrapField(asObject(pane), "pane")
+	if resolve(stringField(paneObj, "cwd")) != resolve(recordedCwd) {
+		return shells
+	}
+	info, _, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "process-info", "--pane", paneID)
 	if err != nil || info == nil {
 		return shells
 	}
-	if n, ok := pidField(info, "shell_pid"); ok {
-		shells[n] = true
+	infoObj := unwrapField(asObject(info), "process_info")
+	shellPID, ok := pidField(infoObj, "shell_pid")
+	if !ok {
+		return shells
+	}
+	fg, _ := infoObj.Get("foreground_processes")
+	list, _ := fg.([]any)
+	for _, raw := range list {
+		p := asObject(raw)
+		argv0 := stringField(p, "argv0")
+		if argv0 == "" {
+			argv0 = stringField(p, "name")
+		}
+		if n, has := pidField(p, "pid"); has && n == shellPID && environment.IsShell(argv0) {
+			shells[shellPID] = true
+		}
 	}
 	return shells
+}
+
+func unwrapField(o *ordjson.Object, key string) *ordjson.Object {
+	if o == nil {
+		return nil
+	}
+	if inner := asObject(func() any { v, _ := o.Get(key); return v }()); inner != nil {
+		return inner
+	}
+	return o
 }
 
 func inspectRecordedPIDs(pids []int, occupant *ordjson.Object, occupantPID int) StopProof {
