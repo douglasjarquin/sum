@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -147,11 +148,22 @@ func TestProjectHookFiles_pointAtLspEnsure(t *testing.T) {
 		t.Fatalf("grok hook = %+v", g)
 	}
 	hookDir := filepath.Join(repo, ".grok", "hooks")
-	if resolved, under := commandResolvesUnderDir(g.Command, hookDir); under {
+	if g.Command != "../../bin/lsp-ensure" {
+		t.Fatalf("grok hook command = %q, want JSON-relative ../../bin/lsp-ensure", g.Command)
+	}
+	resolved, under := commandResolvesUnderDir(g.Command, hookDir)
+	if under {
 		t.Fatalf("grok hook command %q resolves under .grok/hooks/ as %s", g.Command, resolved)
 	}
-	if !strings.Contains(g.Command, "bin/lsp-ensure") || !strings.Contains(g.Command, "git rev-parse --show-toplevel") {
-		t.Fatalf("grok hook command = %q, want git toplevel bin/lsp-ensure", g.Command)
+	want := filepath.Join(repo, "bin", "lsp-ensure")
+	if resolved != want {
+		t.Fatalf("grok hook path = %s, want %s", resolved, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("grok hook target %s: %v", want, err)
+	}
+	if refs := hookCommandEnvRefs(g.Command); len(refs) > 0 {
+		t.Fatalf("grok hook command %q interpolates %v; Grok refuses unset ${VAR} before spawn", g.Command, refs)
 	}
 
 	var cursor struct {
@@ -186,8 +198,37 @@ func TestProjectHookFiles_pointAtLspEnsure(t *testing.T) {
 	if c.Timeout != 120 {
 		t.Fatalf("codex timeout = %d", c.Timeout)
 	}
-	if g.Command != c.Command {
-		t.Fatalf("grok hook command %q, want same as codex %q", g.Command, c.Command)
+	if g.Command == c.Command {
+		t.Fatalf("grok hook must not reuse the Codex $root shell; both are %q", g.Command)
+	}
+}
+
+func TestGrokHookCommand_legacyRootShellRequiresUnsetEnv(t *testing.T) {
+	// Grok expands $VAR / ${VAR} in command before spawn. The Codex git-toplevel
+	// shell that used to live in .grok/hooks/lsp-ensure.json names $root, which
+	// Grok does not inject, so the hook is skipped with:
+	// hook not executed: required env var(s) not set: ${root}
+	legacy := "sh -c 'root=$(git rev-parse --show-toplevel 2>/dev/null || pwd); if [ -x \"$root/bin/lsp-ensure\" ]; then exec \"$root/bin/lsp-ensure\"; fi; exit 0'"
+	refs := hookCommandEnvRefs(legacy)
+	if !containsString(refs, "root") {
+		t.Fatalf("legacy command env refs = %v, want root", refs)
+	}
+	for _, name := range refs {
+		if grokInjectedHookEnv[name] {
+			t.Fatalf("legacy $%s is injected; this pin no longer reproduces the skip", name)
+		}
+	}
+}
+
+func TestGrokHookCommand_runsAsJSONRelativePath(t *testing.T) {
+	repo := repoRoot(t)
+	script := filepath.Clean(filepath.Join(repo, ".grok", "hooks", "../../bin/lsp-ensure"))
+	stdout, stderr, code := runLspEnsureHook(t, script, repo, grokHookPayload(repo))
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 (stderr=%s)", code, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("stdout must be empty, got %q", stdout)
 	}
 }
 
@@ -202,6 +243,46 @@ func commandResolvesUnderDir(command, dir string) (resolved string, under bool) 
 		return resolved, false
 	}
 	return resolved, rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// grokInjectedHookEnv is the reserved set Grok's hook runner injects on every spawn.
+var grokInjectedHookEnv = map[string]bool{
+	"GROK_HOOK_EVENT":     true,
+	"GROK_HOOK_NAME":      true,
+	"GROK_SESSION_ID":     true,
+	"GROK_WORKSPACE_ROOT": true,
+	"CLAUDE_PROJECT_DIR":  true,
+}
+
+var hookEnvRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)`)
+
+func hookCommandEnvRefs(command string) []string {
+	seen := map[string]struct{}{}
+	var names []string
+	for _, match := range hookEnvRef.FindAllStringSubmatch(command, -1) {
+		name := match[1]
+		if name == "" {
+			name = match[2]
+		}
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return names
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func copyLspEnsureHook(t *testing.T, root string) string {
