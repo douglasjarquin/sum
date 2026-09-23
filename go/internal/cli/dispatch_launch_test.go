@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
 var devinWorkerArgv = []string{"--permission-mode", "dangerous", "--respect-workspace-trust", "false"}
@@ -94,6 +96,22 @@ func TestDispatchOtherHarnessHasNoDevinArgv(t *testing.T) {
 	}
 	if _, ok := argsAfterSeparator(starts[0]); ok {
 		t.Fatalf("codex agent start args = %v, want no -- separator", starts[0])
+	}
+}
+
+func TestDispatchRecordsTheStableMachineIdentity(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "identity-worker", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	id, err := machine.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, occupant := launchedWorker(task)
+	for name, recorded := range map[string]any{"task": task["machine"], "attempt owner": asMap(attempt["owner"])["machine"], "occupant": occupant["machine"]} {
+		if recorded != id {
+			t.Fatalf("%s machine = %v, want the stable identity %s", name, recorded, id)
+		}
 	}
 }
 

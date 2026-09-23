@@ -407,3 +407,34 @@ func TestMachineIdentity_aDeliveryRecordedUnderTheHostnameKeyStillCounts(t *test
 		t.Fatalf("an interrupted delivery recorded under the hostname key was sent again: %d deliveries", len(deliveries))
 	}
 }
+
+func TestMachineIdentity_aLegacyWorkerPaneKeepsItsWorkerRoleAfterARename(t *testing.T) {
+	home := legacyHome(t, "dev")
+	herdrEnv(t, home)
+	worktree := t.TempDir()
+	task := strings.Replace(questionTask("t-aaaaaaaaaaaa", "dev", "dev", home), `"brief": "worker task"`, fmt.Sprintf(`"brief": "worker task", "worktree": %q`, worktree), 1)
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", task)
+	onHost(t, thisHostRaw, "dev")
+	mustRole(t, home, "coordinator")
+	onHost(t, thisHostRaw, "renamed")
+
+	t.Setenv("HERDR_PANE_ID", "w-worker:p1")
+	mustRole(t, home, "worker")
+	if out, err := runCLI(t, home, "notes", "t-aaaaaaaaaaaa", "--text", "checkpoint"); err != nil {
+		t.Fatalf("notes: %v\n%s", err, out)
+	}
+	notes, err := os.ReadFile(filepath.Join(home, "tasks", "t-aaaaaaaaaaaa", "notes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(notes), "worker w-worker:p1") {
+		t.Fatalf("note not attributed to the task's worker:\n%s", notes)
+	}
+	out, err := runCLI(t, home, "env", "discover", "t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("env discover: %v\n%s", err, out)
+	}
+	if by := decodeObject(t, out)["by"]; by != "worker" {
+		t.Fatalf("env discover by = %v, want worker", by)
+	}
+}

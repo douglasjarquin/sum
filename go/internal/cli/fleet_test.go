@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/updatecmd"
@@ -139,6 +140,14 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	}
 	if asString(asMap(applied["default"])["sha"]) != sha1 {
 		t.Fatalf("apply one sha = %v, want %s", asMap(applied["default"])["sha"], sha1)
+	}
+	id, err := machine.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged := readJSON(t, filepath.Join(f.root, ".local", "releases", sha1, "release.json"))
+	if by := asMap(staged["staged_by"])["machine"]; by != id {
+		t.Fatalf("staged_by machine = %v, want the stable identity %s", by, id)
 	}
 
 	first, delta := f.measure(true, "refresh", "request")
