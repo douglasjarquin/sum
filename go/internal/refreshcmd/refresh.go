@@ -346,15 +346,6 @@ func recordDelivery(versionsObj *ordjson.Object, revisionID string, event *ordjs
 	versionsObj.Set("refresh", list)
 }
 
-func identityEquals(host machine.Identity, a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return host.Same(asString(func() any { v, _ := a.Get("machine"); return v }()), asString(func() any { v, _ := b.Get("machine"); return v }())) &&
-		asString(func() any { v, _ := a.Get("session"); return v }()) == asString(func() any { v, _ := b.Get("session"); return v }()) &&
-		asString(func() any { v, _ := a.Get("pane"); return v }()) == asString(func() any { v, _ := b.Get("pane"); return v }())
-}
-
 func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runtimeRoot, sumctlPath string, host machine.Identity) (*ordjson.Object, error) {
 	id := asString(func() any { v, _ := task.Get("id"); return v }())
 	row := ordjson.NewObject()
@@ -463,7 +454,7 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 	endpoint.Set("session", func() any { v, _ := task.Get("session"); return v }())
 	endpoint.Set("machine", func() any { v, _ := task.Get("machine"); return v }())
 	var event *ordjson.Object
-	if identityEquals(host, endpoint, ctx) {
+	if host.SameEndpoint(endpoint, ctx) {
 		event = ordjson.NewObject()
 		event.Set("state", "pending-busy")
 		event.Set("reason", "the target is the calling pane; read the revision and adopt it at this turn boundary")
@@ -726,7 +717,7 @@ func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runt
 	unlock()
 	state := versions.RevisionView(filepath.Join(s.Home, versions.ContractDir), target)
 	var event *ordjson.Object
-	if owner == nil || identityEquals(host, owner, ctx) {
+	if owner == nil || host.SameEndpoint(owner, ctx) {
 		event = ordjson.NewObject()
 		event.Set("state", "pending-busy")
 		event.Set("reason", "the coordinator is the calling pane; read the contract revision and run `refresh adopt --coordinator` at this turn boundary")

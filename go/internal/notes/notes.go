@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/douglasjarquin/sum/go/internal/environment"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -101,7 +102,11 @@ func Add(s *store.Store, taskID, text string, endpoint *ordjson.Object) (*ordjso
 	}
 	id, _ := task.Get("id")
 	idString, _ := id.(string)
-	role := endpointRole(task, endpoint)
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
+	role := endpointRole(host, task, endpoint)
 	if role == "" {
 		role = "unattributed"
 	}
@@ -151,41 +156,24 @@ func Add(s *store.Store, taskID, text string, endpoint *ordjson.Object) (*ordjso
 	return result, nil
 }
 
-func endpointRole(task, endpoint *ordjson.Object) string {
+func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string {
 	if endpoint == nil {
 		return ""
 	}
-	if matchesIdentity(task, endpoint) {
-		if pane, ok := task.Get("pane"); ok && pane != nil && pane != "" {
-			return "worker"
-		}
+	if pane, ok := task.Get("pane"); ok && pane != nil && pane != "" && host.SameEndpoint(task, endpoint) {
+		return "worker"
 	}
 	if parentValue, ok := task.Get("parent"); ok {
-		if parent, isObj := parentValue.(*ordjson.Object); isObj && identitiesEqual(parent, endpoint) {
+		if parent, isObj := parentValue.(*ordjson.Object); isObj && host.SameEndpoint(parent, endpoint) {
 			return "coordinator"
 		}
 	}
 	if reviewerValue, ok := task.Get("reviewer"); ok {
-		if reviewer, isObj := reviewerValue.(*ordjson.Object); isObj && identitiesEqual(reviewer, endpoint) {
+		if reviewer, isObj := reviewerValue.(*ordjson.Object); isObj && host.SameEndpoint(reviewer, endpoint) {
 			return "reviewer"
 		}
 	}
 	return "other"
-}
-
-func matchesIdentity(task, endpoint *ordjson.Object) bool {
-	return identitiesEqual(task, endpoint)
-}
-
-func identitiesEqual(a, b *ordjson.Object) bool {
-	for _, field := range []string{"machine", "session", "pane"} {
-		av, _ := a.Get(field)
-		bv, _ := b.Get(field)
-		if av != bv {
-			return false
-		}
-	}
-	return true
 }
 
 func writeAtomic(path, content string) error {

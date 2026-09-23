@@ -102,9 +102,10 @@ func derive(raw string) string {
 func osRaw() (string, error) {
 	if runtime.GOOS == "darwin" {
 		darwinOnce.Do(func() { darwinRaw = darwinPlatformUUID() })
-		if darwinRaw != "" {
-			return darwinRaw, nil
+		if darwinRaw == "" {
+			return "", fmt.Errorf("cannot read the platform UUID from ioreg")
 		}
+		return darwinRaw, nil
 	}
 	for _, path := range linuxIDPaths {
 		if data, err := os.ReadFile(path); err == nil {
@@ -139,27 +140,23 @@ func darwinPlatformUUID() string {
 	return ""
 }
 
-// generatedRaw covers a host whose operating system has no machine identifier
-// (some minimal containers). The value is created once per user state
-// directory, outside any sum installation, so copying an installation or
-// restoring a backup never carries it to another host.
+// generatedRaw covers a Linux host with no machine identifier (some minimal
+// containers). The value is created once under the user's home directory,
+// outside any sum installation, so copying an installation or restoring a
+// backup never carries it to another host.
 func generatedRaw() (string, error) {
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("identify machine: no operating-system machine ID and no home directory: %w", err)
-		}
-		dir = filepath.Join(home, ".local", "state")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("no operating-system machine ID and no home directory: %w", err)
 	}
-	path := filepath.Join(dir, "sum", "machine-id")
+	path := filepath.Join(home, ".local", "state", "sum", "machine-id")
 	if data, err := os.ReadFile(path); err == nil {
 		if raw := strings.TrimSpace(string(data)); raw != "" {
 			return raw, nil
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", fmt.Errorf("identify machine: %w", err)
+		return "", err
 	}
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
@@ -169,12 +166,12 @@ func generatedRaw() (string, error) {
 	if errors.Is(err, os.ErrExist) {
 		data, readErr := os.ReadFile(path)
 		if readErr != nil || strings.TrimSpace(string(data)) == "" {
-			return "", fmt.Errorf("identify machine: unreadable %s", path)
+			return "", fmt.Errorf("unreadable %s", path)
 		}
 		return strings.TrimSpace(string(data)), nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("identify machine: %w", err)
+		return "", err
 	}
 	raw := hex.EncodeToString(buf)
 	_, writeErr := handle.WriteString(raw + "\n")
@@ -182,7 +179,7 @@ func generatedRaw() (string, error) {
 		writeErr = closeErr
 	}
 	if writeErr != nil {
-		return "", fmt.Errorf("identify machine: %w", writeErr)
+		return "", writeErr
 	}
 	return raw, nil
 }
@@ -289,6 +286,22 @@ func (m Identity) Canonical(recorded any) string {
 // Same reports whether two recorded machine values name the same host.
 func (m Identity) Same(a, b any) bool {
 	return m.Canonical(a) == m.Canonical(b)
+}
+
+// SameEndpoint reports whether two recorded endpoints name the same pane: the
+// same machine, Herdr session, and pane ID.
+func (m Identity) SameEndpoint(a, b *ordjson.Object) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	field := func(o *ordjson.Object, key string) string {
+		v, _ := o.Get(key)
+		s, _ := v.(string)
+		return s
+	}
+	return m.Same(field(a, "machine"), field(b, "machine")) &&
+		field(a, "session") == field(b, "session") &&
+		field(a, "pane") == field(b, "pane")
 }
 
 // Legacy lists the hostname values that name this host in records written

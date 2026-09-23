@@ -168,7 +168,8 @@ func deliver(s *store.Store, opts PumpOpts, route *ordjson.Object, items [][2]*o
 	if err != nil {
 		return nil, err
 	}
-	key := RouteKey(route)
+	keys := routeKeys(host, route)
+	key := keys[0]
 	listing := []any{}
 	for _, pair := range items {
 		task, obligation := pair[0], pair[1]
@@ -178,7 +179,7 @@ func deliver(s *store.Store, opts PumpOpts, route *ordjson.Object, items [][2]*o
 		if err != nil {
 			return nil, err
 		}
-		state := NotificationState(returnsObj, obligation, key)
+		state := NotificationState(returnsObj, obligation, keys...)
 		row := ordjson.NewObject()
 		row.Set("task", taskID)
 		for _, k := range []string{"id", "kind", "ref"} {

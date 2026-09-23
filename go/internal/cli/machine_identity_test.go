@@ -62,8 +62,9 @@ func questionTask(id, taskMachine, parentMachine, cwd string) string {
  "attention": [], "evidence": [], "report": null, "notice": null, "brief": "worker task"}`, id, taskMachine, parentMachine, cwd, id[2:6])
 }
 
-// bindReturnsInline rebinds a task to this coordinator and requires the
-// delivery pass to route its open question back to this pane.
+// bindReturnsInline rebinds a task to this coordinator and requires its open
+// question to have reached this pane inline, in this delivery pass or an
+// earlier one, and never a second time.
 func bindReturnsInline(t *testing.T, home, taskID string) {
 	t.Helper()
 	out, err := runCLI(t, home, "bind", taskID, "--parent-only")
@@ -72,12 +73,24 @@ func bindReturnsInline(t *testing.T, home, taskID string) {
 	}
 	returns, _ := decodeObject(t, out)["returns"].(map[string]any)
 	recipients, _ := returns["recipients"].([]any)
-	if len(recipients) == 0 {
-		t.Fatalf("bind %s routed no return to the coordinator: %v", taskID, returns)
+	for _, raw := range recipients {
+		row, _ := raw.(map[string]any)
+		obligations, _ := row["obligations"].([]any)
+		for _, rawObligation := range obligations {
+			obligation, _ := rawObligation.(map[string]any)
+			if obligation["task"] != taskID {
+				continue
+			}
+			notification, _ := obligation["notification"].(map[string]any)
+			sentNow := row["state"] == "submitted" && row["via"] == "inline" && notification["attempts"] == float64(0)
+			sentBefore := notification["state"] == "submitted" && notification["via"] == "inline" && notification["attempts"] == float64(1)
+			if !sentNow && !sentBefore {
+				t.Fatalf("bind %s return = %v, want one inline submission to this pane", taskID, row)
+			}
+			return
+		}
 	}
-	if row, _ := recipients[0].(map[string]any); row["state"] != "submitted" || row["via"] != "inline" {
-		t.Fatalf("bind %s return = %v, want submitted inline", taskID, row)
-	}
+	t.Fatalf("bind %s routed no return to the coordinator: %v", taskID, returns)
 }
 
 func readJSON(t *testing.T, path string) map[string]any {
@@ -353,5 +366,44 @@ func extractArchive(t *testing.T, archive string) string {
 		if err := os.WriteFile(target, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestMachineIdentity_aLegacyWorkerPaneStillCannotAnswerItsOwnQuestion(t *testing.T) {
+	home := legacyHome(t, "dev")
+	herdrEnv(t, home)
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", "dev", "dev", home))
+	onHost(t, thisHostRaw, "dev")
+	mustRole(t, home, "coordinator")
+	onHost(t, thisHostRaw, "renamed")
+
+	t.Setenv("HERDR_PANE_ID", "w-worker:p1")
+	out, err := runCLI(t, home, "answer", "t-aaaaaaaaaaaa", "q-aaaa", "--text", "approved")
+	if err == nil || !strings.Contains(err.Error(), "worker pane cannot record") {
+		t.Fatalf("answer from the task's own worker pane = %v %s, want the worker refusal", err, out)
+	}
+}
+
+func TestMachineIdentity_aDeliveryRecordedUnderTheHostnameKeyStillCounts(t *testing.T) {
+	home := legacyHome(t, "dev")
+	herdrEnv(t, home)
+	id := onHost(t, thisHostRaw, "dev")
+	// t-aaaa, routed under the stable identity, sorts first and shares the
+	// coordinator's bucket with the legacy t-bbbb.
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", id, id, home))
+	writeTaskFixture(t, home, "t-bbbbbbbbbbbb", questionTask("t-bbbbbbbbbbbb", "dev", "dev", home))
+	legacyKey := store.RegistrationKey(store.Endpoint{Machine: "dev", Session: "sum-test", Pane: "w-parent:p1"})
+	interrupted := fmt.Sprintf(`{"schema": 1, "task": "t-bbbbbbbbbbbb", "deliveries": [{"id": "d-0000000001", "at": "2026-01-01T00:00:00+00:00",
+ "recipient": {"recipient": "parent", "role": "coordinator", "machine": "dev", "session": "sum-test", "pane": "w-parent:p1", "key": %q},
+ "state": "in-flight", "runtime": {"sum_version": "0.1.0", "sha": null}, "obligations": ["question:q-bbbb"]}]}`, legacyKey)
+	returnsPath := filepath.Join(home, "tasks", "t-bbbbbbbbbbbb", "returns.json")
+	if err := os.WriteFile(returnsPath, []byte(interrupted), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mustRole(t, home, "coordinator")
+	deliveries, _ := readJSON(t, returnsPath)["deliveries"].([]any)
+	if len(deliveries) != 1 {
+		t.Fatalf("an interrupted delivery recorded under the hostname key was sent again: %d deliveries", len(deliveries))
 	}
 }

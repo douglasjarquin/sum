@@ -17,33 +17,20 @@ var (
 	toolNamePat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`)
 )
 
-func identityEquals(host machine.Identity, a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	am, _ := a.Get("machine")
-	bm, _ := b.Get("machine")
-	as, _ := a.Get("session")
-	bs, _ := b.Get("session")
-	ap, _ := a.Get("pane")
-	bp, _ := b.Get("pane")
-	return host.Same(am, bm) && as == bs && ap == bp
-}
-
 func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string {
 	if endpoint == nil {
 		return ""
 	}
-	if pane, ok := task.Get("pane"); ok && pane != nil && identityEquals(host, task, endpoint) {
+	if pane, ok := task.Get("pane"); ok && pane != nil && host.SameEndpoint(task, endpoint) {
 		return "worker"
 	}
 	if parent, ok := task.Get("parent"); ok {
-		if p, is := parent.(*ordjson.Object); is && identityEquals(host, p, endpoint) {
+		if p, is := parent.(*ordjson.Object); is && host.SameEndpoint(p, endpoint) {
 			return "coordinator"
 		}
 	}
 	if reviewer, ok := task.Get("reviewer"); ok {
-		if r, is := reviewer.(*ordjson.Object); is && identityEquals(host, r, endpoint) {
+		if r, is := reviewer.(*ordjson.Object); is && host.SameEndpoint(r, endpoint) {
 			return "reviewer"
 		}
 	}

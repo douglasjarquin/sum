@@ -92,15 +92,6 @@ func samePath(a, b string) bool {
 	return ra == rb
 }
 
-func identityEquals(host machine.Identity, a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return host.Same(stringField(a, "machine"), stringField(b, "machine")) &&
-		stringField(a, "session") == stringField(b, "session") &&
-		stringField(a, "pane") == stringField(b, "pane")
-}
-
 func herdrPath(runtimeRoot string) (string, error) {
 	return toolpath.Find(runtimeRoot, "herdr")
 }
@@ -1019,7 +1010,7 @@ func (ins *inspection) reviewer() error {
 	}
 	parent := asObject(func() any { v, _ := ins.task.Get("parent"); return v }())
 	host := ins.host()
-	if identityEquals(host, reviewer, ins.task) || identityEquals(host, reviewer, parent) || identityEquals(host, reviewer, ins.ctx) {
+	if host.SameEndpoint(reviewer, ins.task) || host.SameEndpoint(reviewer, parent) || host.SameEndpoint(reviewer, ins.ctx) {
 		row.Set("reason", "reviewer endpoint is the worker or coordinator pane")
 		ins.block("reviewer", "reviewer endpoint equals the worker or coordinator pane; refusing")
 		return nil

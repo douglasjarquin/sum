@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/versions"
@@ -277,6 +278,29 @@ func RouteKey(route *ordjson.Object) any {
 	return store.RegistrationKey(store.Endpoint{Machine: machineStr, Session: sessionStr, Pane: paneStr})
 }
 
+// routeKeys lists the delivery keys that name route's recipient: the key of
+// its endpoint under the stable machine identity first, then, for this host,
+// the keys a legacy hostname identity produced, so deliveries recorded before
+// the stable identity still count toward the same recipient.
+func routeKeys(host machine.Identity, route *ordjson.Object) []any {
+	if RouteKey(route) == nil {
+		return []any{nil}
+	}
+	session, _ := route.Get("session")
+	pane, _ := route.Get("pane")
+	endpoint := store.Endpoint{Machine: host.Canonical(routeValue(route, "machine")), Session: session.(string), Pane: pane.(string)}
+	keys := []any{store.RegistrationKey(endpoint)}
+	if endpoint.Machine != host.ID {
+		return keys
+	}
+	for _, legacy := range host.Legacy() {
+		alias := endpoint
+		alias.Machine = legacy
+		keys = append(keys, store.RegistrationKey(alias))
+	}
+	return keys
+}
+
 func ReadReturns(s *store.Store, taskID string) (*ordjson.Object, error) {
 	taskPath, err := s.TaskPath(taskID)
 	if err != nil {
@@ -327,7 +351,9 @@ func Write(s *store.Store, value *ordjson.Object) error {
 	return ordjson.WriteFile(filepath.Join(taskPath, File), value)
 }
 
-func NotificationState(returnsObj *ordjson.Object, obligation *ordjson.Object, key any) *ordjson.Object {
+// NotificationState summarises the deliveries of obligation to the recipient
+// whose route produced keys; see routeKeys.
+func NotificationState(returnsObj *ordjson.Object, obligation *ordjson.Object, keys ...any) *ordjson.Object {
 	obligationID, _ := obligation.Get("id")
 	deliveriesValue, _ := returnsObj.Get("deliveries")
 	deliveryList, _ := deliveriesValue.([]any)
@@ -353,8 +379,11 @@ func NotificationState(returnsObj *ordjson.Object, obligation *ordjson.Object, k
 		if recipient != nil {
 			recipientKey, _ = recipient.Get("key")
 		}
-		if recipientKey == key {
-			attempts = append(attempts, delivery)
+		for _, key := range keys {
+			if recipientKey == key {
+				attempts = append(attempts, delivery)
+				break
+			}
 		}
 	}
 
@@ -427,6 +456,10 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
 	obligations, err := OpenObligations(s, task)
 	if err != nil {
 		return nil, err
@@ -450,7 +483,7 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 			routeView.Set(key, v)
 		}
 		row.Set("route", routeView)
-		row.Set("notification", NotificationState(returnsObj, obligation, RouteKey(route)))
+		row.Set("notification", NotificationState(returnsObj, obligation, routeKeys(host, route)...))
 		rows = append(rows, row)
 		id, _ := obligation.Get("id")
 		openIDs[id] = true

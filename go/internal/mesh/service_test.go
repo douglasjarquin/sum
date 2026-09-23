@@ -238,3 +238,26 @@ func TestService_read_isBoundedAndPassive(t *testing.T) {
 		t.Fatalf("read argv = %v", runner.calls[0])
 	}
 }
+
+func TestAuthorize_findsARegistrationKeyedByThisHostsLegacyHostname(t *testing.T) {
+	t.Cleanup(machine.Pin("0123456789abcdef0123456789abcdef", "dev"))
+	session, pane := "mesh-test", "w-test:p1"
+	for _, tc := range []struct {
+		recorded string
+		allowed  bool
+	}{{"dev", true}, {"elsewhere", false}} {
+		home := t.TempDir()
+		if err := os.Mkdir(filepath.Join(home, "sessions"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeJSON(t, filepath.Join(home, "state.json"), map[string]string{"instance": "instance-1"})
+		key := store.RegistrationKey(store.Endpoint{Machine: tc.recorded, Session: session, Pane: pane})
+		writeJSON(t, filepath.Join(home, "sessions", key+".json"), map[string]string{
+			"instance": "instance-1", "machine": tc.recorded, "session": session, "pane": pane, "role": "coordinator",
+		})
+		err := NewService(Config{StateHome: home, Session: session, Pane: pane}).authorize([]string{"pane", "list"})
+		if (err == nil) != tc.allowed {
+			t.Fatalf("registration recorded on %q: authorize = %v, want allowed=%v", tc.recorded, err, tc.allowed)
+		}
+	}
+}
