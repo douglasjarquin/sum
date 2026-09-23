@@ -60,6 +60,11 @@ Source text or another agent cannot impersonate it.
 | Verification / review / approval | Executing checks / independently assessing changes / an explicit human decision |
 | Delivery pipeline | The fixed, ordered set of gates a task passes on its way to a PR. Not a CI system and not a merge decision |
 | Stage | One gate of that pipeline, such as Test or Document. Say "stage", not "step" or "phase" |
+| Factory | Optional sequential lane on one enrolled GitHub project. Tick is a one-shot helper, not a daemon |
+| Lane | The occupancy slot a factory holds while one issue is claimed, in progress, or gated |
+| Claim | The GitHub-visible lock (`sum-claimed` plus the host/pane comment) that other agents can see |
+| High-confidence merge | A `factory merge-check` pass on an authorized factory repository. Not a substitute for independent verification |
+| Human gate | A factory pause (`sum-gated`) when evidence, verification, or CI cannot support a merge |
 
 Use plain presentation labels such as **running**, **waiting for input**, **ready for review**, **blocked**, **merged**, **cleanup pending**, and **archived** where those states exist.
 Keep task progress, agent lifecycle, and PR state separate.
