@@ -532,15 +532,10 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		if v, ok := info.Get("shell_pid"); ok {
 			shellPID = v
 		}
-		processes, _ := info.Get("processes")
-		list, _ := processes.([]any)
-		if len(list) == 1 {
-			p := asObject(list[0])
-			if p != nil {
-				occPID, _ = p.Get("pid")
-				occArgv, _ = p.Get("argv")
-				captured = occPID != nil && occArgv != nil
-			}
+		if leader := environment.ForegroundLeader(info); leader != nil {
+			occPID, _ = leader.Get("pid")
+			occArgv, _ = leader.Get("argv")
+			captured = true
 		}
 	}
 	occupant.Set("shell_pid", shellPID)
@@ -557,7 +552,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		obs.Set("pid", occPID)
 	} else {
 		obs.Set("outcome", "occupant-uncertain")
-		obs.Set("reason", "not exactly one foreground process")
+		obs.Set("reason", "no foreground process group leader besides the shell")
 	}
 	if _, err := reservations.Transition(current, fmt.Sprint(wid), next, store.Now(), obs, nil); err != nil {
 		return failStart(s, taskID, err)

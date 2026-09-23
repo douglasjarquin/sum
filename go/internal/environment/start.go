@@ -200,10 +200,40 @@ func PaneProcesses(runtimeRoot, session, paneID string) (*ordjson.Object, string
 		}
 		rows = append(rows, row)
 	}
+	group, _ := shell("foreground_process_group_id")
 	result := ordjson.NewObject()
 	result.Set("shell_pid", shellPID)
+	result.Set("foreground_process_group_id", group)
 	result.Set("processes", rows)
 	return result, "", nil
+}
+
+// ForegroundLeader returns the process leading the pane's foreground job: the
+// one whose pid is the foreground process group id. Children the job forks
+// (an agent's MCP servers) inherit that group, so the leader is the launched
+// command however many processes share the foreground. It returns nil unless
+// the leader is not the pane's shell, is observed exactly once, and carries a
+// pid and argv; an exited leader or a shell in the foreground proves nothing.
+func ForegroundLeader(info *ordjson.Object) *ordjson.Object {
+	group := intField(info, "foreground_process_group_id")
+	if group <= 0 || group == intField(info, "shell_pid") {
+		return nil
+	}
+	var leader *ordjson.Object
+	for _, raw := range listField(info, "processes") {
+		p, _ := raw.(*ordjson.Object)
+		if intField(p, "pid") != group {
+			continue
+		}
+		if leader != nil {
+			return nil
+		}
+		leader = p
+	}
+	if len(listField(leader, "argv")) == 0 {
+		return nil
+	}
+	return leader
 }
 
 func normalizedArgv(argv any) []string {
