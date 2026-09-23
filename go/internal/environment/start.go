@@ -159,6 +159,9 @@ func herdrPath(runtimeRoot string) (string, error) {
 	return toolpath.Find(runtimeRoot, "herdr")
 }
 
+// IsShell reports whether argv0 names a known interactive shell.
+func IsShell(argv0 string) bool { return shells[argv0] }
+
 func PaneProcesses(runtimeRoot, session, paneID string) (*ordjson.Object, string, error) {
 	path, err := herdrPath(runtimeRoot)
 	if err != nil {

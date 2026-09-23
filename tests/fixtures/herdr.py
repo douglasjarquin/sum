@@ -219,6 +219,8 @@ if args[:2] == ["pane", "process-info"]:
     if "--pane" not in args: fail("explicit pane required")
     pane = state["panes"].get(arg("--pane"))
     if not pane: fail("pane_not_found", "pane not found")
+    # Scenario data: the pane is listed but its processes cannot be read.
+    if pane.get("process_info_error"): fail(pane["process_info_error"])
     if pane.get("replace_after") is not None:
         pane["replace_after"] -= 1
         if pane["replace_after"] <= 0:
