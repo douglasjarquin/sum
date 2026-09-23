@@ -229,9 +229,15 @@ if args[:2] == ["pane", "process-info"]:
     shell = pane.get("shell_pid", 4242)
     # A pane's process list is scenario data written by the test; the default is an idle shell in the pane cwd.
     foreground = pane.get("processes", [{"pid": shell, "name": "bash", "argv0": "bash", "argv": ["-bash"], "cwd": pane["cwd"]}])
+    group = foreground[0]["pid"] if foreground else shell
     if pane.get("agent") and "processes" not in pane:  # A live agent occupies the foreground until the scenario clears it.
-        foreground = [{"pid": pane.get("agent_pid", shell + 1), "name": pane["agent"], "argv0": pane["agent"], "argv": [pane["agent"]], "cwd": pane["cwd"]}]
-    emit({"process_info": {"pane_id": pane["pane_id"], "shell_pid": shell, "foreground_process_group_id": foreground[0]["pid"] if foreground else shell,
+        group = pane.get("agent_pid", shell + 1)
+        foreground = [{"pid": group, "name": pane["agent"], "argv0": pane["agent"], "argv": [pane["agent"]], "cwd": pane["cwd"]}]
+        # FAKE_AGENT_CHILDREN=N: the agent forks N children (MCP servers, like Claude Code's) that inherit its foreground group.
+        foreground += [{"pid": group + 100000 + i, "name": "node", "argv0": "node", "argv": ["node", "mcp-server-%d" % i], "cwd": pane["cwd"]}
+                       for i in range(int(os.environ.get("FAKE_AGENT_CHILDREN", "0")))]
+        if os.environ.get("FAKE_AGENT_LEADER_GONE"): foreground = foreground[1:]  # The group leader exited; only its children remain.
+    emit({"process_info": {"pane_id": pane["pane_id"], "shell_pid": shell, "foreground_process_group_id": group,
                            "foreground_processes": foreground}})
 # --- issue #17 service surface: split, run, interrupt, wait-output. Processes are scenario data; a run makes one appear ---------
 def lsof_scenario():

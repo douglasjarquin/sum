@@ -97,6 +97,73 @@ func TestDispatchOtherHarnessHasNoDevinArgv(t *testing.T) {
 	}
 }
 
+func launchedWorker(task map[string]any) (attempt, occupant map[string]any) {
+	attempt = asMap(asMap(task["execution"])["worker"])
+	return attempt, asMap(attempt["occupant"])
+}
+
+// settleFakeWorker returns the fake worker pane to idle, like a worker that
+// finished its turn and waits for the next instruction.
+func settleFakeWorker(t *testing.T, base, pane string) {
+	t.Helper()
+	path := filepath.Join(base, "fake", "state.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	asMap(asMap(state["panes"])[pane])["agent_status"] = "idle"
+	out, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDispatchBindsAgentThatStartsForegroundChildren(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "mcp-children", map[string]string{"README.md": "x\n"})
+	d.setEnv("FAKE_AGENT_CHILDREN", "2")
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--approved")
+	attempt, occupant := launchedWorker(task)
+	if state := asString(attempt["state"]); state != "running" {
+		t.Fatalf("worker attempt state = %q, want running; observations %v", state, attempt["observations"])
+	}
+	if occupant["pid"] == nil || !reflect.DeepEqual(occupant["argv"], []any{"claude"}) || occupant["shell_pid"] == nil {
+		t.Fatalf("occupant = %v, want the claude group leader bound with its shell", occupant)
+	}
+	settleFakeWorker(t, d.base, asString(task["pane"]))
+	sent := d.ctl(false, "repair", "send", asString(task["id"]), "--attempt", asString(attempt["id"]), "--key", "rebase", "--text", "Rebase onto main.")
+	if msg := asString(sent["error"]); msg != "" {
+		t.Fatalf("repair send to the bound worker failed: %s", msg)
+	}
+}
+
+func TestDispatchKeepsForegroundWithoutItsLeaderUncertain(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "orphaned-group", map[string]string{"README.md": "x\n"})
+	d.setEnv("FAKE_AGENT_CHILDREN", "2")
+	d.setEnv("FAKE_AGENT_LEADER_GONE", "1")
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--approved")
+	attempt, occupant := launchedWorker(task)
+	if state := asString(attempt["state"]); state != "uncertain" {
+		t.Fatalf("worker attempt state = %q, want uncertain when no group leader is observed", state)
+	}
+	if occupant["pid"] != nil || occupant["argv"] != nil {
+		t.Fatalf("occupant = %v, want no guessed pid", occupant)
+	}
+	settleFakeWorker(t, d.base, asString(task["pane"]))
+	sent := d.ctl(false, "repair", "send", asString(task["id"]), "--attempt", asString(attempt["id"]), "--key", "rebase", "--text", "Rebase onto main.")
+	if msg := asString(sent["error"]); !strings.Contains(msg, "exact running worker attempt") {
+		t.Fatalf("repair send to an uncertain attempt = %v, want refusal", sent)
+	}
+}
+
 func TestDispatchRetriesAgentPaneBusy(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "busy-pane", map[string]string{"README.md": "x\n"})

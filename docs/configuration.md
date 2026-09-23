@@ -57,6 +57,9 @@ Admission uses the same global and per-repository limits under the local record 
 A refused admission launches nothing.
 
 Use `execution show TASK_ID` to read the current attempt IDs.
+A launched worker attempt becomes `running` only when Herdr's `pane process-info` shows its occupant: the leader of the pane's foreground process group (the process whose pid is that group id), not the shell, observed exactly once with a pid and argv.
+Children the agent forks into that group, such as a harness's MCP servers, do not make the identity ambiguous.
+A foreground without such a leader (the shell holding it, or a leader that already exited) leaves the attempt `uncertain` with its reservation held; nothing binds a guessed pid, and an attempt recorded `uncertain` before this rule stays so.
 After a worker exits, `execution park TASK_ID --attempt ATTEMPT_ID` checks its recorded attempt, instance, occupant, pane, checkout, processes, and owned services before releasing the slot.
 Missing, stale, or unobservable identity is unknown, not stopped.
 The command stops nothing and preserves questions, reports, evidence, and the checkout.

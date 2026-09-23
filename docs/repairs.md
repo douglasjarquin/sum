@@ -19,7 +19,7 @@ A send for work outside the approved brief is an `expansion` and needs a recorde
 ./bin/sumctl repair send TASK_ID --attempt ATTEMPT_ID --key correction-2 --class expansion --reason "the extra endpoint the user asked for" --file /absolute/path/to/correction.md
 ```
 
-The command records the instruction before delivery and refuses a busy worker or a changed attempt.
+The command records the instruction before delivery and refuses a busy worker, a changed attempt, or an attempt that is not `running` (an `uncertain` launch included).
 Repeating the same key and instruction reads the saved outcome without sending or charging again.
 A delivery Herdr refuses before it reaches the worker records nothing and charges nothing.
 An uncertain expansion delivery stays charged, including when the helper exits after saving its intent; a queued or mid-turn delivery counts as delivered.
