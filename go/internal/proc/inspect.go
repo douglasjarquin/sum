@@ -115,7 +115,8 @@ func cwdProcesses() ([]CWDProcess, error) {
 	return rows, nil
 }
 
-func checkoutRoots(worktree string) []string {
+// CheckoutRoots is a checkout path plus its symlink-resolved form, the roots process matching compares against.
+func CheckoutRoots(worktree string) []string {
 	roots := []string{worktree}
 	if real, err := filepath.EvalSymlinks(worktree); err == nil {
 		roots = append(roots, real)
@@ -140,7 +141,7 @@ func ProcessesIn(worktree string, exclude map[int]bool) ([]CWDProcess, error) {
 	if err != nil {
 		return nil, err
 	}
-	roots := checkoutRoots(worktree)
+	roots := CheckoutRoots(worktree)
 	self := os.Getpid()
 	var inside []CWDProcess
 	for _, row := range rows {
@@ -167,7 +168,7 @@ func ProcessesBoundTo(worktree string, exclude map[int]bool) ([]BoundProcess, er
 	if err != nil {
 		return nil, err
 	}
-	roots := checkoutRoots(worktree)
+	roots := CheckoutRoots(worktree)
 	self := os.Getpid()
 	cwdOf := map[int]string{}
 	for _, row := range rows {

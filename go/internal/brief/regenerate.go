@@ -362,9 +362,13 @@ func graphText(s *store.Store, sumctlPath string, task *ordjson.Object) string {
 			errText = "no detail recorded"
 		}
 		lines = append(lines, fmt.Sprintf("- State: `%s`: %s. The graph is not usable here; %s", state, errText, graphview.GraphFallback))
-		lines = append(lines, fmt.Sprintf("- The coordinator may retry with `%s`; read `%s` (`graph`) for a later state. Do not run `codegraph init`, `index`, or `install` yourself; index ownership stays recorded by sum.",
-			shquote.CommandFor(sumctlPath, s.Home, "graph", "init", id),
-			shquote.CommandFor(sumctlPath, s.Home, "context", id, "--section", "execution")))
+		if state == "exhausted" {
+			lines = append(lines, "- The retry bound is spent: sum refuses further `graph init` for this task. Do not run `codegraph init`, `index`, or `install` yourself; read the source.")
+		} else {
+			lines = append(lines, fmt.Sprintf("- The coordinator may retry with `%s`; read `%s` (`graph`) for a later state. Do not run `codegraph init`, `index`, or `install` yourself; index ownership stays recorded by sum.",
+				shquote.CommandFor(sumctlPath, s.Home, "graph", "init", id),
+				shquote.CommandFor(sumctlPath, s.Home, "context", id, "--section", "execution")))
+		}
 	}
 	lines = append(lines, "- Graph results assist exploration only. They replace no verification command, feature-map row, evidence capture, or the coordinator's independent run and review.")
 	lines = append(lines, fmt.Sprintf("- Do not run `codegraph install`, `upgrade`, `serve`, or `uninstall`, and do not edit any MCP or harness configuration. Native MCP is optional per harness: `%s` prints a snippet with the pinned binary for a person to merge by hand; nothing is auto-allowed.",

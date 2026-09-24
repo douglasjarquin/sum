@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -113,7 +114,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 	result.Set("reopened", reopened)
 	result.Set("role", "developer")
 	result.Set("pane", paneView)
-	result.Set("note", fmt.Sprintf("Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates. sum built no code graph here; read the source, or index this checkout yourself on demand with `CODEGRAPH_NO_DAEMON=1 CODEGRAPH_NO_DOWNLOAD=1 %s init %s`.", graph.BinPath(runtimeRoot), path))
+	result.Set("note", fmt.Sprintf("Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates. sum built no code graph here; read the source, or index this checkout yourself on demand with `CODEGRAPH_NO_DAEMON=1 CODEGRAPH_NO_DOWNLOAD=1 %s`.", shquote.Join([]string{graph.BinPath(runtimeRoot), "init", path})))
 	return result, nil
 }
 

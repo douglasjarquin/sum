@@ -24,6 +24,8 @@ const (
 	statusTimeout = 60 * time.Second
 	// statusPreview is how much of a non-JSON status answer the recorded reason quotes.
 	statusPreview = 200
+	// writerArgsPreview is how much of a live writer's argv the refusal quotes.
+	writerArgsPreview = 200
 	// maxFailures is the documented bound: the third failed attempt records `exhausted`.
 	maxFailures = 3
 )
@@ -91,12 +93,12 @@ func identity(worktree string) (*ordjson.Object, error) {
 	return row, nil
 }
 
-func InitCheckout(s *store.Store, runtimeRoot, worktree, purpose string, existing *ordjson.Object) *ordjson.Object {
+func InitCheckout(s *store.Store, runtimeRoot, worktree string, existing *ordjson.Object) *ordjson.Object {
 	record := existing
 	if record == nil {
 		record = ordjson.NewObject()
 		record.Set("schema", jsonInt(graphview.GraphSchema))
-		record.Set("purpose", purpose)
+		record.Set("purpose", "task")
 		record.Set("attempts", []any{})
 		record.Set("indexed_head", nil)
 	}
@@ -218,8 +220,15 @@ func completeIndex(bin, worktree string) (*ordjson.Object, error) {
 		return nil, fmt.Errorf("codegraph status could not confirm the index: %s", asString(errValue))
 	}
 	status := asObject(func() any { v, _ := live.Get("status"); return v }())
+	if status == nil {
+		return nil, fmt.Errorf("%w: codegraph status did not return an object", errIncomplete)
+	}
 	initialized, _ := status.Get("initialized")
-	state, _ := asObject(func() any { v, _ := status.Get("index"); return v }()).Get("state")
+	// An uninitialized checkout's status carries no `index` block at all.
+	var state any
+	if index := asObject(func() any { v, _ := status.Get("index"); return v }()); index != nil {
+		state, _ = index.Get("state")
+	}
 	mismatch, _ := status.Get("worktreeMismatch")
 	if initialized != true || state != "complete" || mismatch != nil {
 		return nil, fmt.Errorf("%w: codegraph status reports initialized %v, index state %v, worktree mismatch %v", errIncomplete, initialized, state, mismatch)
@@ -295,7 +304,7 @@ func InitTask(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, erro
 	if len(writers) > 0 {
 		return nil, fmt.Errorf("A codegraph writer is still running for %s (%s). Nothing was started or recorded, and sum stops no process; retry `graph init %s` after it exits. `graph status %s` observes the index meanwhile.", worktreeStr, strings.Join(writers, "; "), taskID, taskID)
 	}
-	record := InitCheckout(s, runtimeRoot, worktreeStr, "task", existing)
+	record := InitCheckout(s, runtimeRoot, worktreeStr, existing)
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -326,10 +335,7 @@ var writerCommands = map[string]bool{"init": true, "index": true, "sync": true}
 // shim as `<bundle>/node ... lib/dist/bin/codegraph.js init <checkout>`, never under the runtime's tool path, so
 // the match is by argv shape rather than by the recorded binary.
 func liveWriters(worktree string) ([]string, error) {
-	roots := []string{worktree}
-	if resolved, err := filepath.EvalSymlinks(worktree); err == nil && resolved != worktree {
-		roots = append(roots, resolved)
-	}
+	roots := proc.CheckoutRoots(worktree)
 	table, err := proc.ProcessTable()
 	if err != nil {
 		return nil, err
@@ -339,8 +345,8 @@ func liveWriters(worktree string) ([]string, error) {
 	for _, row := range table {
 		if row.PID != self && isWriter(row.Args, roots) {
 			args := row.Args
-			if len(args) > statusPreview {
-				args = args[:statusPreview] + "..."
+			if len(args) > writerArgsPreview {
+				args = args[:writerArgsPreview] + "..."
 			}
 			writers = append(writers, fmt.Sprintf("pid %d: %s", row.PID, args))
 		}
@@ -352,6 +358,9 @@ func liveWriters(worktree string) ([]string, error) {
 // argument after it is a writing subcommand, and which names one of roots or a path inside it. The checkout is
 // matched in the raw string because checkout paths may contain spaces.
 func isWriter(args string, roots []string) bool {
+	if !strings.Contains(args, "codegraph") {
+		return false
+	}
 	fields := strings.Fields(args)
 	for i, field := range fields {
 		base := filepath.Base(field)

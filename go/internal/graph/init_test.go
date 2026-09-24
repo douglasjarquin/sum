@@ -86,7 +86,7 @@ func TestInitCheckoutTimeoutRecordsFailedAttempt(t *testing.T) {
 	repo := gitRepo(t)
 
 	start := time.Now()
-	record := InitCheckout(nil, t.TempDir(), repo, "task", nil)
+	record := InitCheckout(nil, t.TempDir(), repo, nil)
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Fatalf("InitCheckout took %s; the init bound was not applied", elapsed)
 	}
@@ -123,7 +123,7 @@ func TestInitCheckoutTimeoutNamesHeldDescendant(t *testing.T) {
 	repo := gitRepo(t)
 
 	start := time.Now()
-	record := InitCheckout(nil, t.TempDir(), repo, "task", nil)
+	record := InitCheckout(nil, t.TempDir(), repo, nil)
 	if elapsed := time.Since(start); elapsed > 12*time.Second {
 		t.Fatalf("InitCheckout took %s", elapsed)
 	}
@@ -146,7 +146,7 @@ func TestInitCheckoutSuccessRecordsReady(t *testing.T) {
 	statusFake(t, "complete")
 	repo := gitRepo(t)
 
-	record := InitCheckout(nil, t.TempDir(), repo, "task", nil)
+	record := InitCheckout(nil, t.TempDir(), repo, nil)
 	if state := get(record, "state"); state != "ready" {
 		t.Fatalf("state = %v, error = %v, want ready", state, get(record, "error"))
 	}
@@ -160,7 +160,7 @@ func TestInitCheckoutExitFailureKeepsToolOutput(t *testing.T) {
 	fakeCodegraph(t, "echo 'index broke' >&2; exit 3")
 	repo := gitRepo(t)
 
-	record := InitCheckout(nil, t.TempDir(), repo, "task", nil)
+	record := InitCheckout(nil, t.TempDir(), repo, nil)
 	if state := get(record, "state"); state != "failed" {
 		t.Fatalf("state = %v, want failed", state)
 	}
@@ -354,7 +354,7 @@ func calls(t *testing.T, log string) []string {
 func TestInitCheckoutReadyOnlyWhenStatusConfirmsComplete(t *testing.T) {
 	isolate(t)
 	_, log := statusFake(t, "complete")
-	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), nil)
 	if get(record, "state") != "ready" {
 		t.Fatalf("state = %v, error = %v", get(record, "state"), get(record, "error"))
 	}
@@ -370,7 +370,7 @@ func TestInitCheckoutRebuildsAnIncompleteIndexOnce(t *testing.T) {
 	isolate(t)
 	_, log := statusFake(t, "indexing")
 	t.Setenv("REBUILD_OK", "1")
-	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), nil)
 	if get(record, "state") != "ready" {
 		t.Fatalf("state = %v, error = %v", get(record, "state"), get(record, "error"))
 	}
@@ -382,7 +382,7 @@ func TestInitCheckoutRebuildsAnIncompleteIndexOnce(t *testing.T) {
 func TestInitCheckoutNeverReadyFromAPartialIndex(t *testing.T) {
 	isolate(t)
 	_, log := statusFake(t, "indexing")
-	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), nil)
 	if get(record, "state") != "failed" {
 		t.Fatalf("state = %v, want failed", get(record, "state"))
 	}
@@ -400,7 +400,7 @@ func TestInitCheckoutNeverReadyFromAPartialIndex(t *testing.T) {
 func TestInitCheckoutUnreadableStatusIsNotReady(t *testing.T) {
 	isolate(t)
 	fakeCodegraph(t, "if [ \"$1\" = status ]; then echo 'not json'; fi")
-	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), nil)
 	if get(record, "state") != "failed" {
 		t.Fatalf("state = %v, want failed", get(record, "state"))
 	}
@@ -413,7 +413,7 @@ func TestInitCheckoutThirdFailureExhausts(t *testing.T) {
 	var record *ordjson.Object
 	var states []string
 	for i := 0; i < 3; i++ {
-		record = InitCheckout(nil, t.TempDir(), repo, "task", record)
+		record = InitCheckout(nil, t.TempDir(), repo, record)
 		states = append(states, asString(get(record, "state")))
 	}
 	if got := strings.Join(states, ","); got != "failed,failed,exhausted" {
@@ -427,7 +427,7 @@ func TestInitCheckoutUnavailableNeverExhausts(t *testing.T) {
 	repo := gitRepo(t)
 	var record *ordjson.Object
 	for i := 0; i < 4; i++ {
-		record = InitCheckout(nil, t.TempDir(), repo, "task", record)
+		record = InitCheckout(nil, t.TempDir(), repo, record)
 	}
 	if get(record, "state") != "unavailable" {
 		t.Fatalf("state = %v", get(record, "state"))
@@ -441,17 +441,55 @@ func TestInitCheckoutUnavailableNeverExhausts(t *testing.T) {
 func TestInitCheckoutBoundsRecordedDiagnostics(t *testing.T) {
 	isolate(t)
 	fakeCodegraph(t, "head -c 9000000 /dev/zero | tr '\\0' x; echo 'final: index broke' >&2; exit 3")
-	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), nil)
 	errText := asString(get(lastAttempt(t, record), "error"))
 	if len(errText) > 4200 || !strings.Contains(errText, "final: index broke") {
 		t.Fatalf("attempt error is %d bytes (want <= ~4 KB) containing the stderr line: %.200q", len(errText), errText)
 	}
 	fakeCodegraph(t, "head -c 9000000 /dev/zero | tr '\\0' x; exit 3")
-	record = InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	record = InitCheckout(nil, t.TempDir(), gitRepo(t), nil)
 	if get(record, "state") != "failed" {
 		t.Fatalf("state = %v", get(record, "state"))
 	}
 	if errText := asString(get(lastAttempt(t, record), "error")); len(errText) > 4200 {
 		t.Fatalf("stdout-only attempt error is %d bytes", len(errText))
+	}
+}
+
+func TestInitCheckoutUninitializedStatusIsFailedNotAPanic(t *testing.T) {
+	isolate(t)
+	fakeCodegraph(t, `if [ "$1" = status ]; then echo '{"initialized": false}'; fi`)
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), nil)
+	if get(record, "state") != "failed" {
+		t.Fatalf("state = %v, want failed", get(record, "state"))
+	}
+	fakeCodegraph(t, `if [ "$1" = status ]; then echo '[1, 2]'; fi`)
+	if state := get(InitCheckout(nil, t.TempDir(), gitRepo(t), nil), "state"); state != "failed" {
+		t.Fatalf("non-object status: state = %v, want failed", state)
+	}
+}
+
+func TestInitCheckoutFailedRebuildRecordsIndexAttempt(t *testing.T) {
+	isolate(t)
+	fakeCodegraph(t, `case "$1" in
+  status) echo '{"initialized": true, "index": {"state": "indexing"}}';;
+  index) echo 'rebuild broke' >&2; exit 4;;
+esac`)
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), nil)
+	attempt := lastAttempt(t, record)
+	if get(record, "state") != "failed" || get(attempt, "action") != "index" {
+		t.Fatalf("state = %v, last action = %v; want failed on index", get(record, "state"), get(attempt, "action"))
+	}
+	if errText := asString(get(attempt, "error")); !strings.Contains(errText, "rebuild broke") {
+		t.Fatalf("attempt error = %q", errText)
+	}
+}
+
+func TestLiveWritersRefusesWhenTheProcessTableIsUnreadable(t *testing.T) {
+	isolate(t)
+	checkout := t.TempDir()
+	t.Setenv("PATH", t.TempDir()) // no ps: the table cannot be read
+	if writers, err := liveWriters(checkout); err == nil {
+		t.Fatalf("liveWriters without ps = %v, nil; want an error", writers)
 	}
 }

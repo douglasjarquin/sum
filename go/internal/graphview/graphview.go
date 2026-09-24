@@ -130,7 +130,7 @@ func graphFailures(record *ordjson.Object) []any {
 	return failures
 }
 
-// FailureCount is how many recorded attempts failed; the explicit init path exhausts at MaxFailures.
+// FailureCount is how many recorded attempts failed; package graph exhausts a record at its own bound on this count.
 func FailureCount(record *ordjson.Object) int {
 	return len(graphFailures(record))
 }
