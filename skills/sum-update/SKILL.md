@@ -23,10 +23,10 @@ All commands run from the installation directory with its own `./bin/sumctl`; ea
 ```sh
 ./bin/sumctl update check [--ref REF] [--no-fetch]     # fetch origin, resolve the merged SHA, report default/active/compatibility; selects nothing
 ./bin/sumctl update stage [--ref REF] [--no-fetch]     # check plus stage .local/releases/<sha>; the default is unchanged
-./bin/sumctl update apply [--ref REF] [--no-fetch]     # stage if needed, validate under the activation lock, switch the default, fast-forward a clean installation clone
+./bin/sumctl update apply [--ref REF] [--no-fetch] [--allow-pre-machine-identity]   # stage if needed, validate under the activation lock, switch the default, fast-forward a clean installation clone
 ./bin/sumctl update status                             # default and active runtime, checkout HEAD/dirty, staged releases, recent selections
-./bin/sumctl update rollback [--to SHA|checkout]       # recorded previous approved runtime; --to needs exact approved identity. Staging is not approval
-./bin/sumctl update recover --generation GENERATION  # recover the exact pending activation without repeating it
+./bin/sumctl update rollback [--to SHA|checkout] [--allow-pre-machine-identity]     # recorded previous approved runtime; --to needs exact approved identity. Staging is not approval
+./bin/sumctl update recover --generation GENERATION [--allow-pre-machine-identity]  # recover the exact pending activation without repeating it
 ```
 
 `--ref` defaults to the tip of `origin/<default branch>`; any other value must already be merged there (an ancestor of that tip).
@@ -37,7 +37,7 @@ An unmerged self-development or task branch is refused.
 ## What apply does, in order
 
 1. Refuse any pending activation under the lock; outside the lock, fetch origin, resolve the SHA, and stage the bundle (source from `git archive`, pinned tools, Mesh, overlay, Herdr skill, `release.json`).
-2. Under `.local/update.lock` (non-blocking; a concurrent update is refused with the current selection intact): validate the bundle against its manifest, the installation's state schema, every non-archived task's brief schema (legacy records count as schema 1), the installed Herdr version, the pinned tool links, and then run the candidate's own helper read-only (`--version`, `status`, `show` for the most recent tasks) against the real records.
+2. Under `.local/update.lock` (non-blocking; a concurrent update is refused with the current selection intact): validate the bundle against its manifest, the installation's state schema, every non-archived task's brief schema (legacy records count as schema 1), the stable machine identity once the records carry it (see "Rolling back below the stable machine identity"), the installed Herdr version, the pinned tool links, and then run the candidate's own helper read-only (`--version`, `status`, `show` for the most recent tasks) against the real records.
 3. Resolve the recorded previous known-good target by exact path and SHA, not from a checkout HEAD that apply may later fast-forward.
    If pending is empty and committed known-good does not match the serving default, verify that default with the same target checks and entrypoint check, record it as known-good, and use it as the previous-target.
    A real pending generation still refuses; `update recover --generation` remains the path.
@@ -125,6 +125,22 @@ Trusted receipts in `.local/approvals.json` allow offline immutable rollback wit
 An explicit staged target must have exact identity, matching provenance, a complete manifest, compatible state and protocol, and a usable entrypoint.
 Checkout rollback requires a clean tracked and untracked tree whose exact revision is already approved and whose contract evidence comes from that checkout, not from the executing helper's compiled contract.
 
+### Rolling back below the stable machine identity
+
+A release offers the stable machine identity when its `release.json` lists `supports.machine_identity: [1]`; a checkout target offers it through its own `release-contract`.
+A release from before that identity compares each recorded `machine` to the raw hostname.
+Once the records carry a stable `m-` value, that release sees every record as another machine: the coordinator pane is demoted to developer, `init --role coordinator --reclaim` is refused as other-machine, and recovery means rewriting records by hand.
+The records carry it when the coordinator's `context.json`, any session registration, or any task records a `machine` of the form `m-` plus 32 hex digits.
+`.sum/machine.json` is not the evidence, because backups exclude it and a restored home would carry stable records without it.
+
+`update apply --ref`, `update rollback` (default, `--to SHA`, and `--to checkout`), and `update recover` refuse such a target, and the refusal names the record that carries the identity.
+`update check` and `update stage` report the same row as `compatibility.machine_identity` (`supported`, `unused` when the records carry only hostnames, `refused`, or `overridden`) and select nothing.
+Pass `--allow-pre-machine-identity` only when the user decides on an emergency rollback to such a release.
+The override is recorded as `machine_identity_override` in `.local/updates.jsonl` (the `selecting` and `selected` entries of that generation, or the `recover` entry) and in the pending activation record.
+A target that offers the identity, and an installation whose records carry only hostnames, are unaffected, and passing the flag records nothing for them.
+When a failed activation restores the runtime that served just before it, that compensation does not ask for the flag again: the same records ran on it moments ago.
+After an overridden rollback, plan to roll forward rather than rewrite records; the older release is also the one running `update`, and it does not know this check.
+
 Refusal diagnostics that leave selection and previous-known-good unchanged:
 
 - `No recorded previous known-good selection` when default history is missing or already current
@@ -133,6 +149,7 @@ Refusal diagnostics that leave selection and previous-known-good unchanged:
 - `Update approval receipt does not match the selected revision and tree` when the receipt and Git tree disagree
 - `N staged releases match SHA` when the prefix is missing or ambiguous
 - `candidate bundle` / `checkout contract` when target evidence is absent, incomplete, or incompatible
+- `the target release predates the stable machine identity` when the records already carry it and `--allow-pre-machine-identity` was not given
 
 Rollback to a staged SHA also fast-forwards a clean installation clone when that SHA is an ancestor of `origin/<default branch>` and the move is a fast-forward.
 Otherwise Git is left alone and the symlink still rolls back.

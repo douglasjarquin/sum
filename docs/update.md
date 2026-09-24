@@ -15,13 +15,15 @@ Update, rollback, refresh, and runtime releases. Moved out of the README.
 An update activates only a revision merged on the sum `origin` default branch, resolved to an immutable SHA.
 It fast-forwards a clean installation clone to the selected SHA.
 It never resets, stashes, or force-updates a dirty or diverged tree, never edits a development or task checkout, never restarts Herdr, agents, dev services, or a connected MCP server, and never upgrades Herdr.
-Network, build, and dependency work happen before the activation lock; validation covers the release manifest, the state and brief schemas of the recorded tasks, the installed Herdr, the pinned tools, and a read-only run of the candidate helper against the real records.
+Network, build, and dependency work happen before the activation lock; validation covers the release manifest, the state and brief schemas of the recorded tasks, the stable machine identity once the records carry it, the installed Herdr, the pinned tools, and a read-only run of the candidate helper against the real records.
 Staged files are not approval: `.local/approvals.json` binds approved revisions to this installation, while `.local/activation.json` records the known-good runtime and any pending activation.
 Before switching, SUM records `pending.recovery.argv` against the previous known-good helper and checks that helper with `--version`.
 If the new stable entrypoint fails its check, SUM restores that exact previous target and checks it.
 If recovery also fails, it preserves the pending operation and reports both failures.
 An interrupted update requires explicit generation-bound recovery before another apply or rollback; the atomic pointer change alone does not prove activation completed.
 Rollback requires an approved compatible target, and checkout rollback also requires a clean checkout with a matching approval.
+Once the coordinator's `context.json`, a session registration, or a task records a stable `m-` machine identity, apply, rollback, and recover refuse a target whose manifest does not offer `supports.machine_identity` 1: that older release compares recorded machines to the raw hostname, so it would demote the coordinator and refuse its reclaim as other-machine.
+`--allow-pre-machine-identity` overrides the refusal for a deliberate emergency rollback and is recorded in `.local/updates.jsonl` as `machine_identity_override`.
 Commands already running finish on the runtime they resolved; worker briefs carry stable `<installation>/bin/sumctl` commands, so their callbacks keep working across the switch; new dispatches use the new default; connected MCP clients keep their tool set until the client itself restarts.
 A refusal names the exact incompatibility and leaves the old installation serving.
 See `skills/sum-update/SKILL.md` for bootstrap, canary, and rollback steps.

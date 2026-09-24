@@ -4,7 +4,11 @@ const (
 	SumVersion  = "0.1.0"
 	StateSchema = 1
 	BriefSchema = 1
-	HerdrCLI    = "0.9.0"
+	// MachineIdentity 1 is the stable `m-` identity: a release offering it
+	// resolves recorded machine values through internal/machine rather than
+	// comparing them to the raw hostname.
+	MachineIdentity = 1
+	HerdrCLI        = "0.9.0"
 )
 
 var MCP = MCPContract{Server: "herdr-mesh-sum", Version: SumVersion, Tools: 10}
@@ -21,8 +25,9 @@ type Contracts struct {
 }
 
 type Supports struct {
-	StateSchema []int `json:"state_schema"`
-	BriefSchema []int `json:"brief_schema"`
+	StateSchema     []int `json:"state_schema"`
+	BriefSchema     []int `json:"brief_schema"`
+	MachineIdentity []int `json:"machine_identity"`
 }
 
 type Release struct {
@@ -35,6 +40,6 @@ func BuildRelease() Release {
 	return Release{
 		SumVersion: SumVersion,
 		Contracts:  Contracts{HerdrCLI: HerdrCLI, MCP: MCP},
-		Supports:   Supports{StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}},
+		Supports:   Supports{StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}},
 	}
 }

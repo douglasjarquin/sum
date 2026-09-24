@@ -18,7 +18,7 @@ import (
 
 func TestApply_fastForwardsCleanInstallationCheckout(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestApply_refusesDirtyCheckoutAndKeepsRuntime(t *testing.T) {
 	if err := os.WriteFile(dirty, []byte("DIRTY MARKER\nold instructions\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestApply_doesNotMutateNonInstallationPath(t *testing.T) {
 	if otherHead != lab.oldSHA {
 		t.Fatalf("other clone HEAD = %s, want %s", otherHead, lab.oldSHA)
 	}
-	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true); err != nil {
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if got := git(t, lab.other, "rev-parse", "HEAD"); got != lab.oldSHA {
@@ -234,7 +234,7 @@ func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
     "native": {}
   },
   "contracts": {},
-  "supports": {"state_schema": [1], "brief_schema": [1]},
+  "supports": {"state_schema": [1], "brief_schema": [1], "machine_identity": [1]},
   "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": {"machine": "m1", "installation": %q, "instance": null}
 }`, sha, tree, root, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "), root)
 	writeFile(t, filepath.Join(dir, "release.json"), manifest)

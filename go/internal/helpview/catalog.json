@@ -2074,6 +2074,10 @@
       {
         "name": "--no-fetch",
         "help": "Use the already fetched origin refs (offline host)"
+      },
+      {
+        "name": "--allow-pre-machine-identity",
+        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; for a deliberate emergency rollback only. The override is recorded in the update history."
       }
     ],
     "subcommands": null,
@@ -2095,6 +2099,10 @@
       {
         "name": "--to",
         "help": "SHA of a staged approved release, or checkout. Omitted means the recorded previous known-good runtime. Dirty or unapproved --to checkout is refused."
+      },
+      {
+        "name": "--allow-pre-machine-identity",
+        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; for a deliberate emergency rollback only. The override is recorded in the update history."
       }
     ],
     "subcommands": null,
@@ -2109,6 +2117,10 @@
         "name": "--generation",
         "help": null,
         "required": true
+      },
+      {
+        "name": "--allow-pre-machine-identity",
+        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; for a deliberate emergency rollback only. The override is recorded in the update history."
       }
     ],
     "subcommands": null,
