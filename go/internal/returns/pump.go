@@ -110,6 +110,7 @@ type pass struct {
 	sha      any
 	shaDone  bool
 	deferred int
+	lockWait time.Duration
 }
 
 // fits reports whether a call bounded by d, plus the runner's pipe grace, still fits the pass.
@@ -230,14 +231,31 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows := []any{}
-	prompts := 0
-	for _, b := range ordered {
-		row, err := p.deliver(b)
+	// A recipient another operation is delivering to is revisited after every other recipient, so it holds up only
+	// itself; the revisit waits within the pass budget.
+	rows := make([]any, len(ordered))
+	var contended []int
+	for i, b := range ordered {
+		row, busy, err := p.deliver(b, false)
 		if err != nil {
 			return nil, err
 		}
-		rows = append(rows, row)
+		if busy {
+			contended = append(contended, i)
+			continue
+		}
+		rows[i] = row
+	}
+	for _, i := range contended {
+		row, _, err := p.deliver(ordered[i], true)
+		if err != nil {
+			return nil, err
+		}
+		rows[i] = row
+	}
+	prompts := 0
+	for _, r := range rows {
+		row := r.(*ordjson.Object)
 		via, _ := row.Get("via")
 		state, _ := row.Get("state")
 		if via == "prompt" && (state == "submitted" || state == "uncertain") {
@@ -262,6 +280,7 @@ func (p *pass) fanout() *ordjson.Object {
 	row := p.sn.Fanout()
 	row.Set("budget_ms", jsonInt(int(p.budget.Milliseconds())))
 	row.Set("deferred", jsonInt(p.deferred))
+	row.Set("lock_wait_ms", jsonInt(int(p.lockWait.Milliseconds())))
 	return row
 }
 
@@ -304,14 +323,15 @@ func fairOrder(s *store.Store, host machine.Identity, buckets map[string]*bucket
 	return ordered, nil
 }
 
-// revalidate re-reads each item's task under the delivery lock and keeps only obligations still open and still routed
-// to the recipient this bucket was built for. The pass's task snapshot selects work; it never authorizes a write.
-func (p *pass) revalidate(b *bucket) (kept [][2]*ordjson.Object, dropped []any, err error) {
-	want := identity(p.host, b.route)
-	wantCwd := fmt.Sprint(routeValue(b.route, "cwd"))
+// stillRouted re-reads each item's task and keeps only obligations still open and still routed to route's recipient
+// and checkout. The pass's task snapshot selects work; it never authorizes a write. The pass calls it once under the
+// recipient lock, again under the state lock right before the in-flight stamp, and again before recording an outcome.
+func (p *pass) stillRouted(route *ordjson.Object, items [][2]*ordjson.Object) (kept [][2]*ordjson.Object, dropped []any, err error) {
+	want := identity(p.host, route)
+	wantCwd := fmt.Sprint(routeValue(route, "cwd"))
 	fresh := map[string]*ordjson.Object{}
 	open := map[string]map[string]*ordjson.Object{}
-	for _, pair := range b.items {
+	for _, pair := range items {
 		id := fmt.Sprint(func() any { v, _ := pair[0].Get("id"); return v }())
 		task, ok := fresh[id]
 		if !ok {
@@ -330,13 +350,13 @@ func (p *pass) revalidate(b *bucket) (kept [][2]*ordjson.Object, dropped []any, 
 		}
 		oid := fmt.Sprint(func() any { v, _ := pair[1].Get("id"); return v }())
 		recipient := fmt.Sprint(func() any { v, _ := pair[1].Get("recipient"); return v }())
-		route := ReturnRoute(task, recipient)
+		current := ReturnRoute(task, recipient)
 		obligation := open[id][oid]
 		reason := ""
 		switch {
 		case obligation == nil:
 			reason = "closed since this pass read the task"
-		case identity(p.host, route) != want || fmt.Sprint(routeValue(route, "cwd")) != wantCwd:
+		case identity(p.host, current) != want || fmt.Sprint(routeValue(current, "cwd")) != wantCwd:
 			reason = "rebound to another recipient since this pass read the task; the next pass routes it"
 		}
 		if reason != "" {
@@ -359,8 +379,8 @@ func (p *pass) deferRow(row *ordjson.Object, reason string) *ordjson.Object {
 	return row
 }
 
-func (p *pass) deliver(b *bucket) (*ordjson.Object, error) {
-	s, opts, host := p.s, p.opts, p.host
+// deliver visits one recipient under its recipient lock. busy reports a first visit that found the lock held.
+func (p *pass) deliver(b *bucket, wait bool) (*ordjson.Object, bool, error) {
 	route := b.route
 	recipientObj := ordjson.NewObject()
 	for _, k := range []string{"recipient", "role", "machine", "session", "pane"} {
@@ -369,16 +389,23 @@ func (p *pass) deliver(b *bucket) (*ordjson.Object, error) {
 	row := ordjson.NewObject()
 	row.Set("recipient", recipientObj)
 	row.Set("via", nil)
-	unlock, err := s.DeliveryLockContext(p.ctx)
-	if err != nil {
-		if errors.Is(err, store.ErrDeliveryLockBusy) {
-			row.Set("obligations", pendingListing(b.items))
-			return p.deferRow(row, "another delivery pass held the delivery lock until this pass's budget ran out; nothing was sent or recorded"), nil
-		}
-		return nil, err
+	unlock, busy, deferReason, err := p.lock(b, wait)
+	if err != nil || busy {
+		return nil, busy, err
+	}
+	if deferReason != "" {
+		row.Set("obligations", pendingListing(b.items))
+		return p.deferRow(row, deferReason), false, nil
 	}
 	defer unlock()
-	items, dropped, err := p.revalidate(b)
+	row, err = p.deliverLocked(b, row)
+	return row, false, err
+}
+
+func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, error) {
+	s, opts, host := p.s, p.opts, p.host
+	route := b.route
+	items, dropped, err := p.stillRouted(route, b.items)
 	if err != nil {
 		return nil, err
 	}
@@ -474,10 +501,7 @@ func (p *pass) deliver(b *bucket) (*ordjson.Object, error) {
 	}
 	var mentioned, sendItems [][2]*ordjson.Object
 	for _, pair := range items {
-		task, obligation := pair[0], pair[1]
-		taskID, _ := task.Get("id")
-		oid, _ := obligation.Get("id")
-		k := [2]string{fmt.Sprint(taskID), fmt.Sprint(oid)}
+		k := pairKey(pair)
 		if named[k] {
 			mentioned = append(mentioned, pair)
 		}
@@ -518,11 +542,10 @@ func (p *pass) deliver(b *bucket) (*ordjson.Object, error) {
 	runtime.Set("sum_version", contract.SumVersion)
 	runtime.Set("sha", p.runtimeSHA())
 	delivery.Set("runtime", runtime)
+	claimed := false
 	finish := func(state, via, reason, errStr string) (*ordjson.Object, error) {
-		if err := stampDelivery(s, sendItems, delivery, map[string]any{"state": state, "via": via, "reason": reason, "finished_at": store.Now()}); err != nil {
-			return nil, err
-		}
-		if err := mirrorNotice(s, sendItems, route, state, legacy, errStr, deliveryID); err != nil {
+		changes := map[string]any{"state": state, "via": via, "reason": reason, "finished_at": store.Now()}
+		if err := p.record(route, sendItems, claimed, delivery, changes, state, legacy, errStr); err != nil {
 			return nil, err
 		}
 		row.Set("state", state)
@@ -533,21 +556,56 @@ func (p *pass) deliver(b *bucket) (*ordjson.Object, error) {
 	if key == nil {
 		return finish("not-delivered", "", "recipient has no recorded pane yet", "recipient has no recorded pane yet")
 	}
-	message := noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), mentioned, len(withheld))
 	if b.inline {
 		row.Set("via", "inline")
-		row.Set("message", message)
+		row.Set("message", noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), mentioned, len(withheld)))
 		if _, err := finish("submitted", "inline", "presented in the recipient's own command output", ""); err != nil {
 			return nil, err
 		}
 		row.Set("reason", "you are the recipient; this listing is the notice. Nothing is answered, applied, or verified by reading it.")
 		return row, nil
 	}
-	state, detail, errStr, deferReason := p.promptRecipient(route, sendItems, message, func() error {
-		return stampDelivery(s, sendItems, delivery, nil)
-	})
+	// claim runs under the state lock right before the prompt: it keeps only the returns still open and still routed
+	// here, rebuilds the notice from them, confirms the prompt still fits the pass, and records the in-flight attempt.
+	claim := func() (claimResult, error) {
+		unlock, err := s.Lock()
+		if err != nil {
+			return claimResult{}, err
+		}
+		defer unlock()
+		current, _, err := p.stillRouted(route, mentioned)
+		if err != nil {
+			return claimResult{}, err
+		}
+		var survivors [][2]*ordjson.Object
+		for _, pair := range current {
+			if sendable[pairKey(pair)] {
+				survivors = append(survivors, pair)
+			}
+		}
+		if len(survivors) == 0 {
+			return claimResult{quiet: "every return in this group closed or was rebound while the recipient was observed; nothing was sent or recorded"}, nil
+		}
+		if msg := p.checkIdentity(route, survivors); msg != "" {
+			return claimResult{refused: msg}, nil
+		}
+		if !p.fits(PromptTimeout) {
+			return claimResult{deferReason: "the pass budget ran out after this recipient was observed and before the prompt; nothing was sent or recorded"}, nil
+		}
+		if err := stampDeliveryLocked(s, survivors, delivery, nil); err != nil {
+			return claimResult{}, err
+		}
+		sendItems, claimed = survivors, true
+		return claimResult{message: noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), current, len(withheld))}, nil
+	}
+	state, detail, errStr, deferReason := p.promptRecipient(route, sendItems, claim)
 	if deferReason != "" {
 		return p.deferRow(row, deferReason), nil
+	}
+	if state == "quiet" {
+		row.Set("state", state)
+		row.Set("reason", detail)
+		return row, nil
 	}
 	row.Set("via", "prompt")
 	if _, err := finish(state, "prompt", detail, errStr); err != nil {
@@ -583,9 +641,9 @@ func pendingListing(items [][2]*ordjson.Object) []any {
 
 // promptRecipient decides one non-inline recipient. The pass snapshot rules out a recipient Herdr already shows gone,
 // busy, or elsewhere without a call of its own; a settled one is re-observed immediately before the prompt. A
-// non-empty deferReason means the budget did not admit the next call: nothing was sent or recorded. beforePrompt
-// records the in-flight attempt.
-func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object, message string, beforePrompt func() error) (state, detail, errStr, deferReason string) {
+// non-empty deferReason means the budget did not admit the next call: nothing was sent or recorded. claim records the
+// in-flight attempt and supplies the notice; state "quiet" means nothing was still owed.
+func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object, claim func() (claimResult, error)) (state, detail, errStr, deferReason string) {
 	notDelivered := func(msg string) (string, string, string, string) { return "not-delivered", msg, msg, "" }
 	if !p.host.Is(routeValue(route, "machine")) {
 		return notDelivered("Recipient is on another machine.")
@@ -635,13 +693,18 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 	if err != nil {
 		return notDelivered(err.Error())
 	}
-	if !p.fits(PromptTimeout) {
-		return "", "", "", "the pass budget ran out after this recipient was observed and before the prompt; nothing was sent or recorded"
-	}
-	if err := beforePrompt(); err != nil {
+	claimed, err := claim()
+	switch {
+	case err != nil:
 		return notDelivered("prompt was not accepted: " + err.Error())
+	case claimed.refused != "":
+		return notDelivered(claimed.refused)
+	case claimed.deferReason != "":
+		return "", "", "", claimed.deferReason
+	case claimed.quiet != "":
+		return "quiet", claimed.quiet, "", ""
 	}
-	if _, err := p.sn.Call(session, PromptTimeout, "agent", "prompt", pane, message); err != nil {
+	if _, err := p.sn.Call(session, PromptTimeout, "agent", "prompt", pane, claimed.message); err != nil {
 		state, detail, errStr := promptFailure(err)
 		if state == "uncertain" {
 			p.sn.Trip(session, "a prompt's effect is unknown")
@@ -735,120 +798,6 @@ func ObserveRecipient(s *store.Store, runtimeRoot string, route *ordjson.Object,
 		return &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
 	}
 	return checkAgent(herdrclient.UnwrapAgent(agent), expectedCwd)
-}
-
-func stampDelivery(s *store.Store, items [][2]*ordjson.Object, delivery *ordjson.Object, changes map[string]any) error {
-	seen := map[string]bool{}
-	deliveryID, _ := delivery.Get("id")
-	for _, pair := range items {
-		taskID, _ := pair[0].Get("id")
-		idStr, _ := taskID.(string)
-		if seen[idStr] {
-			continue
-		}
-		seen[idStr] = true
-		unlock, err := s.Lock()
-		if err != nil {
-			return err
-		}
-		returnsObj, err := ReadReturns(s, idStr)
-		if err != nil {
-			unlock()
-			return err
-		}
-		ids := []any{}
-		idSet := map[string]bool{}
-		for _, p := range items {
-			tid, _ := p[0].Get("id")
-			if fmt.Sprint(tid) != idStr {
-				continue
-			}
-			oid, _ := p[1].Get("id")
-			key := fmt.Sprint(oid)
-			if !idSet[key] {
-				idSet[key] = true
-				ids = append(ids, oid)
-			}
-		}
-		sortIDs(ids)
-		deliveriesValue, _ := returnsObj.Get("deliveries")
-		list, _ := deliveriesValue.([]any)
-		var existing *ordjson.Object
-		for _, d := range list {
-			obj, _ := d.(*ordjson.Object)
-			id, _ := obj.Get("id")
-			if id == deliveryID {
-				existing = obj
-				break
-			}
-		}
-		if existing != nil {
-			for k, v := range changes {
-				existing.Set(k, v)
-			}
-		} else {
-			entry := cloneObject(delivery)
-			entry.Set("obligations", ids)
-			for k, v := range changes {
-				entry.Set(k, v)
-			}
-			returnsObj.Set("deliveries", append(list, entry))
-		}
-		if err := Write(s, returnsObj); err != nil {
-			unlock()
-			return err
-		}
-		unlock()
-	}
-	return nil
-}
-
-func mirrorNotice(s *store.Store, items [][2]*ordjson.Object, route *ordjson.Object, state, reason, errStr, deliveryID string) error {
-	status := "pending"
-	switch state {
-	case "submitted":
-		status = "submitted-not-acknowledged"
-	case "uncertain":
-		status = "uncertain"
-	}
-	seen := map[string]bool{}
-	for _, pair := range items {
-		kind, _ := pair[1].Get("kind")
-		if kind == "refresh" {
-			continue
-		}
-		taskID, _ := pair[0].Get("id")
-		idStr, _ := taskID.(string)
-		if seen[idStr] {
-			continue
-		}
-		seen[idStr] = true
-		unlock, err := s.Lock()
-		if err != nil {
-			return err
-		}
-		task, err := s.ReadTask(idStr)
-		if err != nil {
-			unlock()
-			return err
-		}
-		notice := ordjson.NewObject()
-		notice.Set("at", store.Now())
-		notice.Set("recipient", routeValue(route, "recipient"))
-		notice.Set("reason", reason)
-		notice.Set("status", status)
-		notice.Set("delivery", deliveryID)
-		if errStr != "" {
-			notice.Set("error", errStr)
-		}
-		task.Set("notice", notice)
-		if err := s.SaveTask(task); err != nil {
-			unlock()
-			return err
-		}
-		unlock()
-	}
-	return nil
 }
 
 func noticeText(s *store.Store, sumctlPath, role string, items [][2]*ordjson.Object, withheld int) string {

@@ -25,14 +25,24 @@ with open(os.path.join(root, "calls"), "a") as out:
 cfg = json.load(open(os.path.join(root, "cfg.json")))
 sess = cfg.get(session, {})
 panes = sess.get("panes", {})
+def hold(verb, pane):
+    # A held call marks held-<verb>-<pane> and waits for release-<pane>, standing in for a slow or unreachable pane.
+    if sess.get("hold", {}).get(pane) != verb:
+        return
+    open(os.path.join(root, "held-%s-%s" % (verb, pane)), "w").close()
+    release, deadline = os.path.join(root, "release-" + pane), time.time() + 60
+    while not os.path.exists(release) and time.time() < deadline:
+        time.sleep(0.02)
 if rest[:2] == ["agent", "list"]:
     time.sleep(sess.get("list_hang", 0))
     print(json.dumps({"result": {"agents": [dict(pane_id=k, **v) for k, v in panes.items()]}})); sys.exit(0)
 if rest[:2] == ["agent", "get"]:
     if rest[2] not in panes:
         print(json.dumps({"error": {"code": "agent_not_found", "message": "gone"}}), file=sys.stderr); sys.exit(1)
+    hold("get", rest[2])
     print(json.dumps({"result": {"agent": dict(pane_id=rest[2], **panes[rest[2]])}})); sys.exit(0)
 if rest[:2] == ["agent", "prompt"]:
+    hold("prompt", rest[2])
     time.sleep(sess.get("prompt_hang", 0))
     print(json.dumps({"result": {}})); sys.exit(0)
 print("unsupported", file=sys.stderr); sys.exit(2)
@@ -450,7 +460,12 @@ func TestPassDefersWhileAnotherPassHoldsTheDeliveryLock(t *testing.T) {
 	l := newPassLab(t)
 	id := l.worker("lab", "w1:p1")
 	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": l.pane("idle", l.worktree(id))}})
-	unlock, err := l.s.DeliveryLock()
+	// An older release's pass holds the compatibility lock exclusively (a second Store stands in for its process).
+	legacy, err := store.Open(l.s.Home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := legacy.DeliveryLock()
 	if err != nil {
 		t.Fatal(err)
 	}

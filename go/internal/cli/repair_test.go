@@ -11,8 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/repair"
+	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 func TestRepairUnknownFlagsAreUsageErrorsBeforeRepair(t *testing.T) {
@@ -419,5 +423,87 @@ func TestRepairSend_classFlagValidation(t *testing.T) {
 	}
 	if got := readNamedTask(t, home, repairSendTask); got != before {
 		t.Fatal("flag validation mutated the task")
+	}
+}
+
+// holdRepairWorker holds the lab worker's recipient delivery lock the way a concurrent pump in another process would.
+func holdRepairWorker(t *testing.T, home string) func() {
+	t.Helper()
+	other, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := other.ReadTask(repairSendTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := returns.LockRecipient(other, context.Background(), returns.ReturnRoute(task, "worker"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return unlock
+}
+
+func TestRepairSend_waitsForAConcurrentDeliveryToTheSameWorker(t *testing.T) {
+	home, _ := repairSendLab(t)
+	old := repair.SendLockWait
+	repair.SendLockWait = 300 * time.Millisecond
+	t.Cleanup(func() { repair.SendLockWait = old })
+	before := readNamedTask(t, home, repairSendTask)
+
+	release := holdRepairWorker(t, home)
+	_, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main")
+	release()
+	if err == nil || !strings.Contains(err.Error(), "still in progress; nothing was sent or recorded") {
+		t.Fatalf("send while another delivery holds the worker = %v", err)
+	}
+	if after := readNamedTask(t, home, repairSendTask); after != before {
+		t.Fatalf("task changed although nothing was sent:\n%s", after)
+	}
+	// Once the other delivery finishes, the same key sends.
+	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main")
+	if err != nil || view["duplicate"] != false {
+		t.Fatalf("send after release = %v, %v", view, err)
+	}
+}
+
+func TestRepairSend_refusesAWorkerReboundWhileItWaited(t *testing.T) {
+	home, _ := repairSendLab(t)
+	settleRepairWorker(t, home)
+	release := holdRepairWorker(t, home)
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := runRepairCLI(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main")
+		done <- err
+	}()
+	time.Sleep(300 * time.Millisecond) // The send has read the route and is waiting for the worker's lock.
+	other, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := other.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := other.ReadTask(repairSendTask)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Set("pane", "w-worker:p9")
+	if err := other.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	release()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "Worker identity changed before corrective delivery; nothing sent.") {
+			t.Fatalf("send after a rebind = %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("send did not finish after the lock was released")
+	}
+	if strings.Contains(readNamedTask(t, home, repairSendTask), `"operations"`) {
+		t.Fatal("a refused send recorded an operation")
 	}
 }
