@@ -107,7 +107,7 @@ State files, returns, and manual dispatch are in [docs/architecture.md](docs/arc
 
 `bin/sumctl skills install` delegates explicit skill and agent selections to the pinned Vercel Skills CLI in project copy mode. See [docs/sum-skills.md](docs/sum-skills.md).
 
-Agent-loaded procedures ship with the distro as `AGENTS.md` and the bundled skills.
+Agent-loaded procedures ship with the distro: `AGENTS.md` is a short role bootstrap every session loads, `COORDINATOR.md` is the coordinator core `init` names, and each action's detail stays in the bundled skills, loaded only for that action.
 
 ## Documentation
 
@@ -129,7 +129,9 @@ Agent-loaded procedures ship with the distro as `AGENTS.md` and the bundled skil
 
 * [docs/terminology.md](docs/terminology.md) — user, coordinator, agent, reviewer, task, brief, question, inbox, result.
 
-* [AGENTS.md](AGENTS.md) — the coordinator contract.
+* [AGENTS.md](AGENTS.md) — the role bootstrap every session loads.
+
+* [COORDINATOR.md](COORDINATOR.md) — the coordinator core.
 
 ## Contributing
 

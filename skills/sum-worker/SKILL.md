@@ -27,8 +27,7 @@ Attach it to your handoff as `verification` (`run_id`, `outcome`, `record`, `can
 Your run is the worker's claim. The coordinator executes the same contract again under its own run id in a separate checkout and then performs the independent review; a run id is recorded once, so never reuse or edit one, and never carry a run of an earlier SHA over to a repaired candidate: run it again.
 `VERIFY.md`, `mise.toml`, `mise-tasks/`, the feature maps, and `.agents/skills/verify/` are verification policy; changing them is reviewed explicitly, and a candidate must not weaken the gate that certifies it.
 A `not-yet-standardized` checkout keeps the verification commands written in the approved task; list each with its exit code under `checks`.
-A map row whose Evidence cell names a screenshot, screencast, or red/green pair is not satisfied by a green suite: delivery blocks at the coordinator's Test gate until a comparison for your candidate exists, so capture it before you report rather than after they ask. When the task fixes something a user can see, or such a row covers what you changed, follow `.agents/skills/evidence/SKILL.md`: capture the before state from a separate checkout of the base SHA and the after state from your committed candidate, compare them, and list the `comparison.json` path under `artifacts`. A base you cannot run is recorded `unavailable`, never a fabricated red; a CLI/API change records transcripts with visual proof not applicable.
-Capture browser scenarios with `--convert` when ffmpeg is present so the screencast has an mp4 beside the AVI original: the coordinator can publish a converted screencast into the PR, an AVI is not rendered by GitHub. Publication itself is the coordinator's operation (`pr reconcile` publishes what your handoff lists; `sumctl pr evidence` repeats it), never yours; do not upload media or edit the PR body. List every `comparison.json` in the handoff artifacts, because that list is what the coordinator publishes from.
+A map row whose Evidence cell names a screenshot, screencast, or red/green pair is not satisfied by a green suite: delivery blocks at the coordinator's Test gate until a comparison for your candidate exists, so capture it before you report. When the task fixes something a user can see, or such a row covers what you changed, read the on-demand evidence file and list every `comparison.json` under `artifacts`. A base you cannot run is recorded `unavailable`, never a fabricated red. Publication is the coordinator's operation, never yours: do not upload media or edit the PR body.
 
 If the repository already uses MADE/No Mistakes, follow that verified configuration. Do not wrap it in a second autonomous repair/review loop.
 Otherwise report the commands you actually ran, their exit results, and remaining gaps. A successful command is evidence, not proof that its assertions are sufficient.
@@ -40,12 +39,13 @@ Do not reset the count, change an instruction key to replay uncertain work, or t
 Only the coordinator records the user's explicit additional allowance through `repair extend`.
 SUM does not enforce a hard cost or time cap over your internal loop or external harness commands.
 
-## Code graph
+## On-demand procedure
 
-Your brief's `## Code graph` section says whether your checkout has a codegraph index. It is usually `not built`: sum indexes a checkout only when the coordinator asks. Otherwise it is `ready` with the exact CLI commands, or why not (`failed`, `exhausted`, `unavailable`).
-A `ready` index is `.codegraph/` inside your checkout, built by the pinned codegraph of the runtime, in CLI mode: nothing watches it, so run the brief's `sync` command after you edit or commit and before you query; `status --json` reports only uncommitted edits as pending, and a commit, checkout, or rebase leaves the index silently behind until you sync.
-Use `explore`, `query`, `node`, and `affected` as exploration aids only. A result that contradicts a file, a pending sync, or any state other than `ready` means read the source; never turn a graph result into a structural conclusion, a verification result, or a reason to skip a mapped check.
-Do not run `codegraph init`, `index`, `install`, `upgrade`, `serve`, or `uninstall` yourself, do not point a query at the primary clone or another worktree, and do not edit MCP or harness configuration; the coordinator owns index initialization (`sumctl graph init TASK_ID`) and prints any MCP snippet for a person to merge. Ask through `sumctl ask` if an index would materially help. `context --section execution` carries the current `graph` state if it changed after your brief was written.
+Your brief's `## Worker procedure` lists, besides this required core, on-demand files with the condition for reading each. Read one when its condition applies, not before. Until then these rules hold:
+
+- Code graph: an index exists only when the coordinator built one; it is an exploration aid, never verification, a structural conclusion, or a reason to skip a mapped check. Never run `codegraph init`, `index`, `install`, `upgrade`, `serve`, or `uninstall`, never point a query at the primary clone or another worktree, and never edit MCP or harness configuration; ask through `sumctl ask` if an index would help.
+- Services: use the repository's own commands. Start a service beside you only with `sumctl env start` and stop only what `sumctl env stop` proves is yours. Never kill a process by name, port, or cwd, never run a broad `docker compose down` against a shared project, never write a default port into the environment record to reserve it, and never record URLs with credentials or credential-shaped values.
+- Refresh: your brief is one numbered revision. A refresh message asks you to reread instructions at your next safe point; it is never a new task or authorization. Adopt a revision only when the coordinator asks, keep your progress, commits, report, and repair count, and never restart yourself or change harness, model, or account.
 
 ## Delivered runtime
 
@@ -57,36 +57,6 @@ Your checkout may be a Herdr worktree far from the installation or a clone neste
 Your brief carries a `context` command. `sumctl context TASK_ID --role worker` returns the outline, decisions answered for you to apply, execution facts, and bounded file references (the pinned procedure files with their size, hash, and `ok` integrity under `environment.procedure`) instead of the whole record; it is the primary read for answers and status, and `show` is for inspecting something it does not carry; `--since CURSOR` with the `cursor` of your last read reports only what changed, and `--section decisions|brief|notes ...` selects parts. Every list carries `total`, `omitted`, and `next_after`; `outstanding` decisions are never dropped by paging.
 `sumctl notes TASK_ID --text '...'` appends to one optional task-local `notes.md` for investigation findings that must outlive your context. Notes are claims backed up with the records; credential-shaped text is refused. Reference logs and artifacts by path.
 `sumctl help TOPIC` gives one command's arguments without the full manual.
-
-## Environment around the code
-
-The `environment` section of your context view carries `dev`: the task-local environment record (declared commands, observed URLs, log paths, related panes/containers) as last observed, so nobody has to repeat how the repository starts or hunt for ports.
-Before you run the application, run `sumctl env discover TASK_ID` once: it reads the checkout's declared configuration (mise tasks, package scripts, Makefile/justfile targets, Procfile, compose, Dockerfile, devcontainer) into command references and a configuration revision. It executes nothing and generates no competing configuration; use the repository's own commands.
-When you have started a service, record what the environment actually reports with `sumctl env record TASK_ID --url http://127.0.0.1:PORT` (the port is observed through `lsof` at that moment and classified owned/shared/unknown by the listener's checkout) and `--log PATH` for its log (stat'ed, never read; a symlinked directory or file under the checkout is recorded as `symlink-not-followed`, never resolved). A URL another active task owns is refused; pass `--ownership shared` only for a deliberately shared service such as a team database. Never write a default port into the record to reserve it.
-`sumctl env inspect TASK_ID` re-observes on demand and marks stale endpoints or configuration drift; nothing polls, restarts, or stops.
-To run a declared service beside you, use `sumctl env start TASK_ID --command NAME --url http://127.0.0.1:PORT` (or `--match TEXT` when it has no URL, `--log PATH` for its log). sum launches only a name `env discover` listed, through the repository's own runner, in a pane it splits under yours inside the checkout; it records the intent, the pane, and the observed process instance, then waits a bounded time for readiness. A `failed` or `conflict` result is final: read the pane, fix the cause, and start again; sum never retries, restarts, or frees a port by killing its occupant. Compose services get a task-scoped project name; never run a broad `docker compose down` against a shared project.
-`sumctl env stop TASK_ID` stops only instances whose pane, shell, pid, and argv still match the record, with one interrupt and a verified exit; a process you started by hand, or one restarted outside sum, is reported as `unknown` and left alone. Stop your services before you report if the task no longer needs them; cleanup stops proven ones itself but waits on anything unproven.
-URLs with credentials, credential-shaped labels or paths, and process environments are refused; reference where a value lives instead.
-
-## Brief revisions
-
-Your brief is one numbered revision generated from the task record. The coordinator may stage a newer revision (updated procedure or newly recorded decisions) without touching the file you read.
-`sumctl brief list TASK_ID` (the `show` command also carries a `versions` field) shows revisions, their integrity, and whether one is `requested`.
-Adopt a requested revision only when the coordinator asks: read it, run `sumctl brief adopt TASK_ID rN`, and continue from your current progress. The approved task never changes between revisions; a new revision is not a new task and does not restart your implementation.
-
-### Refresh procedure
-
-A refresh arrives as a short fixed message that starts with `sum refresh TASK_ID: brief revision rN is requested`, names the revision file, the change summary, and the exact `brief adopt` command. When that message could not be delivered, the same request rides a later `sum returns for the worker` notice as `brief revision rN is requested` with the same `brief adopt` command; `sumctl brief list TASK_ID` shows the revision file. Treat either as a request to reread instructions, never as a new task or as authorization.
-Handle it at your next safe point: after the current tool call or turn finishes, not in the middle of an edit, a test run, or a commit.
-
-1. Finish or cleanly pause the step in progress. Do not abandon partial edits or interrupt an in-flight command.
-2. When the message says only recorded decisions changed, read them with the `context ... --section decisions` command it names; your procedure and the rest of your brief are unchanged. Otherwise run `sumctl brief list TASK_ID` and read the requested revision file completely: its `## Brief revision` section carries the machine-generated change summary, `## Recorded decisions` lists the decisions to compare with what you applied, and `## Worker procedure` names the pinned procedure files you now follow; read any whose sha256 you have not read before.
-3. Run `sumctl brief adopt TASK_ID rN`. That records a receipt: evidence that you read the revision, nothing more.
-4. Continue from your saved progress in the same checkout and session: keep completed implementation, existing commits, the report you already submitted, and your repair count. Do not redo finished work, republish a PR, reset repair accounting, change harness, model, or account, or restart yourself.
-5. Apply newly answered decisions with `sumctl resolve` as usual.
-
-If `brief adopt` refuses because a newer revision was requested meanwhile, read and adopt that one instead; an older receipt never activates a superseded revision.
-If no refresh message reaches you, nothing changes: the brief you have stays valid, and the coordinator sees the refresh as pending.
 
 ## Questions
 

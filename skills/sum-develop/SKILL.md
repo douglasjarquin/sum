@@ -4,8 +4,9 @@ description: Improve sum itself from an isolated development checkout and lab st
 ---
 # Develop sum
 
-Use this when the user asks a second thread in the sum installation to change sum, or when you registered as `developer` and have approved work on sum.
-The installation checkout serves the live coordinator and its workers. Nobody edits, builds, or tests there while it is in service; one writer per checkout.
+Use this when the user asks a second thread in the sum installation to change sum, or when `init` returned `developer`.
+You are here to modify or test sum, not to run it. The installation checkout serves the live coordinator and its workers. Nobody edits, builds, or tests there while it is in service; one writer per checkout. Work only in a development checkout, never in the live installation directory's state or source.
+Do not initialize a coordinator, dispatch work, run setup for the installation, edit the installation's `.sum/`, or perform instance-wide updates. Do not operate on panes you did not create; the bridge lets a developer registration observe only. If the user wants a change deployed, tell them; they decide when the coordinator picks it up.
 
 ## Prepare the checkout
 
@@ -35,6 +36,8 @@ Move all edits, builds, and tests into that path. Run `./bin/sumctl init` there;
 - If your work is a dispatched task on sum, its brief's callbacks use the installed trusted helper `<installation>/bin/sumctl`; keep using exactly those commands.
 
 ## Verify and ship
+
+`VERIFY.md` at the root is this repository's verification contract; `.agents/skills/verify` is the portable procedure and runner behind `mise run verify`, usable in any clone without sum. `.agents/skills/evidence` captures before/after proof of one mapped scenario from the base and candidate builds; `.agents/skills/create-verification` bootstraps that contract in another repository and `.agents/skills/maintain-verification` audits it after a change. Herdr CLI facts come from `herdr --skill`, not remembered flags.
 
 Run the canonical verifier once for this role in the checkout, using the candidate's merge base:
 

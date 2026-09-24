@@ -742,6 +742,26 @@ func DecisionsOnly(versionsObj, target *ordjson.Object) bool {
 	return true
 }
 
+// ActiveRevision is the revision a sidecar marks active, or nil.
+func ActiveRevision(versionsObj *ordjson.Object) *ordjson.Object {
+	if versionsObj == nil {
+		return nil
+	}
+	activeID, _ := versionsObj.Get("active")
+	revisionsValue, _ := versionsObj.Get("revisions")
+	list, _ := revisionsValue.([]any)
+	for _, raw := range list {
+		rev, _ := raw.(*ordjson.Object)
+		if rev == nil {
+			continue
+		}
+		if id, _ := rev.Get("id"); activeID != nil && id == activeID {
+			return rev
+		}
+	}
+	return nil
+}
+
 // ActiveBrief is the file a freshly launched worker is told to read: the active revision, verified
 // together with its pinned procedure. Launch refuses rather than prompting an incomplete brief.
 func ActiveBrief(s *store.Store, task *ordjson.Object) (string, error) {
@@ -749,16 +769,7 @@ func ActiveBrief(s *store.Store, task *ordjson.Object) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	activeID, _ := versionsObj.Get("active")
-	revisionsValue, _ := versionsObj.Get("revisions")
-	list, _ := revisionsValue.([]any)
-	var active *ordjson.Object
-	for _, raw := range list {
-		rev, _ := raw.(*ordjson.Object)
-		if id, _ := rev.Get("id"); activeID != nil && id == activeID {
-			active = rev
-		}
-	}
+	active := ActiveRevision(versionsObj)
 	if active == nil {
 		return "", fmt.Errorf("The task has no active brief revision; no worker was started.")
 	}

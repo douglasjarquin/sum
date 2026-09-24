@@ -13,6 +13,7 @@ artifacts = ".artifacts/verification"
 evidence = ".artifacts/evidence"
 task_owner = "."
 timeout_seconds = 3600
+policy_files = ["COORDINATOR.md", "skills/"]
 
 [requires]
 commands = ["git", "mise", "go", "python3", "node"]
@@ -77,6 +78,7 @@ Remove `.artifacts/verification/` and `.artifacts/evidence/` when you no longer 
 
 Edits to this file, `mise.toml`, `mise-tasks/`, `docs/features/`, or the skills under `.agents/skills/verify/`, `.agents/skills/evidence/`, `.agents/skills/create-verification/`, and `.agents/skills/maintain-verification/` are policy changes.
 Run the runner with `--base <merge-base>` so such a candidate is flagged `requires_root_review`; it cannot certify its own new standard.
+`COORDINATOR.md` and `skills/` are declared as policy files here too: they carry the coordinator core and the role and action procedures that `AGENTS.md` delegates to, so editing them needs the same review as editing `AGENTS.md`.
 Without `--base` a run never certifies a SHA, and the contract's optional `policy_files` list can only add paths to that default set.
 The coordinator's separate verification and review (`skills/sum-delivery/SKILL.md`) remain in place and are not replaced by this contract.
 GitHub Actions runs this same runner once for pull requests targeting `main` and pushes to `main`, comparing the checked-out candidate to the event base revision and retaining `.artifacts/verification/` on success or failure.

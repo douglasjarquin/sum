@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +15,9 @@ import (
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
 const procedureBody = "# sum-worker\n\nPROCEDURE-BODY-MARKER: follow the approved task.\n"
@@ -65,8 +68,18 @@ func newLab(t *testing.T, withProcedure bool) *lab {
 	return &lab{s: s, runtime: runtime, sumctl: filepath.Join(runtime, "bin", "sumctl"), task: task, taskDir: taskDir}
 }
 
+// writeProcedure writes the required core with body and each on-demand source with a fixed body.
 func writeProcedure(t *testing.T, runtime, body string) {
 	t.Helper()
+	for _, src := range procedure.Sources[1:] {
+		extra := filepath.Join(runtime, filepath.FromSlash(src.Path))
+		if err := os.MkdirAll(filepath.Dir(extra), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(extra, []byte("# "+src.Name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	path := filepath.Join(runtime, "skills", "sum-worker", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
@@ -299,5 +312,42 @@ func TestProcedureChangeIsSummarizedAndVerificationAffecting(t *testing.T) {
 	old := filepath.Join(l.taskDir, "procedure", "sum-worker-"+sha256Hex(procedureBody)[:16]+".md")
 	if readText(t, old) != procedureBody {
 		t.Fatal("the earlier pinned procedure changed")
+	}
+}
+
+// A revision pinned before the procedure split (one required row) stays valid, and moving that task to the
+// split procedure is an explicit, verification-affecting revision the worker must request and adopt.
+func TestSplittingTheProcedureIsAnExplicitRevisionAndKeepsEarlierRows(t *testing.T) {
+	l := newLab(t, true)
+	saved := procedure.Sources
+	procedure.Sources = saved[:1]
+	l.writeInitial(t)
+	procedure.Sources = saved
+	versionsObj, err := versions.ReadVersions(l.s, l.task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r1 := versions.ActiveRevision(versionsObj)
+	r1Policy, _ := r1.Get("policy")
+	r1Rows := procedure.Rows(r1Policy.(*ordjson.Object))
+	if len(r1Rows) != 1 || procedure.Verify(l.taskDir, r1Rows) != nil {
+		t.Fatalf("pre-split rows = %v", r1Rows)
+	}
+
+	text, view := l.regenerate(t)
+	rev, _ := view.Get("revision")
+	affected, _ := rev.(*ordjson.Object).Get("verification_affected")
+	if affected != true || !strings.Contains(text, "worker procedure resources changed") {
+		t.Fatalf("procedure split not summarized (affected=%v):\n%s", affected, text)
+	}
+	if strings.Count(text, "- Read when ") != len(procedure.Sources)-1 || strings.Count(text, "- Required before any other step: ") != 1 {
+		t.Fatalf("regenerated brief does not list one required and the on-demand files:\n%s", text)
+	}
+	versionsObj, _ = versions.ReadVersions(l.s, l.task)
+	if active := versions.ActiveRevision(versionsObj); active == nil || fmt.Sprint(func() any { v, _ := active.Get("id"); return v }()) != "r1" {
+		t.Fatalf("regenerate changed the active revision: %v", active)
+	}
+	if err := procedure.Verify(l.taskDir, r1Rows); err != nil {
+		t.Fatalf("pre-split rows after the split: %v", err)
 	}
 }

@@ -823,7 +823,16 @@ func runtimeRootFrom(sumctlPath string) string {
 
 // skillReferences ports `skill_references`. `roles` is always `ContextRoles` until `--role` is supported (Python:
 // `skill_references(roles or CONTEXT_ROLES)`, and `roles` is always `[]` here since `--role` is unimplemented).
-func skillReferences(runtimeRoot, sumctlPath string, roles []string) *ordjson.Object {
+func skillReferences(runtimeRoot, sumctlPath string, roles []string, pinnedWorker bool) *ordjson.Object {
+	if pinnedWorker {
+		// A worker whose active revision pins its procedure reads those files; the live runtime copy could
+		// differ from them, so it is not offered beside them.
+		result := ordjson.NewObject()
+		result.Set("files", []any{})
+		result.Set("helper", filepath.Join(runtimeRoot, "bin", "sumctl"))
+		result.Set("instruction", "Your procedure is the pinned files under `procedure`; no live runtime copy is offered beside them. Paths are absolute installed paths, never relative to a checkout.")
+		return result
+	}
 	var names []string
 	seen := map[string]bool{}
 	for _, role := range roles {
@@ -929,13 +938,15 @@ func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjs
 	result.Set("commands", commands)
 	result.Set("brief_path", getField(task, "brief_path"))
 	result.Set("revisions", revisions)
-	result.Set("procedure", procedureReferences(taskPath, active))
+	procedureRows := procedure.Rows(asObject(getField(active, "policy")))
+	result.Set("procedure", procedureReferences(taskPath, procedureRows))
 	result.Set("notes", pickPresent(notesState, []string{"path", "present", "ok", "error"}))
 	effectiveRoles := roles
 	if len(effectiveRoles) == 0 {
 		effectiveRoles = ContextRoles
 	}
-	result.Set("skills", skillReferences(runtimeRoot, sumctlPath, effectiveRoles))
+	pinnedWorker := len(roles) == 1 && roles[0] == "worker" && procedureRows != nil
+	result.Set("skills", skillReferences(runtimeRoot, sumctlPath, effectiveRoles, pinnedWorker))
 	runtimeObj := ordjson.NewObject()
 	runtimeObj.Set("path", runtimeRoot)
 	runtimeObj.Set("sum_version", store.SumVersion)
@@ -946,27 +957,11 @@ func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjs
 	return result, nil
 }
 
-// procedureReferences lists the active revision's pinned worker procedure with its integrity, so a
-// fresh or recovered worker finds its instructions from the task record. Nil before pinned rows existed.
-func procedureReferences(taskPath string, active *ordjson.Object) any {
-	rows := procedure.Rows(asObject(getField(active, "policy")))
-	if rows == nil {
+// procedureReferences lists the active revision's pinned worker procedure with its integrity.
+func procedureReferences(taskPath string, rows []any) any {
+	refs := procedure.References(taskPath, rows)
+	if refs == nil {
 		return nil
-	}
-	refs := make([]any, 0, len(rows))
-	for _, raw := range rows {
-		row := asObject(raw)
-		ref := pickPresent(row, []string{"name", "sha256", "bytes", "load", "when"})
-		if full, ok := procedure.ResourcePath(taskPath, row); ok {
-			ref.Set("path", full)
-		}
-		if err := procedure.VerifyRow(taskPath, row); err != nil {
-			ref.Set("ok", false)
-			ref.Set("error", err.Error())
-		} else {
-			ref.Set("ok", true)
-		}
-		refs = append(refs, ref)
 	}
 	return refs
 }

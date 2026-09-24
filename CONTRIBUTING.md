@@ -69,7 +69,7 @@ These conventions are for this repository. Sum is not a Node/pnpm app; do not im
 
 - **Tools.** [mise.toml](mise.toml) pins Go, Python, and Node. Verification requires `git`, `mise`, `go`, `python3`, and `node`. Use those pins. Do not add a competing toolchain to make the checks easier to pass.
 - **Helper.** The CLI is `./bin/sumctl` (or `sumctl` after setup). That name exists so this project does not shadow the Unix `sum` command.
-- **Roles.** A harness session in a sum checkout starts with `./bin/sumctl init` and follows the role it returns: `coordinator`, `worker`, or `developer`. Read [AGENTS.md](AGENTS.md). Sending a pull request does not require becoming a coordinator. If another pane already owns coordination, or you are in a development checkout, stay a developer.
+- **Roles.** A harness session in a sum checkout starts with `./bin/sumctl init` and follows the role it returns: `coordinator`, `worker`, or `developer`. Read [AGENTS.md](AGENTS.md), then the role file `init` names under `procedure`. Sending a pull request does not require becoming a coordinator. If another pane already owns coordination, or you are in a development checkout, stay a developer.
 - **Terminology.** New first-party instructions and user-visible text use [docs/terminology.md](docs/terminology.md). Address the user naturally. Do not use themed role titles. Keep technical identifiers (`sumctl report`, `--role worker`, JSON keys) unchanged.
 - **Live installs.** The checkout where setup ran serves live work. Change sum from an isolated checkout:
 

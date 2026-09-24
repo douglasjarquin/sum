@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 )
 
 // newRuntimeLab is a policy lab whose runtime is a disposable copy of this checkout's helper and
@@ -35,9 +37,13 @@ func newRuntimeLab(t *testing.T, withProcedure bool) *demoLab {
 	copyFile("bin/sumctl", 0o755)
 	copyFile(".local/bin/sumctl", 0o755)
 	copyFile("skills/sum-delivery/SKILL.md", 0o644)
+	copyFile("COORDINATOR.md", 0o644)
 	copyFile(".agents/skills/verify/references/engineering-principles.md", 0o644)
 	if withProcedure {
 		copyFile("skills/sum-worker/SKILL.md", 0o644)
+		for _, src := range procedure.Sources[1:] {
+			copyFile(src.Path, 0o644)
+		}
 	}
 	home := filepath.Join(base, "state home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -125,8 +131,38 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 		t.Fatalf("launch prompt = %v", launch)
 	}
 	rows := workerProcedureRows(t, d, taskID, pane)
-	if len(rows) != 1 || asMap(rows[0])["ok"] != true || asString(asMap(rows[0])["path"]) != pinned {
+	if len(rows) != len(procedure.Sources) || asMap(rows[0])["ok"] != true || asString(asMap(rows[0])["path"]) != pinned || asString(asMap(rows[0])["load"]) != procedure.Required {
 		t.Fatalf("worker context procedure = %v", rows)
+	}
+	// Action-scoped files are pinned too, but listed with their condition, never inlined or required.
+	for i, src := range procedure.Sources[1:] {
+		row := asMap(rows[i+1])
+		if asString(row["name"]) != src.Name || asString(row["load"]) != procedure.OnDemand || row["ok"] != true {
+			t.Fatalf("on-demand row %d = %v", i+1, row)
+		}
+		if !strings.Contains(string(brief), "- Read when "+src.When+": `"+asString(row["path"])+"`") {
+			t.Fatalf("brief does not list %s with its condition:\n%s", src.Name, brief)
+		}
+		body, _ := os.ReadFile(filepath.Join(d.root, filepath.FromSlash(src.Path)))
+		if got, _ := os.ReadFile(asString(row["path"])); string(got) != string(body) {
+			t.Fatalf("pinned %s differs from its runtime source", src.Name)
+		}
+		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+		if strings.Contains(string(brief), lines[len(lines)-1]) {
+			t.Fatalf("brief inlines on-demand %s", src.Name)
+		}
+	}
+	if strings.Count(string(brief), "- Required before any other step: ") != 1 {
+		t.Fatalf("brief requires more than the core:\n%s", brief)
+	}
+	// The worker's own reads name only the pinned copies: no live runtime sum-worker beside them.
+	skills := asMap(asMap(d.ctlPane(pane, true, "context", taskID, "--role", "worker", "--section", "environment")["environment"])["skills"])
+	if files := asSlice(skills["files"]); len(files) != 0 {
+		t.Fatalf("worker context still offers live skill files %v", files)
+	}
+	initRows := asSlice(d.ctlPane(pane, true, "init")["procedure"])
+	if len(initRows) != len(procedure.Sources) || asString(asMap(initRows[0])["path"]) != pinned {
+		t.Fatalf("worker init procedure = %v", initRows)
 	}
 
 	// The procedure survives the runtime copy disappearing: a recovered worker reads it from the task.
@@ -250,7 +286,7 @@ func TestDecisionOnlyRefreshReadsThroughBoundedContext(t *testing.T) {
 			refresh = p
 		}
 	}
-	if !strings.Contains(refresh, "brief revision r4 is requested") || strings.Contains(refresh, "Only recorded decisions changed") || !strings.Contains(refresh, "read `") || !strings.Contains(refresh, "r4.md` completely") {
+	if !strings.Contains(refresh, "brief revision r4 is requested") || strings.Contains(refresh, "Only recorded decisions changed") || !strings.Contains(refresh, "read `") || !strings.Contains(refresh, "r4.md` completely") || !strings.Contains(refresh, "any required worker procedure file it names") || !strings.Contains(refresh, "on-demand one only when its condition applies") {
 		t.Fatalf("refresh after an unadopted procedure change = %q\n%v", refresh, second)
 	}
 }
@@ -331,5 +367,25 @@ func TestStartLaunchesFromTheAdoptedRevision(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(pinnedProcedure(t, string(body))); string(got) != "# sum-worker\nrevised procedure\n" {
 		t.Fatalf("r2 names a procedure that is not the revised one: %q", got)
+	}
+}
+
+// A worker whose task record cannot say which procedure it pinned is told so by `init`, instead of seeing
+// a brief that looks like it pinned nothing.
+func TestWorkerInitReportsAnUnreadableProcedureRecord(t *testing.T) {
+	d := newRuntimeLab(t, true)
+	repo := policyProject(t, d.base, "unreadable", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	taskID, pane := asString(task["id"]), asString(task["pane"])
+	if rows := asSlice(d.ctlPane(pane, true, "init")["procedure"]); len(rows) != len(procedure.Sources) {
+		t.Fatalf("worker init procedure before corruption = %v", rows)
+	}
+	if err := os.WriteFile(filepath.Join(d.home, "tasks", taskID, "versions.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	view := d.ctlPane(pane, true, "init")
+	rows := asSlice(view["procedure"])
+	if view["role"] != "worker" || len(rows) != 1 || asMap(rows[0])["ok"] != false || !strings.Contains(asString(asMap(rows[0])["error"]), "unreadable") {
+		t.Fatalf("worker init with an unreadable versions record = role %v, procedure %v", view["role"], rows)
 	}
 }

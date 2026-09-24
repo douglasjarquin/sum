@@ -20,6 +20,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -417,7 +418,7 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 		sha = sha[:12]
 	}
 	adopt := shquote.CommandFor(sumctlPath, s.Home, "brief", "adopt", id, latest)
-	read := fmt.Sprintf("At your next safe point read `%s` completely, and any worker procedure file it names that you have not read at the same sha256, then run %s and continue your current work from its saved progress.", path, adopt)
+	read := fmt.Sprintf("At your next safe point read `%s` completely, and any required worker procedure file it names that you have not read at the same sha256 (read an on-demand one only when its condition applies), then run %s and continue your current work from its saved progress.", path, adopt)
 	if decisionsOnly {
 		read = fmt.Sprintf("Only recorded decisions changed since your active revision %s: at your next safe point read them with %s, then run %s and continue your current work from its saved progress. You need not reread the brief or the unchanged worker procedure; `%s` is the complete revision for a fresh session.", activeID, shquote.CommandFor(sumctlPath, s.Home, "context", id, "--role", "worker", "--section", "decisions"), adopt, path)
 	}
@@ -488,7 +489,14 @@ func asList(v any) []any {
 	return list
 }
 
-func contractPolicy(runtimeRoot string) (*ordjson.Object, error) {
+// coordinatorCore reads the runtime's coordinator core, validated like any role procedure; a runtime
+// without it stages no contract revision.
+func coordinatorCore(runtimeRoot string) (string, error) {
+	_, data, err := procedure.Load(runtimeRoot, procedure.Coordinator, "no coordinator contract revision was staged")
+	return string(data), err
+}
+
+func contractPolicy(runtimeRoot, core string) (*ordjson.Object, error) {
 	agents, err := os.ReadFile(filepath.Join(runtimeRoot, "AGENTS.md"))
 	if err != nil {
 		return nil, err
@@ -509,6 +517,7 @@ func contractPolicy(runtimeRoot string) (*ordjson.Object, error) {
 	policy.Set("runtime_sha", runtimeSHA(runtimeRoot))
 	policy.Set("mcp", mcpObject())
 	policy.Set("agents_sha256", sha256Text(string(agents)))
+	policy.Set("coordinator_sha256", sha256Text(core))
 	policy.Set("skills_sha256", skillHashes)
 	return policy, nil
 }
@@ -526,6 +535,9 @@ func contractSummary(previous, policy *ordjson.Object) []any {
 	}
 	if asString(func() any { v, _ := previous.Get("agents_sha256"); return v }()) != asString(func() any { v, _ := policy.Get("agents_sha256"); return v }()) {
 		changes = append(changes, "AGENTS.md changed")
+	}
+	if asString(func() any { v, _ := previous.Get("coordinator_sha256"); return v }()) != asString(func() any { v, _ := policy.Get("coordinator_sha256"); return v }()) {
+		changes = append(changes, procedure.Coordinator.Path+" changed")
 	}
 	if len(changes) == 0 {
 		return []any{"no recorded change"}
@@ -553,7 +565,11 @@ func regenerateContract(s *store.Store, runtimeRoot, sumctlPath string) (*ordjso
 	if err != nil {
 		return nil, err
 	}
-	policy, err := contractPolicy(runtimeRoot)
+	core, err := coordinatorCore(runtimeRoot)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := contractPolicy(runtimeRoot, core)
 	if err != nil {
 		return nil, err
 	}
@@ -598,11 +614,11 @@ func regenerateContract(s *store.Store, runtimeRoot, sumctlPath string) (*ordjso
 		summaryLines = append(summaryLines, "- "+fmt.Sprint(item))
 	}
 	agents, _ := os.ReadFile(filepath.Join(runtimeRoot, "AGENTS.md"))
-	text := fmt.Sprintf("# sum coordinator contract — %s\n\nThis is the coordinator's operating contract as shipped by sum %s (runtime %s).\nYou remain the coordinator of this installation. This revision does not change your role, your registered pane, the recorded tasks, or their parent routes.\n\n## Refresh procedure\n\n- Read the contract below and the change summary. Then run `%s` to record the receipt.\n- Continue coordination from saved state: `%s` and the task records are the source of truth.\n- Do not restart yourself, re-dispatch running tasks, re-run setup, or re-answer recorded decisions.\n- Already-connected MCP clients keep the tool set they started with; the capability list below says what is deferred until the client itself restarts.\n\n## Change summary\n\n%s\n\n## Operating contract (AGENTS.md at this revision)\n\n%s\n",
+	text := fmt.Sprintf("# sum coordinator contract — %s\n\nThis is the coordinator's operating contract as shipped by sum %s (runtime %s).\nYou remain the coordinator of this installation. This revision does not change your role, your registered pane, the recorded tasks, or their parent routes.\n\n## Refresh procedure\n\n- Read the contract below and the change summary. Then run `%s` to record the receipt.\n- Continue coordination from saved state: `%s` and the task records are the source of truth.\n- Do not restart yourself, re-dispatch running tasks, re-run setup, or re-answer recorded decisions.\n- Already-connected MCP clients keep the tool set they started with; the capability list below says what is deferred until the client itself restarts.\n\n## Change summary\n\n%s\n\n## Operating contract (AGENTS.md at this revision)\n\n%s\n\n## Coordinator core (%s at this revision)\n\n%s\n",
 		rid, contract.SumVersion, runtimeSHA(runtimeRoot),
 		shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", rid),
 		shquote.CommandFor(sumctlPath, s.Home, "inbox", "--live"),
-		strings.Join(summaryLines, "\n"), string(agents))
+		strings.Join(summaryLines, "\n"), string(agents), procedure.Coordinator.Path, core)
 	relative := "contracts/" + rid + ".md"
 	if err := writeOnce(filepath.Join(base, relative), text); err != nil {
 		return nil, err
