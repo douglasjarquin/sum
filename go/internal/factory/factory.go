@@ -29,6 +29,7 @@ const (
 	ClaimMark  = "sum-factory-claim"
 
 	ReadyLabel         = "label"
+	ReadyIssues        = "issues"
 	ReadyRoadmap       = "roadmap"
 	ReadyProjectStatus = "project-status"
 
@@ -286,8 +287,8 @@ func Enable(s *store.Store, ctx *ordjson.Object, args EnableArgs) (*ordjson.Obje
 	if ready == "" {
 		ready = ReadyLabel
 	}
-	if ready != ReadyLabel && ready != ReadyRoadmap && ready != ReadyProjectStatus {
-		return nil, fmt.Errorf("--ready must be label, roadmap, or project-status")
+	if ready != ReadyLabel && ready != ReadyIssues && ready != ReadyRoadmap && ready != ReadyProjectStatus {
+		return nil, fmt.Errorf("--ready must be label, issues, roadmap, or project-status")
 	}
 	if ready == ReadyRoadmap && args.RoadmapIssue <= 0 {
 		return nil, fmt.Errorf("roadmap ready signal needs --roadmap-issue")
@@ -301,7 +302,7 @@ func Enable(s *store.Store, ctx *ordjson.Object, args EnableArgs) (*ordjson.Obje
 		idle = DefaultIdleSeconds
 	}
 	label := args.Label
-	if label == "" {
+	if label == "" && ready == ReadyLabel {
 		label = "ready"
 	}
 	readyOpt := args.ReadyOption
@@ -513,6 +514,9 @@ func listReady(runtimeRoot string, rec *ordjson.Object) ([]ghIssue, string, erro
 			label = "ready"
 		}
 		issues, err := ghIssueList(runtimeRoot, name, label)
+		return issues, kind, err
+	case ReadyIssues:
+		issues, err := ghIssueList(runtimeRoot, name, "")
 		return issues, kind, err
 	case ReadyRoadmap:
 		parent := asInt(get(ready, "roadmap_issue"))

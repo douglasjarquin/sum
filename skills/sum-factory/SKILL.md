@@ -23,10 +23,14 @@ Merge and human-gate procedure is `skills/sum-factory-merge/SKILL.md`.
 ./bin/sumctl factory enable owner/repo --lanes 1 --ready READY_KIND
 ```
 
-Ready kinds: `label` (default, GitHub label `ready`), `roadmap` (`--roadmap-issue N`), `project-status` (`--project-number N`).
+Ready kinds: `label` (default, GitHub label `ready`), `issues` (oldest open issue first), `roadmap` (`--roadmap-issue N`), `project-status` (`--project-number N`).
 Add `--strict-cleanup` when the project's intake requires cleanup before the next issue.
 Add `--skip N` for owner-gated issues (deploy, DNS, credentials).
-NiceBaaS recommended enable is in `docs/plans/2026-09-23-feat-sum-factory-plan.md`.
+NiceBaaS uses `--ready issues`:
+
+```sh
+./bin/sumctl factory enable cofactorworks/nicebaas --ready issues --strict-cleanup --lanes 1
+```
 
 Completion: `factory status --project owner/repo` shows `enabled: true` and `held: 0`.
 

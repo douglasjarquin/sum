@@ -45,8 +45,9 @@ The user wants unattended sequential issue throughput for enrolled projects, wit
 - Claim is GitHub-visible: label `sum-claimed` plus a `<!-- sum-factory-claim -->` comment that names hostname, Herdr pane, and task id.
   (session-settled: the user's hostname + pane suggestion, made checkable.)
   Governs R3.
-- Ready signal is configured per factory: `label`, `roadmap`, or `project-status`.
-  NiceBaaS default is `roadmap` against issue #124 because the repo has no `ready` / `in-progress` labels and this token cannot read GitHub Projects (`read:project` missing).
+- Ready signal is configured per factory: `label`, `issues`, `roadmap`, or `project-status`.
+  NiceBaaS uses `issues`: oldest open GitHub issue first, no ready label and no Projects status.
+  (session-settled: user-approved on `q-95578b8d07` — chosen over roadmap #124 and Projects Status.)
   Governs R2.
 - High-confidence merge is a checkable `factory merge-check` result, not a vibe.
   Only `douglasjarquin/remainder`, `cofactorworks/nicebaas`, and `cofactorworks/ilovethatphoto` may merge.
@@ -109,6 +110,7 @@ Ready kinds:
 | kind | Sequential source |
 | --- | --- |
 | `label` | Open issues with the configured label, lowest number first |
+| `issues` | All open issues, oldest number first |
 | `roadmap` | Issue numbers in order from a parent issue body table (`#N`), first still open |
 | `project-status` | GitHub Projects v2 Status option; if `gh` lacks `read:project`, tick reports `blocked` and names `gh auth refresh -s read:project` |
 
@@ -135,19 +137,15 @@ No flag widens it.
 ### NiceBaaS first run (user, not this branch)
 
 Intake `#115` / PR `#131` is already closed/merged on GitHub.
-Live roadmap `#124` (closed body, keep the issue open per intake) now starts at `#137`.
-Dozens of new design-parity issues are open and must not be treated as ready unless the user chooses the `label` signal.
-Recommended enable:
+Keep `#124` open per intake.
+NiceBaaS enable (recorded answer `q-95578b8d07`):
 
 ```
 sumctl factory enable cofactorworks/nicebaas \
-  --ready roadmap --roadmap-issue 124 \
-  --skip 120 --skip 143 --skip 124 --skip 127 \
-  --strict-cleanup --lanes 1
+  --ready issues --strict-cleanup --lanes 1
 ```
 
-First lane after that enable is `#137`, not `#115`.
-Confirm before running.
+First lane is the oldest open issue, skipping `sum-claimed` and `sum-gated`.
 
 ### Per-harness idle tick
 

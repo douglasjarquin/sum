@@ -174,6 +174,29 @@ func TestTick_dispatchThenOccupied(t *testing.T) {
 	}
 }
 
+func TestTick_issuesPicksOldestOpen(t *testing.T) {
+	st := openStore(t)
+	enroll(t, st, "owner/app")
+	fakeGh(t, []map[string]any{issue(40, "newer"), issue(12, "oldest"), issue(25, "middle", ClaimLabel)}, nil)
+	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app", Ready: ReadyIssues}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := Tick(st, st.Home, "owner/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := tickRow(t, view)
+	if got, _ := row.Get("action"); got != ActionDispatch {
+		t.Fatalf("action = %v", got)
+	}
+	if got := asInt(get(row, "issue")); got != 12 {
+		t.Fatalf("issue = %d want 12", got)
+	}
+	if got, _ := row.Get("ready_signal"); got != ReadyIssues {
+		t.Fatalf("ready_signal = %v", got)
+	}
+}
+
 func TestTick_roadmapOrderSkipsClosedAndSkipped(t *testing.T) {
 	st := openStore(t)
 	enroll(t, st, "owner/app")

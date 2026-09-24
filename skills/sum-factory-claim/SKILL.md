@@ -10,19 +10,19 @@ Call this after `sumctl factory tick` returns `action: dispatch`, or when the us
 ## Ready signal
 
 Configured at `factory enable`.
-Do not invent a fourth kind.
+Do not invent another kind.
 
 | kind | Sequential source |
 | --- | --- |
 | `label` | Open issues with that label, lowest number first |
+| `issues` | All open issues, oldest number first |
 | `roadmap` | Issue numbers in order from the parent issue body table, first still open |
 | `project-status` | GitHub Projects Status option; a missing `read:project` scope is `blocked`, not a guess |
 
 Skip issues listed in `--skip`, issues labeled `sum-claimed` or `sum-gated`, and issues the intake marks as owner-gated.
 
-NiceBaaS has no `ready` label.
-This helper cannot read Projects without `gh auth refresh -s read:project`.
-Until the user says otherwise, NiceBaaS uses `--ready roadmap --roadmap-issue 124`.
+NiceBaaS uses `--ready issues`.
+No ready label and no Projects status.
 
 ## Claim
 
