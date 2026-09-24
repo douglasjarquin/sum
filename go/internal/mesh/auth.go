@@ -31,11 +31,9 @@ func (s Service) authorize(ctx context.Context, args []string) error {
 		return err
 	}
 	var registration map[string]any
-	var registrationPath string
 	for _, candidate := range append([]string{host.ID}, host.Legacy()...) {
 		key := store.RegistrationKey(store.Endpoint{Machine: candidate, Session: s.config.Session, Pane: s.config.Pane})
-		registrationPath = filepath.Join(s.config.StateHome, "sessions", key+".json")
-		if registration, err = readObject(registrationPath); err == nil {
+		if registration, err = readObject(filepath.Join(s.config.StateHome, "sessions", key+".json")); err == nil {
 			break
 		}
 	}
@@ -53,7 +51,7 @@ func (s Service) authorize(ctx context.Context, args []string) error {
 	}
 	if !readOnly(args) {
 		// Only the occupant the registration's role was granted to may act; observing needs nothing.
-		recorded, occupiedAt, err := s.roleRecord(host, registrationPath, registration["role"])
+		recorded, occupiedAt, err := s.roleRecord(host, registration)
 		if err != nil {
 			return err
 		}
@@ -66,11 +64,15 @@ func (s Service) authorize(ctx context.Context, args []string) error {
 
 // roleRecord is the incarnation this pane's role is held by: the owner's for the coordinator while the owner names this
 // pane, the registration's own otherwise.
-func (s Service) roleRecord(host machine.Identity, registrationPath string, role any) (any, string, error) {
-	if role == "coordinator" {
-		ownerValue, err := ordjson.ReadFile(filepath.Join(s.config.StateHome, "context.json"))
+func (s Service) roleRecord(host machine.Identity, registration map[string]any) (any, string, error) {
+	if registration["role"] == "coordinator" {
+		ownerPath := filepath.Join(s.config.StateHome, "context.json")
+		if info, statErr := os.Stat(ownerPath); statErr != nil || info.IsDir() {
+			return nil, "", nil // No coordinator is recorded.
+		}
+		ownerValue, err := ordjson.ReadFile(ownerPath)
 		if err != nil {
-			return nil, "", nil
+			return nil, "", fmt.Errorf("read coordinator record: %w", err)
 		}
 		owner, _ := ownerValue.(*ordjson.Object)
 		if owner == nil || !host.SameEndpoint(owner, endpointObject(s.config.Session, s.config.Pane, host.ID)) {
@@ -79,13 +81,24 @@ func (s Service) roleRecord(host machine.Identity, registrationPath string, role
 		recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
 		return recorded, occupiedAt, nil
 	}
-	value, err := ordjson.ReadFile(registrationPath)
+	// The registration was already read for the role check; re-decode only its incarnation for the comparator.
+	recorded, err := ordjsonValue(registration["incarnation"])
 	if err != nil {
 		return nil, "", err
 	}
-	registration, _ := value.(*ordjson.Object)
-	recorded, occupiedAt := incarnation.RegistrationRecord(registration)
-	return recorded, occupiedAt, nil
+	registeredAt, _ := registration["registered_at"].(string)
+	return recorded, registeredAt, nil
+}
+
+func ordjsonValue(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return ordjson.Decode(data)
 }
 
 func endpointObject(session, pane, machineID string) *ordjson.Object {

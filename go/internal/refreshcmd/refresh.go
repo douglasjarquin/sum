@@ -172,6 +172,28 @@ type occupantRecord struct {
 	value      any
 	occupiedAt string
 	ok         bool
+	// current re-reads the record under the state lock right before the prompt; a record that changed since it was
+	// judged (a rebind or a new registration) sends nothing. Nil skips the re-read.
+	current func() (any, error)
+}
+
+// unchanged re-reads the record under the state lock and reports whether it is still the one judged.
+func (r occupantRecord) unchanged(s *store.Store) bool {
+	if r.current == nil {
+		return true
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		return false
+	}
+	defer unlock()
+	now, err := r.current()
+	if err != nil {
+		return false
+	}
+	a, _ := ordjson.MarshalCompact(now)
+	b, _ := ordjson.MarshalCompact(r.value)
+	return string(a) == string(b)
 }
 
 // judgeOccupant refuses a target whose pane is no longer the recorded occupant: the agent row the pass observed must be
@@ -227,7 +249,7 @@ func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd strin
 	return "submitted-unconfirmed", status, agent, nil
 }
 
-func attemptDelivery(sn *snapshots, endpoint *ordjson.Object, expectedCwd, message string, host machine.Identity, record occupantRecord) *ordjson.Object {
+func attemptDelivery(s *store.Store, sn *snapshots, endpoint *ordjson.Object, expectedCwd, message string, host machine.Identity, record occupantRecord) *ordjson.Object {
 	state, reason, agent, err := observeRecipient(sn, endpoint, expectedCwd, host)
 	row := ordjson.NewObject()
 	if err != nil {
@@ -243,6 +265,11 @@ func attemptDelivery(sn *snapshots, endpoint *ordjson.Object, expectedCwd, messa
 	if msg := judgeOccupant(sn, endpoint, agent, record); msg != "" {
 		row.Set("state", "pending-unreachable")
 		row.Set("reason", msg)
+		return row
+	}
+	if !record.unchanged(s) {
+		row.Set("state", "pending-unreachable")
+		row.Set("reason", "the recipient's recorded incarnation changed while it was observed (a rebind or a new registration); nothing was sent, and the next request judges the current record")
 		return row
 	}
 	path, herr := sn.Herdr()
@@ -400,11 +427,25 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 		event.Set("reason", "the target is the calling pane; read the revision and adopt it at this turn boundary")
 	} else {
 		worktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
-		record := occupantRecord{role: "worker"}
-		if registration, regErr := s.Registration(store.EndpointFromContext(endpoint)); regErr == nil {
-			record.value, record.occupiedAt, record.ok = incarnation.WorkerRecord(registration, id)
+		workerRecord := func() (any, string, bool, error) {
+			registration, err := s.Registration(store.EndpointFromContext(endpoint))
+			if err != nil {
+				return nil, "", false, err
+			}
+			value, occupiedAt, ok := incarnation.WorkerRecord(registration, id)
+			return value, occupiedAt, ok, nil
 		}
-		event = attemptDelivery(sn, endpoint, worktree, message, host, record)
+		record := occupantRecord{role: "worker", current: func() (any, error) {
+			value, _, ok, err := workerRecord()
+			if err == nil && !ok {
+				err = fmt.Errorf("no worker registration")
+			}
+			return value, err
+		}}
+		if value, occupiedAt, ok, err := workerRecord(); err == nil {
+			record.value, record.occupiedAt, record.ok = value, occupiedAt, ok
+		}
+		event = attemptDelivery(s, sn, endpoint, worktree, message, host, record)
 	}
 	unlock, err = s.Lock()
 	if err != nil {
@@ -682,9 +723,16 @@ func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runt
 		session := asString(func() any { v, _ := owner.Get("session"); return v }())
 		message := fmt.Sprintf("sum refresh coordinator: operating contract revision %s is requested (sum %s, runtime %s). Changes: %s. At your next safe point read %s, then run %s and continue coordination from saved state. Do not restart or re-dispatch.",
 			latest, contract.SumVersion, sha, strings.Join(parts, "; "), path, shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", latest))
-		record := occupantRecord{role: "coordinator", ok: true}
+		record := occupantRecord{role: "coordinator", ok: true, current: func() (any, error) {
+			current, err := s.Owner()
+			if err != nil || current == nil {
+				return nil, fmt.Errorf("no coordinator record")
+			}
+			value, _ := incarnation.CoordinatorRecord(current)
+			return value, nil
+		}}
 		record.value, record.occupiedAt = incarnation.CoordinatorRecord(owner)
-		event = attemptDelivery(sn, owner, cwd, message, host, record)
+		event = attemptDelivery(s, sn, owner, cwd, message, host, record)
 		_ = session
 	}
 	unlock, err = s.Lock()

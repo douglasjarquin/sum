@@ -194,3 +194,24 @@ func TestDispatchRetriesAgentPaneBusy(t *testing.T) {
 		t.Fatalf("agent start calls = %d, want two busy refusals then one success", len(starts))
 	}
 }
+
+// Dispatch binds the worker registration to the occupant Herdr reports for the task's pane (its terminal and shell),
+// so the pane's own init and every later delivery are judged against it.
+func TestDispatchRecordsTheWorkerPanesIncarnation(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "incarnation-worker", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	id, err := machine.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane := asString(task["pane"])
+	registration := readJSON(t, sessionPath(d.home, id, pane))
+	inc := asMap(registration["incarnation"])
+	if registration["role"] != "worker" || inc["terminal"] != "term-"+pane || asMap(inc["shell"])["pid"] == nil {
+		t.Fatalf("worker registration = %v, want the pane's terminal and shell recorded", registration)
+	}
+	if worker := d.ctlPane(pane, true, "init"); asString(worker["role"]) != "worker" || asString(asMap(worker["incarnation"])["outcome"]) != "same" {
+		t.Fatalf("worker init = %v, want worker judged same", worker)
+	}
+}

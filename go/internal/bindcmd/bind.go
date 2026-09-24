@@ -110,7 +110,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	opts.Tasks = []string{taskID}
 	opts.Reason = "saved task state needs attention"
 	opts.Inline = true
-	opts.CallerVerified = true // RequireCoordinator judged this pane's occupant above.
+	opts.CallerVerifiedRole = "coordinator" // RequireCoordinator judged this pane's occupant above.
 	pumped, err := returns.Pump(s, opts)
 	if err != nil {
 		return nil, err

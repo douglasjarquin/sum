@@ -185,7 +185,7 @@ func (l *passLab) worktree(id string) string { return filepath.Join(l.root, "wt"
 func (l *passLab) pump(budget time.Duration) (*ordjson.Object, time.Duration) {
 	l.t.Helper()
 	started := time.Now()
-	result, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Ctx: l.ctx, Inline: true, Budget: budget, CallerVerified: true})
+	result, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Ctx: l.ctx, Inline: true, Budget: budget, CallerVerifiedRole: "coordinator"})
 	if err != nil {
 		l.t.Fatal(err)
 	}

@@ -58,9 +58,11 @@ type PumpOpts struct {
 	Snapshot []*ordjson.Object
 	// Herdr is an enclosing operation's Herdr snapshot (a hook event's pumps share one); nil starts one here.
 	Herdr *herdrclient.Snapshot
-	// CallerVerified says this operation already judged the calling pane's occupant verified against its record
-	// (init, or a coordinator command), so its own inline listing needs no second observation.
-	CallerVerified bool
+	// CallerVerifiedRole names the role this operation already judged the calling pane's occupant verified for (init,
+	// or a coordinator command), and CallerVerifiedTask the worker's task; only an inline listing for that role (and,
+	// for a worker, that task) skips a second observation.
+	CallerVerifiedRole string
+	CallerVerifiedTask any
 }
 
 type unreachableError struct {
@@ -561,8 +563,8 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	}
 	if b.inline {
 		// The caller is the recipient; only the recorded occupant of this pane may take its returns.
-		if opts.CallerVerified {
-			// Judged verified earlier in this operation.
+		if callerVerifiedFor(opts, route, items) {
+			// Judged verified earlier in this operation for exactly this role.
 		} else if msg, deferReason := p.checkInline(route, items); deferReason != "" {
 			return p.deferRow(row, deferReason), nil
 		} else if msg != "" {
@@ -1079,4 +1081,22 @@ func joinSpace(parts []string) string {
 		out += p
 	}
 	return out
+}
+
+// callerVerifiedFor reports whether the operation already verified the caller for route's role and, for a worker, for
+// every task in items.
+func callerVerifiedFor(opts PumpOpts, route *ordjson.Object, items [][2]*ordjson.Object) bool {
+	role := fmt.Sprint(routeValue(route, "role"))
+	if opts.CallerVerifiedRole == "" || opts.CallerVerifiedRole != role {
+		return false
+	}
+	if role != "worker" {
+		return true
+	}
+	for _, pair := range items {
+		if id, _ := pair[0].Get("id"); fmt.Sprint(id) != fmt.Sprint(opts.CallerVerifiedTask) {
+			return false
+		}
+	}
+	return true
 }

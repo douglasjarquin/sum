@@ -304,3 +304,16 @@ func TestService_relayFromAReplacedCallerIsRefusedBeforeAnyPrompt(t *testing.T) 
 		t.Fatalf("observation was refused: %v", err)
 	}
 }
+
+// An unreadable coordinator record is reported as the read failure it is, not as a different occupant.
+func TestService_unreadableCoordinatorRecordIsAnError(t *testing.T) {
+	runner := &fakeRunner{results: []commandResult{{stdout: `{"result":{"agent":{"agent_status":"idle"}}}`}}}
+	service := newTestService(t, "coordinator", runner)
+	if err := os.WriteFile(filepath.Join(service.config.StateHome, "context.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := service.Call(context.Background(), "herdr_relay", json.RawMessage(`{"target":"w-test:p2","message":"hello"}`))
+	if err == nil || !strings.Contains(err.Error(), "read coordinator record") {
+		t.Fatalf("relay with a corrupt coordinator record = %v, want the read error", err)
+	}
+}

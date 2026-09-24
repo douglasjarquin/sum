@@ -305,6 +305,13 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 				return nil, err
 			}
 		}
+	case judged != nil && judgedRole == "worker" && !judged.Verified:
+		// A pane a task records as its worker, whose occupant is not the recorded one, claims nothing.
+		if opts.Role == "coordinator" {
+			return nil, fmt.Errorf("This pane is a task's recorded worker pane, but its occupant is not the recorded worker (%s: %s); it cannot claim the coordinator role. %s", judged.Outcome, judged.Reason, incarnation.Recovery("worker", judged.Outcome))
+		}
+		role = "developer"
+		taskID = nil
 	case owner == nil && (opts.Role == "" || opts.Role == "coordinator"):
 		owner = copyEndpoint(ctx)
 		owner.Set("role", "coordinator")
@@ -422,7 +429,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			Inline:      true,
 			Snapshot:    tasks,
 			// The coordinator role was granted to this pane's verified occupant above.
-			CallerVerified: true,
+			CallerVerifiedRole: "coordinator",
 		})
 		if pumpErr != nil {
 			return nil, pumpErr
@@ -459,7 +466,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		}
 	}
 	if role == "developer" && judged != nil && !judged.Verified {
-		note = fmt.Sprintf("This pane's recorded %s role belongs to an earlier occupant (%s), so it is a developer now. %s Role bookkeeping is not an OS-level sandbox.", judgedRole, judged.Outcome, incarnation.Recovery(judgedRole, judged.Outcome))
+		note = earlierOccupantNote(judgedRole, *judged)
 	}
 	result.Set("note", note)
 	return result, nil
@@ -474,9 +481,11 @@ func incarnationView(judged *incarnation.Verdict, judgedRole, role string, obser
 		view.Set("reason", "no earlier coordinator or worker record names this pane; this init records its occupant")
 	} else {
 		view.Set("judged", judgedRole)
-		view.Set("outcome", judged.Outcome)
-		view.Set("verified", judged.Verified)
-		view.Set("reason", judged.Reason)
+		verdict := judged.Object()
+		for _, key := range verdict.Keys() {
+			v, _ := verdict.Get(key)
+			view.Set(key, v)
+		}
 		if !judged.Verified {
 			view.Set("recovery", incarnation.Recovery(judgedRole, judged.Outcome))
 		}

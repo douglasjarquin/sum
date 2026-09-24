@@ -46,7 +46,7 @@ func TestAttemptDeliveryRefusesAReplacedTargetPane(t *testing.T) {
 	bound := incarnation.Evidence{Terminal: "term-w1:p1", Shell: &incarnation.Shell{PID: 4242, Started: "2025-01-01T00:00:00Z"}}.Record(store.Now())
 	record := occupantRecord{role: "worker", value: bound, occupiedAt: store.Now(), ok: true}
 
-	row := attemptDelivery(newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
+	row := attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
 	if state, _ := row.Get("state"); state != "pending-unreachable" {
 		t.Fatalf("state = %v (%v), want pending-unreachable", state, row)
 	}
@@ -64,8 +64,40 @@ func TestAttemptDeliveryRefusesAReplacedTargetPane(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fake, "state.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	row = attemptDelivery(newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
+	row = attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
 	if state, _ := row.Get("state"); state != "submitted-unconfirmed" {
 		t.Fatalf("recorded occupant state = %v (%v), want submitted-unconfirmed", state, row)
+	}
+
+	// A live handoff (a new terminal, the same shell) is still the recorded occupant.
+	t.Setenv("FAKE_PS_STARTS", `{"4242": "2025-01-01T00:00:00Z"}`)
+	pane["terminal_id"], pane["agent_status"] = "term-after-handoff", "idle"
+	raw, _ = json.Marshal(map[string]any{"panes": map[string]any{"w1:p1": pane}, "workspaces": map[string]any{}})
+	if err := os.WriteFile(filepath.Join(fake, "state.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	row = attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
+	if state, _ := row.Get("state"); state != "submitted-unconfirmed" {
+		t.Fatalf("handoff state = %v (%v), want submitted-unconfirmed", state, row)
+	}
+
+	// A record rebound while the recipient was observed sends nothing.
+	pane["agent_status"] = "idle"
+	raw, _ = json.Marshal(map[string]any{"panes": map[string]any{"w1:p1": pane}, "workspaces": map[string]any{}})
+	if err := os.WriteFile(filepath.Join(fake, "state.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.current = func() (any, error) {
+		return incarnation.Evidence{Terminal: "term-someone-else"}.Record(store.Now()), nil
+	}
+	before := strings.Count(func() string { b, _ := os.ReadFile(filepath.Join(fake, "calls.jsonl")); return string(b) }(), `"prompt"`)
+	row = attemptDelivery(st, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
+	after := strings.Count(func() string { b, _ := os.ReadFile(filepath.Join(fake, "calls.jsonl")); return string(b) }(), `"prompt"`)
+	if state, _ := row.Get("state"); state != "pending-unreachable" || after != before {
+		t.Fatalf("rebound record = %v with %d new prompts, want pending-unreachable and none", row, after-before)
 	}
 }

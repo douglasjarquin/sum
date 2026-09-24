@@ -85,10 +85,15 @@ func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, reque
 	if verdict != nil {
 		result.Set("incarnation", incarnationView(verdict, "worker", "", nil))
 		if !verdict.Verified {
-			result.Set("note", fmt.Sprintf("This pane's recorded worker role belongs to an earlier occupant (%s: %s), so it is a developer now. %s Role bookkeeping is not an OS-level sandbox.", verdict.Outcome, verdict.Reason, incarnation.Recovery("worker", verdict.Outcome)))
+			result.Set("note", earlierOccupantNote("worker", *verdict))
 		}
 	}
 	return result, nil
+}
+
+// earlierOccupantNote explains a recorded role refused because this pane's occupant is not the recorded one.
+func earlierOccupantNote(role string, v incarnation.Verdict) string {
+	return fmt.Sprintf("This pane's recorded %s role belongs to an earlier occupant (%s: %s), so it is a developer now. %s Role bookkeeping is not an OS-level sandbox.", role, v.Outcome, v.Reason, incarnation.Recovery(role, v.Outcome))
 }
 
 // judgeWorker judges the calling pane against the worker registration the installation recorded for task.

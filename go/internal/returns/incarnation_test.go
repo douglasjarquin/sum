@@ -184,3 +184,31 @@ func TestPassInlineListingIsNotPresentedToAReplacedCaller(t *testing.T) {
 		t.Fatalf("inline state = %s (%v), want refused", got, result)
 	}
 }
+
+// A caller verified as the coordinator does not skip the occupant check for a worker-role listing at its own pane.
+func TestCallerVerifiedCoversOnlyItsOwnRoleAndTask(t *testing.T) {
+	coordinator := ordjson.NewObject()
+	coordinator.Set("role", "coordinator")
+	worker := ordjson.NewObject()
+	worker.Set("role", "worker")
+	task := ordjson.NewObject()
+	task.Set("id", "t-1")
+	other := ordjson.NewObject()
+	other.Set("id", "t-2")
+	items := [][2]*ordjson.Object{{task, nil}}
+	if !callerVerifiedFor(PumpOpts{CallerVerifiedRole: "coordinator"}, coordinator, items) {
+		t.Fatal("a verified coordinator's own listing must not be re-observed")
+	}
+	if callerVerifiedFor(PumpOpts{CallerVerifiedRole: "coordinator"}, worker, items) {
+		t.Fatal("a coordinator verification covered a worker listing")
+	}
+	if !callerVerifiedFor(PumpOpts{CallerVerifiedRole: "worker", CallerVerifiedTask: "t-1"}, worker, items) {
+		t.Fatal("a verified worker's own task listing must not be re-observed")
+	}
+	if callerVerifiedFor(PumpOpts{CallerVerifiedRole: "worker", CallerVerifiedTask: "t-1"}, worker, append(items, [2]*ordjson.Object{other, nil})) {
+		t.Fatal("a worker verification covered another task")
+	}
+	if callerVerifiedFor(PumpOpts{}, coordinator, items) {
+		t.Fatal("an unverified caller skipped the check")
+	}
+}

@@ -359,7 +359,10 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			opts.Tasks = pumpTasks
 			opts.Force = pumpForce
 			opts.Inline = true
-			opts.CallerVerified = callerVerified(st, ctx, reg)
+			if callerVerified(st, ctx, reg) {
+				opts.CallerVerifiedRole, _ = registrationString(reg, "role")
+				opts.CallerVerifiedTask, _ = reg.Get("task")
+			}
 			opts.Snapshot = tasks
 			opts.Budget = time.Duration(pumpBudget * float64(time.Second))
 			view, err := returns.Pump(st, opts)
@@ -607,27 +610,16 @@ func capitalizeHerdrContext(msg string) string {
 	return msg
 }
 
-// callerVerified judges the calling pane against the incarnation its registration's role records: the owner's for the
-// coordinator, the worker registration's own for a worker. Anything else is not verified, and the delivery pass then
-// checks the pane itself before presenting its inline listing.
+// callerVerified judges the calling pane against the incarnation its registration's role records. Anything else is not
+// verified, and the delivery pass then checks the pane itself before presenting its inline listing.
 func callerVerified(st *store.Store, ctx *ordjson.Object, reg *ordjson.Object) bool {
 	endpoint := store.EndpointFromContext(ctx)
-	role, _ := reg.Get("role")
-	switch role {
-	case "coordinator":
-		owner, err := st.Owner()
-		if err != nil || owner == nil {
-			return false
-		}
-		if owns, err := st.Matches(owner, endpoint); err != nil || !owns {
-			return false
-		}
-		recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
-		return incarnation.Caller(endpoint.Session, endpoint.Pane, recorded, occupiedAt).Verified
-	case "worker":
-		task, _ := reg.Get("task")
-		recorded, occupiedAt, ok := incarnation.WorkerRecord(reg, task)
-		return ok && incarnation.Caller(endpoint.Session, endpoint.Pane, recorded, occupiedAt).Verified
-	}
-	return false
+	recorded, occupiedAt, ok, err := incarnation.RoleRecord(st, reg, endpoint)
+	return err == nil && ok && incarnation.Caller(endpoint.Session, endpoint.Pane, recorded, occupiedAt).Verified
+}
+
+func registrationString(reg *ordjson.Object, key string) (string, bool) {
+	v, _ := reg.Get(key)
+	s, ok := v.(string)
+	return s, ok
 }

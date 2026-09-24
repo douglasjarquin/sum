@@ -464,9 +464,16 @@ func (s *Store) Owner() (*ordjson.Object, error) {
 }
 
 func (s *Store) Registration(endpoint Endpoint) (*ordjson.Object, error) {
+	_, obj, err := s.registrationFile(endpoint)
+	return obj, err
+}
+
+// registrationFile finds endpoint's registration file (under its key, then a legacy hostname key of this host) and
+// reads it, refusing one whose recorded identity is not endpoint. A missing registration is "", nil, nil.
+func (s *Store) registrationFile(endpoint Endpoint) (string, *ordjson.Object, error) {
 	host, err := s.Machine()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	for _, path := range s.registrationPaths(host, endpoint) {
 		if info, err := os.Stat(path); err != nil || info.IsDir() {
@@ -474,18 +481,18 @@ func (s *Store) Registration(endpoint Endpoint) (*ordjson.Object, error) {
 		}
 		value, err := ordjson.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		obj, ok := value.(*ordjson.Object)
 		if !ok {
-			return nil, fmt.Errorf("session registration is not a JSON object")
+			return "", nil, fmt.Errorf("session registration is not a JSON object")
 		}
 		if !identityMatches(host, obj, endpoint) {
-			return nil, fmt.Errorf("session registration identity mismatch; inspect the sessions directory")
+			return "", nil, fmt.Errorf("session registration identity mismatch; inspect the sessions directory")
 		}
-		return obj, nil
+		return path, obj, nil
 	}
-	return nil, nil
+	return "", nil, nil
 }
 
 // Register records endpoint's role. incarnation is the occupant Herdr reported for the pane when it was bound (an
@@ -557,26 +564,15 @@ func (s *Store) Register(endpoint Endpoint, role string, task any, incarnation a
 // SetIncarnation replaces the incarnation recorded on endpoint's registration and changes nothing else. The caller
 // holds the state lock and has just judged the current occupant verified against the record it replaces.
 func (s *Store) SetIncarnation(endpoint Endpoint, incarnation any) error {
-	host, err := s.Machine()
+	path, obj, err := s.registrationFile(endpoint)
 	if err != nil {
 		return err
 	}
-	for _, path := range s.registrationPaths(host, endpoint) {
-		if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
-			continue
-		}
-		value, err := ordjson.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		obj, ok := value.(*ordjson.Object)
-		if !ok || !identityMatches(host, obj, endpoint) {
-			return fmt.Errorf("session registration identity mismatch; inspect the sessions directory")
-		}
-		obj.Set("incarnation", incarnation)
-		return ordjson.WriteFile(path, obj)
+	if obj == nil {
+		return fmt.Errorf("no session registration for pane %s in session %s", endpoint.Pane, endpoint.Session)
 	}
-	return fmt.Errorf("no session registration for pane %s in session %s", endpoint.Pane, endpoint.Session)
+	obj.Set("incarnation", incarnation)
+	return ordjson.WriteFile(path, obj)
 }
 
 func endpointCwd(e Endpoint) any {

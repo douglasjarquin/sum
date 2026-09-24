@@ -30,6 +30,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
@@ -113,15 +114,10 @@ func FromInfo(value any) Evidence {
 
 func unwrap(value any) *ordjson.Object {
 	obj, _ := value.(*ordjson.Object)
-	for _, key := range []string{"pane", "agent"} {
-		if obj == nil {
-			return nil
-		}
-		if inner, ok := field(obj, key).(*ordjson.Object); ok {
-			obj = inner
-		}
+	if inner, ok := field(obj, "pane").(*ordjson.Object); ok {
+		obj = inner
 	}
-	return obj
+	return herdrclient.UnwrapAgent(obj)
 }
 
 func parseSession(obj *ordjson.Object) *Session {
@@ -455,28 +451,48 @@ func toolPath(name string) (string, error) {
 // Caller judges the calling pane (session, pane) against the incarnation recorded for it: one pane get, plus a shell
 // probe only when the judgment needs one.
 func Caller(session, pane string, recordedValue any, occupiedAt string) Verdict {
+	verdict, _ := CallerObserved(session, pane, recordedValue, occupiedAt)
+	return verdict
+}
+
+// CallerObserved is Caller plus the evidence it observed (with the shell when the judgment probed it), for a caller
+// that refreshes a verified record.
+func CallerObserved(session, pane string, recordedValue any, occupiedAt string) (Verdict, Evidence) {
 	herdrPath, err := HerdrPath()
 	if err != nil {
-		return refused(Unobservable, "Herdr cannot be found to verify this pane: "+err.Error())
+		return refused(Unobservable, "Herdr cannot be found to verify this pane: "+err.Error()), Evidence{}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*ObserveTimeout)
 	defer cancel()
-	return Pane(SessionCall(ctx, herdrPath, session), pane, recordedValue, occupiedAt)
+	return PaneObserved(SessionCall(ctx, herdrPath, session), pane, recordedValue, occupiedAt)
 }
 
 // Pane observes pane through call and judges it against recordedValue.
 func Pane(call Call, pane string, recordedValue any, occupiedAt string) Verdict {
+	verdict, _ := PaneObserved(call, pane, recordedValue, occupiedAt)
+	return verdict
+}
+
+// PaneObserved is Pane plus the evidence it observed.
+func PaneObserved(call Call, pane string, recordedValue any, occupiedAt string) (Verdict, Evidence) {
 	observed, code, err := ObservePane(call, pane)
 	if err != nil {
-		return refused(Unobservable, "Herdr cannot report this pane's occupant: "+err.Error())
+		return refused(Unobservable, "Herdr cannot report this pane's occupant: "+err.Error()), observed
 	}
 	if code == "pane_not_found" {
-		return refused(Absent, "Herdr reports pane "+pane+" as pane_not_found.")
+		return refused(Absent, "Herdr reports pane "+pane+" as pane_not_found."), observed
 	}
 	if code != "" {
-		return refused(Unobservable, "Herdr cannot report this pane's occupant: "+code)
+		return refused(Unobservable, "Herdr cannot report this pane's occupant: "+code), observed
 	}
-	return Judge(recordedValue, occupiedAt, observed, func() (*Shell, error) { return ProbeShell(call, pane) })
+	verdict := Judge(recordedValue, occupiedAt, observed, func() (*Shell, error) {
+		shell, err := ProbeShell(call, pane)
+		if err == nil {
+			observed.Shell = shell
+		}
+		return shell, err
+	})
+	return verdict, observed
 }
 
 // CoordinatorRecord is the incarnation that holds coordinator authority and the earliest time the owner record says
@@ -485,6 +501,33 @@ func Pane(call Call, pane string, recordedValue any, occupiedAt string) Verdict 
 // release's init by the occupant this check exists to refuse.
 func CoordinatorRecord(owner *ordjson.Object) (any, string) {
 	return field(owner, "incarnation"), earliest(str(owner, "claimed_at"), str(owner, "at"), str(owner, "upgraded_at"))
+}
+
+// OwnedCoordinatorRecord is CoordinatorRecord for the owner of s when that owner names endpoint; ok is false when no
+// owner is recorded or it names another pane.
+func OwnedCoordinatorRecord(s *store.Store, endpoint store.Endpoint) (recorded any, occupiedAt string, ok bool, err error) {
+	owner, err := s.Owner()
+	if err != nil || owner == nil {
+		return nil, "", false, err
+	}
+	if owns, err := s.Matches(owner, endpoint); err != nil || !owns {
+		return nil, "", false, err
+	}
+	recorded, occupiedAt = CoordinatorRecord(owner)
+	return recorded, occupiedAt, true, nil
+}
+
+// RoleRecord is the incarnation that holds registration's role for endpoint: the owner's for the coordinator while
+// the owner names endpoint, the registration's own for a worker. ok is false for any other role or owner.
+func RoleRecord(s *store.Store, registration *ordjson.Object, endpoint store.Endpoint) (recorded any, occupiedAt string, ok bool, err error) {
+	switch str(registration, "role") {
+	case "coordinator":
+		return OwnedCoordinatorRecord(s, endpoint)
+	case "worker":
+		recorded, occupiedAt = RegistrationRecord(registration)
+		return recorded, occupiedAt, true, nil
+	}
+	return nil, "", false, nil
 }
 
 // WorkerRecord is the incarnation a worker registration recorded for taskID and the registration's first occupancy
@@ -527,9 +570,9 @@ func Recovery(role, outcome string) string {
 	case outcome == Unobservable:
 		return unchanged + "Rerun once Herdr can report this pane's terminal and shell."
 	case role == "coordinator" && (outcome == Replaced || outcome == Absent):
-		return unchanged + "If the user confirms this pane should coordinate, run `sumctl init --reclaim` here."
+		return unchanged + "If the user confirms this pane should coordinate, run `sumctl init --role coordinator --reclaim` here."
 	case role == "coordinator":
-		return unchanged + "The record cannot be proven or disproven from this pane; if the user confirms the recorded coordinator pane is gone, close it so Herdr reports pane_not_found, then run `sumctl init --reclaim`."
+		return unchanged + "The record cannot be proven or disproven from this pane; if the user confirms the recorded coordinator pane is gone, close it so Herdr reports pane_not_found, then run `sumctl init --role coordinator --reclaim`."
 	case role == "worker":
 		return unchanged + "After inspecting the pane, the coordinator rebinds it deliberately with `sumctl bind TASK --worker-pane PANE`."
 	}

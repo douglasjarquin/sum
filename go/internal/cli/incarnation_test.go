@@ -70,7 +70,7 @@ func TestIncarnation_aRestoredPaneUnderANewServerDoesNotInheritTheCoordinator(t 
 	if view["role"] != "developer" || outcomeOf(view) != incarnation.Replaced {
 		t.Fatalf("init in the restored pane = role %v, incarnation %v; want developer, replaced", view["role"], view["incarnation"])
 	}
-	if !strings.Contains(asString(asMap(view["incarnation"])["recovery"]), "init --reclaim") {
+	if !strings.Contains(asString(asMap(view["incarnation"])["recovery"]), "init --role coordinator --reclaim") {
 		t.Fatalf("recovery = %v, want the deliberate reclaim", view["incarnation"])
 	}
 	after, _ := os.ReadFile(filepath.Join(home, "context.json"))
@@ -290,5 +290,62 @@ func TestIncarnation_anUnreachableBackendIsNotIdentityProof(t *testing.T) {
 	}
 	if after, _ := os.ReadFile(filepath.Join(home, "context.json")); string(after) != string(before) {
 		t.Fatal("init changed the coordinator record while Herdr was unreachable")
+	}
+}
+
+// A pane a task records as its worker, whose occupant cannot be proven, claims nothing even when no coordinator is
+// recorded, and its worker registration is kept.
+func TestIncarnation_anUnprovenWorkerPaneNeverClaimsAnUnownedCoordinator(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	host := mustMachine(t)
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", host, host, home))
+	st, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Register(store.Endpoint{Machine: host, Session: "sum-test", Pane: "w-worker:p1", Cwd: home}, "worker", "t-aaaaaaaaaaaa",
+		incarnation.Evidence{Terminal: "term-w-worker:p1", Shell: &incarnation.Shell{PID: 4242, Started: "2025-01-01T00:00:00Z"}}.Record(store.Now())); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PANE_ID", "w-worker:p1")
+	t.Setenv("FAKE_PARENT_TERMINAL", "term-unknown")
+	t.Setenv("FAKE_PS_GONE", "4242")
+	view := initView(t, home)
+	if view["role"] != "developer" || outcomeOf(view) != incarnation.Unobservable {
+		t.Fatalf("init = role %v, incarnation %v; want developer, unobservable", view["role"], view["incarnation"])
+	}
+	if _, err := os.Stat(filepath.Join(home, "context.json")); !os.IsNotExist(err) {
+		t.Fatal("an unproven worker pane claimed the coordinator role")
+	}
+	if kept := readJSON(t, sessionPath(home, host, "w-worker:p1")); kept["role"] != "worker" {
+		t.Fatalf("the worker registration was rewritten: %v", kept)
+	}
+	if _, err := initRole(t, home, "--role", "coordinator"); err == nil {
+		t.Fatal("an unproven worker pane claimed coordinator with --role")
+	}
+}
+
+// A coordinator command from a restored coordinator records the restored terminal, so a new conversation in that
+// terminal afterwards is still the coordinator.
+func TestIncarnation_aRestoredCoordinatorKeepsItsRoleThroughALaterNewConversation(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	t.Setenv("FAKE_PARENT_SESSION", "conv-A")
+	initView(t, home)
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", mustMachine(t), mustMachine(t), home))
+	restartHerdr(t, "term-after-restore")
+	if out, err := runCLI(t, home, "bind", "t-aaaaaaaaaaaa", "--parent-only"); err != nil {
+		t.Fatalf("coordinator command from the restored pane: %v\n%s", err, out)
+	}
+	if ownerIncarnation(t, home)["terminal"] != "term-after-restore" {
+		t.Fatalf("owner after the restored command = %v, want the restored terminal recorded", ownerIncarnation(t, home))
+	}
+	t.Setenv("FAKE_PARENT_SESSION", "conv-B")
+	if view := initView(t, home); view["role"] != "coordinator" || outcomeOf(view) != incarnation.NewConversation {
+		t.Fatalf("new conversation after restore = %v", view)
 	}
 }
