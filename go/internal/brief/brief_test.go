@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -65,8 +66,18 @@ func newLab(t *testing.T, withProcedure bool) *lab {
 	return &lab{s: s, runtime: runtime, sumctl: filepath.Join(runtime, "bin", "sumctl"), task: task, taskDir: taskDir}
 }
 
+// writeProcedure writes the required core with body and each on-demand source with a fixed body.
 func writeProcedure(t *testing.T, runtime, body string) {
 	t.Helper()
+	for _, src := range procedure.Sources[1:] {
+		extra := filepath.Join(runtime, filepath.FromSlash(src.Path))
+		if err := os.MkdirAll(filepath.Dir(extra), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(extra, []byte("# "+src.Name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	path := filepath.Join(runtime, "skills", "sum-worker", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)

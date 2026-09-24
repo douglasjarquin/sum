@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 )
 
 // newRuntimeLab is a policy lab whose runtime is a disposable copy of this checkout's helper and
@@ -35,9 +37,13 @@ func newRuntimeLab(t *testing.T, withProcedure bool) *demoLab {
 	copyFile("bin/sumctl", 0o755)
 	copyFile(".local/bin/sumctl", 0o755)
 	copyFile("skills/sum-delivery/SKILL.md", 0o644)
+	copyFile("COORDINATOR.md", 0o644)
 	copyFile(".agents/skills/verify/references/engineering-principles.md", 0o644)
 	if withProcedure {
 		copyFile("skills/sum-worker/SKILL.md", 0o644)
+		for _, src := range procedure.Sources[1:] {
+			copyFile(src.Path, 0o644)
+		}
 	}
 	home := filepath.Join(base, "state home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -125,8 +131,38 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 		t.Fatalf("launch prompt = %v", launch)
 	}
 	rows := workerProcedureRows(t, d, taskID, pane)
-	if len(rows) != 1 || asMap(rows[0])["ok"] != true || asString(asMap(rows[0])["path"]) != pinned {
+	if len(rows) != len(procedure.Sources) || asMap(rows[0])["ok"] != true || asString(asMap(rows[0])["path"]) != pinned || asString(asMap(rows[0])["load"]) != procedure.Required {
 		t.Fatalf("worker context procedure = %v", rows)
+	}
+	// Action-scoped files are pinned too, but listed with their condition, never inlined or required.
+	for i, src := range procedure.Sources[1:] {
+		row := asMap(rows[i+1])
+		if asString(row["name"]) != src.Name || asString(row["load"]) != procedure.OnDemand || row["ok"] != true {
+			t.Fatalf("on-demand row %d = %v", i+1, row)
+		}
+		if !strings.Contains(string(brief), "- Read when "+src.When+": `"+asString(row["path"])+"`") {
+			t.Fatalf("brief does not list %s with its condition:\n%s", src.Name, brief)
+		}
+		body, _ := os.ReadFile(filepath.Join(d.root, filepath.FromSlash(src.Path)))
+		if got, _ := os.ReadFile(asString(row["path"])); string(got) != string(body) {
+			t.Fatalf("pinned %s differs from its runtime source", src.Name)
+		}
+		lines := strings.Split(strings.TrimSpace(string(body)), "\n")
+		if strings.Contains(string(brief), lines[len(lines)-1]) {
+			t.Fatalf("brief inlines on-demand %s", src.Name)
+		}
+	}
+	if strings.Count(string(brief), "- Required before any other step: ") != 1 {
+		t.Fatalf("brief requires more than the core:\n%s", brief)
+	}
+	// The worker's own reads name only the pinned copies: no live runtime sum-worker beside them.
+	skills := asMap(asMap(d.ctlPane(pane, true, "context", taskID, "--role", "worker", "--section", "environment")["environment"])["skills"])
+	if files := asSlice(skills["files"]); len(files) != 0 {
+		t.Fatalf("worker context still offers live skill files %v", files)
+	}
+	initRows := asSlice(d.ctlPane(pane, true, "init")["procedure"])
+	if len(initRows) != len(procedure.Sources) || asString(asMap(initRows[0])["path"]) != pinned {
+		t.Fatalf("worker init procedure = %v", initRows)
 	}
 
 	// The procedure survives the runtime copy disappearing: a recovered worker reads it from the task.

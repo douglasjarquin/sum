@@ -33,8 +33,10 @@ func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, reque
 
 	var task *ordjson.Object
 	var verdict *incarnation.Verdict
+	var taskStore *store.Store
 	if hint != "" {
 		if hintStore, openErr := store.Open(hint); openErr == nil {
+			taskStore = hintStore
 			task, err = matchingTask(hintStore, endpoint)
 			if err != nil {
 				return nil, err
@@ -81,6 +83,7 @@ func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, reque
 	} else {
 		result.Set("development", nil)
 	}
+	result.Set("procedure", roleProcedure(root, taskStore, role, task, nil))
 	result.Set("note", note(task, marker))
 	if verdict != nil {
 		result.Set("incarnation", incarnationView(verdict, "worker", "", nil))
@@ -118,9 +121,9 @@ func judgeWorker(root string, s *store.Store, task *ordjson.Object, endpoint sto
 
 func note(task, marker *ordjson.Object) string {
 	if task != nil {
-		return "Dispatched worker checkout: follow your brief; do not initialize a coordinator."
+		return "Dispatched worker checkout: follow your brief and the required files under `procedure`; do not initialize a coordinator."
 	}
-	base := "Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates."
+	base := "Development checkout: read the developer procedure under `procedure`; modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates."
 	if marker == nil {
 		return base
 	}

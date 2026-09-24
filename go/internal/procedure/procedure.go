@@ -39,21 +39,50 @@ type Source struct {
 	When string // for OnDemand: when to read it
 }
 
-// Sources is the worker procedure, in reading order.
+// Sources is the worker procedure, in reading order: the required core, then action-scoped files a
+// worker reads only when their condition applies.
 var Sources = []Source{
 	{Name: "sum-worker", Path: "skills/sum-worker/SKILL.md", Load: Required},
+	{Name: "sum-worker-evidence", Path: "skills/sum-worker/references/evidence.md", Load: OnDemand,
+		When: "the task fixes something a user can see, or a feature-map row covering your change names a screenshot, screencast, or red/green pair"},
+	{Name: "sum-worker-environment", Path: "skills/sum-worker/references/environment.md", Load: OnDemand,
+		When: "you run the application, or start, record, inspect, or stop a service for this task"},
+	{Name: "sum-worker-graph", Path: "skills/sum-worker/references/graph.md", Load: OnDemand,
+		When: "the `## Code graph` section or `context --section execution` reports an index other than `not built`, or before you ask for one"},
+	{Name: "sum-worker-refresh", Path: "skills/sum-worker/references/refresh.md", Load: OnDemand,
+		When: "a `sum refresh` message or a `brief revision rN is requested` notice reaches you"},
 }
+
+// Role cores that `init` names for a session it registers; they are read from the runtime, never pinned.
+var (
+	Coordinator = Source{Name: "coordinator", Path: "COORDINATOR.md", Load: Required}
+	Developer   = Source{Name: "sum-develop", Path: "skills/sum-develop/SKILL.md", Load: Required}
+)
+
+// NoBrief is the consequence a worker-procedure failure reports.
+const NoBrief = "no brief was written"
 
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
 }
 
-func sourceError(src Source, runtimeRoot, problem string) error {
-	return fmt.Errorf("Worker procedure %s %s in runtime %s; no brief was written. Restore that tracked file (`git -C %s checkout -- %s` in a checkout runtime, or activate a verified release) and retry; never hand-write a brief.", src.Path, problem, runtimeRoot, shquote.Quote(runtimeRoot), src.Path)
+func sourceError(src Source, runtimeRoot, problem, consequence string) error {
+	kind := "Worker procedure"
+	if src.Name == Coordinator.Name || src.Name == Developer.Name {
+		kind = "Role procedure"
+	}
+	return fmt.Errorf("%s %s %s in runtime %s; %s. Restore that tracked file (`git -C %s checkout -- %s` in a checkout runtime, or activate a verified release) and retry; never substitute another copy or memory.", kind, src.Path, problem, runtimeRoot, consequence, shquote.Quote(runtimeRoot), src.Path)
 }
 
 func readSource(runtimeRoot string, src Source, manifest *ordjson.Object) ([]byte, error) {
+	return readSourceFor(runtimeRoot, src, manifest, NoBrief)
+}
+
+func readSourceFor(runtimeRoot string, src Source, manifest *ordjson.Object, consequence string) ([]byte, error) {
+	sourceError := func(src Source, runtimeRoot, problem string) error {
+		return sourceError(src, runtimeRoot, problem, consequence)
+	}
 	path := filepath.Join(runtimeRoot, filepath.FromSlash(src.Path))
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -94,24 +123,24 @@ func readSource(runtimeRoot string, src Source, manifest *ordjson.Object) ([]byt
 }
 
 // releaseManifest returns the runtime's release.json when the runtime is a release tree.
-func releaseManifest(runtimeRoot string) (*ordjson.Object, error) {
+func releaseManifest(runtimeRoot, consequence string) (*ordjson.Object, error) {
 	path := filepath.Join(runtimeRoot, "release.json")
 	if _, err := os.Lstat(path); err != nil {
 		return nil, nil
 	}
 	value, err := ordjson.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("Release manifest %s is unreadable (%v); no brief was written.", path, err)
+		return nil, fmt.Errorf("Release manifest %s is unreadable (%v); %s.", path, err, consequence)
 	}
 	manifest, _ := value.(*ordjson.Object)
 	if manifest == nil {
-		return nil, fmt.Errorf("Release manifest %s is not a JSON object; no brief was written.", path)
+		return nil, fmt.Errorf("Release manifest %s is not a JSON object; %s.", path, consequence)
 	}
 	return manifest, nil
 }
 
 func readAll(runtimeRoot string) ([][]byte, error) {
-	manifest, err := releaseManifest(runtimeRoot)
+	manifest, err := releaseManifest(runtimeRoot, NoBrief)
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +153,28 @@ func readAll(runtimeRoot string) ([][]byte, error) {
 		contents = append(contents, data)
 	}
 	return contents, nil
+}
+
+// Describe validates one role source in the runtime exactly as pinning would (regular file, size bound,
+// release-manifest hash) and returns its reference row with an absolute path. consequence names what the
+// caller refuses when the file is unusable, e.g. "no role was claimed".
+func Describe(runtimeRoot string, src Source, consequence string) (*ordjson.Object, error) {
+	manifest, err := releaseManifest(runtimeRoot, consequence)
+	if err != nil {
+		return nil, err
+	}
+	data, err := readSourceFor(runtimeRoot, src, manifest, consequence)
+	if err != nil {
+		return nil, err
+	}
+	row := ordjson.NewObject()
+	row.Set("name", src.Name)
+	row.Set("source", src.Path)
+	row.Set("path", filepath.Join(runtimeRoot, filepath.FromSlash(src.Path)))
+	row.Set("sha256", sha256Hex(data))
+	row.Set("bytes", json.Number(fmt.Sprint(len(data))))
+	row.Set("load", src.Load)
+	return row, nil
 }
 
 // Check validates every source without writing anything, so a caller can refuse before side effects.
@@ -275,6 +326,40 @@ func VerifyRow(taskDir string, row *ordjson.Object) error {
 		return pinnedMismatch(full, recorded, actual)
 	}
 	return nil
+}
+
+// References lists recorded rows with absolute paths and their integrity (`ok`, and `error` when not),
+// so a fresh or recovered worker finds its procedure from the task record. Nil before rows existed.
+func References(taskDir string, rows []any) []any {
+	if rows == nil {
+		return nil
+	}
+	refs := make([]any, 0, len(rows))
+	for _, raw := range rows {
+		row, _ := raw.(*ordjson.Object)
+		ref := ordjson.NewObject()
+		for _, key := range []string{"name", "sha256", "bytes", "load", "when"} {
+			if row == nil {
+				break
+			}
+			if v, has := row.Get(key); has {
+				ref.Set(key, v)
+			}
+		}
+		if row != nil {
+			if full, ok := ResourcePath(taskDir, row); ok {
+				ref.Set("path", full)
+			}
+		}
+		if err := VerifyRow(taskDir, row); err != nil {
+			ref.Set("ok", false)
+			ref.Set("error", err.Error())
+		} else {
+			ref.Set("ok", true)
+		}
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 // Verify checks every recorded resource of a revision.

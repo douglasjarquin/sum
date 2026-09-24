@@ -935,7 +935,14 @@ func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjs
 	if len(effectiveRoles) == 0 {
 		effectiveRoles = ContextRoles
 	}
-	result.Set("skills", skillReferences(runtimeRoot, sumctlPath, effectiveRoles))
+	skillRefs := skillReferences(runtimeRoot, sumctlPath, effectiveRoles)
+	// A worker whose active revision pins its procedure reads those files; the live runtime copy could
+	// differ from them, so it is not offered beside them.
+	if len(roles) == 1 && roles[0] == "worker" && procedure.Rows(asObject(getField(active, "policy"))) != nil {
+		skillRefs.Set("files", []any{})
+		skillRefs.Set("instruction", "Your procedure is the pinned files under `procedure`; no live runtime copy is offered beside them. Paths are absolute installed paths, never relative to a checkout.")
+	}
+	result.Set("skills", skillRefs)
 	runtimeObj := ordjson.NewObject()
 	runtimeObj.Set("path", runtimeRoot)
 	runtimeObj.Set("sum_version", store.SumVersion)
@@ -946,27 +953,11 @@ func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjs
 	return result, nil
 }
 
-// procedureReferences lists the active revision's pinned worker procedure with its integrity, so a
-// fresh or recovered worker finds its instructions from the task record. Nil before pinned rows existed.
+// procedureReferences lists the active revision's pinned worker procedure with its integrity.
 func procedureReferences(taskPath string, active *ordjson.Object) any {
-	rows := procedure.Rows(asObject(getField(active, "policy")))
-	if rows == nil {
+	refs := procedure.References(taskPath, procedure.Rows(asObject(getField(active, "policy"))))
+	if refs == nil {
 		return nil
-	}
-	refs := make([]any, 0, len(rows))
-	for _, raw := range rows {
-		row := asObject(raw)
-		ref := pickPresent(row, []string{"name", "sha256", "bytes", "load", "when"})
-		if full, ok := procedure.ResourcePath(taskPath, row); ok {
-			ref.Set("path", full)
-		}
-		if err := procedure.VerifyRow(taskPath, row); err != nil {
-			ref.Set("ok", false)
-			ref.Set("error", err.Error())
-		} else {
-			ref.Set("ok", true)
-		}
-		refs = append(refs, ref)
 	}
 	return refs
 }

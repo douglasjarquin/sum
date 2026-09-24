@@ -80,7 +80,7 @@ func TestInit_plainDeveloperWithNoHintOrMarker(t *testing.T) {
 		t.Fatalf("role = %v, want developer", role)
 	}
 	noteValue, _ := view.Get("note")
-	want := "Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates."
+	want := "Development checkout: read the developer procedure under `procedure`; modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates."
 	if noteValue != want {
 		t.Fatalf("note = %q, want %q", noteValue, want)
 	}
@@ -109,7 +109,7 @@ func TestInit_developmentMarkerAppendsCallbackSentence(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 	noteValue, _ := view.Get("note")
-	want := "Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates. " +
+	want := "Development checkout: read the developer procedure under `procedure`; modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates. " +
 		"Tests use temporary --home state and a named lab Herdr session; the installed helper at /installations/sum/bin/sumctl owns any parent-task callbacks."
 	if noteValue != want {
 		t.Fatalf("note = %q, want %q", noteValue, want)

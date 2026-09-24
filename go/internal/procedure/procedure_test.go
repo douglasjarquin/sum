@@ -12,16 +12,34 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
+// writeSource writes the required core with body and every on-demand source with a small fixed body.
 func writeSource(t *testing.T, runtime, body string) string {
 	t.Helper()
+	for _, src := range Sources[1:] {
+		writeFile(t, filepath.Join(runtime, filepath.FromSlash(src.Path)), "# "+src.Name+"\n")
+	}
 	path := filepath.Join(runtime, "skills", "sum-worker", "SKILL.md")
+	writeFile(t, path, body)
+	return path
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return path
+}
+
+// manifestFiles lists every on-demand source at its real hash plus the core at coreHash.
+func manifestFiles(coreHash string) string {
+	entries := []string{`"skills/sum-worker/SKILL.md": "sha256:` + coreHash + `"`}
+	for _, src := range Sources[1:] {
+		entries = append(entries, `"`+src.Path+`": "sha256:`+hashOf("# "+src.Name+"\n")+`"`)
+	}
+	return strings.Join(entries, ", ")
 }
 
 func hashOf(body string) string {
@@ -135,7 +153,7 @@ func TestSourceRefusals(t *testing.T) {
 		},
 		"release manifest mismatch": func(t *testing.T, runtime string) {
 			writeSource(t, runtime, "# sum-worker\n")
-			manifest := `{"schema": 1, "kind": "sum-release", "files": {"skills/sum-worker/SKILL.md": "sha256:` + hashOf("something else") + `"}}`
+			manifest := `{"schema": 1, "kind": "sum-release", "files": {` + manifestFiles(hashOf("something else")) + `}}`
 			if err := os.WriteFile(filepath.Join(runtime, "release.json"), []byte(manifest), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -171,7 +189,7 @@ func TestReleaseManifestMatchIsAccepted(t *testing.T) {
 	runtime := t.TempDir()
 	body := "# sum-worker\nreleased\n"
 	writeSource(t, runtime, body)
-	manifest := `{"schema": 1, "kind": "sum-release", "files": {"skills/sum-worker/SKILL.md": "sha256:` + hashOf(body) + `"}}`
+	manifest := `{"schema": 1, "kind": "sum-release", "files": {` + manifestFiles(hashOf(body)) + `}}`
 	if err := os.WriteFile(filepath.Join(runtime, "release.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -252,5 +270,73 @@ func TestRenderedRowsSupportSeveralResources(t *testing.T) {
 	}
 	if SHA(rows, "sum-worker") != hashOf("# core\n") || SHA(rows, "absent") != "" {
 		t.Fatalf("SHA lookup = %q", SHA(rows, "sum-worker"))
+	}
+}
+
+func TestShippedSourcesPinOneRequiredCoreThenOnDemandFiles(t *testing.T) {
+	runtime := t.TempDir()
+	writeSource(t, runtime, "# core\n")
+	rows, err := Pin(runtime, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != len(Sources) || len(Sources) < 2 {
+		t.Fatalf("rows = %v", rows)
+	}
+	for i, raw := range rows {
+		r, _ := raw.(*ordjson.Object)
+		wantLoad := OnDemand
+		if i == 0 {
+			wantLoad = Required
+		}
+		if field(r, "load") != wantLoad {
+			t.Fatalf("row %d load = %s, want %s", i, field(r, "load"), wantLoad)
+		}
+		if wantLoad == OnDemand && strings.TrimSpace(field(r, "when")) == "" {
+			t.Fatalf("on-demand row %d has no condition: %v", i, r)
+		}
+	}
+}
+
+func TestOneMissingOnDemandSourceRefusesThePin(t *testing.T) {
+	runtime := t.TempDir()
+	writeSource(t, runtime, "# core\n")
+	last := Sources[len(Sources)-1]
+	if err := os.Remove(filepath.Join(runtime, filepath.FromSlash(last.Path))); err != nil {
+		t.Fatal(err)
+	}
+	taskDir := t.TempDir()
+	if _, err := Pin(runtime, taskDir); err == nil || !strings.Contains(err.Error(), last.Path) || !strings.Contains(err.Error(), "no brief was written") {
+		t.Fatalf("Pin without %s = %v", last.Path, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(taskDir, Dir)); len(entries) != 0 {
+		t.Fatalf("refused pin wrote %v", entries)
+	}
+}
+
+func TestDescribeValidatesARoleSourceWithoutPinning(t *testing.T) {
+	runtime := filepath.Join(t.TempDir(), "run time")
+	body := "# Coordinator core\n"
+	writeFile(t, filepath.Join(runtime, Coordinator.Path), body)
+	r, err := Describe(runtime, Coordinator, "no coordinator role was granted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if field(r, "path") != filepath.Join(runtime, Coordinator.Path) || field(r, "sha256") != hashOf(body) || field(r, "bytes") != fmt.Sprint(len(body)) || field(r, "load") != Required {
+		t.Fatalf("row = %v", r)
+	}
+	manifest := `{"schema": 1, "kind": "sum-release", "files": {"` + Coordinator.Path + `": "sha256:` + hashOf("other") + `"}}`
+	writeFile(t, filepath.Join(runtime, "release.json"), manifest)
+	if _, err := Describe(runtime, Coordinator, "no coordinator role was granted"); err == nil || !strings.Contains(err.Error(), "release manifest") || !strings.Contains(err.Error(), "no coordinator role was granted") || strings.Contains(err.Error(), "no brief was written") {
+		t.Fatalf("Describe with a mismatched manifest = %v", err)
+	}
+	if err := os.Remove(filepath.Join(runtime, "release.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(runtime, Coordinator.Path)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Describe(runtime, Coordinator, "no coordinator role was granted"); err == nil || !strings.Contains(err.Error(), "COORDINATOR.md is missing") || !strings.Contains(err.Error(), "Role procedure") {
+		t.Fatalf("Describe missing = %v", err)
 	}
 }

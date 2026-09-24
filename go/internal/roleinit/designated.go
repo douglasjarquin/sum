@@ -141,6 +141,9 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		}
 	}
 
+	// The coordinator core is validated before the lock: a runtime without it grants or keeps no coordinator role.
+	core, coreErr := coordinatorCore(opts.RuntimeRoot)
+
 	// A reclaim observes the recorded coordinator before the state lock (no Herdr call runs under it) and proceeds
 	// only if the owner record is unchanged when the lock is held.
 	var reclaimVerdict incarnation.Verdict
@@ -278,6 +281,9 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		if opts.Role == "developer" {
 			return nil, fmt.Errorf("This pane owns the coordinator role. Initialize a developer session from another pane; ownership is not released implicitly.")
 		}
+		if coreErr != nil {
+			return nil, coreErr
+		}
 		role = "coordinator"
 		taskID = nil
 		changed := false
@@ -313,6 +319,9 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		role = "developer"
 		taskID = nil
 	case owner == nil && (opts.Role == "" || opts.Role == "coordinator"):
+		if coreErr != nil {
+			return nil, coreErr
+		}
 		owner = copyEndpoint(ctx)
 		owner.Set("role", "coordinator")
 		owner.Set("instance", instanceStr)
@@ -336,6 +345,9 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		}
 		if reclaimVerdict.Outcome != incarnation.Absent && reclaimVerdict.Outcome != incarnation.Replaced {
 			return nil, fmt.Errorf("Refusing reclaim: recorded coordinator pane is %s (%s). Only a pane Herdr reports as pane_not_found, or one a different occupant now holds (a different terminal and shell, no matching native session), can be reclaimed; an existing, unreachable, uncertain, or unprovable coordinator pane is not permission to take over.", reclaimVerdict.Outcome, reclaimVerdict.Reason)
+		}
+		if coreErr != nil {
+			return nil, coreErr
 		}
 		from := ordjson.NewObject()
 		for _, key := range []string{"machine", "session", "pane", "at", "claimed_at", "incarnation"} {
@@ -379,6 +391,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			return nil, err
 		}
 		result.Set("coordinator", coordinator)
+		result.Set("procedure", roleProcedure(opts.RuntimeRoot, s, role, nil, nil))
 		result.Set("note", "This pane's recorded role could not be verified, so it runs as a developer and its registration was left unchanged. "+incarnation.Recovery(judgedRole, judged.Outcome)+" Role bookkeeping is not an OS-level sandbox.")
 		return result, nil
 	}
@@ -452,10 +465,17 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	result.Set("task", taskID)
 	result.Set("registration", registration)
 	result.Set("coordinator", coordinator)
+	workerTask := task
+	if role == "worker" && workerTask == nil {
+		if id, ok := taskID.(string); ok && id != "" {
+			workerTask, _ = s.ReadTask(id)
+		}
+	}
+	result.Set("procedure", roleProcedure(opts.RuntimeRoot, s, role, workerTask, core))
 	note := map[string]string{
-		"coordinator": "You are the coordinator for this instance. Continue the coordinator startup steps.",
-		"worker":      "You are a dispatched worker. Follow your brief; do not run coordinator startup.",
-		"developer":   "Another session owns coordination. Do not run coordinator startup, dispatch, or setup here; develop sum only in a development checkout. Role bookkeeping is not an OS-level sandbox.",
+		"coordinator": "You are the coordinator for this instance. Read the coordinator core at the path under `procedure` before any other step, then follow its startup steps.",
+		"worker":      "You are a dispatched worker. Follow your brief and the required files under `procedure`; do not run coordinator startup.",
+		"developer":   "Another session owns coordination. Read the developer procedure under `procedure`. Do not run coordinator startup, dispatch, or setup here; develop sum only in a development checkout. Role bookkeeping is not an OS-level sandbox.",
 	}[role]
 	if role == "coordinator" {
 		contractValue, _ := result.Get("contract")
