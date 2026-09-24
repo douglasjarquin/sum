@@ -351,13 +351,11 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 		}
 		tasks = append(tasks, row)
 	}
-	offers := releaseOffersIdentity(manifest)
+	target := releaseIdentity(manifest)
 	if checkout {
-		if offers, err = checkoutOffersIdentity(root, candidateSHA); err != nil {
-			return nil, err
-		}
+		target = checkoutIdentity(manifest)
 	}
-	identity, identityBlocking, err := machineIdentityCompatibility(s, all, offers, allow)
+	identity, identityBlocking, err := machineIdentityCompatibility(s, all, target, allow)
 	if err != nil {
 		return nil, err
 	}

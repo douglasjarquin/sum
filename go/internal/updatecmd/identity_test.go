@@ -47,6 +47,7 @@ func preIdentityCases() []preIdentityCase {
 			name: "rollback --to checkout",
 			arrange: func(t *testing.T, lab *applyLab) (string, string) {
 				selectReleaseAllowing(t, lab, lab.oldSHA)
+				plantNativeHelper(t, lab.root, contractHelper(preIdentityContractJSON))
 				return lab.oldSHA, lab.oldSHA
 			},
 			run: func(lab *applyLab, allow PreIdentity) (*ordjson.Object, error) {
@@ -331,15 +332,8 @@ func TestPreIdentity_markerClassifiesThisRepositorysHistory(t *testing.T) {
 		}
 		manifest := ordjson.NewObject()
 		manifest.Set("files", files)
-		if got := releaseOffersIdentity(manifest); got != tc.want {
+		if got := releaseIdentity(manifest).offers; got != tc.want {
 			t.Fatalf("release of %s offers the identity = %v, want %v", tc.rev, got, tc.want)
-		}
-		got, err := checkoutOffersIdentity(repo, tc.rev)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != tc.want {
-			t.Fatalf("checkout at %s offers the identity = %v, want %v", tc.rev, got, tc.want)
 		}
 	}
 }
@@ -348,6 +342,7 @@ func TestPreIdentity_markerClassifiesThisRepositorysHistory(t *testing.T) {
 // out of band; history says why that was allowed.
 func TestPreIdentity_knownGoodRecordedOverStableRecordsIsLogged(t *testing.T) {
 	lab := newPreIdentityLab(t)
+	plantNativeHelper(t, lab.root, contractHelper(preIdentityContractJSON))
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
 	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
 		t.Fatalf("apply from a pre-identity checkout: %v", err)
@@ -365,6 +360,43 @@ func TestPreIdentity_knownGoodRecordedOverStableRecordsIsLogged(t *testing.T) {
 		t.Fatalf("known-good entry = %s, want the checkout at %s", dump(entry), lab.oldSHA)
 	}
 	assertOverride(t, asObject(func() any { v, _ := entry.Get("machine_identity_override"); return v }()))
+}
+
+// Selecting the checkout runs its prebuilt .local/bin/sumctl, which nothing
+// binds to HEAD: HEAD carrying #202 says nothing about an older build there.
+func TestPreIdentity_checkoutHelperDecidesNotItsHead(t *testing.T) {
+	lab := newRollbackLab(t)
+	selectWorkingRelease(t, lab, lab.oldSHA)
+	if exec.Command("git", "-C", lab.root, "cat-file", "-e", "HEAD:"+identityMarker).Run() != nil {
+		t.Fatal("fixture HEAD lacks the marker; this test needs a HEAD that carries #202")
+	}
+	plantNativeHelper(t, lab.root, contractHelper(preIdentityContractJSON))
+
+	_, err := Rollback(lab.store, lab.ctx, "checkout", RefusePreIdentity)
+	if err == nil || !strings.Contains(err.Error(), ".local/bin/sumctl does not report supports.machine_identity") || !strings.Contains(err.Error(), "mise run test") {
+		t.Fatalf("checkout rollback onto a pre-identity helper = %v, want the helper refusal with the rebuild hint", err)
+	}
+	if got := currentSHA(t, lab.root); got != lab.oldSHA {
+		t.Fatalf("selection changed to %s", got)
+	}
+
+	plantNativeHelper(t, lab.root, workingHelper(""))
+	view, err := Rollback(lab.store, lab.ctx, "checkout", RefusePreIdentity)
+	if err != nil {
+		t.Fatalf("checkout rollback after rebuilding the helper: %v", err)
+	}
+	row := compatIdentity(t, view)
+	if strField(row, "result") != "supported" || !strings.Contains(strField(row, "target_evidence"), "checkout helper release-contract") {
+		t.Fatalf("machine_identity = %s, want supported from the helper's contract", dump(row))
+	}
+}
+
+const preIdentityContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.0","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1]}}`
+
+// contractHelper is a checkout helper built before release-contract reported
+// machine_identity.
+func contractHelper(contractJSON string) string {
+	return "#!/bin/sh\nif [ \"$1\" = \"release-contract\" ]; then echo '" + contractJSON + "'; exit 0; fi\nexit 0\n"
 }
 
 func newPreIdentityLab(t *testing.T) *applyLab {

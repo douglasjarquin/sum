@@ -8,6 +8,9 @@
 // sum-specific key so the raw identifier is never stored. The hostname is read
 // only for display and to recognise records written before this identity
 // existed.
+//
+// The update guard treats this file's path as the marker that a release tree
+// carries the stable identity (#202); moving it changes that classification.
 package machine
 
 import (

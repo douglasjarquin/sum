@@ -2,11 +2,10 @@ package updatecmd
 
 import (
 	"fmt"
-	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -56,15 +55,23 @@ func stableIdentityRecord(s *store.Store, tasks []*ordjson.Object) (string, erro
 }
 
 // identityMarker is the file 4eb8591 (#202) added with the stable identity. A
-// target tree that contains it resolves recorded machine values through
+// release tree that contains it resolves recorded machine values through
 // internal/machine; one without it compares them to the raw hostname. The
-// evidence is the target's own tree, never a field the staging runtime stamps
+// evidence is the release's own tree, never a field the staging runtime stamps
 // into release.json, so a release staged by any runtime classifies the same.
 const identityMarker = "go/internal/machine/machine.go"
 
-// releaseOffersIdentity reads the marker from a verified release manifest,
-// whose files list every tracked path of the staged tree with its content ID.
-func releaseOffersIdentity(manifest *ordjson.Object) bool {
+// targetIdentity is what the target itself says about the stable identity.
+type targetIdentity struct {
+	offers bool
+	// evidence names where that was read; lacking is the refusal's reason.
+	evidence, lacking string
+}
+
+// releaseIdentity reads the marker from a verified release manifest, whose
+// files list every tracked path of the staged tree with its content ID. The
+// release's native helper is built from that same tree.
+func releaseIdentity(manifest *ordjson.Object) targetIdentity {
 	files := asObject(func() any {
 		if manifest == nil {
 			return nil
@@ -72,27 +79,44 @@ func releaseOffersIdentity(manifest *ordjson.Object) bool {
 		v, _ := manifest.Get("files")
 		return v
 	}())
-	if files == nil {
-		return false
+	offers := false
+	if files != nil {
+		_, offers = files.Get(identityMarker)
 	}
-	_, ok := files.Get(identityMarker)
-	return ok
+	return targetIdentity{
+		offers:   offers,
+		evidence: "release files: " + identityMarker,
+		lacking:  fmt.Sprintf("its tree has no %s, which #202 added", identityMarker),
+	}
 }
 
-// checkoutOffersIdentity reads the marker from the checkout's commit, which a
-// checkout target must match exactly.
-func checkoutOffersIdentity(root, sha string) (bool, error) {
-	out, err := proc.Run([]string{"git", "-C", root, "cat-file", "-e", sha + ":" + identityMarker}, "", 20*time.Second, false, nil)
-	if err != nil {
-		return false, err
+// checkoutIdentity asks the checkout's own helper. Selecting the checkout runs
+// its prebuilt .local/bin/sumctl, which nothing binds to HEAD, so HEAD's tree
+// says nothing about the code that will run. A helper built before
+// release-contract reported machine_identity is refused conservatively.
+func checkoutIdentity(helperContract *ordjson.Object) targetIdentity {
+	var offered []any
+	if supports := asObject(func() any {
+		if helperContract == nil {
+			return nil
+		}
+		v, _ := helperContract.Get("supports")
+		return v
+	}()); supports != nil {
+		v, _ := supports.Get("machine_identity")
+		offered, _ = v.([]any)
 	}
-	return out.Code == 0, nil
+	return targetIdentity{
+		offers:   containsNumber(offered, contract.MachineIdentity),
+		evidence: "checkout helper release-contract: supports.machine_identity",
+		lacking:  fmt.Sprintf("the checkout's .local/bin/sumctl does not report supports.machine_identity %d in its release-contract; if HEAD is newer than that build, rebuild it with `mise run test` and retry", contract.MachineIdentity),
+	}
 }
 
 // machineIdentityCompatibility reports whether the target can read the
 // machine values already recorded, and the blocking text when it cannot and
 // the override was not given.
-func machineIdentityCompatibility(s *store.Store, tasks []*ordjson.Object, offers bool, allow PreIdentity) (*ordjson.Object, string, error) {
+func machineIdentityCompatibility(s *store.Store, tasks []*ordjson.Object, target targetIdentity, allow PreIdentity) (*ordjson.Object, string, error) {
 	evidence, err := stableIdentityRecord(s, tasks)
 	if err != nil {
 		return nil, "", err
@@ -105,11 +129,11 @@ func machineIdentityCompatibility(s *store.Store, tasks []*ordjson.Object, offer
 		row.Set("records", "stable")
 		row.Set("evidence", evidence)
 	}
-	row.Set("marker", identityMarker)
-	row.Set("target_has_marker", offers)
+	row.Set("target_evidence", target.evidence)
+	row.Set("target_offers", target.offers)
 	var blocking string
 	switch {
-	case offers:
+	case target.offers:
 		row.Set("result", "supported")
 	case evidence == "":
 		row.Set("result", "unused")
@@ -118,7 +142,7 @@ func machineIdentityCompatibility(s *store.Store, tasks []*ordjson.Object, offer
 		row.Set("flag", PreIdentityFlag)
 	default:
 		row.Set("result", "refused")
-		blocking = fmt.Sprintf("the target release predates the stable machine identity (its tree has no %s, which #202 added), but this installation's records already carry it (%s). That release compares each recorded machine to the raw hostname, so it sees every record as another machine: the coordinator pane is demoted to developer, `init --role coordinator --reclaim` is refused as other-machine, and recovery means rewriting records by hand. To select it anyway, repeat the command with %s; the override is recorded in the update history", identityMarker, evidence, PreIdentityFlag)
+		blocking = fmt.Sprintf("the target predates the stable machine identity (%s), but this installation's records already carry it (%s). That code compares each recorded machine to the raw hostname, so it sees every record as another machine: the coordinator pane is demoted to developer, `init --role coordinator --reclaim` is refused as other-machine, and recovery means rewriting records by hand. To select it anyway, repeat the command with %s; the override is recorded in the update history", target.lacking, evidence, PreIdentityFlag)
 	}
 	return row, blocking, nil
 }

@@ -616,7 +616,7 @@ func plantNativeHelper(t *testing.T, runtimeRoot, body string) {
 	}
 }
 
-const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.0","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1]}}`
+const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.0","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1],"machine_identity":[1]}}`
 
 func workingHelper(logPath string) string {
 	prefix := "#!/bin/sh\nif [ \"$1\" = \"release-contract\" ]; then echo '" + releaseContractJSON + "'; exit 0; fi\n"
