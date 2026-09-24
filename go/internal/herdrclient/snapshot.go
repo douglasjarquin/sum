@@ -2,6 +2,7 @@ package herdrclient
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -44,9 +45,6 @@ func NewSnapshot(ctx context.Context, herdr func() (string, error), timeout time
 	}
 	return &Snapshot{ctx: ctx, herdr: lookup, timeout: timeout, sessions: map[string]*sessionList{}, tripped: map[string]string{}, started: time.Now()}
 }
-
-// Context is the operation context every call runs under.
-func (sn *Snapshot) Context() context.Context { return sn.ctx }
 
 // Herdr is the resolved herdr executable.
 func (sn *Snapshot) Herdr() (string, error) { return sn.herdr() }
@@ -95,11 +93,6 @@ func (sn *Snapshot) list(session string) *sessionList {
 		}
 	}
 	return row
-}
-
-// ListError is the error session's agent list failed with in this operation, or nil.
-func (sn *Snapshot) ListError(session string) error {
-	return sn.list(session).err
 }
 
 // Agent returns pane's agent from session's snapshot. An agent missing from a listed session is agent_not_found
@@ -155,6 +148,25 @@ func (sn *Snapshot) Sessions() int { return len(sn.sessions) }
 
 // Elapsed is the time since the operation started.
 func (sn *Snapshot) Elapsed() time.Duration { return time.Since(sn.started) }
+
+// Remaining is the time left before the operation's deadline (an hour when it has none).
+func (sn *Snapshot) Remaining() time.Duration {
+	deadline, ok := sn.ctx.Deadline()
+	if !ok {
+		return time.Hour
+	}
+	return time.Until(deadline)
+}
+
+// Fanout is the operation's observation summary: sessions listed, Herdr calls made, and elapsed milliseconds.
+// Callers add their own bounds to it.
+func (sn *Snapshot) Fanout() *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("sessions", json.Number(fmt.Sprint(sn.Sessions())))
+	row.Set("herdr_calls", json.Number(fmt.Sprint(sn.Calls())))
+	row.Set("elapsed_ms", json.Number(fmt.Sprint(sn.Elapsed().Milliseconds())))
+	return row
+}
 
 // UnwrapAgent returns the agent object inside a Herdr `agent get` result.
 func UnwrapAgent(value any) *ordjson.Object {

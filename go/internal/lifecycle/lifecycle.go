@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -134,7 +135,7 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 	rows := []any{}
 	deferred := []any{}
 	ghTripped := ""
-	defer1 := func(id, action, reason string, args ...string) {
+	deferTask := func(id, action, reason string, args ...string) {
 		row := ordjson.NewObject()
 		row.Set("task", id)
 		row.Set("action", action)
@@ -145,7 +146,7 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 	}
 	for _, item := range queue {
 		if time.Since(started) >= budget {
-			defer1(item.id, "maintenance", fmt.Sprintf("the sweep budget (%s) was spent before this task started; nothing was observed or applied", budget), "sweep", "--task", item.id)
+			deferTask(item.id, "maintenance", fmt.Sprintf("the sweep budget (%s) was spent before this task started; nothing was observed or applied", budget), "sweep", "--task", item.id)
 			continue
 		}
 		beforeTask(item.id)
@@ -164,20 +165,11 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 		}
 		if number := openPRNumber(task); number > 0 {
 			if ghTripped != "" {
-				defer1(item.id, "pr-observe", "GitHub did not answer an earlier observation in this sweep ("+ghTripped+"); not contacted again this pass", "pr", "reconcile", item.id)
+				deferTask(item.id, "pr-observe", "GitHub did not answer an earlier observation in this sweep ("+ghTripped+"); not contacted again this pass", "pr", "reconcile", item.id)
 			} else {
-				row := ordjson.NewObject()
-				row.Set("task", item.id)
-				row.Set("action", "pr-observe")
-				obs, obsErr := prcmd.Reconcile(s, ctx, runtimeRoot, prcmd.ReconcileArgs{Task: item.id, Number: number})
-				if obsErr != nil {
-					row.Set("state", "error")
-					row.Set("error", obsErr.Error())
-					if errors.Is(obsErr, proc.ErrUncertain) || errors.Is(obsErr, proc.ErrNotStarted) || strings.Contains(obsErr.Error(), "timed out") {
-						ghTripped = "#" + fmt.Sprint(number)
-					}
-				} else {
-					row.Set("state", field(asObject(field(obs, "pr")), "state"))
+				row, unanswered := observePR(s, ctx, runtimeRoot, item.id, number)
+				if unanswered {
+					ghTripped = "#" + fmt.Sprint(number)
 				}
 				rows = append(rows, row)
 				if fresh, err := s.ReadTask(item.id); err == nil {
@@ -215,6 +207,22 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 	return result, nil
 }
 
+// observePR runs one `pr reconcile` observation for id and reports whether GitHub failed to answer it (a timeout or
+// unknown effect), which stops further PR observations for the rest of the sweep.
+func observePR(s *store.Store, ctx *ordjson.Object, runtimeRoot, id string, number int) (*ordjson.Object, bool) {
+	row := ordjson.NewObject()
+	row.Set("task", id)
+	row.Set("action", "pr-observe")
+	obs, err := prcmd.Reconcile(s, ctx, runtimeRoot, prcmd.ReconcileArgs{Task: id, Number: number})
+	if err != nil {
+		row.Set("state", "error")
+		row.Set("error", err.Error())
+		return row, errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrNotStarted) || strings.Contains(err.Error(), "timed out")
+	}
+	row.Set("state", field(asObject(field(obs, "pr")), "state"))
+	return row, false
+}
+
 // beforeTask runs between the sweep's snapshot and its fresh read of one task (a seam for tests).
 var beforeTask = func(string) {}
 
@@ -235,8 +243,7 @@ func lastMaintained(task *ordjson.Object) string {
 	if len(times) == 0 {
 		return ""
 	}
-	sort.Strings(times)
-	return times[0]
+	return slices.Min(times)
 }
 
 // openPRNumber returns the recorded PR number when the task's PR record shows a

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
@@ -133,7 +132,7 @@ func observe(s *store.Store, opts Options, rows, tasks []*ordjson.Object, result
 		case !host.Is(machineValue):
 			observed.Set("state", "unobserved")
 			observed.Set("reason", "task belongs to another machine")
-		case !sn.Listed(sessionStr) && deadlineLeft(ctx) < returns.ObserveTimeout:
+		case !sn.Listed(sessionStr) && sn.Remaining() < returns.ObserveTimeout:
 			observed.Set("state", "unobserved")
 			observed.Set("reason", "the observation budget ran out before this session was listed")
 		default:
@@ -152,22 +151,11 @@ func observe(s *store.Store, opts Options, rows, tasks []*ordjson.Object, result
 		}
 		row.Set("observed", observed)
 	}
-	fanout := ordjson.NewObject()
-	fanout.Set("sessions", jsonInt(sn.Sessions()))
-	fanout.Set("herdr_calls", jsonInt(sn.Calls()))
-	fanout.Set("elapsed_ms", jsonInt(int(sn.Elapsed().Milliseconds())))
+	fanout := sn.Fanout()
 	fanout.Set("budget_ms", jsonInt(int(budget.Milliseconds())))
 	result.Set("live", true)
 	result.Set("fanout", fanout)
 	result.Set("guarantee", "Saved records plus one bounded Herdr agent list per session, observed now. Nothing is written, delivered, observed on GitHub, or cleaned up by this view; `sumctl pump` delivers and `sumctl sweep` maintains. No background monitoring.")
-}
-
-func deadlineLeft(ctx context.Context) time.Duration {
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return time.Hour
-	}
-	return time.Until(deadline)
 }
 
 func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {

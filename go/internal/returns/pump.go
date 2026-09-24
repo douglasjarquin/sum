@@ -56,6 +56,8 @@ type PumpOpts struct {
 	// Snapshot is the task list the caller already read in this operation; nil reads it here. It selects work
 	// only: every write re-reads its task first.
 	Snapshot []*ordjson.Object
+	// Herdr is an enclosing operation's Herdr snapshot (a hook event's pumps share one); nil starts one here.
+	Herdr *herdrclient.Snapshot
 }
 
 type unreachableError struct {
@@ -119,6 +121,11 @@ func (p *pass) fits(d time.Duration) bool {
 	return time.Until(deadline) >= d+proc.PipeGrace
 }
 
+// NewHerdrSnapshot starts the Herdr snapshot a delivery pass observes through, under ctx.
+func NewHerdrSnapshot(ctx context.Context, runtimeRoot string) *herdrclient.Snapshot {
+	return herdrclient.NewSnapshot(ctx, func() (string, error) { return toolpath.Find(runtimeRoot, "herdr") }, ObserveTimeout)
+}
+
 func (p *pass) runtimeSHA() any {
 	if !p.shaDone {
 		p.sha = runtimeSHA(p.opts.RuntimeRoot)
@@ -163,8 +170,11 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 	}
 	ctx, cancel := context.WithTimeout(parent, budget)
 	defer cancel()
-	p := &pass{s: s, opts: opts, host: host, ctx: ctx, budget: budget,
-		sn: herdrclient.NewSnapshot(ctx, func() (string, error) { return toolpath.Find(opts.RuntimeRoot, "herdr") }, ObserveTimeout)}
+	sn := opts.Herdr
+	if sn == nil {
+		sn = NewHerdrSnapshot(ctx, opts.RuntimeRoot)
+	}
+	p := &pass{s: s, opts: opts, host: host, ctx: ctx, budget: budget, sn: sn}
 
 	buckets := map[string]*bucket{}
 	var scope map[[3]string]bool
@@ -249,10 +259,7 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 }
 
 func (p *pass) fanout() *ordjson.Object {
-	row := ordjson.NewObject()
-	row.Set("sessions", jsonInt(p.sn.Sessions()))
-	row.Set("herdr_calls", jsonInt(p.sn.Calls()))
-	row.Set("elapsed_ms", jsonInt(int(p.sn.Elapsed().Milliseconds())))
+	row := p.sn.Fanout()
 	row.Set("budget_ms", jsonInt(int(p.budget.Milliseconds())))
 	row.Set("deferred", jsonInt(p.deferred))
 	return row
@@ -389,14 +396,8 @@ func (p *pass) deliver(b *bucket) (*ordjson.Object, error) {
 		if err != nil {
 			return nil, err
 		}
-		state := NotificationState(returnsObj, obligation, keys...)
-		entry := ordjson.NewObject()
-		entry.Set("task", taskID)
-		for _, k := range []string{"id", "kind", "ref"} {
-			v, _ := obligation.Get(k)
-			entry.Set(k, v)
-		}
-		entry.Set("notification", state)
+		entry := obligationEntry(pair)
+		entry.Set("notification", NotificationState(returnsObj, obligation, keys...))
 		listing = append(listing, entry)
 	}
 	row.Set("obligations", listing)
@@ -561,16 +562,21 @@ func (p *pass) deliver(b *bucket) (*ordjson.Object, error) {
 	return row, nil
 }
 
+// obligationEntry is one {task, id, kind, ref} listing row for a task and one of its obligations.
+func obligationEntry(pair [2]*ordjson.Object) *ordjson.Object {
+	entry := ordjson.NewObject()
+	entry.Set("task", func() any { v, _ := pair[0].Get("id"); return v }())
+	for _, k := range []string{"id", "kind", "ref"} {
+		v, _ := pair[1].Get(k)
+		entry.Set(k, v)
+	}
+	return entry
+}
+
 func pendingListing(items [][2]*ordjson.Object) []any {
 	listing := []any{}
 	for _, pair := range items {
-		entry := ordjson.NewObject()
-		entry.Set("task", func() any { v, _ := pair[0].Get("id"); return v }())
-		for _, k := range []string{"id", "kind", "ref"} {
-			v, _ := pair[1].Get(k)
-			entry.Set(k, v)
-		}
-		listing = append(listing, entry)
+		listing = append(listing, obligationEntry(pair))
 	}
 	return listing
 }

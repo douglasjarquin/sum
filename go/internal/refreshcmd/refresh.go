@@ -147,10 +147,7 @@ func newSnapshots(runtimeRoot string) *snapshots {
 }
 
 func fanout(sn *snapshots) *ordjson.Object {
-	row := ordjson.NewObject()
-	row.Set("sessions", jsonNumber(sn.Sessions()))
-	row.Set("herdr_calls", jsonNumber(sn.Calls()))
-	row.Set("elapsed_ms", jsonNumber(int(sn.Elapsed().Milliseconds())))
+	row := sn.Fanout()
 	row.Set("per_recipient_timeout_s", jsonNumber(10))
 	row.Set("snapshot_timeout_s", jsonNumber(10))
 	return row

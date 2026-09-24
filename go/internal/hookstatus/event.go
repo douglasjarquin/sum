@@ -57,6 +57,7 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 	// One budget for every delivery pass this event runs; maintenance (PR observation, cleanup) is never run here.
 	deadline, cancel := context.WithTimeout(context.Background(), returns.DefaultPassBudget)
 	defer cancel()
+	herdr := returns.NewHerdrSnapshot(deadline, runtimeRoot)
 	if event == "startup" {
 		result, pumpErr := returns.Pump(s, returns.PumpOpts{
 			RuntimeRoot: runtimeRoot,
@@ -64,6 +65,7 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 			Reason:      "Herdr started; catching up on saved returns",
 			Inline:      true,
 			Parent:      deadline,
+			Herdr:       herdr,
 		})
 		if pumpErr != nil {
 			return nil, pumpErr
@@ -165,6 +167,7 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 			RetryStalled: true,
 			Parent:       deadline,
 			Snapshot:     tasks,
+			Herdr:        herdr,
 		}); err != nil {
 			return nil, err
 		}
@@ -180,6 +183,7 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 				RetryStalled: true,
 				Parent:       deadline,
 				Snapshot:     tasks,
+				Herdr:        herdr,
 			}); err != nil {
 				return nil, err
 			}

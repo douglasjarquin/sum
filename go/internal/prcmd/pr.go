@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
@@ -70,8 +69,8 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 // prViewFields is what one PR observation reads from GitHub.
 const prViewFields = "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,statusCheckRollup"
 
-// GHBound matches the pipeline's default bound for one gh call (a variable so tests can shorten it).
-var GHBound = 120 * time.Second
+// GHBound bounds one gh call, the pipeline's default (a variable so tests can shorten it).
+var GHBound = pipeline.DefaultGHBound
 
 // viewPR observes one PR through gh, bounded, and parses only stdout: gh's warnings on stderr never reach the JSON,
 // and incomplete or oversized stdout is rejected rather than read as an observation.
