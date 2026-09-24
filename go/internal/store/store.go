@@ -464,9 +464,16 @@ func (s *Store) Owner() (*ordjson.Object, error) {
 }
 
 func (s *Store) Registration(endpoint Endpoint) (*ordjson.Object, error) {
+	_, obj, err := s.registrationFile(endpoint)
+	return obj, err
+}
+
+// registrationFile finds endpoint's registration file (under its key, then a legacy hostname key of this host) and
+// reads it, refusing one whose recorded identity is not endpoint. A missing registration is "", nil, nil.
+func (s *Store) registrationFile(endpoint Endpoint) (string, *ordjson.Object, error) {
 	host, err := s.Machine()
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	for _, path := range s.registrationPaths(host, endpoint) {
 		if info, err := os.Stat(path); err != nil || info.IsDir() {
@@ -474,21 +481,24 @@ func (s *Store) Registration(endpoint Endpoint) (*ordjson.Object, error) {
 		}
 		value, err := ordjson.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		obj, ok := value.(*ordjson.Object)
 		if !ok {
-			return nil, fmt.Errorf("session registration is not a JSON object")
+			return "", nil, fmt.Errorf("session registration is not a JSON object")
 		}
 		if !identityMatches(host, obj, endpoint) {
-			return nil, fmt.Errorf("session registration identity mismatch; inspect the sessions directory")
+			return "", nil, fmt.Errorf("session registration identity mismatch; inspect the sessions directory")
 		}
-		return obj, nil
+		return path, obj, nil
 	}
-	return nil, nil
+	return "", nil, nil
 }
 
-func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Object, error) {
+// Register records endpoint's role. incarnation is the occupant Herdr reported for the pane when it was bound (an
+// incarnation record, see package incarnation), or nil when the caller observed none: a record without one is legacy
+// and proves nothing about who occupies the pane later.
+func (s *Store) Register(endpoint Endpoint, role string, task any, incarnation any) (*ordjson.Object, error) {
 	stateValue, err := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
 	if err != nil {
 		return nil, err
@@ -527,6 +537,7 @@ func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Obj
 	value.Set("pane", endpoint.Pane)
 	value.Set("cwd", endpointCwd(endpoint))
 	value.Set("instance", instance)
+	value.Set("incarnation", incarnation)
 	value.Set("sum_version", contract.SumVersion)
 	mcp := ordjson.NewObject()
 	mcp.Set("server", contract.MCP.Server)
@@ -548,6 +559,20 @@ func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Obj
 		}
 	}
 	return value, nil
+}
+
+// SetIncarnation replaces the incarnation recorded on endpoint's registration and changes nothing else. The caller
+// holds the state lock and has just judged the current occupant verified against the record it replaces.
+func (s *Store) SetIncarnation(endpoint Endpoint, incarnation any) error {
+	path, obj, err := s.registrationFile(endpoint)
+	if err != nil {
+		return err
+	}
+	if obj == nil {
+		return fmt.Errorf("no session registration for pane %s in session %s", endpoint.Pane, endpoint.Session)
+	}
+	obj.Set("incarnation", incarnation)
+	return ordjson.WriteFile(path, obj)
 }
 
 func endpointCwd(e Endpoint) any {

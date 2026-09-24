@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -33,14 +34,24 @@ def hold(verb, pane):
     release, deadline = os.path.join(root, "release-" + pane), time.time() + 60
     while not os.path.exists(release) and time.time() < deadline:
         time.sleep(0.02)
+def row(pane):
+    # Every pane reports Herdr's terminal_id; a scenario that restarts Herdr sets its own.
+    return dict({"pane_id": pane, "terminal_id": "term-" + pane}, **panes.get(pane, {}))
 if rest[:2] == ["agent", "list"]:
     time.sleep(sess.get("list_hang", 0))
-    print(json.dumps({"result": {"agents": [dict(pane_id=k, **v) for k, v in panes.items()]}})); sys.exit(0)
+    print(json.dumps({"result": {"agents": [row(k) for k in panes]}})); sys.exit(0)
 if rest[:2] == ["agent", "get"]:
     if rest[2] not in panes:
         print(json.dumps({"error": {"code": "agent_not_found", "message": "gone"}}), file=sys.stderr); sys.exit(1)
     hold("get", rest[2])
-    print(json.dumps({"result": {"agent": dict(pane_id=rest[2], **panes[rest[2]])}})); sys.exit(0)
+    r = row(rest[2])
+    if "get_terminal_id" in r: r["terminal_id"] = r.pop("get_terminal_id")  # Herdr restarted after the pass's agent list.
+    print(json.dumps({"result": {"agent": r}})); sys.exit(0)
+if rest[:2] == ["pane", "get"]:  # Any pane the scenario does not list is a plain shell, like the lab root.
+    print(json.dumps({"result": {"pane": row(rest[2])}})); sys.exit(0)
+if rest[:2] == ["pane", "process-info"]:
+    pane = rest[3]
+    print(json.dumps({"result": {"process_info": {"pane_id": pane, "shell_pid": panes.get(pane, {}).get("shell_pid", 4242)}}})); sys.exit(0)
 if rest[:2] == ["agent", "prompt"]:
     hold("prompt", rest[2])
     time.sleep(sess.get("prompt_hang", 0))
@@ -93,10 +104,11 @@ func newPassLab(t *testing.T) *passLab {
 		owner.Set(k, v)
 	}
 	owner.Set("role", "coordinator")
+	owner.Set("incarnation", boundTo("w-root:p1"))
 	if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Register(store.EndpointFromContext(ctx), "coordinator", nil); err != nil {
+	if _, err := s.Register(store.EndpointFromContext(ctx), "coordinator", nil, boundTo("w-root:p1")); err != nil {
 		t.Fatal(err)
 	}
 	old := [2]time.Duration{ObserveTimeout, PromptTimeout}
@@ -153,10 +165,15 @@ func (l *passLab) worker(session, pane string) string {
 	if err := l.s.SaveTask(task); err != nil {
 		l.t.Fatal(err)
 	}
-	if _, err := l.s.Register(store.Endpoint{Machine: l.host, Session: session, Pane: pane, Cwd: worktree}, "worker", id); err != nil {
+	if _, err := l.s.Register(store.Endpoint{Machine: l.host, Session: session, Pane: pane, Cwd: worktree}, "worker", id, boundTo(pane)); err != nil {
 		l.t.Fatal(err)
 	}
 	return id
+}
+
+// boundTo is the incarnation recorded when the fake's pane was bound: the terminal the fake reports for it.
+func boundTo(pane string) *ordjson.Object {
+	return incarnation.Evidence{Terminal: "term-" + pane}.Record(store.Now())
 }
 
 func (l *passLab) pane(status, cwd string) map[string]any {
@@ -168,7 +185,7 @@ func (l *passLab) worktree(id string) string { return filepath.Join(l.root, "wt"
 func (l *passLab) pump(budget time.Duration) (*ordjson.Object, time.Duration) {
 	l.t.Helper()
 	started := time.Now()
-	result, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Ctx: l.ctx, Inline: true, Budget: budget})
+	result, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Ctx: l.ctx, Inline: true, Budget: budget, CallerVerifiedRole: "coordinator"})
 	if err != nil {
 		l.t.Fatal(err)
 	}

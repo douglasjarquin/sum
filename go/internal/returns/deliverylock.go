@@ -75,6 +75,7 @@ type claimResult struct {
 	message     string
 	quiet       string // nothing is still owed here; nothing was recorded
 	refused     string // the recipient is no longer registered for these returns
+	stale       string // the recipient pane's occupant is not the recorded one; nothing was sent or recorded
 	deferReason string // the prompt no longer fits the pass; nothing was recorded
 }
 

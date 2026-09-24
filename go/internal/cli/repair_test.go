@@ -186,7 +186,7 @@ func repairSendLab(t *testing.T) (home, worktree string) {
 		"panes": map[string]any{
 			"w-worker:p1": map[string]any{
 				"pane_id": "w-worker:p1", "cwd": worktree, "workspace_id": "w-worker",
-				"agent_status": "idle", "agent": "claude", "created": true, "shell_pid": 4242,
+				"agent_status": "idle", "agent": "claude", "created": true, "shell_pid": 4242, "terminal_id": "term-w-worker:p1",
 			},
 		},
 		"workspaces": map[string]any{
@@ -210,7 +210,8 @@ func repairSendLab(t *testing.T) (home, worktree string) {
 	sum := sha256.Sum256([]byte(strings.Join([]string{host, "sum-test", "w-worker:p1"}, "\n")))
 	key := hex.EncodeToString(sum[:])[:16]
 	registration := fmt.Sprintf(`{"schema": 1, "key": %q, "role": "worker", "task": %q,
-"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "cwd": %q}`, key, repairSendTask, host, worktree)
+"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "cwd": %q,
+"incarnation": {"terminal": "term-w-worker:p1", "agent_session": null, "shell": null, "observed_at": "2026-01-01T00:00:00+00:00"}}`, key, repairSendTask, host, worktree)
 	if err := os.MkdirAll(filepath.Join(home, "sessions"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -505,5 +506,37 @@ func TestRepairSend_refusesAWorkerReboundWhileItWaited(t *testing.T) {
 	}
 	if strings.Contains(readNamedTask(t, home, repairSendTask), `"operations"`) {
 		t.Fatal("a refused send recorded an operation")
+	}
+}
+
+// A worker pane Herdr restored under a new server is not the running attempt's occupant: the correction is refused
+// before anything is stamped in-flight, and nothing is charged.
+func TestRepairSend_refusesAReplacedWorkerPaneBeforeAnythingIsStamped(t *testing.T) {
+	home, _ := repairSendLab(t)
+	path := filepath.Join(home, "fake-herdr", "state.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	pane := state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)
+	pane["terminal_id"], pane["shell_pid"] = "term-after-restart", 5151
+	raw, _ = json.Marshal(state)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_PS_STARTS", `{"5151": "2030-01-01T00:00:00Z"}`)
+	_, err = sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief")
+	if err == nil || !strings.Contains(err.Error(), "replaced") {
+		t.Fatalf("send to a replaced worker pane = %v, want the replaced refusal", err)
+	}
+	if repairs, has := readJSON(t, filepath.Join(home, "tasks", repairSendTask, "task.json"))["repairs"]; has && repairs != nil {
+		t.Fatalf("repairs ledger = %v, want nothing recorded or charged", repairs)
+	}
+	if prompts := fakePrompts(t, home); len(prompts) != 0 {
+		t.Fatalf("prompts = %v, want none", prompts)
 	}
 }

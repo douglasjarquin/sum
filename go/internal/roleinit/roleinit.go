@@ -1,15 +1,18 @@
 package roleinit
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 var ErrDesignated = fmt.Errorf("designated installation: init must run through the Python reference")
@@ -29,11 +32,19 @@ func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, reque
 	}
 
 	var task *ordjson.Object
+	var verdict *incarnation.Verdict
 	if hint != "" {
 		if hintStore, openErr := store.Open(hint); openErr == nil {
 			task, err = matchingTask(hintStore, endpoint)
 			if err != nil {
 				return nil, err
+			}
+			if task != nil {
+				v := judgeWorker(root, hintStore, task, endpoint)
+				verdict = &v
+				if !v.Verified {
+					task = nil
+				}
 			}
 		}
 	}
@@ -71,7 +82,38 @@ func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, reque
 		result.Set("development", nil)
 	}
 	result.Set("note", note(task, marker))
+	if verdict != nil {
+		result.Set("incarnation", incarnationView(verdict, "worker", "", nil))
+		if !verdict.Verified {
+			result.Set("note", earlierOccupantNote("worker", *verdict))
+		}
+	}
 	return result, nil
+}
+
+// earlierOccupantNote explains a recorded role refused because this pane's occupant is not the recorded one.
+func earlierOccupantNote(role string, v incarnation.Verdict) string {
+	return fmt.Sprintf("This pane's recorded %s role belongs to an earlier occupant (%s: %s), so it is a developer now. %s Role bookkeeping is not an OS-level sandbox.", role, v.Outcome, v.Reason, incarnation.Recovery(role, v.Outcome))
+}
+
+// judgeWorker judges the calling pane against the worker registration the installation recorded for task.
+func judgeWorker(root string, s *store.Store, task *ordjson.Object, endpoint store.Endpoint) incarnation.Verdict {
+	registration, err := s.Registration(endpoint)
+	if err != nil {
+		return incarnation.Verdict{Outcome: incarnation.Unrecorded, Reason: err.Error()}
+	}
+	taskID, _ := task.Get("id")
+	recorded, occupiedAt, ok := incarnation.WorkerRecord(registration, taskID)
+	if !ok {
+		return incarnation.Verdict{Outcome: incarnation.Unrecorded, Reason: "no worker registration for this task records this pane; missing metadata is not proof of a match"}
+	}
+	herdrPath, err := toolpath.Find(root, "herdr")
+	if err != nil {
+		return incarnation.Verdict{Outcome: incarnation.Unobservable, Reason: "Herdr cannot be found to verify this pane: " + err.Error()}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
+	defer cancel()
+	return incarnation.Pane(incarnation.SessionCall(ctx, herdrPath, endpoint.Session), endpoint.Pane, recorded, occupiedAt)
 }
 
 func note(task, marker *ordjson.Object) string {

@@ -1,6 +1,7 @@
 package prepare
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
@@ -284,6 +286,9 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	}
 	task.Set("brief_path", briefPath)
 	task.Set("status", "prepared")
+	// The pane Herdr created for this task is bound to it now, so its occupant is recorded now: a pane that inits
+	// before launch is judged against this record, and Start re-records it after the agent starts.
+	bound := observeBound(herdrPath, session, paneID, rootPane)
 	unlock, err = s.Lock()
 	if err != nil {
 		return failPrepare(s, tid, err)
@@ -304,6 +309,10 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	}
 	worker.Set("checkout", worktreePath)
 	if err := s.SaveTask(current); err != nil {
+		unlock()
+		return failPrepare(s, tid, err)
+	}
+	if _, err := s.Register(store.Endpoint{Machine: asString(func() any { v, _ := current.Get("machine"); return v }()), Session: session, Pane: paneID, Cwd: worktreePath}, "worker", tid, bound.Record(store.Now())); err != nil {
 		unlock()
 		return failPrepare(s, tid, err)
 	}
@@ -481,6 +490,9 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	if _, err := herdrclient.Call(herdrPath, session, 10*time.Second, "agent", "prompt", pane, prompt); err != nil {
 		return failStart(s, taskID, err)
 	}
+	// The worker registration records the occupant it binds: the terminal and native session Herdr reports now
+	// (falling back to the agent start response) and the pane shell. Observed before the state lock.
+	bound := observeBound(herdrPath, session, pane, started)
 	unlock, err = s.Lock()
 	if err != nil {
 		return failStart(s, taskID, err)
@@ -560,7 +572,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		Pane:    pane,
 		Cwd:     asString(worktree),
 	}
-	if _, err := s.Register(endpoint, "worker", taskID); err != nil {
+	if _, err := s.Register(endpoint, "worker", taskID, bound.Record(store.Now())); err != nil {
 		return failStart(s, taskID, err)
 	}
 	result := ordjson.NewObject()
@@ -798,4 +810,16 @@ func Dispatch(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, 
 	}
 	id := asString(func() any { v, _ := prepared.Get("id"); return v }())
 	return Start(s, ctx, args.RuntimeRoot, id, args.Extra)
+}
+
+// observeBound is the occupant of a pane sum just bound to a task: what Herdr reports for it now (terminal, native
+// session, shell), falling back to the terminal in fallback (the creating or starting response) when the pane cannot
+// be observed. It runs outside the state lock.
+func observeBound(herdrPath, session, pane string, fallback any) incarnation.Evidence {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
+	defer cancel()
+	if fresh, code, err := incarnation.Observe(incarnation.SessionCall(ctx, herdrPath, session), pane); err == nil && code == "" && fresh.Terminal != "" {
+		return fresh
+	}
+	return incarnation.FromInfo(fallback)
 }

@@ -1,12 +1,14 @@
 package bindcmd
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -31,6 +33,34 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	if !parentOnly && workerPane == "" {
 		return nil, fmt.Errorf("Specify --parent-only or --worker-pane. Binding never creates a replacement.")
 	}
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
+	// A worker pane is observed before the state lock (no Herdr call runs under it): its cwd must be the task
+	// checkout, and its occupant is what the worker registration records.
+	var bound incarnation.Evidence
+	var observedCwd string
+	session, _ := ctx.Get("session")
+	sessionStr, _ := session.(string)
+	if workerPane != "" {
+		herdrPath, err := toolpath.Find(pump.RuntimeRoot, "herdr")
+		if err != nil {
+			return nil, err
+		}
+		agent, err := herdrclient.Call(herdrPath, sessionStr, 5*time.Second, "agent", "get", workerPane)
+		if err != nil {
+			return nil, err
+		}
+		agentObj := herdrclient.UnwrapAgent(agent)
+		observedCwd = herdrclient.AgentCwd(agentObj)
+		bound = incarnation.FromInfo(agentObj)
+		observeCtx, cancel := context.WithTimeout(context.Background(), 2*incarnation.ObserveTimeout)
+		if shell, err := incarnation.ProbeShell(incarnation.SessionCall(observeCtx, herdrPath, sessionStr), workerPane); err == nil {
+			bound.Shell = shell
+		}
+		cancel()
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -45,40 +75,15 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	if err != nil {
 		return nil, err
 	}
-	host, err := s.Machine()
-	if err != nil {
-		return nil, err
-	}
 	if parentOnly {
 		if recorded, _ := task.Get("machine"); !host.Is(recorded) {
 			return nil, fmt.Errorf("Cross-machine restore needs explicit worktree recovery, not a parent-only rebind.")
 		}
 	}
 	if workerPane != "" {
-		herdrPath, err := toolpath.Find(pump.RuntimeRoot, "herdr")
-		if err != nil {
-			return nil, err
-		}
-		session, _ := ctx.Get("session")
-		sessionStr, _ := session.(string)
-		agent, err := herdrclient.Call(herdrPath, sessionStr, 5*time.Second, "agent", "get", workerPane)
-		if err != nil {
-			return nil, err
-		}
-		agentObj, _ := agent.(*ordjson.Object)
-		if nested, ok := agentObj.Get("agent"); ok {
-			if inner, is := nested.(*ordjson.Object); is {
-				agentObj = inner
-			}
-		}
-		cwd, _ := agentObj.Get("cwd")
-		if cwd == nil {
-			cwd, _ = agentObj.Get("working_directory")
-		}
-		cwdStr, _ := cwd.(string)
 		worktree, _ := task.Get("worktree")
 		worktreeStr, _ := worktree.(string)
-		if cwdStr == "" || resolve(cwdStr) != resolve(worktreeStr) {
+		if observedCwd == "" || resolve(observedCwd) != resolve(worktreeStr) {
 			return nil, fmt.Errorf("Worker cwd does not match the recorded worktree.")
 		}
 		task.Set("pane", workerPane)
@@ -89,6 +94,13 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	if err := s.SaveTask(task); err != nil {
 		return nil, err
 	}
+	if workerPane != "" {
+		// The explicit rebind records the worker registration for the bound pane, so the pane's own init and every
+		// delivery to it are judged against the occupant the coordinator inspected.
+		if _, err := s.Register(store.Endpoint{Machine: host.ID, Session: sessionStr, Pane: workerPane, Cwd: observedCwd}, "worker", taskID, bound.Record(store.Now())); err != nil {
+			return nil, err
+		}
+	}
 	if err := unlock(); err != nil {
 		return nil, err
 	}
@@ -98,6 +110,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	opts.Tasks = []string{taskID}
 	opts.Reason = "saved task state needs attention"
 	opts.Inline = true
+	opts.CallerVerifiedRole = "coordinator" // RequireCoordinator judged this pane's occupant above.
 	pumped, err := returns.Pump(s, opts)
 	if err != nil {
 		return nil, err

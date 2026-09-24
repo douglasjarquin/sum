@@ -2,4 +2,5 @@
 #MISE description="Run the explicit isolated real-Herdr smoke test (no model credentials)"
 set -euo pipefail
 cd "$(dirname "$0")/.."
+python scripts/live_incarnation.py
 exec python scripts/live_smoke.py

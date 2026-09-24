@@ -763,7 +763,8 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	worktreeStr, _ := worktree.(string)
 	unlock()
 
-	if err := returns.ObserveRecipient(s, args.RuntimeRoot, route, worktreeStr); err != nil {
+	occupant, err := returns.ObserveWorker(s, args.RuntimeRoot, task, route, worktreeStr)
+	if err != nil {
 		return nil, err
 	}
 
@@ -810,6 +811,10 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	if workerID != args.Attempt || genNow != generation || workerState != "running" || !sameRoute(currentRoute, route) || registration == nil || role != "worker" || regTask != args.TaskID {
 		unlock()
 		return nil, fmt.Errorf("Worker identity changed before corrective delivery; nothing sent.")
+	}
+	if msg := occupant.Check(s, route); msg != "" {
+		unlock()
+		return nil, fmt.Errorf("%s", msg)
 	}
 	value, err = Ledger(current)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/execution"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -67,6 +68,7 @@ func newLab(t *testing.T) *lab {
 		t.Fatal(err)
 	}
 	t.Setenv("SUM_HERDR_BIN", fakeHerdr)
+	t.Setenv("SUM_PS_BIN", filepath.Join(root, "tests", "fixtures", "ps.py"))
 	t.Setenv("SUM_LSOF_BIN", fakeLsof)
 	t.Setenv("FAKE_HERDR_ROOT", herdrRoot)
 	t.Setenv("FAKE_SESSION", "sum-test")
@@ -95,10 +97,12 @@ func newLab(t *testing.T) *lab {
 	owner.Set("pane", "w-parent:p1")
 	owner.Set("machine", host)
 	owner.Set("role", "coordinator")
+	// The occupant the fake Herdr reports for the coordinator pane, as init would have recorded it.
+	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
 	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil); err != nil {
+	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()

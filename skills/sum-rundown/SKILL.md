@@ -67,10 +67,11 @@ Each task row and outline carries `graph`: the state of the checkout's codegraph
 ## Restart
 
 In the new pane run `./bin/sumctl init`. If another pane still owns coordination you become a developer; inspect that pane before anything else.
-Only when the user confirms the old coordinator pane is gone, run `./bin/sumctl init --role coordinator --reclaim`. It proceeds only when Herdr reports the old pane as `pane_not_found`; an existing pane (even with its agent exited) or an unobservable one is refused, and it never rebinds tasks by itself.
+Only when the user confirms the old coordinator pane is gone, run `./bin/sumctl init --role coordinator --reclaim`. It proceeds only when Herdr reports the old pane as `pane_not_found`, or when `init` judged that pane `replaced` (Herdr restarted and a different occupant holds the pane ID). A pane still held by the recorded occupant (even with its agent exited), or an unobservable or unprovable one, is refused, and reclaim never rebinds tasks by itself.
+An `init` output whose `incarnation.outcome` is `replaced`, `unrecorded`, or `unobservable` means this pane is not the recorded occupant. Follow its `recovery`; tasks, answers, reservations, and delivery history are unchanged.
 Then inspect saved tasks and actual Herdr inventory.
 To make an existing task report to this coordinator, explicitly run `sumctl bind TASK_ID --parent-only`. Its output carries one catch-up listing of everything still owed to the parent; the returns that failed against the old pane are not retried against it.
-To adopt a known existing worker after a pane ID change, use `sumctl bind TASK_ID --worker-pane PANE` after verifying its cwd and task identity.
+To adopt a known existing worker after a pane ID change, or one whose restored pane is judged `replaced`, use `sumctl bind TASK_ID --worker-pane PANE` after verifying its cwd and task identity. The bind records the inspected occupant, and it is the only way such a pane becomes that task's worker again. A delivery row `refused` names that recovery and sent nothing.
 Never launch a replacement just because a pane cannot be observed.
 Missing, uncertain, or identity-less execution stays reserved until `execution park` sees verified stop evidence; sum has no automatic retry or process-fencing service.
 A pane Herdr reports gone (`pane_not_found` or `agent_not_found`) with no occupant in the recorded checkout is that stop evidence.

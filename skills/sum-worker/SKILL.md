@@ -6,6 +6,7 @@ description: Execute one approved task, verify the result, and persist questions
 
 You own exactly the task in your supplied brief. You are not the coordinator.
 Your pane was registered as this task's worker at dispatch. If you run `./bin/sumctl init` in a sum checkout, it reports `worker`; never pass `--role coordinator` or `--reclaim`.
+If it reports `developer` with an `incarnation` outcome, this pane is not the occupant the task recorded (for example after a Herdr restart). Do not act as the worker. Tell the user, and do not try to rebind yourself; the coordinator inspects the pane and runs `bind --worker-pane`.
 A sum checkout you are editing is not an installation: do not create `.sum` state there or run setup for it.
 
 Read relevant repository instructions and code. Establish the current behavior before changing it. Keep changes inside the approved scope and your checkout.
