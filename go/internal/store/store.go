@@ -1,9 +1,11 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -142,6 +144,18 @@ func (s *Store) Lock() (func() error, error) {
 }
 
 func (s *Store) DeliveryLock() (func() error, error) {
+	return s.DeliveryLockContext(context.Background())
+}
+
+// ErrDeliveryLockBusy reports that another delivery pass held the lock until the caller's deadline.
+var ErrDeliveryLockBusy = errors.New("delivery lock busy")
+
+// deliveryLockRetry is how often a bounded acquisition retries a held delivery lock.
+const deliveryLockRetry = 20 * time.Millisecond
+
+// DeliveryLockContext takes the same delivery lock as DeliveryLock, but gives up with ErrDeliveryLockBusy when ctx
+// ends first. Without a deadline it blocks exactly like DeliveryLock. The lock's scope is unchanged.
+func (s *Store) DeliveryLockContext(ctx context.Context) (func() error, error) {
 	if err := s.Init(); err != nil {
 		return nil, err
 	}
@@ -149,7 +163,23 @@ func (s *Store) DeliveryLock() (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(handle.Fd()), syscall.LOCK_EX); err != nil {
+	if ctx == nil || ctx.Done() == nil {
+		err = syscall.Flock(int(handle.Fd()), syscall.LOCK_EX)
+	} else {
+		for {
+			err = syscall.Flock(int(handle.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			if err != syscall.EWOULDBLOCK {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				handle.Close()
+				return nil, ErrDeliveryLockBusy
+			case <-time.After(deliveryLockRetry):
+			}
+		}
+	}
+	if err != nil {
 		handle.Close()
 		return nil, err
 	}

@@ -7,7 +7,6 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
-	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -99,7 +98,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	opts.Tasks = []string{taskID}
 	opts.Reason = "saved task state needs attention"
 	opts.Inline = true
-	pumped, err := lifecycle.PumpAndSweep(s, opts)
+	pumped, err := returns.Pump(s, opts)
 	if err != nil {
 		return nil, err
 	}

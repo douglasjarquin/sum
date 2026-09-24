@@ -9,6 +9,8 @@ with (root / "calls.jsonl").open("a") as out:
 scenario = json.loads((root / "pr.json").read_text()) if (root / "pr.json").exists() else {}
 if scenario.get("hang"):
     time.sleep(120)
+if scenario.get("delay"):  # A slow GitHub: every call answers after this many seconds.
+    time.sleep(float(scenario["delay"]))
 if args[:3] == ["repo", "view", "--json"] and args[3] == "nameWithOwner":
     print(json.dumps({"nameWithOwner": scenario.get("repository", "douglasjarquin/project")})); sys.exit(0)
 if args[:2] == ["pr", "checks"]:

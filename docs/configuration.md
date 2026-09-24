@@ -97,5 +97,6 @@ Legacy non-archived tasks without reservation metadata count as held until expli
 Malformed reservation metadata refuses admission and release rather than counting as free capacity.
 Older helpers may preserve these records, but an old coordinator does not enforce the new reservation policy.
 
-Rundown and refresh over a fleet are one bounded pass: one `herdr agent list` snapshot per session replaces a per-worker observation call, each delivery gets its own timeout, no transcript is read, and one unobservable worker delays nobody else.
-`inbox --live`, `status --live`, and `refresh request` report `fanout` with the number of Herdr calls and the local elapsed time of that pass.
+Rundown, delivery, and refresh over a fleet are one bounded pass: one `herdr agent list` snapshot per session replaces a per-worker observation call, each Herdr call gets its own timeout, no transcript is read, and one unobservable worker costs at most one bounded call: a Herdr call that fails or times out marks only its own session unavailable for the rest of that pass (its later recipients are `not-delivered`, which counts toward `stalled`), and other sessions are still served.
+`inbox --live` and `status --live` report `fanout` with the sessions, Herdr calls, and elapsed and budget milliseconds of their read-only observation; `pump` and coordinator `init` (under `returns`) report the same for their delivery pass, plus the count of `deferred` recipients, whenever the pass visited a recipient; `refresh request` reports its Herdr calls and elapsed time.
+A delivery pass has a 20-second budget (`pump --budget SECONDS` overrides it for one pass) and `sweep` a 60-second admission budget (`sweep --budget SECONDS`); neither is a setting in this file.

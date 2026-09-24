@@ -1,7 +1,9 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -143,5 +145,35 @@ func TestLock_excludesASecondLockerUntilReleased(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("second locker never acquired the lock after release")
+	}
+}
+
+func TestDeliveryLockContextGivesUpAtTheCallersDeadline(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := s.DeliveryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	if _, err := s.DeliveryLockContext(ctx); !errors.Is(err, ErrDeliveryLockBusy) {
+		t.Fatalf("err = %v, want ErrDeliveryLockBusy", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("bounded acquisition waited %s", elapsed)
+	}
+	if err := held(); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := s.DeliveryLockContext(context.Background())
+	if err != nil {
+		t.Fatalf("free lock: %v", err)
+	}
+	if err := unlock(); err != nil {
+		t.Fatal(err)
 	}
 }

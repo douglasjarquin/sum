@@ -1,12 +1,12 @@
 package hookstatus
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
 	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -54,22 +54,21 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 		}
 		return row, nil
 	}
+	// One budget for every delivery pass this event runs; maintenance (PR observation, cleanup) is never run here.
+	deadline, cancel := context.WithTimeout(context.Background(), returns.DefaultPassBudget)
+	defer cancel()
+	herdr := returns.NewHerdrSnapshot(deadline, runtimeRoot)
 	if event == "startup" {
 		result, pumpErr := returns.Pump(s, returns.PumpOpts{
 			RuntimeRoot: runtimeRoot,
 			SumctlPath:  sumctlPath,
 			Reason:      "Herdr started; catching up on saved returns",
 			Inline:      true,
+			Parent:      deadline,
+			Herdr:       herdr,
 		})
 		if pumpErr != nil {
 			return nil, pumpErr
-		}
-		owner, ownerErr := s.Owner()
-		if ownerErr != nil {
-			return nil, ownerErr
-		}
-		if sweep := lifecycle.Sweep(s, owner, runtimeRoot, nil); len(sweep) > 0 {
-			result.Set("lifecycle", sweep)
 		}
 		row := ordjson.NewObject()
 		row.Set("at", store.Now())
@@ -166,15 +165,15 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 			Recipient:    "parent",
 			Reason:       "saved task state needs attention",
 			RetryStalled: true,
+			Parent:       deadline,
+			Snapshot:     tasks,
+			Herdr:        herdr,
 		}); err != nil {
 			return nil, err
 		}
-		lifecycle.Sweep(s, owner, runtimeRoot, nil)
 	}
-	var matchedIDs []string
 	for _, task := range matched {
 		id := asString(func() any { v, _ := task.Get("id"); return v }())
-		matchedIDs = append(matchedIDs, id)
 		if event == "pane.agent_status_changed" && (status == "idle" || status == "done" || status == "blocked") {
 			if _, err := returns.Pump(s, returns.PumpOpts{
 				RuntimeRoot:  runtimeRoot,
@@ -182,16 +181,13 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 				Tasks:        []string{id},
 				Recipient:    "worker",
 				RetryStalled: true,
+				Parent:       deadline,
+				Snapshot:     tasks,
+				Herdr:        herdr,
 			}); err != nil {
 				return nil, err
 			}
 		}
-	}
-	// One bounded cleanup/observe pass over the tasks this event touched, as the
-	// coordinator identity that installed this plugin. Pane exit, pane close, and
-	// workspace close are exactly the moments a merged task's resources free up.
-	if len(matchedIDs) > 0 {
-		lifecycle.Sweep(s, owner, runtimeRoot, matchedIDs)
 	}
 	row.Set("outcome", "handled")
 	row.Set("handler_ms", jsonInt(int(time.Since(started).Milliseconds())))

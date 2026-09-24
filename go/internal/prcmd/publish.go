@@ -275,7 +275,7 @@ func attachUnavailable(python, publisher, gh string) string {
 }
 
 func observedVisibility(gh, repoDir, remote string) (string, error) {
-	res, err := proc.Run([]string{gh, "repo", "view", remote, "--json", "visibility"}, repoDir, ghBound, true, nil)
+	res, err := proc.Run([]string{gh, "repo", "view", remote, "--json", "visibility"}, repoDir, GHBound, true, nil)
 	if err != nil {
 		return "", fmt.Errorf("gh could not report the visibility of %s; pass --visibility yourself after checking it", remote)
 	}

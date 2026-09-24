@@ -161,9 +161,10 @@ func TestStatusCommands(t *testing.T) {
 					t.Fatal("expected status output")
 				}
 				value := decodeObject(t, stdout)
+				// Outside a Herdr pane --live observes nothing, says so, and still returns the records view.
 				if tc.live {
-					if value["live"] != true {
-						t.Fatalf("live = %v, want true", value["live"])
+					if value["live"] != false || value["live_reason"] == nil {
+						t.Fatalf("live = %v (%v), want false with a reason outside Herdr", value["live"], value["live_reason"])
 					}
 				} else if value["live"] != false {
 					t.Fatalf("live = %v, want false", value["live"])

@@ -141,10 +141,12 @@ func readHealth(s *store.Store) (*ordjson.Object, error) {
 }
 
 // pendingSummary ports `pending_summary`: count and age of every open return across tasks, from records only.
-func pendingSummary(s *store.Store) (*ordjson.Object, error) {
-	tasks, err := s.AllTasks()
-	if err != nil {
-		return nil, err
+func pendingSummary(s *store.Store, tasks []*ordjson.Object) (*ordjson.Object, error) {
+	if tasks == nil {
+		var err error
+		if tasks, err = s.AllTasks(); err != nil {
+			return nil, err
+		}
 	}
 	count := 0
 	oldest := ""
@@ -180,9 +182,14 @@ func pendingSummary(s *store.Store) (*ordjson.Object, error) {
 }
 
 func Summary(s *store.Store) (*ordjson.Object, error) {
+	return SummaryOf(s, nil)
+}
+
+// SummaryOf is Summary over tasks the caller already read in this operation (nil reads them here).
+func SummaryOf(s *store.Store, tasks []*ordjson.Object) (*ordjson.Object, error) {
 	health, err := readHealth(s)
 	if err != nil {
-		pending, pErr := pendingSummary(s)
+		pending, pErr := pendingSummary(s, tasks)
 		if pErr != nil {
 			return nil, pErr
 		}
@@ -221,7 +228,7 @@ func Summary(s *store.Store) (*ordjson.Object, error) {
 	result.Set("ignored", ignoredValue)
 	result.Set("errors", jsonInt(len(asList(func() any { v, _ := health.Get("errors"); return v }()))))
 
-	pending, pErr := pendingSummary(s)
+	pending, pErr := pendingSummary(s, tasks)
 	if pErr != nil {
 		return nil, pErr
 	}

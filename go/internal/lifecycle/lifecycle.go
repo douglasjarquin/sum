@@ -1,109 +1,284 @@
-// Package lifecycle runs the bounded cleanup-and-observe pass that rides along
-// with the returns pump. It sits above returns in the dependency graph (returns
-// cannot import cleanup without a cycle), so every coordinator-context pump
-// entry point calls PumpAndSweep instead of returns.Pump directly.
+// Package lifecycle is sum's explicit maintenance: observing recorded open PRs through GitHub and applying pending
+// cleanup. Fast coordination (init, status, inbox, pump, bind, hook events) never runs it; those commands show
+// Pending, the records-only view of what maintenance is outstanding, with the exact command that does it. Sweep is
+// the one batch entry point, reached only through the coordinator's explicit `sumctl sweep`.
 package lifecycle
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prcmd"
-	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/proc"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// PumpAndSweep is returns.Pump plus one bounded lifecycle pass: a recorded open
-// PR gets a single structured observation, then each task still pending cleanup
-// gets one apply attempt. Only a coordinator context sweeps; worker pumps
-// deliver returns exactly as before.
-func PumpAndSweep(s *store.Store, opts returns.PumpOpts) (*ordjson.Object, error) {
-	result, err := returns.Pump(s, opts)
-	if err != nil {
-		return nil, err
-	}
-	if rows := Sweep(s, opts.Ctx, opts.RuntimeRoot, opts.Tasks); rows != nil {
-		result.Set("lifecycle", rows)
-	}
-	return result, nil
-}
+// DefaultSweepBudget bounds when a sweep may start another task. A task already started finishes under its own
+// helpers' bounds (up to two 120-second gh calls for one PR observation), so the budget bounds admission, not wall time.
+const DefaultSweepBudget = 60 * time.Second
 
-// Sweep performs the bounded pass itself: every matching task is touched once,
-// per-task failures are named in their row and never abort the rest of the
-// pass, and nothing retries within one sweep. A saved cleanup intent re-plans
-// and reconciles instead of wedging. Returns nil for non-coordinator contexts
-// so callers can attach the field unconditionally.
-func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, only []string) []any {
-	if ctx == nil || app.RequireCoordinator(s, ctx) != nil {
-		return nil
-	}
+// Pending is the records-only maintenance view over tasks (a snapshot the caller already read): recorded open PRs with
+// the time they were last observed, and cleanup still pending, blocked, or interrupted. It reads and writes nothing.
+func Pending(s *store.Store, sumctlPath string, tasks []*ordjson.Object) *ordjson.Object {
 	host, err := s.Machine()
+	view := ordjson.NewObject()
 	if err != nil {
-		return nil
+		view.Set("error", err.Error())
+		return view
 	}
-	taskFilter := map[string]bool{}
-	for _, id := range only {
-		taskFilter[id] = true
-	}
-	tasks, err := s.AllTasks()
-	if err != nil {
-		row := ordjson.NewObject()
-		row.Set("state", "unavailable")
-		row.Set("error", err.Error())
-		return []any{row}
-	}
-	rows := []any{}
+	prs := []any{}
+	cleanups := []any{}
 	for _, task := range tasks {
-		id, _ := task.Get("id")
-		idStr, _ := id.(string)
-		status, _ := task.Get("status")
-		recorded, _ := task.Get("machine")
-		if status == "archived" || !host.Is(recorded) || (len(taskFilter) > 0 && !taskFilter[idStr]) {
+		id := asString(task, "id")
+		if !candidate(host.Is, task) {
 			continue
 		}
 		if number := openPRNumber(task); number > 0 {
+			pr := asObject(field(task, "pr"))
 			row := ordjson.NewObject()
-			row.Set("task", idStr)
-			row.Set("action", "pr-observe")
-			obs, obsErr := prcmd.Reconcile(s, ctx, runtimeRoot, prcmd.ReconcileArgs{Task: idStr, Number: number})
-			if obsErr != nil {
-				row.Set("state", "error")
-				row.Set("error", obsErr.Error())
-			} else {
-				pr := asObject(func() any { v, _ := obs.Get("pr"); return v }())
-				row.Set("state", func() any { v, _ := pr.Get("state"); return v }())
+			row.Set("task", id)
+			row.Set("pr", json.Number(fmt.Sprint(number)))
+			row.Set("state", field(pr, "state"))
+			row.Set("observed_at", field(pr, "observed_at"))
+			if failed := field(pr, "observe_failed_at"); failed != nil {
+				row.Set("observe_failed_at", failed)
 			}
+			row.Set("next", shquote.CommandFor(sumctlPath, s.Home, "pr", "reconcile", id))
+			prs = append(prs, row)
+		}
+		if pending := cleanup.Pending(task); pending != nil {
+			row := ordjson.NewObject()
+			row.Set("task", id)
+			for _, key := range pending.Keys() {
+				v, _ := pending.Get(key)
+				row.Set(key, v)
+			}
+			row.Set("next", shquote.CommandFor(sumctlPath, s.Home, "cleanup", id))
+			cleanups = append(cleanups, row)
+		}
+	}
+	view.Set("open_prs", prs)
+	view.Set("cleanup", cleanups)
+	if len(prs)+len(cleanups) > 0 {
+		view.Set("next", shquote.CommandFor(sumctlPath, s.Home, "sweep"))
+	} else {
+		view.Set("next", nil)
+	}
+	view.Set("note", "From saved records only; nothing was re-observed. An open PR's state and CI are as of its observed_at; merges are seen only by `sweep`, `pr reconcile`, or `cleanup`.")
+	return view
+}
+
+// SweepOpts limits one explicit sweep.
+type SweepOpts struct {
+	Tasks      []string
+	Budget     time.Duration
+	SumctlPath string
+}
+
+// Sweep is one explicit maintenance pass as the coordinator: one PR observation per recorded open PR, then one cleanup
+// apply per task still pending cleanup. Tasks are visited least recently maintained first; no task starts after the
+// budget, and after a gh timeout or unknown effect no further PR is observed in this pass. Each task is re-read
+// before anything acts on it; per-task failures are named in their row and never abort the rest.
+func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOpts) (*ordjson.Object, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("sweep needs this pane's Herdr context; run it from the coordinator pane.")
+	}
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
+	budget := opts.Budget
+	if budget < 0 {
+		budget = 0
+	} else if opts.Budget == 0 {
+		budget = DefaultSweepBudget
+	}
+	started := time.Now()
+	filter := map[string]bool{}
+	for _, id := range opts.Tasks {
+		filter[id] = true
+	}
+	tasks, err := s.AllTasks()
+	if err != nil {
+		return nil, err
+	}
+	type work struct {
+		id   string
+		last string
+	}
+	var queue []work
+	for _, task := range tasks {
+		id := asString(task, "id")
+		if !candidate(host.Is, task) || (len(filter) > 0 && !filter[id]) {
+			continue
+		}
+		if openPRNumber(task) == 0 && cleanup.Pending(task) == nil {
+			continue
+		}
+		queue = append(queue, work{id: id, last: lastMaintained(task)})
+	}
+	sort.SliceStable(queue, func(i, j int) bool {
+		if queue[i].last != queue[j].last {
+			return queue[i].last < queue[j].last
+		}
+		return queue[i].id < queue[j].id
+	})
+	rows := []any{}
+	deferred := []any{}
+	ghTripped := ""
+	deferTask := func(id, action, reason string, args ...string) {
+		row := ordjson.NewObject()
+		row.Set("task", id)
+		row.Set("action", action)
+		row.Set("state", "deferred")
+		row.Set("reason", reason)
+		row.Set("next", shquote.CommandFor(opts.SumctlPath, s.Home, args...))
+		deferred = append(deferred, row)
+	}
+	for _, item := range queue {
+		if time.Since(started) >= budget {
+			deferTask(item.id, "maintenance", fmt.Sprintf("the sweep budget (%s) was spent before this task started; nothing was observed or applied", budget), "sweep", "--task", item.id)
+			continue
+		}
+		beforeTask(item.id)
+		task, err := s.ReadTask(item.id)
+		if err != nil {
+			row := ordjson.NewObject()
+			row.Set("task", item.id)
+			row.Set("action", "read")
+			row.Set("state", "error")
+			row.Set("error", err.Error())
 			rows = append(rows, row)
-			if fresh, err := s.ReadTask(idStr); err == nil {
-				task = fresh
+			continue
+		}
+		if !candidate(host.Is, task) {
+			continue
+		}
+		if number := openPRNumber(task); number > 0 {
+			if ghTripped != "" {
+				deferTask(item.id, "pr-observe", "GitHub did not answer an earlier observation in this sweep ("+ghTripped+"); not contacted again this pass", "pr", "reconcile", item.id)
+			} else {
+				row, unanswered := observePR(s, ctx, runtimeRoot, item.id, number)
+				if unanswered {
+					ghTripped = "#" + fmt.Sprint(number)
+				}
+				rows = append(rows, row)
+				if fresh, err := s.ReadTask(item.id); err == nil {
+					task = fresh
+				}
 			}
 		}
 		if cleanup.Pending(task) == nil {
 			continue
 		}
 		row := ordjson.NewObject()
-		row.Set("task", idStr)
+		row.Set("task", item.id)
 		row.Set("action", "cleanup")
-		applied, runErr := cleanup.Run(s, ctx, runtimeRoot, cleanup.Args{Task: idStr, Apply: true})
+		applied, runErr := cleanup.Run(s, ctx, runtimeRoot, cleanup.Args{Task: item.id, Apply: true})
 		if runErr != nil {
 			row.Set("state", "blocked")
 			row.Set("error", runErr.Error())
 		} else {
-			row.Set("state", func() any { v, _ := applied.Get("state"); return v }())
-			row.Set("archived", func() any { v, _ := applied.Get("archived"); return v }())
+			row.Set("state", field(applied, "state"))
+			row.Set("archived", field(applied, "archived"))
 		}
 		rows = append(rows, row)
 	}
-	return rows
+	after, err := s.AllTasks()
+	if err != nil {
+		return nil, err
+	}
+	result := ordjson.NewObject()
+	result.Set("rows", rows)
+	result.Set("deferred", deferred)
+	result.Set("budget_ms", json.Number(fmt.Sprint(budget.Milliseconds())))
+	result.Set("elapsed_ms", json.Number(fmt.Sprint(time.Since(started).Milliseconds())))
+	result.Set("maintenance", Pending(s, opts.SumctlPath, after))
+	result.Set("note", "Explicit maintenance as the coordinator: each started task finished under its own helpers' bounds; deferred tasks were not touched and keep their exact next command. Nothing here merges, and a merged PR is cleaned up only through cleanup's guarded checks.")
+	return result, nil
+}
+
+// observePR runs one `pr reconcile` observation for id and reports whether GitHub failed to answer it (a timeout or
+// unknown effect), which stops further PR observations for the rest of the sweep.
+func observePR(s *store.Store, ctx *ordjson.Object, runtimeRoot, id string, number int) (*ordjson.Object, bool) {
+	row := ordjson.NewObject()
+	row.Set("task", id)
+	row.Set("action", "pr-observe")
+	obs, err := prcmd.Reconcile(s, ctx, runtimeRoot, prcmd.ReconcileArgs{Task: id, Number: number})
+	if err != nil {
+		row.Set("state", "error")
+		row.Set("error", err.Error())
+		if markErr := markObservationFailed(s, id); markErr != nil {
+			row.Set("record_error", markErr.Error())
+		}
+		return row, errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrNotStarted) || strings.Contains(err.Error(), "timed out")
+	}
+	row.Set("state", field(asObject(field(obs, "pr")), "state"))
+	return row, false
+}
+
+// markObservationFailed stamps the task's PR record with the time an observation failed, so the next sweep orders
+// it behind tasks it has not tried yet instead of spending its budget on the same unreachable PR first. The PR's
+// recorded state and observed_at are untouched; the next successful observation replaces the record.
+func markObservationFailed(s *store.Store, id string) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	task, err := s.ReadTask(id)
+	if err != nil {
+		return err
+	}
+	pr := asObject(field(task, "pr"))
+	if pr == nil {
+		return nil
+	}
+	pr.Set("observe_failed_at", store.Now())
+	return s.SaveTask(task)
+}
+
+// beforeTask runs between the sweep's snapshot and its fresh read of one task (a seam for tests).
+var beforeTask = func(string) {}
+
+// candidate is a local, unarchived task.
+func candidate(local func(any) bool, task *ordjson.Object) bool {
+	return asString(task, "status") != "archived" && local(field(task, "machine"))
+}
+
+// lastMaintained is the older of the task's last PR observation and cleanup record ("" when never).
+func lastMaintained(task *ordjson.Object) string {
+	times := []string{}
+	if pr := asObject(field(task, "pr")); pr != nil {
+		// A failed attempt counts as maintenance for ordering, so an unreachable PR does not head every sweep.
+		times = append(times, max(asString(pr, "observed_at"), asString(pr, "observe_failed_at")))
+	}
+	if record := asObject(field(task, "cleanup")); record != nil {
+		times = append(times, asString(record, "at"))
+	}
+	if len(times) == 0 {
+		return ""
+	}
+	return slices.Min(times)
 }
 
 // openPRNumber returns the recorded PR number when the task's PR record shows a
 // still-open pull request with a verified identity. Only recorded structure is
 // consulted; prose, reports, and notices never trigger observation.
 func openPRNumber(task *ordjson.Object) int {
-	pr := asObject(func() any { v, _ := task.Get("pr"); return v }())
+	pr := asObject(field(task, "pr"))
 	if pr == nil {
 		return 0
 	}
@@ -113,14 +288,26 @@ func openPRNumber(task *ordjson.Object) int {
 	if state, _ := pr.Get("state"); state != "open" {
 		return 0
 	}
-	identity := asObject(func() any { v, _ := pr.Get("identity"); return v }())
+	identity := asObject(field(pr, "identity"))
 	if identity == nil {
 		return 0
 	}
-	number, _ := identity.Get("number")
-	n, _ := number.(json.Number)
+	n, _ := field(identity, "number").(json.Number)
 	i, _ := n.Int64()
 	return int(i)
+}
+
+func field(obj *ordjson.Object, key string) any {
+	if obj == nil {
+		return nil
+	}
+	v, _ := obj.Get(key)
+	return v
+}
+
+func asString(obj *ordjson.Object, key string) string {
+	s, _ := field(obj, key).(string)
+	return s
 }
 
 func asObject(v any) *ordjson.Object {

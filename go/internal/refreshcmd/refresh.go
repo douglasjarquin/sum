@@ -1,6 +1,7 @@
 package refreshcmd
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -136,112 +137,17 @@ func refreshSummary(rows []any, excluded []any) *ordjson.Object {
 	return result
 }
 
-type snapshots struct {
-	runtimeRoot string
-	sessions    map[string]*ordjson.Object
-	calls       int
-	started     time.Time
-}
+// snapshotTimeout bounds each refresh observation and prompt.
+const snapshotTimeout = 10 * time.Second
+
+type snapshots = herdrclient.Snapshot
 
 func newSnapshots(runtimeRoot string) *snapshots {
-	return &snapshots{runtimeRoot: runtimeRoot, sessions: map[string]*ordjson.Object{}, started: time.Now()}
+	return herdrclient.NewSnapshot(context.Background(), func() (string, error) { return toolpath.Find(runtimeRoot, "herdr") }, snapshotTimeout)
 }
 
-func (sn *snapshots) herdr() (string, error) {
-	return toolpath.Find(sn.runtimeRoot, "herdr")
-}
-
-func (sn *snapshots) get(session string) *ordjson.Object {
-	if row, ok := sn.sessions[session]; ok {
-		return row
-	}
-	sn.calls++
-	row := ordjson.NewObject()
-	path, err := sn.herdr()
-	if err != nil {
-		row.Set("ok", false)
-		row.Set("error", err.Error())
-		row.Set("agents", ordjson.NewObject())
-		sn.sessions[session] = row
-		return row
-	}
-	listed, callErr := herdrclient.Call(path, session, 10*time.Second, "agent", "list")
-	if callErr != nil {
-		row.Set("ok", false)
-		row.Set("error", callErr.Error())
-		row.Set("agents", ordjson.NewObject())
-		sn.sessions[session] = row
-		return row
-	}
-	agents := ordjson.NewObject()
-	var list []any
-	if obj := asObject(listed); obj != nil {
-		if v, ok := obj.Get("agents"); ok {
-			list, _ = v.([]any)
-		}
-	} else if arr, ok := listed.([]any); ok {
-		list = arr
-	}
-	for _, raw := range list {
-		if agent := asObject(raw); agent != nil {
-			id, _ := agent.Get("pane_id")
-			if s, ok := id.(string); ok {
-				agents.Set(s, agent)
-			}
-		}
-	}
-	row.Set("ok", true)
-	row.Set("agents", agents)
-	sn.sessions[session] = row
-	return row
-}
-
-func (sn *snapshots) agent(session, pane string) (*ordjson.Object, error) {
-	row := sn.get(session)
-	if ok, _ := row.Get("ok"); ok != true {
-		errText, _ := row.Get("error")
-		return nil, fmt.Errorf("agent list for session %s failed: %v", session, errText)
-	}
-	agents := asObject(func() any { v, _ := row.Get("agents"); return v }())
-	if agents == nil {
-		return nil, fmt.Errorf("agent_not_found (absent from the session's agent snapshot)")
-	}
-	raw, ok := agents.Get(pane)
-	if !ok {
-		return nil, fmt.Errorf("agent_not_found (absent from the session's agent snapshot)")
-	}
-	agent := asObject(raw)
-	cwd := asString(func() any { v, _ := agent.Get("cwd"); return v }())
-	if cwd == "" {
-		cwd = asString(func() any { v, _ := agent.Get("working_directory"); return v }())
-	}
-	if cwd == "" {
-		sn.calls++
-		path, err := sn.herdr()
-		if err != nil {
-			return nil, err
-		}
-		got, callErr := herdrclient.Call(path, session, 10*time.Second, "agent", "get", pane)
-		if callErr != nil {
-			return nil, callErr
-		}
-		if obj := asObject(got); obj != nil {
-			if inner, has := obj.Get("agent"); has {
-				if innerObj := asObject(inner); innerObj != nil {
-					return innerObj, nil
-				}
-			}
-			return obj, nil
-		}
-	}
-	return agent, nil
-}
-
-func (sn *snapshots) summary() *ordjson.Object {
-	row := ordjson.NewObject()
-	row.Set("sessions", jsonNumber(len(sn.sessions)))
-	row.Set("herdr_calls", jsonNumber(sn.calls))
-	row.Set("elapsed_ms", jsonNumber(int(time.Since(sn.started).Milliseconds())))
+func fanout(sn *snapshots) *ordjson.Object {
+	row := sn.Fanout()
 	row.Set("per_recipient_timeout_s", jsonNumber(10))
 	row.Set("snapshot_timeout_s", jsonNumber(10))
 	return row
@@ -265,7 +171,7 @@ func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd strin
 	}
 	session := asString(func() any { v, _ := endpoint.Get("session"); return v }())
 	pane := asString(func() any { v, _ := endpoint.Get("pane"); return v }())
-	agent, err := sn.agent(session, pane)
+	agent, err := sn.Agent(session, pane)
 	if err != nil {
 		if herdrclient.ErrorIsAbsent(err) {
 			return versions.RefreshUnreachable, "Recipient pane is gone (" + err.Error() + "); delivery for this revision is terminal. The old contract keeps serving; the coordinator still sees the task.", nil
@@ -305,7 +211,7 @@ func attemptDelivery(sn *snapshots, endpoint *ordjson.Object, expectedCwd, messa
 		row.Set("reason", reason)
 		return row
 	}
-	path, herr := sn.herdr()
+	path, herr := sn.Herdr()
 	if herr != nil {
 		row.Set("state", "pending-unreachable")
 		row.Set("reason", "prompt was not accepted: "+herr.Error())
@@ -313,7 +219,7 @@ func attemptDelivery(sn *snapshots, endpoint *ordjson.Object, expectedCwd, messa
 	}
 	session := asString(func() any { v, _ := endpoint.Get("session"); return v }())
 	pane := asString(func() any { v, _ := endpoint.Get("pane"); return v }())
-	if _, callErr := herdrclient.Call(path, session, 10*time.Second, "agent", "prompt", pane, message); callErr != nil {
+	if _, callErr := herdrclient.Call(path, session, snapshotTimeout, "agent", "prompt", pane, message); callErr != nil {
 		row.Set("state", "pending-unreachable")
 		row.Set("reason", "prompt was not accepted: "+callErr.Error())
 		return row
@@ -941,6 +847,6 @@ func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator 
 	rt.Set("sum_version", contract.SumVersion)
 	rt.Set("sha", runtimeSHA(runtimeRoot))
 	result.Set("runtime", rt)
-	result.Set("fanout", sn.summary())
+	result.Set("fanout", fanout(sn))
 	return result, nil
 }

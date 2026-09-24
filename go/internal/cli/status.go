@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/statuscmd"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -17,12 +18,13 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 				if err != nil {
 					return err
 				}
-				view, err := statuscmd.Status(st, inboxMode)
+				opts := statuscmd.Options{Inbox: inboxMode, Live: live, RuntimeRoot: o.runtimeRoot, SumctlPath: o.sumctlPath()}
+				if live {
+					opts.Ctx = app.OptionalContext(o.installRoot)
+				}
+				view, err := statuscmd.Status(st, opts)
 				if err != nil {
 					return err
-				}
-				if live {
-					view.Set("live", true)
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			},

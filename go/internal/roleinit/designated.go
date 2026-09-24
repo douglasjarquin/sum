@@ -186,7 +186,13 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	task, err := matchingTask(s, store.EndpointFromContext(ctx))
+	// One task read for this operation, taken under the lock: it decides the role here and selects work for the
+	// delivery pass below, which re-reads every task it writes.
+	tasks, err := s.AllTasks()
+	if err != nil {
+		return nil, err
+	}
+	task, err := matchingTaskIn(s, tasks, store.EndpointFromContext(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -307,10 +313,6 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 
 	if role == "coordinator" {
 		result.Set("contract", versions.ContractState(s))
-		tasks, taskErr := s.AllTasks()
-		if taskErr != nil {
-			return nil, taskErr
-		}
 		pending := make([]any, 0)
 		for _, t := range tasks {
 			if row := cleanup.Pending(t); row != nil {
@@ -325,18 +327,22 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			}
 		}
 		result.Set("cleanup_pending", pending)
-		pumped, pumpErr := lifecycle.PumpAndSweep(s, returns.PumpOpts{
+		// Registration is done; delivery is one budgeted pass. PR observation, evidence publication, and cleanup are
+		// explicit maintenance (`sweep`, `pr reconcile`, `cleanup`), listed below with their commands.
+		pumped, pumpErr := returns.Pump(s, returns.PumpOpts{
 			RuntimeRoot: opts.RuntimeRoot,
 			SumctlPath:  opts.SumctlPath,
 			Ctx:         ctx,
 			Reason:      "saved task state needs attention",
 			Inline:      true,
+			Snapshot:    tasks,
 		})
 		if pumpErr != nil {
 			return nil, pumpErr
 		}
 		result.Set("returns", pumped)
-		hook, hookErr := hookstatus.Summary(s)
+		result.Set("maintenance", lifecycle.Pending(s, opts.SumctlPath, tasks))
+		hook, hookErr := hookstatus.SummaryOf(s, tasks)
 		if hookErr != nil {
 			return nil, hookErr
 		}

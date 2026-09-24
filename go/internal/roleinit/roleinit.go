@@ -124,6 +124,11 @@ func matchingTask(s *store.Store, endpoint store.Endpoint) (*ordjson.Object, err
 	if err != nil {
 		return nil, err
 	}
+	return matchingTaskIn(s, tasks, endpoint)
+}
+
+// matchingTaskIn finds the unarchived task whose recorded pane is endpoint among tasks already read.
+func matchingTaskIn(s *store.Store, tasks []*ordjson.Object, endpoint store.Endpoint) (*ordjson.Object, error) {
 	for _, task := range tasks {
 		paneValue, hasPane := task.Get("pane")
 		pane, _ := paneValue.(string)

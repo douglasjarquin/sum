@@ -578,6 +578,11 @@ func CapacityView(s *store.Store) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
+	return CapacityViewOf(s, tasks)
+}
+
+// CapacityViewOf is CapacityView over tasks the caller already read in this operation.
+func CapacityViewOf(s *store.Store, tasks []*ordjson.Object) (*ordjson.Object, error) {
 	loaded, err := LoadSettings(s)
 	if err != nil {
 		occupied, occErr := occupancy(tasks)
