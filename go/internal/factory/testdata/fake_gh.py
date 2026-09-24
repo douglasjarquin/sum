@@ -45,11 +45,13 @@ if args[:2] == ["issue", "view"]:
     print(json.dumps(issue))
     sys.exit(0)
 
-if args[:2] == ["issue", "edit"] and "--add-label" in args:
+if args[:2] == ["issue", "edit"] and ("--add-label" in args or "--remove-label" in args):
     print(json.dumps({"ok": True}))
     sys.exit(0)
 
 if args[:2] == ["issue", "comment"]:
+    if load("comment_error.json", None):
+        fail(load("comment_error.json", {}).get("message", "comment failed"))
     print(json.dumps({"ok": True}))
     sys.exit(0)
 

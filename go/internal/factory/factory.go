@@ -622,7 +622,7 @@ func runGh(runtimeRoot string, args ...string) ([]byte, error) {
 }
 
 func ghIssueList(runtimeRoot, repo, label string) ([]ghIssue, error) {
-	args := []string{"issue", "list", "--repo", repo, "--state", "open", "--json", "number,title,state,labels", "--limit", "100"}
+	args := []string{"issue", "list", "--repo", repo, "--state", "open", "--json", "number,title,state,labels", "--sort", "created", "--order", "asc", "--limit", "100", "--paginate"}
 	if label != "" {
 		args = append(args, "--label", label)
 	}
@@ -880,26 +880,36 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 		host, _ = os.Hostname()
 	}
 	body := claimBody(host, pane, args.Task)
+	undoLabel := func() error {
+		_, err := runGh(runtimeRoot, "issue", "edit", fmt.Sprint(args.Issue), "--repo", name, "--remove-label", ClaimLabel)
+		return err
+	}
 	if _, err := runGh(runtimeRoot, "issue", "edit", fmt.Sprint(args.Issue), "--repo", name, "--add-label", ClaimLabel); err != nil {
 		return nil, err
 	}
 	tmp, err := os.CreateTemp("", "sum-factory-claim-*.md")
 	if err != nil {
+		_ = undoLabel()
 		return nil, err
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.WriteString(body); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
+		_ = undoLabel()
 		return nil, err
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpPath)
+		_ = undoLabel()
 		return nil, err
 	}
 	defer os.Remove(tmpPath)
 	if _, err := runGh(runtimeRoot, "issue", "comment", fmt.Sprint(args.Issue), "--repo", name, "--body-file", tmpPath); err != nil {
-		return nil, err
+		if undoErr := undoLabel(); undoErr != nil {
+			return nil, fmt.Errorf("claim comment failed: %w; also failed to remove %s: %v", err, ClaimLabel, undoErr)
+		}
+		return nil, fmt.Errorf("claim comment failed; removed %s: %w", ClaimLabel, err)
 	}
 	lane := existing
 	if lane == nil {
@@ -924,7 +934,7 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	claim.Set("label", ClaimLabel)
 	lane.Set("claim", claim)
 	if err := write(s, reg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("GitHub claim is in place on %s#%d (label %s); lane record failed: %w. Release or clear the label before retrying.", name, args.Issue, ClaimLabel, err)
 	}
 	result := ordjson.NewObject()
 	result.Set("project", summary(rec))
@@ -1045,10 +1055,10 @@ func MergeCheck(s *store.Store, taskID string) (*ordjson.Object, error) {
 		reasons = append(reasons, "independent review is not approve for the current candidate")
 	}
 
-	ciPass, ciDetail := ciPassed(s, taskID)
-	setCheck(checks, "pipeline_ci", ciPass, ciDetail)
-	if !ciPass {
-		reasons = append(reasons, "CI gate is not pass: "+ciDetail)
+	pipePass, pipeDetail := pipelineGatesOK(s, taskID)
+	setCheck(checks, "pipeline", pipePass, pipeDetail)
+	if !pipePass {
+		reasons = append(reasons, "pipeline gates are not ready: "+pipeDetail)
 	}
 
 	evidencePass, evidenceDetail := evidenceOK(task)
@@ -1064,7 +1074,7 @@ func MergeCheck(s *store.Store, taskID string) (*ordjson.Object, error) {
 		reasons = append(reasons, "CI still failing after 3 repair attempts")
 	}
 
-	high := authorized && closurePass && reviewPass && ciPass && evidencePass && repairsOK
+	high := authorized && closurePass && reviewPass && pipePass && evidencePass && repairsOK
 	confidence := "human-gate"
 	if high {
 		confidence = "high"
@@ -1096,13 +1106,16 @@ func Merge(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, error) 
 	if err != nil {
 		return nil, err
 	}
+	repo := authorizedRepo(task)
+	if occupyingLane(s, taskID, repo) == nil {
+		return nil, fmt.Errorf("Refusing merge: task %s is not occupying a factory lane on %s and does not carry %s from this installation.", taskID, repo, ClaimLabel)
+	}
 	pr := asObject(get(task, "pr"))
 	identity := asObject(get(pr, "identity"))
 	number := asInt(get(identity, "number"))
 	if number == 0 {
 		number = asInt(get(pr, "number"))
 	}
-	repo := authorizedRepo(task)
 	head := asString(get(identity, "head_sha"))
 	if number == 0 || repo == "" {
 		return nil, fmt.Errorf("PR identity is incomplete; reconcile first")
@@ -1168,16 +1181,44 @@ func isAuthorized(repo string) bool {
 	return false
 }
 
+func occupyingLane(s *store.Store, taskID, repo string) *ordjson.Object {
+	reg, err := Read(s)
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	names := append([]string{}, repo)
+	if projects := projectsOf(reg); projects != nil {
+		names = append(names, projects.Keys()...)
+	}
+	for _, name := range names {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		rec := projectRecord(reg, name)
+		for _, lane := range lanes(rec) {
+			if asString(get(lane, "task")) == taskID {
+				return lane
+			}
+		}
+	}
+	return nil
+}
+
 func reviewApproved(task *ordjson.Object) bool {
+	head := evidenceview.CurrentCandidate(task)
+	if head == "" {
+		return false
+	}
 	raw, _ := task.Get("evidence")
 	list, _ := raw.([]any)
-	head := evidenceview.CurrentCandidate(task)
 	for i := len(list) - 1; i >= 0; i-- {
 		row := asObject(list[i])
 		if asString(get(row, "kind")) != "review" {
 			continue
 		}
-		if head != "" && asString(get(row, "candidate")) != "" && asString(get(row, "candidate")) != head {
+		if asString(get(row, "candidate")) != head {
 			continue
 		}
 		verdict := strings.ToLower(asString(get(row, "verdict")))
@@ -1189,19 +1230,30 @@ func reviewApproved(task *ordjson.Object) bool {
 	return false
 }
 
-func ciPassed(s *store.Store, taskID string) (bool, string) {
+func pipelineGatesOK(s *store.Store, taskID string) (bool, string) {
 	record, err := pipeline.Load(s, taskID)
 	if err != nil {
 		return false, err.Error()
 	}
-	row := record.Get(pipeline.StageCI)
-	if row.Status == pipeline.Pass || row.Status == pipeline.NotDeclared {
-		return true, row.Result
+	var failed []string
+	for _, def := range pipeline.Stages {
+		row := record.Get(def.Stage)
+		switch row.Status {
+		case pipeline.Pass, pipeline.Skipped:
+			continue
+		case pipeline.NotDeclared:
+			if def.Stage == pipeline.StageLint || def.Stage == pipeline.StageCI {
+				continue
+			}
+			failed = append(failed, fmt.Sprintf("%s=%s", def.Display, row.Status))
+		default:
+			failed = append(failed, fmt.Sprintf("%s=%s", def.Display, row.Status))
+		}
 	}
-	if row.Status == pipeline.Pending {
-		return false, "CI row unobserved"
+	if len(failed) > 0 {
+		return false, strings.Join(failed, ", ")
 	}
-	return false, fmt.Sprintf("status=%s result=%s", row.Status, row.Result)
+	return true, "all pipeline stages pass, skipped, or allowed not_declared"
 }
 
 func evidenceOK(task *ordjson.Object) (bool, string) {
@@ -1222,17 +1274,109 @@ func evidenceOK(task *ordjson.Object) (bool, string) {
 	if nested := asObject(get(handoff, "handoff")); nested != nil {
 		artifacts = append(artifacts, anyStrings(get(nested, "artifacts"))...)
 	}
-	hasComparison := false
+	worktree := asString(get(task, "worktree"))
+	head := evidenceview.CurrentCandidate(task)
+	found := false
 	for _, artifact := range artifacts {
-		if strings.HasSuffix(artifact, "comparison.json") {
-			hasComparison = true
-			break
+		if filepath.Base(artifact) != "comparison.json" {
+			continue
+		}
+		found = true
+		resolved, err := resolveComparison(worktree, artifact)
+		if err != nil {
+			return false, err.Error()
+		}
+		if err := comparisonPassing(resolved, head); err != nil {
+			return false, err.Error()
 		}
 	}
-	if !hasComparison {
+	if !found {
 		return false, "handoff lists no comparison.json; factory mode requires before/after evidence"
 	}
-	return true, "comparison.json listed on the handoff"
+	return true, "comparison.json exists in the checkout with a passing verdict for this candidate"
+}
+
+func resolveComparison(worktree, artifact string) (string, error) {
+	resolved := artifact
+	if !filepath.IsAbs(resolved) {
+		if worktree == "" {
+			return "", fmt.Errorf("comparison.json %s is relative and the task has no worktree", artifact)
+		}
+		resolved = filepath.Join(worktree, resolved)
+	}
+	resolved = filepath.Clean(resolved)
+	roots := []string{worktree}
+	if worktree != "" {
+		roots = append(roots, filepath.Join(worktree, ".artifacts", "evidence"))
+	}
+	if !pathContained(resolved, roots) {
+		return "", fmt.Errorf("handoff artifact %s is outside the task checkout and the evidence root", artifact)
+	}
+	info, err := os.Lstat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("comparison.json %s does not exist", artifact)
+	}
+	if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("comparison.json %s is not a regular file", artifact)
+	}
+	return resolved, nil
+}
+
+func pathContained(path string, roots []string) bool {
+	for _, root := range roots {
+		if root == "" {
+			continue
+		}
+		rel, err := filepath.Rel(filepath.Clean(root), path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+var passingVerdicts = map[string]bool{
+	"red-green": true, "before-after": true, "after-only": true, "before-also-passes": true,
+}
+
+func comparisonPassing(path, head string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return fmt.Errorf("%s is not comparison JSON: %w", path, err)
+	}
+	verdict := strings.ToLower(fmt.Sprint(zero(payload["verdict"])))
+	if !passingVerdicts[verdict] {
+		return fmt.Errorf("%s verdict %s does not show the candidate passing", path, verdict)
+	}
+	sha := comparisonSHA(payload)
+	if sha == "" {
+		return fmt.Errorf("%s has no candidate SHA; factory merge requires a comparison bound to this candidate", path)
+	}
+	if head != "" && sha != head {
+		return fmt.Errorf("%s is bound to %s, not the current candidate %s", path, sha, head)
+	}
+	return nil
+}
+
+func comparisonSHA(payload map[string]any) string {
+	if s, ok := payload["candidate"].(string); ok && s != "" {
+		return s
+	}
+	if obj, ok := payload["candidate"].(map[string]any); ok {
+		if s, ok := obj["sha"].(string); ok {
+			return s
+		}
+	}
+	if obj, ok := payload["after"].(map[string]any); ok {
+		if s, ok := obj["sha"].(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 func repairFailures(task *ordjson.Object) int {
