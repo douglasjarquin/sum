@@ -76,6 +76,8 @@ if args[:2] == ["agent", "start"]:
     save()
     if os.environ.get("FAKE_START_UNCERTAIN"): fail("agent_not_ready: simulated trust prompt")
     emit({"agent": state["panes"][pane]})
+if args[:2] in (["agent", "get"], ["agent", "list"]) and os.environ.get("FAKE_OBSERVE_DELAY"):  # A slow or unreachable Herdr agent observation (seconds); pane get and --version stay fast.
+    import time; time.sleep(float(os.environ["FAKE_OBSERVE_DELAY"]))
 if args[:2] in (["agent", "get"], ["pane", "get"]):
     pane = state["panes"].get(args[2])
     if not pane: fail("pane_not_found" if args[0] == "pane" else "agent_not_found")
