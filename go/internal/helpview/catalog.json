@@ -21,7 +21,7 @@
       "notice": "Explicit single retry of the pending notice toward one recipient",
       "archive": "Coordinator only: archive a task after every execution reservation was separately released",
       "ask": "Worker: save a question before waiting; the parent is notified only after it is saved",
-      "answer": "Coordinator: record the user's actual decision for one question",
+      "answer": "Coordinator: record the user's actual decision for one question, or --close an answer no worker can apply any longer",
       "report": "Worker: submit the report (and --handoff) as a claim for the coordinator to verify",
       "resolve": "Worker: mark an answered question applied",
       "review": "Reviewer pane: append independent findings for one candidate; never replaces the worker report",
@@ -546,7 +546,7 @@
   },
   "answer": {
     "topic": "answer",
-    "help": "Coordinator: record the user's actual decision for one question",
+    "help": "Coordinator: record the user's actual decision for one question, or --close an answer no worker can apply any longer",
     "arguments": [
       {
         "name": "task",
@@ -565,6 +565,14 @@
       {
         "name": "--file",
         "help": null
+      },
+      {
+        "name": "--close",
+        "help": "Close an answered question as closed-unapplied, never applied; requires a released worker attempt and --reason"
+      },
+      {
+        "name": "--reason",
+        "help": "Why the answer is closed; recorded with the closing coordinator and time"
       }
     ],
     "subcommands": null,

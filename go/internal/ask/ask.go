@@ -8,8 +8,23 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
+
+// ClosedUnapplied is an answer the coordinator closed because no worker can
+// apply it any longer. It is never the worker's `applied`.
+const ClosedUnapplied = "closed-unapplied"
+
+// Discharged reports whether a question owes nothing more: applied by the
+// worker, settled by cleanup, or closed unapplied by the coordinator.
+func Discharged(status any) bool {
+	switch status {
+	case "applied", "settled", ClosedUnapplied:
+		return true
+	}
+	return false
+}
 
 func newID(prefix string, n int) (string, error) {
 	buf := make([]byte, (n+1)/2)
@@ -193,6 +208,9 @@ func Resolve(s *store.Store, taskID, questionID string) (*ordjson.Object, error)
 	if status == "open" {
 		return nil, fmt.Errorf("Only an answered question can be marked applied.")
 	}
+	if status == ClosedUnapplied {
+		return nil, fmt.Errorf("The coordinator closed this answer unapplied; it cannot be marked applied.")
+	}
 	question.Set("status", "applied")
 	question.Set("applied_at", store.Now())
 	if allApplied(task) {
@@ -205,6 +223,74 @@ func Resolve(s *store.Store, taskID, questionID string) (*ordjson.Object, error)
 		return nil, err
 	}
 	return question, nil
+}
+
+// Close records the coordinator closing an answered question that no worker
+// can apply: the task's worker attempt must already be released, which only a
+// verified stop (`execution park`) records. The caller proves the coordinator.
+func Close(s *store.Store, ctx *ordjson.Object, taskID, questionID, reason string) (*ordjson.Object, error) {
+	if strings.TrimSpace(reason) == "" {
+		return nil, fmt.Errorf("--reason must not be empty.")
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.CheckMachine(task); err != nil {
+		return nil, err
+	}
+	question := findQuestion(task, questionID)
+	if question == nil {
+		return nil, fmt.Errorf("Question not found.")
+	}
+	switch status, _ := question.Get("status"); status {
+	case "answered":
+	case ClosedUnapplied:
+		if recorded, _ := question.Get("close_reason"); recorded == reason {
+			result := ordjson.NewObject()
+			result.Set("question", question)
+			result.Set("duplicate", true)
+			return result, nil
+		}
+		return nil, fmt.Errorf("This answer is already closed with a recorded reason; nothing changed.")
+	case "open":
+		return nil, fmt.Errorf("An open question still needs the user's answer; closing never stands in for a decision.")
+	default:
+		return nil, fmt.Errorf("Only an answered, unapplied question can be closed; this one is %v.", status)
+	}
+	execution, err := reservations.GetExecution(task)
+	if err != nil {
+		return nil, fmt.Errorf("Malformed execution reservation for %s: %s. Nothing was closed.", taskID, err)
+	}
+	if execution == nil {
+		return nil, fmt.Errorf("Legacy task has no execution attempt; run `execution park %s --attempt legacy:%s` to prove the worker stopped. Nothing was closed.", taskID, taskID)
+	}
+	attemptID, _ := execution.Worker.Get("id")
+	if state, _ := execution.Worker.Get("state"); state != "released" {
+		return nil, fmt.Errorf("Worker attempt %v is %v, so a worker may still apply this answer. Run `execution park %s --attempt %v` once its stop is proven. Nothing was closed.", attemptID, state, taskID, attemptID)
+	}
+	by := ordjson.NewObject()
+	by.Set("role", "coordinator")
+	for _, field := range []string{"machine", "session", "pane"} {
+		v, _ := ctx.Get(field)
+		by.Set(field, v)
+	}
+	question.Set("status", ClosedUnapplied)
+	question.Set("closed_at", store.Now())
+	question.Set("closed_by", by)
+	question.Set("close_reason", reason)
+	question.Set("closed_attempt", attemptID)
+	if err := s.SaveTask(task); err != nil {
+		return nil, err
+	}
+	result := ordjson.NewObject()
+	result.Set("question", question)
+	return result, nil
 }
 
 func findQuestion(task *ordjson.Object, id string) *ordjson.Object {
@@ -240,8 +326,7 @@ func allApplied(task *ordjson.Object) bool {
 	}
 	for _, q := range list {
 		question, _ := q.(*ordjson.Object)
-		status, _ := question.Get("status")
-		if status != "applied" && status != "settled" {
+		if status, _ := question.Get("status"); !Discharged(status) {
 			return false
 		}
 	}

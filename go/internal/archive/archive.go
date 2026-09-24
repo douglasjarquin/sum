@@ -3,6 +3,7 @@ package archive
 import (
 	"fmt"
 
+	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -25,9 +26,8 @@ func Run(s *store.Store, taskID string, acknowledge bool) (*ordjson.Object, erro
 		if list, ok := questionsValue.([]any); ok {
 			for _, q := range list {
 				question, _ := q.(*ordjson.Object)
-				status, _ := question.Get("status")
-				if status != "applied" && status != "settled" {
-					return nil, fmt.Errorf("Outstanding questions must be answered and applied before archiving.")
+				if status, _ := question.Get("status"); !ask.Discharged(status) {
+					return nil, fmt.Errorf("Outstanding questions must be answered and applied before archiving. An answer no worker can apply any longer is closed with `answer TASK QUESTION --close --reason TEXT`.")
 				}
 			}
 		}

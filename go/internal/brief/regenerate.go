@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -91,6 +92,8 @@ func RenderFull(s *store.Store, runtimeRoot, sumctlPath string, task *ordjson.Ob
 				lines = append(lines, fmt.Sprintf("- %s: open; no decision recorded yet. Wait for `sumctl answer`, do not assume one.", label))
 			case "answered":
 				lines = append(lines, fmt.Sprintf("- %s: answered, not yet applied: %s", label, answer))
+			case ask.ClosedUnapplied:
+				lines = append(lines, fmt.Sprintf("- %s: closed by the coordinator, never applied: %s", label, answer))
 			default:
 				lines = append(lines, fmt.Sprintf("- %s: applied: %s", label, answer))
 			}
