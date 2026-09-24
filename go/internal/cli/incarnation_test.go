@@ -269,3 +269,26 @@ func fakePrompts(t *testing.T, home string) []string {
 	}
 	return prompts
 }
+
+// An unreachable Herdr (a stale socket, a stopped server) is never identity proof: coordinator commands are refused as
+// unobservable and init claims nothing.
+func TestIncarnation_anUnreachableBackendIsNotIdentityProof(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	initView(t, home)
+	stale := filepath.Join(t.TempDir(), "herdr")
+	if err := os.WriteFile(stale, []byte("#!/bin/sh\n[ \"$1\" = --version ] && { echo 'herdr 0.9.0'; exit 0; }\necho '{\"error\":{\"code\":\"server_not_running\",\"message\":\"connect: no such file or directory\"}}' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUM_HERDR_BIN", stale)
+	if out, err := runCLI(t, home, "bind", "t-aaaaaaaaaaaa", "--parent-only"); err == nil || !strings.Contains(out+err.Error(), incarnation.Unobservable) {
+		t.Fatalf("coordinator command with Herdr unreachable = %v %s, want unobservable", err, out)
+	}
+	before, _ := os.ReadFile(filepath.Join(home, "context.json"))
+	if _, err := initRole(t, home); err == nil {
+		t.Fatal("init succeeded with Herdr unreachable")
+	}
+	if after, _ := os.ReadFile(filepath.Join(home, "context.json")); string(after) != string(before) {
+		t.Fatal("init changed the coordinator record while Herdr was unreachable")
+	}
+}
