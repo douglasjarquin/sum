@@ -22,12 +22,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
-var legacyReasons = map[string]string{
-	"question": "a decision is waiting",
-	"answer":   "an answer has been recorded",
-	"report":   "a worker report is available",
-}
-
 // Pass budget and per-call bounds for one delivery pass. A Herdr call starts only when its own timeout plus the
 // runner's pipe grace still fits the pass, so a started call is never cut short by the pass deadline and a prompt is
 // never left uncertain because of the budget.
@@ -46,7 +40,6 @@ type PumpOpts struct {
 	Tasks        []string
 	Recipient    string
 	Force        bool
-	Reason       string
 	Inline       bool
 	RetryStalled bool
 	// Budget bounds the whole pass; zero means DefaultPassBudget.
@@ -76,7 +69,6 @@ func Notify(s *store.Store, opts PumpOpts, taskID, recipient, reason string, for
 	opts.Tasks = []string{taskID}
 	opts.Recipient = recipient
 	opts.Force = force
-	opts.Reason = reason
 	opts.Inline = false
 	row, err := Pump(s, opts)
 	if err != nil {
@@ -86,8 +78,7 @@ func Notify(s *store.Store, opts PumpOpts, taskID, recipient, reason string, for
 	if err != nil {
 		return nil, err
 	}
-	noticeValue, _ := task.Get("notice")
-	notice, _ := noticeValue.(*ordjson.Object)
+	notice, _ := NoticeOf(s, task).(*ordjson.Object)
 	if notice == nil {
 		notice = ordjson.NewObject()
 		notice.Set("at", store.Now())
@@ -515,20 +506,6 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		}
 	}
 	row.Set("withheld", withheld)
-	var kinds []string
-	for _, pair := range sendItems {
-		kind, _ := pair[1].Get("kind")
-		if kindStr, ok := kind.(string); ok && kindStr != "refresh" {
-			kinds = append(kinds, kindStr)
-		}
-	}
-	legacy := opts.Reason
-	if legacy == "" && len(kinds) > 0 {
-		legacy = legacyReasons[kinds[0]]
-	}
-	if legacy == "" {
-		legacy = "saved task state needs attention"
-	}
 	deliveryID, err := newDeliveryID()
 	if err != nil {
 		return nil, err
@@ -548,9 +525,9 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	runtime.Set("sha", p.runtimeSHA())
 	delivery.Set("runtime", runtime)
 	claimed := false
-	finish := func(state, via, reason, errStr string) (*ordjson.Object, error) {
+	finish := func(state, via, reason string) (*ordjson.Object, error) {
 		changes := map[string]any{"state": state, "via": via, "reason": reason, "finished_at": store.Now()}
-		if err := p.record(route, sendItems, claimed, delivery, changes, state, legacy, errStr); err != nil {
+		if err := p.record(route, sendItems, claimed, delivery, changes); err != nil {
 			return nil, err
 		}
 		row.Set("state", state)
@@ -559,7 +536,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		return row, nil
 	}
 	if key == nil {
-		return finish("not-delivered", "", "recipient has no recorded pane yet", "recipient has no recorded pane yet")
+		return finish("not-delivered", "", "recipient has no recorded pane yet")
 	}
 	if b.inline {
 		// The caller is the recipient; only the recorded occupant of this pane may take its returns.
@@ -574,7 +551,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		}
 		row.Set("via", "inline")
 		row.Set("message", noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), mentioned, len(withheld)))
-		if _, err := finish("submitted", "inline", "presented in the recipient's own command output", ""); err != nil {
+		if _, err := finish("submitted", "inline", "presented in the recipient's own command output"); err != nil {
 			return nil, err
 		}
 		row.Set("reason", "you are the recipient; this listing is the notice. Nothing is answered, applied, or verified by reading it.")
@@ -616,7 +593,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		sendItems, claimed = survivors, true
 		return claimResult{message: noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), current, len(withheld))}, nil
 	}
-	state, detail, errStr, deferReason := p.promptRecipient(route, sendItems, claim)
+	state, detail, deferReason := p.promptRecipient(route, sendItems, claim)
 	if deferReason != "" {
 		return p.deferRow(row, deferReason), nil
 	}
@@ -626,7 +603,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		return row, nil
 	}
 	row.Set("via", "prompt")
-	if _, err := finish(state, "prompt", detail, errStr); err != nil {
+	if _, err := finish(state, "prompt", detail); err != nil {
 		return nil, err
 	}
 	sent := []any{}
@@ -661,8 +638,8 @@ func pendingListing(items [][2]*ordjson.Object) []any {
 // busy, or elsewhere without a call of its own; a settled one is re-observed immediately before the prompt. A
 // non-empty deferReason means the budget did not admit the next call: nothing was sent or recorded. claim records the
 // in-flight attempt and supplies the notice; state "quiet" means nothing was still owed.
-func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object, claim func(*occupant) (claimResult, error)) (state, detail, errStr, deferReason string) {
-	notDelivered := func(msg string) (string, string, string, string) { return "not-delivered", msg, msg, "" }
+func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object, claim func(*occupant) (claimResult, error)) (state, detail, deferReason string) {
+	notDelivered := func(msg string) (string, string, string) { return "not-delivered", msg, "" }
 	if !p.host.Is(routeValue(route, "machine")) {
 		return notDelivered("Recipient is on another machine.")
 	}
@@ -673,7 +650,7 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 		return notDelivered("Recipient's Herdr session is unavailable for the rest of this pass (" + reason + "); not contacted again until the next pass.")
 	}
 	if !p.sn.Listed(session) && !p.fits(ObserveTimeout) {
-		return "", "", "", "the pass budget ran out before this recipient's Herdr session could be observed; nothing was sent or recorded"
+		return "", "", "the pass budget ran out before this recipient's Herdr session could be observed; nothing was sent or recorded"
 	}
 	listed, err := p.sn.Agent(session, pane)
 	if err == nil {
@@ -694,7 +671,7 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 		return notDelivered(msg)
 	}
 	if !p.fits(ObserveTimeout) {
-		return "", "", "", "the pass budget ran out before this recipient could be re-observed; nothing was sent or recorded"
+		return "", "", "the pass budget ran out before this recipient could be re-observed; nothing was sent or recorded"
 	}
 	agent, err := p.sn.Call(session, ObserveTimeout, "agent", "get", pane)
 	if err == nil {
@@ -715,7 +692,7 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 	// judgment needs is taken here, outside the state lock, within the budget.
 	occ, deferReason := p.observeOccupant(route, items, session, pane, herdrclient.UnwrapAgent(agent))
 	if deferReason != "" {
-		return "", "", "", deferReason
+		return "", "", deferReason
 	}
 	claimed, err := claim(occ)
 	switch {
@@ -724,20 +701,20 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 	case claimed.refused != "":
 		return notDelivered(claimed.refused)
 	case claimed.stale != "":
-		return "refused", claimed.stale, "", ""
+		return "refused", claimed.stale, ""
 	case claimed.deferReason != "":
-		return "", "", "", claimed.deferReason
+		return "", "", claimed.deferReason
 	case claimed.quiet != "":
-		return "quiet", claimed.quiet, "", ""
+		return "quiet", claimed.quiet, ""
 	}
 	if _, err := p.sn.Call(session, PromptTimeout, "agent", "prompt", pane, claimed.message); err != nil {
-		state, detail, errStr := promptFailure(err)
+		state, detail := promptFailure(err)
 		if state == "uncertain" {
 			p.sn.Trip(session, "a prompt's effect is unknown")
 		}
-		return state, detail, errStr, ""
+		return state, detail, ""
 	}
-	return "submitted", "notice submitted while the recipient was settled; nothing is acknowledged, read, or applied by that", "", ""
+	return "submitted", "notice submitted while the recipient was settled; nothing is acknowledged, read, or applied by that", ""
 }
 
 // checkIdentity refuses a recipient that is not this instance's registered coordinator or this task's registered
@@ -787,18 +764,18 @@ func checkAgent(agent *ordjson.Object, expectedCwd string) error {
 // promptFailure classifies a failed prompt send. A helper that may have delivered it (timed out, canceled, stopped
 // for output, or left a descendant holding its output) is uncertain and never retried by the pump; only a send
 // that provably did not reach Herdr is not-delivered.
-func promptFailure(err error) (state, detail, reason string) {
+func promptFailure(err error) (state, detail string) {
 	msg := err.Error()
 	if _, ok := err.(*unreachableError); ok {
-		return "not-delivered", msg, msg
+		return "not-delivered", msg
 	}
 	if containsTimeout(msg) {
-		return "uncertain", "prompt timed out after possible submission: " + msg + "; left ambiguous, not retried by itself", msg
+		return "uncertain", "prompt timed out after possible submission: " + msg + "; left ambiguous, not retried by itself"
 	}
 	if errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrOutputLimit) {
-		return "uncertain", "prompt may have been submitted: " + msg + "; left ambiguous, not retried by itself", msg
+		return "uncertain", "prompt may have been submitted: " + msg + "; left ambiguous, not retried by itself"
 	}
-	return "not-delivered", "prompt was not accepted: " + msg, msg
+	return "not-delivered", "prompt was not accepted: " + msg
 }
 
 // ObserveRecipient is one fresh observation of route's pane: on this machine, at the expected cwd, and settled.

@@ -108,7 +108,6 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	opts := pump
 	opts.Ctx = ctx
 	opts.Tasks = []string{taskID}
-	opts.Reason = "saved task state needs attention"
 	opts.Inline = true
 	opts.CallerVerifiedRole = "coordinator" // RequireCoordinator judged this pane's occupant above.
 	pumped, err := returns.Pump(s, opts)
@@ -119,6 +118,11 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	for _, key := range task.Keys() {
 		v, _ := task.Get(key)
 		result.Set(key, v)
+	}
+	// The record's own `notice` is history; the view derives it from the returns sidecar.
+	notice := returns.NoticeOf(s, task)
+	if _, recorded := task.Get("notice"); recorded || notice != nil {
+		result.Set("notice", notice)
 	}
 	result.Set("returns", pumped)
 	return result, nil

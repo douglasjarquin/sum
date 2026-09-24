@@ -62,7 +62,6 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 		result, pumpErr := returns.Pump(s, returns.PumpOpts{
 			RuntimeRoot: runtimeRoot,
 			SumctlPath:  sumctlPath,
-			Reason:      "Herdr started; catching up on saved returns",
 			Inline:      true,
 			Parent:      deadline,
 			Herdr:       herdr,
@@ -163,7 +162,6 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 			RuntimeRoot:  runtimeRoot,
 			SumctlPath:   sumctlPath,
 			Recipient:    "parent",
-			Reason:       "saved task state needs attention",
 			RetryStalled: true,
 			Parent:       deadline,
 			Snapshot:     tasks,

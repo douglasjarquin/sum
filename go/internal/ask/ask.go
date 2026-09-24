@@ -9,6 +9,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -85,8 +86,8 @@ func Ask(s *store.Store, taskID, key, text string, pump func() (*ordjson.Object,
 						unlock()
 						return nil, fmt.Errorf("This question key already exists with different text. Use a new key; do not overwrite an obligation.")
 					}
+					notice := returns.NoticeOf(s, task)
 					unlock()
-					notice, _ := task.Get("notice")
 					result := ordjson.NewObject()
 					result.Set("question", question)
 					result.Set("duplicate", true)

@@ -17,6 +17,8 @@ const (
 	Schema         = 1
 	AttemptsBound  = 3
 	NotSubmittedAt = "submitted-unconfirmed"
+
+	interruptedReason = "an attempt was interrupted before its outcome was recorded; delivery unknown, not retried by itself"
 )
 
 func jsonInt(n int) json.Number {
@@ -422,7 +424,7 @@ func NotificationState(returnsObj *ordjson.Object, obligation *ordjson.Object, k
 	if lastState == "in-flight" {
 		row := base()
 		row.Set("state", "uncertain")
-		row.Set("reason", "an attempt was interrupted before its outcome was recorded; delivery unknown, not retried by itself")
+		row.Set("reason", interruptedReason)
 		return row
 	}
 	if lastState == "not-delivered" {

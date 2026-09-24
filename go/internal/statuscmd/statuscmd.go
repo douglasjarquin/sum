@@ -222,8 +222,7 @@ func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 	evidence.Set("merged_for_task", mergedForTask)
 	row.Set("evidence", evidence)
 
-	noticeValue, _ := task.Get("notice")
-	row.Set("notice", noticeValue)
+	row.Set("notice", returns.NoticeOf(s, task))
 
 	var attentionRows []any
 	for _, a := range returns.OpenAttention(task) {
