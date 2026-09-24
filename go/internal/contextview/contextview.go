@@ -21,6 +21,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/pyrepr"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -919,10 +920,16 @@ func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjs
 		return nil, err
 	}
 
+	taskPath, err := s.TaskPath(taskID)
+	if err != nil {
+		return nil, err
+	}
+
 	result := ordjson.NewObject()
 	result.Set("commands", commands)
 	result.Set("brief_path", getField(task, "brief_path"))
 	result.Set("revisions", revisions)
+	result.Set("procedure", procedureReferences(taskPath, active))
 	result.Set("notes", pickPresent(notesState, []string{"path", "present", "ok", "error"}))
 	effectiveRoles := roles
 	if len(effectiveRoles) == 0 {
@@ -937,6 +944,31 @@ func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjs
 	result.Set("dev", envView)
 	result.Set("note", "Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout. `dev` is the task-local environment record as last observed.")
 	return result, nil
+}
+
+// procedureReferences lists the active revision's pinned worker procedure with its integrity, so a
+// fresh or recovered worker finds its instructions from the task record. Nil before pinned rows existed.
+func procedureReferences(taskPath string, active *ordjson.Object) any {
+	rows := procedure.Rows(asObject(getField(active, "policy")))
+	if rows == nil {
+		return nil
+	}
+	refs := make([]any, 0, len(rows))
+	for _, raw := range rows {
+		row := asObject(raw)
+		ref := pickPresent(row, []string{"name", "sha256", "bytes", "load", "when"})
+		if full, ok := procedure.ResourcePath(taskPath, row); ok {
+			ref.Set("path", full)
+		}
+		if err := procedure.VerifyRow(taskPath, row); err != nil {
+			ref.Set("ok", false)
+			ref.Set("error", err.Error())
+		} else {
+			ref.Set("ok", true)
+		}
+		refs = append(refs, ref)
+	}
+	return refs
 }
 
 var sha40Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)

@@ -16,16 +16,17 @@ environment:
   brief_path: brief.md
   revisions[1]{id,status,path,ok}:
     legacy,active,$HOME/tasks/t-0e0e0e0e0e0e/brief.md,false
+  procedure: null
   notes:
     path: $HOME/tasks/t-0e0e0e0e0e0e/notes.md
     present: false
     ok: true
   skills:
     files[4]{skill,path,bytes,sha256}:
-      sum-worker,$ROOT/skills/sum-worker/SKILL.md,15994,1d431020175d7525
+      sum-worker,$ROOT/skills/sum-worker/SKILL.md,16626,d411219366e8d5a6
       sum-delivery,$ROOT/skills/sum-delivery/SKILL.md,28321,06a4dab97f96b646
       sum-rundown,$ROOT/skills/sum-rundown/SKILL.md,13414,7abf8750cd443334
-      sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,14922,67e6864eb6099048
+      sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,15213,0b5b0ee9216df274
     helper: $ROOT/bin/sumctl
     instruction: "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout."
   runtime:

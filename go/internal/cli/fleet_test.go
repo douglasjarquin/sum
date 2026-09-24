@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -386,11 +387,36 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(body), "Update two") {
-		t.Fatalf("rolled-back brief still has update two: %s", coopPath)
+	// The brief references its pinned procedure instead of copying it. After rollback the revision
+	// pins the update-one procedure again, reusing the file r2 pinned with the same hash, and every
+	// earlier revision's pinned file is still intact.
+	if strings.Contains(string(body), "reread decisions before continuing") {
+		t.Fatalf("rolled-back brief embeds the procedure body: %s", coopPath)
 	}
-	if !strings.Contains(string(body), "Update one") {
-		t.Fatalf("rolled-back brief missing update one: %s", coopPath)
+	pinned := pinnedProcedure(t, string(body))
+	procedureText, err := os.ReadFile(pinned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(procedureText), "Update two") || !strings.Contains(string(procedureText), "Update one") {
+		t.Fatalf("rolled-back procedure %s is not update one:\n%s", pinned, procedureText)
+	}
+	coopVersions := f.readVersions(asString(tasks["cooperative-a"]["id"]))
+	pinnedByRevision := map[string]string{}
+	for _, raw := range asSlice(coopVersions["revisions"]) {
+		rev := asMap(raw)
+		for _, row := range asSlice(asMap(rev["policy"])["procedure"]) {
+			pinnedByRevision[asString(rev["id"])] = asString(asMap(row)["path"])
+		}
+	}
+	if pinnedByRevision["r4"] == "" || pinnedByRevision["r4"] != pinnedByRevision["r2"] || pinnedByRevision["r3"] == pinnedByRevision["r2"] {
+		t.Fatalf("pinned procedure per revision = %v, want r4 to reuse r2's file and r3 to differ", pinnedByRevision)
+	}
+	listed := f.ctl(true, "brief", "list", asString(tasks["cooperative-a"]["id"]))
+	for _, raw := range asSlice(listed["revisions"]) {
+		if rev := asMap(raw); rev["ok"] != true {
+			t.Fatalf("revision %v is no longer usable after rollback: %v", rev["id"], rev["error"])
+		}
 	}
 	f.ctl(true, "refresh", "adopt", "--coordinator", "r3")
 	for _, role := range []string{"cooperative-a", "cooperative-b", "dirty-checkout"} {
@@ -1120,4 +1146,14 @@ func asMapFromOrd(v any) map[string]any {
 		return out
 	}
 	return asMap(v)
+}
+
+// pinnedProcedure is the required worker procedure file a brief names.
+func pinnedProcedure(t *testing.T, brief string) string {
+	t.Helper()
+	match := regexp.MustCompile("- Required before any other step: `([^`]+)`").FindStringSubmatch(brief)
+	if match == nil {
+		t.Fatalf("brief names no required procedure file:\n%s", brief)
+	}
+	return match[1]
 }

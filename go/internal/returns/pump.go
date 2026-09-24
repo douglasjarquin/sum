@@ -832,6 +832,31 @@ func observeAgent(s *store.Store, runtimeRoot string, route *ordjson.Object, exp
 	return obj, checkAgent(obj, expectedCwd)
 }
 
+// recordCommand is the bounded, role-specific read for a notice; full `show` stays for other recipients.
+func recordCommand(s *store.Store, sumctlPath, role, taskID string) string {
+	if role == "worker" || role == "coordinator" {
+		return shquote.CommandFor(sumctlPath, s.Home, "context", taskID, "--role", role)
+	}
+	return shquote.CommandFor(sumctlPath, s.Home, "show", taskID)
+}
+
+// refreshDecisionsOnly reports whether a requested revision changes only decisions relative to what the worker read.
+func refreshDecisionsOnly(s *store.Store, task *ordjson.Object, revisionID string) bool {
+	versionsObj, err := versions.ReadVersions(s, task)
+	if err != nil {
+		return false
+	}
+	revisions, _ := versionsObj.Get("revisions")
+	list, _ := revisions.([]any)
+	for _, raw := range list {
+		rev, _ := raw.(*ordjson.Object)
+		if id, _ := rev.Get("id"); fmt.Sprint(id) == revisionID {
+			return versions.DecisionsOnly(versionsObj, rev)
+		}
+	}
+	return false
+}
+
 func noticeText(s *store.Store, sumctlPath, role string, items [][2]*ordjson.Object, withheld int) string {
 	byTask := []string{}
 	partsByTask := map[string][]string{}
@@ -855,7 +880,12 @@ func noticeText(s *store.Store, sumctlPath, role string, items [][2]*ordjson.Obj
 			att, _ := o.Get("attention")
 			partsByTask[idStr] = append(partsByTask[idStr], fmt.Sprintf("attention %v: native worker status %v without a saved report (evidence, not a result or a question); inspect the pane", ref, att))
 		default:
-			partsByTask[idStr] = append(partsByTask[idStr], fmt.Sprintf("brief revision %v is requested; read it, then run %s and continue from saved progress", ref, shquote.CommandFor(sumctlPath, s.Home, "brief", "adopt", idStr, fmt.Sprint(ref))))
+			adopt := shquote.CommandFor(sumctlPath, s.Home, "brief", "adopt", idStr, fmt.Sprint(ref))
+			if refreshDecisionsOnly(s, pair[0], fmt.Sprint(ref)) {
+				partsByTask[idStr] = append(partsByTask[idStr], fmt.Sprintf("brief revision %v is requested and only recorded decisions changed; read them with %s, then run %s and continue from saved progress", ref, shquote.CommandFor(sumctlPath, s.Home, "context", idStr, "--role", "worker", "--section", "decisions"), adopt))
+			} else {
+				partsByTask[idStr] = append(partsByTask[idStr], fmt.Sprintf("brief revision %v is requested; read it, then run %s and continue from saved progress", ref, adopt))
+			}
 		}
 	}
 	const noticeTasks = 12
@@ -865,7 +895,7 @@ func noticeText(s *store.Store, sumctlPath, role string, items [][2]*ordjson.Obj
 		limit = len(byTask)
 	}
 	for _, taskID := range byTask[:limit] {
-		lines = append(lines, fmt.Sprintf("%s: %s. Read the durable record with %s.", taskID, joinSemi(partsByTask[taskID]), shquote.CommandFor(sumctlPath, s.Home, "show", taskID)))
+		lines = append(lines, fmt.Sprintf("%s: %s. Read the durable record with %s.", taskID, joinSemi(partsByTask[taskID]), recordCommand(s, sumctlPath, role, taskID)))
 	}
 	more := len(byTask) - len(lines)
 	text := fmt.Sprintf("sum returns for the %s: %d pending across %d task(s). %s", role, len(items), len(byTask), joinSpace(lines))

@@ -17,6 +17,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -262,6 +263,16 @@ func Run(s *store.Store, destination string) (*ordjson.Object, error) {
 					relative, _ := pathValue.(string)
 					if relative != "" {
 						paths = append(paths, filepath.Join(taskPath, filepath.FromSlash(relative)))
+					}
+					// A revision's worker procedure lives only in its pinned task resources.
+					policyValue, _ := rev.Get("policy")
+					policy, _ := policyValue.(*ordjson.Object)
+					for _, rowValue := range procedure.Rows(policy) {
+						if row, _ := rowValue.(*ordjson.Object); row != nil {
+							if full, ok := procedure.ResourcePath(taskPath, row); ok {
+								paths = append(paths, full)
+							}
+						}
 					}
 				}
 			}

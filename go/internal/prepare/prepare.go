@@ -20,12 +20,14 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 	"github.com/douglasjarquin/sum/go/internal/verifycontract"
+	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
 const MaxText = 256 * 1024
@@ -98,6 +100,10 @@ type Args struct {
 
 func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	// The brief references the worker procedure; refuse before any Herdr side effect if it cannot be pinned.
+	if err := procedure.Check(args.RuntimeRoot); err != nil {
 		return nil, err
 	}
 	herdrPath, err := toolpath.Find(args.RuntimeRoot, "herdr")
@@ -411,6 +417,12 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		unlock()
 		return nil, fmt.Errorf("The coordinator-owned verification snapshot does not match its committed base: %w", err)
 	}
+	// A fresh session reads the active revision and its pinned procedure; refuse to launch an incomplete one.
+	briefFile, err := versions.ActiveBrief(s, task)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
 	worker, err := reservations.Worker(task)
 	if err != nil {
 		unlock()
@@ -485,8 +497,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		}
 	}
 	observedKind := asString(func() any { v, _ := agent.Get("agent"); return v }())
-	briefPath := asString(func() any { v, _ := task.Get("brief_path"); return v }())
-	prompt := fmt.Sprintf("You are the sum worker for %s, not the coordinator. Read the complete file %s, then execute only that approved task. Questions and results must be saved using the commands in that brief.", taskID, quoteJSON(briefPath))
+	prompt := fmt.Sprintf("You are the sum worker for %s, not the coordinator. Read the complete file %s and every required worker procedure file it names, then execute only that approved task. Questions and results must be saved using the commands in that brief.", taskID, quoteJSON(briefFile))
 	if _, err := herdrclient.Call(herdrPath, session, 10*time.Second, "agent", "prompt", pane, prompt); err != nil {
 		return failStart(s, taskID, err)
 	}
