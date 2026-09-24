@@ -43,8 +43,8 @@ export function handlers(runHerdr) {
         "--timeout", String(timeout)], timeout + 5000)));
     },
     herdr_agent_start: async ({ name, kind, pane_id, args = [] }) => jsonResult(payload(await run([
-      "agent", "start", name, "--kind", kind, "--pane", pane_id, "--timeout", "30000",
-      ...(args.length ? ["--", ...args] : [])], 40000))),
+      "agent", "start", name, "--kind", kind, "--pane", pane_id, "--timeout", "90000",
+      ...(args.length ? ["--", ...args] : [])], 100000))),
     herdr_agent_focus: async ({ target }) => jsonResult(payload(await run(["agent", "focus", target]))),
     herdr_integration_status: async () => jsonResult(payload(await run(["integration", "status"]))),
     herdr_pane_read: async ({ pane_id, lines = 80 }) => result((await run(["pane", "read", pane_id,

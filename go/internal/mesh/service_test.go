@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -220,9 +221,9 @@ func TestService_start_usesExistingPaneAndKind(t *testing.T) {
 	if _, err := service.Call(context.Background(), "herdr_agent_start", json.RawMessage(`{"name":"reviewer","kind":"codex","pane_id":"w1:p2","args":["-m","chosen-model"]}`)); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"agent", "start", "reviewer", "--kind", "codex", "--pane", "w1:p2", "--timeout", "30000", "--", "-m", "chosen-model"}
-	if !slices.Equal(runner.calls[0], want) {
-		t.Fatalf("start argv = %v", runner.calls[0])
+	want := []string{"agent", "start", "reviewer", "--kind", "codex", "--pane", "w1:p2", "--timeout", "90000", "--", "-m", "chosen-model"}
+	if !slices.Equal(runner.calls[0], want) || runner.durations[0] != herdrclient.AgentStartCallTimeout {
+		t.Fatalf("timeout=%s args=%v", runner.durations[0], runner.calls[0])
 	}
 }
 

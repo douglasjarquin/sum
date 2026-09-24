@@ -453,7 +453,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	session := asString(func() any { v, _ := task.Get("session"); return v }())
 	unlock()
 
-	startArgs := []string{"agent", "start", taskID, "--kind", harness, "--pane", pane, "--timeout", "30000"}
+	startArgs := herdrclient.AgentStartArgs(taskID, harness, pane)
 	if len(argv) > 0 {
 		startArgs = append(startArgs, "--")
 		startArgs = append(startArgs, argv...)
@@ -465,7 +465,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	var startErr error
 	deadline := time.Now().Add(agentPaneBusyWait)
 	for {
-		started, startErr = herdrclient.Call(herdrPath, session, 40*time.Second, startArgs...)
+		started, startErr = herdrclient.Call(herdrPath, session, herdrclient.AgentStartCallTimeout, startArgs...)
 		if startErr == nil || !strings.Contains(startErr.Error(), "agent_pane_busy") || !time.Now().Before(deadline) {
 			break
 		}

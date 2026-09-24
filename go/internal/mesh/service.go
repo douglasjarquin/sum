@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 )
 
 type Service struct {
@@ -156,12 +158,12 @@ func (s Service) start(ctx context.Context, input startInput) (string, error) {
 	if err := input.validate(); err != nil {
 		return "", err
 	}
-	args := []string{"agent", "start", input.Name, "--kind", input.Kind, "--pane", input.PaneID, "--timeout", "30000"}
+	args := herdrclient.AgentStartArgs(input.Name, input.Kind, input.PaneID)
 	if len(input.Args) > 0 {
 		args = append(args, "--")
 		args = append(args, input.Args...)
 	}
-	return s.json(ctx, args, 40*time.Second)
+	return s.json(ctx, args, herdrclient.AgentStartCallTimeout)
 }
 
 func (s Service) preflight(ctx context.Context, target string) error {
