@@ -159,7 +159,7 @@ On a host with Herdr 0.9.0 and SSH to a second machine, run `herdr machine add` 
 Keep the coordinator on Local.
 Confirm a task whose recorded `machine` is the remote host's identity is ignored by the local `hook event` pump.
 Confirm a local task can still `sumctl ask` and appear in records-only `sumctl inbox`.
-Confirm local rundown (`inbox --live`, `init`, and `bind --parent-only`) remains the degrade path when the remote Herdr session is disconnected.
+Confirm the local read-only rundown (`inbox --live`) and local delivery (`init`, `bind --parent-only`, and `pump`) remain the degrade path when the remote Herdr session is disconnected.
 A real SSH canary is unrun if no second host is available.
 
 ## Record results
