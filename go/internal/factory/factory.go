@@ -1,10 +1,10 @@
 package factory
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -606,19 +607,18 @@ func runGh(runtimeRoot string, args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(bin, args...)
-	out, runErr := cmd.CombinedOutput()
-	if runErr != nil {
-		text := strings.TrimSpace(string(out))
+	res, runErr := proc.RunContext(context.Background(), proc.Cmd{Argv: append([]string{bin}, args...), Timeout: pipeline.DefaultGHBound})
+	if runErr != nil || res.Code != 0 {
+		text := res.Detail()
 		if strings.Contains(text, "read:project") || strings.Contains(strings.ToLower(text), "insufficient_scopes") {
 			return nil, fmt.Errorf("GitHub Projects need the read:project scope. Run `gh auth refresh -s read:project`. %s", text)
 		}
-		if text == "" {
-			text = runErr.Error()
+		if runErr != nil {
+			text = strings.TrimSpace(runErr.Error() + " " + text)
 		}
 		return nil, fmt.Errorf("gh %s: %s", strings.Join(args, " "), text)
 	}
-	return out, nil
+	return []byte(res.Stdout), nil
 }
 
 func ghIssueList(runtimeRoot, repo, label string) ([]ghIssue, error) {
