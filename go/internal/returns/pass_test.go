@@ -498,3 +498,104 @@ func TestPassDefersWhileAnotherPassHoldsTheDeliveryLock(t *testing.T) {
 		t.Fatalf("calls = %v", l.calls())
 	}
 }
+
+// A pass records every attempt in the returns sidecar only: the task records it delivers for are byte-identical
+// afterwards, and the legacy `notice` view is derived from the sidecar for each outcome.
+func TestPassRecordsAttemptsOnlyInTheReturnsSidecar(t *testing.T) {
+	l := newPassLab(t)
+	submitted := l.worker("lab", "w1:p1")
+	busy := l.worker("lab", "w2:p1")
+	timedOut := l.worker("slow", "w3:p1")
+	// The root owes itself an open question from the submitted task: presented inline to the caller.
+	task, err := l.s.ReadTask(submitted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	questions, _ := task.Get("questions")
+	open := ordjson.NewObject()
+	open.Set("id", "q2")
+	open.Set("status", "open")
+	open.Set("created_at", "2026-09-24T00:02:00+00:00")
+	task.Set("questions", append(questions.([]any), open))
+	task.Set("notice", nil)
+	if err := l.s.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	l.session("lab", map[string]any{"panes": map[string]any{
+		"w1:p1": l.pane("idle", l.worktree(submitted)),
+		"w2:p1": l.pane("working", l.worktree(busy)),
+	}})
+	l.session("slow", map[string]any{"panes": map[string]any{"w3:p1": l.pane("idle", l.worktree(timedOut))}, "prompt_hang": 3})
+	before := map[string][]byte{}
+	for _, id := range []string{submitted, busy, timedOut} {
+		raw, err := os.ReadFile(filepath.Join(l.s.Tasks, id, "task.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[id] = raw
+	}
+	result, _ := l.pump(0)
+	got := states(result)
+	if got["w1:p1"] != "submitted" || got["w2:p1"] != "not-delivered" || got["w3:p1"] != "uncertain" || got["w-root:p1"] != "submitted" {
+		t.Fatalf("states = %v", got)
+	}
+	want := map[string]string{submitted: "submitted-not-acknowledged", busy: "pending", timedOut: "uncertain"}
+	for id, raw := range before {
+		after, err := os.ReadFile(filepath.Join(l.s.Tasks, id, "task.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != string(raw) {
+			t.Fatalf("%s task.json was rewritten by the pass:\nbefore %s\nafter  %s", id, raw, after)
+		}
+		if len(deliveries(t, l.s, id)) == 0 {
+			t.Fatalf("%s: no delivery recorded in the sidecar", id)
+		}
+		task, err := l.s.ReadTask(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		notice, _ := NoticeOf(l.s, task).(*ordjson.Object)
+		if notice == nil {
+			t.Fatalf("%s: no derived notice", id)
+		}
+		if status, _ := notice.Get("status"); status != want[id] {
+			t.Fatalf("%s notice status = %v, want %s (%v)", id, status, want[id], notice)
+		}
+	}
+	timedOutTask, err := l.s.ReadTask(timedOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errText, _ := NoticeOf(l.s, timedOutTask).(*ordjson.Object).Get("error"); !strings.Contains(fmt.Sprint(errText), "prompt timed out after possible submission") {
+		t.Fatalf("uncertain notice error = %v, want the recorded timeout reason", errText)
+	}
+}
+
+// SetNotice gives a task view the derived notice, keeps a recorded null, and adds no key to a record that never
+// carried the field and has no attempt to project.
+func TestSetNoticeKeepsTheRecordedKeyShape(t *testing.T) {
+	l := newPassLab(t)
+	id := l.worker("lab", "w1:p1")
+	task, err := l.s.ReadTask(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := ordjson.NewObject()
+	SetNotice(l.s, task, view)
+	if _, has := view.Get("notice"); has {
+		t.Fatalf("view of a record without the field gained notice = %v", view)
+	}
+	task.Set("notice", nil)
+	SetNotice(l.s, task, view)
+	if notice, has := view.Get("notice"); !has || notice != nil {
+		t.Fatalf("recorded null notice = %v (present %v), want a null key", notice, has)
+	}
+	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": l.pane("idle", l.worktree(id))}})
+	l.pump(0)
+	SetNotice(l.s, task, view)
+	derived, _ := view.Get("notice")
+	if status, _ := derived.(*ordjson.Object).Get("status"); status != "submitted-not-acknowledged" {
+		t.Fatalf("derived notice status = %v", status)
+	}
+}

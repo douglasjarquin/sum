@@ -368,6 +368,7 @@ func Show(s *store.Store, taskID string) (*ordjson.Object, error) {
 		result.Set("versions", versionsView)
 	}
 
+	returns.SetNotice(s, task, result)
 	result.Set("evidence_view", View(task))
 
 	returnsView, returnsErr := returns.View(s, task)
