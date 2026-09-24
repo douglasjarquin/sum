@@ -239,7 +239,8 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	askCmd.MarkFlagsMutuallyExclusive("text", "file")
 	root.AddCommand(askCmd)
 
-	var answerText, answerFile string
+	var answerText, answerFile, answerReason string
+	var answerClose bool
 	answerCmd := &cobra.Command{
 		Use:  "answer TASK QUESTION",
 		Args: cobra.ExactArgs(2),
@@ -247,6 +248,20 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			st, err := o.openStore("answer")
 			if err != nil {
 				return err
+			}
+			if answerClose {
+				ctx, err := store.Context(o.installRoot)
+				if err != nil {
+					return err
+				}
+				if err := app.RequireCoordinator(st, ctx); err != nil {
+					return err
+				}
+				view, err := ask.Close(st, ctx, args[0], args[1], answerReason)
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
 			body, err := app.TextInput(answerText, answerFile)
 			if err != nil {
@@ -263,8 +278,11 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	}
 	answerCmd.Flags().StringVar(&answerText, "text", "", "")
 	answerCmd.Flags().StringVar(&answerFile, "file", "", "")
-	answerCmd.MarkFlagsOneRequired("text", "file")
-	answerCmd.MarkFlagsMutuallyExclusive("text", "file")
+	answerCmd.Flags().BoolVar(&answerClose, "close", false, "")
+	answerCmd.Flags().StringVar(&answerReason, "reason", "", "")
+	answerCmd.MarkFlagsOneRequired("text", "file", "close")
+	answerCmd.MarkFlagsMutuallyExclusive("text", "file", "close")
+	answerCmd.MarkFlagsRequiredTogether("close", "reason")
 	root.AddCommand(answerCmd)
 
 	root.AddCommand(&cobra.Command{

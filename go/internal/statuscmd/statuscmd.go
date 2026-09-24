@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -114,7 +115,7 @@ func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 		if list, ok := questionsValue.([]any); ok {
 			for _, q := range list {
 				question, _ := q.(*ordjson.Object)
-				if status, _ := question.Get("status"); status != "applied" && status != "settled" {
+				if status, _ := question.Get("status"); !ask.Discharged(status) {
 					openQuestions = append(openQuestions, question)
 				}
 			}

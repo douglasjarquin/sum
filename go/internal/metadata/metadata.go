@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
@@ -251,7 +252,7 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 		open := 0
 		for _, raw := range asList(func() any { v, _ := task.Get("questions"); return v }()) {
 			q := asObject(raw)
-			if s := asString(func() any { x, _ := q.Get("status"); return x }()); s != "applied" && s != "settled" {
+			if s, _ := q.Get("status"); !ask.Discharged(s) {
 				open++
 			}
 		}

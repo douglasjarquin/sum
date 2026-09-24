@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
@@ -780,10 +781,11 @@ func (ins *inspection) obligations() string {
 	var openIDs []string
 	for _, raw := range asList(func() any { v, _ := ins.task.Get("questions"); return v }()) {
 		q := asObject(raw)
-		switch stringField(q, "status") {
-		case "applied", "settled":
+		status := stringField(q, "status")
+		switch {
+		case ask.Discharged(status):
 			continue
-		case "answered":
+		case status == "answered":
 			// A worker-only `resolve` can never run once every attempt that could
 			// consume the answer has verified stop evidence. The recorded answer
 			// then settles durably during apply instead of blocking archive forever.

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
@@ -194,7 +195,7 @@ func outstanding(task *ordjson.Object) []any {
 	rows := make([]any, 0)
 	for _, qv := range listField(task, "questions") {
 		q := asObject(qv)
-		if asString(getField(q, "status")) == "applied" {
+		if ask.Discharged(getField(q, "status")) {
 			continue
 		}
 		row := ordjson.NewObject()
