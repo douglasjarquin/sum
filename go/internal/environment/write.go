@@ -199,7 +199,7 @@ func listeners() (map[int][]*ordjson.Object, string) {
 		return nil, err.Error()
 	}
 	result, runErr := proc.Run([]string{lsof, "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpn", "-w"}, "", listenerTimeout, false, nil)
-	if runErr != nil && result.Code == 0 {
+	if runErr != nil {
 		return nil, runErr.Error()
 	}
 	rows := map[int][]*ordjson.Object{}
@@ -248,7 +248,7 @@ func processCwds(exclude map[int]bool) (map[int]string, string) {
 		return nil, err.Error()
 	}
 	result, runErr := proc.Run([]string{lsof, "-a", "-d", "cwd", "-Fpn", "-w"}, "", lsofTimeout, false, nil)
-	if runErr != nil && result.Code == 0 {
+	if runErr != nil {
 		return nil, runErr.Error()
 	}
 	rows := map[int]string{}
