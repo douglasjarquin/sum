@@ -127,3 +127,37 @@ func TestReviewWithoutAParentCreatesNoReturn(t *testing.T) {
 		t.Fatalf("open review returns = %v, want none without a parent", open)
 	}
 }
+
+// Compact PR notes and the parent return are independent: notes are stored with the verdict, the return still opens,
+// and the fixed notice carries neither the findings nor the notes.
+func TestReviewWithNotesStillReturnsToTheParent(t *testing.T) {
+	d, taskID := reviewLab(t)
+	settleFakePane(t, d.base, "w-parent:p1")
+
+	out := d.ctlPane("w-review:p1", true, "review", taskID, "--verdict", "approve", "--candidate", reviewCandidate,
+		"--text", "# Independent review\n\nlong durable report", "--focus", "hero CTA is scoped on purpose", "--limitation", "source inspected only")
+	evidenceID := asString(asMap(out["evidence"])["id"])
+	saved, err := json.Marshal(out["evidence"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"kind":"review-focus"`, "hero CTA is scoped on purpose", `"kind":"limitation"`, "long durable report"} {
+		if !strings.Contains(string(saved), want) {
+			t.Fatalf("review evidence %s lacks %q", saved, want)
+		}
+	}
+
+	open := reviewReturns(d, taskID)
+	if len(open) != 1 || asString(open[0]["id"]) != "review:"+evidenceID || asString(asMap(open[0]["notification"])["state"]) != "submitted" {
+		t.Fatalf("open review returns = %v, want review:%s submitted and still open", open, evidenceID)
+	}
+	prompt := asString(fakePane(t, d.base, "w-parent:p1")["last_prompt"])
+	if !strings.Contains(prompt, "review "+evidenceID) {
+		t.Fatalf("parent prompt %q does not name review %s", prompt, evidenceID)
+	}
+	for _, prose := range []string{"long durable report", "hero CTA", "source inspected only"} {
+		if strings.Contains(prompt, prose) {
+			t.Fatalf("parent prompt %q carries review prose %q", prompt, prose)
+		}
+	}
+}
