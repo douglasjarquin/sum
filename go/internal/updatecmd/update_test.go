@@ -18,7 +18,7 @@ import (
 
 func TestApply_fastForwardsCleanInstallationCheckout(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestApply_refusesDirtyCheckoutAndKeepsRuntime(t *testing.T) {
 	if err := os.WriteFile(dirty, []byte("DIRTY MARKER\nold instructions\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestApply_doesNotMutateNonInstallationPath(t *testing.T) {
 	if otherHead != lab.oldSHA {
 		t.Fatalf("other clone HEAD = %s, want %s", otherHead, lab.oldSHA)
 	}
-	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true); err != nil {
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if got := git(t, lab.other, "rev-parse", "HEAD"); got != lab.oldSHA {
@@ -94,6 +94,9 @@ func TestApply_doesNotMutateNonInstallationPath(t *testing.T) {
 
 type applyLabOpts struct {
 	otherClone bool
+	// preIdentityOld leaves the stable-identity marker out of the old commit, so
+	// only the new commit offers the identity.
+	preIdentityOld bool
 }
 
 type applyLab struct {
@@ -121,11 +124,15 @@ func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 	if err := os.Chmod(filepath.Join(root, "bin", "sumctl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if !opts.preIdentityOld {
+		writeFile(t, filepath.Join(root, identityMarker), identityMarkerContent)
+	}
 	git(t, root, "add", ".")
 	git(t, root, "commit", "-m", "old")
 	oldSHA := git(t, root, "rev-parse", "HEAD")
 	writeFile(t, filepath.Join(root, "AGENTS.md"), "new instructions\n")
-	git(t, root, "add", "AGENTS.md")
+	writeFile(t, filepath.Join(root, identityMarker), identityMarkerContent)
+	git(t, root, "add", "AGENTS.md", identityMarker)
 	git(t, root, "commit", "-m", "new")
 	newSHA := git(t, root, "rev-parse", "HEAD")
 
@@ -198,6 +205,9 @@ func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
 		{"go/cmd/sumctl/main.go", "package main\n"},
 		{"skills/sum-worker/SKILL.md", "# worker\n"},
 	}
+	if exec.Command("git", "-C", root, "cat-file", "-e", sha+":"+identityMarker).Run() == nil {
+		required = append(required, struct{ rel, content string }{identityMarker, identityMarkerContent})
+	}
 	var filesEntries []string
 	for _, entry := range required {
 		writeFile(t, filepath.Join(dir, entry.rel), entry.content)
@@ -239,6 +249,8 @@ func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
 }`, sha, tree, root, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "), root)
 	writeFile(t, filepath.Join(dir, "release.json"), manifest)
 }
+
+const identityMarkerContent = "package machine\n"
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()

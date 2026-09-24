@@ -8,6 +8,9 @@
 // sum-specific key so the raw identifier is never stored. The hostname is read
 // only for display and to recognise records written before this identity
 // existed.
+//
+// The update guard treats this file's path as the marker that a release tree
+// carries the stable identity (#202); moving it changes that classification.
 package machine
 
 import (
@@ -40,6 +43,8 @@ const derivationKey = "sum machine identity v1"
 var linuxIDPaths = []string{"/etc/machine-id", "/var/lib/dbus/machine-id"}
 
 var platformUUIDPattern = regexp.MustCompile(`"IOPlatformUUID"\s*=\s*"([^"]+)"`)
+
+var stablePattern = regexp.MustCompile(`^m-[0-9a-f]{32}$`)
 
 type pin struct{ raw, hostname string }
 
@@ -97,6 +102,13 @@ func derive(raw string) string {
 	mac := hmac.New(sha256.New, []byte(raw))
 	mac.Write([]byte(derivationKey))
 	return "m-" + hex.EncodeToString(mac.Sum(nil))[:32]
+}
+
+// IsStable reports whether a recorded machine value is a stable identity
+// rather than a hostname written before the stable identity existed.
+func IsStable(recorded any) bool {
+	value, _ := recorded.(string)
+	return stablePattern.MatchString(value)
 }
 
 func osRaw() (string, error) {

@@ -476,7 +476,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	updatecmd.TestRecoverPending = func(*store.Store, string, string) (*ordjson.Object, error) {
 		return nil, fmt.Errorf("fleet test-only compensation fault")
 	}
-	_, applyErr := updatecmd.Apply(st, ctx, sha2, true)
+	_, applyErr := updatecmd.Apply(st, ctx, sha2, true, updatecmd.RefusePreIdentity)
 	if applyErr == nil || !strings.Contains(applyErr.Error(), "Recovery also failed: fleet test-only compensation fault") {
 		t.Fatalf("failed compensation: %v", applyErr)
 	}
@@ -488,7 +488,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 		t.Fatalf("pending.to = %v, want %s", pending["to"], sha2)
 	}
 	updatecmd.TestRecoverPending = nil
-	repaired, recErr := updatecmd.Recover(st, ctx, asString(pending["generation"]))
+	repaired, recErr := updatecmd.Recover(st, ctx, asString(pending["generation"]), updatecmd.RefusePreIdentity)
 	if recErr != nil {
 		t.Fatalf("recover: %v", recErr)
 	}
@@ -497,7 +497,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	if changed != true || asString(asMapFromOrd(def)["sha"]) != sha1 {
 		t.Fatalf("repaired = changed %v default %v, want sha %s", changed, def, sha1)
 	}
-	_, applyErr = updatecmd.Apply(st, ctx, sha2, true)
+	_, applyErr = updatecmd.Apply(st, ctx, sha2, true, updatecmd.RefusePreIdentity)
 	if applyErr == nil || !strings.Contains(applyErr.Error(), "entrypoint check failed") || !strings.Contains(applyErr.Error(), "restored and verified") {
 		t.Fatalf("second candidate failure: %v", applyErr)
 	}
