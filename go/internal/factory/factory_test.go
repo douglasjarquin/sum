@@ -177,7 +177,7 @@ func TestTick_dispatchThenOccupied(t *testing.T) {
 func TestTick_issuesPicksOldestOpen(t *testing.T) {
 	st := openStore(t)
 	enroll(t, st, "owner/app")
-	fakeGh(t, []map[string]any{issue(40, "newer"), issue(12, "oldest"), issue(25, "middle", ClaimLabel)}, nil)
+	root := fakeGh(t, []map[string]any{issue(40, "newer"), issue(12, "oldest"), issue(25, "middle", ClaimLabel)}, nil)
 	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app", Ready: ReadyIssues}); err != nil {
 		t.Fatal(err)
 	}
@@ -194,6 +194,11 @@ func TestTick_issuesPicksOldestOpen(t *testing.T) {
 	}
 	if got, _ := row.Get("ready_signal"); got != ReadyIssues {
 		t.Fatalf("ready_signal = %v", got)
+	}
+	calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
+	text := string(calls)
+	if !strings.Contains(text, "--sort") || !strings.Contains(text, "created") || !strings.Contains(text, "--order") || !strings.Contains(text, "asc") || !strings.Contains(text, "--paginate") {
+		t.Fatalf("issue list missing created-asc pagination: %s", text)
 	}
 }
 
@@ -396,12 +401,14 @@ func TestMergeCheck_highConfidenceAuthorized(t *testing.T) {
 	pr.Set("number", json.Number("12"))
 	pr.Set("repository", "cofactorworks/nicebaas")
 	task.Set("pr", pr)
+	rel := filepath.Join(".artifacts", "evidence", "r1", "demo", "comparison.json")
+	writeComparison(t, worktree, rel, sha, "red-green")
 	handoff := ordjson.NewObject()
 	handoff.Set("kind", "handoff")
 	handoff.Set("source", "worker")
 	handoff.Set("current", true)
 	handoff.Set("candidate", sha)
-	handoff.Set("artifacts", []any{".artifacts/evidence/r1/demo/comparison.json"})
+	handoff.Set("artifacts", []any{filepath.ToSlash(rel)})
 	root := ordjson.NewObject()
 	root.Set("kind", "verification")
 	root.Set("source", "coordinator")
@@ -445,6 +452,262 @@ func TestMergeCheck_highConfidenceAuthorized(t *testing.T) {
 	if asString(get(view, "confidence")) != "high" {
 		t.Fatalf("confidence = %v view=%v", get(view, "confidence"), view)
 	}
+}
+
+func writeComparison(t *testing.T, worktree, rel, sha, verdict string) {
+	t.Helper()
+	path := filepath.Join(worktree, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"schema": 1, "scenario": "demo", "verdict": verdict,
+		"after": map[string]any{"sha": sha}, "candidate": map[string]any{"sha": sha},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writePipeline(t *testing.T, st *store.Store, taskID, sha string, statuses map[string]string) {
+	t.Helper()
+	pipe := ordjson.NewObject()
+	pipe.Set("schema", json.Number("1"))
+	pipe.Set("task", taskID)
+	pipe.Set("candidate", sha)
+	var rows []any
+	for _, stage := range []string{"intent", "rebase", "review", "test", "document", "lint", "push", "pr", "ci"} {
+		status := "pass"
+		if statuses != nil && statuses[stage] != "" {
+			status = statuses[stage]
+		}
+		row := ordjson.NewObject()
+		row.Set("stage", stage)
+		row.Set("status", status)
+		row.Set("result", status)
+		rows = append(rows, row)
+	}
+	pipe.Set("rows", rows)
+	if err := ordjson.WriteFile(filepath.Join(st.Home, "tasks", taskID, "pipeline.json"), pipe); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMergeCheck_missingComparisonIsHumanGate(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	task := mergeTask(t, st, worktree, sha, "t-cccccccccccc")
+	if err := os.Remove(filepath.Join(worktree, ".artifacts", "evidence", "r1", "demo", "comparison.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	view, err := MergeCheck(st, "t-cccccccccccc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "confidence")) != "human-gate" {
+		t.Fatalf("confidence = %v", get(view, "confidence"))
+	}
+}
+
+func TestMergeCheck_unboundReviewIsHumanGate(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	task := mergeTask(t, st, worktree, sha, "t-dddddddddddd")
+	raw, _ := task.Get("evidence")
+	list, _ := raw.([]any)
+	for _, item := range list {
+		row := asObject(item)
+		if asString(get(row, "kind")) == "review" {
+			row.Set("candidate", "")
+		}
+	}
+	if err := st.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	view, err := MergeCheck(st, "t-dddddddddddd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "confidence")) != "human-gate" {
+		t.Fatalf("confidence = %v", get(view, "confidence"))
+	}
+}
+
+func TestMergeCheck_failedTestGateIsHumanGate(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	mergeTask(t, st, worktree, sha, "t-eeeeeeeeeeee")
+	writePipeline(t, st, "t-eeeeeeeeeeee", sha, map[string]string{"test": "fail"})
+	view, err := MergeCheck(st, "t-eeeeeeeeeeee")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "confidence")) != "human-gate" {
+		t.Fatalf("confidence = %v", get(view, "confidence"))
+	}
+}
+
+func TestMerge_humanGateDoesNotCallGh(t *testing.T) {
+	st := openStore(t)
+	root := fakeGh(t, nil, nil)
+	task := ordjson.NewObject()
+	task.Set("schema", json.Number("1"))
+	task.Set("id", "t-ffffffffffff")
+	task.Set("status", "running")
+	task.Set("evidence", []any{})
+	policy := ordjson.NewObject()
+	identity := ordjson.NewObject()
+	identity.Set("owner", "other")
+	identity.Set("repo", "app")
+	identity.Set("name", "other/app")
+	policy.Set("project_identity", identity)
+	task.Set("verification_policy", policy)
+	if err := os.MkdirAll(filepath.Join(st.Home, "tasks", "t-ffffffffffff"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Merge(st, st.Home, "t-ffffffffffff")
+	if err == nil || !strings.Contains(err.Error(), "human-gate") {
+		t.Fatalf("err = %v", err)
+	}
+	calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
+	if strings.Contains(string(calls), `"pr", "merge"`) {
+		t.Fatalf("human-gate invoked gh pr merge: %s", calls)
+	}
+}
+
+func TestMerge_highPassesMatchHeadCommit(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	enroll(t, st, "cofactorworks/nicebaas")
+	root := fakeGh(t, []map[string]any{issue(12, "ready", "ready")}, nil)
+	if _, err := Enable(st, ctx(), EnableArgs{Project: "cofactorworks/nicebaas"}); err != nil {
+		t.Fatal(err)
+	}
+	mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
+	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "cofactorworks/nicebaas", Issue: 12, Task: "t-bbbbbbbbbbbb"}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := Merge(st, st.Home, "t-bbbbbbbbbbbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !asBool(get(view, "merged")) {
+		t.Fatalf("merged = %v", get(view, "merged"))
+	}
+	calls, err := os.ReadFile(filepath.Join(root, "calls.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(calls)
+	if !strings.Contains(text, `"pr", "merge"`) || !strings.Contains(text, "--match-head-commit") || !strings.Contains(text, sha) {
+		t.Fatalf("missing match-head-commit in %s", text)
+	}
+}
+
+func TestMerge_refusesWithoutLane(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	enroll(t, st, "cofactorworks/nicebaas")
+	root := fakeGh(t, nil, nil)
+	if _, err := Enable(st, ctx(), EnableArgs{Project: "cofactorworks/nicebaas"}); err != nil {
+		t.Fatal(err)
+	}
+	mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
+	_, err := Merge(st, st.Home, "t-bbbbbbbbbbbb")
+	if err == nil || !strings.Contains(err.Error(), "not occupying a factory lane") {
+		t.Fatalf("err = %v", err)
+	}
+	calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
+	if strings.Contains(string(calls), `"pr", "merge"`) {
+		t.Fatalf("lane refusal invoked gh pr merge: %s", calls)
+	}
+}
+
+func TestClaim_commentFailureRemovesLabel(t *testing.T) {
+	st := openStore(t)
+	enroll(t, st, "owner/app")
+	root := fakeGh(t, []map[string]any{issue(3, "ready", "ready")}, nil)
+	if err := os.WriteFile(filepath.Join(root, "comment_error.json"), []byte(`{"message":"boom"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "owner/app", Issue: 3})
+	if err == nil || !strings.Contains(err.Error(), "removed") {
+		t.Fatalf("err = %v", err)
+	}
+	calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
+	if !strings.Contains(string(calls), "--remove-label") {
+		t.Fatalf("missing remove-label in %s", calls)
+	}
+}
+
+func mergeTask(t *testing.T, st *store.Store, worktree, sha, taskID string) *ordjson.Object {
+	t.Helper()
+	task := ordjson.NewObject()
+	task.Set("schema", json.Number("1"))
+	task.Set("id", taskID)
+	task.Set("status", "running")
+	task.Set("worktree", worktree)
+	task.Set("candidate", sha)
+	policy := ordjson.NewObject()
+	identity := ordjson.NewObject()
+	identity.Set("owner", "cofactorworks")
+	identity.Set("repo", "nicebaas")
+	identity.Set("name", "cofactorworks/nicebaas")
+	policy.Set("project_identity", identity)
+	policy.Set("status", "not-yet-standardized")
+	task.Set("verification_policy", policy)
+	pr := ordjson.NewObject()
+	prIdent := ordjson.NewObject()
+	prIdent.Set("number", json.Number("12"))
+	prIdent.Set("repository", "cofactorworks/nicebaas")
+	prIdent.Set("head_sha", sha)
+	pr.Set("identity", prIdent)
+	pr.Set("complete", true)
+	pr.Set("number", json.Number("12"))
+	pr.Set("repository", "cofactorworks/nicebaas")
+	task.Set("pr", pr)
+	rel := filepath.Join(".artifacts", "evidence", "r1", "demo", "comparison.json")
+	writeComparison(t, worktree, rel, sha, "red-green")
+	handoff := ordjson.NewObject()
+	handoff.Set("kind", "handoff")
+	handoff.Set("source", "worker")
+	handoff.Set("current", true)
+	handoff.Set("candidate", sha)
+	handoff.Set("artifacts", []any{filepath.ToSlash(rel)})
+	root := ordjson.NewObject()
+	root.Set("kind", "verification")
+	root.Set("source", "coordinator")
+	root.Set("current", true)
+	root.Set("candidate", sha)
+	root.Set("result", "pass")
+	root.Set("outcome", "pass")
+	review := ordjson.NewObject()
+	review.Set("kind", "review")
+	review.Set("source", "reviewer")
+	review.Set("current", true)
+	review.Set("candidate", sha)
+	review.Set("verdict", "approve")
+	task.Set("evidence", []any{handoff, root, review})
+	if err := os.MkdirAll(filepath.Join(st.Home, "tasks", taskID), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	writePipeline(t, st, taskID, sha, nil)
+	return task
 }
 
 func TestRoadmapOrder(t *testing.T) {

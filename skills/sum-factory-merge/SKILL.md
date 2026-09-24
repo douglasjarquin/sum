@@ -16,7 +16,9 @@ Deployment, DNS, billing, and public-launch decisions stay owner-approved.
 ./bin/sumctl factory merge-check TASK_ID
 ```
 
-`confidence: high` means every check passed: authorized repo, delivery closure, independent review approve, CI pass (or not declared), handoff `comparison.json`, and fewer than three recorded CI repair failures.
+`confidence: high` means every check passed: authorized repo, delivery closure, independent review approve on this candidate SHA, every pipeline stage pass/skipped (lint and CI may be not_declared), a real comparison.json inside the checkout with a passing verdict bound to this SHA, and fewer than three recorded CI repair failures.
+
+`factory merge` also refuses unless the task occupies a factory lane (or still carries `sum-claimed` from this installation).
 
 `confidence: human-gate` means pause.
 Add GitHub label `sum-gated`, comment why, and:
