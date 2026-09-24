@@ -3,7 +3,6 @@ package proc
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,6 +10,10 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
+
+// processTableTimeout bounds each process-table read. A timed-out, truncated, or failed read is an error, never
+// a shorter table: callers keep a reservation held rather than conclude nothing is running.
+const processTableTimeout = 30 * time.Second
 
 type CWDProcess struct {
 	PID int
@@ -31,12 +34,12 @@ func Descendants(pid int) ([]int, error) {
 	if pid <= 0 {
 		return nil, fmt.Errorf("invalid pid")
 	}
-	out, err := exec.Command("ps", "-ax", "-o", "pid=,ppid=").Output()
+	out, err := Run([]string{"ps", "-ax", "-o", "pid=,ppid="}, "", processTableTimeout, true, nil)
 	if err != nil {
 		return nil, fmt.Errorf("process table cannot be inspected: %s", err)
 	}
 	children := map[int][]int{}
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out.Stdout, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -73,11 +76,11 @@ func ProcessArgv(pid int) ([]string, error) {
 	if pid <= 0 {
 		return nil, fmt.Errorf("invalid pid")
 	}
-	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "args=").Output()
+	out, err := Run([]string{"ps", "-p", strconv.Itoa(pid), "-o", "args="}, "", processTableTimeout, true, nil)
 	if err != nil {
 		return nil, fmt.Errorf("pid %d argv cannot be inspected: %s", pid, err)
 	}
-	line := strings.TrimSpace(string(out))
+	line := strings.TrimSpace(out.Stdout)
 	if line == "" {
 		return nil, fmt.Errorf("pid %d argv cannot be inspected", pid)
 	}
@@ -89,8 +92,8 @@ func cwdProcesses() ([]CWDProcess, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, runErr := Run([]string{lsof, "-a", "-d", "cwd", "-Fpn", "-w"}, "", 30*time.Second, false, nil)
-	if runErr != nil && out.Stdout == "" {
+	out, runErr := Run([]string{lsof, "-a", "-d", "cwd", "-Fpn", "-w"}, "", processTableTimeout, false, nil)
+	if runErr != nil {
 		return nil, runErr
 	}
 	var rows []CWDProcess
@@ -181,11 +184,11 @@ func ProcessesBoundTo(worktree string, exclude map[int]bool) ([]BoundProcess, er
 			seen[row.PID] = true
 		}
 	}
-	out, err := exec.Command("ps", "-ax", "-o", "pid=,args=").Output()
+	table, err := Run([]string{"ps", "-ax", "-o", "pid=,args="}, "", processTableTimeout, true, nil)
 	if err != nil {
 		return nil, fmt.Errorf("process table cannot be inspected: %s", err)
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(table.Stdout, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
 			continue
