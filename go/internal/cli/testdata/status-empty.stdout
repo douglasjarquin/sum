@@ -14,7 +14,12 @@ capacity:
     source: default
   worker_note: Saved worker defaults apply to future dispatches only; absent means the worker runs the coordinator's harness. A task prompt overrides them without changing them.
   note: Each recorded execution reservation holds a slot until a conclusive stop observation releases it; legacy non-archived tasks remain conservatively held.
-guarantee: Saved records only. Open attention includes the recorded excerpt. No background monitoring.
+maintenance:
+  open_prs: []
+  cleanup: []
+  next: null
+  note: "From saved records only; nothing was re-observed. An open PR's state and CI are as of its observed_at; merges are seen only by `sweep`, `pr reconcile`, or `cleanup`."
+guarantee: "Saved records only. Open attention includes the recorded excerpt. No background monitoring. Nothing is delivered, observed on GitHub, or cleaned up by this view."
 metadata:
   enabled: false
   notify: false
