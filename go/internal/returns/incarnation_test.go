@@ -87,7 +87,7 @@ func TestIncarnationRecordedDuringObservationIsJudgedAtTheClaim(t *testing.T) {
 	a := l.worker("lab", "w1:p1")
 	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "get"}, "panes": map[string]any{"w1:p1": l.pane("idle", l.worktree(a))}})
 	h := l.startHelper("a", []string{a}, "worker")
-	l.awaitHeld("get", "w1:p1")
+	l.awaitHeld(h, "get", "w1:p1")
 	other := incarnation.Evidence{Terminal: "term-someone-else", Shell: &incarnation.Shell{PID: 9999, Started: "2025-01-01T00:00:00Z"}}.Record(store.Now())
 	if err := l.s.SetIncarnation(store.Endpoint{Machine: l.host, Session: "lab", Pane: "w1:p1"}, other); err != nil {
 		t.Fatal(err)
