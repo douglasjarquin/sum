@@ -54,6 +54,9 @@ func Push(s *store.Store, ctx *ordjson.Object, args PushArgs) (*ordjson.Object, 
 	if err := RequirePush(task, PushAdmission{AllowBehind: args.AllowBehind, AllowMissingEvidence: args.AllowMissingEvidence}); err != nil {
 		return nil, err
 	}
+	if err := RecheckBase(s, ctx, args.Task, task, candidate, "push", args.AllowBehind); err != nil {
+		return nil, err
+	}
 	body, summary := pushBranch(repo, branch, candidate)
 	return recordGate(s, ctx, args.Task, pushGate, candidate, body, summary)
 }

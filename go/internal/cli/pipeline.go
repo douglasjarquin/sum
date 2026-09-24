@@ -144,7 +144,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	runCmd.Flags().BoolVar(&runAllowNewAfterClosed, "allow-new-after-closed", false, "")
 	pipelineCmd.AddCommand(runCmd)
 
-	var prDraft, prDryRun, prAllowNewAfterClosed bool
+	var prDraft, prDryRun, prAllowNewAfterClosed, prAllowBehind bool
 	var prTitle, prBodyFile string
 	prCmd := &cobra.Command{
 		Use:  "pr TASK",
@@ -156,7 +156,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 			}
 			view, err := pipelinepr.Run(st, ctx, o.runtimeRoot, pipeline.PRArgs{
 				Task: args[0], Draft: prDraft, Title: prTitle, BodyFile: prBodyFile,
-				DryRun: prDryRun, AllowNewAfterClosed: prAllowNewAfterClosed,
+				DryRun: prDryRun, AllowNewAfterClosed: prAllowNewAfterClosed, AllowBehind: prAllowBehind,
 			})
 			if err != nil {
 				return err
@@ -169,6 +169,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	prCmd.Flags().StringVar(&prBodyFile, "body-file", "", "")
 	prCmd.Flags().BoolVar(&prDryRun, "dry-run", false, "")
 	prCmd.Flags().BoolVar(&prAllowNewAfterClosed, "allow-new-after-closed", false, "")
+	prCmd.Flags().BoolVar(&prAllowBehind, "allow-behind", false, "")
 	pipelineCmd.AddCommand(prCmd)
 
 	var candidate, documentRationale string

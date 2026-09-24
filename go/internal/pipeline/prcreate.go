@@ -37,6 +37,7 @@ type PRArgs struct {
 	BodyFile            string
 	DryRun              bool
 	AllowNewAfterClosed bool
+	AllowBehind         bool
 	Timeout             int
 }
 
@@ -61,7 +62,7 @@ func PR(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PRArgs) (*
 	if status := stringField(task, "status"); status != "reported" {
 		return nil, fmt.Errorf("this task is %q; the PR is opened on the worker's reported candidate", status)
 	}
-	if err := RequirePR(task, PushAdmission{}); err != nil {
+	if err := RequirePR(task, PushAdmission{AllowBehind: args.AllowBehind}); err != nil {
 		return nil, err
 	}
 	branch := stringField(task, "branch")
@@ -85,6 +86,9 @@ func PR(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PRArgs) (*
 			fmt.Sprintf("Already recorded as #%d; this run reconciles it", numberOf(identity)))
 	}
 
+	if err := RecheckBase(s, ctx, args.Task, task, candidate, "open the PR", args.AllowBehind); err != nil {
+		return nil, err
+	}
 	listed, listErr := listPRs(gh, repoDir, remote, branch, args.Timeout)
 	if listErr != nil {
 		return nil, fmt.Errorf("could not read the pull requests for %s: %w; nothing was created", branch, listErr)

@@ -41,7 +41,7 @@ func RequirePR(task *ordjson.Object, opts PushAdmission) error {
 }
 
 func refuseUnready(task *ordjson.Object, candidate string, row Row, stage Stage, opts PushAdmission) error {
-	if stage == StageRebase && opts.AllowBehind {
+	if stage == StageRebase && opts.AllowBehind && row.Status != Fail {
 		return nil
 	}
 	if stage == StageTest && row.Status == Blocked && opts.AllowMissingEvidence && evidenceWaiverRecorded(task, candidate) {
@@ -56,6 +56,10 @@ func refuseUnready(task *ordjson.Object, candidate string, row Row, stage Stage,
 	}
 	if settled(row.Status) {
 		return nil
+	}
+	if stage == StageRebase && row.Status == Fail {
+		return fmt.Errorf("the Rebase gate is %s (%s); the worker merges the base into the branch and resolves the conflict, and --allow-behind does not waive a conflict",
+			row.Status, row.Result)
 	}
 	if stage == StageRebase {
 		return fmt.Errorf("the Rebase gate is %s (%s); run `pipeline rebase`, let the worker rebase, or pass --allow-behind to push anyway",

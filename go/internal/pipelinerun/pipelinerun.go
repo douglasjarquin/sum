@@ -143,7 +143,7 @@ func runStage(s *store.Store, ctx *ordjson.Object, args Args, stage pipeline.Sta
 		}
 		return attempt(pipelinepr.Run(s, ctx, args.RuntimeRoot, pipeline.PRArgs{
 			Task: args.Task, Draft: args.Draft, Title: args.Title, BodyFile: args.BodyFile,
-			AllowNewAfterClosed: args.AllowNewAfterClosed,
+			AllowNewAfterClosed: args.AllowNewAfterClosed, AllowBehind: args.AllowBehind,
 		}))
 	}
 	return "not-run", "unknown gate"

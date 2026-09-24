@@ -17,7 +17,7 @@ func Derive(task *ordjson.Object) Record {
 	record.Set(deriveReview(task, candidate))
 	record.Set(deriveDocument(task, candidate))
 	record.Set(derivePR(task))
-	record.Set(gateRow(task, StageRebase, rebaseGate, rebaseUnobserved, rebaseOutcomes))
+	record.Set(deriveRebase(task))
 	record.Set(gateRow(task, StageLint, lintGate, lintUnobserved, lintOutcomes))
 	record.Set(derivePush(task, candidate))
 	record.Set(deriveCI(task))
@@ -275,6 +275,12 @@ func derivePR(task *ordjson.Object) Row {
 	}
 	switch stringField(pr, "state") {
 	case "open":
+		if conflict := MergeConflict(pr); conflict != "" {
+			row.Status = Blocked
+			row.Result = conflict
+			row.Advice = MergeAdvice
+			return row
+		}
 		row.Status = Pass
 		row.Result = "Open: " + stringField(identity, "url")
 	case "merged":

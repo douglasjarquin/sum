@@ -67,7 +67,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 }
 
 // prViewFields is what one PR observation reads from GitHub.
-const prViewFields = "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,statusCheckRollup"
+const prViewFields = "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,mergeable,mergeStateStatus,statusCheckRollup"
 
 // GHBound bounds one gh call, the pipeline's default (a variable so tests can shorten it).
 var GHBound = pipeline.DefaultGHBound
@@ -117,7 +117,9 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 	pr.Set("identity", identity)
 	state := strings.ToLower(fmt.Sprint(data["state"]))
 	pr.Set("state", state)
-	pr.Set("observed_at", store.Now())
+	observedAt := store.Now()
+	pr.Set("observed_at", observedAt)
+	pipeline.SetMergeability(pr, data["mergeable"], data["mergeStateStatus"], observedAt)
 	by := ordjson.NewObject()
 	for _, k := range []string{"machine", "session", "pane"} {
 		v, _ := ctx.Get(k)

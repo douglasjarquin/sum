@@ -65,7 +65,7 @@ func TestDerive_everyGateThatRanRendersTheExpectedTable(t *testing.T) {
 "candidate": "cccccccccccccccccccccccccccccccccccccccc", "result": "pass", "summary": "Passed"},
 {"schema": 1, "id": "e-5", "kind": "rebase", "source": "coordinator", "at": "2026-01-01T05:00:00+00:00",
 "candidate": "cccccccccccccccccccccccccccccccccccccccc", "outcome": "up-to-date", "base_branch": "main",
-"behind": 0, "conflicts": [], "summary": "Up to date with main"},
+"base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "behind": 0, "conflicts": [], "summary": "Up to date with main"},
 {"schema": 1, "id": "e-6", "kind": "lint", "source": "coordinator", "at": "2026-01-01T06:00:00+00:00",
 "candidate": "cccccccccccccccccccccccccccccccccccccccc", "outcome": "pass", "command": "mise run lint", "exit": 0,
 "summary": "Passed (\u0060mise run lint\u0060)"},
@@ -78,7 +78,7 @@ func TestDerive_everyGateThatRanRendersTheExpectedTable(t *testing.T) {
 	want := "| Stage | Status | Result |\n" +
 		"|---|:---:|---|\n" +
 		"| Intent | \u2705 | Approved brief recorded |\n" +
-		"| Rebase | \u2705 | Up to date with main |\n" +
+		"| Rebase | \u2705 | Up to date with main (main at bbbbbbb, observed 2026-01-01T05:00Z) |\n" +
 		"| Review | \u2705 | Passed after 1 remediation pass |\n" +
 		"| Test | \u2705 | Passed (`mise run verify`, run 20260906T010203Z-abcd) |\n" +
 		"| Document | \u2705 | Passed |\n" +
