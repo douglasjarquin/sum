@@ -350,6 +350,40 @@ func TestSweep_hangingGHDefersLaterObservations(t *testing.T) {
 	}
 }
 
+// A PR whose observation keeps failing does not head every sweep: the failed attempt is recorded, so the next sweep
+// observes the PR it has not tried yet before retrying the unreachable one.
+func TestSweep_failedObservationMovesBehindUntriedPRs(t *testing.T) {
+	l := newSweepLab(t)
+	old := [2]time.Duration{prcmd.GHBound, pipeline.DefaultGHBound}
+	prcmd.GHBound, pipeline.DefaultGHBound = time.Second, time.Second
+	t.Cleanup(func() { prcmd.GHBound, pipeline.DefaultGHBound = old[0], old[1] })
+	l.saveTask(l.openPR()) // observed_at 2026-01-02: first in line
+	other := l.cloneTask("t-dddddddddddd", l.openPR(), "2026-01-03T00:00:00+00:00")
+	if err := os.WriteFile(filepath.Join(l.ghRoot, "pr.json"), []byte(`{"hang": true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	firstRows, firstDeferred := l.sweep(SweepOpts{Budget: time.Minute})
+	if obs := sweepRow(firstRows, "pr-observe"); obs == nil || fmt.Sprint(func() any { v, _ := obs.Get("task"); return v }()) != sweepTaskID {
+		t.Fatalf("first sweep rows = %v, want the older PR observed first", firstRows)
+	}
+	if len(firstDeferred) != 1 {
+		t.Fatalf("first sweep deferred = %v", firstDeferred)
+	}
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := asObject(field(task, "pr"))
+	if asString(pr, "observe_failed_at") == "" || asString(pr, "observed_at") != "2026-01-02T00:00:00+00:00" || asString(pr, "state") != "open" {
+		t.Fatalf("failed observation record = %v", pr)
+	}
+	secondRows, _ := l.sweep(SweepOpts{Budget: time.Minute})
+	obs := sweepRow(secondRows, "pr-observe")
+	if obs == nil || fmt.Sprint(func() any { v, _ := obs.Get("task"); return v }()) != other {
+		t.Fatalf("second sweep rows = %v, want %s observed first", secondRows, other)
+	}
+}
+
 // The sweep re-reads each task before acting: a task changed after the snapshot is judged on its fresh record.
 func TestSweep_actsOnlyOnTheFreshRecord(t *testing.T) {
 	l := newSweepLab(t)

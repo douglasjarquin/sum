@@ -49,6 +49,9 @@ func Pending(s *store.Store, sumctlPath string, tasks []*ordjson.Object) *ordjso
 			row.Set("pr", json.Number(fmt.Sprint(number)))
 			row.Set("state", field(pr, "state"))
 			row.Set("observed_at", field(pr, "observed_at"))
+			if failed := field(pr, "observe_failed_at"); failed != nil {
+				row.Set("observe_failed_at", failed)
+			}
 			row.Set("next", shquote.CommandFor(sumctlPath, s.Home, "pr", "reconcile", id))
 			prs = append(prs, row)
 		}
@@ -217,10 +220,34 @@ func observePR(s *store.Store, ctx *ordjson.Object, runtimeRoot, id string, numb
 	if err != nil {
 		row.Set("state", "error")
 		row.Set("error", err.Error())
+		if markErr := markObservationFailed(s, id); markErr != nil {
+			row.Set("record_error", markErr.Error())
+		}
 		return row, errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrNotStarted) || strings.Contains(err.Error(), "timed out")
 	}
 	row.Set("state", field(asObject(field(obs, "pr")), "state"))
 	return row, false
+}
+
+// markObservationFailed stamps the task's PR record with the time an observation failed, so the next sweep orders
+// it behind tasks it has not tried yet instead of spending its budget on the same unreachable PR first. The PR's
+// recorded state and observed_at are untouched; the next successful observation replaces the record.
+func markObservationFailed(s *store.Store, id string) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	task, err := s.ReadTask(id)
+	if err != nil {
+		return err
+	}
+	pr := asObject(field(task, "pr"))
+	if pr == nil {
+		return nil
+	}
+	pr.Set("observe_failed_at", store.Now())
+	return s.SaveTask(task)
 }
 
 // beforeTask runs between the sweep's snapshot and its fresh read of one task (a seam for tests).
@@ -235,7 +262,8 @@ func candidate(local func(any) bool, task *ordjson.Object) bool {
 func lastMaintained(task *ordjson.Object) string {
 	times := []string{}
 	if pr := asObject(field(task, "pr")); pr != nil {
-		times = append(times, asString(pr, "observed_at"))
+		// A failed attempt counts as maintenance for ordering, so an unreachable PR does not head every sweep.
+		times = append(times, max(asString(pr, "observed_at"), asString(pr, "observe_failed_at")))
 	}
 	if record := asObject(field(task, "cleanup")); record != nil {
 		times = append(times, asString(record, "at"))
