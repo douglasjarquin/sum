@@ -380,7 +380,7 @@ func teardownVerification(s *store.Store, taskID, worktree, checkout, attemptID 
 	removeCode := 1
 	removeDetail := ""
 	if processStopped && checkoutPresent {
-		removed, removeErr := proc.Run([]string{"git", "-C", worktree, "worktree", "remove", checkout}, "", 60*time.Second, false, nil)
+		removed, removeErr := proc.Run([]string{"git", "-C", worktree, "worktree", "remove", "--force", checkout}, "", 60*time.Second, false, nil)
 		if removeErr != nil {
 			removeDetail = removeErr.Error()
 		} else {
@@ -401,7 +401,7 @@ func teardownVerification(s *store.Store, taskID, worktree, checkout, attemptID 
 		removeDetail = removeDetail[len(removeDetail)-1000:]
 	}
 	if removeCode != 0 && pathExists(checkout) {
-		note := fmt.Sprintf("git worktree remove exited %d: %s\nThe verification checkout was left in place; inspect it, then remove it with `git worktree remove`.\n", removeCode, removeDetail)
+		note := fmt.Sprintf("git worktree remove --force exited %d: %s\nThe verification checkout was left in place; inspect it, then remove it with `git worktree remove --force`.\n", removeCode, removeDetail)
 		_ = os.WriteFile(filepath.Join(filepath.Dir(checkout), "checkout-not-removed.txt"), []byte(note), 0o644)
 	}
 

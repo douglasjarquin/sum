@@ -243,6 +243,109 @@ func TestPipelineLint_projectsOwnLintFailsAndQuotesItsLastLine(t *testing.T) {
 	}
 }
 
+func TestPipelineLint_noDeclaredBootstrapLeavesBootstrapFieldsEmpty(t *testing.T) {
+	lab := newGateLab(t)
+	lab.declareLint(t, 0)
+
+	result := runGate(t, lab, "lint", gateTaskID)
+
+	record, _ := result["evidence"].(map[string]any)
+	if record["bootstrap_command"] != nil || record["bootstrap_exit"] != nil ||
+		record["bootstrap_seconds"] != nil || record["bootstrap_log"] != nil {
+		t.Fatalf("lint record = %v, want empty bootstrap fields when the project declares none", record)
+	}
+}
+
+func TestPipelineLint_miseDepsRunsBeforeLint(t *testing.T) {
+	lab := newGateLab(t)
+	lab.declareDepsAndLint(t, 0, `#!/bin/sh
+if [ ! -f .bootstrapped ]; then echo "lint ran first"; exit 2; fi
+echo "lint says 0"
+exit 0
+`)
+
+	result := runGate(t, lab, "lint", gateTaskID)
+
+	record, _ := result["evidence"].(map[string]any)
+	if record["outcome"] != "pass" || record["bootstrap_command"] != "mise run deps" || record["command"] != "mise run lint" {
+		t.Fatalf("lint record = %v, want deps then lint", record)
+	}
+	if fmt.Sprint(record["bootstrap_exit"]) != "0" {
+		t.Fatalf("bootstrap_exit = %v (%T)", record["bootstrap_exit"], record["bootstrap_exit"])
+	}
+	if record["bootstrap_log"] == nil {
+		t.Fatalf("bootstrap_log missing: %v", record)
+	}
+	row := lab.row(t, "lint")
+	if row["status"] != "pass" || row["result"] != "Passed (`mise run lint`)" {
+		t.Fatalf("lint row = %v, want a pass after bootstrap", row)
+	}
+	assertNoLeftovers(t, lab)
+}
+
+func TestPipelineLint_bootstrapFailureSkipsLint(t *testing.T) {
+	lab := newGateLab(t)
+	lab.declareDepsAndLint(t, 1, `#!/bin/sh
+echo "lint ran"
+exit 0
+`)
+
+	result := runGate(t, lab, "lint", gateTaskID)
+
+	record, _ := result["evidence"].(map[string]any)
+	if record["outcome"] != "fail" || record["bootstrap_command"] != "mise run deps" {
+		t.Fatalf("lint record = %v, want a failed bootstrap", record)
+	}
+	if record["exit"] != nil || record["log"] != nil {
+		t.Fatalf("lint ran after bootstrap failed: %v", record)
+	}
+	row := lab.row(t, "lint")
+	if row["status"] != "fail" || row["result"] != "Bootstrap failed (`mise run deps`): deps says 1" {
+		t.Fatalf("lint row = %v, want the bootstrap failure in the summary", row)
+	}
+	assertNoLeftovers(t, lab)
+}
+
+func TestPipelineLint_lockfileInstallPicksPnpm(t *testing.T) {
+	lab := newGateLab(t)
+	lab.declareLint(t, 0)
+	writeFile(t, filepath.Join(lab.clone, "package.json"), `{"name":"app","private":true}`+"\n")
+	writeFile(t, filepath.Join(lab.clone, "pnpm-lock.yaml"), "lockfileVersion: '9.0'\n")
+	gitIn(t, lab.clone, "add", "-A")
+	gitIn(t, lab.clone, "commit", "-q", "-m", "declare a pnpm lockfile")
+	lab.candidate = strings.TrimSpace(gitIn(t, lab.clone, "rev-parse", "HEAD"))
+	lab.writeTask(t, "reported")
+	bin := t.TempDir()
+	writeFile(t, filepath.Join(bin, "pnpm"), "#!/bin/sh\necho pnpm-ok\nexit 0\n")
+	if err := os.Chmod(filepath.Join(bin, "pnpm"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	result := runGate(t, lab, "lint", gateTaskID)
+
+	record, _ := result["evidence"].(map[string]any)
+	if record["outcome"] != "pass" || record["bootstrap_command"] != "pnpm install --frozen-lockfile" {
+		t.Fatalf("lint record = %v, want a pnpm frozen install before lint", record)
+	}
+}
+
+func (lab *gateLab) declareDepsAndLint(t *testing.T, depsExit int, lintBody string) {
+	t.Helper()
+	writeFile(t, filepath.Join(lab.clone, "mise-tasks", "deps"), fmt.Sprintf("#!/bin/sh\necho \"deps says %d\"\ntouch .bootstrapped\nexit %d\n", depsExit, depsExit))
+	if err := os.Chmod(filepath.Join(lab.clone, "mise-tasks", "deps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(lab.clone, "mise-tasks", "lint"), lintBody)
+	if err := os.Chmod(filepath.Join(lab.clone, "mise-tasks", "lint"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, lab.clone, "add", "-A")
+	gitIn(t, lab.clone, "commit", "-q", "-m", "declare deps and lint")
+	lab.candidate = strings.TrimSpace(gitIn(t, lab.clone, "rev-parse", "HEAD"))
+	lab.writeTask(t, "reported")
+}
+
 func publicationRecords(candidate string) []string {
 	return []string{
 		fmt.Sprintf(`{"schema": 1, "id": "e-rev", "kind": "review", "source": "reviewer", "at": "2026-01-01T00:30:00+00:00",
