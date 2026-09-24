@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Lint the Go module"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$(dirname "$(mise which go)"):${PATH:-}"
+unset GOROOT
+
+unformatted="$(gofmt -l go)"
+if [ -n "$unformatted" ]; then
+  echo "gofmt needed on:"
+  echo "$unformatted"
+  exit 1
+fi
+
+(cd go && go vet ./...)

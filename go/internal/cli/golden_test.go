@@ -12,10 +12,10 @@ import (
 )
 
 var (
-	tmpPathPattern  = regexp.MustCompile(`(?i)(?:/private)?(?:/var/folders/[^\s"'\\]+|/tmp/Test[^\s"'\\]+)`)
-	gitSHAPattern   = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
-	cursorHashPat   = regexp.MustCompile(`\.[0-9a-f]{12}\.`)
-	codegraphPat    = regexp.MustCompile(`/[^\s"']+/\.local/releases/[^\s"']*codegraph`)
+	tmpPathPattern = regexp.MustCompile(`(?i)(?:/private)?(?:/var/folders/[^\s"'\\]+|/tmp/Test[^\s"'\\]+)`)
+	gitSHAPattern  = regexp.MustCompile(`\b[0-9a-f]{40}\b`)
+	cursorHashPat  = regexp.MustCompile(`\.[0-9a-f]{12}\.`)
+	codegraphPat   = regexp.MustCompile(`/[^\s"']+/\.local/releases/[^\s"']*codegraph`)
 )
 
 func pathAliases(p string) []string {
