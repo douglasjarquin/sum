@@ -119,11 +119,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 		v, _ := task.Get(key)
 		result.Set(key, v)
 	}
-	// The record's own `notice` is history; the view derives it from the returns sidecar.
-	notice := returns.NoticeOf(s, task)
-	if _, recorded := task.Get("notice"); recorded || notice != nil {
-		result.Set("notice", notice)
-	}
+	returns.SetNotice(s, task, result)
 	result.Set("returns", pumped)
 	return result, nil
 }

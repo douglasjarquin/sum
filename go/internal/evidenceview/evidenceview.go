@@ -368,11 +368,7 @@ func Show(s *store.Store, taskID string) (*ordjson.Object, error) {
 		result.Set("versions", versionsView)
 	}
 
-	// The record's own `notice` is history; the view derives it from the returns sidecar.
-	notice := returns.NoticeOf(s, task)
-	if _, recorded := task.Get("notice"); recorded || notice != nil {
-		result.Set("notice", notice)
-	}
+	returns.SetNotice(s, task, result)
 	result.Set("evidence_view", View(task))
 
 	returnsView, returnsErr := returns.View(s, task)

@@ -65,6 +65,7 @@ func Status(s *store.Store, opts Options) (*ordjson.Object, error) {
 	}
 
 	for i, row := range rows {
+		row.Set("notice", returns.NoticeOf(s, rowTasks[i]))
 		view, err := returns.View(s, rowTasks[i])
 		if err != nil {
 			returnsErr := ordjson.NewObject()
@@ -222,7 +223,7 @@ func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 	evidence.Set("merged_for_task", mergedForTask)
 	row.Set("evidence", evidence)
 
-	row.Set("notice", returns.NoticeOf(s, task))
+	row.Set("notice", nil) // holds the key's place; Status sets the derived view for each row it keeps
 
 	var attentionRows []any
 	for _, a := range returns.OpenAttention(task) {

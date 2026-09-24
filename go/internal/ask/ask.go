@@ -86,8 +86,8 @@ func Ask(s *store.Store, taskID, key, text string, pump func() (*ordjson.Object,
 						unlock()
 						return nil, fmt.Errorf("This question key already exists with different text. Use a new key; do not overwrite an obligation.")
 					}
-					notice := returns.NoticeOf(s, task)
 					unlock()
+					notice := returns.NoticeOf(s, task)
 					result := ordjson.NewObject()
 					result.Set("question", question)
 					result.Set("duplicate", true)

@@ -6,14 +6,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
 
-// TestOlderHelpersOnCandidateRecords runs older sum runtime trees against records this candidate wrote, which no
-// longer carry a persisted `notice` mirror. It runs only when SUM_OLD_HELPERS names the trees as
-// name=/path/to/tree[,name=/path] (each with its own built .local/bin/sumctl), for example the supported rollback floor
-// (11fc3d9, the first release a current updater accepts), the machine-identity change (4eb8591), and the base.
+// supportedFloor is the oldest runtime a current updater accepts as a release target: the first tree on main with
+// go/cmd/sumctl/main.go, which release.VerifyRelease requires. The pre-identity check below keeps it relevant: records
+// that never gained the stable machine identity can still roll back this far.
+const supportedFloor = "11fc3d9"
+
+// TestOlderHelpersOnCandidateRecords runs older sum runtimes against records this candidate wrote, which no longer
+// carry a persisted `notice` mirror. By default it builds the supported rollback floor and the merge base with
+// origin/main from this checkout's git history (CI checks out full history); it skips, saying why, when that history
+// is unavailable. SUM_OLD_HELPERS=name=/path/to/tree[,...] replaces those with prebuilt trees (each with its own
+// .local/bin/sumctl), for example to add the machine-identity change 4eb8591.
 //
 // Two histories per helper. "upgraded": the older helper creates the installation and dispatches (its records),
 // the candidate then takes the worker's question, and the installation rolls back to the older helper. "candidate":
@@ -24,15 +31,9 @@ import (
 // sidecar, so a return the candidate already submitted is never treated as pending again, and the candidate's view
 // of what the older helper then recorded agrees with it.
 func TestOlderHelpersOnCandidateRecords(t *testing.T) {
-	spec := os.Getenv("SUM_OLD_HELPERS")
-	if spec == "" {
-		t.Skip("set SUM_OLD_HELPERS=name=/path/to/tree[,...] to run older helpers against candidate records")
-	}
-	for _, entry := range strings.Split(spec, ",") {
-		name, tree, ok := strings.Cut(strings.TrimSpace(entry), "=")
-		if !ok {
-			t.Fatalf("SUM_OLD_HELPERS entry %q is not name=path", entry)
-		}
+	trees := olderTrees(t)
+	for _, name := range sortedKeys(trees) {
+		tree := trees[name]
 		helper := filepath.Join(tree, "bin", "sumctl")
 		// The updater's own evidence that a release tree resolves the stable machine identity (updatecmd.identityMarker).
 		_, markerErr := os.Stat(filepath.Join(tree, "go", "internal", "machine", "machine.go"))
@@ -45,6 +46,62 @@ func TestOlderHelpersOnCandidateRecords(t *testing.T) {
 			olderHelperOnCandidateRecords(t, helper, false, stable)
 		})
 	}
+}
+
+// olderTrees names the older runtime trees to run: SUM_OLD_HELPERS when set, otherwise the supported floor and the
+// merge base built from git history into a temporary directory.
+func olderTrees(t *testing.T) map[string]string {
+	t.Helper()
+	trees := map[string]string{}
+	if spec := os.Getenv("SUM_OLD_HELPERS"); spec != "" {
+		for _, entry := range strings.Split(spec, ",") {
+			name, tree, ok := strings.Cut(strings.TrimSpace(entry), "=")
+			if !ok {
+				t.Fatalf("SUM_OLD_HELPERS entry %q is not name=path", entry)
+			}
+			trees[name] = tree
+		}
+		return trees
+	}
+	root, _ := repoReference(t)
+	revs := map[string]string{"floor-" + supportedFloor: supportedFloor}
+	if out, err := exec.Command("git", "-C", root, "merge-base", "HEAD", "origin/main").Output(); err == nil {
+		base := strings.TrimSpace(string(out))
+		if head, err := exec.Command("git", "-C", root, "rev-parse", "HEAD").Output(); err == nil && strings.TrimSpace(string(head)) != base {
+			revs["base-"+base[:7]] = base
+		}
+	}
+	goBin := pinnedGo(t)
+	for name, rev := range revs {
+		if err := exec.Command("git", "-C", root, "cat-file", "-e", rev+"^{commit}").Run(); err != nil {
+			t.Skipf("git history lacks %s (shallow checkout?); set SUM_OLD_HELPERS to run older helpers against candidate records", rev)
+		}
+		tree := filepath.Join(t.TempDir(), name)
+		if err := os.MkdirAll(tree, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		archive := exec.Command("sh", "-c", `git -C "$1" archive "$2" | tar -x -C "$3"`, "sh", root, rev, tree)
+		if out, err := archive.CombinedOutput(); err != nil {
+			t.Fatalf("extract %s: %v\n%s", rev, err, out)
+		}
+		build := exec.Command(goBin, "build", "-trimpath", "-buildvcs=false", "-o", filepath.Join(tree, ".local", "bin", "sumctl"), "./cmd/sumctl")
+		build.Dir = filepath.Join(tree, "go")
+		build.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build %s: %v\n%s", rev, err, out)
+		}
+		trees[name] = tree
+	}
+	return trees
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates, stableIdentity bool) {

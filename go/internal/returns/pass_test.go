@@ -563,4 +563,39 @@ func TestPassRecordsAttemptsOnlyInTheReturnsSidecar(t *testing.T) {
 			t.Fatalf("%s notice status = %v, want %s (%v)", id, status, want[id], notice)
 		}
 	}
+	timedOutTask, err := l.s.ReadTask(timedOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errText, _ := NoticeOf(l.s, timedOutTask).(*ordjson.Object).Get("error"); !strings.Contains(fmt.Sprint(errText), "prompt timed out after possible submission") {
+		t.Fatalf("uncertain notice error = %v, want the recorded timeout reason", errText)
+	}
+}
+
+// SetNotice gives a task view the derived notice, keeps a recorded null, and adds no key to a record that never
+// carried the field and has no attempt to project.
+func TestSetNoticeKeepsTheRecordedKeyShape(t *testing.T) {
+	l := newPassLab(t)
+	id := l.worker("lab", "w1:p1")
+	task, err := l.s.ReadTask(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := ordjson.NewObject()
+	SetNotice(l.s, task, view)
+	if _, has := view.Get("notice"); has {
+		t.Fatalf("view of a record without the field gained notice = %v", view)
+	}
+	task.Set("notice", nil)
+	SetNotice(l.s, task, view)
+	if notice, has := view.Get("notice"); !has || notice != nil {
+		t.Fatalf("recorded null notice = %v (present %v), want a null key", notice, has)
+	}
+	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": l.pane("idle", l.worktree(id))}})
+	l.pump(0)
+	SetNotice(l.s, task, view)
+	derived, _ := view.Get("notice")
+	if status, _ := derived.(*ordjson.Object).Get("status"); status != "submitted-not-acknowledged" {
+		t.Fatalf("derived notice status = %v", status)
+	}
 }

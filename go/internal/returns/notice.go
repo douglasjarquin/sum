@@ -39,6 +39,15 @@ func NoticeOf(s *store.Store, task *ordjson.Object) any {
 	return Notice(task, returnsObj)
 }
 
+// SetNotice replaces a task view's copied `notice` with the derived one; a record that never carried the field and has
+// no attempt to project gets none.
+func SetNotice(s *store.Store, task, view *ordjson.Object) {
+	notice := NoticeOf(s, task)
+	if _, recorded := task.Get("notice"); recorded || notice != nil {
+		view.Set("notice", notice)
+	}
+}
+
 func latestNoticeDelivery(returnsObj *ordjson.Object) *ordjson.Object {
 	if returnsObj == nil {
 		return nil
@@ -84,7 +93,8 @@ func legacyNotice(delivery *ordjson.Object) *ordjson.Object {
 		at, _ = delivery.Get("at")
 	}
 	recipientValue, _ := delivery.Get("recipient")
-	recipient := routeValue(asObject(recipientValue), "recipient")
+	recipientObj, _ := recipientValue.(*ordjson.Object)
+	recipient := routeValue(recipientObj, "recipient")
 	id, _ := delivery.Get("id")
 	notice := ordjson.NewObject()
 	notice.Set("at", at)
@@ -96,11 +106,6 @@ func legacyNotice(delivery *ordjson.Object) *ordjson.Object {
 		notice.Set("error", errText)
 	}
 	return notice
-}
-
-func asObject(v any) *ordjson.Object {
-	obj, _ := v.(*ordjson.Object)
-	return obj
 }
 
 func legacyReason(ids []string) string {
