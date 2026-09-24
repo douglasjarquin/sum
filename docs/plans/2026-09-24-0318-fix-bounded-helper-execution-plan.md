@@ -46,7 +46,7 @@ Graph init has no timeout at all even though `docs/DEPENDENCIES.md` documents a 
 - R3. stdout and stderr are bounded while they are read; memory for one call stays within the configured limits plus a fixed read buffer.
 - R4. stdout beyond its limit is an error (`ErrOutputLimit`) with `StdoutTruncated` set, unless the caller explicitly marks stdout as free text; stderr beyond its limit keeps the tail, sets `StderrTruncated`, and is not by itself an error.
 - R5. A missing executable, or a caller context already done before start, is a not-started refusal (`ErrNotStarted`): nothing ran.
-- R6. A timeout, cancellation, output-limit stop, or held output pipe is uncertain (`ErrUncertain`); `Result.Code` is `-1` whenever the child did not exit on its own, and the helper never retries.
+- R6. A timeout, cancellation, output-limit stop, or held output pipe is uncertain (`ErrUncertain`); `Result.Code` is `-1` whenever the outcome is not a completed exit (including a held output pipe), and the helper never retries.
 - R7. After the direct child exits or is stopped, the caller waits at most a short fixed grace for its output pipes; a descendant still holding them makes the call uncertain and is named in the message whatever else happened (timeout, cancel, exit), and sum sends it no signal. Closing the read ends means such a descendant may fail on its next write (EPIPE/SIGPIPE from the kernel); the message says it may still be running, never that it stopped.
 - R8. argv, cwd, env (nil inherits, explicit replaces), `ScrubbedEnv`, exit codes, `check=false` (nonzero exit returns the result and nil error), and the existing error texts (`NAME exited N: detail`, `NAME: timed out after Ns; its effect is unknown`) are preserved.
 

@@ -160,10 +160,10 @@ func TestRunContext_descendantHoldingPipesDoesNotHang(t *testing.T) {
 	within(t, start, PipeGrace+2*time.Second)
 	t.Cleanup(func() { stopFixture(t, pidFile) })
 	requireKind(t, err, ErrUncertain)
-	if res.Code != 0 || res.Stdout != "hi\n" {
+	if res.Code != -1 || res.Stdout != "hi\n" {
 		t.Fatalf("res = %+v", res)
 	}
-	if !strings.Contains(err.Error(), "descendant still holds its output and was not stopped") {
+	if !strings.Contains(err.Error(), "sh exited 0 but a descendant still holds its output and was not stopped") {
 		t.Fatalf("err = %v", err)
 	}
 	if running, _ := PIDRunning(fixturePID(t, pidFile)); !running {

@@ -1,7 +1,6 @@
 package proc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -68,14 +67,23 @@ type Cmd struct {
 	FreeText bool
 }
 
-// Result is what one helper run produced. Code is the exit code, or -1 when the helper did not exit on its own
-// (not started, timed out, canceled, or stopped), so a caller that ignores the error never reads success.
+// Result is what one helper run produced. Code is the exit code, or -1 whenever the outcome is not a completed
+// exit (not started, timed out, canceled, stopped, or a descendant still holding the output), so a caller that
+// ignores the error never reads success. The held-output message still names the helper's own exit code.
 type Result struct {
 	Stdout          string
 	Stderr          string
 	Code            int
 	StdoutTruncated bool
 	StderrTruncated bool
+}
+
+// Detail is the helper's own explanation: trimmed stderr, or trimmed stdout when stderr is blank.
+func (r Result) Detail() string {
+	if detail := strings.TrimSpace(r.Stderr); detail != "" {
+		return detail
+	}
+	return strings.TrimSpace(r.Stdout)
 }
 
 // Run is the compatibility form of RunContext for callers without an operation context: it runs under
@@ -163,7 +171,21 @@ func RunContext(ctx context.Context, c Cmd) (Result, error) {
 		case <-grace.C:
 			held = true
 		case <-runCtx.Done():
-			held = true
+			if errors.Is(context.Cause(runCtx), errOverflow) {
+				// The drain itself raised the overflow after the helper exited: wait for the pipes as usual.
+				select {
+				case <-drained:
+				case <-grace.C:
+					held = true
+				}
+			} else {
+				// The caller's deadline or cancel ends the wait early; the pipes count as held only if still open.
+				select {
+				case <-drained:
+				default:
+					held = true
+				}
+			}
 		}
 	}
 	grace.Stop()
@@ -204,7 +226,9 @@ func RunContext(ctx context.Context, c Cmd) (Result, error) {
 		return result, classified(msg+heldNote, ErrUncertain)
 	}
 	if held {
-		return result, classified(fmt.Sprintf("%s exited %d but a descendant still holds its output and was not stopped; its output may be incomplete and its effect is unknown", name, result.Code), ErrUncertain)
+		exitCode := result.Code
+		result.Code = -1
+		return result, classified(fmt.Sprintf("%s exited %d but a descendant still holds its output and was not stopped; its output may be incomplete and its effect is unknown", name, exitCode), ErrUncertain)
 	}
 	if waitErr != nil {
 		var exitErr *exec.ExitError
@@ -215,7 +239,7 @@ func RunContext(ctx context.Context, c Cmd) (Result, error) {
 			return result, classified(fmt.Sprintf("%s: %s; its effect is unknown", name, waitErr), ErrUncertain)
 		}
 		if c.Check {
-			return result, fmt.Errorf("%s exited %d: %s", name, result.Code, trimDetail(result.Stderr, result.Stdout))
+			return result, fmt.Errorf("%s exited %d: %s", name, result.Code, tail(result.Detail(), 4000))
 		}
 	}
 	return result, nil
@@ -270,16 +294,15 @@ func (c *capture) Write(p []byte) (int, error) {
 		}
 		return n, nil
 	}
+	if c.overflowed {
+		return n, nil
+	}
 	room := c.limit - len(c.buf)
 	if len(p) > room {
-		if room > 0 {
-			c.buf = append(c.buf, p[:room]...)
-		}
-		if !c.overflowed {
-			c.overflowed = true
-			if c.onOverflow != nil {
-				c.onOverflow()
-			}
+		c.buf = append(c.buf, p[:room]...)
+		c.overflowed = true
+		if c.onOverflow != nil {
+			c.onOverflow()
 		}
 		return n, nil
 	}
@@ -294,16 +317,12 @@ func (c *capture) bytes() []byte {
 	return c.buf
 }
 
-func trimDetail(stderr, stdout string) string {
-	detail := stderr
-	if len(bytes.TrimSpace([]byte(detail))) == 0 {
-		detail = stdout
+// tail keeps the last n bytes of text.
+func tail(text string, n int) string {
+	if len(text) > n {
+		return text[len(text)-n:]
 	}
-	detail = string(bytes.TrimSpace([]byte(detail)))
-	if len(detail) > 4000 {
-		return detail[len(detail)-4000:]
-	}
-	return detail
+	return text
 }
 
 // Terminate sends one SIGTERM for a graceful stop of a process that has no pane
