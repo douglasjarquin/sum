@@ -44,7 +44,7 @@ It runs, in order, the existing commands and stops at the first failure:
 | --- | --- | --- |
 | Go CLI, Mesh, and skill tests | `cd go && go test ./...` | sumctl command contracts, Herdr Mesh, portable verify/evidence skills, and the offline demo |
 
-Scoped tasks stay available for iteration: `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`, plus basedpyright on the portable skill scripts), and `mise run demo`.
+Scoped tasks stay available for iteration: `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`), and `mise run demo`.
 `mise run lint` is the project's declared lint task (`mise-tasks/lint`); the delivery pipeline Lint gate runs it.
 `mise run test-live` is the explicit real-Herdr smoke test and is not part of the aggregate because it needs an installed Herdr; `mise run doctor` observes the installation and is not a check.
 

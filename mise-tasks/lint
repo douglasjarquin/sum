@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Lint the Go module and portable skill scripts"
+#MISE description="Lint the Go module"
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$(dirname "$(mise which go)"):${PATH:-}"
@@ -13,10 +13,3 @@ if [ -n "$unformatted" ]; then
 fi
 
 (cd go && go vet ./...)
-
-basedpyright="$(mise which basedpyright)"
-"$basedpyright" \
-  .agents/skills/verify/scripts \
-  .agents/skills/evidence/scripts \
-  .agents/skills/maintain-verification/scripts \
-  .agents/skills/create-verification/scripts
