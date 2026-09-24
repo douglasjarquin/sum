@@ -82,7 +82,7 @@ func Status(s *store.Store, opts Options) (*ordjson.Object, error) {
 		rowsAny[i] = r
 	}
 
-	capacityView, err := settings.CapacityView(s)
+	capacityView, err := settings.CapacityViewOf(s, tasks)
 	if err != nil {
 		return nil, err
 	}

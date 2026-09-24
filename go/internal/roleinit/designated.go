@@ -342,7 +342,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		}
 		result.Set("returns", pumped)
 		result.Set("maintenance", lifecycle.Pending(s, opts.SumctlPath, tasks))
-		hook, hookErr := hookstatus.Summary(s)
+		hook, hookErr := hookstatus.SummaryOf(s, tasks)
 		if hookErr != nil {
 			return nil, hookErr
 		}
