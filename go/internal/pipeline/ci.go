@@ -66,6 +66,11 @@ func CI(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args CIArgs) (*
 	if err != nil {
 		return nil, err
 	}
+	mergeability, mergeErr := ObserveMergeability(s, ctx, runtimeRoot, args.Task, args.Timeout)
+	if mergeErr != nil {
+		mergeability = ordjson.NewObject()
+		mergeability.Set("error", mergeErr.Error())
+	}
 	record, err := Load(s, args.Task)
 	if err != nil {
 		return nil, err
@@ -73,9 +78,10 @@ func CI(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args CIArgs) (*
 	result := ordjson.NewObject()
 	result.Set("task", args.Task)
 	result.Set("ci", row)
+	result.Set("mergeability", mergeability)
 	result.Set("publication", republish(s, ctx, runtimeRoot, args))
 	result.Set("pipeline", View(record))
-	result.Set("note", "The checks as GitHub reported them at this instant. A green row means green at the last observation; nothing watches them afterwards.")
+	result.Set("note", "The checks and mergeability as GitHub reported them at this instant. A green row means green at the last observation; nothing watches them afterwards.")
 	return result, nil
 }
 

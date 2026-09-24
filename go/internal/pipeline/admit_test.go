@@ -100,3 +100,15 @@ func TestRequirePR_refusesUntilPushPassed(t *testing.T) {
 		t.Fatalf("err = %v, want a Push refusal before PR", err)
 	}
 }
+
+func TestRequirePush_allowBehindDoesNotWaiveAConflict(t *testing.T) {
+	raw := strings.Replace(readyTaskJSON(true, false, "20260906T010203Z-aaaa", "20260906T010203Z-bbbb", false),
+		`"outcome": "up-to-date", "base_branch": "main",
+"behind": 0, "conflicts": [], "summary": "Up to date with main"}`,
+		`"outcome": "conflict", "base_branch": "main",
+"behind": 1, "conflicts": ["app.txt"], "summary": "Conflicts with main in: app.txt"}`, 1)
+	err := RequirePush(taskFrom(t, raw), PushAdmission{AllowBehind: true})
+	if err == nil || !strings.Contains(err.Error(), "does not waive a conflict") {
+		t.Fatalf("err = %v, want a conflict --allow-behind cannot waive", err)
+	}
+}

@@ -93,6 +93,18 @@ func (lab gateLab) remoteSHA(t *testing.T, branch string) string {
 	return fields[0]
 }
 
+// rebaseResultIs reads a Rebase row as the observation's own sentence followed by the base SHA and the minute it was
+// observed, which is what makes a stale row recognisable.
+func (lab gateLab) rebaseResultIs(t *testing.T, row map[string]any, sentence string) bool {
+	t.Helper()
+	result, _ := row["result"].(string)
+	at, _ := row["at"].(string)
+	if len(at) < 16 {
+		return false
+	}
+	return result == fmt.Sprintf("%s (main at %s, observed %sZ)", sentence, lab.originMain(t)[:7], at[:16])
+}
+
 func identify(t *testing.T, dir string) {
 	t.Helper()
 	gitIn(t, dir, "config", "user.email", "gate@example.com")
@@ -147,8 +159,8 @@ func TestPipelineRebase_candidateOnTopOfItsBasePasses(t *testing.T) {
 		t.Fatalf("rebase record = %v, want an up-to-date observation of main", record)
 	}
 	row := lab.row(t, "rebase")
-	if row["status"] != "pass" || row["result"] != "Up to date with main" {
-		t.Fatalf("rebase row = %v, want a pass", row)
+	if row["status"] != "pass" || !lab.rebaseResultIs(t, row, "Up to date with main") {
+		t.Fatalf("rebase row = %v, want a pass naming the base SHA and when it was observed", row)
 	}
 	assertNoLeftovers(t, lab)
 }
@@ -161,7 +173,7 @@ func TestPipelineRebase_behindButCleanBlocksAndNamesTheCount(t *testing.T) {
 
 	row := lab.row(t, "rebase")
 	want := "Behind main by 1 commit; rebases cleanly. The worker rebases; send `repair send` with the rebase instruction"
-	if row["status"] != "blocked" || row["result"] != want {
+	if row["status"] != "blocked" || !lab.rebaseResultIs(t, row, want) {
 		t.Fatalf("rebase row = %v\nwant blocked with %q", row, want)
 	}
 	assertNoLeftovers(t, lab)
@@ -174,7 +186,7 @@ func TestPipelineRebase_conflictFailsAndNamesTheConflictingPath(t *testing.T) {
 	runGate(t, lab, "rebase", gateTaskID)
 
 	row := lab.row(t, "rebase")
-	if row["status"] != "fail" || row["result"] != "Conflicts with main in: app.txt" {
+	if row["status"] != "fail" || !lab.rebaseResultIs(t, row, "Conflicts with main in: app.txt") {
 		t.Fatalf("rebase row = %v, want a fail naming app.txt", row)
 	}
 	assertNoLeftovers(t, lab)
@@ -489,9 +501,11 @@ func TestPipelineRun_stopsAtAFailingRebaseAndPushesNothing(t *testing.T) {
 	if got := lab.remoteSHA(t, gateBranch); got != "" {
 		t.Fatalf("origin/%s = %s, want nothing pushed after a failing rebase", gateBranch, got)
 	}
-	want := "Rebase is fail: Conflicts with main in: app.txt. Do: run `sumctl pipeline rebase TASK_ID`; a branch that is behind or conflicting is the worker's to rebase."
-	if result["next"] != want {
-		t.Fatalf("next = %v\nwant %q", result["next"], want)
+	next, _ := result["next"].(string)
+	wantStart := "Rebase is fail: Conflicts with main in: app.txt (main at " + lab.originMain(t)[:7] + ", observed "
+	wantEnd := "Z). Do: run `sumctl pipeline rebase TASK_ID`; a branch that is behind or conflicting is the worker's to rebase."
+	if !strings.HasPrefix(next, wantStart) || !strings.HasSuffix(next, wantEnd) {
+		t.Fatalf("next = %v\nwant %q...%q", next, wantStart, wantEnd)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/prcmd"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
@@ -51,6 +52,10 @@ func Pending(s *store.Store, sumctlPath string, tasks []*ordjson.Object) *ordjso
 			row.Set("observed_at", field(pr, "observed_at"))
 			if failed := field(pr, "observe_failed_at"); failed != nil {
 				row.Set("observe_failed_at", failed)
+			}
+			if conflict := pipeline.MergeConflict(pr); conflict != "" {
+				row.Set("blocked", conflict)
+				row.Set("fix", pipeline.MergeAdvice)
 			}
 			row.Set("next", shquote.CommandFor(sumctlPath, s.Home, "pr", "reconcile", id))
 			prs = append(prs, row)

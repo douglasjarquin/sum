@@ -6,7 +6,8 @@ becomes a stable attachment URL derived from the file's content hash, an unrefer
 and `mutation` ({"after_views": N, "where": "outside" | "inside", "text": ...}) which changes the stored body once after the N-th
 `pr view`, so a concurrent human edit between the publisher's read and write can be staged. `prs` is the full list this repository
 answers `pr list` with (default: the single `pr`, if any); `head_sha` and `next_number` are what `pr create` gives a new one, and
-`create` (ok | timeout | truncated | refuse) decides whether it reports the URL it just created. Never touches the network."""
+`create` (ok | timeout | truncated | refuse) decides whether it reports the URL it just created. `mergeable` and `merge_state_status`
+(on the state or one PR) are what `pr view` answers for GitHub's mergeability. Never touches the network."""
 import hashlib
 import json
 import os
@@ -88,6 +89,8 @@ def pr_json(p, fields):
             "headRefName": p.get("head_branch", "sum/t-x"), "headRefOid": p.get("head_sha"), "baseRefName": p.get("base_branch", "main"),
             "headRepository": {"name": name}, "headRepositoryOwner": {"login": owner}, "isCrossRepository": state.get("head_repository", repo) != repo,
             "mergedAt": p.get("merged_at"), "mergeCommit": {"oid": p["merge_commit"]} if p.get("merge_commit") else None, "closed": p.get("state", "OPEN") != "OPEN",
+            "mergeable": p.get("mergeable", state.get("mergeable", "MERGEABLE")),
+            "mergeStateStatus": p.get("merge_state_status", state.get("merge_state_status", "CLEAN")),
             "statusCheckRollup": rollup()}
     return {k: full.get(k) for k in fields.split(",")}
 

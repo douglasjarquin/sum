@@ -743,10 +743,10 @@
       "run": "Coordinator only: run the gates this pane owns in order (rebase, test, lint, document, push, PR) and stop at the first failure or a blocked Test; --no-pr stops after push",
       "rebase": "Coordinator only: observe the candidate against its base branch in a throwaway worktree; never rewrites the branch",
       "lint": "Coordinator only: run the lint task the project itself declares against the candidate; a project that declares none is not-declared",
-      "push": "Coordinator only: fast-forward push the recorded branch to origin once the worker has reported, Rebase passes, and no required before/after evidence is missing; never forces",
-      "pr": "Coordinator only: open the PR for the pushed candidate, or adopt the one GitHub already has for that branch, then reconcile it; a branch with only closed PRs is refused",
+      "push": "Coordinator only: fast-forward push the recorded branch to origin once the worker has reported, Rebase passes against a base fetched just now, and no required before/after evidence is missing; --allow-behind never waives a conflict; never forces",
+      "pr": "Coordinator only: fetch the base again, then open the PR for the pushed candidate, or adopt the one GitHub already has for that branch, and reconcile it; a candidate now behind (without --allow-behind) or conflicting is refused, and so is a branch with only closed PRs",
       "document": "Coordinator only: audit the candidate's VERIFY.md and feature maps in a throwaway checkout and record the result",
-      "ci": "Coordinator only: read the checks GitHub reports on the reconciled PR and record what they said; observed at this instant, never watched, and republished unless --no-publish",
+      "ci": "Coordinator only: read the checks and the mergeability GitHub reports on the reconciled PR and record what they said; observed at this instant, never watched, and republished unless --no-publish",
       "publish": "Coordinator only: write the pipeline table into the reconciled PR's own marked block; --dry-run edits nothing"
     },
     "read_only": false,
