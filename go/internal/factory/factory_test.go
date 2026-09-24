@@ -2,6 +2,7 @@ package factory
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -493,6 +494,95 @@ func writePipeline(t *testing.T, st *store.Store, taskID, sha string, statuses m
 	pipe.Set("rows", rows)
 	if err := ordjson.WriteFile(filepath.Join(st.Home, "tasks", taskID, "pipeline.json"), pipe); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestMergeCheck_nonAuthorizingVerdictsAreHumanGate(t *testing.T) {
+	for i, verdict := range []string{"after-only", "before-also-passes", "before-unavailable", "mismatch", "capture-failed", "after-fails"} {
+		t.Run(verdict, func(t *testing.T) {
+			st := openStore(t)
+			worktree, sha := gitWorktree(t)
+			id := fmt.Sprintf("t-c%011x", i)
+			mergeTask(t, st, worktree, sha, id)
+			rel := filepath.Join(".artifacts", "evidence", "r1", "demo", "comparison.json")
+			writeComparison(t, worktree, rel, sha, verdict)
+			view, err := MergeCheck(st, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if asString(get(view, "confidence")) != "human-gate" {
+				t.Fatalf("verdict %s confidence = %v", verdict, get(view, "confidence"))
+			}
+		})
+	}
+}
+
+func TestMergeCheck_beforeAfterAuthorizes(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	mergeTask(t, st, worktree, sha, "t-cfffffffffff")
+	rel := filepath.Join(".artifacts", "evidence", "r1", "demo", "comparison.json")
+	writeComparison(t, worktree, rel, sha, "before-after")
+	view, err := MergeCheck(st, "t-cfffffffffff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "confidence")) != "high" {
+		t.Fatalf("confidence = %v", get(view, "confidence"))
+	}
+}
+
+func TestMergeCheck_outsideCheckoutComparisonIsHumanGate(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	task := mergeTask(t, st, worktree, sha, "t-d00000000001")
+	outside := filepath.Join(t.TempDir(), "comparison.json")
+	if err := os.WriteFile(outside, []byte(`{"verdict":"red-green","candidate":{"sha":"`+sha+`"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := task.Get("evidence")
+	asObject(raw.([]any)[0]).Set("artifacts", []any{outside})
+	if err := st.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	view, err := MergeCheck(st, "t-d00000000001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "confidence")) != "human-gate" {
+		t.Fatalf("confidence = %v", get(view, "confidence"))
+	}
+}
+
+func TestMergeCheck_unboundComparisonIsHumanGate(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	mergeTask(t, st, worktree, sha, "t-d00000000002")
+	path := filepath.Join(worktree, ".artifacts", "evidence", "r1", "demo", "comparison.json")
+	if err := os.WriteFile(path, []byte(`{"schema":1,"verdict":"red-green"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	view, err := MergeCheck(st, "t-d00000000002")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "confidence")) != "human-gate" {
+		t.Fatalf("confidence = %v", get(view, "confidence"))
+	}
+}
+
+func TestMergeCheck_shaMismatchComparisonIsHumanGate(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	mergeTask(t, st, worktree, sha, "t-d00000000003")
+	rel := filepath.Join(".artifacts", "evidence", "r1", "demo", "comparison.json")
+	writeComparison(t, worktree, rel, strings.Repeat("a", 40), "red-green")
+	view, err := MergeCheck(st, "t-d00000000003")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "confidence")) != "human-gate" {
+		t.Fatalf("confidence = %v", get(view, "confidence"))
 	}
 }
 

@@ -1335,8 +1335,8 @@ func pathContained(path string, roots []string) bool {
 	return false
 }
 
-var passingVerdicts = map[string]bool{
-	"red-green": true, "before-after": true, "after-only": true, "before-also-passes": true,
+var authorizingVerdicts = map[string]bool{
+	"red-green": true, "before-after": true,
 }
 
 func comparisonPassing(path, head string) error {
@@ -1349,8 +1349,8 @@ func comparisonPassing(path, head string) error {
 		return fmt.Errorf("%s is not comparison JSON: %w", path, err)
 	}
 	verdict := strings.ToLower(fmt.Sprint(zero(payload["verdict"])))
-	if !passingVerdicts[verdict] {
-		return fmt.Errorf("%s verdict %s does not show the candidate passing", path, verdict)
+	if !authorizingVerdicts[verdict] {
+		return fmt.Errorf("%s verdict %s does not authorize factory merge (need red-green or before-after)", path, verdict)
 	}
 	sha := comparisonSHA(payload)
 	if sha == "" {
