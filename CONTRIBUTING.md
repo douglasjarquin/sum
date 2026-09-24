@@ -55,7 +55,8 @@ A preflight that validates the contract without running the suites:
 python3 .agents/skills/verify/scripts/verify_run.py --check
 ```
 
-Scoped iteration can use `mise run test` (suites only) and `mise run demo`. `mise run test-live` is the explicit real-Herdr smoke test and is not part of the aggregate; run it only when that scenario applies and a real Herdr is available, otherwise record it as not-run.
+Scoped iteration can use `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`), and `mise run demo`.
+`mise run test-live` is the explicit real-Herdr smoke test and is not part of the aggregate; run it only when that scenario applies and a real Herdr is available, otherwise record it as not-run.
 
 Keep checks pointed at temporary state homes and named lab sessions. Never aim a test at a live `.sum/` directory or the user's `default` Herdr session.
 

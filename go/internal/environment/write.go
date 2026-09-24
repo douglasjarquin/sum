@@ -23,13 +23,13 @@ const (
 )
 
 type RecordArgs struct {
-	Task       string
-	URL        string
-	Log        string
-	Pane       string
-	Container  string
-	Label      string
-	Ownership  string
+	Task        string
+	URL         string
+	Log         string
+	Pane        string
+	Container   string
+	Label       string
+	Ownership   string
 	RuntimeRoot string
 }
 
@@ -1185,4 +1185,3 @@ func sortedInts(set map[int]bool) []int {
 	}
 	return out
 }
-
