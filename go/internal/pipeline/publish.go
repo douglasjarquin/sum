@@ -29,11 +29,13 @@ const (
 	OutcomeSkipped   Outcome = "skipped"
 )
 
+// DefaultGHBound bounds one gh call unless the caller passes a timeout (a variable so tests can shorten it).
+var DefaultGHBound = 120 * time.Second
+
 const (
 	ReceiptsFile    = "pipeline-receipts.json"
 	receiptsSchema  = 1
 	publishSubdir   = "pipeline"
-	defaultGhBound  = 120 * time.Second
 	rebaseAttempts  = 3
 	receiptsHistory = 200
 )
@@ -317,7 +319,7 @@ func bound(timeout int) time.Duration {
 	if timeout > 0 {
 		return time.Duration(timeout) * time.Second
 	}
-	return defaultGhBound
+	return DefaultGHBound
 }
 
 func firstLine(text string) string {

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/archive"
@@ -325,10 +326,14 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 
 	var pumpTasks []string
 	var pumpForce bool
+	var pumpBudget float64
 	pumpCmd := &cobra.Command{
 		Use:  "pump",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if pumpBudget < 0 {
+				return usageError("pump", []string{"--budget", fmt.Sprint(pumpBudget)})
+			}
 			st, err := o.openStore("pump")
 			if err != nil {
 				return err
@@ -344,21 +349,67 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if reg == nil {
 				return fmt.Errorf("Run `sumctl init` in this pane first; the pump delivers only for a pane registered in this instance.")
 			}
+			tasks, err := st.AllTasks()
+			if err != nil {
+				return err
+			}
 			opts := o.pumpOpts()
 			opts.Ctx = ctx
 			opts.Tasks = pumpTasks
 			opts.Force = pumpForce
 			opts.Inline = true
-			view, err := lifecycle.PumpAndSweep(st, opts)
+			opts.Snapshot = tasks
+			opts.Budget = time.Duration(pumpBudget * float64(time.Second))
+			view, err := returns.Pump(st, opts)
 			if err != nil {
 				return err
+			}
+			if app.RequireCoordinator(st, ctx) == nil {
+				view.Set("maintenance", lifecycle.Pending(st, o.sumctlPath(), tasks))
 			}
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},
 	}
 	pumpCmd.Flags().StringArrayVar(&pumpTasks, "task", nil, "")
 	pumpCmd.Flags().BoolVar(&pumpForce, "force", false, "")
+	pumpCmd.Flags().Float64Var(&pumpBudget, "budget", 0, "")
 	root.AddCommand(pumpCmd)
+
+	var sweepTasks []string
+	var sweepBudget float64
+	sweepCmd := &cobra.Command{
+		Use:  "sweep",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if sweepBudget < 0 {
+				return usageError("sweep", []string{"--budget", fmt.Sprint(sweepBudget)})
+			}
+			st, err := o.openStore("sweep")
+			if err != nil {
+				return err
+			}
+			ctx, err := store.Context(o.installRoot)
+			if err != nil {
+				return err
+			}
+			budget := lifecycle.DefaultSweepBudget
+			if cmd.Flags().Changed("budget") {
+				// An explicit zero starts nothing: every task is reported deferred with its command.
+				budget = time.Duration(sweepBudget * float64(time.Second))
+				if budget == 0 {
+					budget = -1
+				}
+			}
+			view, err := lifecycle.Sweep(st, ctx, o.runtimeRoot, lifecycle.SweepOpts{Tasks: sweepTasks, Budget: budget, SumctlPath: o.sumctlPath()})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	sweepCmd.Flags().StringArrayVar(&sweepTasks, "task", nil, "")
+	sweepCmd.Flags().Float64Var(&sweepBudget, "budget", 0, "")
+	root.AddCommand(sweepCmd)
 
 	root.AddCommand(&cobra.Command{
 		Use:  "backup DESTINATION",

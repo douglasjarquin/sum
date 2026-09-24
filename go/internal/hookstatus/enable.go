@@ -10,7 +10,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
-	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -141,7 +140,7 @@ func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string)
 	if _, err := writeHealth(s, nil, changes); err != nil {
 		return nil, err
 	}
-	reconciliation, err := lifecycle.PumpAndSweep(s, returns.PumpOpts{
+	reconciliation, err := returns.Pump(s, returns.PumpOpts{
 		RuntimeRoot: runtimeRoot,
 		SumctlPath:  sumctlPath,
 		Ctx:         ctx,

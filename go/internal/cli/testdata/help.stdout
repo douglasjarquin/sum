@@ -2,9 +2,9 @@ commands:
   doctor: "Observe setup, Herdr context, and this pane's registered role; writes nothing"
   quota: Advisory provider quota. Codex uses Remainder. Other providers use quota-axi. Never switches accounts
   "release-contract": Print this runtime's release contract; writes nothing
-  init: Explicitly register this pane's role in this instance; the first eligible pane claims coordinator
-  status: All recorded tasks
-  inbox: "Only tasks that need attention: questions, reports, errors, cleanup"
+  init: "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, then one budgeted delivery pass (no PR observation or cleanup)"
+  status: "All recorded tasks from saved records, with outstanding maintenance and its commands; reads only, never delivers, calls GitHub, or cleans up"
+  inbox: "Only tasks that need attention: questions, reports, errors, cleanup; reads only, like status"
   skills: Check Sum-owned skill projections or copy explicit third-party skills into one project
   prepare: "Coordinator only: record an approved task and create its isolated worktree (no launch)"
   dispatch: "Coordinator only: record an approved task and create its isolated worktree; then launch the worker"
@@ -27,7 +27,8 @@ commands:
   pr: Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names
   pipeline: "The delivery gates one task has passed, and the status table sum owns in its PR body"
   cleanup: "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay"
-  pump: "One bounded delivery pass over saved pending returns: at most one coalesced notice per recipient; nothing sleeps, polls, or is deleted"
+  pump: "One budgeted delivery pass over saved pending returns: at most one coalesced notice per recipient, deferred recipients named; never calls GitHub or cleans up"
+  sweep: "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks"
   hook: "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon"
   metadata: "Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle"
   attention: "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays"
