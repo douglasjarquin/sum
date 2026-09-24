@@ -118,6 +118,7 @@ environment:
   brief_path: brief.md
   revisions[1]{id,status,path,ok}:
     legacy,active,"$HOME/tasks/t-1b1b1b1b1b1b/brief.md",false
+  procedure: null
   notes:
     path: "$HOME/tasks/t-1b1b1b1b1b1b/notes.md"
     present: false

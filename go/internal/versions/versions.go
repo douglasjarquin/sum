@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -171,8 +172,12 @@ func RevisionView(base string, revision *ordjson.Object) *ordjson.Object {
 					actual := sha256Text(string(content))
 					recordedShaValue, hasSha := revision.Get("sha256")
 					recordedSha, _ := recordedShaValue.(string)
+					policyValue, _ := revision.Get("policy")
+					policy, _ := policyValue.(*ordjson.Object)
 					if hasSha && recordedSha != "" && actual != recordedSha {
 						err = fmt.Errorf("content hash %s does not match the recorded %s", actual[:12], recordedSha[:12])
+					} else if procErr := procedure.Verify(base, procedure.Rows(policy)); procErr != nil {
+						err = procErr
 					} else {
 						row.Set("ok", true)
 						row.Set("sha256", actual)
@@ -693,4 +698,82 @@ func contractChanged(task *ordjson.Object) bool {
 		}
 	}
 	return false
+}
+
+// SameJSON reports whether two recorded values encode identically with sorted keys.
+func SameJSON(a, b any) bool {
+	encodedA, errA := ordjson.MarshalSortedCompact(a)
+	encodedB, errB := ordjson.MarshalSortedCompact(b)
+	return errA == nil && errB == nil && string(encodedA) == string(encodedB)
+}
+
+// DecisionsOnly reports whether a requested revision differs from the task's active revision only
+// in recorded decisions: same policy (pinned procedure included), return commands, and approved
+// fingerprint. The active revision is the baseline because it is what the worker actually read; a
+// procedure change staged in between and never adopted keeps a later revision from qualifying.
+func DecisionsOnly(versionsObj, target *ordjson.Object) bool {
+	if versionsObj == nil || target == nil {
+		return false
+	}
+	activeID, _ := versionsObj.Get("active")
+	targetID, _ := target.Get("id")
+	if activeID == nil || activeID == targetID {
+		return false
+	}
+	revisionsValue, _ := versionsObj.Get("revisions")
+	list, _ := revisionsValue.([]any)
+	var active *ordjson.Object
+	for _, raw := range list {
+		rev, _ := raw.(*ordjson.Object)
+		if id, _ := rev.Get("id"); id == activeID {
+			active = rev
+		}
+	}
+	if active == nil {
+		return false
+	}
+	for _, key := range []string{"policy", "commands", "approved"} {
+		before, hasBefore := active.Get(key)
+		after, hasAfter := target.Get(key)
+		if !hasBefore || !hasAfter || before == nil || after == nil || !SameJSON(before, after) {
+			return false
+		}
+	}
+	return true
+}
+
+// ActiveBrief is the file a freshly launched worker is told to read: the active revision, verified
+// together with its pinned procedure. Launch refuses rather than prompting an incomplete brief.
+func ActiveBrief(s *store.Store, task *ordjson.Object) (string, error) {
+	versionsObj, err := ReadVersions(s, task)
+	if err != nil {
+		return "", err
+	}
+	activeID, _ := versionsObj.Get("active")
+	revisionsValue, _ := versionsObj.Get("revisions")
+	list, _ := revisionsValue.([]any)
+	var active *ordjson.Object
+	for _, raw := range list {
+		rev, _ := raw.(*ordjson.Object)
+		if id, _ := rev.Get("id"); activeID != nil && id == activeID {
+			active = rev
+		}
+	}
+	if active == nil {
+		return "", fmt.Errorf("The task has no active brief revision; no worker was started.")
+	}
+	idValue, _ := task.Get("id")
+	id, _ := idValue.(string)
+	taskPath, err := s.TaskPath(id)
+	if err != nil {
+		return "", err
+	}
+	view := RevisionView(taskPath, active)
+	if ok, _ := view.Get("ok"); ok != true {
+		errText, _ := view.Get("error")
+		return "", fmt.Errorf("No worker was started: %v", errText)
+	}
+	path, _ := view.Get("path")
+	file, _ := path.(string)
+	return file, nil
 }
