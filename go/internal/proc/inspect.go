@@ -184,20 +184,16 @@ func ProcessesBoundTo(worktree string, exclude map[int]bool) ([]BoundProcess, er
 			seen[row.PID] = true
 		}
 	}
-	table, err := Run([]string{"ps", "-ax", "-o", "pid=,args="}, "", processTableTimeout, true, nil)
+	table, err := ProcessTable()
 	if err != nil {
-		return nil, fmt.Errorf("process table cannot be inspected: %s", err)
+		return nil, err
 	}
-	for _, line := range strings.Split(table.Stdout, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
+	for _, row := range table {
+		pid := row.PID
+		if pid == self || exclude[pid] || seen[pid] {
 			continue
 		}
-		pid, convErr := strconv.Atoi(fields[0])
-		if convErr != nil || pid <= 0 || pid == self || exclude[pid] || seen[pid] {
-			continue
-		}
-		for _, field := range fields[1:] {
+		for _, field := range strings.Fields(row.Args) {
 			if pathWithinRoots(field, roots) || pathWithinRoots(argValue(field), roots) {
 				bound = append(bound, BoundProcess{PID: pid, CWD: cwdOf[pid], Bound: "argv"})
 				seen[pid] = true
@@ -206,6 +202,34 @@ func ProcessesBoundTo(worktree string, exclude map[int]bool) ([]BoundProcess, er
 		}
 	}
 	return bound, nil
+}
+
+// TableProcess is one live process and its full argument string as the process table reports it.
+type TableProcess struct {
+	PID  int
+	Args string
+}
+
+// ProcessTable reads every live process with its full argument string. `-ww` keeps ps from cutting args to
+// $COLUMNS, which procps does even when its output is a pipe.
+func ProcessTable() ([]TableProcess, error) {
+	table, err := Run([]string{"ps", "-ax", "-ww", "-o", "pid=,args="}, "", processTableTimeout, true, nil)
+	if err != nil {
+		return nil, fmt.Errorf("process table cannot be inspected: %s", err)
+	}
+	var rows []TableProcess
+	for _, line := range strings.Split(table.Stdout, "\n") {
+		pidText, args, ok := strings.Cut(strings.TrimSpace(line), " ")
+		if !ok {
+			continue
+		}
+		pid, convErr := strconv.Atoi(pidText)
+		if convErr != nil || pid <= 0 {
+			continue
+		}
+		rows = append(rows, TableProcess{PID: pid, Args: strings.TrimSpace(args)})
+	}
+	return rows, nil
 }
 
 // argValue returns the value half of a `--flag=value` argv field so a daemon

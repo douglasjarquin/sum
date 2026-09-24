@@ -24,6 +24,8 @@ const (
 	statusTimeout = 60 * time.Second
 	// statusPreview is how much of a non-JSON status answer the recorded reason quotes.
 	statusPreview = 200
+	// maxFailures is the documented bound: the third failed attempt records `exhausted`.
+	maxFailures = 3
 )
 
 func jsonInt(n int) json.Number {
@@ -106,10 +108,7 @@ func InitCheckout(s *store.Store, runtimeRoot, worktree, purpose string, existin
 	record.Set("error", nil)
 	ident, err := identity(worktree)
 	if err != nil {
-		appendAttempt(record, "identity", false, err.Error())
-		record.Set("state", "failed")
-		record.Set("error", err.Error())
-		return record
+		return failAttempt(record, "identity", err)
 	}
 	record.Set("identity", ident)
 	tool := Tool(runtimeRoot)
@@ -123,10 +122,21 @@ func InitCheckout(s *store.Store, runtimeRoot, worktree, purpose string, existin
 	}
 	path := asString(func() any { v, _ := tool.Get("path"); return v }())
 	if err := runCodegraph(path, worktree, "init"); err != nil {
-		appendAttempt(record, "init", false, err.Error())
-		record.Set("state", "failed")
-		record.Set("error", err.Error())
-		return record
+		return failAttempt(record, "init", err)
+	}
+	// `init` exits 0 on an index an interrupted build left behind, so only status can confirm a complete one; an
+	// incomplete index gets one full rebuild.
+	status, err := completeIndex(path, worktree)
+	rebuilt := false
+	if errors.Is(err, errIncomplete) {
+		if err := runCodegraph(path, worktree, "index"); err != nil {
+			return failAttempt(record, "index", err)
+		}
+		rebuilt = true
+		status, err = completeIndex(path, worktree)
+	}
+	if err != nil {
+		return failAttempt(record, "verified", err)
 	}
 	_ = ensureExclude(worktree)
 	head, _ := ident.Get("head")
@@ -134,8 +144,10 @@ func InitCheckout(s *store.Store, runtimeRoot, worktree, purpose string, existin
 	record.Set("state", "ready")
 	record.Set("error", nil)
 	index := ordjson.NewObject()
-	index.Set("fileCount", nil)
-	index.Set("nodeCount", nil)
+	for _, key := range []string{"fileCount", "nodeCount", "edgeCount"} {
+		v, _ := status.Get(key)
+		index.Set(key, v)
+	}
 	record.Set("index", index)
 	quoted := fmt.Sprintf("%q", worktree)
 	commands := ordjson.NewObject()
@@ -147,6 +159,9 @@ func InitCheckout(s *store.Store, runtimeRoot, worktree, purpose string, existin
 	commands.Set("affected", fmt.Sprintf("CODEGRAPH_NO_DAEMON=1 %s query NAME -p %s --json", path, quoted))
 	record.Set("commands", commands)
 	appendAttempt(record, "init", true, "")
+	if rebuilt {
+		appendAttempt(record, "index", true, "")
+	}
 	appendAttempt(record, "verified", true, "")
 	return record
 }
@@ -177,29 +192,50 @@ func ensureExclude(worktree string) error {
 	return err
 }
 
-// runCodegraph runs one indexing command under graphTimeout. Its stdout is progress text, never parsed. A timeout
-// stops only the direct launcher; the error then says so, including when the indexer behind it still holds the
-// output and may still be running.
+// runCodegraph runs one indexing command under graphTimeout. Its stdout is progress text, never parsed. A failure
+// keeps proc's bounded detail (stderr tail, else the stdout head, at most 4000 bytes). A timeout stops only the
+// direct launcher; the error then says so, including when the indexer behind it still holds the output and may
+// still be running.
 func runCodegraph(bin, worktree string, args ...string) error {
-	argv := append(append([]string{bin}, args...), worktree)
-	result, err := proc.RunContext(context.Background(), proc.Cmd{
-		Argv:     argv,
+	_, err := proc.RunContext(context.Background(), proc.Cmd{
+		Argv:     append(append([]string{bin}, args...), worktree),
 		Dir:      worktree,
 		Env:      codegraphEnv(),
 		Timeout:  graphTimeout(),
 		Check:    true,
 		FreeText: true,
 	})
-	if err == nil {
-		return nil
-	}
-	if errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrNotStarted) {
-		return err
-	}
-	if detail := result.Detail(); detail != "" {
-		return errors.New(detail)
-	}
 	return err
+}
+
+// errIncomplete marks a status that answered cleanly but does not report a complete index for this checkout.
+var errIncomplete = errors.New("index is not complete")
+
+// completeIndex returns the status of a complete index built for this checkout, or why it cannot be confirmed.
+func completeIndex(bin, worktree string) (*ordjson.Object, error) {
+	live := observeStatus(bin, worktree)
+	if errValue, ok := live.Get("error"); ok {
+		return nil, fmt.Errorf("codegraph status could not confirm the index: %s", asString(errValue))
+	}
+	status := asObject(func() any { v, _ := live.Get("status"); return v }())
+	initialized, _ := status.Get("initialized")
+	state, _ := asObject(func() any { v, _ := status.Get("index"); return v }()).Get("state")
+	mismatch, _ := status.Get("worktreeMismatch")
+	if initialized != true || state != "complete" || mismatch != nil {
+		return nil, fmt.Errorf("%w: codegraph status reports initialized %v, index state %v, worktree mismatch %v", errIncomplete, initialized, state, mismatch)
+	}
+	return status, nil
+}
+
+// failAttempt records one failed action; the maxFailures-th failure exhausts the record.
+func failAttempt(record *ordjson.Object, action string, err error) *ordjson.Object {
+	appendAttempt(record, action, false, err.Error())
+	record.Set("state", "failed")
+	if graphview.FailureCount(record) >= maxFailures {
+		record.Set("state", "exhausted")
+	}
+	record.Set("error", err.Error())
+	return record
 }
 
 func appendAttempt(record *ordjson.Object, action string, ok bool, errText string) {
@@ -252,6 +288,13 @@ func InitTask(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, erro
 			return nil, fmt.Errorf("Graph initialization for %s is exhausted; the recorded fallback is source inspection. Inspect the attempts in the graph record; sum does not retry beyond the bound.", taskID)
 		}
 	}
+	writers, err := liveWriters(worktreeStr)
+	if err != nil {
+		return nil, fmt.Errorf("Cannot prove that no codegraph writer is running for %s (%s); nothing was started or recorded.", worktreeStr, err)
+	}
+	if len(writers) > 0 {
+		return nil, fmt.Errorf("A codegraph writer is still running for %s (%s). Nothing was started or recorded, and sum stops no process; retry `graph init %s` after it exits. `graph status %s` observes the index meanwhile.", worktreeStr, strings.Join(writers, "; "), taskID, taskID)
+	}
 	record := InitCheckout(s, runtimeRoot, worktreeStr, "task", existing)
 	unlock, err := s.Lock()
 	if err != nil {
@@ -274,6 +317,77 @@ func InitTask(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, erro
 	result.Set("graph", record)
 	result.Set("note", "The task, its checkout, and its worker are unchanged; nothing was launched or restarted. A running worker sees the new state through `context --section execution` or a requested brief revision, never through a forced restart.")
 	return result, nil
+}
+
+// writerCommands are the codegraph subcommands that write an index.
+var writerCommands = map[string]bool{"init": true, "index": true, "sync": true}
+
+// liveWriters names live codegraph processes writing this checkout's index. The real indexer runs behind the npm
+// shim as `<bundle>/node ... lib/dist/bin/codegraph.js init <checkout>`, never under the runtime's tool path, so
+// the match is by argv shape rather than by the recorded binary.
+func liveWriters(worktree string) ([]string, error) {
+	roots := []string{worktree}
+	if resolved, err := filepath.EvalSymlinks(worktree); err == nil && resolved != worktree {
+		roots = append(roots, resolved)
+	}
+	table, err := proc.ProcessTable()
+	if err != nil {
+		return nil, err
+	}
+	self := os.Getpid()
+	var writers []string
+	for _, row := range table {
+		if row.PID != self && isWriter(row.Args, roots) {
+			args := row.Args
+			if len(args) > statusPreview {
+				args = args[:statusPreview] + "..."
+			}
+			writers = append(writers, fmt.Sprintf("pid %d: %s", row.PID, args))
+		}
+	}
+	return writers, nil
+}
+
+// isWriter reports an argument string whose program is codegraph (any path, any extension), whose first non-flag
+// argument after it is a writing subcommand, and which names one of roots or a path inside it. The checkout is
+// matched in the raw string because checkout paths may contain spaces.
+func isWriter(args string, roots []string) bool {
+	fields := strings.Fields(args)
+	for i, field := range fields {
+		base := filepath.Base(field)
+		if strings.TrimSuffix(base, filepath.Ext(base)) != "codegraph" {
+			continue
+		}
+		for _, next := range fields[i+1:] {
+			if strings.HasPrefix(next, "-") {
+				continue
+			}
+			return writerCommands[next] && namesRoot(args, roots)
+		}
+		return false
+	}
+	return false
+}
+
+// namesRoot reports a root that appears in args as a whole path: preceded by the start, a space, or `=`, and
+// followed by the end, a space, or `/`.
+func namesRoot(args string, roots []string) bool {
+	for _, root := range roots {
+		for offset := 0; ; {
+			i := strings.Index(args[offset:], root)
+			if i < 0 {
+				break
+			}
+			start, end := offset+i, offset+i+len(root)
+			before := start == 0 || args[start-1] == ' ' || args[start-1] == '='
+			after := end == len(args) || args[end] == ' ' || args[end] == '/'
+			if before && after {
+				return true
+			}
+			offset = start + 1
+		}
+	}
+	return false
 }
 
 func StatusTask(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, error) {

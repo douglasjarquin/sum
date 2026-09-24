@@ -1,6 +1,7 @@
 package graph
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -142,7 +143,7 @@ func TestInitCheckoutTimeoutNamesHeldDescendant(t *testing.T) {
 
 func TestInitCheckoutSuccessRecordsReady(t *testing.T) {
 	isolate(t)
-	fakeCodegraph(t, "echo indexing; exit 0")
+	statusFake(t, "complete")
 	repo := gitRepo(t)
 
 	record := InitCheckout(nil, t.TempDir(), repo, "task", nil)
@@ -268,5 +269,189 @@ func TestGraphTimeoutKnob(t *testing.T) {
 		if got := graphTimeout(); got != want {
 			t.Fatalf("SUM_GRAPH_TIMEOUT=%q: graphTimeout() = %s, want %s", value, got, want)
 		}
+	}
+}
+
+func TestIsWriterMatchesRealAndFakeArgvShapes(t *testing.T) {
+	checkout := "/work/.sum/worktrees with spaces/sum-t-1"
+	roots := []string{checkout}
+	cases := map[string]bool{
+		// The real 1.5.0 indexer behind the npm shim.
+		"/opt/x/@colbymchenry/codegraph-linux-x64/node --liftoff-only --disable-warning=ExperimentalWarning /opt/x/@colbymchenry/codegraph-linux-x64/lib/dist/bin/codegraph.js init " + checkout: true,
+		"/bin/sh /tmp/fake/codegraph init " + checkout:                true,
+		"python3 /repo/tests/fixtures/codegraph.py index " + checkout: true,
+		"/rt/.local/bin/codegraph sync " + checkout + "/":             true,
+		"/rt/.local/bin/codegraph serve --mcp --path " + checkout:     false,
+		"/rt/.local/bin/codegraph status --json " + checkout:          false,
+		"/rt/.local/bin/codegraph init " + checkout + "-other":        false,
+		"/rt/.local/bin/codegraph init /elsewhere" + checkout:         false,
+		"node /opt/x/codegraph/npm-shim.js init " + checkout:          false,
+		"sleep 30 " + checkout:                                        false,
+	}
+	for args, want := range cases {
+		if got := isWriter(args, roots); got != want {
+			t.Errorf("isWriter(%q) = %v, want %v", args, got, want)
+		}
+	}
+}
+
+func TestLiveWritersFindsARunningIndexer(t *testing.T) {
+	isolate(t)
+	// Not exec: the shell must keep the fake's own argv (`<fake>/codegraph init <repo>`) in the process table.
+	bin := fakeCodegraph(t, "sleep 30; exit 0")
+	repo := gitRepo(t)
+	cmd := exec.Command(bin, "init", repo)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); _ = cmd.Wait() })
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		writers, err := liveWriters(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(writers) > 0 {
+			if !strings.Contains(writers[0], strconv.Itoa(cmd.Process.Pid)) {
+				t.Fatalf("writers = %v, want pid %d", writers, cmd.Process.Pid)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the running fake indexer was not found")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if others, err := liveWriters(gitRepo(t)); err != nil || len(others) != 0 {
+		t.Fatalf("another checkout sees writers %v (%v)", others, err)
+	}
+}
+
+// statusFake answers init and index with exit 0 and status with the given index state (complete once an index
+// run with REBUILD_OK set has marked the rebuild), logging each subcommand.
+func statusFake(t *testing.T, state string) (string, string) {
+	t.Helper()
+	log := filepath.Join(t.TempDir(), "calls")
+	body := `echo "$1" >> '` + log + `'
+case "$1" in
+  status)
+    s=` + state + `
+    if [ -f '` + log + `.rebuilt' ]; then s=complete; fi
+    printf '{"initialized": true, "fileCount": 3, "nodeCount": 9, "edgeCount": 4, "pendingChanges": {"added": 0, "modified": 0}, "index": {"state": "%s"}}\n' "$s";;
+  index)
+    if [ -n "$REBUILD_OK" ]; then touch '` + log + `.rebuilt'; fi;;
+esac`
+	return fakeCodegraph(t, body), log
+}
+
+func calls(t *testing.T, log string) []string {
+	t.Helper()
+	raw, _ := os.ReadFile(log)
+	return strings.Fields(string(raw))
+}
+
+func TestInitCheckoutReadyOnlyWhenStatusConfirmsComplete(t *testing.T) {
+	isolate(t)
+	_, log := statusFake(t, "complete")
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	if get(record, "state") != "ready" {
+		t.Fatalf("state = %v, error = %v", get(record, "state"), get(record, "error"))
+	}
+	if got := strings.Join(calls(t, log), ","); got != "init,status" {
+		t.Fatalf("calls = %s, want init,status", got)
+	}
+	if files := fmt.Sprint(get(asObject(get(record, "index")), "fileCount")); files != "3" {
+		t.Fatalf("index fileCount = %v, want 3 from status", files)
+	}
+}
+
+func TestInitCheckoutRebuildsAnIncompleteIndexOnce(t *testing.T) {
+	isolate(t)
+	_, log := statusFake(t, "indexing")
+	t.Setenv("REBUILD_OK", "1")
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	if get(record, "state") != "ready" {
+		t.Fatalf("state = %v, error = %v", get(record, "state"), get(record, "error"))
+	}
+	if got := strings.Join(calls(t, log), ","); got != "init,status,index,status" {
+		t.Fatalf("calls = %s, want init,status,index,status", got)
+	}
+}
+
+func TestInitCheckoutNeverReadyFromAPartialIndex(t *testing.T) {
+	isolate(t)
+	_, log := statusFake(t, "indexing")
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	if get(record, "state") != "failed" {
+		t.Fatalf("state = %v, want failed", get(record, "state"))
+	}
+	if head := get(record, "indexed_head"); head != nil {
+		t.Fatalf("indexed_head = %v on a failed build", head)
+	}
+	if errText := asString(get(lastAttempt(t, record), "error")); !strings.Contains(errText, "indexing") {
+		t.Fatalf("attempt error = %q, want the unconfirmed index state", errText)
+	}
+	if got := strings.Join(calls(t, log), ","); got != "init,status,index,status" {
+		t.Fatalf("calls = %s, want exactly one rebuild", got)
+	}
+}
+
+func TestInitCheckoutUnreadableStatusIsNotReady(t *testing.T) {
+	isolate(t)
+	fakeCodegraph(t, "if [ \"$1\" = status ]; then echo 'not json'; fi")
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	if get(record, "state") != "failed" {
+		t.Fatalf("state = %v, want failed", get(record, "state"))
+	}
+}
+
+func TestInitCheckoutThirdFailureExhausts(t *testing.T) {
+	isolate(t)
+	fakeCodegraph(t, "echo 'index broke' >&2; exit 3")
+	repo := gitRepo(t)
+	var record *ordjson.Object
+	var states []string
+	for i := 0; i < 3; i++ {
+		record = InitCheckout(nil, t.TempDir(), repo, "task", record)
+		states = append(states, asString(get(record, "state")))
+	}
+	if got := strings.Join(states, ","); got != "failed,failed,exhausted" {
+		t.Fatalf("states = %s", got)
+	}
+}
+
+func TestInitCheckoutUnavailableNeverExhausts(t *testing.T) {
+	isolate(t)
+	t.Setenv("SUM_CODEGRAPH_BIN", filepath.Join(t.TempDir(), "missing"))
+	repo := gitRepo(t)
+	var record *ordjson.Object
+	for i := 0; i < 4; i++ {
+		record = InitCheckout(nil, t.TempDir(), repo, "task", record)
+	}
+	if get(record, "state") != "unavailable" {
+		t.Fatalf("state = %v", get(record, "state"))
+	}
+	list, _ := record.Get("attempts")
+	if items, _ := list.([]any); len(items) != 0 {
+		t.Fatalf("unavailable recorded %d attempts", len(items))
+	}
+}
+
+func TestInitCheckoutBoundsRecordedDiagnostics(t *testing.T) {
+	isolate(t)
+	fakeCodegraph(t, "head -c 9000000 /dev/zero | tr '\\0' x; echo 'final: index broke' >&2; exit 3")
+	record := InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	errText := asString(get(lastAttempt(t, record), "error"))
+	if len(errText) > 4200 || !strings.Contains(errText, "final: index broke") {
+		t.Fatalf("attempt error is %d bytes (want <= ~4 KB) containing the stderr line: %.200q", len(errText), errText)
+	}
+	fakeCodegraph(t, "head -c 9000000 /dev/zero | tr '\\0' x; exit 3")
+	record = InitCheckout(nil, t.TempDir(), gitRepo(t), "task", nil)
+	if get(record, "state") != "failed" {
+		t.Fatalf("state = %v", get(record, "state"))
+	}
+	if errText := asString(get(lastAttempt(t, record), "error")); len(errText) > 4200 {
+		t.Fatalf("stdout-only attempt error is %d bytes", len(errText))
 	}
 }

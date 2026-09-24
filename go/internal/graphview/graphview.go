@@ -129,6 +129,11 @@ func graphFailures(record *ordjson.Object) []any {
 	return failures
 }
 
+// FailureCount is how many recorded attempts failed; the explicit init path exhausts at MaxFailures.
+func FailureCount(record *ordjson.Object) int {
+	return len(graphFailures(record))
+}
+
 // Summary ports `graph_summary`: the bounded view kept in task.json, dev.json, and run records.
 func Summary(record *ordjson.Object) *ordjson.Object {
 	if !truthy(record) {
@@ -146,7 +151,7 @@ func Summary(record *ordjson.Object) *ordjson.Object {
 	result.Set("indexed_head", getField(record, "indexed_head"))
 	result.Set("pinned", CodegraphVersion)
 	result.Set("attempts", jsonInt(len(attempts)))
-	result.Set("failures", jsonInt(len(graphFailures(record))))
+	result.Set("failures", jsonInt(FailureCount(record)))
 	result.Set("last_action", getField(last, "action"))
 	result.Set("seconds", getField(last, "seconds"))
 	index := asObject(getField(record, "index"))
