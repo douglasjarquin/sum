@@ -56,6 +56,7 @@ func herdrEnv(t *testing.T, home string) {
 	t.Setenv("HERDR_SESSION", "sum-test")
 	t.Setenv("SUM_SESSION", "sum-test")
 	t.Setenv("SUM_HERDR_BIN", fake)
+	t.Setenv("SUM_PS_BIN", filepath.Join(root, "tests", "fixtures", "ps.py"))
 	t.Setenv("FAKE_HERDR_ROOT", filepath.Join(home, "fake-herdr"))
 	t.Setenv("FAKE_SESSION", "sum-test")
 	t.Setenv("FAKE_PARENT_CWD", home)

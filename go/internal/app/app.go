@@ -5,6 +5,7 @@ import (
 	"os"
 	"unicode/utf8"
 
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -60,6 +61,12 @@ func RequireCoordinator(s *store.Store, ctx *ordjson.Object) error {
 	}
 	if registration == nil || role != "coordinator" || !owns {
 		return fmt.Errorf("This pane is not the registered coordinator of this sum instance. Run ./bin/sumctl init in the coordinator pane; a developer session must not dispatch or rebind.")
+	}
+	// The address matches; the occupant must be the one that holds the role. A restored or reused pane ID with a new
+	// occupant, or one Herdr cannot report, gets no coordinator authority.
+	recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
+	if verdict := incarnation.Caller(endpoint.Session, endpoint.Pane, recorded, occupiedAt); !verdict.Verified {
+		return fmt.Errorf("This pane is the recorded coordinator pane, but its occupant is not the recorded coordinator (%s: %s). %s", verdict.Outcome, verdict.Reason, incarnation.Recovery("coordinator", verdict.Outcome))
 	}
 	return nil
 }

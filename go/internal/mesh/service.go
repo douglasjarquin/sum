@@ -188,7 +188,7 @@ func (s Service) preflight(ctx context.Context, target string) error {
 }
 
 func (s Service) json(ctx context.Context, args []string, timeout time.Duration) (string, error) {
-	if err := s.authorize(args); err != nil {
+	if err := s.authorize(ctx, args); err != nil {
 		return "", err
 	}
 	result, err := s.runner.Run(ctx, args, timeout, false)
@@ -206,7 +206,7 @@ func (s Service) json(ctx context.Context, args []string, timeout time.Duration)
 }
 
 func (s Service) text(ctx context.Context, args []string, timeout time.Duration) (string, error) {
-	if err := s.authorize(args); err != nil {
+	if err := s.authorize(ctx, args); err != nil {
 		return "", err
 	}
 	result, err := s.runner.Run(ctx, args, timeout, true)

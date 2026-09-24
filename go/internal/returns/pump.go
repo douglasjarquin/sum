@@ -58,6 +58,9 @@ type PumpOpts struct {
 	Snapshot []*ordjson.Object
 	// Herdr is an enclosing operation's Herdr snapshot (a hook event's pumps share one); nil starts one here.
 	Herdr *herdrclient.Snapshot
+	// CallerVerified says this operation already judged the calling pane's occupant verified against its record
+	// (init, or a coordinator command), so its own inline listing needs no second observation.
+	CallerVerified bool
 }
 
 type unreachableError struct {
@@ -557,6 +560,16 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		return finish("not-delivered", "", "recipient has no recorded pane yet", "recipient has no recorded pane yet")
 	}
 	if b.inline {
+		// The caller is the recipient; only the recorded occupant of this pane may take its returns.
+		if opts.CallerVerified {
+			// Judged verified earlier in this operation.
+		} else if msg, deferReason := p.checkInline(route, items); deferReason != "" {
+			return p.deferRow(row, deferReason), nil
+		} else if msg != "" {
+			row.Set("state", "refused")
+			row.Set("reason", msg)
+			return row, nil
+		}
 		row.Set("via", "inline")
 		row.Set("message", noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), mentioned, len(withheld)))
 		if _, err := finish("submitted", "inline", "presented in the recipient's own command output", ""); err != nil {
@@ -567,7 +580,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	}
 	// claim runs under the state lock right before the prompt: it keeps only the returns still open and still routed
 	// here, rebuilds the notice from them, confirms the prompt still fits the pass, and records the in-flight attempt.
-	claim := func() (claimResult, error) {
+	claim := func(occ *occupant) (claimResult, error) {
 		unlock, err := s.Lock()
 		if err != nil {
 			return claimResult{}, err
@@ -589,6 +602,9 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		if msg := p.checkIdentity(route, survivors); msg != "" {
 			return claimResult{refused: msg}, nil
 		}
+		if msg := p.checkOccupant(route, survivors, occ); msg != "" {
+			return claimResult{stale: msg}, nil
+		}
 		if !p.fits(PromptTimeout) {
 			return claimResult{deferReason: "the pass budget ran out after this recipient was observed and before the prompt; nothing was sent or recorded"}, nil
 		}
@@ -602,7 +618,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	if deferReason != "" {
 		return p.deferRow(row, deferReason), nil
 	}
-	if state == "quiet" {
+	if state == "quiet" || state == "refused" {
 		row.Set("state", state)
 		row.Set("reason", detail)
 		return row, nil
@@ -643,7 +659,7 @@ func pendingListing(items [][2]*ordjson.Object) []any {
 // busy, or elsewhere without a call of its own; a settled one is re-observed immediately before the prompt. A
 // non-empty deferReason means the budget did not admit the next call: nothing was sent or recorded. claim records the
 // in-flight attempt and supplies the notice; state "quiet" means nothing was still owed.
-func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object, claim func() (claimResult, error)) (state, detail, errStr, deferReason string) {
+func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object, claim func(*occupant) (claimResult, error)) (state, detail, errStr, deferReason string) {
 	notDelivered := func(msg string) (string, string, string, string) { return "not-delivered", msg, msg, "" }
 	if !p.host.Is(routeValue(route, "machine")) {
 		return notDelivered("Recipient is on another machine.")
@@ -693,12 +709,20 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 	if err != nil {
 		return notDelivered(err.Error())
 	}
-	claimed, err := claim()
+	// The occupant this fresh observation shows is judged against its record inside the claim; a shell probe the
+	// judgment needs is taken here, outside the state lock, within the budget.
+	occ, deferReason := p.observeOccupant(route, items, session, pane, herdrclient.UnwrapAgent(agent))
+	if deferReason != "" {
+		return "", "", "", deferReason
+	}
+	claimed, err := claim(occ)
 	switch {
 	case err != nil:
 		return notDelivered("prompt was not accepted: " + err.Error())
 	case claimed.refused != "":
 		return notDelivered(claimed.refused)
+	case claimed.stale != "":
+		return "refused", claimed.stale, "", ""
 	case claimed.deferReason != "":
 		return "", "", "", claimed.deferReason
 	case claimed.quiet != "":
@@ -777,27 +801,33 @@ func promptFailure(err error) (state, detail, reason string) {
 
 // ObserveRecipient is one fresh observation of route's pane: on this machine, at the expected cwd, and settled.
 func ObserveRecipient(s *store.Store, runtimeRoot string, route *ordjson.Object, expectedCwd string) error {
+	_, err := observeAgent(s, runtimeRoot, route, expectedCwd)
+	return err
+}
+
+func observeAgent(s *store.Store, runtimeRoot string, route *ordjson.Object, expectedCwd string) (*ordjson.Object, error) {
 	host, err := s.Machine()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !host.Is(routeValue(route, "machine")) {
-		return &unreachableError{state: "pending-unreachable", msg: "Recipient is on another machine."}
+		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient is on another machine."}
 	}
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
 	if err != nil {
-		return &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
+		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
 	}
 	session := fmt.Sprint(routeValue(route, "session"))
 	pane := fmt.Sprint(routeValue(route, "pane"))
 	agent, err := herdrclient.Call(herdrPath, session, ObserveTimeout, "agent", "get", pane)
 	if err != nil {
 		if herdrclient.ErrorIsAbsent(err) {
-			return &unreachableError{state: versions.RefreshUnreachable, msg: "Recipient pane is gone (" + err.Error() + "); delivery for this revision is terminal."}
+			return nil, &unreachableError{state: versions.RefreshUnreachable, msg: "Recipient pane is gone (" + err.Error() + "); delivery for this revision is terminal."}
 		}
-		return &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
+		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
 	}
-	return checkAgent(herdrclient.UnwrapAgent(agent), expectedCwd)
+	obj := herdrclient.UnwrapAgent(agent)
+	return obj, checkAgent(obj, expectedCwd)
 }
 
 func noticeText(s *store.Store, sumctlPath, role string, items [][2]*ordjson.Object, withheld int) string {

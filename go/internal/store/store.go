@@ -488,7 +488,10 @@ func (s *Store) Registration(endpoint Endpoint) (*ordjson.Object, error) {
 	return nil, nil
 }
 
-func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Object, error) {
+// Register records endpoint's role. incarnation is the occupant Herdr reported for the pane when it was bound (an
+// incarnation record, see package incarnation), or nil when the caller observed none: a record without one is legacy
+// and proves nothing about who occupies the pane later.
+func (s *Store) Register(endpoint Endpoint, role string, task any, incarnation any) (*ordjson.Object, error) {
 	stateValue, err := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
 	if err != nil {
 		return nil, err
@@ -527,6 +530,7 @@ func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Obj
 	value.Set("pane", endpoint.Pane)
 	value.Set("cwd", endpointCwd(endpoint))
 	value.Set("instance", instance)
+	value.Set("incarnation", incarnation)
 	value.Set("sum_version", contract.SumVersion)
 	mcp := ordjson.NewObject()
 	mcp.Set("server", contract.MCP.Server)
@@ -548,6 +552,31 @@ func (s *Store) Register(endpoint Endpoint, role string, task any) (*ordjson.Obj
 		}
 	}
 	return value, nil
+}
+
+// SetIncarnation replaces the incarnation recorded on endpoint's registration and changes nothing else. The caller
+// holds the state lock and has just judged the current occupant verified against the record it replaces.
+func (s *Store) SetIncarnation(endpoint Endpoint, incarnation any) error {
+	host, err := s.Machine()
+	if err != nil {
+		return err
+	}
+	for _, path := range s.registrationPaths(host, endpoint) {
+		if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
+			continue
+		}
+		value, err := ordjson.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		obj, ok := value.(*ordjson.Object)
+		if !ok || !identityMatches(host, obj, endpoint) {
+			return fmt.Errorf("session registration identity mismatch; inspect the sessions directory")
+		}
+		obj.Set("incarnation", incarnation)
+		return ordjson.WriteFile(path, obj)
+	}
+	return fmt.Errorf("no session registration for pane %s in session %s", endpoint.Pane, endpoint.Session)
 }
 
 func endpointCwd(e Endpoint) any {

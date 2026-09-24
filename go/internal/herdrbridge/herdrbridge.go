@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -43,6 +44,16 @@ func Run(runtimeRoot string, s *store.Store, ctx *ordjson.Object, args []string,
 	if role == "developer" && !isReadOnly(native) {
 		return fmt.Errorf("Developer sessions may only observe through the bridge. Coordination commands need the registered coordinator pane.")
 	}
+	if !isReadOnly(native) {
+		// Only the occupant the registration's role was granted to may act through the bridge; observing needs nothing.
+		recorded, occupiedAt, err := roleRecord(s, registration, endpoint)
+		if err != nil {
+			return err
+		}
+		if verdict := incarnation.Caller(endpoint.Session, endpoint.Pane, recorded, occupiedAt); !verdict.Verified {
+			return fmt.Errorf("Pane %s is registered as %v, but its occupant is not the one that role was granted to (%s: %s). Observation still works; run ./bin/sumctl init here. %s", endpoint.Pane, role, verdict.Outcome, verdict.Reason, incarnation.Recovery(fmt.Sprint(role), verdict.Outcome))
+		}
+	}
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
 	if err != nil {
 		return err
@@ -66,4 +77,23 @@ func isReadOnly(args []string) bool {
 		pair[1] = args[1]
 	}
 	return readOnly[pair]
+}
+
+// roleRecord is the incarnation a registration's role is held by: the owner's for the coordinator (only while the owner
+// names this pane), the registration's own for a worker.
+func roleRecord(s *store.Store, registration *ordjson.Object, endpoint store.Endpoint) (any, string, error) {
+	role, _ := registration.Get("role")
+	if role == "coordinator" {
+		owner, err := s.Owner()
+		if err != nil || owner == nil {
+			return nil, "", err
+		}
+		if owns, err := s.Matches(owner, endpoint); err != nil || !owns {
+			return nil, "", err
+		}
+		recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
+		return recorded, occupiedAt, nil
+	}
+	recorded, occupiedAt := incarnation.RegistrationRecord(registration)
+	return recorded, occupiedAt, nil
 }

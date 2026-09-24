@@ -22,11 +22,21 @@ type fakeRunner struct {
 	durations []time.Duration
 	results   []commandResult
 	errors    []error
+	// terminal is what `pane get` reports for this server's own pane (the occupant check before a mutating call);
+	// those calls are answered here and not scripted or recorded.
+	terminal string
 }
 
 func (r *fakeRunner) Run(_ context.Context, args []string, duration time.Duration, _ bool) (commandResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if len(args) > 2 && args[0] == "pane" && args[1] == "get" {
+		terminal := r.terminal
+		if terminal == "" {
+			terminal = "term-" + args[2]
+		}
+		return commandResult{stdout: `{"result":{"pane":{"pane_id":"` + args[2] + `","terminal_id":"` + terminal + `"}}}`}, nil
+	}
 	r.calls = append(r.calls, append([]string(nil), args...))
 	r.durations = append(r.durations, duration)
 	if len(r.errors) > 0 {
@@ -57,9 +67,13 @@ func newTestService(t *testing.T, role string, runner *fakeRunner) Service {
 		t.Fatal(err)
 	}
 	session, pane := "mesh-test", "w-test:p1"
-	writeJSON(t, filepath.Join(home, "sessions", store.RegistrationKey(store.Endpoint{Machine: machine, Session: session, Pane: pane})+".json"), map[string]string{
-		"instance": instance, "machine": machine, "session": session, "pane": pane, "role": role,
+	bound := map[string]any{"terminal": "term-" + pane, "agent_session": nil, "shell": nil, "observed_at": "2026-09-24T00:00:00+00:00"}
+	writeJSON(t, filepath.Join(home, "sessions", store.RegistrationKey(store.Endpoint{Machine: machine, Session: session, Pane: pane})+".json"), map[string]any{
+		"instance": instance, "machine": machine, "session": session, "pane": pane, "role": role, "incarnation": bound,
 	})
+	if role == "coordinator" {
+		writeJSON(t, filepath.Join(home, "context.json"), map[string]any{"machine": machine, "session": session, "pane": pane, "role": role, "incarnation": bound})
+	}
 	service := NewService(Config{StateHome: home, Session: session, Pane: pane})
 	service.runner = runner
 	return service
@@ -255,9 +269,38 @@ func TestAuthorize_findsARegistrationKeyedByThisHostsLegacyHostname(t *testing.T
 		writeJSON(t, filepath.Join(home, "sessions", key+".json"), map[string]string{
 			"instance": "instance-1", "machine": tc.recorded, "session": session, "pane": pane, "role": "coordinator",
 		})
-		err := NewService(Config{StateHome: home, Session: session, Pane: pane}).authorize([]string{"pane", "list"})
+		err := NewService(Config{StateHome: home, Session: session, Pane: pane}).authorize(context.Background(), []string{"pane", "list"})
 		if (err == nil) != tc.allowed {
 			t.Fatalf("registration recorded on %q: authorize = %v, want allowed=%v", tc.recorded, err, tc.allowed)
 		}
+	}
+}
+
+// A pane whose occupant is no longer the one its role was granted to (Herdr restarted and restored the pane ID under a
+// new terminal) may still observe but not prompt; nothing reaches the target.
+func TestService_relayFromAReplacedCallerIsRefusedBeforeAnyPrompt(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUM_PS_BIN", filepath.Join(root, "tests", "fixtures", "ps.py"))
+	runner := &fakeRunner{terminal: "term-after-restart", results: []commandResult{
+		{stdout: `{"result":{"agent":{"agent_status":"idle"}}}`},
+		{stdout: `{"result":{"process_info":{"pane_id":"w-test:p1","shell_pid":5151}}}`},
+		{stdout: `{"result":{"ok":true}}`},
+	}}
+	t.Setenv("FAKE_PS_STARTS", `{"5151": "2030-01-01T00:00:00Z"}`)
+	service := newTestService(t, "worker", runner)
+	_, err = service.Call(context.Background(), "herdr_relay", json.RawMessage(`{"target":"w-test:p2","message":"hello"}`))
+	if err == nil || !strings.Contains(err.Error(), "replaced") {
+		t.Fatalf("relay from a replaced pane = %v, want the replaced refusal", err)
+	}
+	for _, call := range runner.calls {
+		if len(call) > 1 && call[0] == "agent" && call[1] == "prompt" {
+			t.Fatalf("a prompt was sent: %v", runner.calls)
+		}
+	}
+	if _, err := service.Call(context.Background(), "herdr_agent_list", json.RawMessage(`{}`)); err != nil && strings.Contains(err.Error(), "occupant") {
+		t.Fatalf("observation was refused: %v", err)
 	}
 }

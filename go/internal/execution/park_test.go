@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -64,6 +65,7 @@ func newLab(t *testing.T) *lab {
 		t.Fatal(err)
 	}
 	t.Setenv("SUM_HERDR_BIN", fakeHerdr)
+	t.Setenv("SUM_PS_BIN", filepath.Join(root, "tests", "fixtures", "ps.py"))
 	t.Setenv("SUM_LSOF_BIN", fakeLsof)
 	t.Setenv("FAKE_HERDR_ROOT", herdrRoot)
 	t.Setenv("FAKE_SESSION", "sum-test")
@@ -92,10 +94,12 @@ func newLab(t *testing.T) *lab {
 	owner.Set("pane", "w-parent:p1")
 	owner.Set("machine", host)
 	owner.Set("role", "coordinator")
+	// The occupant the fake Herdr reports for the coordinator pane, as init would have recorded it.
+	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
 	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil); err != nil {
+	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
@@ -686,4 +690,35 @@ func (l *lab) identity() machine.Identity {
 		l.t.Fatal(err)
 	}
 	return host
+}
+
+// A worker pane ID that Herdr restored under a new server, now occupied by a different live agent (a new terminal and
+// shell), is not proof that the recorded attempt stopped: the attempt keeps its reservation and nothing is released.
+func TestPark_aRestoredPaneWithADifferentLiveAgentKeepsTheAttemptsCapacity(t *testing.T) {
+	l := newLab(t)
+	l.writeSettings(1, 1)
+	l.plantLsof(nil)
+	l.writeIdleWorker()
+	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	worker := state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)
+	worker["terminal_id"], worker["shell_pid"], worker["agent"] = "term-after-restart", 5151, "codex"
+	out, _ := json.Marshal(state)
+	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	occupant := fmt.Sprintf(`"occupant": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "checkout": %q, "harness": "claude", "name": "idle", "shell_pid": 4242, "pid": null, "argv": null}`, l.host, l.checkout)
+	l.saveTask(l.workerRunningJSON(occupant))
+	if _, err := l.park(workerID); err == nil {
+		t.Fatal("a different occupant of the recorded pane released the attempt's capacity")
+	}
+	if l.attemptState(workerID) == "released" || l.heldCount() == 0 {
+		t.Fatalf("attempt state = %s, held = %d; want the reservation kept", l.attemptState(workerID), l.heldCount())
+	}
 }

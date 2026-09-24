@@ -63,7 +63,7 @@ func TestRegistration_findsASessionFileKeyedByALegacyHostnameAndRekeysIt(t *test
 		t.Fatalf("role = %v, want worker", role)
 	}
 
-	rekeyed, err := s.Register(endpoint, "worker", "t-aaaaaaaaaaaa")
+	rekeyed, err := s.Register(endpoint, "worker", "t-aaaaaaaaaaaa", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestRegisterThenRegistration_roundTripsAndPreservesRegisteredAt(t *testing.
 	}
 	endpoint := Endpoint{Machine: "m1", Session: "s1", Pane: "p1", Cwd: "/tmp/x"}
 
-	first, err := s.Register(endpoint, "developer", nil)
+	first, err := s.Register(endpoint, "developer", nil, nil)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestRegisterThenRegistration_roundTripsAndPreservesRegisteredAt(t *testing.
 		t.Fatal("registration = nil, want the record just written")
 	}
 
-	second, err := s.Register(endpoint, "worker", "t-0123456789ab")
+	second, err := s.Register(endpoint, "worker", "t-0123456789ab", nil)
 	if err != nil {
 		t.Fatalf("re-register: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestRegistration_rejectsIdentityMismatch(t *testing.T) {
 		t.Fatalf("init: %v", err)
 	}
 	endpoint := Endpoint{Machine: "m1", Session: "s1", Pane: "p1"}
-	if _, err := s.Register(endpoint, "developer", nil); err != nil {
+	if _, err := s.Register(endpoint, "developer", nil, nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
@@ -219,10 +219,10 @@ func TestRegistrations_returnsAllSortedByFilename(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if _, err := s.Register(Endpoint{Machine: "m1", Session: "s1", Pane: "p1"}, "developer", nil); err != nil {
+	if _, err := s.Register(Endpoint{Machine: "m1", Session: "s1", Pane: "p1"}, "developer", nil, nil); err != nil {
 		t.Fatalf("register 1: %v", err)
 	}
-	if _, err := s.Register(Endpoint{Machine: "m2", Session: "s2", Pane: "p2"}, "worker", nil); err != nil {
+	if _, err := s.Register(Endpoint{Machine: "m2", Session: "s2", Pane: "p2"}, "worker", nil, nil); err != nil {
 		t.Fatalf("register 2: %v", err)
 	}
 	all, err := s.Registrations()

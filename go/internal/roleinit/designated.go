@@ -1,6 +1,7 @@
 package roleinit
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -61,33 +63,20 @@ func newInstanceID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func observeOwner(s *store.Store, runtimeRoot string, owner *ordjson.Object) (string, string) {
+// observeOwner judges the recorded coordinator pane's current occupant against the owner record. Only absent
+// (pane_not_found) and replaced (a different terminal and shell, no matching native session) prove it gone.
+func observeOwner(s *store.Store, herdrPath string, owner *ordjson.Object) incarnation.Verdict {
 	host, err := s.Machine()
 	if err != nil {
-		return "uncertain", err.Error()
+		return incarnation.Verdict{Outcome: incarnation.Unobservable, Reason: err.Error()}
 	}
 	if !host.Is(asString(owner, "machine")) {
-		return "other-machine", ""
+		return incarnation.Verdict{Outcome: "other-machine", Reason: "the recorded coordinator is on another machine"}
 	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return "uncertain", err.Error()
-	}
-	_, code, err := herdrclient.Observe(herdrPath, asString(owner, "session"), 5*time.Second, "pane", "get", asString(owner, "pane"))
-	if err != nil {
-		detail := err.Error()
-		if len(detail) > 300 {
-			detail = detail[len(detail)-300:]
-		}
-		return "uncertain", detail
-	}
-	if code == "pane_not_found" {
-		return "absent", code
-	}
-	if code != "" {
-		return "uncertain", code
-	}
-	return "present", ""
+	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
+	defer cancel()
+	recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
+	return incarnation.Pane(incarnation.SessionCall(ctx, herdrPath, asString(owner, "session")), asString(owner, "pane"), recorded, occupiedAt)
 }
 
 func copyEndpoint(ctx *ordjson.Object) *ordjson.Object {
@@ -119,6 +108,14 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		return nil, err
 	}
 	pane := unwrapPane(paneValue)
+	// The occupant of this address now: terminal and native session from the pane get above, shell from one
+	// process-info read. Every role below is judged against it, and it is what this init records.
+	self := incarnation.FromInfo(paneValue)
+	observeCtx, cancelObserve := context.WithTimeout(context.Background(), 2*incarnation.ObserveTimeout)
+	selfShell, selfShellErr := incarnation.ProbeShell(incarnation.SessionCall(observeCtx, herdrPath, session), paneID)
+	cancelObserve()
+	self.Shell = selfShell
+	selfProbe := func() (*incarnation.Shell, error) { return selfShell, selfShellErr }
 	installRoot := project.InstallationOf(s, opts.RuntimeRoot)
 	if pane != nil {
 		var nested *ordjson.Object
@@ -141,6 +138,19 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 				why, _ := nested.Get("why")
 				return nil, fmt.Errorf("This pane works inside managed project %v (%v) (%v). A project session is not a sum session: no role was registered and nothing was claimed. Coordinate from the installation directory; a parent directory's instructions grant a project pane nothing.", name, path, why)
 			}
+		}
+	}
+
+	// A reclaim observes the recorded coordinator before the state lock (no Herdr call runs under it) and proceeds
+	// only if the owner record is unchanged when the lock is held.
+	var reclaimVerdict incarnation.Verdict
+	var reclaimSeen []byte
+	if opts.Reclaim {
+		if seen, ownerErr := s.Owner(); ownerErr != nil {
+			return nil, ownerErr
+		} else if seen != nil {
+			reclaimVerdict = observeOwner(s, herdrPath, seen)
+			reclaimSeen, _ = ordjson.MarshalCompact(seen)
 		}
 	}
 
@@ -210,6 +220,27 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			return nil, fmt.Errorf("This pane is not the recorded worker pane of %s (%v). Worker identity comes from dispatch records, not from the brief text.", opts.Task, pane)
 		}
 	}
+	now := store.Now()
+	observed := self.Record(now)
+	// judged is the verdict on the authority recorded for this address, if any; it is reported and, when it could not
+	// be established either way, leaves the registration as it was.
+	var judged *incarnation.Verdict
+	var judgedRole string
+	workerVerified := false
+	prevRole := asString(previous, "role")
+	if task != nil || prevRole == "worker" {
+		workerTask := any(nil)
+		if task != nil {
+			workerTask, _ = task.Get("id")
+		} else {
+			workerTask, _ = previous.Get("task")
+		}
+		v := incarnation.Verdict{Outcome: incarnation.Unrecorded, Reason: "no worker registration for this task records this pane; missing metadata is not proof of a match"}
+		if recordedValue, occupiedAt, ok := incarnation.WorkerRecord(previous, workerTask); ok {
+			v = incarnation.Judge(recordedValue, occupiedAt, self, selfProbe)
+		}
+		judged, judgedRole, workerVerified = &v, "worker", v.Verified
+	}
 
 	result := ordjson.NewObject()
 	result.Set("home", s.Home)
@@ -220,15 +251,20 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 
 	ownsCoordinator := false
 	if owner != nil {
-		if ownsCoordinator, err = s.Matches(owner, store.EndpointFromContext(ctx)); err != nil {
-			return nil, err
+		ownsAddress, matchErr := s.Matches(owner, store.EndpointFromContext(ctx))
+		if matchErr != nil {
+			return nil, matchErr
+		}
+		if ownsAddress && !workerVerified {
+			recordedValue, occupiedAt := incarnation.CoordinatorRecord(owner)
+			v := incarnation.Judge(recordedValue, occupiedAt, self, selfProbe)
+			judged, judgedRole, ownsCoordinator = &v, "coordinator", v.Verified
 		}
 	}
 	var role string
 	var taskID any
-	prevRole := asString(previous, "role")
 	switch {
-	case task != nil || (previous != nil && prevRole == "worker"):
+	case workerVerified:
 		if opts.Role == "coordinator" {
 			return nil, fmt.Errorf("This pane is a dispatched worker; it cannot become the coordinator.")
 		}
@@ -244,28 +280,38 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		}
 		role = "coordinator"
 		taskID = nil
+		changed := false
 		if recorded := asString(owner, "machine"); recorded != asString(ctx, "machine") {
 			owner.Set("machine", asString(ctx, "machine"))
-			if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
-				return nil, err
-			}
+			changed = true
 		}
 		if _, hasRole := owner.Get("role"); !hasRole {
 			owner.Set("role", "coordinator")
 			owner.Set("instance", instanceStr)
 			owner.Set("sum_version", contract.SumVersion)
-			owner.Set("upgraded_at", store.Now())
+			owner.Set("upgraded_at", now)
+			changed = true
+			result.Set("upgraded", true)
+		}
+		// A verified occupant refreshes the evidence it is judged by next time: a legacy record is adopted here, and
+		// a handoff, restore, or new conversation records the terminal and session it now has.
+		recordedValue, _ := owner.Get("incarnation")
+		if refreshed, differs := incarnation.Refresh(recordedValue, self, now); differs {
+			owner.Set("incarnation", refreshed)
+			changed = true
+		}
+		if changed {
 			if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
 				return nil, err
 			}
-			result.Set("upgraded", true)
 		}
 	case owner == nil && (opts.Role == "" || opts.Role == "coordinator"):
 		owner = copyEndpoint(ctx)
 		owner.Set("role", "coordinator")
 		owner.Set("instance", instanceStr)
 		owner.Set("sum_version", contract.SumVersion)
-		owner.Set("claimed_at", store.Now())
+		owner.Set("claimed_at", now)
+		owner.Set("incarnation", observed)
 		if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
 			return nil, err
 		}
@@ -273,14 +319,19 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		taskID = nil
 	case opts.Role == "coordinator":
 		if !opts.Reclaim {
+			if judged != nil && judgedRole == "coordinator" {
+				return nil, fmt.Errorf("This pane is the recorded coordinator pane, but its occupant is not the recorded one (%s: %s). %s", judged.Outcome, judged.Reason, incarnation.Recovery("coordinator", judged.Outcome))
+			}
 			return nil, fmt.Errorf("Coordinator is owned by pane %s in session %s on %s. Inspect it; use --reclaim only for a deliberate, verified takeover. Task parent routes stay unchanged either way.", asString(owner, "pane"), asString(owner, "session"), asString(owner, "machine"))
 		}
-		observed, detail := observeOwner(s, opts.RuntimeRoot, owner)
-		if observed != "absent" {
-			return nil, fmt.Errorf("Refusing reclaim: recorded coordinator pane is %s (%s). Only a pane Herdr reports as pane_not_found can be reclaimed; an existing, unreachable, or uncertain coordinator pane is not permission to take over.", observed, detail)
+		if current, _ := ordjson.MarshalCompact(owner); string(current) != string(reclaimSeen) {
+			return nil, fmt.Errorf("Refusing reclaim: the coordinator record changed while its pane was observed. Nothing was claimed; inspect it and retry.")
+		}
+		if reclaimVerdict.Outcome != incarnation.Absent && reclaimVerdict.Outcome != incarnation.Replaced {
+			return nil, fmt.Errorf("Refusing reclaim: recorded coordinator pane is %s (%s). Only a pane Herdr reports as pane_not_found, or one a different occupant now holds (a different terminal and shell, no matching native session), can be reclaimed; an existing, unreachable, uncertain, or unprovable coordinator pane is not permission to take over.", reclaimVerdict.Outcome, reclaimVerdict.Reason)
 		}
 		from := ordjson.NewObject()
-		for _, key := range []string{"machine", "session", "pane", "at", "claimed_at"} {
+		for _, key := range []string{"machine", "session", "pane", "at", "claimed_at", "incarnation"} {
 			v, _ := owner.Get(key)
 			from.Set(key, v)
 		}
@@ -288,21 +339,55 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		owner.Set("role", "coordinator")
 		owner.Set("instance", instanceStr)
 		owner.Set("sum_version", contract.SumVersion)
-		owner.Set("claimed_at", store.Now())
+		owner.Set("claimed_at", now)
+		owner.Set("incarnation", observed)
 		owner.Set("reclaimed_from", from)
-		owner.Set("previous_observed", observed)
+		owner.Set("previous_observed", reclaimVerdict.Outcome)
 		if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
 			return nil, err
 		}
 		result.Set("reclaimed", true)
 		role = "coordinator"
 		taskID = nil
+		judged = nil
 	default:
 		role = "developer"
 		taskID = nil
 	}
+	result.Set("incarnation", incarnationView(judged, judgedRole, role, observed))
 
-	registration, err := s.Register(store.EndpointFromContext(ctx), role, taskID)
+	// An occupant that could be neither proven nor disproven leaves the registration it was judged by untouched, so a
+	// transient Herdr failure never costs a worker or coordinator its record.
+	if judged != nil && !judged.Verified && (judged.Outcome == incarnation.Unobservable || judged.Outcome == incarnation.Unrecorded) && role == "developer" {
+		if err := unlock(); err != nil {
+			return nil, err
+		}
+		released = true
+		result.Set("role", role)
+		result.Set("task", nil)
+		result.Set("registered", false)
+		result.Set("registration", previous)
+		coordinator, err := s.Owner()
+		if err != nil {
+			return nil, err
+		}
+		result.Set("coordinator", coordinator)
+		result.Set("note", "This pane's recorded role could not be verified, so it runs as a developer and its registration was left unchanged. "+incarnation.Recovery(judgedRole, judged.Outcome)+" Role bookkeeping is not an OS-level sandbox.")
+		return result, nil
+	}
+
+	// A verified occupant keeps the recorded shell when this init could not read it; any other occupant is recorded as
+	// observed.
+	registrationRecord := any(observed)
+	if judged != nil && judged.Verified && previous != nil {
+		previousValue, _ := previous.Get("incarnation")
+		if refreshed, differs := incarnation.Refresh(previousValue, self, now); differs {
+			registrationRecord = refreshed
+		} else {
+			registrationRecord = previousValue
+		}
+	}
+	registration, err := s.Register(store.EndpointFromContext(ctx), role, taskID, registrationRecord)
 	if err != nil {
 		return nil, err
 	}
@@ -336,6 +421,8 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			Reason:      "saved task state needs attention",
 			Inline:      true,
 			Snapshot:    tasks,
+			// The coordinator role was granted to this pane's verified occupant above.
+			CallerVerified: true,
 		})
 		if pumpErr != nil {
 			return nil, pumpErr
@@ -371,6 +458,29 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			}
 		}
 	}
+	if role == "developer" && judged != nil && !judged.Verified {
+		note = fmt.Sprintf("This pane's recorded %s role belongs to an earlier occupant (%s), so it is a developer now. %s Role bookkeeping is not an OS-level sandbox.", judgedRole, judged.Outcome, incarnation.Recovery(judgedRole, judged.Outcome))
+	}
 	result.Set("note", note)
 	return result, nil
+}
+
+// incarnationView is the init output's account of which recorded incarnation this pane was judged against.
+func incarnationView(judged *incarnation.Verdict, judgedRole, role string, observed *ordjson.Object) *ordjson.Object {
+	view := ordjson.NewObject()
+	if judged == nil {
+		view.Set("judged", nil)
+		view.Set("outcome", nil)
+		view.Set("reason", "no earlier coordinator or worker record names this pane; this init records its occupant")
+	} else {
+		view.Set("judged", judgedRole)
+		view.Set("outcome", judged.Outcome)
+		view.Set("verified", judged.Verified)
+		view.Set("reason", judged.Reason)
+		if !judged.Verified {
+			view.Set("recovery", incarnation.Recovery(judgedRole, judged.Outcome))
+		}
+	}
+	view.Set("observed", observed)
+	return view
 }

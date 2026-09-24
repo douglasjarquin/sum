@@ -204,6 +204,7 @@ func demoEnv(t *testing.T, root, base string) []string {
 	env = append(env,
 		"SUM_STAGE_OFFLINE=1",
 		"SUM_HERDR_BIN="+filepath.Join(root, "tests/fixtures/herdr.py"),
+		"SUM_PS_BIN="+filepath.Join(root, "tests/fixtures/ps.py"),
 		"SUM_GH_BIN="+filepath.Join(root, "tests/fixtures/gh.py"),
 		"FAKE_GH_ROOT="+filepath.Join(base, "fake-gh"),
 		"SUM_CODEGRAPH_BIN="+filepath.Join(root, "tests/fixtures/codegraph.py"),

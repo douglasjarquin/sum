@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/spf13/cobra"
@@ -49,6 +50,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		runtimeRoot = cwd
 	}
 	installRoot := sumruntime.ResolveInstallation(runtimeRoot, os.Getenv("SUM_INSTALL_ROOT"))
+	incarnation.UseRuntime(runtimeRoot)
 	opts := &rootOptions{reference: reference, runtimeRoot: runtimeRoot, installRoot: installRoot, out: out, err: errOut}
 	root := &cobra.Command{
 		Use:                "sumctl",

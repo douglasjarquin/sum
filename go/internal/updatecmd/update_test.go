@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
@@ -153,11 +155,20 @@ func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 	ctx.Set("pane", "w-parent:p1")
 	ctx.Set("machine", host)
 	ctx.Set("cwd", root)
+	// Coordinator commands verify the calling pane's occupant; answer through the repository's fake Herdr.
+	fixtures := filepath.Join(repoRootForFixtures(t), "tests", "fixtures")
+	t.Setenv("SUM_HERDR_BIN", filepath.Join(fixtures, "herdr.py"))
+	t.Setenv("SUM_PS_BIN", filepath.Join(fixtures, "ps.py"))
+	t.Setenv("FAKE_HERDR_ROOT", filepath.Join(base, "fake-herdr"))
+	t.Setenv("FAKE_SESSION", "sum-test")
+	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
 	owner := ordjson.NewObject()
 	owner.Set("session", "sum-test")
 	owner.Set("pane", "w-parent:p1")
 	owner.Set("machine", host)
 	owner.Set("role", "coordinator")
+	// The occupant the fake Herdr reports for the coordinator pane, as init would have recorded it.
+	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
 	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +176,7 @@ func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil); err != nil {
+	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	buildCompatibleRelease(t, filepath.Join(root, ".local", "releases"), newSHA)
@@ -320,4 +331,14 @@ func dump(v any) string {
 		return fmt.Sprint(v)
 	}
 	return string(encoded)
+}
+
+// repoRootForFixtures is this repository's root, where tests/fixtures lives.
+func repoRootForFixtures(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate the test source")
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }

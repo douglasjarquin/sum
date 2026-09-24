@@ -16,6 +16,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -358,6 +359,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			opts.Tasks = pumpTasks
 			opts.Force = pumpForce
 			opts.Inline = true
+			opts.CallerVerified = callerVerified(st, ctx, reg)
 			opts.Snapshot = tasks
 			opts.Budget = time.Duration(pumpBudget * float64(time.Second))
 			view, err := returns.Pump(st, opts)
@@ -603,4 +605,29 @@ func capitalizeHerdrContext(msg string) string {
 		return "Run" + msg[3:]
 	}
 	return msg
+}
+
+// callerVerified judges the calling pane against the incarnation its registration's role records: the owner's for the
+// coordinator, the worker registration's own for a worker. Anything else is not verified, and the delivery pass then
+// checks the pane itself before presenting its inline listing.
+func callerVerified(st *store.Store, ctx *ordjson.Object, reg *ordjson.Object) bool {
+	endpoint := store.EndpointFromContext(ctx)
+	role, _ := reg.Get("role")
+	switch role {
+	case "coordinator":
+		owner, err := st.Owner()
+		if err != nil || owner == nil {
+			return false
+		}
+		if owns, err := st.Matches(owner, endpoint); err != nil || !owns {
+			return false
+		}
+		recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
+		return incarnation.Caller(endpoint.Session, endpoint.Pane, recorded, occupiedAt).Verified
+	case "worker":
+		task, _ := reg.Get("task")
+		recorded, occupiedAt, ok := incarnation.WorkerRecord(reg, task)
+		return ok && incarnation.Caller(endpoint.Session, endpoint.Pane, recorded, occupiedAt).Verified
+	}
+	return false
 }

@@ -22,7 +22,12 @@ parent = os.environ.get("HERDR_PANE_ID", "w-parent:p1")
 if not state["panes"].get(parent, {}).get("created"):  # A pane this fake created (worktree/workspace/split) keeps its own cwd and agent, like Herdr's store; only the scripted root pane follows the FAKE_PARENT_* scenario.
     _kept = {k: v for k, v in state["panes"].get(parent, {}).items() if k in ("tokens", "token_sources", "label")}  # Metadata and labels survive like Herdr's own store.
     state["panes"][parent] = {**_kept, "pane_id": parent, "cwd": os.environ.get("FAKE_PARENT_CWD", "/tmp"), "workspace_id": parent.split(":")[0],
-      "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": os.environ.get("FAKE_PARENT_KIND", "claude")}
+      "agent_status": os.environ.get("FAKE_PARENT_STATUS", "idle"), "agent": os.environ.get("FAKE_PARENT_KIND", "claude"),
+      # Herdr's terminal_id changes on every server incarnation; FAKE_PARENT_TERMINAL simulates a restart or live handoff of the scripted pane.
+      "terminal_id": os.environ.get("FAKE_PARENT_TERMINAL") or "term-" + parent}
+    if os.environ.get("FAKE_PARENT_SHELL_PID"): state["panes"][parent]["shell_pid"] = int(os.environ["FAKE_PARENT_SHELL_PID"])
+    if os.environ.get("FAKE_PARENT_SESSION"):  # The native conversation an official integration reports.
+        state["panes"][parent]["agent_session"] = {"agent": state["panes"][parent]["agent"], "kind": "id", "source": "herdr:" + str(state["panes"][parent]["agent"]), "value": os.environ["FAKE_PARENT_SESSION"]}
 state["workspaces"].setdefault(parent.split(":")[0], {"workspace_id": parent.split(":")[0], "label": "coordinator", "worktree": None})
 
 def save():
@@ -47,7 +52,7 @@ if args[:2] == ["worktree", "create"]:
     if result.returncode: fail(result.stderr)
     workspace = "w-" + uuid.uuid4().hex[:6]
     pane = workspace + ":p1"
-    state["panes"][pane] = {"pane_id": pane, "cwd": str(path), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "created": True}
+    state["panes"][pane] = {"pane_id": pane, "cwd": str(path), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "created": True, "terminal_id": "term-" + pane}
     state["workspaces"][workspace] = {"workspace_id": workspace, "label": arg("--label") if "--label" in args else "",
                                       "worktree": {"checkout_path": str(path), "repo_root": arg("--cwd"), "is_linked_worktree": True}}
     response = {"root_pane": {"pane_id": pane}, "workspace": {"workspace_id": workspace},
@@ -58,7 +63,7 @@ if args[:2] == ["workspace", "create"]:
     if "--no-focus" not in args or "--cwd" not in args: fail("wrong workspace contract")
     workspace = "w-" + uuid.uuid4().hex[:6]
     pane = workspace + ":p1"
-    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "created": True}
+    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "created": True, "terminal_id": "term-" + pane}
     state["workspaces"][workspace] = {"workspace_id": workspace, "label": arg("--label") if "--label" in args else "", "worktree": None}
     emit({"workspace": {"workspace_id": workspace}, "tab": {"tab_id": workspace + ":t1"}, "root_pane": {"pane_id": pane}})
 if args[:2] == ["agent", "start"]:
@@ -169,7 +174,7 @@ if args[:3] == ["plugin", "pane", "open"]:
     if placement == "popup": emit({"type": "plugin_pane_opened", "plugin_pane": {"entrypoint": entry["id"], "plugin_id": row["plugin_id"], "ok": True, "command": entry["command"]}})
     workspace = arg("--target-pane").split(":")[0] if "--target-pane" in args else parent.split(":")[0]
     pane = f"{workspace}:p{len(state['panes']) + 20}"
-    state["panes"][pane] = {"pane_id": pane, "cwd": row["plugin_root"], "workspace_id": workspace, "agent_status": "unknown", "agent": None, "label": entry.get("title"), "created": True, "plugin_command": entry["command"]}
+    state["panes"][pane] = {"pane_id": pane, "cwd": row["plugin_root"], "workspace_id": workspace, "agent_status": "unknown", "agent": None, "label": entry.get("title"), "created": True, "plugin_command": entry["command"], "terminal_id": "term-" + pane}
     emit({"type": "plugin_pane_opened", "plugin_pane": {"entrypoint": entry["id"], "plugin_id": row["plugin_id"], "pane": state["panes"][pane], "command": entry["command"]}})
 if args[:2] == ["agent", "read"]:
     pane = state["panes"].get(args[2])
@@ -255,12 +260,12 @@ if args[:2] == ["pane", "split"]:
     if not target: fail("pane_not_found", f"pane {args[2]} not found")
     if os.environ.get("FAKE_SPLIT_CRASH"):  # Real Herdr created the pane, the caller died before recording the id.
         workspace = target["workspace_id"]; pane = f"{workspace}:p{len(state['panes']) + 10}"
-        state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "shell_pid": 5000 + len(state["panes"]), "processes": []}
+        state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "shell_pid": 5000 + len(state["panes"]), "processes": [], "terminal_id": "term-" + pane}
         save(); sys.exit(137)
     workspace = target["workspace_id"]
     pane = f"{workspace}:p{len(state['panes']) + 10}"
     shell_pid = 5000 + len(state["panes"])
-    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "shell_pid": shell_pid, "processes": []}
+    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "shell_pid": shell_pid, "processes": [], "terminal_id": "term-" + pane}
     path_, data_ = lsof_scenario()
     if path_ is not None:  # A real shell sits in the checkout too; the cwd scan sees it whether or not a command runs.
         data_.setdefault("processes", []).append({"pid": shell_pid, "cwd": arg("--cwd")}); path_.write_text(json.dumps(data_))

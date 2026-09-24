@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -170,11 +171,13 @@ func newMeasureFixture(t *testing.T, root string, n int, scenario string) *measu
 		owner.Set(k, v)
 	}
 	owner.Set("role", "coordinator")
+	// The occupant the fake Herdr reports for the coordinator pane, as init would have recorded it.
+	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
 	owner.Set("claimed_at", "2026-09-05T00:00:00+00:00")
 	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Register(store.EndpointFromContext(parent), "coordinator", nil); err != nil {
+	if _, err := s.Register(store.EndpointFromContext(parent), "coordinator", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	repo := filepath.Join(template, "repo")
@@ -197,7 +200,7 @@ func newMeasureFixture(t *testing.T, root string, n int, scenario string) *measu
 		task := map[string]any{
 			"schema": 1, "id": id, "status": "running", "repository": repo, "machine": host.ID, "session": "sum-test",
 			"pane": pane, "workspace": strings.Split(pane, ":")[0], "worktree": worktree, "branch": "sum/" + id,
-			"parent": map[string]any{"machine": host.ID, "session": "sum-test", "pane": "w-parent:p1", "cwd": root},
+			"parent":    map[string]any{"machine": host.ID, "session": "sum-test", "pane": "w-parent:p1", "cwd": root},
 			"questions": []any{}, "evidence": []any{}, "report": nil, "notice": nil, "attention": []any{}, "brief": "measure",
 			"base_sha": strings.Repeat("0", 40), "kind": "ship",
 			"execution": map[string]any{"schema": 1, "verifiers": []any{}, "worker": map[string]any{
@@ -231,7 +234,7 @@ func newMeasureFixture(t *testing.T, root string, n int, scenario string) *measu
 				task["pr"] = pr
 			}
 			panes[pane] = map[string]any{"pane_id": pane, "cwd": worktree, "workspace_id": strings.Split(pane, ":")[0], "agent_status": status, "agent": "claude", "created": true}
-			if _, err := s.Register(store.Endpoint{Machine: host.ID, Session: "sum-test", Pane: pane, Cwd: worktree}, "worker", id); err != nil {
+			if _, err := s.Register(store.Endpoint{Machine: host.ID, Session: "sum-test", Pane: pane, Cwd: worktree}, "worker", id, nil); err != nil {
 				t.Fatal(err)
 			}
 		}
