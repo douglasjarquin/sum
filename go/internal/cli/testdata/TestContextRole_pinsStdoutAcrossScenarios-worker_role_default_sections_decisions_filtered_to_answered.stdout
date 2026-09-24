@@ -99,7 +99,7 @@ execution:
   graph:
     present: false
     ok: true
-    note: "No graph record; the task was dispatched before sum initialized graphs, or the checkout was never created."
+    note: "Not built: sum indexes a checkout only when the coordinator runs `graph init`, so this task has no code graph. Read the source."
   endpoints:
     worker:
       machine: null

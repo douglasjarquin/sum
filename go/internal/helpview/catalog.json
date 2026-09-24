@@ -39,7 +39,7 @@
       "preset": "Named launch presets in .sum/settings.json: validated harness/model/argv shortcuts expanded at dispatch, not agents or roles",
       "project": "Managed project clones: enroll exactly one repository under <installation>/projects/<owner>/<repo>, list, show, or inspect a migration; never a shared task checkout",
       "herdr": "Session-scoped native CLI bridge for Mesh; no protocol reimplementation",
-      "graph": "Per-checkout code graph (pinned codegraph): retry/resume one task's initialization, observe its freshness, or print an MCP snippet; never installs or configures globally",
+      "graph": "Per-checkout code graph (pinned codegraph), built only on request: index one task's checkout, observe its freshness, or print an MCP snippet; never installs or configures globally",
       "lsp": "Install allowlisted LSP binaries through mise into .local/bin; unknown binaries are refused; an existing link is never retargeted",
       "dev": "Prepare, list, or remove isolated self-development checkouts of this installation",
       "brief": "Inspect, regenerate, request, or adopt versioned worker brief revisions; the brief a worker reads is never rewritten",
@@ -941,10 +941,10 @@
   },
   "graph": {
     "topic": "graph",
-    "help": "Per-checkout code graph (pinned codegraph): retry/resume one task's initialization, observe its freshness, or print an MCP snippet; never installs or configures globally",
+    "help": "Per-checkout code graph (pinned codegraph), built only on request: index one task's checkout, observe its freshness, or print an MCP snippet; never installs or configures globally",
     "arguments": [],
     "subcommands": {
-      "init": "Coordinator only: initialize or reconcile the task checkout's index (bounded retries; exhausted stays recorded)",
+      "init": "Coordinator only: build the task checkout's index on request and confirm it complete (one writer per checkout; three failures record exhausted)",
       "status": "Recorded graph state plus one live freshness observation; writes nothing",
       "config": "Print an MCP snippet naming the pinned binary for one harness; no file is written"
     },
@@ -1775,7 +1775,7 @@
   },
   "graph-init": {
     "topic": "graph-init",
-    "help": "Coordinator only: initialize or reconcile the task checkout's index (bounded retries; exhausted stays recorded)",
+    "help": "Coordinator only: build the task checkout's index on request and confirm it complete (one writer per checkout; three failures record exhausted)",
     "arguments": [
       {
         "name": "task",

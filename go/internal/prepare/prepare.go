@@ -14,7 +14,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/brief"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/environment"
-	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -279,10 +278,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if err := s.SaveTask(task); err != nil {
 		return failPrepare(s, tid, err)
 	}
-	record := graph.InitCheckout(s, args.RuntimeRoot, worktreePath, "task", nil)
-	if err := graph.WriteTaskGraph(s, task, record); err != nil {
-		return failPrepare(s, tid, err)
-	}
 	briefPath, err := brief.WriteInitial(s, args.RuntimeRoot, args.SumctlPath, task)
 	if err != nil {
 		return failPrepare(s, tid, err)
@@ -298,7 +293,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		unlock()
 		return failPrepare(s, tid, err)
 	}
-	for _, key := range []string{"pane", "workspace", "worktree", "verification_policy", "brief_path", "status", "graph"} {
+	for _, key := range []string{"pane", "workspace", "worktree", "verification_policy", "brief_path", "status"} {
 		v, _ := task.Get(key)
 		current.Set(key, v)
 	}

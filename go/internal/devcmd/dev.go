@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/graph"
-	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -74,11 +73,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 			return nil, err
 		}
 	}
-	graphRecord := graph.InitCheckout(s, runtimeRoot, path, "development", objectField(existing, "graph"))
-	existing.Set("graph", graphview.Summary(graphRecord))
-	if err := ordjson.WriteFile(filepath.Join(path, ".sum", "dev.json"), existing); err != nil {
-		return nil, err
-	}
 	var paneView any
 	if pane {
 		if ctx == nil {
@@ -119,8 +113,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 	result.Set("reopened", reopened)
 	result.Set("role", "developer")
 	result.Set("pane", paneView)
-	result.Set("graph", graphview.Summary(graphRecord))
-	result.Set("note", "Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates.")
+	result.Set("note", fmt.Sprintf("Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates. sum built no code graph here; read the source, or index this checkout yourself on demand with `CODEGRAPH_NO_DAEMON=1 CODEGRAPH_NO_DOWNLOAD=1 %s init %s`.", graph.BinPath(runtimeRoot), path))
 	return result, nil
 }
 

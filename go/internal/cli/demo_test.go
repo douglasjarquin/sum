@@ -66,7 +66,12 @@ func TestOfflineDemo(t *testing.T) {
 	if !strings.HasPrefix(asString(owned["error"]), "Coordinator is owned by pane w-parent:p1") {
 		t.Fatalf("owned %v", owned)
 	}
+	codegraphCalls := filepath.Join(base, "fake-codegraph", "calls.jsonl")
+	callsBefore := countLines(t, codegraphCalls)
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", brief, "--approved")
+	if added := countLines(t, codegraphCalls) - callsBefore; added != 0 {
+		t.Fatalf("dispatch invoked codegraph %d times; checkout creation must not index", added)
+	}
 	if asString(asMap(asMap(task["launch"])["source"])["harness"]) != "root" {
 		t.Fatalf("launch %v", task["launch"])
 	}
@@ -86,12 +91,22 @@ func TestOfflineDemo(t *testing.T) {
 	if !strings.Contains(asString(refused["error"]), "1 of 1 slots for") {
 		t.Fatalf("admission %v", refused)
 	}
-	if asString(asMap(task["graph"])["state"]) != "ready" {
-		t.Fatalf("graph %v", task["graph"])
+	if graph, ok := task["graph"]; ok {
+		t.Fatalf("dispatch recorded graph %v; no index was requested", graph)
 	}
 	worktree := asString(task["worktree"])
 	if git(worktree, "status", "--porcelain", "--untracked-files=all") != "" {
 		t.Fatal("dirty worktree")
+	}
+	if _, err := os.Stat(filepath.Join(worktree, ".codegraph")); !os.IsNotExist(err) {
+		t.Fatalf("dispatch created an index: %v", err)
+	}
+	briefText, err := os.ReadFile(asString(task["brief_path"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(briefText), "not built") || !strings.Contains(string(briefText), "graph init "+taskID) {
+		t.Fatalf("brief does not say the graph is not built with the graph init command:\n%s", briefText)
 	}
 	worker := d.ctlPane(asString(task["pane"]), true, "init")
 	if asString(worker["role"]) != "worker" || asString(worker["task"]) != taskID {
@@ -152,6 +167,19 @@ func TestOfflineDemo(t *testing.T) {
 	}
 	_ = io.Discard
 	t.Log("offline demo covered init, dispatch, remainder-free quota path skipped, hook event, ask/answer, report, review, verify")
+}
+
+// countLines counts newline-terminated records in a fake's call log; a missing log counts zero.
+func countLines(t *testing.T, path string) int {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Count(string(raw), "\n")
 }
 
 type demoLab struct {

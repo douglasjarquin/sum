@@ -180,7 +180,7 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 		result := ordjson.NewObject()
 		result.Set("present", false)
 		result.Set("ok", true)
-		result.Set("note", "No graph record; the task was dispatched before sum initialized graphs, or the checkout was never created.")
+		result.Set("note", "Not built: sum indexes a checkout only when the coordinator runs `graph init`, so this task has no code graph. Read the source.")
 		return result, nil
 	}
 	path, err := Path(s, taskID)

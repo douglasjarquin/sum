@@ -328,12 +328,17 @@ func graphText(s *store.Store, sumctlPath string, task *ordjson.Object) string {
 		record.Set("state", "failed")
 		record.Set("error", err.Error())
 	}
-	if record == nil {
-		return "- Not recorded for this task (dispatched before sum initialized graphs). Use your normal source tools; do not run `codegraph init` yourself."
+	var state string
+	if record != nil {
+		state = asString(func() any { v, _ := record.Get("state"); return v }())
 	}
-	state := asString(func() any { v, _ := record.Get("state"); return v }())
 	var lines []string
-	if state == "ready" {
+	if record == nil {
+		lines = append(lines, "- State: not built. sum indexes a checkout only when asked, so this checkout has no code graph; "+graphview.GraphFallback)
+		lines = append(lines, fmt.Sprintf("- The coordinator can build one with `%s`; read `%s` (`graph`) for a later state. Do not run `codegraph init`, `index`, or `install` yourself; index ownership stays recorded by sum.",
+			shquote.CommandFor(sumctlPath, s.Home, "graph", "init", id),
+			shquote.CommandFor(sumctlPath, s.Home, "context", id, "--section", "execution")))
+	} else if state == "ready" {
 		index := objectField(record, "index")
 		tool := objectField(record, "tool")
 		lines = append(lines, fmt.Sprintf("- State: `ready`. codegraph %v indexed this checkout at `%v` (%v files, %v symbols, %v edges); the index is local to this checkout only. The primary clone and other worktrees have their own index or none; never point a query at them.",
