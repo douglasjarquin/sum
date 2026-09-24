@@ -19,7 +19,7 @@ commands:
   notice: Explicit single retry of the pending notice toward one recipient
   archive: "Coordinator only: archive a task after every execution reservation was separately released"
   ask: "Worker: save a question before waiting; the parent is notified only after it is saved"
-  answer: "Coordinator: record the user's actual decision for one question"
+  answer: "Coordinator: record the user's actual decision for one question, or --close an answer no worker can apply any longer"
   report: "Worker: submit the report (and --handoff) as a claim for the coordinator to verify"
   resolve: "Worker: mark an answered question applied"
   review: "Reviewer pane: append independent findings for one candidate; never replaces the worker report"

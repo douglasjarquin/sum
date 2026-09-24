@@ -24,7 +24,15 @@ Record the user's actual answer with:
 ./bin/sumctl answer TASK_ID QUESTION_ID --text 'The authorized answer'
 ```
 
-An answer stays visible until the worker marks it applied. `sumctl brief list TASK_ID` shows whether a report was produced under an older brief revision whose verification policy has since changed; treat that as evidence needing refresh review, not as a failure or an approval.
+An answer stays visible until the worker marks it applied.
+When that worker is gone and its attempt is already released (`execution park` proved the stop), close the answer instead so the task can be archived:
+
+```sh
+./bin/sumctl answer TASK_ID QUESTION_ID --close --reason 'Why no worker will apply it'
+```
+
+The question becomes `closed-unapplied` with who closed it, when, and why; it is never recorded as applied. It refuses an open question, which still needs the user's answer, and any attempt that is not released.
+`sumctl brief list TASK_ID` shows whether a report was produced under an older brief revision whose verification policy has since changed; treat that as evidence needing refresh review, not as a failure or an approval.
 
 ## Pending returns
 
