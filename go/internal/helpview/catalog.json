@@ -39,6 +39,7 @@
       "settings": "Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited",
       "preset": "Named launch presets in .sum/settings.json: validated harness/model/argv shortcuts expanded at dispatch, not agents or roles",
       "project": "Managed project clones: enroll exactly one repository under <installation>/projects/<owner>/<repo>, list, show, or inspect a migration; never a shared task checkout",
+      "factory": "Per-project software factory: enable a lane, tick for the next ready issue, claim it, and merge only at high confidence; never a daemon",
       "herdr": "Session-scoped native CLI bridge for Mesh; no protocol reimplementation",
       "graph": "Per-checkout code graph (pinned codegraph), built only on request: index one task's checkout, observe its freshness, or print an MCP snippet; never installs or configures globally",
       "lsp": "Install allowlisted LSP binaries through mise into .local/bin; unknown binaries are refused; an existing link is never retargeted",
@@ -54,6 +55,8 @@
       "doctor",
       "env-show",
       "execution-show",
+      "factory-merge-check",
+      "factory-status",
       "graph-config",
       "graph-status",
       "help",
@@ -2151,6 +2154,202 @@
       {
         "name": "--allow-pre-machine-identity",
         "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; pass it only when the user decides to select such a release. The override is recorded in the update history."
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "factory": {
+    "topic": "factory",
+    "help": "Per-project software factory: enable a lane, tick for the next ready issue, claim it, and merge only at high confidence; never a daemon",
+    "arguments": [],
+    "subcommands": {
+      "status": "Enabled factories and held lanes; writes nothing",
+      "enable": "Coordinator only: enable one enrolled project's factory lane",
+      "disable": "Coordinator only: disable a factory that holds no lanes",
+      "tick": "One GitHub observation for ready work; records next_tick_at when idle; never sleeps or dispatches",
+      "claim": "Coordinator only: label the issue sum-claimed and occupy one lane",
+      "release": "Coordinator only: free or gate a held lane",
+      "merge-check": "Whether the task may merge at high confidence; writes nothing",
+      "merge": "Coordinator only: squash-merge after a high-confidence merge-check"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "merge-check",
+      "status"
+    ]
+  },
+  "factory-status": {
+    "topic": "factory-status",
+    "help": "Enabled factories and held lanes; writes nothing",
+    "arguments": [
+      {
+        "name": "--project",
+        "help": "Limit the listing to one owner/repo"
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "factory-enable": {
+    "topic": "factory-enable",
+    "help": "Coordinator only: enable one enrolled project's factory lane",
+    "arguments": [
+      {
+        "name": "project",
+        "help": "Enrolled owner/repo",
+        "required": true
+      },
+      {
+        "name": "--lanes",
+        "help": "Lane limit for this project",
+        "default": "1"
+      },
+      {
+        "name": "--ready",
+        "help": "Ready signal: label, issues, roadmap, or project-status",
+        "choices": ["label", "issues", "roadmap", "project-status"],
+        "default": "label"
+      },
+      {
+        "name": "--label",
+        "help": "GitHub issue label that means ready when --ready=label",
+        "default": "ready"
+      },
+      {
+        "name": "--roadmap-issue",
+        "help": "Parent issue whose body table is sequential order when --ready=roadmap"
+      },
+      {
+        "name": "--project-number",
+        "help": "GitHub Project number when --ready=project-status"
+      },
+      {
+        "name": "--ready-option",
+        "help": "Projects Status option that means ready",
+        "default": "Ready"
+      },
+      {
+        "name": "--idle-seconds",
+        "help": "Seconds until next_tick_at when tick finds nothing",
+        "default": "300"
+      },
+      {
+        "name": "--strict-cleanup",
+        "help": "Keep the lane occupied until cleanup, matching factory intake"
+      },
+      {
+        "name": "--skip",
+        "help": "Issue number to never pick (repeatable)"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "factory-disable": {
+    "topic": "factory-disable",
+    "help": "Coordinator only: disable a factory that holds no lanes",
+    "arguments": [
+      {
+        "name": "project",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "factory-tick": {
+    "topic": "factory-tick",
+    "help": "One GitHub observation for ready work; records next_tick_at when idle; never sleeps or dispatches",
+    "arguments": [
+      {
+        "name": "--project",
+        "help": "Limit the tick to one owner/repo"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "factory-claim": {
+    "topic": "factory-claim",
+    "help": "Coordinator only: label the issue sum-claimed and occupy one lane",
+    "arguments": [
+      {
+        "name": "project",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--issue",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--task",
+        "help": "Bind an already-dispatched task id to this lane"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "factory-release": {
+    "topic": "factory-release",
+    "help": "Coordinator only: free or gate a held lane",
+    "arguments": [
+      {
+        "name": "project",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--issue",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--reason",
+        "help": null,
+        "required": true,
+        "choices": ["gated", "merged", "dropped"]
+      },
+      {
+        "name": "--continue",
+        "help": "Free a gated lane because later issues do not depend on it"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "factory-merge-check": {
+    "topic": "factory-merge-check",
+    "help": "Whether the task may merge at high confidence; writes nothing",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": null
+  },
+  "factory-merge": {
+    "topic": "factory-merge",
+    "help": "Coordinator only: squash-merge after a high-confidence merge-check",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
       }
     ],
     "subcommands": null,

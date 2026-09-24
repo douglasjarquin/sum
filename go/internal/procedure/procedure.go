@@ -51,6 +51,8 @@ var Sources = []Source{
 		When: "the `## Code graph` section or `context --section execution` reports an index other than `not built`, or before you ask for one"},
 	{Name: "sum-worker-refresh", Path: "skills/sum-worker/references/refresh.md", Load: OnDemand,
 		When: "a `sum refresh` message or a `brief revision rN is requested` notice reaches you, or before you adopt any revision"},
+	{Name: "sum-worker-factory", Path: "skills/sum-worker/references/factory.md", Load: OnDemand,
+		When: "your brief says this task is a claimed factory issue"},
 }
 
 // Role cores that `init` names for a session it registers; they are read from the runtime, never pinned.

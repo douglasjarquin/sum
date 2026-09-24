@@ -114,6 +114,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addEnvCommands(root)
 	opts.addReleaseCommands(root)
 	opts.addProjectCommands(root)
+	opts.addFactoryCommands(root)
 	opts.addHookCommands(root)
 
 	opts.addShowCommand(root)

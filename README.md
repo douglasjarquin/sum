@@ -8,7 +8,13 @@
 
 sum is a small, Herdr-native agent distro. Launch a coding harness in this directory and it becomes the coordinator: it dispatches every approved request to a worker, stays free for inbox notices, gathers results, and brings decisions back to you.
 
-It is for someone who already has mise, Git, and an authenticated coding harness, and who wants one finished task rather than an unattended factory. Instructions and skills do the reasoning. Herdr owns processes and worktrees. A small synchronous helper preserves task records. There is no sum daemon, scheduler, database server, or permanent hierarchy of managers.
+It is for someone who already has mise, Git, and an authenticated coding harness.
+The default path is one finished task.
+A factory lane (`sumctl factory` plus the factory procedures in `sum-dispatch` and the worker procedure) can run sequential ready issues on an enrolled project without a sum daemon: tick is a one-shot helper, dispatch stays with the coordinator, and merge happens only at high confidence on authorized repositories.
+Instructions and skills do the reasoning.
+Herdr owns processes and worktrees.
+A small synchronous helper preserves task records.
+There is no sum daemon, scheduler, database server, or permanent hierarchy of managers.
 
 Roles and work objects use the dictionary in [docs/terminology.md](docs/terminology.md).
 
