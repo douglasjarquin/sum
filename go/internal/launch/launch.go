@@ -123,13 +123,13 @@ func intField(o *ordjson.Object, key string) (int, bool) {
 }
 
 type ResolveArgs struct {
-	Harness    string
-	Model      string
-	Reasoning  string
-	SameAsRoot bool
-	Extra      []string
-	Preset     string
-	PresetSet  bool
+	Harness     string
+	Model       string
+	Reasoning   string
+	SameAsRoot  bool
+	Extra       []string
+	Preset      string
+	PresetSet   bool
 	RuntimeRoot string
 }
 
@@ -390,9 +390,9 @@ func Confirmation(launch *ordjson.Object) string {
 	observed := asObject(func() any { v, _ := launch.Get("observed"); return v }())
 	status := asString(func() any { v, _ := observed.Get("status"); return v }())
 	verification := map[string]string{
-		"not-started":       "not started yet",
-		"harness-observed":  "Herdr confirmed the harness kind; a CLI-requested model is not runtime-verified because no harness exposes it",
-		"harness-mismatch":  "Herdr reports a different agent kind than requested; inspect the pane",
+		"not-started":      "not started yet",
+		"harness-observed": "Herdr confirmed the harness kind; a CLI-requested model is not runtime-verified because no harness exposes it",
+		"harness-mismatch": "Herdr reports a different agent kind than requested; inspect the pane",
 	}[status]
 	if verification == "" {
 		verification = status

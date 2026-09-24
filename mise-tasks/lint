@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#MISE description="Lint the Go module and portable skill scripts"
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export PATH="$(dirname "$(mise which go)"):${PATH:-}"
+unset GOROOT
+
+unformatted="$(gofmt -l go)"
+if [ -n "$unformatted" ]; then
+  echo "gofmt needed on:"
+  echo "$unformatted"
+  exit 1
+fi
+
+(cd go && go vet ./...)
+
+basedpyright="$(mise which basedpyright)"
+"$basedpyright" \
+  .agents/skills/verify/scripts \
+  .agents/skills/evidence/scripts \
+  .agents/skills/maintain-verification/scripts \
+  .agents/skills/create-verification/scripts
