@@ -428,13 +428,8 @@ func BuildManifest(s *store.Store, root, sha, target string) (*ordjson.Object, e
 	for _, n := range offered.Supports.BriefSchema {
 		brief = append(brief, jsonNumber(n))
 	}
-	var identity []any
-	for _, n := range offered.Supports.MachineIdentity {
-		identity = append(identity, jsonNumber(n))
-	}
 	supports.Set("state_schema", state)
 	supports.Set("brief_schema", brief)
-	supports.Set("machine_identity", identity)
 	treeOut, err := proc.Run([]string{"git", "-C", root, "rev-parse", sha + "^{tree}"}, "", 30*time.Second, true, nil)
 	if err != nil {
 		return nil, err

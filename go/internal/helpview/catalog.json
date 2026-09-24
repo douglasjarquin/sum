@@ -2077,7 +2077,7 @@
       },
       {
         "name": "--allow-pre-machine-identity",
-        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; for a deliberate emergency rollback only. The override is recorded in the update history."
+        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; pass it only when the user decides to select such a release. The override is recorded in the update history."
       }
     ],
     "subcommands": null,
@@ -2102,7 +2102,7 @@
       },
       {
         "name": "--allow-pre-machine-identity",
-        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; for a deliberate emergency rollback only. The override is recorded in the update history."
+        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; pass it only when the user decides to select such a release. The override is recorded in the update history."
       }
     ],
     "subcommands": null,
@@ -2120,7 +2120,7 @@
       },
       {
         "name": "--allow-pre-machine-identity",
-        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; for a deliberate emergency rollback only. The override is recorded in the update history."
+        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; pass it only when the user decides to select such a release. The override is recorded in the update history."
       }
     ],
     "subcommands": null,

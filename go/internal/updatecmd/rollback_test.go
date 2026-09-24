@@ -337,7 +337,12 @@ func fmtBlocking(v any) string {
 
 func newRollbackLab(t *testing.T) *applyLab {
 	t.Helper()
-	lab := newApplyLab(t, applyLabOpts{})
+	return newRollbackLabWith(t, applyLabOpts{})
+}
+
+func newRollbackLabWith(t *testing.T, opts applyLabOpts) *applyLab {
+	t.Helper()
+	lab := newApplyLab(t, opts)
 	buildCompatibleRelease(t, filepath.Join(lab.root, ".local", "releases"), lab.oldSHA)
 	plantNativeHelper(t, lab.root, workingHelper(filepath.Join(lab.home, "checkout-helper.log")))
 	plantTask(t, lab.home)

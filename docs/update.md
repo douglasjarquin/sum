@@ -22,8 +22,8 @@ If the new stable entrypoint fails its check, SUM restores that exact previous t
 If recovery also fails, it preserves the pending operation and reports both failures.
 An interrupted update requires explicit generation-bound recovery before another apply or rollback; the atomic pointer change alone does not prove activation completed.
 Rollback requires an approved compatible target, and checkout rollback also requires a clean checkout with a matching approval.
-Once the coordinator's `context.json`, a session registration, or a task records a stable `m-` machine identity, apply, rollback, and recover refuse a target whose manifest does not offer `supports.machine_identity` 1: that older release compares recorded machines to the raw hostname, so it would demote the coordinator and refuse its reclaim as other-machine.
-`--allow-pre-machine-identity` overrides the refusal for a deliberate emergency rollback and is recorded in `.local/updates.jsonl` as `machine_identity_override`.
+Once the coordinator's `context.json`, a session registration, or a task records a stable `m-` machine identity, apply, rollback, and recover refuse a target whose own tree lacks `go/internal/machine/machine.go`, the file #202 added with the identity (the verified `files` list of a staged release, or the commit of a checkout target, never a field the staging runtime writes): that older release compares recorded machines to the raw hostname, so it would demote the coordinator and refuse its reclaim as other-machine.
+`--allow-pre-machine-identity` overrides the refusal when the user decides to select such a release anyway, and is recorded in `.local/updates.jsonl` as `machine_identity_override`.
 Commands already running finish on the runtime they resolved; worker briefs carry stable `<installation>/bin/sumctl` commands, so their callbacks keep working across the switch; new dispatches use the new default; connected MCP clients keep their tool set until the client itself restarts.
 A refusal names the exact incompatibility and leaves the old installation serving.
 See `skills/sum-update/SKILL.md` for bootstrap, canary, and rollback steps.

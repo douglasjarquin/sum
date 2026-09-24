@@ -127,18 +127,22 @@ Checkout rollback requires a clean tracked and untracked tree whose exact revisi
 
 ### Rolling back below the stable machine identity
 
-A release offers the stable machine identity when its `release.json` lists `supports.machine_identity: [1]`; a checkout target offers it through its own `release-contract`.
+A target offers the stable machine identity when its own tree contains `go/internal/machine/machine.go`, the file #202 (4eb8591) added with it, so 4eb8591 and every later revision offer it and 1f2806d and earlier do not.
+For a staged release that is read from the verified `files` list in its `release.json`; for `--to checkout` it is read from the checkout's commit.
+Never from a field the staging runtime writes: a runtime stamps its own compiled contract into every manifest it stages, so such a field would say nothing about the target, as with checkout contract evidence above.
 A release from before that identity compares each recorded `machine` to the raw hostname.
 Once the records carry a stable `m-` value, that release sees every record as another machine: the coordinator pane is demoted to developer, `init --role coordinator --reclaim` is refused as other-machine, and recovery means rewriting records by hand.
 The records carry it when the coordinator's `context.json`, any session registration, or any task records a `machine` of the form `m-` plus 32 hex digits.
 `.sum/machine.json` is not the evidence, because backups exclude it and a restored home would carry stable records without it.
 
 `update apply --ref`, `update rollback` (default, `--to SHA`, and `--to checkout`), and `update recover` refuse such a target, and the refusal names the record that carries the identity.
-`update check` and `update stage` report the same row as `compatibility.machine_identity` (`supported`, `unused` when the records carry only hostnames, `refused`, or `overridden`) and select nothing.
+`update check` and `update stage` report the same row as `compatibility.machine_identity` and select nothing: `records` and `evidence`, the `marker` path, whether the target has it (`target_has_marker`), and `result` (`supported`, `unused` when the records carry only hostnames, `refused`, or `overridden`).
 Pass `--allow-pre-machine-identity` only when the user decides on an emergency rollback to such a release.
 The override is recorded as `machine_identity_override` in `.local/updates.jsonl` (the `selecting` and `selected` entries of that generation, or the `recover` entry) and in the pending activation record.
+When apply or rollback records a pre-identity runtime that already serves as known-good, that runtime is accepted as it is, and a `known-good` history entry carries the waived row.
 A target that offers the identity, and an installation whose records carry only hostnames, are unaffected, and passing the flag records nothing for them.
 When a failed activation restores the runtime that served just before it, that compensation does not ask for the flag again: the same records ran on it moments ago.
+The recorded `pending.recovery.argv` does not carry the flag. When its helper has this check and the prior known-good predates the identity, append `--allow-pre-machine-identity` to that argv; a helper that predates the identity has no such check and needs nothing.
 After an overridden rollback, plan to roll forward rather than rewrite records; the older release is also the one running `update`, and it does not know this check.
 
 Refusal diagnostics that leave selection and previous-known-good unchanged:

@@ -569,6 +569,14 @@ func verifyCurrentKnownGood(s *store.Store, root string, current, currentDesc *o
 	if ok, _ := check.Get("ok"); ok != true {
 		return fmt.Errorf("The current stable entrypoint cannot be established as known-good: %v", func() any { v, _ := check.Get("detail"); return v }())
 	}
+	if override := identityOverride(compat); override != nil {
+		log := ordjson.NewObject()
+		log.Set("action", "known-good")
+		log.Set("result", "recorded")
+		log.Set("known_good", currentDesc)
+		log.Set("machine_identity_override", override)
+		updateLog(root, log)
+	}
 	return nil
 }
 

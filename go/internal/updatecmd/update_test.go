@@ -94,6 +94,9 @@ func TestApply_doesNotMutateNonInstallationPath(t *testing.T) {
 
 type applyLabOpts struct {
 	otherClone bool
+	// preIdentityOld leaves the stable-identity marker out of the old commit, so
+	// only the new commit offers the identity.
+	preIdentityOld bool
 }
 
 type applyLab struct {
@@ -121,11 +124,15 @@ func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 	if err := os.Chmod(filepath.Join(root, "bin", "sumctl"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if !opts.preIdentityOld {
+		writeFile(t, filepath.Join(root, identityMarker), identityMarkerContent)
+	}
 	git(t, root, "add", ".")
 	git(t, root, "commit", "-m", "old")
 	oldSHA := git(t, root, "rev-parse", "HEAD")
 	writeFile(t, filepath.Join(root, "AGENTS.md"), "new instructions\n")
-	git(t, root, "add", "AGENTS.md")
+	writeFile(t, filepath.Join(root, identityMarker), identityMarkerContent)
+	git(t, root, "add", "AGENTS.md", identityMarker)
 	git(t, root, "commit", "-m", "new")
 	newSHA := git(t, root, "rev-parse", "HEAD")
 
@@ -198,6 +205,9 @@ func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
 		{"go/cmd/sumctl/main.go", "package main\n"},
 		{"skills/sum-worker/SKILL.md", "# worker\n"},
 	}
+	if exec.Command("git", "-C", root, "cat-file", "-e", sha+":"+identityMarker).Run() == nil {
+		required = append(required, struct{ rel, content string }{identityMarker, identityMarkerContent})
+	}
 	var filesEntries []string
 	for _, entry := range required {
 		writeFile(t, filepath.Join(dir, entry.rel), entry.content)
@@ -234,11 +244,13 @@ func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
     "native": {}
   },
   "contracts": {},
-  "supports": {"state_schema": [1], "brief_schema": [1], "machine_identity": [1]},
+  "supports": {"state_schema": [1], "brief_schema": [1]},
   "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": {"machine": "m1", "installation": %q, "instance": null}
 }`, sha, tree, root, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "), root)
 	writeFile(t, filepath.Join(dir, "release.json"), manifest)
 }
+
+const identityMarkerContent = "package machine\n"
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()

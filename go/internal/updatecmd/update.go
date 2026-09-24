@@ -180,22 +180,6 @@ func offeredContracts(manifest *ordjson.Object) (sumVersion, herdrCLI string, mc
 	return
 }
 
-func offeredMachineIdentity(manifest *ordjson.Object) []any {
-	supports := asObject(func() any {
-		if manifest == nil {
-			return nil
-		}
-		v, _ := manifest.Get("supports")
-		return v
-	}())
-	if supports == nil {
-		return nil
-	}
-	v, _ := supports.Get("machine_identity")
-	list, _ := v.([]any)
-	return list
-}
-
 func checkoutContract(candidatePath string) (*ordjson.Object, error) {
 	helpers := []string{
 		filepath.Join(candidatePath, ".local", "bin", "sumctl"),
@@ -367,7 +351,13 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 		}
 		tasks = append(tasks, row)
 	}
-	identity, identityBlocking, err := machineIdentityCompatibility(s, all, offeredMachineIdentity(manifest), allow)
+	offers := releaseOffersIdentity(manifest)
+	if checkout {
+		if offers, err = checkoutOffersIdentity(root, candidateSHA); err != nil {
+			return nil, err
+		}
+	}
+	identity, identityBlocking, err := machineIdentityCompatibility(s, all, offers, allow)
 	if err != nil {
 		return nil, err
 	}

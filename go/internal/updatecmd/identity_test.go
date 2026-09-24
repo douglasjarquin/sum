@@ -1,8 +1,10 @@
 package updatecmd
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,8 +13,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
-
-const preIdentityContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.0","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1]}}`
 
 type preIdentityCase struct {
 	name string
@@ -24,9 +24,8 @@ type preIdentityCase struct {
 
 func preIdentityCases() []preIdentityCase {
 	servingNewRollingBackToOld := func(t *testing.T, lab *applyLab) (string, string) {
-		selectWorkingRelease(t, lab, lab.oldSHA)
+		selectReleaseAllowing(t, lab, lab.oldSHA)
 		selectWorkingRelease(t, lab, lab.newSHA)
-		predateMachineIdentity(t, filepath.Join(lab.root, ".local", "releases", lab.oldSHA))
 		return lab.newSHA, lab.oldSHA
 	}
 	return []preIdentityCase{
@@ -47,8 +46,7 @@ func preIdentityCases() []preIdentityCase {
 		{
 			name: "rollback --to checkout",
 			arrange: func(t *testing.T, lab *applyLab) (string, string) {
-				selectWorkingRelease(t, lab, lab.oldSHA)
-				plantNativeHelper(t, lab.root, contractHelper(preIdentityContractJSON))
+				selectReleaseAllowing(t, lab, lab.oldSHA)
 				return lab.oldSHA, lab.oldSHA
 			},
 			run: func(lab *applyLab, allow PreIdentity) (*ordjson.Object, error) {
@@ -68,7 +66,7 @@ func preIdentityCases() []preIdentityCase {
 func TestPreIdentityTarget_refusedWithoutFlag(t *testing.T) {
 	for _, tc := range preIdentityCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			lab := newRollbackLab(t)
+			lab := newPreIdentityLab(t)
 			serving, _ := tc.arrange(t, lab)
 			before := DefaultRuntime(lab.root)
 			knownGood := recordedKnownGood(t, lab.root)
@@ -102,7 +100,7 @@ func TestPreIdentityTarget_refusedWithoutFlag(t *testing.T) {
 func TestPreIdentityTarget_flagProceedsAndRecordsOverride(t *testing.T) {
 	for _, tc := range preIdentityCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			lab := newRollbackLab(t)
+			lab := newPreIdentityLab(t)
 			_, target := tc.arrange(t, lab)
 
 			view, err := tc.run(lab, AllowPreIdentity)
@@ -131,8 +129,8 @@ func TestPreIdentityTarget_flagProceedsAndRecordsOverride(t *testing.T) {
 }
 
 func TestPreIdentityRecover_refusedWithoutFlagThenRecordsOverride(t *testing.T) {
-	lab := newRollbackLab(t)
-	selectWorkingRelease(t, lab, lab.oldSHA)
+	lab := newPreIdentityLab(t)
+	selectReleaseAllowing(t, lab, lab.oldSHA)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
 	afterSelect = func() error { return errTestInterrupt }
 	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); !errors.Is(err, errTestInterrupt) {
@@ -143,7 +141,6 @@ func TestPreIdentityRecover_refusedWithoutFlagThenRecordsOverride(t *testing.T) 
 	if generation == "" {
 		t.Fatal("pending activation was not recorded")
 	}
-	predateMachineIdentity(t, filepath.Join(lab.root, ".local", "releases", lab.oldSHA))
 
 	_, err := independentRecoverWith(t, lab, generation, RefusePreIdentity)
 	if err == nil || !strings.Contains(err.Error(), "predates the stable machine identity") || !strings.Contains(err.Error(), "--allow-pre-machine-identity") {
@@ -171,13 +168,9 @@ func TestPreIdentityRecover_refusedWithoutFlagThenRecordsOverride(t *testing.T) 
 }
 
 func TestPreIdentity_compensationRestoresServingReleaseWithoutFlag(t *testing.T) {
-	lab := newRollbackLab(t)
-	selectWorkingRelease(t, lab, lab.oldSHA)
-	selectWorkingRelease(t, lab, lab.newSHA)
-	predateMachineIdentity(t, filepath.Join(lab.root, ".local", "releases", lab.oldSHA))
-	if _, err := Rollback(lab.store, lab.ctx, "", AllowPreIdentity); err != nil {
-		t.Fatalf("emergency rollback: %v", err)
-	}
+	lab := newPreIdentityLab(t)
+	selectReleaseAllowing(t, lab, lab.oldSHA)
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
 	candidate := filepath.Join(lab.root, ".local", "releases", lab.newSHA)
 	TestPostCheck = func(_ *store.Store, root string) *ordjson.Object {
 		row := ordjson.NewObject()
@@ -205,10 +198,23 @@ func TestPreIdentity_compensationRestoresServingReleaseWithoutFlag(t *testing.T)
 	assertOverride(t, asObject(func() any { v, _ := last.Get("machine_identity_override"); return v }()))
 }
 
+// A release that 4eb8591 stages writes no identity field into release.json; its
+// tree alone decides.
 func TestPreIdentity_targetOfferingTheIdentityIsUnaffected(t *testing.T) {
 	lab := newRollbackLab(t)
 	selectWorkingRelease(t, lab, lab.oldSHA)
 	selectWorkingRelease(t, lab, lab.newSHA)
+	supports := asObject(func() any {
+		manifest, err := ordjson.ReadFile(filepath.Join(lab.root, ".local", "releases", lab.oldSHA, "release.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		v, _ := asObject(manifest).Get("supports")
+		return v
+	}())
+	if _, has := supports.Get("machine_identity"); has {
+		t.Fatal("fixture manifest carries an identity field; it must look like one 4eb8591 staged")
+	}
 
 	view, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity)
 	if err != nil {
@@ -227,10 +233,9 @@ func TestPreIdentity_targetOfferingTheIdentityIsUnaffected(t *testing.T) {
 }
 
 func TestPreIdentity_installationWithoutStableRecordsIsUnaffected(t *testing.T) {
-	lab := newRollbackLab(t)
-	selectWorkingRelease(t, lab, lab.oldSHA)
+	lab := newPreIdentityLab(t)
+	selectReleaseAllowing(t, lab, lab.oldSHA)
 	selectWorkingRelease(t, lab, lab.newSHA)
-	predateMachineIdentity(t, filepath.Join(lab.root, ".local", "releases", lab.oldSHA))
 	rewriteRecordsToHostname(t, lab)
 
 	view, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity)
@@ -250,10 +255,9 @@ func TestPreIdentity_installationWithoutStableRecordsIsUnaffected(t *testing.T) 
 }
 
 func TestPreIdentity_staleTaskRecordIsEvidence(t *testing.T) {
-	lab := newRollbackLab(t)
-	selectWorkingRelease(t, lab, lab.oldSHA)
+	lab := newPreIdentityLab(t)
+	selectReleaseAllowing(t, lab, lab.oldSHA)
 	selectWorkingRelease(t, lab, lab.newSHA)
-	predateMachineIdentity(t, filepath.Join(lab.root, ".local", "releases", lab.oldSHA))
 	rewriteRecordsToHostname(t, lab)
 	id, err := machine.ID()
 	if err != nil {
@@ -274,13 +278,108 @@ func TestPreIdentity_staleTaskRecordIsEvidence(t *testing.T) {
 	}
 }
 
-func predateMachineIdentity(t *testing.T, releaseDir string) {
-	t.Helper()
-	rewriteReleaseSupports(t, releaseDir, []int{1}, []int{1})
+// A runtime from 9fb9256 stamped its own compiled support into every manifest
+// it staged, including one for a tree that predates the identity.
+func TestPreIdentity_manifestClaimingSupportDoesNotHideAPreIdentityTree(t *testing.T) {
+	lab := newPreIdentityLab(t)
+	selectReleaseAllowing(t, lab, lab.oldSHA)
+	selectWorkingRelease(t, lab, lab.newSHA)
+	path := filepath.Join(lab.root, ".local", "releases", lab.oldSHA, "release.json")
+	raw, err := ordjson.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := asObject(raw)
+	supports := asObject(func() any { v, _ := manifest.Get("supports"); return v }())
+	supports.Set("machine_identity", []any{json.Number("1")})
+	if err := ordjson.WriteFile(path, manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Rollback(lab.store, lab.ctx, "", RefusePreIdentity)
+	if err == nil || !strings.Contains(err.Error(), "predates the stable machine identity") {
+		t.Fatalf("rollback to a pre-identity tree whose manifest claims support = %v, want the refusal", err)
+	}
+	if got := currentSHA(t, lab.root); got != lab.newSHA {
+		t.Fatalf("selection changed to %s", got)
+	}
 }
 
-func contractHelper(contractJSON string) string {
-	return "#!/bin/sh\nif [ \"$1\" = \"release-contract\" ]; then echo '" + contractJSON + "'; exit 0; fi\nexit 0\n"
+// The marker must classify this repository's own history: 1f2806d is the
+// parent of #202, 4eb8591 is #202, and HEAD is everything since.
+func TestPreIdentity_markerClassifiesThisRepositorysHistory(t *testing.T) {
+	top, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("this test needs the sum repository with its history: %v", err)
+	}
+	repo := strings.TrimSpace(string(top))
+	for _, tc := range []struct {
+		rev  string
+		want bool
+	}{
+		{"1f2806db4669efdfab7be90c1e4efd4e21aac0e3", false},
+		{"4eb8591bd9372f96a3322f35ad1be0e70f75987b", true},
+		{"HEAD", true},
+	} {
+		names, err := exec.Command("git", "-C", repo, "ls-tree", "-r", "--name-only", tc.rev).Output()
+		if err != nil {
+			t.Fatalf("%s is not in this clone's history (fetch full history): %v", tc.rev, err)
+		}
+		files := ordjson.NewObject()
+		for _, name := range strings.Split(strings.TrimSpace(string(names)), "\n") {
+			files.Set(name, "sha256:unused")
+		}
+		manifest := ordjson.NewObject()
+		manifest.Set("files", files)
+		if got := releaseOffersIdentity(manifest); got != tc.want {
+			t.Fatalf("release of %s offers the identity = %v, want %v", tc.rev, got, tc.want)
+		}
+		got, err := checkoutOffersIdentity(repo, tc.rev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Fatalf("checkout at %s offers the identity = %v, want %v", tc.rev, got, tc.want)
+		}
+	}
+}
+
+// The serving checkout predates the identity and is recorded as known-good
+// out of band; history says why that was allowed.
+func TestPreIdentity_knownGoodRecordedOverStableRecordsIsLogged(t *testing.T) {
+	lab := newPreIdentityLab(t)
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
+		t.Fatalf("apply from a pre-identity checkout: %v", err)
+	}
+	var entry *ordjson.Object
+	for _, raw := range readUpdateLog(lab.root, 100) {
+		if row := asObject(raw); row != nil && strField(row, "action") == "known-good" {
+			entry = row
+		}
+	}
+	if entry == nil {
+		t.Fatal("recording the pre-identity checkout as known-good left no history entry")
+	}
+	if known := asObject(func() any { v, _ := entry.Get("known_good"); return v }()); strField(known, "kind") != "checkout" || strField(known, "sha") != lab.oldSHA {
+		t.Fatalf("known-good entry = %s, want the checkout at %s", dump(entry), lab.oldSHA)
+	}
+	assertOverride(t, asObject(func() any { v, _ := entry.Get("machine_identity_override"); return v }()))
+}
+
+func newPreIdentityLab(t *testing.T) *applyLab {
+	t.Helper()
+	return newRollbackLabWith(t, applyLabOpts{preIdentityOld: true})
+}
+
+// selectReleaseAllowing selects a release as an operator who already chose the
+// override would, so a pre-identity release can serve before a test starts.
+func selectReleaseAllowing(t *testing.T, lab *applyLab, sha string) {
+	t.Helper()
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", sha), workingHelper(""))
+	if _, err := Apply(lab.store, lab.ctx, sha, true, AllowPreIdentity); err != nil {
+		t.Fatalf("setup apply %s: %v", sha, err)
+	}
 }
 
 // rewriteRecordsToHostname leaves the coordinator's context.json and session
