@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -36,9 +37,11 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 		},
 	})
 
+	allowFlag := strings.TrimPrefix(updatecmd.PreIdentityFlag, "--")
 	addRef := func(name string) {
 		var ref string
 		var noFetch bool
+		var allowPreIdentity bool
 		cmd := &cobra.Command{
 			Use:  name,
 			Args: cobra.NoArgs,
@@ -54,7 +57,7 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 				case "stage":
 					view, err = updatecmd.Stage(st, app.OptionalContext(o.installRoot), ref, noFetch)
 				case "apply":
-					view, err = updatecmd.Apply(st, app.OptionalContext(o.installRoot), ref, noFetch)
+					view, err = updatecmd.Apply(st, app.OptionalContext(o.installRoot), ref, noFetch, updatecmd.PreIdentity(allowPreIdentity))
 				}
 				if err != nil {
 					return err
@@ -64,6 +67,9 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 		}
 		cmd.Flags().StringVar(&ref, "ref", "", "")
 		cmd.Flags().BoolVar(&noFetch, "no-fetch", false, "")
+		if name == "apply" {
+			cmd.Flags().BoolVar(&allowPreIdentity, allowFlag, false, "")
+		}
 		updateCmd.AddCommand(cmd)
 	}
 	addRef("check")
@@ -71,6 +77,7 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 	addRef("apply")
 
 	var to string
+	var rollbackAllow bool
 	rollbackCmd := &cobra.Command{
 		Use:  "rollback",
 		Args: cobra.NoArgs,
@@ -83,7 +90,7 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := updatecmd.Rollback(st, ctx, to)
+			view, err := updatecmd.Rollback(st, ctx, to, updatecmd.PreIdentity(rollbackAllow))
 			if err != nil {
 				return err
 			}
@@ -91,9 +98,11 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 		},
 	}
 	rollbackCmd.Flags().StringVar(&to, "to", "", "")
+	rollbackCmd.Flags().BoolVar(&rollbackAllow, allowFlag, false, "")
 	updateCmd.AddCommand(rollbackCmd)
 
 	var generation string
+	var recoverAllow bool
 	recoverCmd := &cobra.Command{
 		Use:  "recover",
 		Args: cobra.NoArgs,
@@ -109,7 +118,7 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := updatecmd.Recover(st, ctx, generation)
+			view, err := updatecmd.Recover(st, ctx, generation, updatecmd.PreIdentity(recoverAllow))
 			if err != nil {
 				return err
 			}
@@ -117,6 +126,7 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 		},
 	}
 	recoverCmd.Flags().StringVar(&generation, "generation", "", "")
+	recoverCmd.Flags().BoolVar(&recoverAllow, allowFlag, false, "")
 	updateCmd.AddCommand(recoverCmd)
 
 	root.AddCommand(updateCmd)

@@ -253,7 +253,7 @@ func containsNumber(list []any, n int) bool {
 	return false
 }
 
-func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.Object) (*ordjson.Object, error) {
+func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.Object, allow PreIdentity) (*ordjson.Object, error) {
 	resolvedRoot, _ := filepath.Abs(root)
 	resolvedCandidate, _ := filepath.Abs(candidatePath)
 	checkout := resolvedRoot == resolvedCandidate
@@ -351,6 +351,17 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 		}
 		tasks = append(tasks, row)
 	}
+	target := releaseIdentity(manifest)
+	if checkout {
+		target = checkoutIdentity(manifest)
+	}
+	identity, identityBlocking, err := machineIdentityCompatibility(s, all, target, allow)
+	if err != nil {
+		return nil, err
+	}
+	if identityBlocking != "" {
+		blocking = append(blocking, identityBlocking)
+	}
 	currentMCP := asObject(func() any {
 		if current == nil {
 			return nil
@@ -447,6 +458,7 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 	result.Set("deferred", deferred)
 	result.Set("probes", probes)
 	result.Set("tasks", tasks)
+	result.Set("machine_identity", identity)
 	result.Set("candidate", candidateObj)
 	result.Set("current", currentObj)
 	return result, nil
@@ -696,16 +708,16 @@ func descriptorsEqual(a, b *ordjson.Object) bool {
 		asString(func() any { v, _ := a.Get("path"); return v }()) == asString(func() any { v, _ := b.Get("path"); return v }())
 }
 
-func activate(s *store.Store, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
+func activate(s *store.Store, root, target, action string, source *ordjson.Object, allow PreIdentity) (*ordjson.Object, error) {
 	unlock, err := activationLock(root)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return activateLocked(s, root, target, action, source)
+	return activateLocked(s, root, target, action, source, allow)
 }
 
-func activateLocked(s *store.Store, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
+func activateLocked(s *store.Store, root, target, action string, source *ordjson.Object, allow PreIdentity) (*ordjson.Object, error) {
 	if err := requireNoPending(s, root); err != nil {
 		return nil, err
 	}
@@ -714,7 +726,7 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	if err != nil {
 		return nil, err
 	}
-	compat, intended, err := ValidateTarget(s, root, target, current)
+	compat, intended, err := ValidateTarget(s, root, target, current, allow)
 	newSHA := asString(func() any {
 		if intended != nil {
 			v, _ := intended.Get("sha")
@@ -783,6 +795,10 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	pending.Set("source", source)
 	pending.Set("recovery", recovery)
 	pending.Set("status", "prepared")
+	override := identityOverride(compat)
+	if override != nil {
+		pending.Set("machine_identity_override", override)
+	}
 	state.Set("pending", pending)
 	if err := writeActivationState(s, root, state); err != nil {
 		return nil, err
@@ -794,6 +810,9 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	log.Set("from", before)
 	log.Set("to", intended)
 	log.Set("source", source)
+	if override != nil {
+		log.Set("machine_identity_override", override)
+	}
 	updateLog(root, log)
 	if afterPendingWrite != nil {
 		if hookErr := afterPendingWrite(); hookErr != nil {
@@ -801,7 +820,7 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 		}
 	}
 	if _, err := SelectDefault(root, target); err != nil {
-		if _, recErr := recoverPendingLocked(s, root, generation); recErr != nil {
+		if _, recErr := compensate(s, root, generation); recErr != nil {
 			return nil, fmt.Errorf("%s could not replace the selection: %v. Recovery also failed: %v. Run `%s`; records are untouched.", action, err, recErr, argvJoin(recovery))
 		}
 		return nil, err
@@ -814,7 +833,7 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	after := DefaultRuntime(root)
 	check := postCheck(s, root)
 	if ok, _ := check.Get("ok"); ok != true {
-		recovered, recErr := recoverPendingLocked(s, root, generation)
+		recovered, recErr := compensate(s, root, generation)
 		detail, _ := check.Get("detail")
 		if recErr != nil {
 			failLog := ordjson.NewObject()
@@ -858,6 +877,9 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	okLog.Set("deferred", deferredWhats(compat))
 	okLog.Set("checkout", checkout)
 	okLog.Set("post_check", check)
+	if override != nil {
+		okLog.Set("machine_identity_override", override)
+	}
 	updateLog(root, okLog)
 	result := ordjson.NewObject()
 	result.Set("action", action)
@@ -870,6 +892,9 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	result.Set("source", source)
 	result.Set("generation", generation)
 	result.Set("recovery", recovery)
+	if override != nil {
+		result.Set("machine_identity_override", override)
+	}
 	result.Set("note", "New entrypoint invocations and new dispatches use this default. Commands already running finish on the runtime they resolved; connected MCP servers keep their start tree; task records, worktrees, and .sum were not touched.")
 	return result, nil
 }
@@ -958,7 +983,7 @@ func Check(s *store.Store, runtimeRoot, ref string, noFetch bool) (*ordjson.Obje
 	result.Set("staged", staged)
 	result.Set("up_to_date", curSHA == sha && curKind == "release")
 	if staged {
-		compat, cErr := Compatibility(s, root, stagedPath, current)
+		compat, cErr := Compatibility(s, root, stagedPath, current, RefusePreIdentity)
 		if cErr != nil {
 			return nil, cErr
 		}
@@ -997,7 +1022,7 @@ func Stage(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	if err := unlock(); err != nil {
 		return nil, err
 	}
-	compat, err := Compatibility(s, root, relPath, current)
+	compat, err := Compatibility(s, root, relPath, current, RefusePreIdentity)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,7 +1037,7 @@ func Stage(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	return result, nil
 }
 
-func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordjson.Object, error) {
+func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool, allow PreIdentity) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -1039,10 +1064,10 @@ func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 			src.Set(k, v)
 		}
 	}
-	return activate(s, root, relPath, "apply", src)
+	return activate(s, root, relPath, "apply", src, allow)
 }
 
-func Rollback(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, error) {
+func Rollback(s *store.Store, ctx *ordjson.Object, to string, allow PreIdentity) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -1067,7 +1092,7 @@ func Rollback(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, 
 	if err != nil {
 		return nil, err
 	}
-	return activateLocked(s, root, target, "rollback", src)
+	return activateLocked(s, root, target, "rollback", src, allow)
 }
 
 func resolveRollbackTarget(root, to string, state, current *ordjson.Object) (string, *ordjson.Object, error) {
@@ -1109,7 +1134,7 @@ func resolveRollbackTarget(root, to string, state, current *ordjson.Object) (str
 	return matches[0], src, nil
 }
 
-func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.Object, error) {
+func Recover(s *store.Store, ctx *ordjson.Object, generation string, allow PreIdentity) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -1122,7 +1147,15 @@ func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.O
 		return nil, lockErr
 	}
 	defer unlock()
-	return recoverPendingLocked(s, root, generation)
+	return recoverPendingLocked(s, root, generation, allow)
+}
+
+// compensate restores the known-good runtime a failed activation replaced. That
+// runtime served these same records until moments ago, so the machine-identity
+// override the user gives for choosing a pre-identity release is not asked for
+// again to put it back.
+func compensate(s *store.Store, root, generation string) (*ordjson.Object, error) {
+	return recoverPendingLocked(s, root, generation, AllowPreIdentity)
 }
 
 // Test seams for crash injection. Production leaves these nil.

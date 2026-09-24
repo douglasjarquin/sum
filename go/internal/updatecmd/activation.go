@@ -26,7 +26,7 @@ var sha40Hex = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // ValidateTarget is the single target-validation path for apply, rollback, compensation, and recovery.
 // A staged directory is not approval.
-func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object) (*ordjson.Object, *ordjson.Object, error) {
+func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object, allow PreIdentity) (*ordjson.Object, *ordjson.Object, error) {
 	resolvedRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, nil, err
@@ -83,7 +83,7 @@ func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object
 			return nil, nil, err
 		}
 	}
-	compat, compatErr := Compatibility(s, root, candidate, current)
+	compat, compatErr := Compatibility(s, root, candidate, current, allow)
 	if compatErr != nil {
 		return nil, nil, compatErr
 	}
@@ -552,7 +552,9 @@ func verifyCurrentKnownGood(s *store.Store, root string, current, currentDesc *o
 	if resolveErr != nil {
 		return resolveErr
 	}
-	compat, _, validErr := ValidateTarget(s, root, target, current)
+	// The current runtime already serves these records; refusing to record it as
+	// known-good would only block moving off a pre-identity release.
+	compat, _, validErr := ValidateTarget(s, root, target, current, AllowPreIdentity)
 	if validErr != nil {
 		blocking := ""
 		if compat != nil {
@@ -567,10 +569,18 @@ func verifyCurrentKnownGood(s *store.Store, root string, current, currentDesc *o
 	if ok, _ := check.Get("ok"); ok != true {
 		return fmt.Errorf("The current stable entrypoint cannot be established as known-good: %v", func() any { v, _ := check.Get("detail"); return v }())
 	}
+	if override := identityOverride(compat); override != nil {
+		log := ordjson.NewObject()
+		log.Set("action", "known-good")
+		log.Set("result", "recorded")
+		log.Set("known_good", currentDesc)
+		log.Set("machine_identity_override", override)
+		updateLog(root, log)
+	}
 	return nil
 }
 
-func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Object, error) {
+func recoverPendingLocked(s *store.Store, root, generation string, allow PreIdentity) (*ordjson.Object, error) {
 	if TestRecoverPending != nil {
 		return TestRecoverPending(s, root, generation)
 	}
@@ -615,7 +625,7 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 	if resolveErr != nil {
 		return nil, resolveErr
 	}
-	compat, _, validErr := ValidateTarget(s, root, target, DefaultRuntime(root))
+	compat, _, validErr := ValidateTarget(s, root, target, DefaultRuntime(root), allow)
 	if validErr != nil {
 		blocking := validErr.Error()
 		if compat != nil {
@@ -625,6 +635,7 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 		}
 		return nil, fmt.Errorf("The prior known-good runtime is no longer compatible: %s", blocking)
 	}
+	override := identityOverride(compat)
 	if descriptorsEqual(current, from) {
 		check := postCheck(s, root)
 		if ok, _ := check.Get("ok"); ok != true {
@@ -642,6 +653,9 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 		log.Set("from", current)
 		log.Set("to", current)
 		log.Set("post_check", check)
+		if override != nil {
+			log.Set("machine_identity_override", override)
+		}
 		updateLog(root, log)
 		state.Set("pending", nil)
 		if writeErr := writeActivationState(s, root, state); writeErr != nil {
@@ -679,6 +693,9 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 	log.Set("from", to)
 	log.Set("to", restored)
 	log.Set("post_check", check)
+	if override != nil {
+		log.Set("machine_identity_override", override)
+	}
 	updateLog(root, log)
 	state.Set("pending", nil)
 	if writeErr := writeActivationState(s, root, state); writeErr != nil {

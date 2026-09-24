@@ -27,6 +27,9 @@ func TestBuildRelease_matchesThePythonReferenceShape(t *testing.T) {
     ],
     "brief_schema": [
       1
+    ],
+    "machine_identity": [
+      1
     ]
   }
 }`
