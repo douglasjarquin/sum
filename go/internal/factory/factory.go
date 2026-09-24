@@ -753,6 +753,7 @@ func ghProjectReady(runtimeRoot, repo string, number int, option string) ([]ghIs
 	if err := json.Unmarshal(out, &parsed); err != nil {
 		return nil, fmt.Errorf("gh did not return project items: %s", truncate(string(out), 300))
 	}
+	want := repoIdentity(repo)
 	items := projectItems(parsed)
 	var issues []ghIssue
 	for _, item := range items {
@@ -761,6 +762,9 @@ func ghProjectReady(runtimeRoot, repo string, number int, option string) ([]ghIs
 			status = strings.TrimSpace(fmt.Sprint(item["Status"]))
 		}
 		if !strings.EqualFold(status, option) {
+			continue
+		}
+		if repoIdentity(itemRepository(item)) != want {
 			continue
 		}
 		content, _ := item["content"].(map[string]any)
@@ -780,6 +784,54 @@ func ghProjectReady(runtimeRoot, repo string, number int, option string) ([]ghIs
 	}
 	sort.Slice(issues, func(i, j int) bool { return issues[i].Number < issues[j].Number })
 	return issues, nil
+}
+
+func itemRepository(item map[string]any) string {
+	if item == nil {
+		return ""
+	}
+	if s := repositoryString(item["repository"]); s != "" {
+		return s
+	}
+	content, _ := item["content"].(map[string]any)
+	if content == nil {
+		return ""
+	}
+	return repositoryString(content["repository"])
+}
+
+func repositoryString(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case map[string]any:
+		for _, key := range []string{"url", "nameWithOwner", "name"} {
+			if s, ok := t[key].(string); ok && s != "" {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func repoIdentity(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.TrimSuffix(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	s = strings.ToLower(s)
+	for _, prefix := range []string{"https://github.com/", "http://github.com/", "github.com/"} {
+		s = strings.TrimPrefix(s, prefix)
+	}
+	owner, rest, ok := strings.Cut(s, "/")
+	if !ok || owner == "" {
+		return ""
+	}
+	repo, _, _ := strings.Cut(rest, "/")
+	repo = strings.TrimSuffix(repo, ".git")
+	if repo == "" {
+		return ""
+	}
+	return owner + "/" + repo
 }
 
 func projectItems(parsed any) []map[string]any {

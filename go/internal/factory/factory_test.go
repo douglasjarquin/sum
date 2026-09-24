@@ -197,6 +197,32 @@ func TestTick_issuesPicksOldestOpen(t *testing.T) {
 	}
 }
 
+func TestGhProjectReady_keepsOnlyEnrolledRepository(t *testing.T) {
+	st := openStore(t)
+	root := fakeGh(t, nil, nil)
+	items := []map[string]any{
+		{"status": "Ready", "number": 54, "title": "photo", "repository": "https://github.com/cofactorworks/ilovethatphoto"},
+		{"status": "Ready", "number": 146, "title": "tape", "repository": "cofactorworks/cuttingtape"},
+		{"status": "Ready", "number": 960, "title": "uptime", "repository": "https://github.com/cofactorworks/niceuptime"},
+		{"status": "Ready", "number": 1, "title": "missing-repo"},
+		{"status": "Ready", "number": 200, "title": "baas", "repository": "https://github.com/CofactorWorks/NiceBaaS"},
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "project_items.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ghProjectReady(st.Home, "cofactorworks/nicebaas", 7, "Ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Number != 200 {
+		t.Fatalf("got %#v, want only enrolled #200", got)
+	}
+}
+
 func TestTick_roadmapOrderSkipsClosedAndSkipped(t *testing.T) {
 	st := openStore(t)
 	enroll(t, st, "owner/app")
