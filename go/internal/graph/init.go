@@ -196,14 +196,10 @@ func runCodegraph(bin, worktree string, args ...string) error {
 	if errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrNotStarted) {
 		return err
 	}
-	detail := strings.TrimSpace(result.Stderr)
-	if detail == "" {
-		detail = strings.TrimSpace(result.Stdout)
+	if detail := result.Detail(); detail != "" {
+		return errors.New(detail)
 	}
-	if detail == "" {
-		return err
-	}
-	return errors.New(detail)
+	return err
 }
 
 func appendAttempt(record *ordjson.Object, action string, ok bool, errText string) {
@@ -343,20 +339,31 @@ func observeStatus(bin, worktree string) *ordjson.Object {
 	live.Set("status", decoded)
 	fresh := ordjson.NewObject()
 	fresh.Set("state", "fresh")
-	if obj := asObject(decoded); obj != nil {
-		if pending, ok := obj.Get("pendingChanges"); ok {
-			if p := asObject(pending); p != nil {
-				added, _ := p.Get("added")
-				modified, _ := p.Get("modified")
-				if fmt.Sprint(added) != "0" || fmt.Sprint(modified) != "0" {
-					fresh.Set("state", "stale")
-				}
-			}
-		}
+	if hasPendingChanges(decoded) {
+		fresh.Set("state", "stale")
 	}
 	live.Set("freshness", fresh)
 	live.Set("reconcile_needed", nil)
 	return live
+}
+
+// hasPendingChanges reports a status whose pendingChanges count added or modified files.
+func hasPendingChanges(status any) bool {
+	obj := asObject(status)
+	if obj == nil {
+		return false
+	}
+	pending, ok := obj.Get("pendingChanges")
+	if !ok {
+		return false
+	}
+	p := asObject(pending)
+	if p == nil {
+		return false
+	}
+	added, _ := p.Get("added")
+	modified, _ := p.Get("modified")
+	return fmt.Sprint(added) != "0" || fmt.Sprint(modified) != "0"
 }
 
 func asObject(v any) *ordjson.Object {

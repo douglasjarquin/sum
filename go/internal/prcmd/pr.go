@@ -89,11 +89,7 @@ func viewPR(gh, repo, remote string, number int) (map[string]any, error) {
 		return nil, fmt.Errorf("PR observation for #%d is uncertain: %w%s", number, err, detail)
 	}
 	if res.Code != 0 {
-		detail := strings.TrimSpace(res.Stderr)
-		if detail == "" {
-			detail = strings.TrimSpace(res.Stdout)
-		}
-		return nil, fmt.Errorf("PR observation for #%d is uncertain: %s", number, detail)
+		return nil, fmt.Errorf("PR observation for #%d is uncertain: %s", number, res.Detail())
 	}
 	var data map[string]any
 	if err := json.Unmarshal([]byte(res.Stdout), &data); err != nil {

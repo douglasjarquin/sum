@@ -74,10 +74,7 @@ func Tool(runtimeRoot string) *ordjson.Object {
 
 	exitCode := result.Code
 	if exitCode != 0 || version == "" {
-		detail := strings.TrimSpace(result.Stderr)
-		if detail == "" {
-			detail = strings.TrimSpace(result.Stdout)
-		}
+		detail := result.Detail()
 		if len(detail) > 300 {
 			detail = detail[len(detail)-300:]
 		}
