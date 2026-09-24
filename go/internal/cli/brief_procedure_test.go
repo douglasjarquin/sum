@@ -94,11 +94,6 @@ func (d *demoLab) prompts(t *testing.T, pane string) []string {
 	return out
 }
 
-func requiredProcedure(t *testing.T, brief string) string {
-	t.Helper()
-	return pinnedProcedure(t, brief)
-}
-
 func workerProcedureRows(t *testing.T, d *demoLab, taskID, pane string) []any {
 	t.Helper()
 	view := d.ctlPane(pane, true, "context", taskID, "--role", "worker", "--section", "environment")
@@ -114,7 +109,7 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned := requiredProcedure(t, string(brief))
+	pinned := pinnedProcedure(t, string(brief))
 	if !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure", "sum-worker-")) {
 		t.Fatalf("pinned procedure %s is not a task resource", pinned)
 	}
@@ -171,7 +166,7 @@ func TestStartRefusesATamperedProcedureUntilItIsRepinned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned := requiredProcedure(t, string(brief))
+	pinned := pinnedProcedure(t, string(brief))
 	if err := os.WriteFile(pinned, []byte("# tampered\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +293,7 @@ func TestBackupCarriesThePinnedProcedure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pinned := requiredProcedure(t, string(brief))
+	pinned := pinnedProcedure(t, string(brief))
 	dest := filepath.Join(d.base, "records.tar.gz")
 	d.ctl(true, "backup", dest)
 	listing, err := exec.Command("tar", "-tzf", dest).Output()
@@ -308,5 +303,33 @@ func TestBackupCarriesThePinnedProcedure(t *testing.T) {
 	want := "state/tasks/" + taskID + "/procedure/" + filepath.Base(pinned)
 	if !strings.Contains(string(listing), want) {
 		t.Fatalf("backup lacks %s:\n%s", want, listing)
+	}
+}
+
+func TestStartLaunchesFromTheAdoptedRevision(t *testing.T) {
+	d := newRuntimeLab(t, true)
+	repo := policyProject(t, d.base, "relaunch", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	taskID, pane := asString(task["id"]), asString(task["pane"])
+	d.writeProcedure(t, "# sum-worker\nrevised procedure\n")
+	staged := d.ctl(true, "brief", "regenerate", taskID)
+	r2 := asString(asMap(staged["revision"])["path"])
+	if !strings.HasSuffix(r2, filepath.Join("briefs", "r2.md")) {
+		t.Fatalf("regenerate staged %v", staged["revision"])
+	}
+	d.ctl(true, "brief", "request", taskID, "r2")
+	d.ctlPane(pane, true, "brief", "adopt", taskID, "r2")
+	before := len(d.prompts(t, pane))
+	d.ctl(true, "start", taskID)
+	launch := d.prompts(t, pane)[before:]
+	if len(launch) != 1 || !strings.Contains(launch[0], r2) || strings.Contains(launch[0], asString(task["brief_path"])) {
+		t.Fatalf("launch prompt after adopting r2 = %v, want %s", launch, r2)
+	}
+	body, err := os.ReadFile(r2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(pinnedProcedure(t, string(body))); string(got) != "# sum-worker\nrevised procedure\n" {
+		t.Fatalf("r2 names a procedure that is not the revised one: %q", got)
 	}
 }

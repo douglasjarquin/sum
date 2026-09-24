@@ -53,36 +53,10 @@ func Commands(sumctlPath, home, taskID string) *ordjson.Object {
 }
 
 func writeOnce(path, text string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	if _, err := os.Lstat(path); err == nil {
 		return fmt.Errorf("Refusing to overwrite %s; a brief a worker may be reading is never rewritten.", path)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".write-")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmp.WriteString(text); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		return err
-	}
-	if err := os.Link(tmpPath, path); err != nil {
-		return err
-	}
-	return nil
+	return procedure.WriteOnce(path, []byte(text))
 }
 
 func WriteInitial(s *store.Store, runtimeRoot, sumctlPath string, task *ordjson.Object) (string, error) {

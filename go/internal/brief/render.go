@@ -164,7 +164,7 @@ func decisionText(decisions []any) string {
 
 // procedureText references the pinned resources instead of copying them.
 func procedureText(taskDir string, rows []any) string {
-	lines := []string{"Your operating procedure is pinned with this task's records, not copied here. The files are write-once: a changed procedure gets new files, and a runtime update or rollback never edits these.", ""}
+	lines := []string{"Your worker procedure is pinned with this task's records, not copied here. The files are write-once: a changed procedure gets new files, and a runtime update or rollback never edits these.", ""}
 	for _, raw := range rows {
 		row, _ := raw.(*ordjson.Object)
 		if row == nil {
@@ -203,9 +203,9 @@ func launchNote(task *ordjson.Object) string {
 		return ""
 	}
 	var parts []string
-	for _, field := range []string{"model", "reasoning"} {
-		if v := asString(func() any { val, _ := launch.Get(field); return val }()); v != "" {
-			parts = append(parts, fmt.Sprintf("%s `%s`", field, v))
+	for _, key := range []string{"model", "reasoning"} {
+		if v := field(launch, key); v != "" {
+			parts = append(parts, fmt.Sprintf("%s `%s`", key, v))
 		}
 	}
 	if len(parts) == 0 {
@@ -382,4 +382,3 @@ func graphText(s *store.Store, sumctlPath string, task *ordjson.Object) string {
 		shquote.CommandFor(sumctlPath, s.Home, "graph", "config", "--harness", "NAME")))
 	return strings.Join(lines, "\n")
 }
-

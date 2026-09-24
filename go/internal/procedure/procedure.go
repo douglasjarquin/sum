@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 )
 
 const (
@@ -49,7 +50,7 @@ func sha256Hex(data []byte) string {
 }
 
 func sourceError(src Source, runtimeRoot, problem string) error {
-	return fmt.Errorf("Worker procedure %s %s in runtime %s; no brief was written. Restore it (run `mise run setup` in that runtime, or activate a verified release) and retry; never hand-write a brief.", src.Path, problem, runtimeRoot)
+	return fmt.Errorf("Worker procedure %s %s in runtime %s; no brief was written. Restore that tracked file (`git -C %s checkout -- %s` in a checkout runtime, or activate a verified release) and retry; never hand-write a brief.", src.Path, problem, runtimeRoot, shquote.Quote(runtimeRoot), src.Path)
 }
 
 func readSource(runtimeRoot string, src Source, manifest *ordjson.Object) ([]byte, error) {
@@ -160,7 +161,7 @@ func Pin(runtimeRoot, taskDir string) ([]any, error) {
 			if actual := sha256Hex(existing); actual != sha {
 				return nil, pinnedMismatch(full, sha, actual)
 			}
-		} else if err := writeOnce(full, data); err != nil {
+		} else if err := WriteOnce(full, data); err != nil {
 			return nil, err
 		}
 		row := ordjson.NewObject()
@@ -178,7 +179,9 @@ func Pin(runtimeRoot, taskDir string) ([]any, error) {
 	return rows, nil
 }
 
-func writeOnce(path string, data []byte) error {
+// WriteOnce publishes data at path through a hard link from a synced 0600 temporary file, so the
+// target appears complete or not at all and an existing file is never replaced.
+func WriteOnce(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
