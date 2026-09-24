@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +33,7 @@ type Store struct {
 	Sessions string
 
 	machine *machine.Identity
+	locks   *lockRanks
 }
 
 func Open(home string) (*Store, error) {
@@ -121,76 +123,154 @@ func (s *Store) Init() error {
 	return nil
 }
 
-func (s *Store) Lock() (func() error, error) {
-	if err := s.Init(); err != nil {
-		return nil, err
-	}
-	handle, err := os.OpenFile(filepath.Join(s.Home, ".lock"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(handle.Fd()), syscall.LOCK_EX); err != nil {
-		handle.Close()
-		return nil, err
-	}
-	return func() error {
-		unlockErr := syscall.Flock(int(handle.Fd()), syscall.LOCK_UN)
-		closeErr := handle.Close()
-		if unlockErr != nil {
-			return unlockErr
-		}
-		return closeErr
-	}, nil
-}
+// Lock order. A process takes the delivery compatibility lock, then at most one recipient lock, then the state lock,
+// and never the reverse; each Store refuses an out-of-order acquisition with ErrLockOrder instead of deadlocking.
+// Only the state lock guards record writes, and nothing holds it across a Herdr call. The compatibility lock is held
+// shared by every delivery of this release and exclusively by older releases, so mixed versions stay fully serialized
+// while deliveries of this release to different recipients run in parallel.
+const (
+	rankCompat    = 1 // .deliver.lock
+	rankRecipient = 2 // deliver/<hash>.lock
+	rankState     = 3 // .lock
+)
 
-func (s *Store) DeliveryLock() (func() error, error) {
-	return s.DeliveryLockContext(context.Background())
-}
+// ErrLockOrder reports an acquisition that would invert the documented lock order.
+var ErrLockOrder = errors.New("lock order violation: delivery compatibility, then recipient, then state lock")
 
-// ErrDeliveryLockBusy reports that another delivery pass held the lock until the caller's deadline.
+// ErrDeliveryLockBusy reports that another delivery held the compatibility lock until the caller's deadline.
 var ErrDeliveryLockBusy = errors.New("delivery lock busy")
 
-// deliveryLockRetry is how often a bounded acquisition retries a held delivery lock.
+// ErrRecipientBusy reports that another operation held this recipient's delivery lock until the caller's deadline.
+var ErrRecipientBusy = errors.New("recipient delivery lock busy")
+
+// deliveryLockRetry is how often a bounded acquisition retries a held lock.
 const deliveryLockRetry = 20 * time.Millisecond
 
-// DeliveryLockContext takes the same delivery lock as DeliveryLock, but gives up with ErrDeliveryLockBusy when ctx
-// ends first. Without a deadline it blocks exactly like DeliveryLock. The lock's scope is unchanged.
-func (s *Store) DeliveryLockContext(ctx context.Context) (func() error, error) {
-	if err := s.Init(); err != nil {
+type lockRanks struct {
+	mu   sync.Mutex
+	held []int
+}
+
+func (s *Store) ranks() *lockRanks {
+	if s.locks == nil {
+		s.locks = &lockRanks{}
+	}
+	return s.locks
+}
+
+func (r *lockRanks) acquire(rank int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, held := range r.held {
+		if held >= rank {
+			return ErrLockOrder
+		}
+	}
+	r.held = append(r.held, rank)
+	return nil
+}
+
+func (r *lockRanks) release(rank int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.held) - 1; i >= 0; i-- {
+		if r.held[i] == rank {
+			r.held = append(r.held[:i], r.held[i+1:]...)
+			return
+		}
+	}
+}
+
+// flock takes how (LOCK_SH or LOCK_EX) on path at rank. Without a deadline it blocks; with one it retries until ctx
+// ends and then returns busy. An already-ended ctx makes exactly one non-blocking attempt.
+func (s *Store) flock(ctx context.Context, path string, how, rank int, busy error) (func() error, error) {
+	if err := s.ranks().acquire(rank); err != nil {
 		return nil, err
 	}
-	handle, err := os.OpenFile(filepath.Join(s.Home, ".deliver.lock"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	handle, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
+		s.ranks().release(rank)
 		return nil, err
 	}
 	if ctx == nil || ctx.Done() == nil {
-		err = syscall.Flock(int(handle.Fd()), syscall.LOCK_EX)
+		err = syscall.Flock(int(handle.Fd()), how)
 	} else {
 		for {
-			err = syscall.Flock(int(handle.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+			err = syscall.Flock(int(handle.Fd()), how|syscall.LOCK_NB)
 			if err != syscall.EWOULDBLOCK {
 				break
 			}
 			select {
 			case <-ctx.Done():
 				handle.Close()
-				return nil, ErrDeliveryLockBusy
+				s.ranks().release(rank)
+				return nil, busy
 			case <-time.After(deliveryLockRetry):
 			}
 		}
 	}
 	if err != nil {
 		handle.Close()
+		s.ranks().release(rank)
 		return nil, err
 	}
 	return func() error {
 		unlockErr := syscall.Flock(int(handle.Fd()), syscall.LOCK_UN)
 		closeErr := handle.Close()
+		s.ranks().release(rank)
 		if unlockErr != nil {
 			return unlockErr
 		}
 		return closeErr
 	}, nil
+}
+
+// Lock takes the state lock that guards every record write. Hold it only for local reads and writes.
+func (s *Store) Lock() (func() error, error) {
+	if err := s.Init(); err != nil {
+		return nil, err
+	}
+	return s.flock(nil, filepath.Join(s.Home, ".lock"), syscall.LOCK_EX, rankState, nil)
+}
+
+// DeliveryLock takes the delivery compatibility lock exclusively, as releases before recipient-scoped delivery did
+// for every delivery. It excludes every delivery of every release.
+func (s *Store) DeliveryLock() (func() error, error) {
+	return s.DeliveryLockContext(context.Background())
+}
+
+// DeliveryLockContext is DeliveryLock giving up with ErrDeliveryLockBusy when ctx ends first.
+func (s *Store) DeliveryLockContext(ctx context.Context) (func() error, error) {
+	if err := s.Init(); err != nil {
+		return nil, err
+	}
+	return s.flock(ctx, filepath.Join(s.Home, ".deliver.lock"), syscall.LOCK_EX, rankCompat, ErrDeliveryLockBusy)
+}
+
+// DeliveryShared takes the delivery compatibility lock shared: it coexists with other deliveries of this release and
+// waits for an older release's exclusive holder, giving up with ErrDeliveryLockBusy when ctx ends first.
+func (s *Store) DeliveryShared(ctx context.Context) (func() error, error) {
+	if err := s.Init(); err != nil {
+		return nil, err
+	}
+	return s.flock(ctx, filepath.Join(s.Home, ".deliver.lock"), syscall.LOCK_SH, rankCompat, ErrDeliveryLockBusy)
+}
+
+// RecipientLockPath is the lock file for one canonical recipient endpoint (machine, session, pane). Callers pass the
+// machine already canonicalized, so every spelling of one host's endpoint names one file.
+func (s *Store) RecipientLockPath(endpoint [3]string) string {
+	sum := sha256.Sum256([]byte(endpoint[0] + "\x00" + endpoint[1] + "\x00" + endpoint[2]))
+	return filepath.Join(s.Home, "deliver", hex.EncodeToString(sum[:16])+".lock")
+}
+
+// RecipientLock takes one recipient's delivery lock exclusively, after the compatibility lock and before the state
+// lock, giving up with ErrRecipientBusy when ctx ends first. Lock files are never removed.
+func (s *Store) RecipientLock(ctx context.Context, endpoint [3]string) (func() error, error) {
+	path := s.RecipientLockPath(endpoint)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	return s.flock(ctx, path, syscall.LOCK_EX, rankRecipient, ErrRecipientBusy)
 }
 
 // Machine is this host's identity as seen from this state home, resolved once
