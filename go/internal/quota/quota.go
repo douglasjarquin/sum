@@ -29,7 +29,7 @@ func Run(runtimeRoot, provider, format string, stdout, stderr io.Writer) (int, e
 		argv = []string{binary, "--provider", provider}
 	}
 	result, err := proc.Run(argv, "", 0, false, nil)
-	if err != nil && result.Code == 0 {
+	if err != nil {
 		return 1, err
 	}
 	if _, writeErr := io.WriteString(stdout, result.Stdout); writeErr != nil {

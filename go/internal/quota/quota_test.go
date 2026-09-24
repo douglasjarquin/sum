@@ -112,3 +112,21 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+func TestRun_helperThatCannotStartIsAnError(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	root := t.TempDir()
+	dir := filepath.Join(root, ".local", "bin")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// An interpreter that does not exist: the helper never starts, so there is no exit code to report.
+	if err := os.WriteFile(filepath.Join(dir, "remainder"), []byte("#!/nonexistent/sum-no-interpreter\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code, err := Run(root, "codex", "", &stdout, &stderr)
+	if err == nil || code != 1 {
+		t.Fatalf("code = %d err = %v, want 1 and an error", code, err)
+	}
+}

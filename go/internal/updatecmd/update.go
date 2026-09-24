@@ -556,7 +556,12 @@ func syncInstallationCheckout(root, sha string) *ordjson.Object {
 		result.Set("reason", fmt.Sprintf("%s is not an ancestor of origin/%s", sha, branch))
 		return result
 	}
-	dirtyOut, _ := proc.Run([]string{"git", "-C", root, "status", "--porcelain", "--untracked-files=no"}, "", 20*time.Second, false, nil)
+	dirtyOut, dirtyErr := proc.Run([]string{"git", "-C", root, "status", "--porcelain", "--untracked-files=no"}, "", 20*time.Second, true, nil)
+	if dirtyErr != nil {
+		result.Set("result", "refused")
+		result.Set("reason", "checkout state cannot be read: "+dirtyErr.Error())
+		return result
+	}
 	if strings.TrimSpace(dirtyOut.Stdout) != "" {
 		result.Set("result", "refused")
 		result.Set("reason", "checkout has tracked changes")

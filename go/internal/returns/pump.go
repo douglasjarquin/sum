@@ -3,6 +3,7 @@ package returns
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -410,16 +411,26 @@ func promptRecipient(s *store.Store, opts PumpOpts, route *ordjson.Object, items
 	pane := fmt.Sprint(routeValue(route, "pane"))
 	_, err = herdrclient.Call(herdrPath, session, 5*time.Second, "agent", "prompt", pane, message)
 	if err != nil {
-		if _, ok := err.(*unreachableError); ok {
-			return "not-delivered", err.Error(), err.Error()
-		}
-		msg := err.Error()
-		if containsTimeout(msg) {
-			return "uncertain", "prompt timed out after possible submission: " + msg + "; left ambiguous, not retried by itself", msg
-		}
-		return "not-delivered", "prompt was not accepted: " + msg, msg
+		return promptFailure(err)
 	}
 	return "submitted", "notice submitted while the recipient was settled; nothing is acknowledged, read, or applied by that", ""
+}
+
+// promptFailure classifies a failed prompt send. A helper that may have delivered it (timed out, canceled, stopped
+// for output, or left a descendant holding its output) is uncertain and never retried by the pump; only a send
+// that provably did not reach Herdr is not-delivered.
+func promptFailure(err error) (state, detail, reason string) {
+	msg := err.Error()
+	if _, ok := err.(*unreachableError); ok {
+		return "not-delivered", msg, msg
+	}
+	if containsTimeout(msg) {
+		return "uncertain", "prompt timed out after possible submission: " + msg + "; left ambiguous, not retried by itself", msg
+	}
+	if errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrOutputLimit) {
+		return "uncertain", "prompt may have been submitted: " + msg + "; left ambiguous, not retried by itself", msg
+	}
+	return "not-delivered", "prompt was not accepted: " + msg, msg
 }
 
 func ObserveRecipient(s *store.Store, runtimeRoot string, route *ordjson.Object, expectedCwd string) error {
