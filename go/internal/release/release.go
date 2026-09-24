@@ -1,19 +1,18 @@
 package release
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -200,28 +199,6 @@ func ValidateDependencyInventory(value *ordjson.Object) error {
 	return nil
 }
 
-func runGit(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		return stdout.String(), nil
-	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		if len(detail) > 4000 {
-			detail = detail[len(detail)-4000:]
-		}
-		return "", fmt.Errorf("git exited %d: %s", exitErr.ExitCode(), detail)
-	}
-	return "", fmt.Errorf("git: %s", err)
-}
-
 func resolvePath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -240,11 +217,11 @@ func InstallationRoot(s *store.Store) (string, error) {
 		return "", fmt.Errorf("%s is not a sum installation's state home; run dev and release commands with the installation's ./bin/sumctl.", s.Home)
 	}
 	root := filepath.Dir(s.Home)
-	out, err := runGit("-C", root, "rev-parse", "--show-toplevel")
+	out, err := proc.Run([]string{"git", "-C", root, "rev-parse", "--show-toplevel"}, "", 0, true, nil)
 	if err != nil {
 		return "", err
 	}
-	toplevel, err := resolvePath(strings.TrimSpace(out))
+	toplevel, err := resolvePath(strings.TrimSpace(out.Stdout))
 	if err != nil {
 		return "", err
 	}

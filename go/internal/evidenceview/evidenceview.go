@@ -1,13 +1,12 @@
 package evidenceview
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/versions"
@@ -75,18 +74,6 @@ func pyStr(v any) string {
 	}
 }
 
-func runGit(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		return stdout.String(), nil
-	}
-	return "", fmt.Errorf("git: %s", strings.TrimSpace(stderr.String()))
-}
-
 // CurrentCandidate ports `current_candidate`: the worktree's live HEAD, or "" (Python's None) when the worktree
 // is unset, missing, or git fails.
 func CurrentCandidate(task *ordjson.Object) string {
@@ -98,11 +85,11 @@ func CurrentCandidate(task *ordjson.Object) string {
 	if err != nil || !info.IsDir() {
 		return ""
 	}
-	out, err := runGit("-C", worktree, "rev-parse", "HEAD")
+	out, err := proc.Run([]string{"git", "-C", worktree, "rev-parse", "HEAD"}, "", 0, true, nil)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(out)
+	return strings.TrimSpace(out.Stdout)
 }
 
 func evidenceRowCopy(record *ordjson.Object, head string) *ordjson.Object {

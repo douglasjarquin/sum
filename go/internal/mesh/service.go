@@ -191,7 +191,7 @@ func (s Service) json(ctx context.Context, args []string, timeout time.Duration)
 	if err := s.authorize(args); err != nil {
 		return "", err
 	}
-	result, err := s.runner.Run(ctx, args, timeout)
+	result, err := s.runner.Run(ctx, args, timeout, false)
 	if err != nil {
 		return "", err
 	}
@@ -209,6 +209,9 @@ func (s Service) text(ctx context.Context, args []string, timeout time.Duration)
 	if err := s.authorize(args); err != nil {
 		return "", err
 	}
-	result, err := s.runner.Run(ctx, args, timeout)
+	result, err := s.runner.Run(ctx, args, timeout, true)
+	if result.truncated {
+		result.stdout += fmt.Sprintf("\n[output truncated at %d bytes]\n", stdoutLimit)
+	}
 	return result.stdout, err
 }

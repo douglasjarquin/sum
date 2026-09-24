@@ -24,7 +24,7 @@ type fakeRunner struct {
 	errors    []error
 }
 
-func (r *fakeRunner) Run(_ context.Context, args []string, duration time.Duration) (commandResult, error) {
+func (r *fakeRunner) Run(_ context.Context, args []string, duration time.Duration, _ bool) (commandResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, append([]string(nil), args...))

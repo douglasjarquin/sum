@@ -4,17 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"time"
+
+	"github.com/douglasjarquin/sum/go/internal/proc"
 )
+
+// stdoutLimit bounds what one Herdr call may return to the bridge.
+const stdoutLimit = 256 * 1024
 
 type commandResult struct {
 	stdout string
 	stderr string
+	// truncated reports that free-text stdout was cut at stdoutLimit; structured stdout never truncates.
+	truncated bool
 }
 
+// commandRunner runs one Herdr call. Structured (freeText false) stdout past the bound is an error; free-text stdout
+// keeps its head and reports truncated.
 type commandRunner interface {
-	Run(context.Context, []string, time.Duration) (commandResult, error)
+	Run(ctx context.Context, args []string, timeout time.Duration, freeText bool) (commandResult, error)
 }
 
 type herdrRunner struct {
@@ -22,43 +30,22 @@ type herdrRunner struct {
 	session string
 }
 
-func (r herdrRunner) Run(parent context.Context, args []string, timeout time.Duration) (commandResult, error) {
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-	command := exec.CommandContext(ctx, r.path, append([]string{"--session", r.session}, args...)...)
-	stdout, stderr := make([]byte, 0), make([]byte, 0)
-	var outBuffer, errBuffer limitedBuffer
-	command.Stdout = &outBuffer
-	command.Stderr = &errBuffer
-	err := command.Run()
-	stdout, stderr = outBuffer.Bytes(), errBuffer.Bytes()
-	if ctx.Err() != nil {
-		return commandResult{stdout: string(stdout), stderr: string(stderr)}, fmt.Errorf("%s: timed out after %s; its effect is unknown", r.path, timeout)
-	}
+func (r herdrRunner) Run(parent context.Context, args []string, timeout time.Duration, freeText bool) (commandResult, error) {
+	res, err := proc.RunContext(parent, proc.Cmd{
+		Argv:        append([]string{r.path, "--session", r.session}, args...),
+		Timeout:     timeout,
+		StdoutLimit: stdoutLimit,
+		FreeText:    freeText,
+	})
+	result := commandResult{stdout: res.Stdout, stderr: res.Stderr, truncated: res.StdoutTruncated}
 	if err != nil {
-		return commandResult{stdout: string(stdout), stderr: string(stderr)}, remoteError(stderr, err)
+		return result, err
 	}
-	return commandResult{stdout: string(stdout), stderr: string(stderr)}, nil
-}
-
-type limitedBuffer struct {
-	data []byte
-}
-
-func (b *limitedBuffer) Write(p []byte) (int, error) {
-	const limit = 256 * 1024
-	remaining := limit - len(b.data)
-	if remaining > 0 {
-		if len(p) > remaining {
-			b.data = append(b.data, p[:remaining]...)
-		} else {
-			b.data = append(b.data, p...)
-		}
+	if res.Code != 0 {
+		return result, remoteError([]byte(res.Stderr), fmt.Errorf("exit status %d", res.Code))
 	}
-	return len(p), nil
+	return result, nil
 }
-
-func (b *limitedBuffer) Bytes() []byte { return b.data }
 
 func remoteError(stderr []byte, cause error) error {
 	var envelope struct {

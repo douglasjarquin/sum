@@ -1,13 +1,11 @@
 package contextview
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -21,6 +19,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/pyrepr"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -941,28 +940,6 @@ func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjs
 
 var sha40Pattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
-func runGit(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	if err == nil {
-		return stdout.String(), nil
-	}
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		if len(detail) > 4000 {
-			detail = detail[len(detail)-4000:]
-		}
-		return "", fmt.Errorf("git exited %d: %s", exitErr.ExitCode(), detail)
-	}
-	return "", fmt.Errorf("git: %s", err)
-}
-
 func resolvePath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -980,14 +957,14 @@ func defaultRuntime(root string) (*ordjson.Object, error) {
 	info, statErr := os.Lstat(link)
 	isSymlink := statErr == nil && info.Mode()&os.ModeSymlink != 0
 	if !isSymlink {
-		out, gitErr := runGit("-C", root, "rev-parse", "HEAD")
+		out, gitErr := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 0, true, nil)
 		if gitErr != nil {
 			return nil, gitErr
 		}
 		result := ordjson.NewObject()
 		result.Set("kind", "checkout")
 		result.Set("path", root)
-		result.Set("sha", strings.TrimSpace(out))
+		result.Set("sha", strings.TrimSpace(out.Stdout))
 		result.Set("manifest", nil)
 		result.Set("ok", true)
 		return result, nil

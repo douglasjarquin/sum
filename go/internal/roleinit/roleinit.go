@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -89,11 +89,11 @@ func note(task, marker *ordjson.Object) string {
 }
 
 func InstallationHint(root string) (string, error) {
-	out, err := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	out, err := proc.Run([]string{"git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir"}, "", 0, true, nil)
 	if err != nil {
 		return "", nil
 	}
-	common := strings.TrimSpace(string(out))
+	common := strings.TrimSpace(out.Stdout)
 	if filepath.Base(common) != ".git" {
 		return "", nil
 	}
