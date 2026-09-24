@@ -406,7 +406,9 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	for _, raw := range asSlice(coopVersions["revisions"]) {
 		rev := asMap(raw)
 		for _, row := range asSlice(asMap(rev["policy"])["procedure"]) {
-			pinnedByRevision[asString(rev["id"])] = asString(asMap(row)["path"])
+			if asString(asMap(row)["name"]) == "sum-worker" {
+				pinnedByRevision[asString(rev["id"])] = asString(asMap(row)["path"])
+			}
 		}
 	}
 	if pinnedByRevision["r4"] == "" || pinnedByRevision["r4"] != pinnedByRevision["r2"] || pinnedByRevision["r3"] == pinnedByRevision["r2"] {

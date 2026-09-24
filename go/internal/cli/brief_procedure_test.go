@@ -286,7 +286,7 @@ func TestDecisionOnlyRefreshReadsThroughBoundedContext(t *testing.T) {
 			refresh = p
 		}
 	}
-	if !strings.Contains(refresh, "brief revision r4 is requested") || strings.Contains(refresh, "Only recorded decisions changed") || !strings.Contains(refresh, "read `") || !strings.Contains(refresh, "r4.md` completely") {
+	if !strings.Contains(refresh, "brief revision r4 is requested") || strings.Contains(refresh, "Only recorded decisions changed") || !strings.Contains(refresh, "read `") || !strings.Contains(refresh, "r4.md` completely") || !strings.Contains(refresh, "any required worker procedure file it names") || !strings.Contains(refresh, "on-demand one only when its condition applies") {
 		t.Fatalf("refresh after an unadopted procedure change = %q\n%v", refresh, second)
 	}
 }

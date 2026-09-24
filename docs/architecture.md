@@ -23,7 +23,8 @@ Herdr's optional native integrations can be installed separately, for example `h
 
 | Component | Purpose |
 | --- | --- |
-| `AGENTS.md` and harness instruction aliases | A short coordinator contract, with a separate worker role |
+| `AGENTS.md` and harness instruction aliases | A short role bootstrap: explicit `init`, routing to the returned role's core, and the authority rules every role shares |
+| `COORDINATOR.md` | The coordinator core, read at the runtime path `init` names and embedded in every coordinator contract revision; each action's detail stays in its skill |
 | Plain-language dictionary | [docs/terminology.md](terminology.md): user, coordinator, agent, reviewer, task, brief, question, inbox, result |
 | Six bundled skills | Dispatch, worker execution, verification/PR delivery, rundown/recovery, isolated self-development, and atomic updates with rolling session refresh and code-only rollback |
 | Project-local third-party skills | `bin/sumctl skills install` delegates explicit skill and agent selections to the pinned Vercel Skills CLI in project copy mode; see `docs/sum-skills.md` |
