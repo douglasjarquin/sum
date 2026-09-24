@@ -396,7 +396,7 @@ func promptRecipient(s *store.Store, opts PumpOpts, route *ordjson.Object, items
 			taskIDs[id] = true
 		}
 		regRole, _ := registrationField(registration, "role")
-		regTask, _ := registration.Get("task")
+		regTask, _ := registrationField(registration, "task")
 		if registration == nil || regRole != "worker" || !taskIDs[regTask] {
 			msg := "Recipient pane is not registered as this task's worker in this instance; a pane label is not identity."
 			return "not-delivered", msg, msg
