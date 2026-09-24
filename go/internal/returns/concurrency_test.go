@@ -411,11 +411,17 @@ func TestContendedRecipientIsRevisitedLastWithinTheBudget(t *testing.T) {
 		"w1:p1": l.pane("idle", l.worktree(a)), "w2:p1": l.pane("idle", l.worktree(b))}})
 	h := l.startHelper("a", []string{a}, "worker")
 	l.awaitHeld("prompt", "w1:p1")
+	// Release the held recipient only once this pass has prompted the free one and has been waiting on the held one,
+	// so the measured wait does not depend on how fast the free recipient's prompt is.
 	released := make(chan struct{})
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		defer close(released)
+		deadline := time.Now().Add(20 * time.Second)
+		for len(prompts(l.calls(), "w2:p1")) == 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(400 * time.Millisecond)
 		l.release("w1:p1")
-		close(released)
 	}()
 
 	result, elapsed := l.pumpFor([]string{a, b}, "worker", 10*time.Second)
