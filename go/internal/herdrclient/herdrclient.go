@@ -18,16 +18,16 @@ var sessionNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 // runRaw runs herdr once on the bounded helper runner. A nonzero exit returns its code with a nil error; a helper
 // that did not start, timed out, or overflowed its stdout bound returns the classified proc error and code -1, so a
 // prefix of Herdr's output never becomes an observation.
-func runRaw(herdrPath string, timeout time.Duration, args ...string) (stdout, stderr string, code int, err error) {
-	result, err := proc.RunContext(context.Background(), proc.Cmd{Argv: append([]string{herdrPath}, args...), Timeout: timeout})
+func runRaw(ctx context.Context, herdrPath string, timeout time.Duration, args ...string) (stdout, stderr string, code int, err error) {
+	result, err := proc.RunContext(ctx, proc.Cmd{Argv: append([]string{herdrPath}, args...), Timeout: timeout})
 	if err != nil {
 		return result.Stdout, result.Stderr, -1, err
 	}
 	return result.Stdout, result.Stderr, result.Code, nil
 }
 
-func run(herdrPath string, timeout time.Duration, args ...string) (string, error) {
-	stdout, stderr, code, err := runRaw(herdrPath, timeout, args...)
+func run(ctx context.Context, herdrPath string, timeout time.Duration, args ...string) (string, error) {
+	stdout, stderr, code, err := runRaw(ctx, herdrPath, timeout, args...)
 	if err != nil {
 		return "", err
 	}
@@ -80,6 +80,11 @@ func ErrorIsAbsent(err error) bool {
 }
 
 func Observe(herdrPath, session string, timeout time.Duration, args ...string) (any, string, error) {
+	return ObserveContext(context.Background(), herdrPath, session, timeout, args...)
+}
+
+// ObserveContext is Observe under the tighter of ctx and timeout.
+func ObserveContext(ctx context.Context, herdrPath, session string, timeout time.Duration, args ...string) (any, string, error) {
 	if !sessionNamePattern.MatchString(session) {
 		return nil, "", fmt.Errorf("Invalid session name.")
 	}
@@ -96,7 +101,7 @@ func Observe(herdrPath, session string, timeout time.Duration, args ...string) (
 		}
 	}
 	fullArgs := append([]string{"--session", session}, args...)
-	stdout, stderr, code, err := runRaw(herdrPath, timeout, fullArgs...)
+	stdout, stderr, code, err := runRaw(ctx, herdrPath, timeout, fullArgs...)
 	if err != nil {
 		return nil, "", err
 	}
@@ -123,6 +128,11 @@ func Observe(herdrPath, session string, timeout time.Duration, args ...string) (
 }
 
 func CallRaw(herdrPath, session string, timeout time.Duration, args ...string) (string, error) {
+	return CallRawContext(context.Background(), herdrPath, session, timeout, args...)
+}
+
+// CallRawContext is CallRaw under the tighter of ctx and timeout.
+func CallRawContext(ctx context.Context, herdrPath, session string, timeout time.Duration, args ...string) (string, error) {
 	if !sessionNamePattern.MatchString(session) {
 		return "", fmt.Errorf("Invalid session name.")
 	}
@@ -139,11 +149,16 @@ func CallRaw(herdrPath, session string, timeout time.Duration, args ...string) (
 		}
 	}
 	fullArgs := append([]string{"--session", session}, args...)
-	return run(herdrPath, timeout, fullArgs...)
+	return run(ctx, herdrPath, timeout, fullArgs...)
 }
 
 func Call(herdrPath, session string, timeout time.Duration, args ...string) (any, error) {
-	stdout, err := CallRaw(herdrPath, session, timeout, args...)
+	return CallContext(context.Background(), herdrPath, session, timeout, args...)
+}
+
+// CallContext is Call under the tighter of ctx and timeout.
+func CallContext(ctx context.Context, herdrPath, session string, timeout time.Duration, args ...string) (any, error) {
+	stdout, err := CallRawContext(ctx, herdrPath, session, timeout, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +189,7 @@ func decodeHerdr(stdout string) (any, error) {
 }
 
 func Version(herdrPath string) (string, string, error) {
-	stdout, err := run(herdrPath, 20*time.Second, "--version")
+	stdout, err := run(context.Background(), herdrPath, 20*time.Second, "--version")
 	if err != nil {
 		return "", "", err
 	}
