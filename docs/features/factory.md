@@ -11,6 +11,7 @@ Implementation: `go/internal/factory`, `go/internal/cli/factory.go`, `go/interna
 | `factory.claim-lane` | Claim occupies the only lane; a second tick is `occupied` and a second claim is refused at the lane limit | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.roadmap-order` | Roadmap ready signal follows the parent issue table, skips closed and `--skip` issues, and picks the next open number | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.issues-oldest` | Issues ready signal picks the lowest-number open issue, skipping claimed and `--skip` issues | automated: `go/internal/factory/factory_test.go` | offline suite |
+| `factory.project-status-repo` | A GitHub Project Ready column that spans repositories yields only items whose repository matches the enrolled owner/repo | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.merge-authorization` | Merge-check is `human-gate` outside the standing authorized repositories and `high` only when closure, review, CI, and evidence comparisons all pass | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.human-gate-continue` | A gated issue stays occupying the lane until `--continue` or a merged/dropped release | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.coordinator-only-writes` | `factory enable` and `factory claim` refuse a non-coordinator pane | automated: `go/internal/cli/factory_test.go` | offline suite |

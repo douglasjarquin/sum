@@ -56,6 +56,8 @@ if args[:2] == ["issue", "comment"]:
 if args[:2] == ["project", "item-list"]:
     if load("project_error.json", None):
         fail(load("project_error.json", {}).get("message", "insufficient_scopes"))
+    # project_items.json is returned as-is. Each item may include
+    # "repository": "https://github.com/owner/repo" or "owner/repo".
     print(json.dumps(load("project_items.json", [])))
     sys.exit(0)
 
