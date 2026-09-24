@@ -1,16 +1,18 @@
 package prcmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -46,18 +48,9 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	if remote == "" {
 		remote = pipeline.RemoteRepository(gh, repo)
 	}
-	cmd := exec.Command(gh, "pr", "view", fmt.Sprint(args.Number), "--json", "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,statusCheckRollup")
-	if remote != "" {
-		cmd.Args = append(cmd.Args, "--repo", remote)
-	}
-	cmd.Dir = repo
-	out, runErr := cmd.CombinedOutput()
-	if runErr != nil {
-		return nil, fmt.Errorf("PR observation for #%d is uncertain: %s", args.Number, strings.TrimSpace(string(out)))
-	}
-	var data map[string]any
-	if err := json.Unmarshal(out, &data); err != nil {
-		return nil, fmt.Errorf("gh did not return JSON: %s", string(out)[:min(300, len(out))])
+	data, err := viewPR(gh, repo, remote, args.Number)
+	if err != nil {
+		return nil, err
 	}
 	pr, recordID, err := recordObservation(s, ctx, args.Task, data)
 	if err != nil {
@@ -72,6 +65,41 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	result.Set("pipeline_publication", autoPipeline(s, ctx, runtimeRoot, args.Task, pr))
 	result.Set("note", "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains.")
 	return result, nil
+}
+
+// prViewFields is what one PR observation reads from GitHub.
+const prViewFields = "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,statusCheckRollup"
+
+// ghBound matches the pipeline's default bound for one gh call.
+const ghBound = 120 * time.Second
+
+// viewPR observes one PR through gh, bounded, and parses only stdout: gh's warnings on stderr never reach the JSON,
+// and incomplete or oversized stdout is rejected rather than read as an observation.
+func viewPR(gh, repo, remote string, number int) (map[string]any, error) {
+	argv := []string{gh, "pr", "view", fmt.Sprint(number), "--json", prViewFields}
+	if remote != "" {
+		argv = append(argv, "--repo", remote)
+	}
+	res, err := proc.RunContext(context.Background(), proc.Cmd{Argv: argv, Dir: repo, Timeout: ghBound})
+	if err != nil {
+		detail := strings.TrimSpace(res.Stderr)
+		if detail != "" {
+			detail = ": " + detail
+		}
+		return nil, fmt.Errorf("PR observation for #%d is uncertain: %w%s", number, err, detail)
+	}
+	if res.Code != 0 {
+		detail := strings.TrimSpace(res.Stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(res.Stdout)
+		}
+		return nil, fmt.Errorf("PR observation for #%d is uncertain: %s", number, detail)
+	}
+	var data map[string]any
+	if err := json.Unmarshal([]byte(res.Stdout), &data); err != nil {
+		return nil, fmt.Errorf("gh did not return JSON: %s", res.Stdout[:min(300, len(res.Stdout))])
+	}
+	return data, nil
 }
 
 func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data map[string]any) (*ordjson.Object, any, error) {

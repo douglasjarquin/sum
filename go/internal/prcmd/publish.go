@@ -14,6 +14,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -274,16 +275,14 @@ func attachUnavailable(python, publisher, gh string) string {
 }
 
 func observedVisibility(gh, repoDir, remote string) (string, error) {
-	cmd := exec.Command(gh, "repo", "view", remote, "--json", "visibility")
-	cmd.Dir = repoDir
-	out, err := cmd.Output()
+	res, err := proc.Run([]string{gh, "repo", "view", remote, "--json", "visibility"}, repoDir, ghBound, true, nil)
 	if err != nil {
 		return "", fmt.Errorf("gh could not report the visibility of %s; pass --visibility yourself after checking it", remote)
 	}
 	var payload struct {
 		Visibility string `json:"visibility"`
 	}
-	if json.Unmarshal(out, &payload) != nil || payload.Visibility == "" {
+	if json.Unmarshal([]byte(res.Stdout), &payload) != nil || payload.Visibility == "" {
 		return "", fmt.Errorf("gh did not report a visibility for %s; pass --visibility yourself after checking it", remote)
 	}
 	return strings.ToLower(payload.Visibility), nil

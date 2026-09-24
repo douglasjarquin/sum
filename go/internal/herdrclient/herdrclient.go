@@ -1,40 +1,29 @@
 package herdrclient
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 )
 
 var sessionNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
+// runRaw runs herdr once on the bounded helper runner. A nonzero exit returns its code with a nil error; a helper
+// that did not start, timed out, or overflowed its stdout bound returns the classified proc error and code -1, so a
+// prefix of Herdr's output never becomes an observation.
 func runRaw(herdrPath string, timeout time.Duration, args ...string) (stdout, stderr string, code int, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, herdrPath, args...)
-	var outBuf, errBuf bytes.Buffer
-	cmd.Stdout = &outBuf
-	cmd.Stderr = &errBuf
-	runErr := cmd.Run()
-	name := filepath.Base(herdrPath)
-	if ctx.Err() == context.DeadlineExceeded {
-		return outBuf.String(), errBuf.String(), -1, fmt.Errorf("%s: timed out after %s; its effect is unknown", name, timeout)
+	result, err := proc.RunContext(context.Background(), proc.Cmd{Argv: append([]string{herdrPath}, args...), Timeout: timeout})
+	if err != nil {
+		return result.Stdout, result.Stderr, -1, err
 	}
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			return outBuf.String(), errBuf.String(), exitErr.ExitCode(), nil
-		}
-		return outBuf.String(), errBuf.String(), -1, fmt.Errorf("%s: %s", name, runErr)
-	}
-	return outBuf.String(), errBuf.String(), 0, nil
+	return result.Stdout, result.Stderr, result.Code, nil
 }
 
 func run(herdrPath string, timeout time.Duration, args ...string) (string, error) {
