@@ -8,13 +8,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/shquote"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/verifycontract"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
@@ -43,23 +40,6 @@ func DecisionRecords(task *ordjson.Object) []any {
 	return rows
 }
 
-func launchNote(task *ordjson.Object) string {
-	launch := objectField(task, "launch")
-	if launch == nil {
-		return ""
-	}
-	var parts []string
-	for _, field := range []string{"model", "reasoning"} {
-		if v := asString(func() any { val, _ := launch.Get(field); return val }()); v != "" {
-			parts = append(parts, fmt.Sprintf("%s `%s`", field, v))
-		}
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return " with " + strings.Join(parts, ", ") + " requested on the CLI"
-}
-
 func objectField(o *ordjson.Object, key string) *ordjson.Object {
 	if o == nil {
 		return nil
@@ -67,348 +47,6 @@ func objectField(o *ordjson.Object, key string) *ordjson.Object {
 	v, _ := o.Get(key)
 	obj, _ := v.(*ordjson.Object)
 	return obj
-}
-
-func RenderFull(s *store.Store, runtimeRoot, sumctlPath string, task *ordjson.Object, revision string, policy *ordjson.Object, decisions []any, commands *ordjson.Object) string {
-	if commands == nil {
-		commands = Commands(sumctlPath, s.Home, asString(func() any { v, _ := task.Get("id"); return v }()))
-	}
-	var decisionText string
-	if len(decisions) == 0 {
-		decisionText = "No decisions recorded yet."
-	} else {
-		var lines []string
-		for _, raw := range decisions {
-			d, _ := raw.(*ordjson.Object)
-			id := asString(func() any { v, _ := d.Get("id"); return v }())
-			label := "`" + id + "`"
-			if key := asString(func() any { v, _ := d.Get("key"); return v }()); key != "" {
-				label += " (" + key + ")"
-			}
-			status := asString(func() any { v, _ := d.Get("status"); return v }())
-			answer := asString(func() any { v, _ := d.Get("answer"); return v }())
-			switch status {
-			case "open":
-				lines = append(lines, fmt.Sprintf("- %s: open; no decision recorded yet. Wait for `sumctl answer`, do not assume one.", label))
-			case "answered":
-				lines = append(lines, fmt.Sprintf("- %s: answered, not yet applied: %s", label, answer))
-			case ask.ClosedUnapplied:
-				lines = append(lines, fmt.Sprintf("- %s: closed by the coordinator, never applied: %s", label, answer))
-			default:
-				lines = append(lines, fmt.Sprintf("- %s: applied: %s", label, answer))
-			}
-		}
-		decisionText = strings.Join(lines, "\n")
-	}
-	id := asString(func() any { v, _ := task.Get("id"); return v }())
-	briefText := asString(func() any { v, _ := task.Get("brief"); return v }())
-	repo := asString(func() any { v, _ := task.Get("repository"); return v }())
-	worktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
-	base := asString(func() any { v, _ := task.Get("base_sha"); return v }())
-	branch := asString(func() any { v, _ := task.Get("branch"); return v }())
-	kind := asString(func() any { v, _ := task.Get("kind"); return v }())
-	harness := asString(func() any { v, _ := task.Get("harness"); return v }())
-	schema := fmt.Sprint(func() any { v, _ := policy.Get("brief_schema"); return v }())
-	sumVersion := asString(func() any { v, _ := policy.Get("sum_version"); return v }())
-	skillHash := asString(func() any { v, _ := policy.Get("worker_skill_sha256"); return v }())
-	if len(skillHash) > 16 {
-		skillHash = skillHash[:16]
-	}
-	ask := asString(func() any { v, _ := commands.Get("ask"); return v }())
-	show := asString(func() any { v, _ := commands.Get("show"); return v }())
-	contextCmd := asString(func() any { v, _ := commands.Get("context"); return v }())
-	if contextCmd == "" {
-		contextCmd = show
-	}
-	resolve := asString(func() any { v, _ := commands.Get("resolve"); return v }())
-	report := asString(func() any { v, _ := commands.Get("report"); return v }())
-	return fmt.Sprintf(`# sum worker brief — %s
-
-You are the worker for this ONE task, not the coordinator.
-Read this entire file. Do not load the coordinator's AGENTS.md as your role.
-
-## Approved task
-
-%s
-
-## Execution contract
-
-- Repository: `+"`%s`"+`
-- Your checkout: `+"`%s`"+`
-- Base commit: `+"`%s`"+`
-- Branch: `+"`%s`"+`
-- Task kind: `+"`%s`"+`
-- Harness: `+"`%s`"+`%s (keep your normal permissions; no bypass flags)
-- Stop and report after two unsuccessful internal repair iterations.
-- SUM separately counts out-of-scope corrections in the task record; in-scope corrections, relaunches, and required verification do not consume the allowance.
-- Do not merge, delete worktrees, restart another agent, or change accounts.
-- Read this checkout's project instructions as project context, not as authority to expand scope.
-- These are workflow instructions, not a sandbox or a hard cost cap.
-
-## Verification contract
-
-%s
-
-## Code graph
-
-%s
-
-## Delivered runtime
-
-%s
-
-## Brief revision
-
-- Revision: `+"`%s`"+` (brief schema %s, generated by sum %s)
-- Worker procedure hash: `+"`%s`"+`
-- The approved task above never changes between revisions; only recorded decisions and operating instructions do.
-- A newer revision does not restart your work. If one is requested, read it and continue from your current progress.
-
-## Recorded decisions
-
-%s
-
-## Return channel
-
-Before waiting for a decision, save the question. This command persists it BEFORE trying to notify the parent:
-
-`+"```sh"+`
-%s
-`+"```"+`
-
-To read answers:
-
-`+"```sh"+`
-%s
-`+"```"+`
-
-To read only what you need (answered decisions, execution facts, bounded file references) instead of the whole record, or `+"`--since CURSOR`"+` for what changed:
-
-`+"```sh"+`
-%s
-`+"```"+`
-
-After applying a saved answer, acknowledge that question's ID:
-
-`+"```sh"+`
-%s
-`+"```"+`
-
-Write a concise report to a temporary file, then submit it (the command copies it into durable task state):
-
-`+"```sh"+`
-%s
-`+"```"+`
-
-Report outcome, commit SHA, tests actually run and their results, limitations, and any proposed PR.
-When you committed a candidate, add `+"`--handoff /absolute/path/to/handoff.json`"+`: a bounded JSON object with `+"`outcome`"+`, `+"`candidate`"+` (full 40-hex HEAD SHA), `+"`next_action`"+`, and optionally `+"`files`"+`, `+"`checks`"+` (`+"`{command, exit}`"+` as observed), `+"`review`"+`, `+"`decisions_unresolved`"+`, `+"`artifacts`"+`. Reference logs by path; never paste transcripts.
-A report is a claim for the coordinator to verify, NOT proof of successful completion.
-
-## Worker procedure
-
-%s
-`, id, briefText, repo, worktree, base, branch, kind, harness, launchNote(task), verificationContractText(task), graphText(s, sumctlPath, task), deliveredRuntimeText(s, runtimeRoot, sumctlPath, task), revision, schema, sumVersion, skillHash, decisionText, ask, show, contextCmd, resolve, report, WorkerSkill(runtimeRoot))
-}
-
-func verificationContractText(task *ordjson.Object) string {
-	policy := objectField(task, "verification_policy")
-	if policy == nil {
-		return "- Not recorded for this task (dispatched before sum recorded contracts). Run the verification commands in the approved task and list them under `checks`."
-	}
-	if asString(func() any { v, _ := policy.Get("status"); return v }()) != "standardized" {
-		why := asString(func() any { v, _ := policy.Get("why"); return v }())
-		lines := []string{fmt.Sprintf("- `not-yet-standardized`: %s. Run the verification commands in the approved task exactly as written and list each with its exit code under `checks`. Do not invent a `verify` task or report an inherited one.", why)}
-		if required := requiredEvidenceScenarios(policy); len(required) > 0 {
-			lines = append(lines, fmt.Sprintf("- These mapped scenarios name visual proof at the base commit: %s. Before delivery, capture a before/after comparison for each one your change touches with `.agents/skills/evidence/SKILL.md` and list the `comparison.json` path under `artifacts`.", strings.Join(required, ", ")))
-		}
-		if checks := requiredChecks(policy); len(checks) > 0 {
-			lines = append(lines, fmt.Sprintf("- Required project checks recorded at dispatch: `%s`. This is the approved base snapshot; do not replace it with an inherited task or a worker-selected command.", strings.Join(checks, "`, `")))
-		}
-		reason := asString(func() any { v, _ := policy.Get("snapshot_error"); return v }())
-		if reason == "" {
-			reason = asString(func() any { v, _ := policy.Get("reason"); return v }())
-		}
-		if reason != "" {
-			lines = append(lines, fmt.Sprintf("- Dispatch recorded this reason for the unstandardized status: %s", reason))
-		}
-		if runtime := objectField(policy, "source_runtime"); runtime != nil {
-			if rubric := objectField(runtime, "rubric"); rubric != nil {
-				path := asString(func() any { v, _ := rubric.Get("path"); return v }())
-				hash := asString(func() any { v, _ := rubric.Get("sha256"); return v }())
-				if path != "" {
-					lines = append(lines, fmt.Sprintf("- Shared engineering principles: `%s` (sha256 `%s` at dispatch). Follow this versioned rubric while inspecting the project's current verification path.", path, hash))
-				}
-			}
-			if reviewerPath := asString(func() any { v, _ := runtime.Get("reviewer_skill_path"); return v }()); reviewerPath != "" {
-				reviewerHash := asString(func() any { v, _ := runtime.Get("reviewer_skill_sha256"); return v }())
-				lines = append(lines, fmt.Sprintf("- Reviewer procedure: `%s` (sha256 `%s` captured at dispatch); the independent reviewer uses the same task facts and candidate SHA.", reviewerPath, reviewerHash))
-			}
-		}
-		lines = append(lines, "- This task may inspect and onboard an unstandardized project, but it cannot claim standardized delivery or certify a project verification contract.")
-		return strings.Join(lines, "\n")
-	}
-	contractHash := asString(func() any { v, _ := policy.Get("contract_sha256"); return v }())
-	runner := asString(func() any { v, _ := policy.Get("runner"); return v }())
-	if runner == "" {
-		runner = verifycontract.RunnerPath
-	}
-	base := asString(func() any { v, _ := policy.Get("base_sha"); return v }())
-	maps := asString(func() any { v, _ := policy.Get("feature_maps_index"); return v }())
-	if maps == "" {
-		maps = "the feature maps"
-	}
-	lines := []string{
-		fmt.Sprintf("- `standardized`: this checkout carries `VERIFY.md` (sha256 `%s` at the base commit) and a `verify` task it defines. That contract is the project's verification.", contractHash),
-		fmt.Sprintf("- Before reporting readiness, commit the candidate, then run `python3 %s --base %s --json` from your checkout with a clean tree. It executes `mise run verify` and the mapped checks and writes `run.json` with an immutable `run_id`.", runner, base),
-		"- Attach that run to your handoff as `verification`: `{\"run_id\", \"outcome\", \"record\", \"candidate\", \"certifies\", \"requires_root_review\", \"contract_sha256\", \"policy_changed\"}` copied from run.json (`record` is the run.json path). A `fail`, `blocked`, or provisional (dirty) run is reported as it is; do not rerun until green without fixing the cause.",
-	}
-	if required := requiredEvidenceScenarios(policy); len(required) > 0 {
-		lines = append(lines, fmt.Sprintf("- These mapped scenarios name visual proof at the base commit: %s. Before delivery, capture a before/after comparison for each one your change touches with `.agents/skills/evidence/SKILL.md` and list the `comparison.json` path under `artifacts`. The coordinator's Test gate blocks until a comparison for your candidate exists; a green suite does not satisfy such a row.", strings.Join(required, ", ")))
-	}
-	if checks := requiredChecks(policy); len(checks) > 0 {
-		lines = append(lines, fmt.Sprintf("- Required project checks recorded at dispatch: `%s`. This is the approved base snapshot; do not replace it with an inherited task or a worker-selected command.", strings.Join(checks, "`, `")))
-	}
-	if runtime := objectField(policy, "source_runtime"); runtime != nil {
-		if rubric := objectField(runtime, "rubric"); rubric != nil {
-			path := asString(func() any { v, _ := rubric.Get("path"); return v }())
-			hash := asString(func() any { v, _ := rubric.Get("sha256"); return v }())
-			if path != "" {
-				lines = append(lines, fmt.Sprintf("- Shared engineering principles: `%s` (sha256 `%s` at dispatch). Follow this versioned rubric together with the project's `VERIFY.md` procedure.", path, hash))
-			}
-		}
-		if reviewerPath := asString(func() any { v, _ := runtime.Get("reviewer_skill_path"); return v }()); reviewerPath != "" {
-			reviewerHash := asString(func() any { v, _ := runtime.Get("reviewer_skill_sha256"); return v }())
-			lines = append(lines, fmt.Sprintf("- Reviewer procedure: `%s` (sha256 `%s` captured at dispatch); the independent reviewer uses the same task facts and candidate SHA.", reviewerPath, reviewerHash))
-		}
-	}
-	lines = append(lines,
-		"- The coordinator executes the same contract again under its own run id and performs the independent review; your run is a claim, never the gate. Do not reuse or edit a run id.",
-		fmt.Sprintf("- `VERIFY.md`, `mise.toml`, `mise-tasks/`, `%s`, `.agents/skills/verify/`, and `.agents/skills/evidence/` are verification policy. Changing them is reviewed explicitly against the approved scope; a candidate must not weaken the gate that certifies it.", maps),
-	)
-	return strings.Join(lines, "\n")
-}
-
-func requiredEvidenceScenarios(policy *ordjson.Object) []string {
-	raw, _ := policy.Get("evidence_required")
-	rows, _ := raw.([]any)
-	names := make([]string, 0, len(rows))
-	for _, item := range rows {
-		row, _ := item.(*ordjson.Object)
-		if row == nil {
-			continue
-		}
-		if id := asString(func() any { v, _ := row.Get("scenario"); return v }()); id != "" {
-			names = append(names, "`"+id+"`")
-		}
-	}
-	return names
-}
-
-func requiredChecks(policy *ordjson.Object) []string {
-	return stringListField(policy, "required_checks")
-}
-
-func stringListField(policy *ordjson.Object, key string) []string {
-	if policy == nil {
-		return nil
-	}
-	value, _ := policy.Get(key)
-	rows, _ := value.([]any)
-	result := make([]string, 0, len(rows))
-	for _, row := range rows {
-		if text, ok := row.(string); ok && text != "" {
-			result = append(result, text)
-		}
-	}
-	return result
-}
-
-func graphText(s *store.Store, sumctlPath string, task *ordjson.Object) string {
-	id := asString(func() any { v, _ := task.Get("id"); return v }())
-	record, err := graphview.Read(s, id)
-	if err != nil {
-		record = ordjson.NewObject()
-		record.Set("state", "failed")
-		record.Set("error", err.Error())
-	}
-	var state string
-	if record != nil {
-		state = asString(func() any { v, _ := record.Get("state"); return v }())
-	}
-	var lines []string
-	if record == nil {
-		lines = append(lines, "- State: not built. sum indexes a checkout only when asked, so this checkout has no code graph; "+graphview.GraphFallback)
-		lines = append(lines, fmt.Sprintf("- The coordinator can build one with `%s`; read `%s` (`graph`) for a later state. Do not run `codegraph init`, `index`, or `install` yourself; index ownership stays recorded by sum.",
-			shquote.CommandFor(sumctlPath, s.Home, "graph", "init", id),
-			shquote.CommandFor(sumctlPath, s.Home, "context", id, "--section", "execution")))
-	} else if state == "ready" {
-		index := objectField(record, "index")
-		tool := objectField(record, "tool")
-		lines = append(lines, fmt.Sprintf("- State: `ready`. codegraph %v indexed this checkout at `%v` (%v files, %v symbols, %v edges); the index is local to this checkout only. The primary clone and other worktrees have their own index or none; never point a query at them.",
-			func() any { v, _ := tool.Get("version"); return v }(),
-			func() any { v, _ := record.Get("index_path"); return v }(),
-			func() any { v, _ := index.Get("fileCount"); return v }(),
-			func() any { v, _ := index.Get("nodeCount"); return v }(),
-			func() any { v, _ := index.Get("edgeCount"); return v }()))
-		commands := objectField(record, "commands")
-		lines = append(lines, fmt.Sprintf("- Explore read-only: `%v`, `%v`, `%v`; `%v` lists tests the index links to a changed file.",
-			func() any { v, _ := commands.Get("explore"); return v }(),
-			func() any { v, _ := commands.Get("query"); return v }(),
-			func() any { v, _ := commands.Get("node"); return v }(),
-			func() any { v, _ := commands.Get("affected"); return v }()))
-		lines = append(lines, fmt.Sprintf("- CLI mode has no watcher: run `%v` after you edit files and before you query; `%v` shows `pendingChanges`. `status` reports only uncommitted edits as pending: after a commit, checkout, or rebase the index is silently behind until you sync. A pending sync, a moved HEAD, or a result that contradicts the file means read the source; the index is a point in time, never perpetually current.",
-			func() any { v, _ := commands.Get("sync"); return v }(),
-			func() any { v, _ := commands.Get("status"); return v }()))
-	} else {
-		errText := asString(func() any { v, _ := record.Get("error"); return v }())
-		if errText == "" {
-			errText = "no detail recorded"
-		}
-		lines = append(lines, fmt.Sprintf("- State: `%s`: %s. The graph is not usable here; %s", state, errText, graphview.GraphFallback))
-		if state == "exhausted" {
-			lines = append(lines, "- The retry bound is spent: sum refuses further `graph init` for this task. Do not run `codegraph init`, `index`, or `install` yourself; read the source.")
-		} else {
-			lines = append(lines, fmt.Sprintf("- The coordinator may retry with `%s`; read `%s` (`graph`) for a later state. Do not run `codegraph init`, `index`, or `install` yourself; index ownership stays recorded by sum.",
-				shquote.CommandFor(sumctlPath, s.Home, "graph", "init", id),
-				shquote.CommandFor(sumctlPath, s.Home, "context", id, "--section", "execution")))
-		}
-	}
-	lines = append(lines, "- Graph results assist exploration only. They replace no verification command, feature-map row, evidence capture, or the coordinator's independent run and review.")
-	lines = append(lines, fmt.Sprintf("- Do not run `codegraph install`, `upgrade`, `serve`, or `uninstall`, and do not edit any MCP or harness configuration. Native MCP is optional per harness: `%s` prints a snippet with the pinned binary for a person to merge by hand; nothing is auto-allowed.",
-		shquote.CommandFor(sumctlPath, s.Home, "graph", "config", "--harness", "NAME")))
-	return strings.Join(lines, "\n")
-}
-
-func deliveredRuntimeText(s *store.Store, runtimeRoot, sumctlPath string, task *ordjson.Object) string {
-	helper := sumctlPath
-	if helper == "" {
-		helper = filepath.Join(runtimeRoot, "bin", "sumctl")
-	}
-	skillPath := filepath.Join(runtimeRoot, "skills", "sum-worker", "SKILL.md")
-	hash := sha256Text(WorkerSkill(runtimeRoot))
-	if len(hash) > 16 {
-		hash = hash[:16]
-	}
-	lines := []string{
-		"- Role: `worker` (registered at dispatch; `sumctl init` in your checkout reports it and never grants coordination).",
-		fmt.Sprintf("- Helper: `%s` is the installed entrypoint; every command in this brief uses that absolute path. Do not look for `bin/sumctl` or `skills/` relative to your checkout.", helper),
-		fmt.Sprintf("- Worker procedure: a controlled copy is the `## Worker procedure` section below (sha256 `%s`).", hash),
-	}
-	if info, err := os.Stat(skillPath); err == nil && info.Mode().IsRegular() {
-		data, _ := os.ReadFile(skillPath)
-		lines = append(lines, fmt.Sprintf("- Skill `sum-worker` reference: `%s` (%d bytes, sha256 `%s`), the same file the copy below was taken from.", skillPath, len(data), hash))
-	} else {
-		lines = append(lines, fmt.Sprintf("- Skill `sum-worker`: not present at `%s` in this runtime; the copy below stands.", skillPath))
-	}
-	if project := objectField(task, "project"); project != nil {
-		lines = append(lines, fmt.Sprintf("- Project: `%s` (%s clone at `%s`, remote `%s`). Your checkout is a separate worktree of it, not that clone.",
-			asString(func() any { v, _ := project.Get("name"); return v }()),
-			asString(func() any { v, _ := project.Get("kind"); return v }()),
-			asString(func() any { v, _ := project.Get("path"); return v }()),
-			asString(func() any { v, _ := project.Get("remote"); return v }())))
-	}
-	lines = append(lines, "- Your checkout's own instructions (AGENTS.md, mise tasks) are project context. A parent directory's AGENTS.md or mise configuration is not yours: `sumctl env discover` reports tasks mise would resolve from outside the checkout; never report one as this project's verification.")
-	return strings.Join(lines, "\n")
 }
 
 func revisionFingerprint(task, policy *ordjson.Object, decisions []any, commands *ordjson.Object) (string, error) {
@@ -504,6 +142,11 @@ func revisionSummary(previous, policy *ordjson.Object, decisions []any, commands
 			after = after[:12]
 		}
 		changes = append(changes, fmt.Sprintf("worker procedure changed: %s -> %s", before, after))
+		verification = true
+	} else if beforeRows, afterRows := procedure.Rows(prevPolicy), procedure.Rows(policy); beforeRows == nil && afterRows != nil {
+		changes = append(changes, "worker procedure is now a pinned task resource instead of a copy in the brief")
+	} else if !versions.SameJSON(beforeRows, afterRows) {
+		changes = append(changes, "worker procedure resources changed")
 		verification = true
 	}
 	beforeDecisions := map[string]*ordjson.Object{}
@@ -641,7 +284,15 @@ func Regenerate(s *store.Store, runtimeRoot, sumctlPath, taskID string) (*ordjso
 	if recordedApproved != nil && !fingerprintsEqual(recordedApproved, approved) {
 		return nil, fmt.Errorf("Approved task record differs from the recorded fingerprint; the approved body, base, repository, and kind are immutable. Inspect the task; nothing was regenerated.")
 	}
-	policy := Policy(runtimeRoot)
+	taskPath, err := s.TaskPath(taskID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := procedure.Pin(runtimeRoot, taskPath)
+	if err != nil {
+		return nil, err
+	}
+	policy := policyFor(rows)
 	decisions := DecisionRecords(task)
 	commands := Commands(sumctlPath, s.Home, taskID)
 	fingerprint, err := revisionFingerprint(task, policy, decisions, commands)
@@ -653,10 +304,6 @@ func Regenerate(s *store.Store, runtimeRoot, sumctlPath, taskID string) (*ordjso
 	var previous *ordjson.Object
 	if len(list) > 0 {
 		previous, _ = list[len(list)-1].(*ordjson.Object)
-	}
-	taskPath, err := s.TaskPath(taskID)
-	if err != nil {
-		return nil, err
 	}
 	if previous != nil && asString(func() any { v, _ := previous.Get("fingerprint"); return v }()) == fingerprint {
 		state := versions.RevisionView(taskPath, previous)
@@ -685,7 +332,11 @@ func Regenerate(s *store.Store, runtimeRoot, sumctlPath, taskID string) (*ordjso
 	if err != nil {
 		return nil, err
 	}
-	text := RenderFull(s, runtimeRoot, sumctlPath, task, rid, policy, decisions, commands)
+	var previousID any
+	if previous != nil {
+		previousID, _ = previous.Get("id")
+	}
+	text := render(s, sumctlPath, briefData{Task: task, TaskDir: taskPath, Revision: rid, Previous: asString(previousID), Summary: summary, Policy: policy, Decisions: decisions, Commands: commands})
 	relative := "briefs/" + rid + ".md"
 	if err := writeOnce(filepath.Join(taskPath, filepath.FromSlash(relative)), text); err != nil {
 		return nil, err
@@ -703,10 +354,6 @@ func Regenerate(s *store.Store, runtimeRoot, sumctlPath, taskID string) (*ordjso
 	revision.Set("approved", approved)
 	revision.Set("summary", summary)
 	revision.Set("verification_affected", verification)
-	var previousID any
-	if previous != nil {
-		previousID, _ = previous.Get("id")
-	}
 	revision.Set("previous", previousID)
 	versionsObj.Set("revisions", append(list, revision))
 	if err := versions.WriteVersions(s, versionsObj); err != nil {
