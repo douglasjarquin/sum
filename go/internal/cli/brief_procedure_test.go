@@ -231,7 +231,7 @@ func TestDecisionOnlyRefreshReadsThroughBoundedContext(t *testing.T) {
 			refresh = p
 		}
 	}
-	match := regexp.MustCompile(`Only recorded decisions changed since your active revision r1: at your next safe point read them with (.*? --section decisions), then run (.*? brief adopt ` + taskID + ` r2)\.`).FindStringSubmatch(refresh)
+	match := regexp.MustCompile(`Only recorded decisions changed since your active revision r1: at your next safe point read them with (.*? --section decisions), then run (.*? brief adopt ` + taskID + ` r2) and continue`).FindStringSubmatch(refresh)
 	if match == nil {
 		t.Fatalf("decision-only refresh message = %q", refresh)
 	}

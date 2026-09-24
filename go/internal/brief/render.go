@@ -132,7 +132,7 @@ func render(s *store.Store, sumctlPath string, d briefData) string {
 	line("")
 	line("## Worker procedure")
 	line("")
-	line("%s", procedureText(d.TaskDir, procedure.Rows(d.Policy), field(d.Commands, "context")))
+	line("%s", procedureText(d.TaskDir, procedure.Rows(d.Policy)))
 	return b.String()
 }
 
@@ -163,8 +163,8 @@ func decisionText(decisions []any) string {
 }
 
 // procedureText references the pinned resources instead of copying them.
-func procedureText(taskDir string, rows []any, contextCmd string) string {
-	lines := []string{"Your operating procedure is pinned with this task's records, not copied into this brief. These files are write-once: a revision that changes the procedure names new files, and a runtime update or rollback never edits these.", ""}
+func procedureText(taskDir string, rows []any) string {
+	lines := []string{"Your operating procedure is pinned with this task's records, not copied here. The files are write-once: a changed procedure gets new files, and a runtime update or rollback never edits these.", ""}
 	for _, raw := range rows {
 		row, _ := raw.(*ordjson.Object)
 		if row == nil {
@@ -179,7 +179,7 @@ func procedureText(taskDir string, rows []any, contextCmd string) string {
 	}
 	lines = append(lines, "",
 		"A fresh or recovered session reads every required file completely before it works. A session that already read a file with the same sha256 need not read it again; nothing records whether you did.",
-		fmt.Sprintf("If a file is missing, or `%s` reports its `procedure` row not `ok`, stop and save a question with the `ask` command above; never substitute another copy, a checkout-relative `skills/` file, or memory.", contextCmd))
+		"If a file is missing, or the `context` command above reports its `procedure` row not `ok`, stop and save a question with `ask`; never substitute another copy, a checkout-relative `skills/` file, or memory.")
 	return strings.Join(lines, "\n")
 }
 
