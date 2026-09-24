@@ -16,7 +16,8 @@ Deployment, DNS, billing, and public-launch decisions stay owner-approved.
 ./bin/sumctl factory merge-check TASK_ID
 ```
 
-`confidence: high` means every check passed: authorized repo, delivery closure, independent review approve on this candidate SHA, every pipeline stage pass/skipped (lint and CI may be not_declared), a real comparison.json inside the checkout with a passing verdict bound to this SHA, and fewer than three recorded CI repair failures.
+`confidence: high` means every check passed: authorized repo, delivery closure, independent review approve on this candidate SHA, every pipeline stage pass/skipped (lint and CI may be not_declared), a real comparison.json inside the checkout whose verdict is `red-green` or `before-after` bound to this SHA, and fewer than three recorded CI repair failures.
+`after-only`, `before-also-passes`, and any other verdict are a human gate.
 
 `factory merge` also refuses unless the task occupies a factory lane (or still carries `sum-claimed` from this installation).
 
