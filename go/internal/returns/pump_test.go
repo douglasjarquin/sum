@@ -48,7 +48,7 @@ func TestPromptFailureKeepsPossibleDeliveryUncertain(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected a send error")
 			}
-			state, detail, _ := promptFailure(err)
+			state, detail := promptFailure(err)
 			if state != tc.want {
 				t.Fatalf("state = %s (%s), want %s", state, detail, tc.want)
 			}
@@ -57,10 +57,10 @@ func TestPromptFailureKeepsPossibleDeliveryUncertain(t *testing.T) {
 			}
 		})
 	}
-	if state, _, _ := promptFailure(&unreachableError{state: "pending-unreachable", msg: "Recipient is on another machine."}); state != "not-delivered" {
+	if state, _ := promptFailure(&unreachableError{state: "pending-unreachable", msg: "Recipient is on another machine."}); state != "not-delivered" {
 		t.Fatalf("unreachable state = %s", state)
 	}
-	if state, _, _ := promptFailure(errors.New("herdr: timed out after 5s; its effect is unknown")); state != "uncertain" {
+	if state, _ := promptFailure(errors.New("herdr: timed out after 5s; its effect is unknown")); state != "uncertain" {
 		t.Fatalf("legacy timeout text state = %s", state)
 	}
 }

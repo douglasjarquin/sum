@@ -438,7 +438,6 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			RuntimeRoot: opts.RuntimeRoot,
 			SumctlPath:  opts.SumctlPath,
 			Ctx:         ctx,
-			Reason:      "saved task state needs attention",
 			Inline:      true,
 			Snapshot:    tasks,
 			// The coordinator role was granted to this pane's verified occupant above.

@@ -144,7 +144,6 @@ func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string)
 		RuntimeRoot: runtimeRoot,
 		SumctlPath:  sumctlPath,
 		Ctx:         ctx,
-		Reason:      "native event delivery enabled; catching up on saved returns",
 		Inline:      true,
 	})
 	if err != nil {

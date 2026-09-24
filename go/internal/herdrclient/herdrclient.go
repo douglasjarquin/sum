@@ -13,7 +13,20 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/proc"
 )
 
+// AgentStartTimeout is the herdr `agent start --timeout` bound.
+// Grok cold starts on the observed host exceed 30s; a 90s start succeeds.
+// Faster harnesses return as soon as they are ready. Herdr accepts up to 300000ms.
+const AgentStartTimeout = 90 * time.Second
+
+// AgentStartCallTimeout wraps AgentStartTimeout so the herdr flag expires first.
+const AgentStartCallTimeout = AgentStartTimeout + 10*time.Second
+
 var sessionNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// AgentStartArgs is the herdr argv for launching an agent in an existing pane.
+func AgentStartArgs(name, kind, pane string) []string {
+	return []string{"agent", "start", name, "--kind", kind, "--pane", pane, "--timeout", fmt.Sprint(AgentStartTimeout.Milliseconds())}
+}
 
 // runRaw runs herdr once on the bounded helper runner. A nonzero exit returns its code with a nil error; a helper
 // that did not start, timed out, or overflowed its stdout bound returns the classified proc error and code -1, so a

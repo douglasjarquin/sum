@@ -81,8 +81,8 @@ type claimResult struct {
 
 // record writes an attempt's outcome under one state-lock hold. A claimed attempt already has its in-flight entry and
 // is always finalized; an outcome with no possible effect is recorded only for returns still open and still routed to
-// route, and the legacy notice mirror is written only for those.
-func (p *pass) record(route *ordjson.Object, items [][2]*ordjson.Object, claimed bool, delivery *ordjson.Object, changes map[string]any, state, reason, errStr string) error {
+// route. The returns sidecar is the only record written; no task record is rewritten for an attempt.
+func (p *pass) record(route *ordjson.Object, items [][2]*ordjson.Object, claimed bool, delivery *ordjson.Object, changes map[string]any) error {
 	unlock, err := p.s.Lock()
 	if err != nil {
 		return err
@@ -91,21 +91,13 @@ func (p *pass) record(route *ordjson.Object, items [][2]*ordjson.Object, claimed
 	// A claimed attempt is finalized before anything is re-read, so a read error cannot leave a known outcome
 	// in-flight.
 	if claimed {
-		if err := stampDeliveryLocked(p.s, items, delivery, changes); err != nil {
-			return err
-		}
+		return stampDeliveryLocked(p.s, items, delivery, changes)
 	}
 	current, _, err := p.stillRouted(route, items)
 	if err != nil {
 		return err
 	}
-	if !claimed {
-		if err := stampDeliveryLocked(p.s, current, delivery, changes); err != nil {
-			return err
-		}
-	}
-	deliveryID, _ := delivery.Get("id")
-	return mirrorNoticeLocked(p.s, current, route, state, reason, errStr, fmt.Sprint(deliveryID))
+	return stampDeliveryLocked(p.s, current, delivery, changes)
 }
 
 func pairKey(pair [2]*ordjson.Object) [2]string {
@@ -168,49 +160,6 @@ func stampDeliveryLocked(s *store.Store, items [][2]*ordjson.Object, delivery *o
 			returnsObj.Set("deliveries", append(list, entry))
 		}
 		if err := Write(s, returnsObj); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// mirrorNoticeLocked writes the legacy single notice field for each non-refresh item's task; the caller holds the
-// state lock.
-func mirrorNoticeLocked(s *store.Store, items [][2]*ordjson.Object, route *ordjson.Object, state, reason, errStr, deliveryID string) error {
-	status := "pending"
-	switch state {
-	case "submitted":
-		status = "submitted-not-acknowledged"
-	case "uncertain":
-		status = "uncertain"
-	}
-	seen := map[string]bool{}
-	for _, pair := range items {
-		kind, _ := pair[1].Get("kind")
-		if kind == "refresh" {
-			continue
-		}
-		taskID, _ := pair[0].Get("id")
-		idStr, _ := taskID.(string)
-		if seen[idStr] {
-			continue
-		}
-		seen[idStr] = true
-		task, err := s.ReadTask(idStr)
-		if err != nil {
-			return err
-		}
-		notice := ordjson.NewObject()
-		notice.Set("at", store.Now())
-		notice.Set("recipient", routeValue(route, "recipient"))
-		notice.Set("reason", reason)
-		notice.Set("status", status)
-		notice.Set("delivery", deliveryID)
-		if errStr != "" {
-			notice.Set("error", errStr)
-		}
-		task.Set("notice", notice)
-		if err := s.SaveTask(task); err != nil {
 			return err
 		}
 	}

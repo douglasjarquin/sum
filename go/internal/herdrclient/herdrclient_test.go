@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -80,5 +81,19 @@ func TestVersionParses(t *testing.T) {
 	version, found, err := Version(herdr)
 	if err != nil || version != "0.9.0" || found != "herdr 0.9.0" {
 		t.Fatalf("version=%q found=%q err=%v", version, found, err)
+	}
+}
+
+func TestAgentStartCallTimeoutExceedsReadinessBound(t *testing.T) {
+	if AgentStartTimeout != 90*time.Second {
+		t.Fatalf("AgentStartTimeout = %s, want 90s", AgentStartTimeout)
+	}
+	if AgentStartCallTimeout <= AgentStartTimeout {
+		t.Fatalf("AgentStartCallTimeout = %s, want above %s", AgentStartCallTimeout, AgentStartTimeout)
+	}
+	args := AgentStartArgs("t-test", "grok", "w1:p1")
+	want := []string{"agent", "start", "t-test", "--kind", "grok", "--pane", "w1:p1", "--timeout", "90000"}
+	if !slices.Equal(args, want) {
+		t.Fatalf("AgentStartArgs = %v, want %v", args, want)
 	}
 }
