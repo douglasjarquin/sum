@@ -116,7 +116,11 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinned := pinnedProcedure(t, string(brief))
-	if !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure", "sum-worker-")) {
+	home := d.home
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		home = resolved
+	}
+	if !strings.HasPrefix(pinned, filepath.Join(home, "tasks", taskID, "procedure", "sum-worker-")) {
 		t.Fatalf("pinned procedure %s is not a task resource", pinned)
 	}
 	source, _ := os.ReadFile(filepath.Join(d.root, "skills", "sum-worker", "SKILL.md"))

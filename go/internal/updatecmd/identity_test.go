@@ -172,10 +172,10 @@ func TestPreIdentity_compensationRestoresServingReleaseWithoutFlag(t *testing.T)
 	lab := newPreIdentityLab(t)
 	selectReleaseAllowing(t, lab, lab.oldSHA)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
-	candidate := filepath.Join(lab.root, ".local", "releases", lab.newSHA)
+	sha := lab.newSHA
 	TestPostCheck = func(_ *store.Store, root string) *ordjson.Object {
 		row := ordjson.NewObject()
-		ok := strField(DefaultRuntime(root), "path") != candidate
+		ok := strField(DefaultRuntime(root), "sha") != sha
 		row.Set("ok", ok)
 		row.Set("detail", map[bool]any{true: nil, false: "candidate fails its entrypoint check"}[ok])
 		return row

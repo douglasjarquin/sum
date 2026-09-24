@@ -98,10 +98,11 @@ func trackedThroughLink(t *testing.T, root, rel string, tracked map[string]bool)
 // Every installed helper since the namespace check refuses to stage a tree with an unknown `sum-*` skill
 // directory or projection, and `update apply` stages with the installed helper. Adding one would make the
 // release uninstallable through `update`, so role and action procedures live inside these skills or beside
-// AGENTS.md instead. Changing this set needs a release that accepts the new name first.
+// AGENTS.md instead. Changing this set needs a release that accepts the new name first. This release accepts
+// the factory skills; a helper from before that name set cannot stage it.
 func TestSumSkillSetIsWhatInstalledHelpersAccept(t *testing.T) {
 	root := repoRoot(t)
-	want := []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker"}
+	want := []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-factory", "sum-factory-claim", "sum-factory-merge", "sum-factory-work", "sum-rundown", "sum-update", "sum-worker"}
 	for _, dir := range []string{"skills", ".agents/skills", ".claude/skills"} {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
 		if err != nil {
