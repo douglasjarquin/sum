@@ -8,6 +8,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -37,7 +38,7 @@ func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string 
 	return "other"
 }
 
-func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath string, policyReviewed bool, endpoint *ordjson.Object) (*ordjson.Object, error) {
+func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath string, policyReviewed bool, endpoint *ordjson.Object, pump returns.PumpOpts) (*ordjson.Object, error) {
 	if !verdicts[verdict] {
 		return nil, fmt.Errorf("--verdict must be one of ['approve', 'changes-requested', 'blocked', 'comment']")
 	}
@@ -71,26 +72,53 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath str
 		}
 		made = report
 	}
-	unlock, err := s.Lock()
+	result, task, err := record(s, taskID, verdict, candidate, toolName, text, policyReviewed, made, endpoint)
 	if err != nil {
 		return nil, err
+	}
+	// Like a report, the saved verdict is a return to the parent, and one bounded pass tries to tell it now.
+	saved, _ := result.Get("evidence")
+	id, _ := saved.(*ordjson.Object).Get("id")
+	owed, err := returns.OpenObligations(s, task)
+	if err != nil {
+		return nil, err
+	}
+	for _, obligation := range owed {
+		if oid, _ := obligation.Get("id"); oid == fmt.Sprintf("review:%v", id) {
+			notice, err := returns.Notify(s, pump, taskID, "parent", "a review verdict is recorded", false)
+			if err != nil {
+				return nil, err
+			}
+			result.Set("notice", notice)
+			return result, nil
+		}
+	}
+	result.Set("notice", nil)
+	result.Set("note", "Findings saved. The task records no parent pane, so no return was created and no one was notified. They do not verify the candidate or close anything.")
+	return result, nil
+}
+
+func record(s *store.Store, taskID, verdict, candidate, toolName, text string, policyReviewed bool, made, endpoint *ordjson.Object) (*ordjson.Object, *ordjson.Object, error) {
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, nil, err
 	}
 	defer unlock()
 	task, err := s.ReadTask(taskID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if made != nil {
 		if repo, ok := made.Get("repository"); ok {
 			if name, _ := repo.(string); name != "" {
 				taskRepo, _ := task.Get("repository")
 				if taskRepo != name {
-					return nil, fmt.Errorf("Made report repository %s does not match task repository %v", name, taskRepo)
+					return nil, nil, fmt.Errorf("Made report repository %s does not match task repository %v", name, taskRepo)
 				}
 			}
 		}
 		if blocking, _ := made.Get("blocking"); blocking == true && verdict == "approve" {
-			return nil, fmt.Errorf("Made report has blocking findings; an approve is refused")
+			return nil, nil, fmt.Errorf("Made report has blocking findings; an approve is refused")
 		}
 		if text == "" {
 			runID, _ := made.Get("run_id")
@@ -99,18 +127,18 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath str
 	}
 	host, err := s.Machine()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	role := endpointRole(host, task, endpoint)
 	if role == "worker" {
-		return nil, fmt.Errorf("The worker pane cannot record independent review of its own candidate. Save findings from the reviewer pane, or record `verify` as the coordinator.")
+		return nil, nil, fmt.Errorf("The worker pane cannot record independent review of its own candidate. Save findings from the reviewer pane, or record `verify` as the coordinator.")
 	}
 	if endpoint != nil && role == "other" && toolName == "" {
 		if existing, ok := task.Get("reviewer"); ok && existing != nil {
 			rev := existing.(*ordjson.Object)
 			pane, _ := rev.Get("pane")
 			session, _ := rev.Get("session")
-			return nil, fmt.Errorf("Task already has reviewer pane %v in session %v; a second reviewer endpoint is not adopted silently.", pane, session)
+			return nil, nil, fmt.Errorf("Task already has reviewer pane %v in session %v; a second reviewer endpoint is not adopted silently.", pane, session)
 		}
 		bound := ordjson.NewObject()
 		for _, key := range []string{"machine", "session", "pane", "cwd"} {
@@ -144,11 +172,11 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath str
 	}
 	record, err := evidence.Append(task, "review", role, body, cand, endpoint)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	record.Set("brief_revision", evidence.ActiveRevision(s, task))
 	if err := s.SaveTask(task); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	note := pipeline.RefreshNote(s, task)
 	result := ordjson.NewObject()
@@ -157,6 +185,6 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath str
 	result.Set("pipeline_note", note)
 	reviewer, _ := task.Get("reviewer")
 	result.Set("reviewer", reviewer)
-	result.Set("note", "Findings saved. They do not verify the candidate or close anything; a reviewer pane with saved findings is closable later, one without is not.")
-	return result, nil
+	result.Set("note", "Findings saved as a return to the parent. They do not verify the candidate or close anything; a reviewer pane with saved findings is closable later, one without is not.")
+	return result, task, nil
 }

@@ -853,6 +853,12 @@ func noticeText(s *store.Store, sumctlPath, role string, items [][2]*ordjson.Obj
 			partsByTask[idStr] = append(partsByTask[idStr], fmt.Sprintf("answer to %v is recorded and not yet applied", ref))
 		case "report":
 			partsByTask[idStr] = append(partsByTask[idStr], fmt.Sprintf("report %v is submitted and not verified", ref))
+		case "review":
+			candidate, _ := routeValue(o, "candidate").(string)
+			if candidate == "" {
+				candidate = "the task as it stands"
+			}
+			partsByTask[idStr] = append(partsByTask[idStr], fmt.Sprintf("review %v recorded verdict %v on %s, not acted on yet (a finding, not approval); read it with %s", ref, routeValue(o, "verdict"), candidate, shquote.CommandFor(sumctlPath, s.Home, "context", idStr, "--role", "coordinator", "--section", "evidence", "--kind", "review")))
 		case "attention":
 			att, _ := o.Get("attention")
 			partsByTask[idStr] = append(partsByTask[idStr], fmt.Sprintf("attention %v: native worker status %v without a saved report (evidence, not a result or a question); inspect the pane", ref, att))

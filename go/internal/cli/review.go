@@ -24,7 +24,7 @@ func (o *rootOptions) addReviewCommand(root *cobra.Command) {
 					return err
 				}
 			}
-			view, err := review.Run(st, args[0], verdict, candidate, toolName, body, runPath, policyReviewed, app.OptionalContext(o.installRoot))
+			view, err := review.Run(st, args[0], verdict, candidate, toolName, body, runPath, policyReviewed, app.OptionalContext(o.installRoot), o.pumpOpts())
 			if err != nil {
 				return err
 			}
