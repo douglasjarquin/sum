@@ -391,8 +391,8 @@ func TestConcurrentPassDoesNotWaitForAnUnrelatedRecipient(t *testing.T) {
 	if got := states(result)["w2:p1"]; got != "submitted" {
 		t.Fatalf("B = %s after %s while A was held (%v), want submitted", got, elapsed, result)
 	}
-	if elapsed >= helperPromptTimeout/2 {
-		t.Fatalf("B took %s while A was held for %s; B must not wait for A's prompt", elapsed, helperPromptTimeout)
+	if elapsed > 3*time.Second {
+		t.Fatalf("B took %s while A was held; B must not wait for A's prompt", elapsed)
 	}
 	// An older runtime takes the compatibility lock exclusively; it must still wait for a new-runtime delivery.
 	handle, err := os.OpenFile(filepath.Join(l.s.Home, ".deliver.lock"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -464,7 +464,7 @@ func TestCrashAfterPossibleSubmissionStaysUncertain(t *testing.T) {
 	if got := states(result)["w1:p1"]; got != "uncertain" {
 		t.Fatalf("after a crash mid-prompt, state = %s (%v), want uncertain", got, result)
 	}
-	if elapsed >= helperPromptTimeout/2 {
+	if elapsed > 3*time.Second {
 		t.Fatalf("pass after the crash took %s; the dead process's locks must be free", elapsed)
 	}
 	if n := len(prompts(l.calls(), "w1:p1")); n != 1 {
