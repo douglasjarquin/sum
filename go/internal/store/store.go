@@ -33,7 +33,7 @@ type Store struct {
 	Sessions string
 
 	machine *machine.Identity
-	locks   *lockRanks
+	locks   lockRanks
 }
 
 func Open(home string) (*Store, error) {
@@ -151,12 +151,7 @@ type lockRanks struct {
 	held []int
 }
 
-func (s *Store) ranks() *lockRanks {
-	if s.locks == nil {
-		s.locks = &lockRanks{}
-	}
-	return s.locks
-}
+func (s *Store) ranks() *lockRanks { return &s.locks }
 
 func (r *lockRanks) acquire(rank int) error {
 	r.mu.Lock()
@@ -187,7 +182,8 @@ func (s *Store) flock(ctx context.Context, path string, how, rank int, busy erro
 	if err := s.ranks().acquire(rank); err != nil {
 		return nil, err
 	}
-	handle, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	// Read-write, so a shared lock also works where flock is emulated with byte-range locks (NFS).
+	handle, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		s.ranks().release(rank)
 		return nil, err
@@ -259,8 +255,8 @@ func (s *Store) DeliveryShared(ctx context.Context) (func() error, error) {
 // RecipientLockPath is the lock file for one canonical recipient endpoint (machine, session, pane). Callers pass the
 // machine already canonicalized, so every spelling of one host's endpoint names one file.
 func (s *Store) RecipientLockPath(endpoint [3]string) string {
-	sum := sha256.Sum256([]byte(endpoint[0] + "\x00" + endpoint[1] + "\x00" + endpoint[2]))
-	return filepath.Join(s.Home, "deliver", hex.EncodeToString(sum[:16])+".lock")
+	key := RegistrationKey(Endpoint{Machine: endpoint[0], Session: endpoint[1], Pane: endpoint[2]})
+	return filepath.Join(s.Home, "deliver", key+".lock")
 }
 
 // RecipientLock takes one recipient's delivery lock exclusively, after the compatibility lock and before the state

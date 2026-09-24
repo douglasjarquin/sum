@@ -638,6 +638,9 @@ func Extend(s *store.Store, ctx *ordjson.Object, args ExtendArgs) (*ordjson.Obje
 	return result, nil
 }
 
+// SendLockWait bounds how long Send waits for another delivery to the same worker (a variable so tests can shorten it).
+var SendLockWait = returns.DefaultPassBudget
+
 type SendArgs struct {
 	TaskID      string
 	Attempt     string
@@ -671,7 +674,7 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 		return nil, err
 	}
 	lockedRoute := returns.ReturnRoute(preread, "worker")
-	lockCtx, cancelLock := context.WithTimeout(context.Background(), returns.DefaultPassBudget)
+	lockCtx, cancelLock := context.WithTimeout(context.Background(), SendLockWait)
 	defer cancelLock()
 	deliverUnlock, err := returns.LockRecipient(s, lockCtx, lockedRoute)
 	if errors.Is(err, store.ErrRecipientBusy) || errors.Is(err, store.ErrDeliveryLockBusy) {

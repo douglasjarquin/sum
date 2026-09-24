@@ -1,6 +1,7 @@
 package returns
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -435,5 +436,83 @@ func TestContendedRecipientIsRevisitedLastWithinTheBudget(t *testing.T) {
 	calls := l.calls()
 	if len(prompts(calls, "w1:p1")) != 1 || len(prompts(calls, "w2:p1")) != 1 {
 		t.Fatalf("calls = %v, want one prompt per recipient", calls)
+	}
+}
+
+// holdRecipient holds route's recipient lock the way another sumctl process would, through its own Store.
+func (l *passLab) holdRecipient(session, pane, cwd string) func() {
+	l.t.Helper()
+	other, err := store.Open(l.s.Home)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	route := ordjson.NewObject()
+	for k, v := range map[string]any{"machine": l.host, "session": session, "pane": pane, "cwd": cwd} {
+		route.Set(k, v)
+	}
+	unlock, err := LockRecipient(other, context.Background(), route)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	return unlock
+}
+
+// KTD3: a contended revisit waits only while an observation and a prompt could still follow. With too little budget
+// it defers at once; otherwise it gives up when that bound passes. Either way nothing is sent or recorded.
+func TestContendedRecipientDefersWhenItsWaitCannotLeadToAPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		budget time.Duration
+		reason string
+		within time.Duration
+	}{
+		// The cheapest observe-and-prompt cost is 2 x 200 ms plus 2 x PipeGrace (4 s).
+		{"too little budget to wait", 3 * time.Second, "too little of the pass budget remained", time.Second},
+		{"held past the bound", 5 * time.Second, "for the rest of this pass's budget", 3 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := newPassLab(t)
+			ObserveTimeout, PromptTimeout = 200*time.Millisecond, 200*time.Millisecond
+			a := l.worker("lab", "w1:p1")
+			l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": l.pane("idle", l.worktree(a))}})
+			release := l.holdRecipient("lab", "w1:p1", l.worktree(a))
+			defer release()
+			result, elapsed := l.pumpFor([]string{a}, "worker", tc.budget)
+			rows, _ := result.Get("recipients")
+			row := rows.([]any)[0].(*ordjson.Object)
+			state, _ := row.Get("state")
+			reason, _ := row.Get("reason")
+			if state != "deferred" || !strings.Contains(fmt.Sprint(reason), tc.reason) {
+				t.Fatalf("row = %v / %v, want deferred with %q", state, reason, tc.reason)
+			}
+			if elapsed > tc.within {
+				t.Fatalf("pass took %s, want under %s", elapsed, tc.within)
+			}
+			if len(l.calls()) != 0 || len(deliveries(t, l.s, a)) != 0 {
+				t.Fatalf("calls = %v, deliveries = %v; want nothing sent or recorded", l.calls(), deliveries(t, l.s, a))
+			}
+		})
+	}
+}
+
+// R5: a recipient deregistered while it was being observed is refused at the claim, before any prompt.
+func TestDeregistrationDuringObservationIsRefusedAtTheClaim(t *testing.T) {
+	l := newPassLab(t)
+	a := l.worker("lab", "w1:p1")
+	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "get"}, "panes": map[string]any{
+		"w1:p1": l.pane("idle", l.worktree(a))}})
+	h := l.startHelper("a", []string{a}, "worker")
+	l.awaitHeld("get", "w1:p1")
+	key := store.RegistrationKey(store.Endpoint{Machine: l.host, Session: "lab", Pane: "w1:p1"})
+	if err := os.Remove(filepath.Join(l.s.Sessions, key+".json")); err != nil {
+		t.Fatal(err)
+	}
+	l.release("w1:p1")
+	result := h.result(t)
+	if got := states(result)["w1:p1"]; got != "not-delivered" {
+		t.Fatalf("state = %s (%v), want not-delivered", got, result)
+	}
+	if n := countCalls(l.calls(), "prompt"); n != 0 {
+		t.Fatalf("prompts = %d, want none to a deregistered pane", n)
 	}
 }
