@@ -1,9 +1,11 @@
 package repair
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"regexp"
@@ -662,7 +664,19 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	if args.Class == ClassExpansion && args.Reason == "" {
 		return nil, fmt.Errorf("An expansion repair requires --reason describing the out-of-scope work.")
 	}
-	deliverUnlock, err := s.DeliveryLock()
+	// The worker route is read without a lock only to choose the recipient lock; the checks below run under it, so
+	// the duplicate-key and allowance checks stay serialized with every other delivery to this worker.
+	preread, err := s.ReadTask(args.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	lockedRoute := returns.ReturnRoute(preread, "worker")
+	lockCtx, cancelLock := context.WithTimeout(context.Background(), returns.DefaultPassBudget)
+	defer cancelLock()
+	deliverUnlock, err := returns.LockRecipient(s, lockCtx, lockedRoute)
+	if errors.Is(err, store.ErrRecipientBusy) || errors.Is(err, store.ErrDeliveryLockBusy) {
+		return nil, fmt.Errorf("Another delivery to this worker is still in progress; nothing was sent or recorded. Retry the same repair key.")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -680,6 +694,15 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	if err := s.CheckMachine(task); err != nil {
 		unlock()
 		return nil, err
+	}
+	host, err := s.Machine()
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if !host.SameEndpoint(returns.ReturnRoute(task, "worker"), lockedRoute) {
+		unlock()
+		return nil, fmt.Errorf("Worker identity changed before corrective delivery; nothing sent.")
 	}
 	value, err := Ledger(task)
 	if err != nil {
