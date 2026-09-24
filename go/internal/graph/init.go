@@ -1,16 +1,29 @@
 package graph
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
+)
+
+const (
+	// defaultGraphTimeout is the documented bound on one `codegraph init`.
+	defaultGraphTimeout = 300 * time.Second
+	// statusTimeout bounds one `codegraph status --json` observation.
+	statusTimeout = 60 * time.Second
+	// statusPreview is how much of a non-JSON status answer the recorded reason quotes.
+	statusPreview = 200
 )
 
 func jsonInt(n int) json.Number {
@@ -18,12 +31,26 @@ func jsonInt(n int) json.Number {
 }
 
 func runGit(worktree string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
-	out, err := cmd.Output()
+	result, err := proc.Run(append([]string{"git", "-C", worktree}, args...), "", proc.DefaultTimeout, true, nil)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(result.Stdout), nil
+}
+
+// codegraphEnv is the environment every codegraph call runs with: no shared daemon, no download, no color.
+func codegraphEnv() []string {
+	return append(os.Environ(), "CODEGRAPH_NO_DAEMON=1", "CODEGRAPH_NO_DOWNLOAD=1", "NO_COLOR=1")
+}
+
+// graphTimeout is the bound on `codegraph init`: 300 s, or SUM_GRAPH_TIMEOUT positive whole seconds (a lab knob).
+func graphTimeout() time.Duration {
+	if raw := strings.TrimSpace(os.Getenv("SUM_GRAPH_TIMEOUT")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return defaultGraphTimeout
 }
 
 func identity(worktree string) (*ordjson.Object, error) {
@@ -150,19 +177,33 @@ func ensureExclude(worktree string) error {
 	return err
 }
 
+// runCodegraph runs one indexing command under graphTimeout. Its stdout is progress text, never parsed. A timeout
+// stops only the direct launcher; the error then says so, including when the indexer behind it still holds the
+// output and may still be running.
 func runCodegraph(bin, worktree string, args ...string) error {
-	cmd := exec.Command(bin, append(args, worktree)...)
-	cmd.Dir = worktree
-	cmd.Env = append(os.Environ(), "CODEGRAPH_NO_DAEMON=1", "CODEGRAPH_NO_DOWNLOAD=1", "NO_COLOR=1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		detail := strings.TrimSpace(string(out))
-		if detail == "" {
-			detail = err.Error()
-		}
-		return fmt.Errorf("%s", detail)
+	argv := append(append([]string{bin}, args...), worktree)
+	result, err := proc.RunContext(context.Background(), proc.Cmd{
+		Argv:     argv,
+		Dir:      worktree,
+		Env:      codegraphEnv(),
+		Timeout:  graphTimeout(),
+		Check:    true,
+		FreeText: true,
+	})
+	if err == nil {
+		return nil
 	}
-	return nil
+	if errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrNotStarted) {
+		return err
+	}
+	detail := strings.TrimSpace(result.Stderr)
+	if detail == "" {
+		detail = strings.TrimSpace(result.Stdout)
+	}
+	if detail == "" {
+		return err
+	}
+	return errors.New(detail)
 }
 
 func appendAttempt(record *ordjson.Object, action string, ok bool, errText string) {
@@ -257,44 +298,65 @@ func StatusTask(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, er
 		result.Set("recorded", nil)
 		result.Set("commands", nil)
 	}
-	live := ordjson.NewObject()
+	var live *ordjson.Object
 	if record != nil {
 		tool := asObject(func() any { v, _ := record.Get("tool"); return v }())
 		bin := asString(func() any { v, _ := tool.Get("path"); return v }())
 		worktree := asString(func() any { v, _ := record.Get("worktree"); return v }())
 		if bin != "" && worktree != "" {
-			cmd := exec.Command(bin, "status", "--json", worktree)
-			cmd.Dir = worktree
-			cmd.Env = append(os.Environ(), "CODEGRAPH_NO_DAEMON=1", "CODEGRAPH_NO_DOWNLOAD=1", "NO_COLOR=1")
-			if out, err := cmd.Output(); err == nil {
-				if decoded, decErr := ordjson.Decode(out); decErr == nil {
-					live.Set("status", decoded)
-					fresh := ordjson.NewObject()
-					fresh.Set("state", "fresh")
-					if obj := asObject(decoded); obj != nil {
-						if pending, ok := obj.Get("pendingChanges"); ok {
-							if p := asObject(pending); p != nil {
-								added, _ := p.Get("added")
-								modified, _ := p.Get("modified")
-								if fmt.Sprint(added) != "0" || fmt.Sprint(modified) != "0" {
-									fresh.Set("state", "stale")
-								}
-							}
-						}
-					}
-					live.Set("freshness", fresh)
-					live.Set("reconcile_needed", nil)
-				}
-			}
+			live = observeStatus(bin, worktree)
 		}
 	}
-	if live.Len() == 0 {
+	if live == nil {
 		result.Set("live", nil)
 	} else {
 		result.Set("live", live)
 	}
 	result.Set("note", "Observation only. `stale` means edits are not in the index until `sync`; a `reconcile_needed` action runs only through `graph init`.")
 	return result, nil
+}
+
+// observeStatus runs `codegraph status --json` once. Only complete, in-limit JSON from a command that exited 0 becomes
+// a live status; anything else leaves status and freshness unset and names the reason in `error`.
+func observeStatus(bin, worktree string) *ordjson.Object {
+	live := ordjson.NewObject()
+	result, err := proc.RunContext(context.Background(), proc.Cmd{
+		Argv:    []string{bin, "status", "--json", worktree},
+		Dir:     worktree,
+		Env:     codegraphEnv(),
+		Timeout: statusTimeout,
+		Check:   true,
+	})
+	if err != nil {
+		live.Set("error", err.Error())
+		return live
+	}
+	decoded, decErr := ordjson.Decode([]byte(result.Stdout))
+	if decErr != nil {
+		preview := strings.TrimSpace(result.Stdout)
+		if len(preview) > statusPreview {
+			preview = preview[:statusPreview]
+		}
+		live.Set("error", fmt.Sprintf("codegraph status did not return JSON (%s): %s", decErr, preview))
+		return live
+	}
+	live.Set("status", decoded)
+	fresh := ordjson.NewObject()
+	fresh.Set("state", "fresh")
+	if obj := asObject(decoded); obj != nil {
+		if pending, ok := obj.Get("pendingChanges"); ok {
+			if p := asObject(pending); p != nil {
+				added, _ := p.Get("added")
+				modified, _ := p.Get("modified")
+				if fmt.Sprint(added) != "0" || fmt.Sprint(modified) != "0" {
+					fresh.Set("state", "stale")
+				}
+			}
+		}
+	}
+	live.Set("freshness", fresh)
+	live.Set("reconcile_needed", nil)
+	return live
 }
 
 func asObject(v any) *ordjson.Object {

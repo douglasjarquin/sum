@@ -1,16 +1,15 @@
 package graph
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 )
 
 const (
@@ -51,17 +50,18 @@ func Tool(runtimeRoot string) *ordjson.Object {
 		return row
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "--version")
-	cmd.Env = append(os.Environ(), "CODEGRAPH_NO_DAEMON=1", "CODEGRAPH_NO_DOWNLOAD=1", "NO_COLOR=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	runErr := cmd.Run()
+	result, runErr := proc.RunContext(context.Background(), proc.Cmd{
+		Argv:    []string{path, "--version"},
+		Env:     codegraphEnv(),
+		Timeout: 60 * time.Second,
+	})
+	if runErr != nil {
+		row.Set("reason", fmt.Sprintf("codegraph did not answer `--version`: %s", runErr))
+		return row
+	}
 
 	var lines []string
-	for _, line := range strings.Split(stdout.String(), "\n") {
+	for _, line := range strings.Split(result.Stdout, "\n") {
 		if trimmed := strings.TrimSpace(line); trimmed != "" {
 			lines = append(lines, trimmed)
 		}
@@ -72,19 +72,11 @@ func Tool(runtimeRoot string) *ordjson.Object {
 		row.Set("version", version)
 	}
 
-	exitCode := 0
-	if runErr != nil {
-		if exitErr, ok := runErr.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			row.Set("reason", fmt.Sprintf("codegraph did not answer `--version`: %s", runErr))
-			return row
-		}
-	}
+	exitCode := result.Code
 	if exitCode != 0 || version == "" {
-		detail := strings.TrimSpace(stderr.String())
+		detail := strings.TrimSpace(result.Stderr)
 		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
+			detail = strings.TrimSpace(result.Stdout)
 		}
 		if len(detail) > 300 {
 			detail = detail[len(detail)-300:]
