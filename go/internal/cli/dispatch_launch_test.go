@@ -2,12 +2,14 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
@@ -179,6 +181,36 @@ func TestDispatchKeepsForegroundWithoutItsLeaderUncertain(t *testing.T) {
 	sent := d.ctl(false, "repair", "send", asString(task["id"]), "--attempt", asString(attempt["id"]), "--key", "rebase", "--text", "Rebase onto main.")
 	if msg := asString(sent["error"]); !strings.Contains(msg, "exact running worker attempt") {
 		t.Fatalf("repair send to an uncertain attempt = %v, want refusal", sent)
+	}
+}
+
+func flagAfter(call []string, name string) (string, bool) {
+	for i := 0; i < len(call)-1; i++ {
+		if call[i] == name {
+			return call[i+1], true
+		}
+	}
+	return "", false
+}
+
+func TestDispatchAgentStartTimeoutAllowsGrokColdStart(t *testing.T) {
+	if herdrclient.AgentStartTimeout.Milliseconds() == 30000 {
+		t.Fatalf("AgentStartTimeout = %s, want a bound above 30s", herdrclient.AgentStartTimeout)
+	}
+	if herdrclient.AgentStartCallTimeout <= herdrclient.AgentStartTimeout {
+		t.Fatalf("AgentStartCallTimeout = %s, want above AgentStartTimeout %s", herdrclient.AgentStartCallTimeout, herdrclient.AgentStartTimeout)
+	}
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "grok-cold-start", map[string]string{"README.md": "x\n"})
+	d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "grok", "--approved")
+	starts := agentStartCalls(t, d.base)
+	if len(starts) != 1 {
+		t.Fatalf("agent start calls = %v, want exactly one", starts)
+	}
+	got, ok := flagAfter(starts[0], "--timeout")
+	want := fmt.Sprint(herdrclient.AgentStartTimeout.Milliseconds())
+	if !ok || got != want || got == "30000" {
+		t.Fatalf("agent start --timeout = %q, want %s in %v", got, want, starts[0])
 	}
 }
 
