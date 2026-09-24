@@ -492,22 +492,12 @@ func asList(v any) []any {
 // coordinatorCore reads the runtime's coordinator core, validated like any role procedure; a runtime
 // without it stages no contract revision.
 func coordinatorCore(runtimeRoot string) (string, error) {
-	if _, err := procedure.Describe(runtimeRoot, procedure.Coordinator, "no coordinator contract revision was staged"); err != nil {
-		return "", err
-	}
-	data, err := os.ReadFile(filepath.Join(runtimeRoot, procedure.Coordinator.Path))
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	_, data, err := procedure.Load(runtimeRoot, procedure.Coordinator, "no coordinator contract revision was staged")
+	return string(data), err
 }
 
-func contractPolicy(runtimeRoot string) (*ordjson.Object, error) {
+func contractPolicy(runtimeRoot, core string) (*ordjson.Object, error) {
 	agents, err := os.ReadFile(filepath.Join(runtimeRoot, "AGENTS.md"))
-	if err != nil {
-		return nil, err
-	}
-	core, err := coordinatorCore(runtimeRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -575,7 +565,11 @@ func regenerateContract(s *store.Store, runtimeRoot, sumctlPath string) (*ordjso
 	if err != nil {
 		return nil, err
 	}
-	policy, err := contractPolicy(runtimeRoot)
+	core, err := coordinatorCore(runtimeRoot)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := contractPolicy(runtimeRoot, core)
 	if err != nil {
 		return nil, err
 	}
@@ -620,10 +614,6 @@ func regenerateContract(s *store.Store, runtimeRoot, sumctlPath string) (*ordjso
 		summaryLines = append(summaryLines, "- "+fmt.Sprint(item))
 	}
 	agents, _ := os.ReadFile(filepath.Join(runtimeRoot, "AGENTS.md"))
-	core, err := coordinatorCore(runtimeRoot)
-	if err != nil {
-		return nil, err
-	}
 	text := fmt.Sprintf("# sum coordinator contract — %s\n\nThis is the coordinator's operating contract as shipped by sum %s (runtime %s).\nYou remain the coordinator of this installation. This revision does not change your role, your registered pane, the recorded tasks, or their parent routes.\n\n## Refresh procedure\n\n- Read the contract below and the change summary. Then run `%s` to record the receipt.\n- Continue coordination from saved state: `%s` and the task records are the source of truth.\n- Do not restart yourself, re-dispatch running tasks, re-run setup, or re-answer recorded decisions.\n- Already-connected MCP clients keep the tool set they started with; the capability list below says what is deferred until the client itself restarts.\n\n## Change summary\n\n%s\n\n## Operating contract (AGENTS.md at this revision)\n\n%s\n\n## Coordinator core (%s at this revision)\n\n%s\n",
 		rid, contract.SumVersion, runtimeSHA(runtimeRoot),
 		shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", rid),

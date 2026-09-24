@@ -50,7 +50,7 @@ var Sources = []Source{
 	{Name: "sum-worker-graph", Path: "skills/sum-worker/references/graph.md", Load: OnDemand,
 		When: "the `## Code graph` section or `context --section execution` reports an index other than `not built`, or before you ask for one"},
 	{Name: "sum-worker-refresh", Path: "skills/sum-worker/references/refresh.md", Load: OnDemand,
-		When: "a `sum refresh` message or a `brief revision rN is requested` notice reaches you"},
+		When: "a `sum refresh` message or a `brief revision rN is requested` notice reaches you, or before you adopt any revision"},
 }
 
 // Role cores that `init` names for a session it registers; they are read from the runtime, never pinned.
@@ -80,29 +80,27 @@ func readSource(runtimeRoot string, src Source, manifest *ordjson.Object) ([]byt
 }
 
 func readSourceFor(runtimeRoot string, src Source, manifest *ordjson.Object, consequence string) ([]byte, error) {
-	sourceError := func(src Source, runtimeRoot, problem string) error {
-		return sourceError(src, runtimeRoot, problem, consequence)
-	}
+	fail := func(problem string) error { return sourceError(src, runtimeRoot, problem, consequence) }
 	path := filepath.Join(runtimeRoot, filepath.FromSlash(src.Path))
 	info, err := os.Lstat(path)
 	if err != nil {
-		return nil, sourceError(src, runtimeRoot, "is missing")
+		return nil, fail("is missing")
 	}
 	if !info.Mode().IsRegular() {
-		return nil, sourceError(src, runtimeRoot, "is not a regular file")
+		return nil, fail("is not a regular file")
 	}
 	if info.Size() == 0 {
-		return nil, sourceError(src, runtimeRoot, "is empty")
+		return nil, fail("is empty")
 	}
 	if info.Size() > MaxBytes {
-		return nil, sourceError(src, runtimeRoot, fmt.Sprintf("is larger than %d bytes", MaxBytes))
+		return nil, fail(fmt.Sprintf("is larger than %d bytes", MaxBytes))
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, sourceError(src, runtimeRoot, "is unreadable ("+err.Error()+")")
+		return nil, fail("is unreadable (" + err.Error() + ")")
 	}
 	if len(data) == 0 || len(data) > MaxBytes {
-		return nil, sourceError(src, runtimeRoot, "changed size while it was read")
+		return nil, fail("changed size while it was read")
 	}
 	if manifest != nil {
 		files, _ := manifest.Get("files")
@@ -113,10 +111,10 @@ func readSourceFor(runtimeRoot string, src Source, manifest *ordjson.Object, con
 			recorded, _ = value.(string)
 		}
 		if recorded == "" {
-			return nil, sourceError(src, runtimeRoot, "is not listed in the release manifest")
+			return nil, fail("is not listed in the release manifest")
 		}
 		if recorded != "sha256:"+sha256Hex(data) {
-			return nil, sourceError(src, runtimeRoot, "does not match its release manifest hash")
+			return nil, fail("does not match its release manifest hash")
 		}
 	}
 	return data, nil
@@ -155,17 +153,17 @@ func readAll(runtimeRoot string) ([][]byte, error) {
 	return contents, nil
 }
 
-// Describe validates one role source in the runtime exactly as pinning would (regular file, size bound,
-// release-manifest hash) and returns its reference row with an absolute path. consequence names what the
-// caller refuses when the file is unusable, e.g. "no role was claimed".
-func Describe(runtimeRoot string, src Source, consequence string) (*ordjson.Object, error) {
+// Load validates one role source in the runtime exactly as pinning would (regular file, size bound,
+// release-manifest hash) and returns its reference row with an absolute path, plus its content.
+// consequence names what the caller refuses when the file is unusable, e.g. "no role was claimed".
+func Load(runtimeRoot string, src Source, consequence string) (*ordjson.Object, []byte, error) {
 	manifest, err := releaseManifest(runtimeRoot, consequence)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	data, err := readSourceFor(runtimeRoot, src, manifest, consequence)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	row := ordjson.NewObject()
 	row.Set("name", src.Name)
@@ -174,7 +172,30 @@ func Describe(runtimeRoot string, src Source, consequence string) (*ordjson.Obje
 	row.Set("sha256", sha256Hex(data))
 	row.Set("bytes", json.Number(fmt.Sprint(len(data))))
 	row.Set("load", src.Load)
-	return row, nil
+	return row, data, nil
+}
+
+// Describe is Load without the content.
+func Describe(runtimeRoot string, src Source, consequence string) (*ordjson.Object, error) {
+	row, _, err := Load(runtimeRoot, src, consequence)
+	return row, err
+}
+
+// Reference is Describe for a role that proceeds regardless: the row carries `ok`, and on failure the
+// source's identity with the `error` instead of its path and hash.
+func Reference(runtimeRoot string, src Source, consequence string) *ordjson.Object {
+	row, err := Describe(runtimeRoot, src, consequence)
+	if err != nil {
+		row = ordjson.NewObject()
+		row.Set("name", src.Name)
+		row.Set("source", src.Path)
+		row.Set("load", src.Load)
+		row.Set("ok", false)
+		row.Set("error", err.Error())
+		return row
+	}
+	row.Set("ok", true)
+	return row
 }
 
 // Check validates every source without writing anything, so a caller can refuse before side effects.

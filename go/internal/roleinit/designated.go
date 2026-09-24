@@ -465,13 +465,20 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	result.Set("task", taskID)
 	result.Set("registration", registration)
 	result.Set("coordinator", coordinator)
-	workerTask := task
-	if role == "worker" && workerTask == nil {
+	procedureView := any(nil)
+	if workerTask := task; role == "worker" && workerTask == nil {
+		// A verified worker whose task no longer matches this pane (archived, say) still gets its procedure.
 		if id, ok := taskID.(string); ok && id != "" {
-			workerTask, _ = s.ReadTask(id)
+			if recorded, readErr := s.ReadTask(id); readErr != nil {
+				procedureView = []any{unreadableProcedure(readErr)}
+			} else {
+				procedureView = roleProcedure(opts.RuntimeRoot, s, role, recorded, core)
+			}
 		}
+	} else {
+		procedureView = roleProcedure(opts.RuntimeRoot, s, role, task, core)
 	}
-	result.Set("procedure", roleProcedure(opts.RuntimeRoot, s, role, workerTask, core))
+	result.Set("procedure", procedureView)
 	note := map[string]string{
 		"coordinator": "You are the coordinator for this instance. Read the coordinator core at the path under `procedure` before any other step, then follow its startup steps.",
 		"worker":      "You are a dispatched worker. Follow your brief and the required files under `procedure`; do not run coordinator startup.",

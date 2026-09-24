@@ -14,7 +14,7 @@ A session explicitly given a worker brief is a worker even before it runs `init`
 - `worker`: follow your brief and every required file under its `## Worker procedure` (`init` names them too). Never initialize a coordinator, dispatch, or spawn a management hierarchy.
 - `developer`: another session owns coordination, or this checkout is not the installation. Read `skills/sum-develop/SKILL.md` and follow nothing else: modify and test sum only in a development checkout; never run it.
 
-Read each file at the path `init` names under `procedure` (the copy it validated), not a checkout-relative one, and reread it after context compaction or a resumed conversation (rerun `init` if you lost the path). If such a file is missing or unreadable, stop and say so; never continue from memory or another copy.
+Read each file at the path `init` names under `procedure` (the copy it validated), not a checkout-relative one, and reread it after context compaction or a resumed conversation (rerun `init` if you lost the path). An older helper, for example after a rollback, names no `procedure`: a coordinator then reads `COORDINATOR.md` beside this file and a developer `skills/sum-develop/SKILL.md`. If such a file is missing or unreadable, stop and say so; never continue from memory or another copy.
 
 ## Every role
 

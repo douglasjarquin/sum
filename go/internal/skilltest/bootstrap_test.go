@@ -12,12 +12,22 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/procedure"
 )
 
-// roleFiles are the files a session is told to read on start: the bootstrap every harness loads, the
-// role cores `init` names, and the worker procedure `procedure.Sources` pins into briefs.
-func roleFiles() []string {
+// roleFiles are the files a session is told to read: the bootstrap every harness loads, the role cores
+// `init` names, the worker procedure `procedure.Sources` pins into briefs, and every action skill a
+// role core routes to.
+func roleFiles(t *testing.T, root string) []string {
+	t.Helper()
 	files := []string{"AGENTS.md", procedure.Coordinator.Path, procedure.Developer.Path}
 	for _, src := range procedure.Sources {
 		files = append(files, src.Path)
+	}
+	skills, err := filepath.Glob(filepath.Join(root, "skills", "*", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range skills {
+		rel, _ := filepath.Rel(root, path)
+		files = append(files, filepath.ToSlash(rel))
 	}
 	return files
 }
@@ -43,7 +53,11 @@ func TestRoleFilesAndTheFilesTheyNameShipInEveryRuntime(t *testing.T) {
 	root := repoRoot(t)
 	tracked := trackedFiles(t, root)
 	seen := map[string]bool{}
-	for _, rel := range roleFiles() {
+	for _, rel := range roleFiles(t, root) {
+		if seen["file:"+rel] {
+			continue
+		}
+		seen["file:"+rel] = true
 		if !tracked[rel] {
 			t.Errorf("%s is not tracked, so no release tree or task runtime carries it", rel)
 		}

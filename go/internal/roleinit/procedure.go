@@ -26,25 +26,14 @@ func roleProcedure(runtimeRoot string, s *store.Store, role string, task, coordi
 		row.Set("ok", true)
 		return []any{row}
 	case "developer":
-		row, err := procedure.Describe(runtimeRoot, procedure.Developer, "read it from a verified runtime before developing")
-		if err != nil {
-			row = ordjson.NewObject()
-			row.Set("name", procedure.Developer.Name)
-			row.Set("source", procedure.Developer.Path)
-			row.Set("load", procedure.Developer.Load)
-			row.Set("ok", false)
-			row.Set("error", err.Error())
-			return []any{row}
-		}
-		row.Set("ok", true)
-		return []any{row}
+		return []any{procedure.Reference(runtimeRoot, procedure.Developer, "read it from a verified runtime before developing")}
 	case "worker":
 		if s == nil || task == nil {
 			return nil
 		}
 		versionsObj, err := versions.ReadVersions(s, task)
 		if err != nil {
-			return nil
+			return []any{unreadableProcedure(err)}
 		}
 		active := versions.ActiveRevision(versionsObj)
 		if active == nil {
@@ -52,11 +41,9 @@ func roleProcedure(runtimeRoot string, s *store.Store, role string, task, coordi
 		}
 		policy, _ := active.Get("policy")
 		policyObj, _ := policy.(*ordjson.Object)
-		id, _ := task.Get("id")
-		idStr, _ := id.(string)
-		taskPath, err := s.TaskPath(idStr)
+		taskPath, err := s.TaskPath(asString(task, "id"))
 		if err != nil {
-			return nil
+			return []any{unreadableProcedure(err)}
 		}
 		refs := procedure.References(taskPath, procedure.Rows(policyObj))
 		if refs == nil {
@@ -65,4 +52,13 @@ func roleProcedure(runtimeRoot string, s *store.Store, role string, task, coordi
 		return refs
 	}
 	return nil
+}
+
+// unreadableProcedure is the row a worker sees when its task record cannot say which procedure it pinned,
+// so the failure is visible instead of reading like a brief without pinned files.
+func unreadableProcedure(err error) *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("ok", false)
+	row.Set("error", "The task record naming your pinned worker procedure is unreadable ("+err.Error()+"); stop and report it rather than working from memory or another copy.")
+	return row
 }

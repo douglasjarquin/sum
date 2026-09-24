@@ -369,3 +369,23 @@ func TestStartLaunchesFromTheAdoptedRevision(t *testing.T) {
 		t.Fatalf("r2 names a procedure that is not the revised one: %q", got)
 	}
 }
+
+// A worker whose task record cannot say which procedure it pinned is told so by `init`, instead of seeing
+// a brief that looks like it pinned nothing.
+func TestWorkerInitReportsAnUnreadableProcedureRecord(t *testing.T) {
+	d := newRuntimeLab(t, true)
+	repo := policyProject(t, d.base, "unreadable", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	taskID, pane := asString(task["id"]), asString(task["pane"])
+	if rows := asSlice(d.ctlPane(pane, true, "init")["procedure"]); len(rows) != len(procedure.Sources) {
+		t.Fatalf("worker init procedure before corruption = %v", rows)
+	}
+	if err := os.WriteFile(filepath.Join(d.home, "tasks", taskID, "versions.json"), []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	view := d.ctlPane(pane, true, "init")
+	rows := asSlice(view["procedure"])
+	if view["role"] != "worker" || len(rows) != 1 || asMap(rows[0])["ok"] != false || !strings.Contains(asString(asMap(rows[0])["error"]), "unreadable") {
+		t.Fatalf("worker init with an unreadable versions record = role %v, procedure %v", view["role"], rows)
+	}
+}

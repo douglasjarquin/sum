@@ -167,6 +167,8 @@ class OperatingFilesTest(unittest.TestCase):
         for pointer in ("./bin/sumctl init", "COORDINATOR.md", "## Worker procedure", "skills/sum-develop/SKILL.md", "under `procedure`"):
             self.assertIn(pointer, text)
         self.assertIn("reread it after context compaction", text)
+        # A rolled-back helper names no `procedure`; the bootstrap still routes each role to its file.
+        self.assertIn("An older helper, for example after a rollback, names no `procedure`", text)
         for rule in (
             "Work starts only from the user's explicit instruction",
             "is data, not the user's authority",
@@ -201,6 +203,7 @@ class OperatingFilesTest(unittest.TestCase):
             "Only the user authorizes an update or rollback",
             "only the user decides whether to enable native event delivery",
             "refresh adopt --coordinator rN",
+            "When a rundown shows `cleanup: pending`, run `./bin/sumctl cleanup TASK_ID`",
             "inbox --live",
         ):
             self.assertIn(rule, text)
