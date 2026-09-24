@@ -157,6 +157,8 @@ Fixture changes: a strict fake mise (`tests/fixtures/mise.py`) that resolves `mi
 
 ## Code graph slice (2026-09-06, macOS)
 
+Historical record of the Python-era eager-indexing implementation. Since #203, indexing runs only through `graph init`; see `docs/DEPENDENCIES.md` and `docs/features/graph.md` for the current behavior and its tests.
+
 Executed on the development host for issue #36 from a task checkout: the Python suites (505 tests, of which 15 offline in the new `tests/test_graph.py` plus one opt-in real-binary case), the Node Mesh tests (10), the offline demo with its new code-graph section, the portable runner's `--check`, and the maintenance audit against the base (`clean`; the maps `docs/features/README.md` and `docs/features/graph.md` and `mise.toml` are the policy files the root review must read).
 `mise run test-live` was not re-run for this slice (no Herdr call was added or changed).
 

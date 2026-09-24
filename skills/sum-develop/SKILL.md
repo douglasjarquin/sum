@@ -22,7 +22,7 @@ The helper refuses symlinked or overlapping paths and never nests a development 
 `--pane` creates a Herdr workspace whose root pane starts in the checkout; it starts no agent and copies no coordinator identity.
 
 Move all edits, builds, and tests into that path. Run `./bin/sumctl init` there; it reports `developer` and writes nothing.
-`dev prepare` also initializes the checkout's code graph with the installation's pinned codegraph (`graph` in the result and in `.sum/dev.json`, index at `<checkout>/.codegraph`, ignored by sum's own `.gitignore`); rerunning the same name reconciles it instead of re-indexing. Use `CODEGRAPH_NO_DAEMON=1 <installation>/.local/bin/codegraph explore ... -p <checkout>` (the result's `graph.commands`) and `sync` after edits; a state other than `ready` means read the source, and nothing about the checkout depends on it.
+`dev prepare` builds no code graph. When one would help, index your own checkout on demand with the installation's pinned codegraph, as the result's `note` prints: `CODEGRAPH_NO_DAEMON=1 CODEGRAPH_NO_DOWNLOAD=1 <installation>/.local/bin/codegraph init <checkout>` (index at `<checkout>/.codegraph`, ignored by sum's own `.gitignore`). Then use `codegraph explore ... -p <checkout>` and `sync` after edits. Without an index, read the source; nothing about the checkout depends on it.
 
 ## Keep production separate
 

@@ -55,7 +55,7 @@ A rundown reconciles missed events once from one snapshot per session; do not wa
 
 ## Code graph
 
-Each task row and outline carries `graph`: the state of the checkout's codegraph index as sum last recorded it (`ready`, `failed`, `deferred`, `exhausted`, `unavailable`). `./bin/sumctl graph status TASK_ID` adds one live freshness observation without writing anything; `graph init TASK_ID` retries or reconciles within the bound. None of those states blocks a task, changes a slot, or says anything about verification; a worker without a usable graph reads source, as its brief says.
+Each task row and outline carries `graph`: the state of the checkout's codegraph index as sum last recorded it (`ready`, `failed`, `exhausted`, `unavailable`), or nothing when no index was requested (`not built`, the normal case). `./bin/sumctl graph status TASK_ID` adds one live freshness observation without writing anything; `graph init TASK_ID` builds or rebuilds it on request, refuses while a codegraph writer for that checkout is still running, and stops at three failures. None of those states blocks a task, changes a slot, or says anything about verification; a worker without a usable graph reads source, as its brief says.
 
 ## Restart
 

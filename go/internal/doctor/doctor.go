@@ -168,7 +168,7 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 	codegraphRow.Set("version", version)
 	codegraphRow.Set("path", path)
 	if available == true {
-		codegraphRow.Set("detail", "pinned codegraph available; new checkouts get a local index")
+		codegraphRow.Set("detail", "pinned codegraph available; `graph init TASK_ID` builds a checkout-local index on request")
 	} else {
 		reasonStr, _ := reason.(string)
 		codegraphRow.Set("detail", "graph optional and unavailable: "+reasonStr)

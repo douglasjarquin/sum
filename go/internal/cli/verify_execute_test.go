@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/machine"
 )
@@ -468,40 +469,47 @@ func TestVerifyExecute_runCheckIsRefusedAndRealRunJSONStillWorks(t *testing.T) {
 	}
 }
 
-func TestVerifyExecute_graphIndexLivesUnderVerificationAndLeavesWithCheckout(t *testing.T) {
+func TestVerifyExecute_invokesNoCodegraphAndBuildsNoIndex(t *testing.T) {
 	v := newVerifyLab(t)
-	metaPath := filepath.Join(v.worktree, ".codegraph", "meta.json")
-	workerMeta, err := os.ReadFile(metaPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	calls := filepath.Join(v.base, "fake-codegraph", "calls.jsonl")
 	sha := v.commit("NOTES.md", "notes\n")
+	before := countLines(t, calls)
 	out := v.ctl(true, "verify", v.taskID, "--candidate", sha, "--execute")
 	ev := v.evidence(out)
 	if asString(ev["result"]) != "pass" || asString(ev["isolation"]) != "separate-checkout" {
 		t.Fatalf("evidence %v", ev)
 	}
-	graph := asMap(ev["graph"])
-	if asString(graph["state"]) != "ready" {
-		t.Fatalf("graph.state %v", graph["state"])
+	if graph, ok := ev["graph"]; ok {
+		t.Fatalf("verification evidence carries graph %v; verification must not index", graph)
 	}
-	indexPath := asString(graph["index_path"])
-	marker := filepath.Join("tasks", v.taskID, "verification")
-	if !strings.Contains(indexPath, marker) {
-		t.Fatalf("index_path %q want under %s", indexPath, marker)
+	if added := countLines(t, calls) - before; added != 0 {
+		t.Fatalf("verify --execute invoked codegraph %d times", added)
 	}
-	if _, err := os.Stat(asString(ev["root"])); !os.IsNotExist(err) {
-		t.Fatalf("verification checkout still present: %v", err)
+	if _, err := os.Stat(filepath.Join(v.worktree, ".codegraph")); !os.IsNotExist(err) {
+		t.Fatalf("worker checkout gained an index: %v", err)
 	}
-	if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
-		t.Fatalf("index still present at %s: %v", indexPath, err)
-	}
-	gotMeta, err := os.ReadFile(metaPath)
-	if err != nil {
+}
+
+func TestVerifyExecute_neverExitingCodegraphCannotBlock(t *testing.T) {
+	v := newVerifyLab(t)
+	hang := filepath.Join(v.base, "codegraph-hang")
+	if err := os.WriteFile(hang, []byte("#!/bin/sh\nexec sleep 100000\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if string(gotMeta) != string(workerMeta) {
-		t.Fatalf("worker index changed\nbefore %s\nafter %s", workerMeta, gotMeta)
+	v.env = append(v.env, "SUM_CODEGRAPH_BIN="+hang)
+	start := time.Now()
+	task := v.ctl(true, "dispatch", "--repo", v.repo, "--brief", filepath.Join(v.base, "brief.md"), "--approved")
+	if _, ok := task["graph"]; ok {
+		t.Fatalf("dispatch recorded graph %v", task["graph"])
+	}
+	sha := v.commit("NOTES.md", "notes\n")
+	out := v.ctl(true, "verify", v.taskID, "--candidate", sha, "--execute")
+	if asString(v.evidence(out)["result"]) != "pass" {
+		t.Fatalf("verify %v", out)
+	}
+	// The --version probe alone is bounded at 60 s; both commands together finishing far below it proves neither ran.
+	if elapsed := time.Since(start); elapsed > 45*time.Second {
+		t.Fatalf("dispatch and verify took %s with a never-exiting codegraph", elapsed)
 	}
 }
 

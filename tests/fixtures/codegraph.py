@@ -8,7 +8,9 @@ incremental; `index` rebuilds; `query NAME -p PATH --json` returns the symbols o
 `install --print-config ID` prints a snippet and writes nothing. Anything else exits 2 so an unverified call is never silently accepted.
 
 Knobs: FAKE_CODEGRAPH_ROOT (call log, concurrency accounting), FAKE_CODEGRAPH_VERSION, FAKE_CODEGRAPH_FAIL=1 (init/index/sync exit 1),
-FAKE_CODEGRAPH_SLEEP=SECONDS (slow build, for timeouts and slot bounds), FAKE_CODEGRAPH_EXTRACTION (schema version of new indexes)."""
+FAKE_CODEGRAPH_SLEEP=SECONDS (slow build, for timeouts), FAKE_CODEGRAPH_EXTRACTION (schema version of new indexes),
+FAKE_CODEGRAPH_PARTIAL=1 (init/index write the index as the real 1.5.0 does before indexing finishes, leave `index.state` at
+`indexing`, and exit 1: an interrupted build, which a later `init` skips as already initialized)."""
 import hashlib
 import fcntl
 import json
@@ -88,9 +90,14 @@ def build(project, index_dir, meta_path, full):
         index_dir.mkdir(exist_ok=True)
         (index_dir / ".gitignore").write_text(GITIGNORE)
         files, symbols = scan(project)
+        partial = bool(os.environ.get("FAKE_CODEGRAPH_PARTIAL"))
         (index_dir / "codegraph.db").write_text(json.dumps({"files": files, "symbols": symbols}))
         meta_path.write_text(json.dumps({"version": VERSION, "extraction": EXTRACTION, "projectPath": str(project), "lastIndexed": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                                         "fileCount": len(files), "nodeCount": len(files) + len(symbols), "edgeCount": len(symbols), "full": full}))
+                                         "fileCount": len(files), "nodeCount": len(files) + len(symbols), "edgeCount": len(symbols), "full": full,
+                                         "state": "indexing" if partial else "complete"}))
+        if partial:
+            print("✗ fake codegraph: build interrupted as instructed", file=sys.stderr)
+            sys.exit(1)
     finally:
         if marker is not None:
             marker.unlink(missing_ok=True)
@@ -131,7 +138,7 @@ def status(project):
             "backend": "fake", "journalMode": "wal", "languages": ["python"], "pendingChanges": pending,
             "worktreeMismatch": None if meta["projectPath"] == str(project) else {"indexed": meta["projectPath"], "current": str(project)},
             "index": {"builtWithVersion": meta["version"], "builtWithExtractionVersion": meta["extraction"], "currentExtractionVersion": EXTRACTION,
-                      "reindexRecommended": meta["extraction"] != EXTRACTION, "state": "complete", "pendingRefs": 0}}
+                      "reindexRecommended": meta["extraction"] != EXTRACTION, "state": meta.get("state", "complete"), "pendingRefs": 0}}
 
 
 def main(args):

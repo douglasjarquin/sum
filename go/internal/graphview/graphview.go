@@ -122,11 +122,17 @@ func graphFailures(record *ordjson.Object) []any {
 	var failures []any
 	for _, av := range listField(record, "attempts") {
 		a := asObject(av)
+		// Records from the Python-era build slots may carry `deferred` attempts; those never counted as failures.
 		if !truthy(getField(a, "ok")) && asString(getField(a, "action")) != "deferred" {
 			failures = append(failures, a)
 		}
 	}
 	return failures
+}
+
+// FailureCount is how many recorded attempts failed; package graph exhausts a record at its own bound on this count.
+func FailureCount(record *ordjson.Object) int {
+	return len(graphFailures(record))
 }
 
 // Summary ports `graph_summary`: the bounded view kept in task.json, dev.json, and run records.
@@ -146,7 +152,7 @@ func Summary(record *ordjson.Object) *ordjson.Object {
 	result.Set("indexed_head", getField(record, "indexed_head"))
 	result.Set("pinned", CodegraphVersion)
 	result.Set("attempts", jsonInt(len(attempts)))
-	result.Set("failures", jsonInt(len(graphFailures(record))))
+	result.Set("failures", jsonInt(FailureCount(record)))
 	result.Set("last_action", getField(last, "action"))
 	result.Set("seconds", getField(last, "seconds"))
 	index := asObject(getField(record, "index"))
@@ -180,7 +186,7 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 		result := ordjson.NewObject()
 		result.Set("present", false)
 		result.Set("ok", true)
-		result.Set("note", "No graph record; the task was dispatched before sum initialized graphs, or the checkout was never created.")
+		result.Set("note", "Not built: sum indexes a checkout only when the coordinator runs `graph init`, so this task has no code graph. Read the source.")
 		return result, nil
 	}
 	path, err := Path(s, taskID)

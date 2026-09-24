@@ -13,8 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/graph"
-	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
@@ -94,7 +92,6 @@ func executeRootVerification(s *store.Store, runtimeRoot string, task *ordjson.O
 		return nil, "", err
 	}
 
-	graphSummary := graphview.Summary(graph.InitCheckout(s, runtimeRoot, checkout, "verification", nil))
 	runner := filepath.Join(checkout, filepath.FromSlash(verificationRunner))
 	if info, err := os.Stat(runner); err != nil || info.IsDir() {
 		return nil, "", fmt.Errorf("Candidate %s carries no %s; the project is not standardized at this SHA. Run its documented commands and record them with --result.", candidate, verificationRunner)
@@ -156,7 +153,6 @@ func executeRootVerification(s *store.Store, runtimeRoot string, task *ordjson.O
 
 	removeCheckoutArtifacts(parsed, checkout)
 	parsed.Set("root", checkout)
-	parsed.Set("graph", graphSummary)
 	return parsed, kept, nil
 }
 

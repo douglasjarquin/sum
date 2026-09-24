@@ -99,7 +99,7 @@ execution:
   graph:
     present: false
     ok: true
-    note: "No graph record; the task was dispatched before sum initialized graphs, or the checkout was never created."
+    note: "Not built: sum indexes a checkout only when the coordinator runs `graph init`, so this task has no code graph. Read the source."
   endpoints:
     worker:
       machine: null
@@ -124,7 +124,7 @@ environment:
     ok: true
   skills:
     files[1]{skill,path,bytes,sha256}:
-      sum-worker,$ROOT/skills/sum-worker/SKILL.md,15583,4e04d95d30f599ce
+      sum-worker,$ROOT/skills/sum-worker/SKILL.md,15711,f81db97fa6a55cea
     helper: $ROOT/bin/sumctl
     instruction: "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout."
   runtime:

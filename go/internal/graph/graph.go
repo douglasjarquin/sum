@@ -28,7 +28,8 @@ func IsValidHarness(harness string) bool {
 	return false
 }
 
-func binPath(runtimeRoot string) string {
+// BinPath is the pinned codegraph this runtime uses (SUM_CODEGRAPH_BIN in labs). Resolving it runs nothing.
+func BinPath(runtimeRoot string) string {
 	if override := os.Getenv("SUM_CODEGRAPH_BIN"); override != "" {
 		return override
 	}
@@ -36,7 +37,7 @@ func binPath(runtimeRoot string) string {
 }
 
 func Tool(runtimeRoot string) *ordjson.Object {
-	path := binPath(runtimeRoot)
+	path := BinPath(runtimeRoot)
 	row := ordjson.NewObject()
 	row.Set("pinned", CodegraphVersion)
 	row.Set("path", path)
