@@ -16,6 +16,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/review"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -608,7 +609,7 @@ func (l *lab) saveTaskWithReviewer() {
 		endpoint.Set(key, v)
 	}
 	endpoint.Set("pane", "w-worker:p2")
-	if _, err := review.Run(l.store, taskID, "approve", "", "", "no findings", "", false, endpoint); err != nil {
+	if _, err := review.Run(l.store, taskID, "approve", "", "", "no findings", "", false, endpoint, returns.PumpOpts{}); err != nil {
 		l.t.Fatal(err)
 	}
 }

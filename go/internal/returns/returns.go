@@ -167,6 +167,8 @@ func OpenObligations(s *store.Store, task *ordjson.Object) ([]*ordjson.Object, e
 		}
 	}
 
+	items = append(items, reviewObligations(task)...)
+
 	for _, a := range OpenAttention(task) {
 		id, _ := a.Get("id")
 		at, _ := a.Get("at")
@@ -228,6 +230,78 @@ func OpenObligations(s *store.Store, task *ordjson.Object) ([]*ordjson.Object, e
 	}
 
 	return items, nil
+}
+
+// reviewClosers are the delivery records through which the coordinator acts on a verdict for their candidate.
+var reviewClosers = map[string]bool{"verification": true, "push": true, "pr": true, "ci": true, "publication": true}
+
+// reviewObligations lists each recorded review the parent has not acted on yet. A review stays open until, after it,
+// the coordinator takes its candidate further (its own verification, push, PR, CI read, or PR publication) or sends
+// the worker a repair, or until a later report, handoff, or review names another candidate and so supersedes it.
+// Archiving the task ends it too. A delivery or notice closes nothing, and a task with no parent pane owes no one.
+func reviewObligations(task *ordjson.Object) []*ordjson.Object {
+	parent, _ := routeValue(task, "parent").(*ordjson.Object)
+	if pane, _ := routeValue(parent, "pane").(string); pane == "" {
+		return nil
+	}
+	list, _ := routeValue(task, "evidence").([]any)
+	records := make([]*ordjson.Object, 0, len(list))
+	for _, raw := range list {
+		if record, _ := raw.(*ordjson.Object); record != nil {
+			records = append(records, record)
+		}
+	}
+	var repairsAt []string
+	repairs, _ := routeValue(task, "repairs").(*ordjson.Object)
+	operations, _ := routeValue(repairs, "operations").([]any)
+	for _, raw := range operations {
+		op, _ := raw.(*ordjson.Object)
+		if kind, _ := routeValue(op, "kind").(string); kind == "send" {
+			at, _ := routeValue(op, "created_at").(string)
+			repairsAt = append(repairsAt, at)
+		}
+	}
+	text := func(record *ordjson.Object, key string) string {
+		value, _ := routeValue(record, key).(string)
+		return value
+	}
+	var items []*ordjson.Object
+	for i, review := range records {
+		if text(review, "kind") != "review" {
+			continue
+		}
+		candidate, at := text(review, "candidate"), text(review, "at")
+		closed := false
+		for _, later := range records[i+1:] {
+			kind, named := text(later, "kind"), text(later, "candidate")
+			superseded := (kind == "report" || kind == "handoff" || kind == "review") && named != "" && named != candidate
+			source := text(later, "source")
+			acted := reviewClosers[kind] && (source == "coordinator" || source == "github") && (candidate == "" || named == candidate)
+			if superseded || acted {
+				closed = true
+				break
+			}
+		}
+		for _, repairAt := range repairsAt {
+			if repairAt >= at {
+				closed = true
+			}
+		}
+		if closed {
+			continue
+		}
+		id := text(review, "id")
+		item := ordjson.NewObject()
+		item.Set("id", "review:"+id)
+		item.Set("kind", "review")
+		item.Set("ref", id)
+		item.Set("recipient", "parent")
+		item.Set("since", at)
+		item.Set("verdict", routeValue(review, "verdict"))
+		item.Set("candidate", routeValue(review, "candidate"))
+		items = append(items, item)
+	}
+	return items
 }
 
 func ReturnRoute(task *ordjson.Object, recipient string) *ordjson.Object {
@@ -477,6 +551,10 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 		for _, key := range []string{"id", "kind", "ref", "recipient", "since"} {
 			v, _ := obligation.Get(key)
 			row.Set(key, v)
+		}
+		if kind, _ := obligation.Get("kind"); kind == "review" {
+			row.Set("verdict", routeValue(obligation, "verdict"))
+			row.Set("candidate", routeValue(obligation, "candidate"))
 		}
 		row.Set("obligation", "open")
 		routeView := ordjson.NewObject()

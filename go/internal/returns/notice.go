@@ -12,12 +12,13 @@ var legacyReasons = []struct{ prefix, reason string }{
 	{"question:", "a decision is waiting"},
 	{"answer:", "an answer has been recorded"},
 	{"report:", "a worker report is available"},
+	{"review:", "a review verdict is recorded"},
 }
 
 const defaultLegacyReason = "saved task state needs attention"
 
 // Notice is the legacy single `notice` view of a task: its latest delivery attempt of a question, answer, report,
-// or attention return, read from the task's returns sidecar. The sidecar is the only persisted authority; the task
+// review, or attention return, read from the task's returns sidecar. The sidecar is the only persisted authority; the task
 // record's own `notice` field is history an older release wrote, returned unchanged only when the sidecar holds no
 // such attempt (or could not be read). Nothing decides delivery from this view.
 func Notice(task, returnsObj *ordjson.Object) any {

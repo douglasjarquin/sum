@@ -8,6 +8,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/review"
 )
 
@@ -138,7 +139,7 @@ func TestEndpointShells_reviewerRecordedByReviewRunIsExempt(t *testing.T) {
 		endpoint.Set(key, v)
 	}
 	endpoint.Set("pane", "w-rev:p1")
-	if _, err := review.Run(l.store, taskID, "approve", "", "", "no findings", "", false, endpoint); err != nil {
+	if _, err := review.Run(l.store, taskID, "approve", "", "", "no findings", "", false, endpoint, returns.PumpOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	task, err = l.store.ReadTask(taskID)
