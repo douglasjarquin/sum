@@ -7,8 +7,9 @@ import (
 )
 
 func (o *rootOptions) addReviewCommand(root *cobra.Command) {
-	var verdict, candidate, toolName, text, file, runPath string
+	var verdict, candidate, toolName, text, file, runPath, notesPath string
 	var policyReviewed bool
+	var focus, findings, limitations []string
 	cmd := &cobra.Command{
 		Use:  "review TASK",
 		Args: cobra.ExactArgs(1),
@@ -24,7 +25,28 @@ func (o *rootOptions) addReviewCommand(root *cobra.Command) {
 					return err
 				}
 			}
-			view, err := review.Run(st, args[0], verdict, candidate, toolName, body, runPath, policyReviewed, app.OptionalContext(o.installRoot))
+			var notes []review.Note
+			if notesPath != "" {
+				notes, err = review.ParseNotesFile(notesPath)
+				if err != nil {
+					return err
+				}
+			}
+			flagNotes, err := review.NotesFromFlags(focus, findings, limitations)
+			if err != nil {
+				return err
+			}
+			notes = append(notes, flagNotes...)
+			view, err := review.Run(st, review.Args{
+				Task:           args[0],
+				Verdict:        verdict,
+				Candidate:      candidate,
+				Tool:           toolName,
+				Text:           body,
+				RunPath:        runPath,
+				PolicyReviewed: policyReviewed,
+				Notes:          notes,
+			}, app.OptionalContext(o.installRoot))
 			if err != nil {
 				return err
 			}
@@ -38,6 +60,10 @@ func (o *rootOptions) addReviewCommand(root *cobra.Command) {
 	cmd.Flags().StringVar(&text, "text", "", "")
 	cmd.Flags().StringVar(&file, "file", "", "")
 	cmd.Flags().StringVar(&runPath, "run", "", "")
+	cmd.Flags().StringVar(&notesPath, "notes", "", "")
+	cmd.Flags().StringArrayVar(&focus, "focus", nil, "")
+	cmd.Flags().StringArrayVar(&findings, "finding", nil, "")
+	cmd.Flags().StringArrayVar(&limitations, "limitation", nil, "")
 	_ = cmd.MarkFlagRequired("verdict")
 	cmd.MarkFlagsOneRequired("text", "file", "run")
 	cmd.MarkFlagsMutuallyExclusive("text", "file")

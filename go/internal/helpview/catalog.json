@@ -664,6 +664,22 @@
       {
         "name": "--file",
         "help": null
+      },
+      {
+        "name": "--notes",
+        "help": "JSON array of structured PR notes ({kind, text}, optional severity and link). Kinds: review-focus, open-finding, limitation. Published instead of the findings file"
+      },
+      {
+        "name": "--focus",
+        "help": "Repeatable review-focus note for the PR summary (a non-obvious decision or scope boundary)"
+      },
+      {
+        "name": "--finding",
+        "help": "Repeatable open finding for the PR summary (severity, problem, consequence, and required action)"
+      },
+      {
+        "name": "--limitation",
+        "help": "Repeatable verification limitation for the PR summary"
       }
     ],
     "subcommands": null,

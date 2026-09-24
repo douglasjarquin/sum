@@ -57,6 +57,7 @@ func TestReviewCommands(t *testing.T) {
 		{name: "valid after dashdash", args: []string{"review", "--verdict", "comment", "--text", "looks fine", "--", "t-aaaaaaaaaaaa"}, ok: true},
 		{name: "valid --verdict= --text= --policy-reviewed", args: []string{"review", "t-aaaaaaaaaaaa", "--verdict=comment", "--text=looks fine", "--policy-reviewed"}, ok: true},
 		{name: "valid --tool", args: []string{"review", "t-aaaaaaaaaaaa", "--verdict", "comment", "--tool", "made", "--text", "looks fine"}, ok: true},
+		{name: "valid --focus --finding --limitation", args: []string{"review", "t-aaaaaaaaaaaa", "--verdict", "approve", "--text", "full findings", "--focus", "hero CTA is scoped on purpose", "--finding", "blocking: nav still points at #, so login is unreachable; point it at /login", "--limitation", "source inspected only"}, ok: true},
 		{name: "unknown flag", args: []string{"review", "t-aaaaaaaaaaaa", "--verdict", "comment", "--text", "looks fine", "--unexpected"}, usage: true, unknown: true},
 		{name: "extra positional", args: []string{"review", "t-aaaaaaaaaaaa", "--verdict", "comment", "--text", "looks fine", "extra"}, usage: true},
 		{name: "missing task", args: []string{"review", "--verdict", "comment", "--text", "looks fine"}, usage: true},
@@ -137,6 +138,45 @@ func TestReviewMadeRunRefusesWrongCandidate(t *testing.T) {
 	_, stderr, err := runReviewCLI(t, home, "review", "t-aaaaaaaaaaaa", "--verdict", "approve", "--candidate", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--tool", "made", "--run", report)
 	if err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("err=%v stderr=%s, want a candidate mismatch", err, stderr)
+	}
+	assertReviewTaskUnchanged(t, home, before)
+}
+
+func TestReviewNotesFileIsStoredAndFindingsTextStaysOnTheRecord(t *testing.T) {
+	clearHerdrEnv(t)
+	home, _ := reviewUsageLab(t)
+	notes := filepath.Join(t.TempDir(), "notes.json")
+	if err := os.WriteFile(notes, []byte(`[{"kind":"review-focus","text":"hero CTA is scoped on purpose"},{"kind":"limitation","text":"source inspected only"}]`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := runReviewCLI(t, home, "review", "t-aaaaaaaaaaaa", "--verdict", "approve",
+		"--candidate", "cccccccccccccccccccccccccccccccccccccccc", "--text", "# Independent review\n\nlong report",
+		"--notes", notes)
+	if err != nil {
+		t.Fatalf("err=%v stdout=%s stderr=%s", err, stdout, stderr)
+	}
+	saved := readNamedTask(t, home, "t-aaaaaaaaaaaa")
+	if !strings.Contains(saved, `"kind": "review-focus"`) || !strings.Contains(saved, "hero CTA is scoped on purpose") {
+		t.Fatalf("task.json missing stored notes: %s", saved)
+	}
+	if !strings.Contains(saved, "long report") {
+		t.Fatalf("task.json dropped the durable findings: %s", saved)
+	}
+	if !strings.Contains(stdout, "hero CTA is scoped on purpose") {
+		t.Fatalf("stdout missing stored notes: %s", stdout)
+	}
+}
+
+func TestReviewNotesFileWithUnknownKindLeavesTheTaskUnchanged(t *testing.T) {
+	clearHerdrEnv(t)
+	home, before := reviewUsageLab(t)
+	notes := filepath.Join(t.TempDir(), "notes.json")
+	if err := os.WriteFile(notes, []byte(`[{"kind":"nit","text":"rename me"}]`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err := runReviewCLI(t, home, "review", "t-aaaaaaaaaaaa", "--verdict", "approve", "--text", "full findings", "--notes", notes)
+	if err == nil || !strings.Contains(err.Error(), "kind") {
+		t.Fatalf("err=%v stderr=%s, want a kind error", err, stderr)
 	}
 	assertReviewTaskUnchanged(t, home, before)
 }

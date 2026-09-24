@@ -17,7 +17,7 @@ A worker brief is generated from the record: the approved task text, base, repos
 ```sh
 ./bin/sumctl brief list TASK_ID          # revisions, integrity, active/requested state, report evidence binding
 ./bin/sumctl report TASK_ID --file r.md --handoff h.json   # worker: prose report plus a bounded structured handoff bound to the candidate SHA
-./bin/sumctl review TASK_ID --verdict changes-requested --candidate SHA --file f.md   # reviewer pane: appended findings; binds the reviewer endpoint
+./bin/sumctl review TASK_ID --verdict changes-requested --candidate SHA --file f.md --finding 'blocking: …'   # reviewer pane: full findings plus compact PR notes; binds the reviewer endpoint
 ./bin/sumctl verify TASK_ID --candidate SHA --result pass --text '...'               # coordinator: own verification record (prose)
 ./bin/sumctl verify TASK_ID --candidate SHA --execute                                  # coordinator: run the candidate's VERIFY.md contract in a separate checkout under its own run id
 ./bin/sumctl review TASK_ID --verdict approve --candidate SHA --tool made --text '...' # coordinator: the configured MADE/No Mistakes result; binds no reviewer pane

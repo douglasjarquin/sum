@@ -608,7 +608,7 @@ func (l *lab) saveTaskWithReviewer() {
 		endpoint.Set(key, v)
 	}
 	endpoint.Set("pane", "w-worker:p2")
-	if _, err := review.Run(l.store, taskID, "approve", "", "", "no findings", "", false, endpoint); err != nil {
+	if _, err := review.Run(l.store, review.Args{Task: taskID, Verdict: "approve", Text: "no findings"}, endpoint); err != nil {
 		l.t.Fatal(err)
 	}
 }

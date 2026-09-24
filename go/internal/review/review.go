@@ -37,7 +37,27 @@ func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string 
 	return "other"
 }
 
-func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath string, policyReviewed bool, endpoint *ordjson.Object) (*ordjson.Object, error) {
+// Args is one review recording. Text is the durable findings; Notes are the only fields published into the PR.
+type Args struct {
+	Task           string
+	Verdict        string
+	Candidate      string
+	Tool           string
+	Text           string
+	RunPath        string
+	PolicyReviewed bool
+	Notes          []Note
+}
+
+func Run(s *store.Store, args Args, endpoint *ordjson.Object) (*ordjson.Object, error) {
+	verdict := args.Verdict
+	candidate := args.Candidate
+	toolName := args.Tool
+	text := args.Text
+	runPath := args.RunPath
+	policyReviewed := args.PolicyReviewed
+	notes := args.Notes
+	taskID := args.Task
 	if !verdicts[verdict] {
 		return nil, fmt.Errorf("--verdict must be one of ['approve', 'changes-requested', 'blocked', 'comment']")
 	}
@@ -46,6 +66,12 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath str
 	}
 	if toolName != "" && !toolNamePat.MatchString(toolName) {
 		return nil, fmt.Errorf("--tool must be a short name of the review facility that produced these findings (for example `made`)")
+	}
+	for i, note := range notes {
+		if err := validateNote(note, i); err != nil {
+			return nil, err
+		}
+		notes[i] = normalizeNote(note)
 	}
 	var made *ordjson.Object
 	if runPath != "" {
@@ -124,9 +150,13 @@ func Run(s *store.Store, taskID, verdict, candidate, toolName, text, runPath str
 	if role == "" {
 		role = "unattributed"
 	}
+	if len(notes) == 0 {
+		notes = notesFromMade(made)
+	}
 	body := ordjson.NewObject()
 	body.Set("verdict", verdict)
 	body.Set("text", text)
+	body.Set("notes", encodeNotes(notes))
 	if toolName == "" {
 		body.Set("tool", nil)
 	} else {

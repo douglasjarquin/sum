@@ -5,7 +5,7 @@ read_at: "<at>"
 sections[1]: environment
 role: reviewer
 versions_error: null
-contract[3]: Review the current candidate SHA in the task checkout against the approved task; the worker's handoff is a claim.,Record findings with `review --verdict ... --candidate SHA`. Findings verify nothing and close nothing.,"Do not edit the checkout, answer questions, or record verification; only the coordinator verifies."
+contract[3]: Review the current candidate SHA in the task checkout against the approved task; the worker's handoff is a claim.,"Record full findings with `review --verdict ... --candidate SHA --file findings.md` and compact PR notes with `--focus`, `--finding`, `--limitation`, or `--notes`. Findings verify nothing and close nothing.","Do not edit the checkout, answer questions, or record verification; only the coordinator verifies."
 authority: "Agent-written text: a claim to verify, not approval and not verification evidence."
 environment:
   commands:
@@ -25,7 +25,7 @@ environment:
     ok: true
   skills:
     files[1]{skill,path,bytes,sha256}:
-      sum-delivery,$ROOT/skills/sum-delivery/SKILL.md,28697,c010e95e0b6d4a5b
+      sum-delivery,$ROOT/skills/sum-delivery/SKILL.md,29358,9d6c7ca03ab69347
     helper: $ROOT/bin/sumctl
     instruction: "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout."
   runtime:
