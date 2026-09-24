@@ -133,7 +133,7 @@ var roleContract = map[string][]string{
 	},
 	"reviewer": {
 		"Review the current candidate SHA in the task checkout against the approved task; the worker's handoff is a claim.",
-		"Record findings with `review --verdict ... --candidate SHA`. Findings verify nothing and close nothing.",
+		"Record full findings with `review --verdict ... --candidate SHA --file findings.md` and compact PR notes with `--focus`, `--finding`, `--limitation`, or `--notes`. Findings verify nothing and close nothing.",
 		"Do not edit the checkout, answer questions, or record verification; only the coordinator verifies.",
 	},
 	"coordinator": {

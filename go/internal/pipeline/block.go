@@ -65,7 +65,31 @@ func blockHash(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Render is the block sum owns in the PR body: the stage table, then whatever the reviewers wrote.
+const (
+	noteFocus   = "review-focus"
+	noteFinding = "open-finding"
+	noteLimit   = "limitation"
+
+	legacyNotesLimitation = "The recorded review has no structured notes. Full findings stay in the task record and were not published here."
+	emptyPassLimitation   = "This pass recorded no structured notes."
+)
+
+var noteOrder = []string{noteFocus, noteFinding, noteLimit}
+
+var noteLabels = map[string]string{
+	noteFocus:   "Review focus",
+	noteFinding: "Open finding",
+	noteLimit:   "Limitation",
+}
+
+type reviewNote struct {
+	kind     string
+	text     string
+	severity string
+	link     string
+}
+
+// Render is the block sum owns in the PR body: the stage table, then a compact review summary of structured notes.
 func Render(record Record, task *ordjson.Object) string {
 	var out strings.Builder
 	out.WriteString(MarkerStart + "\n## Pipeline\n\n" + attribution + "\n\n")
@@ -79,33 +103,41 @@ func Render(record Record, task *ordjson.Object) string {
 
 // renderReview reads every review the task ever collected, not only this candidate's: the remediation log
 // is the history of the candidates that were sent back, which by definition are not the current one.
+// Publication uses structured notes only. The durable findings text is never copied into the PR.
 func renderReview(task *ordjson.Object) string {
 	reviews := reviewHistory(task)
 	if len(reviews) == 0 {
 		return ""
 	}
 	var summary string
+	var haveSummary bool
 	var remediation []string
 	for _, record := range reviews {
-		text := reviewText(record)
-		if text == "" {
-			continue
-		}
+		body := compactReviewBody(record)
 		switch stringField(record, "verdict") {
 		case "changes-requested":
-			remediation = append(remediation, text)
+			if body != "" {
+				remediation = append(remediation, body)
+			}
 		case "approve", "blocked":
-			summary = text
+			summary = body
+			haveSummary = true
 		}
 	}
-	if summary == "" && len(remediation) > 0 {
+	if !haveSummary && len(remediation) > 0 {
 		summary = remediation[len(remediation)-1]
+		haveSummary = true
 	}
-	if summary == "" {
+	if !haveSummary || (summary == "" && len(remediation) == 0) {
 		return ""
 	}
 	var out strings.Builder
-	out.WriteString("### Review summary\n\n" + summary + "\n")
+	out.WriteString("### Review summary\n")
+	if summary != "" {
+		out.WriteString("\n" + summary + "\n")
+	} else {
+		out.WriteString("\n")
+	}
 	if len(remediation) > 0 {
 		out.WriteString("\n<details><summary><strong>Review remediation log</strong></summary>\n\n")
 		for i, text := range remediation {
@@ -126,9 +158,90 @@ func reviewHistory(task *ordjson.Object) []*ordjson.Object {
 	return out
 }
 
-// reviewText strips both marker families, so a reviewer's quoted marker can never split either block.
-func reviewText(record *ordjson.Object) string {
-	text := stringField(record, "text")
+func compactReviewBody(record *ordjson.Object) string {
+	notes, known := notesFromRecord(record)
+	if !known {
+		return renderNoteBullets([]reviewNote{{kind: noteLimit, text: legacyNotesLimitation}})
+	}
+	if len(notes) == 0 {
+		if stringField(record, "verdict") == "changes-requested" {
+			return renderNoteBullets([]reviewNote{{kind: noteLimit, text: emptyPassLimitation}})
+		}
+		return ""
+	}
+	return renderNoteBullets(notes)
+}
+
+func notesFromRecord(record *ordjson.Object) ([]reviewNote, bool) {
+	if record == nil {
+		return nil, false
+	}
+	raw, has := record.Get("notes")
+	if !has || raw == nil {
+		return nil, false
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		return nil, false
+	}
+	var notes []reviewNote
+	for _, item := range items {
+		row, _ := item.(*ordjson.Object)
+		if row == nil {
+			continue
+		}
+		kind := stripMarkers(stringField(row, "kind"))
+		if noteLabels[kind] == "" {
+			continue
+		}
+		text := collapseNoteText(stripMarkers(stringField(row, "text")))
+		if text == "" {
+			continue
+		}
+		notes = append(notes, reviewNote{
+			kind:     kind,
+			text:     text,
+			severity: collapseNoteText(stripMarkers(stringField(row, "severity"))),
+			link:     collapseNoteText(stripMarkers(stringField(row, "link"))),
+		})
+	}
+	return notes, true
+}
+
+func renderNoteBullets(notes []reviewNote) string {
+	grouped := map[string][]reviewNote{}
+	for _, note := range notes {
+		grouped[note.kind] = append(grouped[note.kind], note)
+	}
+	var lines []string
+	for _, kind := range noteOrder {
+		for _, note := range grouped[kind] {
+			lines = append(lines, "- **"+noteLabels[kind]+":** "+formatNoteText(note))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatNoteText(note reviewNote) string {
+	text := note.text
+	if note.kind == noteFinding && note.severity != "" {
+		prefix := note.severity + ": "
+		if !strings.HasPrefix(strings.ToLower(text), strings.ToLower(prefix)) {
+			text = prefix + text
+		}
+	}
+	if note.link != "" && !strings.Contains(text, note.link) {
+		text = strings.TrimSpace(text + " " + note.link)
+	}
+	return text
+}
+
+func collapseNoteText(text string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(text, "\n", " ")), " ")
+}
+
+// stripMarkers removes both marker families, so a reviewer's quoted marker can never split either block.
+func stripMarkers(text string) string {
 	for _, marker := range []string{MarkerStart, MarkerEnd, evidenceMarkerStart, evidenceMarkerEnd} {
 		text = strings.ReplaceAll(text, marker, "")
 	}
