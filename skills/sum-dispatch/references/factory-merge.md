@@ -1,8 +1,6 @@
----
-name: sum-factory-merge
-description: Merge a factory PR only at high confidence, or leave a human gate and free the lane when later issues do not depend on it.
----
-# Factory merge
+# Coordinator procedure: factory merge
+
+Part of `sum-dispatch`, read from the factory lane procedure. Merge a factory PR only at high confidence, or leave a human gate and free the lane when later issues do not depend on it.
 
 Coordinator only, after `sum-delivery` has independently verified and reviewed the candidate and `pipeline run` has published the gate table and evidence block.
 

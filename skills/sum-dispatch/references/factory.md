@@ -1,8 +1,6 @@
----
-name: sum-factory
-description: Run a per-project software factory: enable a lane, tick for the next ready GitHub issue, dispatch one worker, then merge or leave a human gate. Never a daemon.
----
-# Factory
+# Coordinator procedure: factory lane
+
+Part of `sum-dispatch`. Read it when the user asks to run, tick, or stop a factory on an enrolled project. Run a per-project software factory: enable a lane, tick for the next ready GitHub issue, dispatch one worker, then merge or leave a human gate. Never a daemon.
 
 Use this only from the pane registered as coordinator.
 Workers do not enable a factory or dispatch other workers.
@@ -10,9 +8,9 @@ Do not start a factory unless the user named the project and asked to run it.
 
 A factory is one sequential lane on one enrolled GitHub project.
 The coordinator still only routes.
-Implementation happens in a dispatched worker that follows `skills/sum-factory-work/SKILL.md`.
-Claim procedure is `skills/sum-factory-claim/SKILL.md`.
-Merge and human-gate procedure is `skills/sum-factory-merge/SKILL.md`.
+Implementation happens in a dispatched worker that reads the pinned on-demand worker file `skills/sum-worker/references/factory.md`.
+Claim procedure is `skills/sum-dispatch/references/factory-claim.md`.
+Merge and human-gate procedure is `skills/sum-dispatch/references/factory-merge.md`.
 
 ## Start
 
@@ -58,16 +56,16 @@ On the next inbox pass, tick once if a factory is enabled and a lane is free.
 
 ## Dispatch
 
-After `action: dispatch`, follow `sum-factory-claim`, then `sum-dispatch` with `--project owner/repo`.
+After `action: dispatch`, follow the factory claim procedure, then `sum-dispatch` with `--project owner/repo`.
 The brief is the issue body plus factory constraints: use `/lfg`, capture evidence with `.agents/skills/evidence`, do not merge, report with a handoff that lists every `comparison.json`.
-Point the worker at `skills/sum-factory-work/SKILL.md` by naming it in the brief.
+Say in the brief that this is a claimed factory issue, so the worker reads its pinned factory file.
 Then `factory claim owner/repo --issue N --task TASK_ID`.
 Return control.
 
 ## After the report
 
 Follow `sum-delivery` through independent verify, review, and `pipeline run`.
-Then follow `sum-factory-merge`.
+Then follow the factory merge procedure.
 Do not pick the next issue until that skill says the lane is free.
 
 ## Stop

@@ -1,8 +1,6 @@
----
-name: sum-factory-claim
-description: Find the next ready GitHub issue for a sum factory lane and claim it with label sum-claimed plus a host and pane comment.
----
-# Factory claim
+# Coordinator procedure: factory claim
+
+Part of `sum-dispatch`, read from the factory lane procedure. Find the next ready GitHub issue for a sum factory lane and claim it with label sum-claimed plus a host and pane comment.
 
 Coordinator only.
 Call this after `sumctl factory tick` returns `action: dispatch`, or when the user names the next issue.

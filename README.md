@@ -10,7 +10,7 @@ sum is a small, Herdr-native agent distro. Launch a coding harness in this direc
 
 It is for someone who already has mise, Git, and an authenticated coding harness.
 The default path is one finished task.
-A factory lane (`sumctl factory` plus `skills/sum-factory*`) can run sequential ready issues on an enrolled project without a sum daemon: tick is a one-shot helper, dispatch stays with the coordinator, and merge happens only at high confidence on authorized repositories.
+A factory lane (`sumctl factory` plus the factory procedures in `sum-dispatch` and the worker procedure) can run sequential ready issues on an enrolled project without a sum daemon: tick is a one-shot helper, dispatch stays with the coordinator, and merge happens only at high confidence on authorized repositories.
 Instructions and skills do the reasoning.
 Herdr owns processes and worktrees.
 A small synchronous helper preserves task records.
@@ -26,7 +26,7 @@ Roles and work objects use the dictionary in [docs/terminology.md](docs/terminol
 
 * **Evidence on the PR.** Before/after evidence publishes on `pr reconcile` unless you turn it off. See [docs/verification.md](docs/verification.md).
 
-* **Bundled skills.** /sum-dispatch, /sum-worker, /sum-delivery, /sum-rundown, /sum-develop, /sum-update, and the /sum-factory* suite, with rolling session refresh and code-only rollback.
+* **Six bundled skills.** /sum-dispatch, /sum-worker, /sum-delivery, /sum-rundown, /sum-develop, and /sum-update with rolling session refresh and code-only rollback.
 
 * **Optional Herdr hook and metadata.** Native event delivery and sidebar tokens stay off until you enable them. See [docs/herdr-backend.md](docs/herdr-backend.md).
 
@@ -110,7 +110,6 @@ State files, returns, and manual dispatch are in [docs/architecture.md](docs/arc
 | /sum-rundown  | Reconcile saved tasks and pending returns                                |
 | /sum-develop  | Change sum from a development checkout that cannot claim the coordinator |
 | /sum-update   | Update or roll back the installation, then refresh running sessions      |
-| /sum-factory  | Enable a per-project factory lane, tick for the next ready issue, and route claim, work, and merge |
 
 `bin/sumctl skills install` delegates explicit skill and agent selections to the pinned Vercel Skills CLI in project copy mode. See [docs/sum-skills.md](docs/sum-skills.md).
 

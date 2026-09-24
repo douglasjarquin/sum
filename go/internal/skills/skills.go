@@ -20,7 +20,7 @@ const Version = "1.5.25"
 const engineeringPrinciplesReference = ".agents/skills/verify/references/engineering-principles.md"
 
 var (
-	sumSkillNames      = []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-factory", "sum-factory-claim", "sum-factory-merge", "sum-factory-work", "sum-rundown", "sum-update", "sum-worker"}
+	sumSkillNames      = []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker"}
 	portableSkillNames = []string{"create-verification", "evidence", "maintain-verification", "verify"}
 	skillArgument      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 )

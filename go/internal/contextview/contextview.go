@@ -799,9 +799,9 @@ const BriefSchema = 1
 var ContextRoles = []string{"worker", "reviewer", "coordinator"}
 
 var roleSkills = map[string][]string{
-	"worker":      {"sum-worker", "sum-factory-work"},
+	"worker":      {"sum-worker"},
 	"reviewer":    {"sum-delivery"},
-	"coordinator": {"sum-rundown", "sum-delivery", "sum-dispatch", "sum-factory", "sum-factory-claim", "sum-factory-merge"},
+	"coordinator": {"sum-rundown", "sum-delivery", "sum-dispatch"},
 }
 
 func pickPresent(o *ordjson.Object, keys []string) *ordjson.Object {

@@ -1,7 +1,7 @@
 ok: true
-active[10]: sum-delivery,sum-develop,sum-dispatch,sum-factory,sum-factory-claim,sum-factory-merge,sum-factory-work,sum-rundown,sum-update,sum-worker
+active[6]: sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker
 routes:
-  agents[14]: create-verification,evidence,maintain-verification,sum-delivery,sum-develop,sum-dispatch,sum-factory,sum-factory-claim,sum-factory-merge,sum-factory-work,sum-rundown,sum-update,sum-worker,verify
-  claude[14]: create-verification,evidence,maintain-verification,sum-delivery,sum-develop,sum-dispatch,sum-factory,sum-factory-claim,sum-factory-merge,sum-factory-work,sum-rundown,sum-update,sum-worker,verify
+  agents[10]: create-verification,evidence,maintain-verification,sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker,verify
+  claude[10]: create-verification,evidence,maintain-verification,sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker,verify
 compatibility: []
 errors: []
