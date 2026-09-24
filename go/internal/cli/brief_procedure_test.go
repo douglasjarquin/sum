@@ -116,8 +116,13 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	pinned := pinnedProcedure(t, string(brief))
-	if !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure", "sum-worker-")) {
-		t.Fatalf("pinned procedure %s is not a task resource", pinned)
+	home := d.home
+	if resolved, err := filepath.EvalSymlinks(d.home); err == nil {
+		home = resolved
+	}
+	wantPrefix := filepath.Join(home, "tasks", taskID, "procedure", "sum-worker-")
+	if !strings.HasPrefix(pinned, wantPrefix) && !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure", "sum-worker-")) {
+		t.Fatalf("pinned procedure %s is not a task resource (want prefix %s)", pinned, wantPrefix)
 	}
 	source, _ := os.ReadFile(filepath.Join(d.root, "skills", "sum-worker", "SKILL.md"))
 	if got, _ := os.ReadFile(pinned); string(got) != string(source) {
