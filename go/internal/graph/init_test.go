@@ -117,19 +117,23 @@ func TestInitCheckoutTimeoutNamesHeldDescendant(t *testing.T) {
 			}
 		}
 	})
-	t.Setenv("SUM_GRAPH_TIMEOUT", "1")
+	// Three seconds leaves the fake time to start its indexer even on a loaded machine.
+	t.Setenv("SUM_GRAPH_TIMEOUT", "3")
 	repo := gitRepo(t)
 
 	start := time.Now()
 	record := InitCheckout(nil, t.TempDir(), repo, "task", nil)
-	if elapsed := time.Since(start); elapsed > 8*time.Second {
+	if elapsed := time.Since(start); elapsed > 12*time.Second {
 		t.Fatalf("InitCheckout took %s", elapsed)
+	}
+	if _, err := os.Stat(pidFile); err != nil {
+		t.Fatalf("the fake never started its indexer before the bound: %v", err)
 	}
 	if state := get(record, "state"); state != "failed" {
 		t.Fatalf("state = %v, want failed", state)
 	}
 	errText := asString(get(lastAttempt(t, record), "error"))
-	for _, want := range []string{"timed out after 1s", "descendant still holds its output and was not stopped"} {
+	for _, want := range []string{"timed out after 3s", "descendant still holds its output and was not stopped"} {
 		if !strings.Contains(errText, want) {
 			t.Fatalf("attempt error = %q, want %q", errText, want)
 		}

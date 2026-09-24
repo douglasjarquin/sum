@@ -174,11 +174,13 @@ func TestRunContext_descendantHoldingPipesDoesNotHang(t *testing.T) {
 func TestRunContext_timeoutWithHeldPipesNamesBoth(t *testing.T) {
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	start := time.Now()
-	_, err := RunContext(context.Background(), Cmd{Argv: sh("sleep 30 & echo $! > " + pidFile + "; wait"), Timeout: 300 * time.Millisecond})
-	within(t, start, PipeGrace+2*time.Second)
+	// One second leaves the shell time to start its sleeper even on a loaded machine.
+	_, err := RunContext(context.Background(), Cmd{Argv: sh("sleep 30 & echo $! > " + pidFile + "; wait"), Timeout: time.Second})
+	within(t, start, time.Second+PipeGrace+2*time.Second)
 	t.Cleanup(func() { stopFixture(t, pidFile) })
+	fixturePID(t, pidFile)
 	requireKind(t, err, ErrUncertain)
-	if !strings.Contains(err.Error(), "timed out after 300ms") || !strings.Contains(err.Error(), "descendant still holds its output") {
+	if !strings.Contains(err.Error(), "timed out after 1s") || !strings.Contains(err.Error(), "descendant still holds its output") {
 		t.Fatalf("err = %v", err)
 	}
 }
