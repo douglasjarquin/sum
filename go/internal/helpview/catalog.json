@@ -2209,8 +2209,8 @@
       },
       {
         "name": "--ready",
-        "help": "Ready signal: label, roadmap, or project-status",
-        "choices": ["label", "roadmap", "project-status"],
+        "help": "Ready signal: label, issues, roadmap, or project-status",
+        "choices": ["label", "issues", "roadmap", "project-status"],
         "default": "label"
       },
       {
