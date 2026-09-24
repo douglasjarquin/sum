@@ -1,12 +1,13 @@
 package mesh
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 func (s Service) authorize(args []string) error {
@@ -21,16 +22,21 @@ func (s Service) authorize(args []string) error {
 	if _, ok := state["instance"].(string); !ok {
 		return fmt.Errorf("Sum state has no registered instance")
 	}
-	machine, err := os.Hostname()
+	host, err := machine.Local(s.config.StateHome)
 	if err != nil {
-		return fmt.Errorf("identify machine: %w", err)
+		return err
 	}
-	key := registrationKey(machine, s.config.Session, s.config.Pane)
-	registration, err := readObject(filepath.Join(s.config.StateHome, "sessions", key+".json"))
-	if err != nil {
+	var registration map[string]any
+	for _, candidate := range append([]string{host.ID}, host.Legacy()...) {
+		key := store.RegistrationKey(store.Endpoint{Machine: candidate, Session: s.config.Session, Pane: s.config.Pane})
+		if registration, err = readObject(filepath.Join(s.config.StateHome, "sessions", key+".json")); err == nil {
+			break
+		}
+	}
+	if registration == nil {
 		return fmt.Errorf("pane %s in session %s is not registered with %s; run ./bin/sumctl init there first", s.config.Pane, s.config.Session, s.config.StateHome)
 	}
-	if registration["machine"] != machine || registration["session"] != s.config.Session || registration["pane"] != s.config.Pane {
+	if !host.Is(registration["machine"]) || registration["session"] != s.config.Session || registration["pane"] != s.config.Pane {
 		return fmt.Errorf("Sum session registration identity mismatch")
 	}
 	if registration["instance"] != state["instance"] {
@@ -52,11 +58,6 @@ func readOnly(args []string) bool {
 	default:
 		return false
 	}
-}
-
-func registrationKey(machine, session, pane string) string {
-	hash := sha256.Sum256([]byte(machine + "\n" + session + "\n" + pane))
-	return hex.EncodeToString(hash[:])[:16]
 }
 
 func readObject(path string) (map[string]any, error) {

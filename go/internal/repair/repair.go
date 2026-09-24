@@ -737,7 +737,7 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	worktreeStr, _ := worktree.(string)
 	unlock()
 
-	if err := returns.ObserveRecipient(args.RuntimeRoot, route, worktreeStr); err != nil {
+	if err := returns.ObserveRecipient(s, args.RuntimeRoot, route, worktreeStr); err != nil {
 		return nil, err
 	}
 

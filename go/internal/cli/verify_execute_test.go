@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
 const verifyRunner = ".agents/skills/verify/scripts/verify_run.py"
@@ -310,6 +312,18 @@ func TestVerifyExecute_standardizedCandidatePassesInSeparateCheckout(t *testing.
 	}
 	if got := v.worktreeCount(); got != beforeTrees {
 		t.Fatalf("worktree count %d want %d\n%s", got, beforeTrees, v.git(v.repo, "worktree", "list", "--porcelain"))
+	}
+	id, err := machine.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifiers := asSlice(asMap(v.taskFile()["execution"])["verifiers"])
+	if len(verifiers) != 1 {
+		t.Fatalf("verifiers %v", verifiers)
+	}
+	verifier := asMap(verifiers[0])
+	if owner, occupant := asMap(verifier["owner"])["machine"], asMap(verifier["occupant"])["machine"]; owner != id || occupant != id {
+		t.Fatalf("verifier owner/occupant machine = %v/%v, want the stable identity %s", owner, occupant, id)
 	}
 }
 

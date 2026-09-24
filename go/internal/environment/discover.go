@@ -106,29 +106,21 @@ func requireWorktree(task *ordjson.Object) (string, error) {
 	return worktree, nil
 }
 
-func endpointRole(task, endpoint *ordjson.Object) string {
+func endpointRole(s *store.Store, task, endpoint *ordjson.Object) string {
 	if endpoint == nil {
 		return ""
 	}
-	if stringField(task, "pane") != "" && identitiesEqual(task, endpoint) {
+	host, _ := s.Machine()
+	if stringField(task, "pane") != "" && host.SameEndpoint(task, endpoint) {
 		return "worker"
 	}
-	if identitiesEqual(objectField(task, "parent"), endpoint) {
+	if host.SameEndpoint(objectField(task, "parent"), endpoint) {
 		return "coordinator"
 	}
-	if identitiesEqual(objectField(task, "reviewer"), endpoint) {
+	if host.SameEndpoint(objectField(task, "reviewer"), endpoint) {
 		return "reviewer"
 	}
 	return "other"
-}
-
-func identitiesEqual(a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return stringField(a, "machine") == stringField(b, "machine") &&
-		stringField(a, "session") == stringField(b, "session") &&
-		stringField(a, "pane") == stringField(b, "pane")
 }
 
 func sha256Text(text string) string {

@@ -3,7 +3,6 @@ package hookstatus
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"time"
 
@@ -115,7 +114,7 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 	row.Set("pane", pane)
 	row.Set("workspace", workspace)
 	row.Set("status", status)
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +123,7 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 		return nil, err
 	}
 	isRoot := owner != nil && pane != "" &&
-		asString(func() any { v, _ := owner.Get("machine"); return v }()) == host &&
+		host.Is(asString(func() any { v, _ := owner.Get("machine"); return v }())) &&
 		asString(func() any { v, _ := owner.Get("session"); return v }()) == session &&
 		asString(func() any { v, _ := owner.Get("pane"); return v }()) == pane
 	tasks, err := s.AllTasks()
@@ -136,7 +135,7 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 		if asString(func() any { v, _ := task.Get("status"); return v }()) == "archived" {
 			continue
 		}
-		if asString(func() any { v, _ := task.Get("machine"); return v }()) != host {
+		if !host.Is(asString(func() any { v, _ := task.Get("machine"); return v }())) {
 			continue
 		}
 		if asString(func() any { v, _ := task.Get("session"); return v }()) != session {

@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -54,15 +53,6 @@ func unwrapPane(value any) *ordjson.Object {
 	return obj
 }
 
-func identityEquals(a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return asString(a, "machine") == asString(b, "machine") &&
-		asString(a, "session") == asString(b, "session") &&
-		asString(a, "pane") == asString(b, "pane")
-}
-
 func newInstanceID() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {
@@ -71,12 +61,12 @@ func newInstanceID() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func observeOwner(runtimeRoot string, owner *ordjson.Object) (string, string) {
-	host, err := os.Hostname()
+func observeOwner(s *store.Store, runtimeRoot string, owner *ordjson.Object) (string, string) {
+	host, err := s.Machine()
 	if err != nil {
 		return "uncertain", err.Error()
 	}
-	if asString(owner, "machine") != host {
+	if !host.Is(asString(owner, "machine")) {
 		return "other-machine", ""
 	}
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
@@ -222,6 +212,12 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	result.Set("endpoint", ctx)
 	result.Set("upgraded", false)
 
+	ownsCoordinator := false
+	if owner != nil {
+		if ownsCoordinator, err = s.Matches(owner, store.EndpointFromContext(ctx)); err != nil {
+			return nil, err
+		}
+	}
 	var role string
 	var taskID any
 	prevRole := asString(previous, "role")
@@ -236,12 +232,18 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		} else {
 			taskID, _ = previous.Get("task")
 		}
-	case owner != nil && identityEquals(owner, ctx):
+	case ownsCoordinator:
 		if opts.Role == "developer" {
 			return nil, fmt.Errorf("This pane owns the coordinator role. Initialize a developer session from another pane; ownership is not released implicitly.")
 		}
 		role = "coordinator"
 		taskID = nil
+		if recorded := asString(owner, "machine"); recorded != asString(ctx, "machine") {
+			owner.Set("machine", asString(ctx, "machine"))
+			if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+				return nil, err
+			}
+		}
 		if _, hasRole := owner.Get("role"); !hasRole {
 			owner.Set("role", "coordinator")
 			owner.Set("instance", instanceStr)
@@ -267,7 +269,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		if !opts.Reclaim {
 			return nil, fmt.Errorf("Coordinator is owned by pane %s in session %s on %s. Inspect it; use --reclaim only for a deliberate, verified takeover. Task parent routes stay unchanged either way.", asString(owner, "pane"), asString(owner, "session"), asString(owner, "machine"))
 		}
-		observed, detail := observeOwner(opts.RuntimeRoot, owner)
+		observed, detail := observeOwner(s, opts.RuntimeRoot, owner)
 		if observed != "absent" {
 			return nil, fmt.Errorf("Refusing reclaim: recorded coordinator pane is %s (%s). Only a pane Herdr reports as pane_not_found can be reclaimed; an existing, unreachable, or uncertain coordinator pane is not permission to take over.", observed, detail)
 		}

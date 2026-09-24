@@ -18,7 +18,24 @@ If a worker's pane changed, inspect the actual agent and use `bind TASK_ID --wor
 
 This is deliberately **records-only**. The manifest lists the code worktrees that were **not** captured. Back up source code and unpushed work separately. No credential store is copied, but task text can itself contain sensitive information; protect the archive accordingly.
 
-Restore into a new empty directory, inspect the manifest, and point `sumctl --home /restored/state` at it. Keep the original archive. Unknown schema versions fail without modifying them. Pane IDs are machine-local; cross-machine process recovery is manual in this MVP.
+Restore into a new empty directory, inspect the manifest, and point `sumctl --home /restored/state` at it. Keep the original archive. Unknown schema versions fail without modifying them. Pane IDs are machine-local; cross-machine process recovery is manual in this MVP. The manifest's `machine` is the stable identity of the host that made it and `hostname` its name at the time.
+
+## Machine identity
+
+Herdr pane IDs such as `w5K:p1` are unique only within one Herdr server, so every recorded endpoint carries a `machine`, and sum refuses to reuse another machine's pane IDs. That value is `m-` and 32 hex digits: an HMAC of the operating system's machine ID (`/etc/machine-id` or `/var/lib/dbus/machine-id` on Linux, the `IOPlatformUUID` on macOS) under a sum-specific key. The raw machine ID is never stored. A Linux host with neither file gets a random ID created once at `~/.local/state/sum/machine-id`, outside any installation. On macOS, a failed `ioreg` read is an error, never a different identity.
+
+Renaming the host changes nothing: the coordinator stays coordinator, registrations and return routes keep resolving, and `--reclaim` is not needed. A different host, including one that shares the hostname, is still another machine.
+
+Records written before this identity existed carry the hostname instead. No manual step migrates them. Such a value names this host when it is the current hostname, or when this host recorded it under its own identity in `.sum/machine.json`; each registration (`sumctl init`, and dispatch for the worker pane) records the current hostname there. The coordinator's next `init` rewrites its own record and session file to the stable identity, and a session file keyed by the old hostname is still found and re-keyed when that pane registers again. A name recorded under a different identity never names this host.
+
+A name this host carried only before this release is not provable. If the host was renamed under the older release and this release first runs under the new name, the coordinator record still names the old one: `init` returns `developer`, and reclaim is refused as other-machine. Recover without editing records: set the old hostname again (`hostnamectl set-hostname OLD`), run `./bin/sumctl init` in the coordinator pane, which records the name and rewrites the coordinator record, then set the current hostname back. Tasks recorded under the old name resolve from then on.
+
+A malformed `.sum/machine.json` stops every command that needs the machine identity and names the file. Restore it from the copy you trust. Removing it only forgets the recorded names, so records under a name the host no longer carries become other-machine again.
+
+* A VM clone is a different machine only if it regenerates `/etc/machine-id`, as cloned systemd hosts must. Such a clone does not inherit the original's coordinator, tasks, or hostname records, even with the whole `.sum/` copied and the hostname kept. A clone that keeps the machine ID is the same machine to sum.
+* A records backup does not include `.sum/machine.json` or the coordinator claim. Restored on another host, its tasks and pane bindings are other-machine until recovered and bound explicitly. The exception is a record from before this identity whose hostname the restoring host happens to share, which resolves there as it did before.
+* A reinstalled operating system with a new machine ID is a new machine: reclaim the coordinator and rebind tasks explicitly.
+* A release from before this identity compares `machine` to the raw hostname. Once this release has written records, rolling back below it leaves those records other-machine to the older code, and its reclaim refuses them.
 
 ## Limits worth knowing
 

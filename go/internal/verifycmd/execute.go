@@ -58,10 +58,11 @@ func executeRootVerification(s *store.Store, runtimeRoot string, task *ordjson.O
 		return nil, "", err
 	}
 	checkout := filepath.Join(taskPath, verificationDir, stamp, "checkout")
-	host, err := os.Hostname()
+	identity, err := s.Machine()
 	if err != nil {
 		return nil, "", err
 	}
+	host := identity.ID
 
 	attemptID, err := reserveVerifier(s, ctx, taskID, candidate, checkout)
 	if err != nil {

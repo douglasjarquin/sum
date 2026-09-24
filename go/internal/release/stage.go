@@ -13,6 +13,7 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/skills"
@@ -437,7 +438,7 @@ func BuildManifest(s *store.Store, root, sha, target string) (*ordjson.Object, e
 	source.Set("sha", sha)
 	source.Set("tree", strings.TrimSpace(treeOut.Stdout))
 	source.Set("repository", root)
-	host, _ := os.Hostname()
+	host, _ := machine.ID()
 	statePath := filepath.Join(s.Home, "state.json")
 	var instance any
 	if raw, readErr := ordjson.ReadFile(statePath); readErr == nil {

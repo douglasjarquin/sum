@@ -39,7 +39,7 @@ Repeat the same small task with a different worker harness and, separately, a di
 
 ## 7. Backup
 
-Create a records backup. Inspect its manifest: worktree code is explicitly excluded. Extract into a new directory, inspect records via `sumctl --home`, and verify that another machine's bindings are not automatically used.
+Create a records backup. Inspect its manifest: worktree code is explicitly excluded. Extract into a new directory, inspect records via `sumctl --home`, and verify that another machine's bindings are not automatically used. Rename the host (`hostnamectl set-hostname`, then back) and confirm the coordinator pane's next `sumctl init` still returns `coordinator` without `--reclaim`.
 
 ## 8. Fleet capacity and rolling update
 
@@ -157,7 +157,7 @@ Do not add `sumctl machine` or a Sum SSH daemon.
 
 On a host with Herdr 0.9.0 and SSH to a second machine, run `herdr machine add` for that host.
 Keep the coordinator on Local.
-Confirm a task whose recorded `machine` is the remote hostname is ignored by the local `hook event` pump.
+Confirm a task whose recorded `machine` is the remote host's identity is ignored by the local `hook event` pump.
 Confirm a local task can still `sumctl ask` and appear in records-only `sumctl inbox`.
 Confirm local rundown (`inbox --live`, `init`, and `bind --parent-only`) remains the degrade path when the remote Herdr session is disconnected.
 A real SSH canary is unrun if no second host is available.

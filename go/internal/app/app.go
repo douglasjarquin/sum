@@ -52,7 +52,13 @@ func RequireCoordinator(s *store.Store, ctx *ordjson.Object) error {
 		return err
 	}
 	role, _ := registrationField(registration, "role")
-	if registration == nil || role != "coordinator" || owner == nil || !identityMatches(owner, endpoint) {
+	owns := false
+	if owner != nil {
+		if owns, err = s.Matches(owner, endpoint); err != nil {
+			return err
+		}
+	}
+	if registration == nil || role != "coordinator" || !owns {
 		return fmt.Errorf("This pane is not the registered coordinator of this sum instance. Run ./bin/sumctl init in the coordinator pane; a developer session must not dispatch or rebind.")
 	}
 	return nil
@@ -65,13 +71,6 @@ func registrationField(registration *ordjson.Object, key string) (string, bool) 
 	value, ok := registration.Get(key)
 	s, isString := value.(string)
 	return s, ok && isString
-}
-
-func identityMatches(value *ordjson.Object, e store.Endpoint) bool {
-	machine, _ := value.Get("machine")
-	session, _ := value.Get("session")
-	pane, _ := value.Get("pane")
-	return machine == e.Machine && session == e.Session && pane == e.Pane
 }
 
 func OptionalContext(root string) *ordjson.Object {

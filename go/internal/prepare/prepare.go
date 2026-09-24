@@ -171,14 +171,14 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		unlock()
 		return nil, err
 	}
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		unlock()
 		return nil, err
 	}
 	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
 	owner := ordjson.NewObject()
-	owner.Set("machine", host)
+	owner.Set("machine", host.ID)
 	owner.Set("session", session)
 	owner.Set("pane", nil)
 	attempt, err := reservations.NewAttempt("worker", owner, nil, store.Now(), "", nil)
@@ -191,7 +191,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	task.Set("id", tid)
 	task.Set("created_at", store.Now())
 	task.Set("status", "preparing")
-	task.Set("machine", host)
+	task.Set("machine", host.ID)
 	task.Set("repository", repo)
 	task.Set("project", projectObj)
 	task.Set("base_sha", baseSHA)

@@ -12,6 +12,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/repair"
@@ -89,15 +90,6 @@ func samePath(a, b string) bool {
 		rb, _ = filepath.Abs(b)
 	}
 	return ra == rb
-}
-
-func identityEquals(a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	return stringField(a, "machine") == stringField(b, "machine") &&
-		stringField(a, "session") == stringField(b, "session") &&
-		stringField(a, "pane") == stringField(b, "pane")
 }
 
 func herdrPath(runtimeRoot string) (string, error) {
@@ -449,7 +441,7 @@ func (ins *inspection) block(code, detail string) {
 // records (the reviewer), read once per inspection.
 func (ins *inspection) endpointShells() map[int]bool {
 	if ins.shells == nil {
-		ins.shells = execution.EndpointShells(ins.runtimeRoot, ins.task)
+		ins.shells = execution.EndpointShells(ins.host(), ins.runtimeRoot, ins.task)
 	}
 	return ins.shells
 }
@@ -564,8 +556,10 @@ func (ins *inspection) addOrphans(inside []any) {
 	}
 }
 
-func (ins *inspection) hostname() string {
-	h, _ := os.Hostname()
+// host is this machine's identity. When it cannot be resolved the zero
+// Identity names no recorded machine, so every machine check fails closed.
+func (ins *inspection) host() machine.Identity {
+	h, _ := ins.store.Machine()
 	return h
 }
 
@@ -576,8 +570,8 @@ func (ins *inspection) identity() {
 			ins.block("identity", fmt.Sprintf("task record has no %s; nothing can be matched to a Herdr resource", key))
 		}
 	}
-	if stringField(task, "machine") != ins.hostname() {
-		ins.block("identity", fmt.Sprintf("task belongs to machine %s, this is %s", stringField(task, "machine"), ins.hostname()))
+	if host := ins.host(); !host.Is(stringField(task, "machine")) {
+		ins.block("identity", fmt.Sprintf("task belongs to machine %s, this is %s (%s)", stringField(task, "machine"), host.ID, host.Hostname))
 	}
 	if stringField(task, "session") != stringField(ins.ctx, "session") {
 		ins.block("identity", fmt.Sprintf("task lives in Herdr session %s, the coordinator runs in %s", stringField(task, "session"), stringField(ins.ctx, "session")))
@@ -1015,12 +1009,13 @@ func (ins *inspection) reviewer() error {
 		return nil
 	}
 	parent := asObject(func() any { v, _ := ins.task.Get("parent"); return v }())
-	if identityEquals(reviewer, ins.task) || identityEquals(reviewer, parent) || identityEquals(reviewer, ins.ctx) {
+	host := ins.host()
+	if host.SameEndpoint(reviewer, ins.task) || host.SameEndpoint(reviewer, parent) || host.SameEndpoint(reviewer, ins.ctx) {
 		row.Set("reason", "reviewer endpoint is the worker or coordinator pane")
 		ins.block("reviewer", "reviewer endpoint equals the worker or coordinator pane; refusing")
 		return nil
 	}
-	if stringField(reviewer, "machine") != ins.hostname() || stringField(reviewer, "session") != stringField(ins.ctx, "session") {
+	if !host.Is(stringField(reviewer, "machine")) || stringField(reviewer, "session") != stringField(ins.ctx, "session") {
 		row.Set("reason", "reviewer pane is in another session or machine")
 		ins.block("reviewer", fmt.Sprintf("reviewer pane %s is in session %s on %s; not observable from here", stringField(reviewer, "pane"), stringField(reviewer, "session"), stringField(reviewer, "machine")))
 		return nil

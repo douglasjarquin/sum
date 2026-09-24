@@ -6,7 +6,6 @@ package lifecycle
 
 import (
 	"encoding/json"
-	"os"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
@@ -40,7 +39,7 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, only []strin
 	if ctx == nil || app.RequireCoordinator(s, ctx) != nil {
 		return nil
 	}
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return nil
 	}
@@ -60,8 +59,8 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, only []strin
 		id, _ := task.Get("id")
 		idStr, _ := id.(string)
 		status, _ := task.Get("status")
-		machine, _ := task.Get("machine")
-		if status == "archived" || machine != host || (len(taskFilter) > 0 && !taskFilter[idStr]) {
+		recorded, _ := task.Get("machine")
+		if status == "archived" || !host.Is(recorded) || (len(taskFilter) > 0 && !taskFilter[idStr]) {
 			continue
 		}
 		if number := openPRNumber(task); number > 0 {

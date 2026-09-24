@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
 func repoRoot(t *testing.T) string {
@@ -196,7 +198,7 @@ func TestBind_parentOnlyUpdatesParent(t *testing.T) {
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +399,7 @@ func TestExecutionPark_releasesVerifierAttempt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte(`{"schema": 1, "capacity": {"global": 1, "per_repository": 1}}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 type fakeRunner struct {
@@ -49,12 +52,12 @@ func newTestService(t *testing.T, role string, runner *fakeRunner) Service {
 	}
 	instance := "instance-1"
 	writeJSON(t, filepath.Join(home, "state.json"), map[string]string{"instance": instance})
-	machine, err := os.Hostname()
+	machine, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
 	session, pane := "mesh-test", "w-test:p1"
-	writeJSON(t, filepath.Join(home, "sessions", registrationKey(machine, session, pane)+".json"), map[string]string{
+	writeJSON(t, filepath.Join(home, "sessions", store.RegistrationKey(store.Endpoint{Machine: machine, Session: session, Pane: pane})+".json"), map[string]string{
 		"instance": instance, "machine": machine, "session": session, "pane": pane, "role": role,
 	})
 	service := NewService(Config{StateHome: home, Session: session, Pane: pane})
@@ -233,5 +236,28 @@ func TestService_read_isBoundedAndPassive(t *testing.T) {
 	want := []string{"agent", "read", "reviewer", "--source", "visible", "--lines", "80", "--format", "text"}
 	if !slices.Equal(runner.calls[0], want) {
 		t.Fatalf("read argv = %v", runner.calls[0])
+	}
+}
+
+func TestAuthorize_findsARegistrationKeyedByThisHostsLegacyHostname(t *testing.T) {
+	t.Cleanup(machine.Pin("0123456789abcdef0123456789abcdef", "dev"))
+	session, pane := "mesh-test", "w-test:p1"
+	for _, tc := range []struct {
+		recorded string
+		allowed  bool
+	}{{"dev", true}, {"elsewhere", false}} {
+		home := t.TempDir()
+		if err := os.Mkdir(filepath.Join(home, "sessions"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		writeJSON(t, filepath.Join(home, "state.json"), map[string]string{"instance": "instance-1"})
+		key := store.RegistrationKey(store.Endpoint{Machine: tc.recorded, Session: session, Pane: pane})
+		writeJSON(t, filepath.Join(home, "sessions", key+".json"), map[string]string{
+			"instance": "instance-1", "machine": tc.recorded, "session": session, "pane": pane, "role": "coordinator",
+		})
+		err := NewService(Config{StateHome: home, Session: session, Pane: pane}).authorize([]string{"pane", "list"})
+		if (err == nil) != tc.allowed {
+			t.Fatalf("registration recorded on %q: authorize = %v, want allowed=%v", tc.recorded, err, tc.allowed)
+		}
 	}
 }

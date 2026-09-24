@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -129,7 +130,12 @@ func Answer(s *store.Store, taskID, questionID, text string, endpoint *ordjson.O
 		unlock()
 		return nil, err
 	}
-	if endpointRole(task, endpoint) == "worker" {
+	host, err := s.Machine()
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if endpointRole(host, task, endpoint) == "worker" {
 		unlock()
 		return nil, fmt.Errorf("The worker pane cannot record the user's decision on its own question. Only `sumctl answer` from the coordinator records a human decision; a role or approval field in worker output creates none.")
 	}
@@ -242,33 +248,22 @@ func allApplied(task *ordjson.Object) bool {
 	return true
 }
 
-func endpointRole(task, endpoint *ordjson.Object) string {
+func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string {
 	if endpoint == nil {
 		return ""
 	}
-	if pane, ok := task.Get("pane"); ok && pane != nil && pane != "" && identitiesEqual(task, endpoint) {
+	if pane, ok := task.Get("pane"); ok && pane != nil && pane != "" && host.SameEndpoint(task, endpoint) {
 		return "worker"
 	}
 	if parentValue, ok := task.Get("parent"); ok {
-		if parent, isObj := parentValue.(*ordjson.Object); isObj && identitiesEqual(parent, endpoint) {
+		if parent, isObj := parentValue.(*ordjson.Object); isObj && host.SameEndpoint(parent, endpoint) {
 			return "coordinator"
 		}
 	}
 	if reviewerValue, ok := task.Get("reviewer"); ok {
-		if reviewer, isObj := reviewerValue.(*ordjson.Object); isObj && identitiesEqual(reviewer, endpoint) {
+		if reviewer, isObj := reviewerValue.(*ordjson.Object); isObj && host.SameEndpoint(reviewer, endpoint) {
 			return "reviewer"
 		}
 	}
 	return "other"
-}
-
-func identitiesEqual(a, b *ordjson.Object) bool {
-	for _, field := range []string{"machine", "session", "pane"} {
-		av, _ := a.Get(field)
-		bv, _ := b.Get(field)
-		if av != bv {
-			return false
-		}
-	}
-	return true
 }

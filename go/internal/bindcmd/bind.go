@@ -2,7 +2,6 @@ package bindcmd
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -47,13 +46,12 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 	if err != nil {
 		return nil, err
 	}
-	host, err := os.Hostname()
+	host, err := s.Machine()
 	if err != nil {
 		return nil, err
 	}
 	if parentOnly {
-		machine, _ := task.Get("machine")
-		if machine != host {
+		if recorded, _ := task.Get("machine"); !host.Is(recorded) {
 			return nil, fmt.Errorf("Cross-machine restore needs explicit worktree recovery, not a parent-only rebind.")
 		}
 	}
@@ -86,7 +84,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane string, parentO
 		}
 		task.Set("pane", workerPane)
 		task.Set("session", session)
-		task.Set("machine", host)
+		task.Set("machine", host.ID)
 	}
 	task.Set("parent", ctx)
 	if err := s.SaveTask(task); err != nil {

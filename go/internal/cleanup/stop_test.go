@@ -12,6 +12,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/launch"
+	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/review"
@@ -73,7 +74,7 @@ func newLab(t *testing.T) *lab {
 	t.Setenv("FAKE_PARENT_STATUS", "idle")
 	t.Setenv("FAKE_PARENT_KIND", "claude")
 	t.Setenv("FAKE_LSOF_ROOT", lsofRoot)
-	host, err := os.Hostname()
+	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
