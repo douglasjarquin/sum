@@ -24,7 +24,7 @@ environment:
   skills:
     files[4]{skill,path,bytes,sha256}:
       sum-worker,$ROOT/skills/sum-worker/SKILL.md,10527,45ac1aed5504bbd8
-      sum-delivery,$ROOT/skills/sum-delivery/SKILL.md,30831,cbeb1ad7d470cc6a
+      sum-delivery,$ROOT/skills/sum-delivery/SKILL.md,31492,b90498758e95d878
       sum-rundown,$ROOT/skills/sum-rundown/SKILL.md,15018,83a278fbd512cfc5
       sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,16339,856b2436312334af
     helper: $ROOT/bin/sumctl
