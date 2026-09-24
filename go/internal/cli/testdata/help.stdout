@@ -2,7 +2,7 @@ commands:
   doctor: "Observe setup, Herdr context, and this pane's registered role; writes nothing"
   quota: Advisory provider quota. Codex uses Remainder. Other providers use quota-axi. Never switches accounts
   "release-contract": Print this runtime's release contract; writes nothing
-  init: "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, then one budgeted delivery pass (no PR observation or cleanup)"
+  init: "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, a recorded role holds only for the occupant Herdr shows in the pane (its incarnation), then one budgeted delivery pass (no PR observation or cleanup)"
   status: "All recorded tasks from saved records, with outstanding maintenance and its commands; reads only, never delivers, calls GitHub, or cleans up"
   inbox: "Only tasks that need attention: questions, reports, errors, cleanup; reads only, like status"
   skills: Check Sum-owned skill projections or copy explicit third-party skills into one project

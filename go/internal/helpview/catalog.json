@@ -4,7 +4,7 @@
       "doctor": "Observe setup, Herdr context, and this pane's registered role; writes nothing",
       "quota": "Advisory provider quota. Codex uses Remainder. Other providers use quota-axi. Never switches accounts",
       "release-contract": "Print this runtime's release contract; writes nothing",
-      "init": "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, then one budgeted delivery pass (no PR observation or cleanup)",
+      "init": "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, a recorded role holds only for the occupant Herdr shows in the pane (its incarnation), then one budgeted delivery pass (no PR observation or cleanup)",
       "status": "All recorded tasks from saved records, with outstanding maintenance and its commands; reads only, never delivers, calls GitHub, or cleans up",
       "inbox": "Only tasks that need attention: questions, reports, errors, cleanup; reads only, like status",
       "skills": "Check Sum-owned skill projections or copy explicit third-party skills into one project",
@@ -113,7 +113,7 @@
   },
   "init": {
     "topic": "init",
-    "help": "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, then one budgeted delivery pass (no PR observation or cleanup)",
+    "help": "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, a recorded role holds only for the occupant Herdr shows in the pane (its incarnation), then one budgeted delivery pass (no PR observation or cleanup)",
     "arguments": [
       {
         "name": "--role",
@@ -130,7 +130,7 @@
       },
       {
         "name": "--reclaim",
-        "help": "Deliberate, identity-checked takeover of an absent coordinator pane; never rebinds tasks"
+        "help": "Deliberate, identity-checked takeover of a coordinator pane that is absent or held by a different occupant (replaced); never rebinds tasks"
       }
     ],
     "subcommands": null,
@@ -886,7 +886,7 @@
       },
       {
         "name": "--worker-pane",
-        "help": "Explicitly adopt an existing worker; never launch a replacement"
+        "help": "Explicitly adopt an existing worker and record its occupant; never launch a replacement"
       },
       {
         "name": "--parent-only",

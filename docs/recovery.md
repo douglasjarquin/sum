@@ -4,7 +4,7 @@ Backup, cleanup after a merge, and limits. Moved out of the README.
 
 ## Recovery and backup
 
-After reopening the coordinator, run `./bin/sumctl init`. If the previous coordinator pane is verifiably gone, run `./bin/sumctl init --role coordinator --reclaim`; it proceeds only when Herdr reports that pane as `pane_not_found`; a pane that still exists (even with its agent exited) or that Herdr cannot observe is refused, and it never rebinds tasks by itself. Then run a rundown. To route an existing task back to the new coordinator:
+After reopening the coordinator, run `./bin/sumctl init`. If the previous coordinator pane is verifiably gone, run `./bin/sumctl init --role coordinator --reclaim`. It proceeds only when Herdr reports that pane as `pane_not_found`, or when a different occupant now holds that pane ID (`replaced`, see [Pane incarnation](#pane-incarnation)). A pane still held by the recorded occupant (even with its agent exited), or one whose occupant Herdr cannot establish, is refused, and reclaim never rebinds tasks by itself. Then run a rundown. To route an existing task back to the new coordinator:
 
 ```sh
 ./bin/sumctl bind TASK_ID --parent-only
@@ -36,6 +36,37 @@ A malformed `.sum/machine.json` stops every command that needs the machine ident
 * A records backup does not include `.sum/machine.json` or the coordinator claim. Restored on another host, its tasks and pane bindings are other-machine until recovered and bound explicitly. The exception is a record from before this identity whose hostname the restoring host happens to share, which resolves there as it did before.
 * A reinstalled operating system with a new machine ID is a new machine: reclaim the coordinator and rebind tasks explicitly.
 * A release from before this identity compares `machine` to the raw hostname. Once this release has written records, rolling back below it leaves those records other-machine to the older code, and its reclaim refuses them.
+
+## Pane incarnation
+
+A Herdr pane ID names an address, not an occupant. After a Herdr restart the saved layout comes back under the same pane IDs with new shells, and a pane that was never saved hands its ID to whatever is created next. So sum records what occupied a pane when it bound it and checks that occupant again before any authority or prompt. The record, `incarnation`, sits on the pane's registration (`sessions/*.json`) and, for the coordinator, on `context.json`. It holds the `terminal_id` and native `agent_session` Herdr reports, plus the pane shell's pid and OS start time. `init`, `prepare`, `dispatch`, `bind --worker-pane`, and `reclaim` write it. Coordinator commands, the bridge and MCP (for anything but observation), delivery, `repair send`, and refresh check it.
+
+| Outcome | What Herdr shows | Result |
+| --- | --- | --- |
+| `same` | the recorded `terminal_id` | the role stands |
+| `new-conversation` | the same terminal, a different native session (for example a new harness conversation in the pane) | the role stands; the new session is recorded |
+| `handoff` | a new `terminal_id`, the same shell process (pid and start time), as after a live handoff | the role stands; the new terminal is recorded |
+| `restored` | a new terminal and shell, but Herdr resumed the recorded native conversation (same agent, same session id) | the role stands |
+| `legacy-verified` | a record written before this release, whose pane shell already ran more than 2 s before the record's first occupancy time | the role stands, and this record is adopted at its next write |
+| `replaced` | a new terminal, a different shell, no matching native session; or a legacy record older than the pane's shell | no role; the returns stay pending |
+| `unrecorded` | a legacy record that cannot be proven either way | no role; the registration is left untouched |
+| `unobservable` | Herdr cannot report the terminal or shell (unreachable server, stale socket) | no role; the registration is left untouched |
+
+A refusal changes no task, question, answer, reservation, or delivery record. A `submitted` or `uncertain` delivery keeps its state: a recycled address never makes an ambiguous prompt safe to repeat. The recovery is always deliberate:
+
+* Coordinator `replaced`, or pane gone: if the user confirms the pane should coordinate, run `./bin/sumctl init --role coordinator --reclaim` there.
+* Coordinator `unrecorded`: if the user confirms the recorded coordinator is gone, close that pane so Herdr reports `pane_not_found`, then reclaim.
+* Worker not verified: after inspecting the pane, the coordinator runs `./bin/sumctl bind TASK_ID --worker-pane PANE`. That records the worker registration for the inspected occupant.
+* `unobservable`: rerun once Herdr answers.
+
+Nothing is relaunched, and no replacement worker is started.
+
+Limits:
+
+* Herdr 0.9.0 has no server generation and no prompt precondition. A restart in the moment between sum's last observation and `agent prompt` can still deliver one prompt to the new occupant.
+* `restored` trusts the native session an integration reports. Any process in the pane can report one: role bookkeeping is not an OS security sandbox.
+* The legacy proof assumes the wall clock was not stepped backwards by more than the gap between a record and a later Herdr restart.
+* An older sum helper neither records nor checks incarnation. While one runs (for example during a refresh), protection covers only this release's paths, and a record it rewrites becomes legacy again.
 
 ## Limits worth knowing
 

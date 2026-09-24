@@ -2,6 +2,16 @@
 
 Env start and stop, native event delivery, and native metadata. Moved out of the README.
 
+### Pane identity
+
+Herdr 0.9.0 pane and agent objects (`pane get`, `agent get`, `agent list`) carry a `terminal_id` and, when an official integration reports it, an `agent_session` (`{agent, kind, source, value}`, the native conversation). `pane process-info` reports the pane's `shell_pid`. A bounded lab against the pinned build (`scripts/live_incarnation.py`, run by `mise run test-live`) shows the following:
+
+* A `server stop` and restart restores the saved layout under the same pane IDs, with a new `terminal_id` and a new shell. The default `resume_agents_on_restore = true` resumes supported agents into their recorded `agent_session`.
+* A `kill -9` restart restores only what was saved; a later pane can receive a freed ID.
+* A live handoff (`server.live_handoff`, the path behind `herdr update --handoff`) keeps pane IDs and the shell process, and still issues a new `terminal_id`.
+
+sum judges a recorded address against those fields (see [Pane incarnation](recovery.md#pane-incarnation)). It invents no generation field, and a socket path or a bare pid is never identity. The narrow upstream requirement that would close the remaining window: `agent.prompt` and `pane.send_*` accepting an expected `terminal_id` and failing atomically on a mismatch, and `terminal_id` documented as unique across server incarnations.
+
 ### State and communication env rules
 
 ```sh
