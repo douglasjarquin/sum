@@ -40,7 +40,7 @@ The shared engineering principles reference is authored for sum and builds on th
 
 ## Code exploration
 
-**[codegraph](https://github.com/colbymchenry/codegraph)** provides the structural code context and worktree-local graph exploration every checkout sum creates gets its own index of. Credit reflects the current pinned-binary, per-checkout-index relationship, not earlier planning language.
+**[codegraph](https://github.com/colbymchenry/codegraph)** provides the structural code context and worktree-local graph exploration a task checkout gets its own index of when the coordinator requests one. Credit reflects the current pinned-binary, per-checkout-index relationship, not earlier planning language.
 
 ## Verification companions
 

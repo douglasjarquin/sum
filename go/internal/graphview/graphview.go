@@ -122,6 +122,7 @@ func graphFailures(record *ordjson.Object) []any {
 	var failures []any
 	for _, av := range listField(record, "attempts") {
 		a := asObject(av)
+		// Records from the Python-era build slots may carry `deferred` attempts; those never counted as failures.
 		if !truthy(getField(a, "ok")) && asString(getField(a, "action")) != "deferred" {
 			failures = append(failures, a)
 		}
