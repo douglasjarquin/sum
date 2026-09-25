@@ -118,10 +118,20 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 	})
 
 	var after, limit, maxChars int
+	var grouped groupedFlags
 	inboxCmd := &cobra.Command{
 		Use:  "inbox",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := grouped.check(cmd); err != nil {
+				return err
+			}
+			if grouped.grouped {
+				if cmd.Flags().Changed("after") || cmd.Flags().Changed("limit") || cmd.Flags().Changed("max-chars") {
+					return fmt.Errorf("--after, --limit, and --max-chars cannot combine with --grouped")
+				}
+				return grouped.run(cmd, o.home)
+			}
 			st, err := store.Open(o.home)
 			if err != nil {
 				return err
@@ -134,6 +144,7 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 		},
 	}
 	compactFlags(inboxCmd, &after, &limit, &maxChars)
+	grouped.add(inboxCmd, false)
 	metadataCmd.AddCommand(inboxCmd)
 
 	root.AddCommand(metadataCmd)

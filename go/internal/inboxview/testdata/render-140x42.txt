@@ -1,0 +1,212 @@
+$ 
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+> a/repo  t-aaaaaaaaaaaa  Which path?
+  a/repo  t-aaaaaaaaaaaa  red $(touch x)
+  (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+  - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+    t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
+      lane issue 7  t-aaaaaaaaaaaa  running  claimed 2026-01-01T00:00:00Z
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ n
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+  a/repo  t-aaaaaaaaaaaa  Which path?
+> a/repo  t-aaaaaaaaaaaa  red $(touch x)
+  (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+  - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+    t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
+      lane issue 7  t-aaaaaaaaaaaa  running  claimed 2026-01-01T00:00:00Z
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ n
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+  a/repo  t-aaaaaaaaaaaa  Which path?
+  a/repo  t-aaaaaaaaaaaa  red $(touch x)
+> (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+  - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+    t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
+      lane issue 7  t-aaaaaaaaaaaa  running  claimed 2026-01-01T00:00:00Z
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ n
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+  a/repo  t-aaaaaaaaaaaa  Which path?
+  a/repo  t-aaaaaaaaaaaa  red $(touch x)
+  (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+> - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+    t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
+      lane issue 7  t-aaaaaaaaaaaa  running  claimed 2026-01-01T00:00:00Z
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ n
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+  a/repo  t-aaaaaaaaaaaa  Which path?
+  a/repo  t-aaaaaaaaaaaa  red $(touch x)
+  (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+  - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+>   t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
+      lane issue 7  t-aaaaaaaaaaaa  running  claimed 2026-01-01T00:00:00Z
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ d
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  TASK t-aaaaaaaaaaaa  project a/repo
+    state needs-decision  stage intent-fail  status running
+    repository /w/a-repo  branch feat/a
+    saved observation: running at 2026-01-05T00:00:00Z (a recorded observation, not freshness)
+    open: sumctl context t-aaaaaaaaaaaa --role coordinator
+    decision  question question:q-1  question-open
+      Which path?
+      answer: sumctl answer t-aaaaaaaaaaaa q-1 --text ...
+      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 0 --limit 1 --max-chars 0
+    decision  question question:q-5  question-open
+      red $(touch x)
+      answer: sumctl answer t-aaaaaaaaaaaa q-5 --text ...
+      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 2 --limit 1 --max-chars 0
+    routine  question question:q-2  answer-unapplied
+      done
+      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ n
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  TASK t-aaaaaaaaaaaa  project a/repo
+    state needs-decision  stage intent-fail  status running
+    repository /w/a-repo  branch feat/a
+    saved observation: running at 2026-01-05T00:00:00Z (a recorded observation, not freshness)
+    open: sumctl context t-aaaaaaaaaaaa --role coordinator
+    decision  question question:q-1  question-open
+      Which path?
+      answer: sumctl answer t-aaaaaaaaaaaa q-1 --text ...
+      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 0 --limit 1 --max-chars 0
+    decision  question question:q-5  question-open
+      red $(touch x)
+      answer: sumctl answer t-aaaaaaaaaaaa q-5 --text ...
+      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 2 --limit 1 --max-chars 0
+    routine  question question:q-2  answer-unapplied
+      done
+      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ b
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+  a/repo  t-aaaaaaaaaaaa  Which path?
+  a/repo  t-aaaaaaaaaaaa  red $(touch x)
+  (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+  - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+>   t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
+      lane issue 7  t-aaaaaaaaaaaa  running  claimed 2026-01-01T00:00:00Z
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ o
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+  a/repo  t-aaaaaaaaaaaa  Which path?
+  a/repo  t-aaaaaaaaaaaa  red $(touch x)
+  (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+> + a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ c
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+  a/repo  t-aaaaaaaaaaaa  Which path?
+  a/repo  t-aaaaaaaaaaaa  red $(touch x)
+  (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+> + a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
+$ p
+SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2 sources)
+  NEEDS YOU
+  a/repo  t-aaaaaaaaaaaa  Which path?
+  a/repo  t-aaaaaaaaaaaa  red $(touch x)
+> (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  PROJECTS
+  + a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
+  - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
+    t-cccccccccccc  needs-attention  intent-fail  feat/c
+  - ghe.example.com/b/repo  0 decisions, 1 inspection, 0 working, 1 task
+    t-bbbbbbbbbbbb  needs-attention  intent-fail
+  + z/old  0 decisions, 0 inspection, 0 working, 1 task, healthy
+  - (standalone)  1 decision, 0 inspection, 0 working, 1 task
+    t-dddddddddddd  needs-decision  intent-fail  1 decision
+  UNREADABLE  1 source outside any project
+  COORDINATOR  3 items, 3 inspection, across 2 tasks
+n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit

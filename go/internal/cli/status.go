@@ -12,12 +12,22 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 	add := func(name string, inboxMode bool) {
 		var live, compact bool
 		var after, limit, maxChars int
+		var grouped groupedFlags
 		cmd := &cobra.Command{
 			Use:  name,
 			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				if !compact && (cmd.Flags().Changed("after") || cmd.Flags().Changed("limit") || cmd.Flags().Changed("max-chars")) {
 					return fmt.Errorf("--after, --limit, and --max-chars require --compact")
+				}
+				if err := grouped.check(cmd); err != nil {
+					return err
+				}
+				if grouped.grouped {
+					if compact || live {
+						return fmt.Errorf("--grouped cannot combine with --compact or --live")
+					}
+					return grouped.run(cmd, o.home)
 				}
 				st, err := store.Open(o.home)
 				if err != nil {
@@ -37,6 +47,7 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 		cmd.Flags().BoolVar(&live, "live", false, "")
 		cmd.Flags().BoolVar(&compact, "compact", false, "Bounded presentation with global known decision counts")
 		compactFlags(cmd, &after, &limit, &maxChars)
+		grouped.add(cmd, true)
 		root.AddCommand(cmd)
 	}
 	add("status", false)

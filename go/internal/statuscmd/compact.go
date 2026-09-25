@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/environment"
@@ -37,21 +36,9 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 		}
 		items = append(items, item)
 	}
-	rank := func(item presentation.Item) int {
-		switch item.Kind {
-		case presentation.Decision:
-			return 0
-		case presentation.Inspection:
-			return 1
-		case presentation.Routine:
-			return 2
-		default:
-			return 3
-		}
-	}
 	sort.SliceStable(items, func(i, j int) bool {
-		if rank(items[i]) != rank(items[j]) {
-			return rank(items[i]) < rank(items[j])
+		if inboxview.Rank(items[i]) != inboxview.Rank(items[j]) {
+			return inboxview.Rank(items[i]) < inboxview.Rank(items[j])
 		}
 		return items[i].Identity < items[j].Identity
 	})
@@ -85,7 +72,7 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 			row.Set("text", text)
 		}
 		task := tasks[item.Source.TaskID]
-		detail := compactDetail(item, task)
+		detail := inboxview.DetailRoute(item, task)
 		if len(detail) > 0 {
 			row.Set("detail", compactJSON(detail))
 		}
@@ -144,34 +131,6 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 	return result, nil
 }
 
-func compactDetail(item presentation.Item, task inboxview.Task) []string {
-	id := item.Source.TaskID
-	if item.Source.Kind == presentation.Factory {
-		return []string{"factory", "status"}
-	}
-	if id == "" {
-		return nil
-	}
-	if item.Source.Kind == presentation.Pipeline {
-		return []string{"pipeline", "show", id}
-	}
-	if item.Source.Kind == presentation.Question && task.Record != nil {
-		raw, _ := task.Record.Get("questions")
-		questions, _ := raw.([]any)
-		for i, raw := range questions {
-			question, ok := raw.(*ordjson.Object)
-			if !ok {
-				continue
-			}
-			qid, _ := question.Get("id")
-			if qid == strings.TrimPrefix(item.Source.ID, "question:") {
-				return []string{"context", id, "--section", "decisions", "--after", strconv.Itoa(i), "--limit", "1", "--max-chars", "0"}
-			}
-		}
-	}
-	return []string{"show", id}
-}
-
 func compactJSON(value any) any {
 	raw, err := json.Marshal(value)
 	if err != nil {
@@ -182,4 +141,21 @@ func compactJSON(value any) any {
 		panic(err)
 	}
 	return parsed
+}
+
+// Grouped is the read-only grouped overview; `project` narrows the groups while every global fact stays.
+func Grouped(s *store.Store, project string) (*ordjson.Object, error) {
+	overview, err := GroupedOverview(s, project)
+	if err != nil {
+		return nil, err
+	}
+	converted, ok := compactJSON(overview).(*ordjson.Object)
+	if !ok {
+		return nil, fmt.Errorf("grouped overview did not encode as an object")
+	}
+	return converted, nil
+}
+
+func GroupedOverview(s *store.Store, project string) (inboxview.Overview, error) {
+	return inboxview.Focus(inboxview.BuildOverview(inboxview.Read(s)), project), nil
 }

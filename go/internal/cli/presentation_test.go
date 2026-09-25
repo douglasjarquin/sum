@@ -459,3 +459,142 @@ func TestPresentationHelpMatchesImplementedReadCommands(t *testing.T) {
 		assertStdoutGolden(t, t.TempDir(), []string{"help", topic}, "help-"+topic)
 	}
 }
+
+func groupedHome(t *testing.T) string {
+	t.Helper()
+	home := presentationHome(t)
+	write := func(id string, task map[string]any) {
+		t.Helper()
+		path := filepath.Join(home, "tasks", id, "task.json")
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(task)
+		if err := os.WriteFile(path, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("t-aaaaaaaaaaaa", map[string]any{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "/w/a", "project": map[string]any{"host": "github.com", "owner": "a", "repo": "repo"}, "questions": []any{map[string]any{"id": "q-a", "status": "open", "text": "A: which path?", "created_at": "2026-01-02T00:00:00Z"}}, "attention": []any{}, "evidence": []any{}, "report": nil})
+	write("t-bbbbbbbbbbbb", map[string]any{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "running", "repository": "/w/b", "project": map[string]any{"host": "ghe.example.com", "owner": "b", "repo": "repo"}, "questions": []any{map[string]any{"id": "q-b", "status": "open", "text": "B: \x1b[31mred\x1b[0m\x07 question?", "created_at": "2026-01-03T00:00:00Z"}}, "attention": []any{}, "evidence": []any{}, "report": nil})
+	write("t-cccccccccccc", map[string]any{"schema": 1, "id": "t-cccccccccccc", "status": "running", "questions": []any{}, "attention": []any{}, "evidence": []any{}, "report": nil})
+	return home
+}
+
+func groupKeys(view map[string]any) []string {
+	keys := []string{}
+	for _, raw := range view["groups"].([]any) {
+		keys = append(keys, raw.(map[string]any)["key"].(string))
+	}
+	return keys
+}
+
+func TestGroupedOverviewCommandsGroupByCanonicalIdentity(t *testing.T) {
+	clearHerdrEnv(t)
+	home := groupedHome(t)
+	before := snapshotPresentationFiles(t, home)
+	for _, command := range [][]string{{"status", "--grouped"}, {"inbox", "--grouped"}, {"metadata", "inbox", "--grouped"}} {
+		view := compactRead(t, home, command...)
+		if got := groupKeys(view); !reflect.DeepEqual(got, []string{"a/repo", "ghe.example.com/b/repo"}) {
+			t.Fatalf("%v groups = %v", command, got)
+		}
+		counts := view["counts"].(map[string]any)
+		if counts["decisions"] != float64(2) || view["complete"] != true || len(view["needs_you"].([]any)) != 2 {
+			t.Fatalf("%v global facts: %v", command, view)
+		}
+		standalone := view["standalone"].(map[string]any)
+		if standalone["key"] != "" || standalone["tasks"].([]any)[0].(map[string]any)["id"] != "t-cccccccccccc" {
+			t.Fatalf("%v standalone: %v", command, standalone)
+		}
+		if _, has := view["page"]; has {
+			t.Fatalf("%v grouped output must not be the compact page", command)
+		}
+		for _, raw := range view["needs_you"].([]any) {
+			row := raw.(map[string]any)
+			if row["project"] == "ghe.example.com/b/repo" && !strings.Contains(row["text"].(map[string]any)["text"].(string), "\x1b") {
+				t.Fatal("JSON contract carries saved text verbatim; only the terminal view sanitizes")
+			}
+		}
+	}
+	if !reflect.DeepEqual(before, snapshotPresentationFiles(t, home)) {
+		t.Fatal("grouped read changed source files")
+	}
+	compact := compactRead(t, home, "status", "--compact")
+	if _, has := compact["groups"]; has || compact["compact"] != true {
+		t.Fatal("existing compact output changed")
+	}
+}
+
+func TestGroupedProjectFocusKeepsGlobalCountsAndNeedsYou(t *testing.T) {
+	clearHerdrEnv(t)
+	home := groupedHome(t)
+	if err := os.WriteFile(filepath.Join(home, "tasks", "t-bbbbbbbbbbbb", "versions.json"), []byte("{broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(home, "tasks", "t-dddddddddddd", "task.json")
+	if err := os.MkdirAll(filepath.Dir(broken), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(broken, []byte("broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range [][]string{{"status", "--grouped"}, {"inbox", "--grouped"}, {"metadata", "inbox", "--grouped"}} {
+		view := compactRead(t, home, append(command, "--project", "a/repo")...)
+		if got := groupKeys(view); !reflect.DeepEqual(got, []string{"a/repo"}) || view["standalone"] != nil || view["project"] != "a/repo" {
+			t.Fatalf("%v focus = %v", command, view)
+		}
+		counts := view["counts"].(map[string]any)
+		if counts["decisions"] != float64(2) || view["complete"] != false || counts["unknown_sources"] != float64(2) || len(view["gaps"].([]any)) != 1 {
+			t.Fatalf("%v focus dropped global facts: %v", command, view)
+		}
+		projects := map[string]bool{}
+		for _, raw := range view["needs_you"].([]any) {
+			projects[raw.(map[string]any)["project"].(string)] = true
+		}
+		if !projects["ghe.example.com/b/repo"] || !projects["a/repo"] {
+			t.Fatalf("%v needs_you lost the other project's question: %v", command, projects)
+		}
+	}
+	for _, args := range [][]string{{"status", "--project", "a/repo"}, {"inbox", "--view"}, {"status", "--grouped", "--compact"}, {"status", "--width", "10"}, {"metadata", "inbox", "--project", "x"}} {
+		stdout, _, err := runStatus(t, home, args...)
+		if err == nil || stdout != "" || !strings.Contains(err.Error(), "--grouped") {
+			t.Fatalf("%v accepted without prerequisites: %v %q", args, err, stdout)
+		}
+	}
+}
+
+func TestGroupedViewRunsScriptedSessionReadOnly(t *testing.T) {
+	clearHerdrEnv(t)
+	home := groupedHome(t)
+	t.Setenv("COLUMNS", "100")
+	t.Setenv("LINES", "30")
+	before := snapshotPresentationFiles(t, home)
+	var outBuf, errBuf bytes.Buffer
+	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
+	root.SetIn(strings.NewReader("n\nd\nb\nq\n"))
+	root.SetArgs([]string{"--home", home, "status", "--grouped", "--view"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("view: %v %s", err, errBuf.String())
+	}
+	out := outBuf.String()
+	if !strings.HasPrefix(out, "SUM  2 decisions") || !strings.Contains(out, "NEEDS YOU") || !strings.Contains(out, "TASK t-") || strings.Contains(out, "\x1b") || strings.Contains(out, "\x07") {
+		t.Fatalf("view output:\n%s", out)
+	}
+	for _, row := range strings.Split(out, "\n") {
+		if len([]rune(row)) > 100 {
+			t.Fatalf("line exceeds COLUMNS: %q", row)
+		}
+	}
+	if !reflect.DeepEqual(before, snapshotPresentationFiles(t, home)) {
+		t.Fatal("view changed source files")
+	}
+	outBuf.Reset()
+	root = NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
+	root.SetIn(strings.NewReader("q\n"))
+	root.SetArgs([]string{"--home", home, "inbox", "--grouped", "--view", "--project", "a/repo", "--width", "60", "--height", "12"})
+	if err := root.ExecuteContext(context.Background()); err != nil {
+		t.Fatalf("focused view: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "focus: a/repo") || strings.Contains(outBuf.String(), "ghe.example.com/b/repo  0 decisions") {
+		t.Fatalf("focused view:\n%s", outBuf.String())
+	}
+}

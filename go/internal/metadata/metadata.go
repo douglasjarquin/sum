@@ -12,8 +12,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/inboxview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/pipeline"
-	"github.com/douglasjarquin/sum/go/internal/presentation"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -251,32 +249,11 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 			continue
 		}
 		active++
-		state := "running"
-		decision, inspection, review, answer, refresh := false, false, false, false, false
-		for _, item := range row.Items {
-			decision = decision || item.Kind == presentation.Decision
-			inspection = inspection || item.Kind == presentation.Inspection
-			review = review || (item.Owner == presentation.Coordinator && item.Kind == presentation.Routine)
-			answer = answer || item.Reason == presentation.AnswerUnapplied
-			refresh = refresh || item.Reason == presentation.RefreshUnapplied
-		}
-		inspection = inspection || tasksWithGaps[row.ID]
-		switch {
-		case decision:
-			state = "needs-decision"
-		case inspection:
-			state = "needs-attention"
-		case review:
-			state = "review-ready"
-		case answer:
-			state = "answer-pending"
-		case refresh:
-			state = "instruction-refresh-pending"
-		}
+		state := inboxview.TaskState(row, tasksWithGaps[row.ID])
 		repo := asString(func() any { v, _ := task.Get("repository"); return v }())
 		tokens := map[string]string{
 			"sum_state":    state,
-			"sum_pipeline": pipelineToken(task),
+			"sum_pipeline": inboxview.Stage(task),
 			"sum_task":     asString(func() any { v, _ := task.Get("id"); return v }()),
 			"sum_repo":     filepath.Base(repo),
 		}
@@ -342,15 +319,6 @@ func inboxToken(snapshot inboxview.Snapshot) string {
 		prefix = "unknown; "
 	}
 	return fmt.Sprintf("%s%d decisions; other work pending", prefix, snapshot.Counts.Decisions)
-}
-
-// pipelineToken is the one gate the task is waiting on, derived from the same records the rundown reads.
-// It is a label in the user's own sidebar and changes nothing about the task.
-func pipelineToken(task *ordjson.Object) string {
-	if stage := pipeline.FirstUnsettled(pipeline.Derive(task)); stage != "" {
-		return stage
-	}
-	return "settled"
 }
 
 func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot string, notify bool) (*ordjson.Object, error) {
