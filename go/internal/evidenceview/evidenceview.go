@@ -58,6 +58,24 @@ func pick(o *ordjson.Object, keys []string) *ordjson.Object {
 	return result
 }
 
+// prIdentityRecorded is the pre-merge closure check: a reconcile observation with
+// identity fields populated and no findings. complete/merged_for_task still mean merged.
+func prIdentityRecorded(pr *ordjson.Object) bool {
+	if pr == nil {
+		return false
+	}
+	identity := asObject(getField(pr, "identity"))
+	if identity == nil {
+		return false
+	}
+	for _, key := range []string{"number", "url", "head_sha", "head_branch", "base_branch"} {
+		if !truthy(getField(identity, key)) {
+			return false
+		}
+	}
+	return !truthy(getField(pr, "findings"))
+}
+
 func pyStr(v any) string {
 	switch t := v.(type) {
 	case nil:
@@ -187,7 +205,7 @@ func View(task *ordjson.Object) *ordjson.Object {
 	if len(handoffs) == 0 || !truthy(getField(handoffs[len(handoffs)-1], "current")) {
 		missing = append(missing, "current structured handoff")
 	}
-	if pr == nil || !truthy(getField(pr, "complete")) {
+	if !prIdentityRecorded(pr) {
 		missing = append(missing, "complete PR identity from `pr reconcile`")
 	} else if head != "" {
 		identity := asObject(getField(pr, "identity"))
