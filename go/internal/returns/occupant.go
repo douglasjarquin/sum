@@ -8,8 +8,10 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
+	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
 // occupant is what one fresh observation shows in a recipient pane: the terminal and native session from the agent
@@ -164,6 +166,9 @@ type Occupant struct {
 func ObserveWorker(s *store.Store, runtimeRoot string, task, route *ordjson.Object, expectedCwd string) (*Occupant, error) {
 	agent, err := observeAgent(s, runtimeRoot, route, expectedCwd)
 	if err != nil {
+		if u, ok := err.(*unreachableError); ok && u.state == versions.RefreshUnreachable && panes.WorkerIsClosed(task) {
+			return nil, &unreachableError{state: "pane-closed", msg: "Recipient pane is closed; resume via execution resume. Delivery is pane-closed, not unreachable."}
+		}
 		return nil, err
 	}
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")

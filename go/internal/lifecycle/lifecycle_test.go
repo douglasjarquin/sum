@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,8 +13,10 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/prcmd"
+	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -33,6 +36,7 @@ type sweepLab struct {
 	head     string
 	runtime  string
 	ghRoot   string
+	herdr    string
 }
 
 func newSweepLab(t *testing.T) *sweepLab {
@@ -119,7 +123,7 @@ func newSweepLab(t *testing.T) *sweepLab {
 		t.Fatal(err)
 	}
 	return &sweepLab{t: t, store: st, ctx: ctx, host: host, home: home, repo: repo,
-		checkout: checkout, head: strings.TrimSpace(string(head)), runtime: root, ghRoot: ghRoot}
+		checkout: checkout, head: strings.TrimSpace(string(head)), runtime: root, ghRoot: ghRoot, herdr: herdrRoot}
 }
 
 // saveTask writes a task whose pane and workspace are already gone: the worker
@@ -199,6 +203,57 @@ func (l *sweepLab) sweep(opts SweepOpts) (rows, deferred []any) {
 	r, _ := result.Get("rows")
 	d, _ := result.Get("deferred")
 	return r.([]any), d.([]any)
+}
+
+func (l *sweepLab) writeLivePanes(extra map[string]any) {
+	l.t.Helper()
+	panes := map[string]any{
+		"w-parent:p1": map[string]any{
+			"pane_id": "w-parent:p1", "cwd": l.home, "workspace_id": "w-parent",
+			"agent_status": "idle", "agent": "claude",
+		},
+		"w-worker:p1": map[string]any{
+			"pane_id": "w-worker:p1", "cwd": l.checkout, "workspace_id": "w-worker",
+			"agent_status": "idle", "agent": "codex", "name": "worker",
+			"shell_pid": 4242, "created": true,
+			"processes": []any{},
+		},
+	}
+	for id, pane := range extra {
+		panes[id] = pane
+	}
+	state := map[string]any{
+		"panes": panes,
+		"workspaces": map[string]any{
+			"w-parent": map[string]any{"workspace_id": "w-parent", "label": "coordinator", "worktree": nil},
+			"w-worker": map[string]any{
+				"workspace_id": "w-worker", "label": "task",
+				"worktree": map[string]any{"checkout_path": l.checkout, "repo_root": l.repo},
+			},
+		},
+	}
+	raw, err := json.Marshal(state)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), raw, 0o600); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+func (l *sweepLab) paneExists(id string) bool {
+	l.t.Helper()
+	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
+	if err != nil {
+		return false
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return false
+	}
+	panes, _ := state["panes"].(map[string]any)
+	_, ok := panes[id]
+	return ok
 }
 
 func (l *sweepLab) ghCalls() int {
@@ -439,6 +494,10 @@ func TestPending_listsMaintenanceFromRecords(t *testing.T) {
 	if next, _ := view.Get("next"); !strings.Contains(fmt.Sprint(next), "sweep") {
 		t.Fatalf("next = %v", next)
 	}
+	listed, _ := view.Get("panes")
+	if n := len(listed.([]any)); n != 2 {
+		t.Fatalf("panes = %v, want both reported tasks", listed)
+	}
 	if l.ghCalls() != 0 {
 		t.Fatal("Pending called gh")
 	}
@@ -474,4 +533,236 @@ func (l *sweepLab) cloneTask(id, pr, observedAt string) string {
 		l.t.Fatal(err)
 	}
 	return id
+}
+
+func (l *sweepLab) setWorkerState(state string) {
+	l.t.Helper()
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	exec := asObject(field(task, "execution"))
+	worker := asObject(field(exec, "worker"))
+	worker.Set("state", state)
+	if err := l.store.SaveTask(task); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+func (l *sweepLab) clearReport() {
+	l.t.Helper()
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	task.Set("report", nil)
+	if err := l.store.SaveTask(task); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+func TestSweep_closesReportedWorkerPane(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	l.writeGHScenario("OPEN", "")
+	l.writeLivePanes(nil)
+	l.setWorkerState("running")
+	rows, _ := l.sweep(SweepOpts{})
+	row := sweepRow(rows, "pane-close")
+	if row == nil {
+		t.Fatalf("no pane-close row in %v", rows)
+	}
+	if state, _ := row.Get("state"); state != "closed" {
+		t.Fatalf("pane-close state = %v err=%v", state, func() any { v, _ := row.Get("error"); return v }())
+	}
+	if l.paneExists("w-worker:p1") {
+		t.Fatal("reported worker pane is still open")
+	}
+	if l.paneExists("w-parent:p1") == false {
+		t.Fatal("coordinator pane was closed")
+	}
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !panes.WorkerIsClosed(task) {
+		t.Fatalf("closed_panes = %v", field(task, "closed_panes"))
+	}
+	if park, _ := row.Get("park_error"); park != nil {
+		t.Fatalf("park after close: %v", park)
+	}
+	exec := asObject(field(task, "execution"))
+	worker := asObject(field(exec, "worker"))
+	if asString(worker, "state") != "released" {
+		t.Fatalf("worker state after close = %v", asString(worker, "state"))
+	}
+	if _, err := os.Stat(l.checkout); err != nil {
+		t.Fatal("pane close removed the checkout")
+	}
+}
+
+func TestSweep_leavesInFlightWorkerPane(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	l.writeGHScenario("OPEN", "")
+	l.writeLivePanes(nil)
+	l.clearReport()
+	l.setWorkerState("running")
+	rows, _ := l.sweep(SweepOpts{})
+	if row := sweepRow(rows, "pane-close"); row != nil {
+		t.Fatalf("in-flight pane was closed: %v", row)
+	}
+	if !l.paneExists("w-worker:p1") {
+		t.Fatal("in-flight worker pane is gone")
+	}
+}
+
+func TestSweep_neverClosesCoordinatorPane(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	l.writeGHScenario("OPEN", "")
+	l.writeLivePanes(nil)
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Set("pane", "w-parent:p1")
+	task.Set("workspace", "w-parent")
+	if err := l.store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := l.sweep(SweepOpts{})
+	row := sweepRow(rows, "pane-close")
+	if row == nil {
+		t.Fatalf("expected a skipped pane-close, got %v", rows)
+	}
+	if state, _ := row.Get("state"); state != "skipped" {
+		t.Fatalf("state = %v, want skipped", state)
+	}
+	if !l.paneExists("w-parent:p1") {
+		t.Fatal("coordinator pane was closed")
+	}
+}
+
+func TestSweep_closesReviewerPaneAfterVerdict(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	l.writeGHScenario("OPEN", "")
+	l.clearReport()
+	l.setWorkerState("running")
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer := ordjson.NewObject()
+	reviewer.Set("machine", l.host)
+	reviewer.Set("session", "sum-test")
+	reviewer.Set("pane", "w-rev:p1")
+	reviewer.Set("cwd", l.home)
+	task.Set("reviewer", reviewer)
+	review := ordjson.NewObject()
+	review.Set("kind", "review")
+	review.Set("source", "reviewer")
+	review.Set("candidate", l.head)
+	review.Set("at", "2026-01-01T00:00:00+00:00")
+	task.Set("evidence", []any{review})
+	if err := l.store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	l.writeLivePanes(map[string]any{
+		"w-rev:p1": map[string]any{
+			"pane_id": "w-rev:p1", "cwd": l.home, "workspace_id": "w-rev",
+			"agent_status": "idle", "agent": "codex", "name": "reviewer",
+			"shell_pid": 5151, "created": true, "processes": []any{},
+		},
+	})
+	rows, _ := l.sweep(SweepOpts{})
+	row := sweepRow(rows, "pane-close")
+	if row == nil {
+		t.Fatalf("no pane-close row in %v", rows)
+	}
+	if pane, _ := row.Get("pane"); pane != "w-rev:p1" {
+		t.Fatalf("closed pane = %v, want reviewer", pane)
+	}
+	if state, _ := row.Get("state"); state != "closed" {
+		t.Fatalf("state = %v err=%v", state, func() any { v, _ := row.Get("error"); return v }())
+	}
+	if l.paneExists("w-rev:p1") {
+		t.Fatal("reviewer pane is still open")
+	}
+	if !l.paneExists("w-worker:p1") {
+		t.Fatal("in-flight worker pane was closed with the reviewer")
+	}
+}
+
+func TestSweep_closesReportedWorkerWithOpenQuestion(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	l.writeGHScenario("OPEN", "")
+	l.writeLivePanes(nil)
+	l.setWorkerState("running")
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := ordjson.NewObject()
+	q.Set("id", "q-aaaaaaaaaa")
+	q.Set("key", "open")
+	q.Set("status", "open")
+	q.Set("text", "which one?")
+	task.Set("questions", []any{q})
+	if err := l.store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := l.sweep(SweepOpts{})
+	row := sweepRow(rows, "pane-close")
+	if row == nil {
+		t.Fatal("open question kept a reported pane open")
+	}
+	if state, _ := row.Get("state"); state != "closed" {
+		t.Fatalf("state = %v", state)
+	}
+}
+
+func TestSweep_closedPaneRepairRecordsPendingResume(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	l.writeGHScenario("OPEN", "")
+	l.writeLivePanes(nil)
+	l.setWorkerState("running")
+	rows, _ := l.sweep(SweepOpts{})
+	if row := sweepRow(rows, "pane-close"); row == nil {
+		t.Fatal("worker pane was not closed")
+	}
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker := asObject(field(asObject(field(task, "execution")), "worker"))
+	attempt := asString(worker, "id")
+	got, err := repair.Send(l.store, l.ctx, repair.SendArgs{
+		TaskID:      sweepTaskID,
+		Attempt:     attempt,
+		Key:         "after-close",
+		Text:        "re-run the failing gate",
+		Class:       repair.ClassInScope,
+		RuntimeRoot: l.runtime,
+	})
+	if err != nil {
+		t.Fatalf("repair send: %v", err)
+	}
+	if state, _ := got.Get("state"); state != "pane-closed" {
+		t.Fatalf("repair state = %v", got)
+	}
+	if next, _ := got.Get("next"); !strings.Contains(fmt.Sprint(next), "execution resume") {
+		t.Fatalf("repair next = %v", next)
+	}
+	task, err = l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := repair.PendingResumeTexts(task)
+	if len(texts) != 1 || texts[0] != "re-run the failing gate" {
+		t.Fatalf("pending resume texts = %v", texts)
+	}
 }

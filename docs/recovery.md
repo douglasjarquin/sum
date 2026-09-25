@@ -96,10 +96,15 @@ When you say a task is merged, or a rundown shows a task as `cleanup: pending`, 
 ./bin/sumctl cleanup TASK_ID                 # inspect: fresh GitHub observation, identity, occupants, artifacts; persists the plan, removes nothing
 ./bin/sumctl cleanup TASK_ID --apply         # remove the verified workspace and clean checkout through native Herdr, then archive the record
 ./bin/sumctl cleanup TASK_ID --reviewer-only # close only a bound reviewer pane that saved its findings and whose agent exited
-./bin/sumctl sweep                           # every recorded open PR observed once, then one guarded cleanup apply per pending task
+./bin/sumctl sweep                           # every recorded open PR observed once, settled panes closed, then one guarded cleanup apply per pending task
 ```
 
-`sweep` is the batch form: least recently maintained tasks first, each re-read before it acts, no further PR observed in that pass after a `gh` timeout, and no task started after its budget (`--budget SECONDS`, default 60; `0` starts nothing). A started task finishes under its helpers' own bounds (each `gh` call up to 120 s), so the budget bounds admission, not wall time; tasks it did not reach are listed under `deferred` with their exact next command. A second sweep with nothing pending does nothing.
+`sweep` is the batch form: least recently maintained tasks first, each re-read before it acts, no further PR observed in that pass after a `gh` timeout, and no task started after its budget (`--budget SECONDS`, default 60; `0` starts nothing).
+A started task finishes under its helpers' own bounds (each `gh` call up to 120 s), so the budget bounds admission, not wall time; tasks it did not reach are listed under `deferred` with their exact next command.
+The same pass closes a worker pane after a report for the current candidate (or a terminal task state) and a reviewer pane after a verdict for the current candidate, via native `pane close`, after the pane cwd matches the recorded checkout.
+Unanswered questions do not keep those panes open: `answer` writes the decision, and `execution resume` launches a fresh session that reads `context --role worker --section decisions`.
+A closed pane is recorded so later delivery is `pane-closed`; `repair send` records the instruction and names resume.
+A second sweep with nothing pending does nothing.
 
 `--apply` proceeds only when every check passes, and every failed check is a named blocker in the output and in `show TASK_ID`:
 the exact recorded PR must be observed **merged** with a merge commit and its head must be a recorded candidate (closed is not merged, a network or auth failure is uncertain and blocks);

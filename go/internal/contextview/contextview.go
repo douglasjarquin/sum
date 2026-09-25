@@ -19,6 +19,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/graphview"
 	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
@@ -777,14 +778,30 @@ func sectionExecution(s *store.Store, task *ordjson.Object) (*ordjson.Object, er
 	result.Set("graph", graphV)
 
 	endpoints := ordjson.NewObject()
-	endpoints.Set("worker", pick(task, executionEndpointKeys))
+	worker := pick(task, executionEndpointKeys)
+	if panes.WorkerIsClosed(task) {
+		if worker == nil {
+			worker = ordjson.NewObject()
+		}
+		worker.Set("closed", true)
+		id, _ := task.Get("id")
+		worker.Set("note", panes.ResumeNote(fmt.Sprint(id)))
+	}
+	endpoints.Set("worker", worker)
 	if parentValue := getField(task, "parent"); truthy(parentValue) {
 		endpoints.Set("parent", pick(asObject(parentValue), executionEndpointKeys))
 	} else {
 		endpoints.Set("parent", nil)
 	}
 	if reviewerValue := getField(task, "reviewer"); truthy(reviewerValue) {
-		endpoints.Set("reviewer", pick(asObject(reviewerValue), executionEndpointKeys))
+		reviewer := pick(asObject(reviewerValue), executionEndpointKeys)
+		if panes.ReviewerIsClosed(task) {
+			if reviewer == nil {
+				reviewer = ordjson.NewObject()
+			}
+			reviewer.Set("closed", true)
+		}
+		endpoints.Set("reviewer", reviewer)
 	} else {
 		endpoints.Set("reviewer", nil)
 	}

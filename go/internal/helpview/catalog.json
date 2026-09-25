@@ -30,7 +30,7 @@
       "pipeline": "The delivery gates one task has passed, and the status table sum owns in its PR body",
       "cleanup": "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay",
       "pump": "One budgeted delivery pass over saved pending returns: at most one coalesced notice per recipient, deferred recipients named; never calls GitHub or cleans up",
-      "sweep": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
+      "sweep": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
       "hook": "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon",
       "metadata": "Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle",
       "attention": "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays",
@@ -822,7 +822,7 @@
   },
   "sweep": {
     "topic": "sweep",
-    "help": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
+    "help": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
     "arguments": [
       {
         "name": "--task",
