@@ -688,8 +688,8 @@ func TestMerge_humanGateDoesNotCallGh(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
-	if strings.Contains(string(calls), `"pr", "merge"`) {
-		t.Fatalf("human-gate invoked gh pr merge: %s", calls)
+	if strings.Contains(string(calls), `"pr", "merge"`) || strings.Contains(string(calls), `"pr", "ready"`) {
+		t.Fatalf("human-gate invoked gh pr ready or merge: %s", calls)
 	}
 }
 
@@ -720,6 +720,11 @@ func TestMerge_highPassesMatchHeadCommit(t *testing.T) {
 	if !strings.Contains(text, `"pr", "merge"`) || !strings.Contains(text, "--match-head-commit") || !strings.Contains(text, sha) {
 		t.Fatalf("missing match-head-commit in %s", text)
 	}
+	readyAt := strings.Index(text, `"pr", "ready"`)
+	mergeAt := strings.Index(text, `"pr", "merge"`)
+	if readyAt < 0 || mergeAt < 0 || readyAt > mergeAt {
+		t.Fatalf("factory merge must mark ready then merge in the same action: %s", text)
+	}
 }
 
 func TestMerge_refusesWithoutLane(t *testing.T) {
@@ -736,8 +741,8 @@ func TestMerge_refusesWithoutLane(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
-	if strings.Contains(string(calls), `"pr", "merge"`) {
-		t.Fatalf("lane refusal invoked gh pr merge: %s", calls)
+	if strings.Contains(string(calls), `"pr", "merge"`) || strings.Contains(string(calls), `"pr", "ready"`) {
+		t.Fatalf("lane refusal invoked gh pr ready or merge: %s", calls)
 	}
 }
 

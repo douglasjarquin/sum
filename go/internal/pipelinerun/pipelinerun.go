@@ -23,7 +23,6 @@ type Args struct {
 	AllowMissingEvidence bool
 	RuntimeRoot          string
 	NoPR                 bool
-	Draft                bool
 	Title                string
 	BodyFile             string
 	AllowNewAfterClosed  bool
@@ -106,6 +105,7 @@ func prIdentity(s *store.Store, taskID string) any {
 		row.Set(key, value(identity, key))
 	}
 	row.Set("state", value(pr, "state"))
+	row.Set("draft", value(pr, "draft"))
 	return row
 }
 
@@ -142,7 +142,7 @@ func runStage(s *store.Store, ctx *ordjson.Object, args Args, stage pipeline.Sta
 			return "skipped", "--no-pr; opening and reconciling the PR is left to you"
 		}
 		return attempt(pipelinepr.Run(s, ctx, args.RuntimeRoot, pipeline.PRArgs{
-			Task: args.Task, Draft: args.Draft, Title: args.Title, BodyFile: args.BodyFile,
+			Task: args.Task, Title: args.Title, BodyFile: args.BodyFile,
 			AllowNewAfterClosed: args.AllowNewAfterClosed, AllowBehind: args.AllowBehind,
 		}))
 	}

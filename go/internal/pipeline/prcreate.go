@@ -32,7 +32,6 @@ var prURL = regexp.MustCompile(`https://[^\s]*/pull/([0-9]+)`)
 
 type PRArgs struct {
 	Task                string
-	Draft               bool
 	Title               string
 	BodyFile            string
 	DryRun              bool
@@ -48,6 +47,7 @@ type listedPR struct {
 	HeadOID string `json:"headRefOid"`
 	Base    string `json:"baseRefName"`
 	URL     string `json:"url"`
+	IsDraft bool   `json:"isDraft"`
 }
 
 func (p listedPR) open() bool { return strings.EqualFold(p.State, "open") }
@@ -81,7 +81,7 @@ func PR(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PRArgs) (*
 
 	prRecord, _ := field(task, "pr").(*ordjson.Object)
 	if identity, _ := field(prRecord, "identity").(*ordjson.Object); identity != nil {
-		return recordPR(s, ctx, args, candidate, prBody(prExisting, branch, remote, args.Draft,
+		return recordPR(s, ctx, args, candidate, prBody(prExisting, branch, remote, boolField(identity, "draft"),
 			numberOf(identity), stringField(identity, "url"), stringField(identity, "base_branch")),
 			fmt.Sprintf("Already recorded as #%d; this run reconciles it", numberOf(identity)))
 	}
@@ -94,11 +94,11 @@ func PR(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PRArgs) (*
 		return nil, fmt.Errorf("could not read the pull requests for %s: %w; nothing was created", branch, listErr)
 	}
 	if adopted := adoptable(listed, candidate); adopted != nil {
-		return recordPR(s, ctx, args, candidate, prBody(prExisting, branch, remote, args.Draft, adopted.Number, adopted.URL, adopted.Base),
+		return recordPR(s, ctx, args, candidate, prBody(prExisting, branch, remote, adopted.IsDraft, adopted.Number, adopted.URL, adopted.Base),
 			fmt.Sprintf("Adopted the existing #%d (%s): %s", adopted.Number, strings.ToLower(adopted.State), adopted.URL))
 	}
 	if len(listed) > 0 && !args.AllowNewAfterClosed {
-		return recordPR(s, ctx, args, candidate, prBody(prRefused, branch, remote, args.Draft, 0, "", ""),
+		return recordPR(s, ctx, args, candidate, prBody(prRefused, branch, remote, false, 0, "", ""),
 			fmt.Sprintf("Refused: %s already has %s and none is open at this candidate. A closed PR is not permission to create another; reopen one, or pass --allow-new-after-closed.",
 				branch, describe(listed)))
 	}
@@ -119,7 +119,7 @@ func create(s *store.Store, ctx *ordjson.Object, gh, repoDir, remote, branch, ca
 		}
 	}
 	if args.DryRun {
-		planned := prBody(prPlanned, branch, remote, args.Draft, 0, "", base)
+		planned := prBody(prPlanned, branch, remote, true, 0, "", base)
 		planned.Set("title", title)
 		planned.Set("body_file", bodyFile)
 		result := ordjson.NewObject()
@@ -129,10 +129,7 @@ func create(s *store.Store, ctx *ordjson.Object, gh, repoDir, remote, branch, ca
 		return result, nil
 	}
 
-	cmd := []string{"pr", "create", "--repo", remote, "--head", branch, "--base", base, "--title", title, "--body-file", bodyFile}
-	if args.Draft {
-		cmd = append(cmd, "--draft")
-	}
+	cmd := []string{"pr", "create", "--repo", remote, "--head", branch, "--base", base, "--title", title, "--body-file", bodyFile, "--draft"}
 	stdout, runErr := runGH(gh, repoDir, args.Timeout, cmd...)
 	number, url := parseCreated(stdout)
 
@@ -142,20 +139,20 @@ func create(s *store.Store, ctx *ordjson.Object, gh, repoDir, remote, branch, ca
 		listed, listErr := listPRs(gh, repoDir, remote, branch, args.Timeout)
 		if listErr == nil {
 			if adopted := adoptable(listed, candidate); adopted != nil {
-				body := prBody(prCreated, branch, remote, args.Draft, adopted.Number, adopted.URL, adopted.Base)
+				body := prBody(prCreated, branch, remote, adopted.IsDraft, adopted.Number, adopted.URL, adopted.Base)
 				body.Set("title", title)
 				body.Set("body_file", bodyFile)
 				return recordPR(s, ctx, args, candidate, body,
 					fmt.Sprintf("Created #%d: %s (`gh pr create` did not report it; GitHub did)", adopted.Number, adopted.URL))
 			}
 		}
-		body := prBody(prFailed, branch, remote, args.Draft, 0, "", base)
+		body := prBody(prFailed, branch, remote, true, 0, "", base)
 		body.Set("title", title)
 		body.Set("body_file", bodyFile)
 		return recordPR(s, ctx, args, candidate, body, "Failed to open the PR: "+createReason(runErr, stdout))
 	}
 
-	body := prBody(prCreated, branch, remote, args.Draft, number, url, base)
+	body := prBody(prCreated, branch, remote, true, number, url, base)
 	body.Set("title", title)
 	body.Set("body_file", bodyFile)
 	return recordPR(s, ctx, args, candidate, body, fmt.Sprintf("Created #%d: %s", number, url))
@@ -218,7 +215,7 @@ func describe(listed []listedPR) string {
 
 func listPRs(gh, repoDir, remote, branch string, timeout int) ([]listedPR, error) {
 	stdout, err := runGH(gh, repoDir, timeout, "pr", "list", "--repo", remote, "--head", branch,
-		"--state", "all", "--json", "number,state,headRefOid,baseRefName,url")
+		"--state", "all", "--json", "number,state,headRefOid,baseRefName,url,isDraft")
 	if err != nil {
 		return nil, err
 	}
@@ -313,4 +310,27 @@ func numberOf(identity *ordjson.Object) int {
 		return 0
 	}
 	return int(value)
+}
+
+func boolField(o *ordjson.Object, key string) bool {
+	value, _ := field(o, key).(bool)
+	return value
+}
+
+// MarkReady calls `gh pr ready`. A PR GitHub already marked ready is success, not a failure to retry.
+func MarkReady(gh, repoDir, remote string, number, timeout int) error {
+	args := []string{"pr", "ready", fmt.Sprint(number)}
+	if remote != "" {
+		args = append(args, "--repo", remote)
+	}
+	_, err := runGH(gh, repoDir, timeout, args...)
+	if err != nil && alreadyReady(err.Error()) {
+		return nil
+	}
+	return err
+}
+
+func alreadyReady(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "already") && strings.Contains(lower, "ready")
 }

@@ -83,6 +83,24 @@ func (lab gateLab) creates(t *testing.T) int {
 	return int(count)
 }
 
+func (lab gateLab) readyCalls(t *testing.T) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(lab.ghRoot, "calls.jsonl"))
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(data), `"pr", "ready"`)
+}
+
+func (lab gateLab) createdAsDraft(t *testing.T) bool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(lab.ghRoot, "calls.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Contains(string(data), `"draft": true`)
+}
+
 func (lab gateLab) prStep(t *testing.T, result map[string]any) map[string]any {
 	t.Helper()
 	steps, _ := result["steps"].([]any)
@@ -292,5 +310,72 @@ func TestPipelinePR_refusedUntilTheBranchIsOnOrigin(t *testing.T) {
 	}
 	if got := lab.creates(t); got != 0 {
 		t.Fatalf("gh pr create ran %d times before the push, want none", got)
+	}
+}
+
+func TestPipelinePR_opensAsDraftAndPromotesWhenGatesSettle(t *testing.T) {
+	lab := prLab(t)
+
+	result := runGate(t, lab, "run", gateTaskID)
+
+	if !lab.createdAsDraft(t) {
+		t.Fatal("gh pr create did not pass --draft")
+	}
+	if got := lab.readyCalls(t); got != 1 {
+		t.Fatalf("gh pr ready ran %d times, want one after gates settled", got)
+	}
+	pr, _ := lab.github(t)["pr"].(map[string]any)
+	if pr["draft"] != false {
+		t.Fatalf("GitHub PR draft = %v, want false after promotion", pr["draft"])
+	}
+	reported, _ := result["pr"].(map[string]any)
+	if reported["draft"] != false {
+		t.Fatalf("run reported draft = %v, want false", reported["draft"])
+	}
+}
+
+func TestPipelinePR_missingReviewStaysDraft(t *testing.T) {
+	lab := prLab(t)
+	lab.writeGitHub(t, map[string]any{
+		"pr": map[string]any{
+			"number": 7, "state": "OPEN", "head_sha": lab.candidate,
+			"head_branch": gateBranch, "base_branch": "main", "draft": true,
+		},
+	})
+	lab.writeTask(t, "reported", publicationRecords(lab.candidate)[1:]...)
+
+	if _, stderr, err := runPRCLI(t, lab.home, "pr", "reconcile", gateTaskID, "--number", "7"); err != nil {
+		t.Fatalf("reconcile: %v stderr=%s", err, stderr)
+	}
+
+	if got := lab.readyCalls(t); got != 0 {
+		t.Fatalf("gh pr ready ran %d times, want none without Review", got)
+	}
+	pr, _ := lab.github(t)["pr"].(map[string]any)
+	if pr["draft"] != true {
+		t.Fatalf("GitHub PR draft = %v, want true when Review is missing", pr["draft"])
+	}
+}
+
+func TestPipelinePR_createWithoutReconcileStaysDraft(t *testing.T) {
+	lab := prLab(t)
+	lab.writeGitHub(t, map[string]any{"view_fail": "boom"})
+	runGate(t, lab, "run", gateTaskID, "--no-pr")
+
+	if _, _, err := runPRCLI(t, lab.home, "pipeline", "pr", gateTaskID); err == nil {
+		t.Fatal("pipeline pr succeeded; want reconcile to fail after create")
+	}
+	if got := lab.creates(t); got != 1 {
+		t.Fatalf("gh pr create ran %d times, want one", got)
+	}
+	if !lab.createdAsDraft(t) {
+		t.Fatal("gh pr create did not pass --draft")
+	}
+	if got := lab.readyCalls(t); got != 0 {
+		t.Fatalf("gh pr ready ran %d times, want none without reconcile", got)
+	}
+	pr, _ := lab.github(t)["pr"].(map[string]any)
+	if pr["draft"] != true {
+		t.Fatalf("GitHub PR draft = %v, want true when reconcile did not run", pr["draft"])
 	}
 }

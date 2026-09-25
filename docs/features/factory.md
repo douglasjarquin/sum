@@ -19,6 +19,7 @@ Implementation: `go/internal/factory`, `go/internal/cli/factory.go`, `go/interna
 | `factory.merge-review-sha` | An approve with an empty candidate, or a newer unbound review, does not authorize the current HEAD | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.merge-pipeline-gates` | Fail or blocked Test/Review/Push is human-gate; lint and CI may be not_declared | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.merge-lane` | `factory merge` refuses a high-confidence task that occupies no factory lane, and never calls `gh pr merge` on human-gate | automated: `go/internal/factory/factory_test.go` | offline suite |
+| `factory.merge-promotes` | High-confidence `factory merge` marks the PR ready then squash-merges in the same action; human-gate and lane refusal call neither ready nor merge | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.human-gate-continue` | A gated issue stays occupying the lane until `--continue` or a merged/dropped release | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.coordinator-only-writes` | `factory enable` and `factory claim` refuse a non-coordinator pane | automated: `go/internal/cli/factory_test.go` | offline suite |
 | `factory.live-nicebaas` | Enabling the NiceBaaS factory, ticking, claiming, and either merging or gating one real issue | manual: operator run after this branch is adopted; `--ready issues` picks the oldest open issue | operator report |

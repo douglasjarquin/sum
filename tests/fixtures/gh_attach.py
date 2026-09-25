@@ -91,6 +91,7 @@ def pr_json(p, fields):
             "mergedAt": p.get("merged_at"), "mergeCommit": {"oid": p["merge_commit"]} if p.get("merge_commit") else None, "closed": p.get("state", "OPEN") != "OPEN",
             "mergeable": p.get("mergeable", state.get("mergeable", "MERGEABLE")),
             "mergeStateStatus": p.get("merge_state_status", state.get("merge_state_status", "CLEAN")),
+            "isDraft": bool(p.get("draft", p.get("isDraft", False))),
             "statusCheckRollup": rollup()}
     return {k: full.get(k) for k in fields.split(",")}
 
@@ -257,6 +258,19 @@ if args[:2] == ["pr", "edit"]:
         time.sleep(120)
     if failed:
         fail("failed to upload " + ", ".join(failed), 1)
+    sys.exit(0)
+if args[:2] == ["pr", "ready"]:
+    number = int(args[2])
+    repo = flag("--repo", state.get("repository", "douglasjarquin/project"))
+    target = find_pr(number)
+    if target is None or repo != state.get("repository", "douglasjarquin/project"):
+        fail("GraphQL: Could not resolve to a PullRequest with the number of %d. (repository.pullRequest)" % number)
+    if not target.get("draft", False):
+        fail("pull request is already marked as 'ready for review'")
+    target["draft"] = False
+    state["readies"] = state.get("readies", 0) + 1
+    save()
+    print("✓ Pull request %s is marked as \"ready for review\"" % number)
     sys.exit(0)
 if args[:2] == ["repo", "clone"]:
     fail("unsupported in the attach fake", 2)

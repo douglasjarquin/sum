@@ -55,11 +55,14 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	if err != nil {
 		return nil, err
 	}
+	ci := observeCI(s, ctx, runtimeRoot, args.Task, asList(data["statusCheckRollup"]))
+	pr, ready := promoteIfSettled(s, args.Task, gh, remote, repo, pr)
 	result := ordjson.NewObject()
 	result.Set("task", args.Task)
 	result.Set("pr", pr)
 	result.Set("evidence", recordID)
-	result.Set("ci", observeCI(s, ctx, runtimeRoot, args.Task, asList(data["statusCheckRollup"])))
+	result.Set("ci", ci)
+	result.Set("ready", ready)
 	result.Set("evidence_publication", autoPublish(s, ctx, runtimeRoot, args.Task, pr))
 	result.Set("pipeline_publication", autoPipeline(s, ctx, runtimeRoot, args.Task, pr))
 	result.Set("note", "An exact GitHub observation at one instant. Merged applies to this task only when the state is merged, a merge commit exists, and no identity finding remains.")
@@ -67,7 +70,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 }
 
 // prViewFields is what one PR observation reads from GitHub.
-const prViewFields = "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,mergeable,mergeStateStatus,statusCheckRollup"
+const prViewFields = "number,url,state,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner,isCrossRepository,mergedAt,mergeCommit,mergeable,mergeStateStatus,statusCheckRollup,isDraft"
 
 // GHBound bounds one gh call, the pipeline's default (a variable so tests can shorten it).
 var GHBound = pipeline.DefaultGHBound
@@ -117,6 +120,9 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 	pr.Set("identity", identity)
 	state := strings.ToLower(fmt.Sprint(data["state"]))
 	pr.Set("state", state)
+	draft := boolOf(data["isDraft"])
+	pr.Set("draft", draft)
+	identity.Set("draft", draft)
 	observedAt := store.Now()
 	pr.Set("observed_at", observedAt)
 	pipeline.SetMergeability(pr, data["mergeable"], data["mergeStateStatus"], observedAt)
@@ -305,4 +311,89 @@ func intOf(v any) int {
 		return n
 	}
 	return 0
+}
+
+func boolOf(v any) bool {
+	b, _ := v.(bool)
+	return b
+}
+
+func objectBool(o *ordjson.Object, key string) bool {
+	if o == nil {
+		return false
+	}
+	v, _ := o.Get(key)
+	return boolOf(v)
+}
+
+// promoteIfSettled marks a draft ready only when GatesSettled is true. A failed ready leaves the PR draft.
+func promoteIfSettled(s *store.Store, taskID, gh, remote, repoDir string, pr *ordjson.Object) (*ordjson.Object, any) {
+	row := ordjson.NewObject()
+	if pr == nil || !objectBool(pr, "draft") {
+		row.Set("action", "skipped")
+		row.Set("reason", "PR is not a draft")
+		return pr, row
+	}
+	if asString(pr, "state") != "open" {
+		row.Set("action", "skipped")
+		row.Set("reason", "PR is not open")
+		return pr, row
+	}
+	record, err := pipeline.Load(s, taskID)
+	if err != nil {
+		row.Set("action", "skipped")
+		row.Set("reason", err.Error())
+		return pr, row
+	}
+	ok, detail := pipeline.GatesSettled(record)
+	if !ok {
+		row.Set("action", "skipped")
+		row.Set("reason", detail)
+		return pr, row
+	}
+	ident := asObject(identityValue(pr, "identity"))
+	number := intOf(identityValue(ident, "number"))
+	if number == 0 {
+		row.Set("action", "skipped")
+		row.Set("reason", "PR number is missing")
+		return pr, row
+	}
+	if err := pipeline.MarkReady(gh, repoDir, remote, number, 0); err != nil {
+		row.Set("action", "failed")
+		row.Set("reason", err.Error())
+		return pr, row
+	}
+	updated, err := persistDraft(s, taskID, false)
+	if err != nil {
+		row.Set("action", "failed")
+		row.Set("reason", err.Error())
+		return pr, row
+	}
+	row.Set("action", "promoted")
+	return updated, row
+}
+
+func persistDraft(s *store.Store, taskID string, draft bool) (*ordjson.Object, error) {
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	pr := asObject(func() any { v, _ := task.Get("pr"); return v }())
+	if pr == nil {
+		return nil, fmt.Errorf("PR identity is missing")
+	}
+	pr.Set("draft", draft)
+	if identity := asObject(identityValue(pr, "identity")); identity != nil {
+		identity.Set("draft", draft)
+	}
+	task.Set("pr", pr)
+	if err := s.SaveTask(task); err != nil {
+		return nil, err
+	}
+	return pr, nil
 }

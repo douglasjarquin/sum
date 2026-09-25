@@ -113,7 +113,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	pushCmd.Flags().BoolVar(&allowMissingEvidence, "allow-missing-evidence", false, "")
 	pipelineCmd.AddCommand(pushCmd)
 
-	var rerun, runAllowBehind, runAllowMissingEvidence, noPR, runDraft, runAllowNewAfterClosed bool
+	var rerun, runAllowBehind, runAllowMissingEvidence, noPR, runAllowNewAfterClosed bool
 	var runTitle, runBodyFile string
 	runCmd := &cobra.Command{
 		Use:  "run TASK",
@@ -125,7 +125,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 			}
 			view, err := pipelinerun.Run(st, ctx, pipelinerun.Args{
 				Task: args[0], Rerun: rerun, AllowBehind: runAllowBehind, AllowMissingEvidence: runAllowMissingEvidence, RuntimeRoot: o.runtimeRoot,
-				NoPR: noPR, Draft: runDraft, Title: runTitle, BodyFile: runBodyFile,
+				NoPR: noPR, Title: runTitle, BodyFile: runBodyFile,
 				AllowNewAfterClosed: runAllowNewAfterClosed,
 			})
 			if err != nil {
@@ -138,13 +138,12 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 	runCmd.Flags().BoolVar(&runAllowBehind, "allow-behind", false, "")
 	runCmd.Flags().BoolVar(&runAllowMissingEvidence, "allow-missing-evidence", false, "")
 	runCmd.Flags().BoolVar(&noPR, "no-pr", false, "")
-	runCmd.Flags().BoolVar(&runDraft, "draft", false, "")
 	runCmd.Flags().StringVar(&runTitle, "title", "", "")
 	runCmd.Flags().StringVar(&runBodyFile, "body-file", "", "")
 	runCmd.Flags().BoolVar(&runAllowNewAfterClosed, "allow-new-after-closed", false, "")
 	pipelineCmd.AddCommand(runCmd)
 
-	var prDraft, prDryRun, prAllowNewAfterClosed, prAllowBehind bool
+	var prDryRun, prAllowNewAfterClosed, prAllowBehind bool
 	var prTitle, prBodyFile string
 	prCmd := &cobra.Command{
 		Use:  "pr TASK",
@@ -155,7 +154,7 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 				return err
 			}
 			view, err := pipelinepr.Run(st, ctx, o.runtimeRoot, pipeline.PRArgs{
-				Task: args[0], Draft: prDraft, Title: prTitle, BodyFile: prBodyFile,
+				Task: args[0], Title: prTitle, BodyFile: prBodyFile,
 				DryRun: prDryRun, AllowNewAfterClosed: prAllowNewAfterClosed, AllowBehind: prAllowBehind,
 			})
 			if err != nil {
@@ -164,7 +163,6 @@ func (o *rootOptions) addPipelineCommands(root *cobra.Command) {
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},
 	}
-	prCmd.Flags().BoolVar(&prDraft, "draft", false, "")
 	prCmd.Flags().StringVar(&prTitle, "title", "", "")
 	prCmd.Flags().StringVar(&prBodyFile, "body-file", "", "")
 	prCmd.Flags().BoolVar(&prDryRun, "dry-run", false, "")

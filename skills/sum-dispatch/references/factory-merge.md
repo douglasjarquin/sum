@@ -40,7 +40,8 @@ Only when merge-check is `high`:
 ./bin/sumctl factory merge TASK_ID
 ```
 
-Squash-merge of the reconciled PR, matching the candidate head.
+Marks the PR ready (`gh pr ready`) and squash-merges it in the same action, matching the candidate head.
+A draft cannot merge, so promotion is part of the authorized merge.
 Then observe the merge (`pr reconcile` / cleanup inspection) and run guarded cleanup as `sum-delivery` already describes.
 
 ```sh
