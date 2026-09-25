@@ -246,3 +246,14 @@ func TestMalformedDecisionTextKeepsDecisionAndMarksCoverageUnknown(t *testing.T)
 		t.Fatalf("malformed decision prose silently disappeared: %+v", got)
 	}
 }
+
+func TestLegacyProjectLookupPreservesDeterministicMatch(t *testing.T) {
+	s := fixture(t)
+	write(t, s, "projects.json", `{"schema":1,"projects":{"z/repo":{"path":"/lab/repo"},"a/repo":{"path":"/lab/./repo"}}}`)
+	write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":1,"id":"t-aaaaaaaaaaaa","repository":"/lab/repo"}`)
+	write(t, s, "tasks/t-bbbbbbbbbbbb/task.json", `{"schema":1,"id":"t-bbbbbbbbbbbb","repository":"/lab/unregistered"}`)
+	got := Read(s)
+	if !got.Complete || got.Tasks[0].ProjectID != "a/repo" || got.Tasks[1].ProjectID != "/lab/unregistered" {
+		t.Fatalf("legacy project lookup changed: %+v", got)
+	}
+}

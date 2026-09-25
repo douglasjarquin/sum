@@ -36,6 +36,12 @@ const (
 	Resolved   Kind = "resolved"
 )
 
+const (
+	AnswerUnapplied      = "answer-unapplied"
+	RefreshUnapplied     = "refresh-unapplied"
+	UnknownQuestionState = "unknown-question-state"
+)
+
 // Source keeps canonical identity separate from mutable prose and display state.
 type Source struct {
 	TaskID    string     `json:"task"`
@@ -81,7 +87,7 @@ func Classify(f Fact) Item {
 		case "open":
 			item.Owner, item.Kind, item.Reason = Human, Decision, "question-open"
 		case "answered":
-			item.Owner, item.Kind, item.Reason = Worker, Routine, "answer-unapplied"
+			item.Owner, item.Kind, item.Reason = Worker, Routine, AnswerUnapplied
 		case "applied":
 			item.Owner, item.Kind, item.Reason = Nobody, Resolved, "answer-applied"
 		case "settled":
@@ -89,16 +95,16 @@ func Classify(f Fact) Item {
 		case "closed-unapplied":
 			item.Owner, item.Kind, item.Reason = Nobody, Resolved, "answer-closed-unapplied"
 		default:
-			item.Reason, item.Uncertain = "unknown-question-state", true
+			item.Reason, item.Uncertain = UnknownQuestionState, true
 		}
 	case Answer:
-		item.Owner, item.Kind, item.Reason = Worker, Routine, "answer-unapplied"
+		item.Owner, item.Kind, item.Reason = Worker, Routine, AnswerUnapplied
 	case Report:
 		item.Kind, item.Reason = Routine, "report-awaiting-action"
 	case Review:
 		item.Kind, item.Reason = Routine, "review-awaiting-action"
 	case Refresh:
-		item.Owner, item.Kind, item.Reason = Worker, Routine, "refresh-unapplied"
+		item.Owner, item.Kind, item.Reason = Worker, Routine, RefreshUnapplied
 	case Attention:
 		item.Reason = "native-observation"
 	case Execution:

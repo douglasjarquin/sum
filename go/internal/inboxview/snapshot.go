@@ -65,6 +65,7 @@ func Read(s *store.Store) Snapshot {
 		out.gap("", filepath.Join(s.Home, project.ProjectsFile), err)
 		registry = nil
 	}
+	projectsByPath := projectPaths(registry)
 	out.Factory, err = factory.Read(s)
 	if err != nil {
 		out.gap("", filepath.Join(s.Home, factory.File), err)
@@ -89,7 +90,7 @@ func Read(s *store.Store) Snapshot {
 			continue
 		}
 		row := Task{ID: id, Record: record, Items: []presentation.Item{}}
-		row.ProjectID = out.projectID(record, registry, path)
+		row.ProjectID = out.projectID(record, projectsByPath, path)
 		clean := out.taskSources(record, path)
 		versionPath := filepath.Join(s.Tasks, id, versions.File)
 		version, err := versions.ReadVersions(s, clean)
@@ -119,7 +120,7 @@ func Read(s *store.Store) Snapshot {
 		byRef := map[string]*ordjson.Object{}
 		for _, obligation := range obligations {
 			kind := str(obligation, "kind")
-			if kind == "question" || kind == "answer" {
+			if kind == string(presentation.Question) || kind == string(presentation.Answer) {
 				byRef[str(obligation, "ref")] = obligation
 				continue
 			}
@@ -145,7 +146,7 @@ func Read(s *store.Store) Snapshot {
 				fact.Delivery = deliveryState(clean, notices, obligation)
 			}
 			item := presentation.Classify(fact)
-			if item.Reason == "unknown-question-state" {
+			if item.Reason == presentation.UnknownQuestionState {
 				out.gap(id, path+"#questions/"+qid, fmt.Errorf("unknown question status %q", state))
 			}
 			row.Items = append(row.Items, item)
@@ -400,7 +401,7 @@ func findRecord(task *ordjson.Object, kind, ref string) *ordjson.Object {
 	return nil
 }
 
-func (s *Snapshot) projectID(task, registry *ordjson.Object, path string) string {
+func (s *Snapshot) projectID(task *ordjson.Object, projectsByPath map[string]string, path string) string {
 	if raw := field(task, "project"); raw != nil {
 		record := obj(raw)
 		if record == nil {
@@ -423,18 +424,29 @@ func (s *Snapshot) projectID(task, registry *ordjson.Object, path string) string
 	if repository == "" {
 		return ""
 	}
+	if name, ok := projectsByPath[filepath.Clean(repository)]; ok {
+		return name
+	}
+	return filepath.Clean(repository)
+}
+
+func projectPaths(registry *ordjson.Object) map[string]string {
+	byPath := map[string]string{}
 	projects := obj(field(registry, "projects"))
 	if projects != nil {
 		names := append([]string(nil), projects.Keys()...)
 		sort.Strings(names)
 		for _, name := range names {
 			row := obj(field(projects, name))
-			if str(row, "path") != "" && filepath.Clean(str(row, "path")) == filepath.Clean(repository) {
-				return name
+			if path := str(row, "path"); path != "" {
+				path = filepath.Clean(path)
+				if _, exists := byPath[path]; !exists {
+					byPath[path] = name
+				}
 			}
 		}
 	}
-	return filepath.Clean(repository)
+	return byPath
 }
 
 func (s *Snapshot) execution(row *Task, path string) {

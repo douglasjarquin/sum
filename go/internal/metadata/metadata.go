@@ -240,6 +240,10 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
 	source := sourceID(s)
 	snapshot := inboxview.Read(s)
+	tasksWithGaps := make(map[string]bool, len(snapshot.Gaps))
+	for _, gap := range snapshot.Gaps {
+		tasksWithGaps[gap.TaskID] = true
+	}
 	active := 0
 	for _, row := range snapshot.Tasks {
 		task := row.Record
@@ -253,12 +257,10 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 			decision = decision || item.Kind == presentation.Decision
 			inspection = inspection || item.Kind == presentation.Inspection
 			review = review || (item.Owner == presentation.Coordinator && item.Kind == presentation.Routine)
-			answer = answer || item.Reason == "answer-unapplied"
-			refresh = refresh || item.Reason == "refresh-unapplied"
+			answer = answer || item.Reason == presentation.AnswerUnapplied
+			refresh = refresh || item.Reason == presentation.RefreshUnapplied
 		}
-		for _, gap := range snapshot.Gaps {
-			inspection = inspection || gap.TaskID == row.ID
-		}
+		inspection = inspection || tasksWithGaps[row.ID]
 		switch {
 		case decision:
 			state = "needs-decision"
