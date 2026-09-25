@@ -14,14 +14,16 @@ worktree: $TMP
 verification_policy:
   status: standardized
 pr:
-  complete: true
+  complete: false
   merged_for_task: false
   identity:
     repository: owner/repoD
     number: 1
+    url: "https://github.com/owner/repoD/pull/1"
     head_sha: $SHA
     head_repository: owner/repoD
     head_branch: task-branch
+    base_branch: main
 reviewer:
   machine: m1
   session: s1
@@ -152,14 +154,16 @@ evidence_view:
     session: s1
     pane: p9
   pr:
-    complete: true
+    complete: false
     merged_for_task: false
     identity:
       repository: owner/repoD
       number: 1
+      url: "https://github.com/owner/repoD/pull/1"
       head_sha: $SHA
       head_repository: owner/repoD
       head_branch: task-branch
+      base_branch: main
   verification:
     contract: standardized
     worker_run:

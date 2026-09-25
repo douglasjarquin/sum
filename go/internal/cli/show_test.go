@@ -75,7 +75,7 @@ func TestShow_pinsStdoutAcrossScenarios(t *testing.T) {
 		taskJSON := fmt.Sprintf(`{"schema": 1, "id": "t-dddddddddddd", "status": "reported", "repository": "owner/repoD",
 "questions": [], "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "report": null, "worktree": %q, "verification_policy": {"status": "standardized"},
-"pr": {"complete": true, "merged_for_task": false, "identity": {"repository": "owner/repoD", "number": 1, "head_sha": %q, "head_repository": "owner/repoD", "head_branch": "task-branch"}},
+"pr": {"complete": false, "merged_for_task": false, "identity": {"repository": "owner/repoD", "number": 1, "url": "https://github.com/owner/repoD/pull/1", "head_sha": %q, "head_repository": "owner/repoD", "head_branch": "task-branch", "base_branch": "main"}},
 "reviewer": {"machine": "m1", "session": "s1", "pane": "p9"},
 "evidence": [
   {"schema": 1, "id": "e-0000000001", "kind": "handoff", "source": "worker", "at": "2026-01-01T00:05:00+00:00",

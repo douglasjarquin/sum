@@ -378,73 +378,10 @@ func gitWorktree(t *testing.T) (path, sha string) {
 func TestMergeCheck_highConfidenceAuthorized(t *testing.T) {
 	st := openStore(t)
 	worktree, sha := gitWorktree(t)
-	task := ordjson.NewObject()
-	task.Set("schema", json.Number("1"))
-	task.Set("id", "t-bbbbbbbbbbbb")
-	task.Set("status", "running")
-	task.Set("worktree", worktree)
-	task.Set("candidate", sha)
-	policy := ordjson.NewObject()
-	identity := ordjson.NewObject()
-	identity.Set("owner", "cofactorworks")
-	identity.Set("repo", "nicebaas")
-	identity.Set("name", "cofactorworks/nicebaas")
-	policy.Set("project_identity", identity)
-	policy.Set("status", "not-yet-standardized")
-	task.Set("verification_policy", policy)
-	pr := ordjson.NewObject()
-	prIdent := ordjson.NewObject()
-	prIdent.Set("number", json.Number("12"))
-	prIdent.Set("repository", "cofactorworks/nicebaas")
-	prIdent.Set("head_sha", sha)
-	pr.Set("identity", prIdent)
-	pr.Set("complete", true)
-	pr.Set("number", json.Number("12"))
-	pr.Set("repository", "cofactorworks/nicebaas")
-	task.Set("pr", pr)
-	rel := filepath.Join(".artifacts", "evidence", "r1", "demo", "comparison.json")
-	writeComparison(t, worktree, rel, sha, "red-green")
-	handoff := ordjson.NewObject()
-	handoff.Set("kind", "handoff")
-	handoff.Set("source", "worker")
-	handoff.Set("current", true)
-	handoff.Set("candidate", sha)
-	handoff.Set("artifacts", []any{filepath.ToSlash(rel)})
-	root := ordjson.NewObject()
-	root.Set("kind", "verification")
-	root.Set("source", "coordinator")
-	root.Set("current", true)
-	root.Set("candidate", sha)
-	root.Set("result", "pass")
-	root.Set("outcome", "pass")
-	review := ordjson.NewObject()
-	review.Set("kind", "review")
-	review.Set("source", "reviewer")
-	review.Set("current", true)
-	review.Set("candidate", sha)
-	review.Set("verdict", "approve")
-	task.Set("evidence", []any{handoff, root, review})
-	if err := os.MkdirAll(filepath.Join(st.Home, "tasks", "t-bbbbbbbbbbbb"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	pipe := ordjson.NewObject()
-	pipe.Set("schema", json.Number("1"))
-	pipe.Set("task", "t-bbbbbbbbbbbb")
-	pipe.Set("candidate", sha)
-	var rows []any
-	for _, stage := range []string{"intent", "rebase", "review", "test", "document", "lint", "push", "pr", "ci"} {
-		row := ordjson.NewObject()
-		row.Set("stage", stage)
-		row.Set("status", "pass")
-		row.Set("result", "Passed")
-		rows = append(rows, row)
-	}
-	pipe.Set("rows", rows)
-	if err := ordjson.WriteFile(filepath.Join(st.Home, "tasks", "t-bbbbbbbbbbbb", "pipeline.json"), pipe); err != nil {
-		t.Fatal(err)
+	task := mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
+	pr := asObject(get(task, "pr"))
+	if asBool(get(pr, "complete")) || asBool(get(pr, "merged_for_task")) {
+		t.Fatal("open-PR reconcile observation must not be marked complete/merged")
 	}
 	view, err := MergeCheck(st, "t-bbbbbbbbbbbb")
 	if err != nil {
@@ -452,6 +389,35 @@ func TestMergeCheck_highConfidenceAuthorized(t *testing.T) {
 	}
 	if asString(get(view, "confidence")) != "high" {
 		t.Fatalf("confidence = %v view=%v", get(view, "confidence"), view)
+	}
+	closure := asObject(get(asObject(get(view, "checks")), "closure"))
+	if asString(get(closure, "status")) != "pass" {
+		t.Fatalf("closure = %v", closure)
+	}
+}
+
+func TestMergeCheck_noReconcileObservationIsHumanGate(t *testing.T) {
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	task := mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
+	task.Set("pr", nil)
+	if err := st.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	view, err := MergeCheck(st, "t-bbbbbbbbbbbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "confidence")) != "human-gate" {
+		t.Fatalf("confidence = %v", get(view, "confidence"))
+	}
+	closure := asObject(get(asObject(get(view, "checks")), "closure"))
+	if asString(get(closure, "status")) != "fail" {
+		t.Fatalf("closure = %v", closure)
+	}
+	detail := asString(get(closure, "detail"))
+	if !strings.Contains(detail, "complete PR identity from `pr reconcile`") {
+		t.Fatalf("closure detail = %q", detail)
 	}
 }
 
@@ -758,15 +724,18 @@ func mergeTask(t *testing.T, st *store.Store, worktree, sha, taskID string) *ord
 	policy.Set("project_identity", identity)
 	policy.Set("status", "not-yet-standardized")
 	task.Set("verification_policy", policy)
-	pr := ordjson.NewObject()
 	prIdent := ordjson.NewObject()
 	prIdent.Set("number", json.Number("12"))
-	prIdent.Set("repository", "cofactorworks/nicebaas")
+	prIdent.Set("url", "https://github.com/cofactorworks/nicebaas/pull/12")
 	prIdent.Set("head_sha", sha)
+	prIdent.Set("head_branch", "sum/"+taskID)
+	prIdent.Set("base_branch", "main")
+	pr := ordjson.NewObject()
 	pr.Set("identity", prIdent)
-	pr.Set("complete", true)
-	pr.Set("number", json.Number("12"))
-	pr.Set("repository", "cofactorworks/nicebaas")
+	pr.Set("state", "open")
+	pr.Set("complete", false)
+	pr.Set("merged_for_task", false)
+	pr.Set("findings", []any{})
 	task.Set("pr", pr)
 	rel := filepath.Join(".artifacts", "evidence", "r1", "demo", "comparison.json")
 	writeComparison(t, worktree, rel, sha, "red-green")
