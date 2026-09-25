@@ -1120,6 +1120,13 @@ func Merge(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, error) 
 	if number == 0 || repo == "" {
 		return nil, fmt.Errorf("PR identity is incomplete; reconcile first")
 	}
+	gh, err := ghBin(runtimeRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err := pipeline.MarkReady(gh, "", repo, number, 0); err != nil {
+		return nil, fmt.Errorf("could not mark PR #%d ready for merge: %w", number, err)
+	}
 	args := []string{"pr", "merge", fmt.Sprint(number), "--repo", repo, "--squash"}
 	if head != "" {
 		args = append(args, "--match-head-commit", head)
@@ -1235,25 +1242,7 @@ func pipelineGatesOK(s *store.Store, taskID string) (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	var failed []string
-	for _, def := range pipeline.Stages {
-		row := record.Get(def.Stage)
-		switch row.Status {
-		case pipeline.Pass, pipeline.Skipped:
-			continue
-		case pipeline.NotDeclared:
-			if def.Stage == pipeline.StageLint || def.Stage == pipeline.StageCI {
-				continue
-			}
-			failed = append(failed, fmt.Sprintf("%s=%s", def.Display, row.Status))
-		default:
-			failed = append(failed, fmt.Sprintf("%s=%s", def.Display, row.Status))
-		}
-	}
-	if len(failed) > 0 {
-		return false, strings.Join(failed, ", ")
-	}
-	return true, "all pipeline stages pass, skipped, or allowed not_declared"
+	return pipeline.GatesSettled(record)
 }
 
 func evidenceOK(task *ordjson.Object) (bool, string) {

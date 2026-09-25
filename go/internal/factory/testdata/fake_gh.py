@@ -63,6 +63,10 @@ if args[:2] == ["project", "item-list"]:
     print(json.dumps(load("project_items.json", [])))
     sys.exit(0)
 
+if args[:2] == ["pr", "ready"]:
+    print("ready")
+    sys.exit(0)
+
 if args[:2] == ["pr", "merge"]:
     print("merged")
     sys.exit(0)
