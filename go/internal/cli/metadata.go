@@ -49,6 +49,15 @@ func (o *rootOptions) projectAfter(cmd *cobra.Command, args []string) {
 	metadata.After(st, o.runtimeRoot, tasks, cmd.CommandPath())
 }
 
+// nativeOpen is the plugin id the inbox entrypoint can be opened through, from saved records only, or the reason it cannot.
+func (o *rootOptions) nativeOpen(st *store.Store) (pluginID, reason string) {
+	pluginID, reason = hookstatus.InboxOpenable(st, o.sumctlPath())
+	if reason == "" && !metadata.Capability(st, "plugin_pane_open") {
+		return "", "the saved capability probe does not show plugin pane opening; run `metadata enable` (or `metadata sync`) from the coordinator pane to probe the installed Herdr"
+	}
+	return pluginID, reason
+}
+
 var inboxPlacements = map[string]bool{"split": true, "overlay": true, "tab": true, "zoomed": true}
 
 // openInbox opens the grouped view through the linked plugin's inbox entrypoint. Every precondition failure or Herdr
@@ -65,12 +74,9 @@ func (o *rootOptions) openInbox(st *store.Store, project, placement string) (*or
 		view.Set("open", open)
 		return view, nil
 	}
-	pluginID, reason := hookstatus.InboxOpenable(st, o.sumctlPath())
+	pluginID, reason := o.nativeOpen(st)
 	if reason != "" {
 		return fallback(reason)
-	}
-	if !metadata.Capability(st, "plugin_pane_open") {
-		return fallback("the saved capability probe does not show plugin pane opening; run `metadata enable` (or `metadata sync`) from the coordinator pane to probe the installed Herdr")
 	}
 	ctx, err := store.Context(o.installRoot)
 	if err != nil {
@@ -89,12 +95,14 @@ func (o *rootOptions) openInbox(st *store.Store, project, placement string) (*or
 		return fallback(err.Error())
 	}
 	pluginPane, _ := opened.(*ordjson.Object)
-	if inner, ok := pluginPane.Get("plugin_pane"); ok {
-		pluginPane, _ = inner.(*ordjson.Object)
+	if pluginPane != nil {
+		if inner, ok := pluginPane.Get("plugin_pane"); ok {
+			pluginPane, _ = inner.(*ordjson.Object)
+		}
 	}
 	var pane any
 	if pluginPane != nil {
-		if paneObj, ok := func() (any, bool) { return pluginPane.Get("pane") }(); ok {
+		if paneObj, ok := pluginPane.Get("pane"); ok {
 			if obj, isObj := paneObj.(*ordjson.Object); isObj {
 				pane, _ = obj.Get("pane_id")
 			}
@@ -161,10 +169,7 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 			}
 			view := metadata.Status(st)
 			native := ordjson.NewObject()
-			_, reason := hookstatus.InboxOpenable(st, o.sumctlPath())
-			if reason == "" && !metadata.Capability(st, "plugin_pane_open") {
-				reason = "the saved capability probe does not show plugin pane opening; `metadata enable` probes the installed Herdr"
-			}
+			_, reason := o.nativeOpen(st)
 			native.Set("available", reason == "")
 			if reason == "" {
 				native.Set("reason", nil)
@@ -253,7 +258,7 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 			if err := grouped.check(cmd); err != nil {
 				return err
 			}
-			paged := cmd.Flags().Changed("after") || cmd.Flags().Changed("limit") || cmd.Flags().Changed("max-chars")
+			paged := pagingFlagsChanged(cmd)
 			if open {
 				if placement != "" && !inboxPlacements[placement] {
 					return fmt.Errorf("--placement must be one of split, overlay, tab, zoomed")

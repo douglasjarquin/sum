@@ -17,7 +17,7 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 			Use:  name,
 			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				if !compact && (cmd.Flags().Changed("after") || cmd.Flags().Changed("limit") || cmd.Flags().Changed("max-chars")) {
+				if !compact && pagingFlagsChanged(cmd) {
 					return fmt.Errorf("--after, --limit, and --max-chars require --compact")
 				}
 				if err := grouped.check(cmd); err != nil {
@@ -52,6 +52,10 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 	}
 	add("status", false)
 	add("inbox", true)
+}
+
+func pagingFlagsChanged(cmd *cobra.Command) bool {
+	return cmd.Flags().Changed("after") || cmd.Flags().Changed("limit") || cmd.Flags().Changed("max-chars")
 }
 
 func compactFlags(cmd *cobra.Command, after, limit, maxChars *int) {

@@ -124,7 +124,7 @@ def main():
             wall = round((time.monotonic() - started) * 1000)
             assert len(live["tasks"]) == 13 and live["capacity"]["occupied"]["global"] == 13, live["capacity"]
             assert live["fanout"]["herdr_calls"] == 1, live["fanout"]  # One real `agent list`; no per-pane observation call.
-            assert all(row.get("attention", "").startswith("Cannot observe worker") for row in live["tasks"]), [r.get("attention") for r in live["tasks"]]
+            assert all(row.get("observed", {}).get("state") == "absent" for row in live["tasks"]), [r.get("observed") for r in live["tasks"]]  # Shell panes without an agent are absent from `agent list`; nothing is inferred from that.
             for row in live["tasks"]:  # A recorded decision per task gives the refresh a real revision to deliver.
                 sumctl("--home", str(state), "ask", row["id"], "--key", "lab", "--text", "Lab question?")
             started = time.monotonic()

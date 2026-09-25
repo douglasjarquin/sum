@@ -1,6 +1,7 @@
 package inboxview
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,8 +112,8 @@ type Row struct {
 }
 
 // Rank orders presentation kinds: decisions before inspection before routine.
-func Rank(item presentation.Item) int {
-	switch item.Kind {
+func Rank(kind presentation.Kind) int {
+	switch kind {
 	case presentation.Decision:
 		return 0
 	case presentation.Inspection:
@@ -204,8 +205,8 @@ func rowOf(item presentation.Item, task Task) Row {
 
 func sortItems(items []presentation.Item) {
 	sort.SliceStable(items, func(i, j int) bool {
-		if Rank(items[i]) != Rank(items[j]) {
-			return Rank(items[i]) < Rank(items[j])
+		if Rank(items[i].Kind) != Rank(items[j].Kind) {
+			return Rank(items[i].Kind) < Rank(items[j].Kind)
 		}
 		return items[i].Identity < items[j].Identity
 	})
@@ -337,7 +338,7 @@ func taskRank(row TaskRow) int {
 	}
 	best := 3
 	for _, item := range row.Items {
-		r := Rank(presentation.Item{Kind: item.Kind})
+		r := Rank(item.Kind)
 		if r < best {
 			best = r
 		}
@@ -391,7 +392,7 @@ func factoryLanes(record *ordjson.Object) map[string][]Lane {
 			}
 			issue := ""
 			if v := field(lane, "issue"); v != nil {
-				issue = strings.TrimSpace(strings.Trim(mustJSON(v), `"`))
+				issue = fmt.Sprint(v)
 			}
 			lanes = append(lanes, Lane{Issue: issue, Task: str(lane, "task"), State: str(lane, "state"), ClaimedAt: str(lane, "claimed_at")})
 		}
@@ -400,14 +401,6 @@ func factoryLanes(record *ordjson.Object) map[string][]Lane {
 		}
 	}
 	return out
-}
-
-func mustJSON(v any) string {
-	raw, err := ordjson.MarshalCompact(v)
-	if err != nil {
-		return ""
-	}
-	return string(raw)
 }
 
 // Focus keeps every global fact and narrows the groups to one project key.

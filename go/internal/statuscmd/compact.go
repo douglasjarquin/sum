@@ -37,8 +37,8 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
-		if inboxview.Rank(items[i]) != inboxview.Rank(items[j]) {
-			return inboxview.Rank(items[i]) < inboxview.Rank(items[j])
+		if inboxview.Rank(items[i].Kind) != inboxview.Rank(items[j].Kind) {
+			return inboxview.Rank(items[i].Kind) < inboxview.Rank(items[j].Kind)
 		}
 		return items[i].Identity < items[j].Identity
 	})
