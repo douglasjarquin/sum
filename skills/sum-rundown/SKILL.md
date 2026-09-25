@@ -23,7 +23,7 @@ It is the coordinator's explicit maintenance: one GitHub observation per recorde
 After a GitHub timeout it observes no further PR in that pass; no task starts after its budget (`--budget SECONDS`, default 60; `0` starts nothing), but a started task finishes under its own helpers' bounds, so the budget bounds admission, not wall time.
 Tasks it did not reach are listed under `deferred` with their exact `next` command.
 A second sweep with nothing pending does nothing.
-A worker or reviewer pane whose recorded obligation is settled (report or review for the current candidate, or a terminal task) is closed in that pass; `status` shows `pane_closed` and `execution resume` is the path for a later repair. Delivery to that pane is `pane-closed`, not `unreachable`.
+The pane that settled the obligation (the worker report or reviewer verdict for the current candidate, or a terminal task) is closed in that pass; a successor pane created by resume stays open until it files a new report or review. `status` shows `pane_closed` and `execution resume` is the path for a later repair, launching at the recorded worktree's current HEAD. Delivery and refresh to that pane are `pane-closed`, not `unreachable`.
 
 For a worker that is idle/done/blocked without a report, read bounded relevant output with MCP `herdr_agent_read` or `bin/herdr-scoped agent read PANE --source visible --lines 120`.
 Do not assume idle means done. Inspect ambiguous prose; ask for a file report when screen output is incomplete. If a question was never saved, capture it using `sumctl ask` before relaying it to the user.

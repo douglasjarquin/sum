@@ -19,6 +19,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
@@ -101,7 +102,7 @@ func deferredCapabilities(recorded *ordjson.Object) []any {
 
 func refreshSummary(rows []any, excluded []any) *ordjson.Object {
 	counts := ordjson.NewObject()
-	for _, state := range []string{"confirmed", "submitted-unconfirmed", "pending-busy", "pending-unreachable", versions.RefreshUnreachable, "not-requested", "capability-deferred"} {
+	for _, state := range []string{"confirmed", "submitted-unconfirmed", "pending-busy", "pending-unreachable", versions.RefreshUnreachable, "pane-closed", "not-requested", "capability-deferred"} {
 		counts.Set(state, jsonNumber(0))
 	}
 	inc := func(state string) {
@@ -217,12 +218,15 @@ func judgeOccupant(sn *snapshots, endpoint *ordjson.Object, agent *ordjson.Objec
 	return fmt.Sprintf("Recipient pane %s is not the recorded %s's occupant (%s: %s); nothing was sent and the old contract keeps serving. %s", pane, record.role, verdict.Outcome, verdict.Reason, incarnation.Recovery(record.role, verdict.Outcome))
 }
 
-func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd string, host machine.Identity) (string, string, *ordjson.Object, error) {
+func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd string, host machine.Identity, task *ordjson.Object) (string, string, *ordjson.Object, error) {
 	if !host.Is(asString(func() any { v, _ := endpoint.Get("machine"); return v }())) {
 		return "pending-unreachable", "Recipient is on another machine.", nil, nil
 	}
 	session := asString(func() any { v, _ := endpoint.Get("session"); return v }())
 	pane := asString(func() any { v, _ := endpoint.Get("pane"); return v }())
+	if panes.Closed(task, pane) {
+		return "pane-closed", "Recipient pane is closed; resume via execution resume. Delivery is pane-closed, not unreachable.", nil, nil
+	}
 	agent, err := sn.Agent(session, pane)
 	if err != nil {
 		if herdrclient.ErrorIsAbsent(err) {
@@ -250,8 +254,8 @@ func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd strin
 	return "submitted-unconfirmed", status, agent, nil
 }
 
-func attemptDelivery(s *store.Store, sn *snapshots, endpoint *ordjson.Object, expectedCwd, message string, host machine.Identity, record occupantRecord) *ordjson.Object {
-	state, reason, agent, err := observeRecipient(sn, endpoint, expectedCwd, host)
+func attemptDelivery(s *store.Store, sn *snapshots, endpoint *ordjson.Object, expectedCwd, message string, host machine.Identity, record occupantRecord, task *ordjson.Object) *ordjson.Object {
+	state, reason, agent, err := observeRecipient(sn, endpoint, expectedCwd, host, task)
 	row := ordjson.NewObject()
 	if err != nil {
 		row.Set("state", "pending-unreachable")
@@ -453,7 +457,7 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 		if value, occupiedAt, ok, err := workerRecord(); err == nil {
 			record.value, record.occupiedAt, record.ok = value, occupiedAt, ok
 		}
-		event = attemptDelivery(s, sn, endpoint, worktree, message, host, record)
+		event = attemptDelivery(s, sn, endpoint, worktree, message, host, record, task)
 	}
 	unlock, err = s.Lock()
 	if err != nil {
@@ -755,7 +759,7 @@ func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runt
 			return value, nil
 		}}
 		record.value, record.occupiedAt = incarnation.CoordinatorRecord(owner)
-		event = attemptDelivery(s, sn, owner, cwd, message, host, record)
+		event = attemptDelivery(s, sn, owner, cwd, message, host, record, nil)
 		_ = session
 	}
 	unlock, err = s.Lock()

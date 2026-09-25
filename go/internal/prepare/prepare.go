@@ -409,7 +409,19 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	actualBranch, branchErr := runGit("-C", preparedWorktree, "branch", "--show-current")
 	actualCommon, commonErr := runGit("-C", preparedWorktree, "rev-parse", "--git-common-dir")
 	repositoryCommon, repositoryCommonErr := runGit("-C", repository, "rev-parse", "--git-common-dir")
-	if rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualHead != asString(func() any { v, _ := task.Get("base_sha"); return v }()) || actualHead != asString(policyField(recordedWorktree, "head")) || actualBranch != asString(policyField(recordedWorktree, "branch")) || asString(func() any { v, _ := task.Get("workspace"); return v }()) != asString(policyField(recordedWorktree, "workspace")) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon) {
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if worker == nil {
+		unlock()
+		return nil, fmt.Errorf("Worker execution reservation is missing; start is refused.")
+	}
+	resuming := asString(func() any { v, _ := worker.Get("resumes"); return v }()) != ""
+	identityMismatch := rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualBranch != asString(policyField(recordedWorktree, "branch")) || asString(func() any { v, _ := task.Get("workspace"); return v }()) != asString(policyField(recordedWorktree, "workspace")) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon)
+	headPinned := actualHead == asString(func() any { v, _ := task.Get("base_sha"); return v }()) && actualHead == asString(policyField(recordedWorktree, "head"))
+	if identityMismatch || (!resuming && !headPinned) {
 		unlock()
 		return nil, fmt.Errorf("The prepared checkout does not match its saved Git identity; start is refused.")
 	}
@@ -419,11 +431,6 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	}
 	// A fresh session reads the active revision and its pinned procedure; refuse to launch an incomplete one.
 	briefFile, err := versions.ActiveBrief(s, task)
-	if err != nil {
-		unlock()
-		return nil, err
-	}
-	worker, err := reservations.Worker(task)
 	if err != nil {
 		unlock()
 		return nil, err

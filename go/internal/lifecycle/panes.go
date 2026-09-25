@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/proc"
@@ -49,62 +51,190 @@ func currentSHA(task *ordjson.Object) string {
 	return evidenceview.CurrentCandidate(task)
 }
 
-func reportMatchesCurrent(task *ordjson.Object) bool {
-	report := asObject(field(task, "report"))
-	if report == nil {
-		return false
-	}
-	candidate := asString(report, "candidate")
-	head := currentSHA(task)
-	if candidate == "" {
-		return true
-	}
-	return head != "" && candidate == head
+func currentCandidateMatch(candidate, head string) bool {
+	return candidate != "" && head != "" && candidate == head
 }
 
-func reviewMatchesCurrent(task *ordjson.Object) bool {
+func reportMatchesCurrent(task *ordjson.Object) bool {
 	head := currentSHA(task)
+	if currentCandidateMatch(asString(asObject(field(task, "report")), "candidate"), head) {
+		return true
+	}
 	for _, raw := range asList(field(task, "evidence")) {
 		row := asObject(raw)
-		if asString(row, "kind") != "review" {
+		if asString(row, "kind") != "report" {
 			continue
 		}
-		candidate := asString(row, "candidate")
-		if candidate == "" {
-			return true
-		}
-		if head != "" && candidate == head {
+		if currentCandidateMatch(asString(row, "candidate"), head) {
 			return true
 		}
 	}
 	return false
 }
 
+func reviewMatchesCurrent(task *ordjson.Object) bool {
+	head := currentSHA(task)
+	for _, raw := range asList(field(task, "evidence")) {
+		row := asObject(raw)
+		if asString(row, "kind") != "review" || asString(row, "verdict") == "" {
+			continue
+		}
+		if currentCandidateMatch(asString(row, "candidate"), head) {
+			return true
+		}
+	}
+	return false
+}
+
+func evidencePane(row *ordjson.Object) string {
+	return asString(asObject(field(row, "endpoint")), "pane")
+}
+
+func currentReportPane(task *ordjson.Object) string {
+	head := currentSHA(task)
+	var reportPane, handoffPane string
+	for _, raw := range asList(field(task, "evidence")) {
+		row := asObject(raw)
+		kind := asString(row, "kind")
+		if kind != "report" && kind != "handoff" {
+			continue
+		}
+		if !currentCandidateMatch(asString(row, "candidate"), head) {
+			continue
+		}
+		if pane := evidencePane(row); pane != "" {
+			if kind == "report" {
+				reportPane = pane
+			} else {
+				handoffPane = pane
+			}
+		}
+	}
+	if reportPane != "" {
+		return reportPane
+	}
+	return handoffPane
+}
+
+func currentReviewPane(task *ordjson.Object) string {
+	head := currentSHA(task)
+	var pane string
+	for _, raw := range asList(field(task, "evidence")) {
+		row := asObject(raw)
+		if asString(row, "kind") != "review" || asString(row, "verdict") == "" {
+			continue
+		}
+		if !currentCandidateMatch(asString(row, "candidate"), head) {
+			continue
+		}
+		if p := evidencePane(row); p != "" {
+			pane = p
+		}
+	}
+	return pane
+}
+
+func reportTime(task *ordjson.Object) string {
+	head := currentSHA(task)
+	if report := asObject(field(task, "report")); currentCandidateMatch(asString(report, "candidate"), head) {
+		if at := asString(report, "submitted_at"); at != "" {
+			return at
+		}
+	}
+	var latest string
+	for _, raw := range asList(field(task, "evidence")) {
+		row := asObject(raw)
+		kind := asString(row, "kind")
+		if kind != "report" && kind != "handoff" {
+			continue
+		}
+		if !currentCandidateMatch(asString(row, "candidate"), head) {
+			continue
+		}
+		if at := asString(row, "at"); at > latest {
+			latest = at
+		}
+	}
+	return latest
+}
+
+func reviewTime(task *ordjson.Object) string {
+	var latest string
+	head := currentSHA(task)
+	for _, raw := range asList(field(task, "evidence")) {
+		row := asObject(raw)
+		if asString(row, "kind") != "review" || asString(row, "verdict") == "" {
+			continue
+		}
+		if !currentCandidateMatch(asString(row, "candidate"), head) {
+			continue
+		}
+		if at := asString(row, "at"); at > latest {
+			latest = at
+		}
+	}
+	return latest
+}
+
+func workerAttemptPredates(task *ordjson.Object, at string) bool {
+	if at == "" {
+		return false
+	}
+	worker, err := reservations.Worker(task)
+	if err != nil || worker == nil {
+		return false
+	}
+	created := asString(worker, "created_at")
+	return created != "" && created <= at
+}
+
 func workerCloseReason(task *ordjson.Object) (string, string) {
-	if pane := asString(task, "pane"); pane == "" {
+	current := asString(task, "pane")
+	if current == "" {
 		return "", ""
 	}
 	if term := terminalState(task); term != "" {
-		return term, asString(task, "pane")
+		return term, current
 	}
-	if reportMatchesCurrent(task) {
-		return "report-submitted", asString(task, "pane")
+	if !reportMatchesCurrent(task) {
+		return "", ""
+	}
+	if settled := currentReportPane(task); settled != "" {
+		if settled != current {
+			return "", ""
+		}
+		return "report-submitted", current
+	}
+	if workerAttemptPredates(task, reportTime(task)) {
+		return "report-submitted", current
 	}
 	return "", ""
 }
 
 func reviewerCloseReason(task *ordjson.Object) (string, string) {
-	pane := asString(asObject(field(task, "reviewer")), "pane")
-	if pane == "" {
+	reviewer := asObject(field(task, "reviewer"))
+	current := asString(reviewer, "pane")
+	if current == "" {
 		return "", ""
 	}
 	if term := terminalState(task); term != "" {
-		return term, pane
+		return term, current
 	}
-	if reviewMatchesCurrent(task) {
-		return "review-recorded", pane
+	if !reviewMatchesCurrent(task) {
+		return "", ""
 	}
-	return "", ""
+	if settled := currentReviewPane(task); settled != "" {
+		if settled != current {
+			return "", ""
+		}
+		return "review-recorded", current
+	}
+	boundAt := asString(reviewer, "bound_at")
+	reviewedAt := reviewTime(task)
+	if boundAt != "" && reviewedAt != "" && boundAt > reviewedAt {
+		return "", ""
+	}
+	return "review-recorded", current
 }
 
 func resolvePath(path string) string {
@@ -226,16 +356,7 @@ func closeOnePane(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, pane
 			row.Set("error", fmt.Sprintf("pane %s cannot be observed (%s)", paneID, code))
 			return row
 		}
-		if err := recordClosed(s, taskID, paneID, role, "", reason); err != nil {
-			row.Set("state", "error")
-			row.Set("error", err.Error())
-			return row
-		}
-		if role == "worker" {
-			parkWorkerAfterClose(s, ctx, runtimeRoot, taskID, row)
-		}
-		row.Set("state", "already-absent")
-		return row
+		return settleClosedPane(s, ctx, runtimeRoot, taskID, paneID, role, "", reason, "already-absent", row)
 	}
 	paneObj := unwrapPane(observed)
 	gotCwd := resolvePath(asString(paneObj, "cwd"))
@@ -252,9 +373,14 @@ func closeOnePane(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, pane
 			return row
 		}
 	}
+	if msg := occupantMismatch(s, herdrPath, session, task, paneID, role); msg != "" {
+		row.Set("state", "skipped")
+		row.Set("error", msg)
+		return row
+	}
 	agentName := asString(paneObj, "name")
 	if agentName == "" {
-		if kind := asString(paneObj, "agent"); kind != "" && kind != "<nil>" {
+		if kind := asString(paneObj, "agent"); kind != "" {
 			agentName = kind
 		}
 	}
@@ -269,25 +395,78 @@ func closeOnePane(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, pane
 		row.Set("error", fmt.Sprintf("pane close returned %s", closeCode))
 		return row
 	}
-	if role == "worker" {
-		if err := reapCheckoutLeftovers(s, runtimeRoot, task); err != nil {
-			row.Set("state", "error")
-			row.Set("error", err.Error())
-			_ = recordClosed(s, taskID, paneID, role, agentName, reason)
-			return row
+	return settleClosedPane(s, ctx, runtimeRoot, taskID, paneID, role, agentName, reason, "closed", row)
+}
+
+func occupantMismatch(s *store.Store, herdrPath, session string, task *ordjson.Object, paneID, role string) string {
+	recorded, occupiedAt, ok := recordedOccupant(s, task, paneID, role)
+	if !ok {
+		return fmt.Sprintf("pane %s has no recorded incarnation to judge; refusing to close a possible reused address", paneID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
+	defer cancel()
+	verdict := incarnation.Pane(incarnation.SessionCall(ctx, herdrPath, session), paneID, recorded, occupiedAt)
+	if verdict.Verified {
+		return ""
+	}
+	return fmt.Sprintf("pane %s occupant is not verified (%s: %s); refusing to close a reused pane", paneID, verdict.Outcome, verdict.Reason)
+}
+
+func recordedOccupant(s *store.Store, task *ordjson.Object, paneID, role string) (any, string, bool) {
+	endpoint := store.Endpoint{
+		Machine: asString(task, "machine"),
+		Session: asString(task, "session"),
+		Pane:    paneID,
+	}
+	if role == "reviewer" {
+		reviewer := asObject(field(task, "reviewer"))
+		if m := asString(reviewer, "machine"); m != "" {
+			endpoint.Machine = m
+		}
+		if sess := asString(reviewer, "session"); sess != "" {
+			endpoint.Session = sess
 		}
 	}
-	if err := recordClosed(s, taskID, paneID, role, agentName, reason); err != nil {
+	registration, err := s.Registration(endpoint)
+	if err != nil || registration == nil {
+		return nil, "", false
+	}
+	if role == "worker" {
+		value, occupiedAt, ok := incarnation.WorkerRecord(registration, asString(task, "id"))
+		return value, occupiedAt, ok
+	}
+	value, occupiedAt := incarnation.RegistrationRecord(registration)
+	return value, occupiedAt, value != nil
+}
+
+func settleClosedPane(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, paneID, role, agent, reason, state string, row *ordjson.Object) *ordjson.Object {
+	task, err := s.ReadTask(taskID)
+	if err != nil {
 		row.Set("state", "error")
 		row.Set("error", err.Error())
 		return row
 	}
 	if role == "worker" {
+		if err := reapCheckoutLeftovers(s, runtimeRoot, task); err != nil {
+			row.Set("state", "error")
+			row.Set("error", err.Error())
+			return row
+		}
 		parkWorkerAfterClose(s, ctx, runtimeRoot, taskID, row)
+		if park, _ := row.Get("park_error"); park != nil {
+			row.Set("state", "error")
+			row.Set("error", fmt.Sprint(park))
+			return row
+		}
 	}
-	row.Set("state", "closed")
-	if agentName != "" {
-		row.Set("agent", agentName)
+	if err := recordClosed(s, taskID, paneID, role, agent, reason); err != nil {
+		row.Set("state", "error")
+		row.Set("error", err.Error())
+		return row
+	}
+	row.Set("state", state)
+	if agent != "" {
+		row.Set("agent", agent)
 	}
 	return row
 }
