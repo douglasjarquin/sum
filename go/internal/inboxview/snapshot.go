@@ -57,22 +57,29 @@ type Snapshot struct {
 // Complete is false when an unreadable source could conceal more work.
 func Read(s *store.Store) Snapshot {
 	out := Snapshot{Tasks: []Task{}, Items: []presentation.Item{}, Gaps: []Gap{}, Complete: true}
-	registry, err := project.ReadProjects(s)
-	if fileErr := optionalFile(filepath.Join(s.Home, project.ProjectsFile)); fileErr != nil {
-		err = fileErr
+	var registry *ordjson.Object
+	err := optionalFile(filepath.Join(s.Home, project.ProjectsFile))
+	if err == nil {
+		registry, err = project.ReadProjects(s)
 	}
 	if err != nil {
 		out.gap("", filepath.Join(s.Home, project.ProjectsFile), err)
 		registry = nil
 	}
 	projectsByPath := projectPaths(registry)
-	out.Factory, err = factory.Read(s)
+	err = optionalFile(filepath.Join(s.Home, factory.File))
+	if err == nil {
+		out.Factory, err = factory.Read(s)
+	}
 	if err != nil {
 		out.gap("", filepath.Join(s.Home, factory.File), err)
 	}
 	entries, err := os.ReadDir(s.Tasks)
-	if err != nil && !os.IsNotExist(err) {
-		out.gap("", s.Tasks, err)
+	if err != nil {
+		_, stateErr := os.Lstat(filepath.Join(s.Home, "state.json"))
+		if !os.IsNotExist(err) || !os.IsNotExist(stateErr) {
+			out.gap("", s.Tasks, err)
+		}
 	}
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name(), "t-") {
@@ -84,7 +91,11 @@ func Read(s *store.Store) Snapshot {
 			out.gap("", path, err)
 			continue
 		}
-		record, err := s.ReadTask(id)
+		var record *ordjson.Object
+		err := optionalFile(path)
+		if err == nil {
+			record, err = s.ReadTask(id)
+		}
 		if err != nil {
 			out.gap(id, path, err)
 			continue
@@ -93,9 +104,10 @@ func Read(s *store.Store) Snapshot {
 		row.ProjectID = out.projectID(record, projectsByPath, path)
 		clean := out.taskSources(record, path)
 		versionPath := filepath.Join(s.Tasks, id, versions.File)
-		version, err := versions.ReadVersions(s, clean)
-		if fileErr := optionalFile(versionPath); fileErr != nil {
-			err = fileErr
+		var version *ordjson.Object
+		err = optionalFile(versionPath)
+		if err == nil {
+			version, err = versions.ReadVersions(s, clean)
 		}
 		if err == nil {
 			err = validateVersions(version)
@@ -105,9 +117,10 @@ func Read(s *store.Store) Snapshot {
 			version = nil
 		}
 		returnPath := filepath.Join(s.Tasks, id, returns.File)
-		notices, err := returns.ReadReturns(s, id)
-		if fileErr := optionalFile(returnPath); fileErr != nil {
-			err = fileErr
+		var notices *ordjson.Object
+		err = optionalFile(returnPath)
+		if err == nil {
+			notices, err = returns.ReadReturns(s, id)
 		}
 		if err == nil {
 			err = validateDeliveries(notices)
@@ -166,8 +179,10 @@ func Read(s *store.Store) Snapshot {
 				out.gap(id, pipelinePath, err)
 			} else if info != nil {
 				row.Pipeline = &saved
-				for _, gate := range saved.Rows {
-					row.Items = append(row.Items, presentation.Classify(presentation.Fact{Source: presentation.Source{TaskID: id, Kind: presentation.Pipeline, ID: string(gate.Stage), Candidate: saved.Candidate}, ProjectID: row.ProjectID, State: string(gate.Status), At: gate.At, Text: gate.Result, Details: []presentation.Detail{{Section: "pipeline", Ref: string(gate.Stage), Path: pipelinePath}}}))
+				if str(record, "status") != "archived" {
+					for _, gate := range saved.Rows {
+						row.Items = append(row.Items, presentation.Classify(presentation.Fact{Source: presentation.Source{TaskID: id, Kind: presentation.Pipeline, ID: string(gate.Stage), Candidate: saved.Candidate}, ProjectID: row.ProjectID, State: string(gate.Status), At: gate.At, Text: gate.Result, Details: []presentation.Detail{{Section: "pipeline", Ref: string(gate.Stage), Path: pipelinePath}}}))
+					}
 				}
 			}
 		}

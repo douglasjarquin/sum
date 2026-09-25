@@ -1,11 +1,15 @@
 package inboxview
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/presentation"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -186,6 +190,9 @@ func TestPartialSourceShapesAndSavedPipelineFactoryFacts(t *testing.T) {
 	}
 	kinds := map[presentation.SourceKind]presentation.Item{}
 	for _, item := range got.Items {
+		if item.Source.Kind == presentation.Question && (item.Delivery != "unknown" || !item.Uncertain) {
+			t.Fatalf("malformed returns lost delivery uncertainty: %+v", item)
+		}
 		if item.Kind == presentation.Inspection {
 			kinds[item.Source.Kind] = item
 		}
@@ -214,6 +221,114 @@ func TestDirectorySidecarAndMissingTaskAreGaps(t *testing.T) {
 	got := Read(s)
 	if got.Counts.Decisions != 1 || got.Counts.UnknownSources != 2 {
 		t.Fatalf("read silently skipped unreadable sources: %+v", got)
+	}
+}
+
+func TestFIFOSourcesRetainHealthyDecision(t *testing.T) {
+	if home := os.Getenv("INBOXVIEW_FIFO_HOME"); home != "" {
+		s, err := store.Open(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := Read(s)
+		if got.Complete || got.Counts.Decisions != 1 || got.Counts.UnknownSources != 1 {
+			t.Fatalf("FIFO concealed healthy decision or source gap: %+v", got)
+		}
+		if got.Gaps[0].Path != os.Getenv("INBOXVIEW_FIFO_PATH") || !strings.Contains(got.Gaps[0].Reason, "not a regular file") {
+			t.Fatalf("unexpected source gap: %+v", got.Gaps)
+		}
+		return
+	}
+	for _, path := range []string{"projects.json", "factory.json", "tasks/t-aaaaaaaaaaaa/task.json", "tasks/t-aaaaaaaaaaaa/versions.json", "tasks/t-aaaaaaaaaaaa/returns.json", "tasks/t-aaaaaaaaaaaa/pipeline.json"} {
+		t.Run(path, func(t *testing.T) {
+			s := fixture(t)
+			write(t, s, "tasks/t-bbbbbbbbbbbb/task.json", `{"schema":1,"id":"t-bbbbbbbbbbbb","questions":[{"id":"q1","status":"open"}]}`)
+			if strings.HasPrefix(path, "tasks/") && !strings.HasSuffix(path, "/task.json") {
+				write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":1,"id":"t-aaaaaaaaaaaa"}`)
+			}
+			fifo := filepath.Join(s.Home, path)
+			if err := os.MkdirAll(filepath.Dir(fifo), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(fifo, 0600); err != nil {
+				t.Fatal(err)
+			}
+			executable, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, executable, "-test.run=^TestFIFOSourcesRetainHealthyDecision$")
+			cmd.Env = append(os.Environ(), "INBOXVIEW_FIFO_HOME="+s.Home, "INBOXVIEW_FIFO_PATH="+fifo)
+			output, err := cmd.CombinedOutput()
+			if ctx.Err() != nil {
+				t.Fatalf("snapshot blocked on FIFO; subprocess killed and reaped: %v\n%s", ctx.Err(), output)
+			}
+			if err != nil {
+				t.Fatalf("FIFO snapshot subprocess failed: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestMissingTasksDirectoryCoverage(t *testing.T) {
+	s := fixture(t)
+	if got := Read(s); !got.Complete || got.Counts.Tasks != 0 || got.Counts.UnknownSources != 0 {
+		t.Fatalf("fresh home is not empty and complete: %+v", got)
+	}
+	write(t, s, "state.json", `{"schema":1}`)
+	if err := os.Mkdir(s.Tasks, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := Read(s); !got.Complete {
+		t.Fatalf("initialized empty home has a gap: %+v", got.Gaps)
+	}
+	if err := os.Remove(s.Tasks); err != nil {
+		t.Fatal(err)
+	}
+	got := Read(s)
+	if got.Complete || got.Counts.UnknownSources != 1 || got.Gaps[0].Path != s.Tasks {
+		t.Fatalf("missing initialized tasks directory reported clear: %+v", got)
+	}
+}
+
+func TestArchivedPipelineRetainsHistoryWithoutCurrentWork(t *testing.T) {
+	for _, status := range []string{"fail", "blocked"} {
+		t.Run(status, func(t *testing.T) {
+			s := fixture(t)
+			write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":1,"id":"t-aaaaaaaaaaaa","status":"archived"}`)
+			path := "tasks/t-aaaaaaaaaaaa/pipeline.json"
+			write(t, s, path, `{"schema":1,"task":"t-aaaaaaaaaaaa","candidate":"sha1","rows":[{"stage":"test","status":"`+status+`","result":"saved failure"}]}`)
+			got := Read(s)
+			if !got.Complete || got.Counts.Coordinator != 0 || got.Counts.Inspection != 0 || len(got.Items) != 0 || got.Tasks[0].Pipeline == nil {
+				t.Fatalf("archived pipeline counted as current work or lost history: %+v", got)
+			}
+			write(t, s, path, `{broken`)
+			got = Read(s)
+			if got.Complete || got.Counts.UnknownSources != 1 || got.Gaps[0].Path != filepath.Join(s.Home, path) {
+				t.Fatalf("archived pipeline hid source gap: %+v", got)
+			}
+		})
+	}
+}
+
+func TestMalformedPipelineRetainsHealthyDecision(t *testing.T) {
+	for _, broken := range []string{
+		`{broken`,
+		`{"schema":1,"task":"t-bbbbbbbbbbbb","rows":[]}`,
+		`{"schema":1,"task":"t-aaaaaaaaaaaa","rows":[{"stage":"test","status":"unexpected"}]}`,
+	} {
+		t.Run(broken, func(t *testing.T) {
+			s := fixture(t)
+			write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":1,"id":"t-aaaaaaaaaaaa","questions":[{"id":"q1","status":"open"}]}`)
+			path := "tasks/t-aaaaaaaaaaaa/pipeline.json"
+			write(t, s, path, broken)
+			got := Read(s)
+			if got.Complete || got.Counts.Decisions != 1 || got.Counts.UnknownSources != 1 || got.Gaps[0].Path != filepath.Join(s.Home, path) || got.Tasks[0].Pipeline != nil {
+				t.Fatalf("malformed pipeline concealed decision or gap: %+v", got)
+			}
+		})
 	}
 }
 
