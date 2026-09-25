@@ -51,6 +51,10 @@ const (
 
 	DefaultIdleSeconds = 300
 	DefaultLanes       = 1
+
+	// gh project item-list has no --paginate; GraphQL pages at 100, so a 100
+	// cap hid Ready items at board positions 103+ (live project 7 had 155).
+	projectItemListLimit = 500
 )
 
 var AuthorizedMerge = []string{
@@ -745,7 +749,7 @@ func roadmapOrder(body string) []int {
 
 func ghProjectReady(runtimeRoot, repo string, number int, option string) ([]ghIssue, error) {
 	owner, _, _ := strings.Cut(repo, "/")
-	out, err := runGh(runtimeRoot, "project", "item-list", fmt.Sprint(number), "--owner", owner, "--format", "json", "--limit", "100")
+	out, err := runGh(runtimeRoot, "project", "item-list", fmt.Sprint(number), "--owner", owner, "--format", "json", "--limit", strconv.Itoa(projectItemListLimit))
 	if err != nil {
 		return nil, err
 	}
