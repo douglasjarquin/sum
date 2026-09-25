@@ -21,7 +21,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// TestMeasureCoordinationPasses records wall time, task reads, and helper/Herdr/gh calls of the fast coordination
+// TestMeasureCoordinationPasses records successful stdout bytes, wall time, task reads, and helper/Herdr/gh calls of the fast coordination
 // commands over synthesized homes of 1, 12, and 100 tasks (one third archived; active tasks mixing open questions,
 // unapplied answers, reports, open PRs, and merged cleanup-pending tasks), with healthy fakes and with a slow
 // dependency. It runs only when SUM_MEASURE_OUT names an output directory; SUM_MEASURE_BINS adds binaries to compare
@@ -56,12 +56,14 @@ func TestMeasureCoordinationPasses(t *testing.T) {
 		Subprocess  int       `json:"subprocesses"`
 		HerdrCalls  int       `json:"herdr_calls"`
 		GHCalls     int       `json:"gh_calls"`
+		OutputBytes []int     `json:"stdout_bytes"`
+		Unavailable string    `json:"unavailable,omitempty"`
 		ExitCodes   []int     `json:"exit_codes"`
 		Deferred    int       `json:"deferred"`
 		StraceNotes string    `json:"strace,omitempty"`
 	}
 	var cells []cell
-	commands := [][]string{{"init"}, {"inbox", "--live"}, {"pump"}, {"status"}}
+	commands := [][]string{{"init"}, {"inbox", "--live"}, {"pump"}, {"status"}, {"status", "--compact"}, {"inbox", "--compact"}, {"inbox", "--compact", "--live"}}
 	scenarios := []string{"healthy", "slow"}
 	for _, bin := range binaries {
 		for _, n := range []int{1, 12, 100} {
@@ -80,26 +82,42 @@ func TestMeasureCoordinationPasses(t *testing.T) {
 						run := fx.fresh(t)
 						started := time.Now()
 						code, stdout := run.exec(bin[1], "", command...)
-						c.Samples = append(c.Samples, float64(time.Since(started).Microseconds())/1000)
 						c.ExitCodes = append(c.ExitCodes, code)
+						if code != 0 {
+							if bin[0] == "candidate" {
+								t.Fatalf("candidate %s failed with exit %d; failed output is not a measurement", c.Command, code)
+							}
+							c.Unavailable = "a sample failed or the comparison binary does not support this command; failed output excluded"
+							break
+						}
+						c.Samples = append(c.Samples, float64(time.Since(started).Microseconds())/1000)
+						c.OutputBytes = append(c.OutputBytes, len([]byte(stdout)))
 						if i == 0 {
 							c.HerdrCalls = measureLines(filepath.Join(run.base, "fake", "calls.jsonl"))
 							c.GHCalls = measureLines(filepath.Join(run.base, "fake-gh", "calls.jsonl"))
 							c.Deferred = strings.Count(stdout, "state: deferred")
 						}
 					}
-					if straceErr == nil {
+					if len(c.Samples) > 0 && straceErr == nil {
 						run := fx.fresh(t)
 						trace := filepath.Join(run.base, "strace.txt")
-						run.exec(bin[1], trace, command...)
+						code, _ := run.exec(bin[1], trace, command...)
+						if code != 0 {
+							t.Fatalf("instrumented %s %s failed with exit %d", bin[0], c.Command, code)
+						}
 						c.TaskReads, c.Subprocess = parseStrace(t, trace)
 					} else {
-						c.StraceNotes = "strace unavailable; task reads and subprocesses not counted"
+						if straceErr != nil {
+							c.StraceNotes = "strace unavailable; task reads and subprocesses not counted"
+						} else {
+							c.StraceNotes = "no successful samples; trace not run"
+						}
 					}
 					c.P50, c.P95, c.Max = percentile(c.Samples, 50), percentile(c.Samples, 95), percentile(c.Samples, 100)
 					cells = append(cells, c)
 					t.Logf("%s n=%d %s %-12s p50=%.0fms p95=%.0fms reads=%d subprocs=%d herdr=%d gh=%d deferred=%d exits=%v",
 						c.Binary, c.Tasks, c.Scenario, c.Command, c.P50, c.P95, c.TaskReads, c.Subprocess, c.HerdrCalls, c.GHCalls, c.Deferred, c.ExitCodes)
+					t.Logf("stdout bytes=%v unavailable=%s", c.OutputBytes, c.Unavailable)
 				}
 			}
 		}
@@ -115,11 +133,11 @@ func TestMeasureCoordinationPasses(t *testing.T) {
 		t.Fatal(err)
 	}
 	var table bytes.Buffer
-	fmt.Fprintln(&table, "| Binary | Tasks (active) | Scenario | Command | Samples | p50 ms | p95 ms | Task reads | Subprocesses | Herdr calls | gh calls | Deferred |")
-	fmt.Fprintln(&table, "| --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	fmt.Fprintln(&table, "| Binary | Tasks (active) | Scenario | Command | Samples | p50 ms | p95 ms | Task reads | Subprocesses | Herdr calls | gh calls | Deferred | Stdout bytes | Unavailable |")
+	fmt.Fprintln(&table, "| --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
 	for _, c := range cells {
-		fmt.Fprintf(&table, "| %s | %d (%d) | %s | `%s` | %d | %.0f | %.0f | %d | %d | %d | %d | %d |\n",
-			c.Binary, c.Tasks, c.Active, c.Scenario, c.Command, len(c.Samples), c.P50, c.P95, c.TaskReads, c.Subprocess, c.HerdrCalls, c.GHCalls, c.Deferred)
+		fmt.Fprintf(&table, "| %s | %d (%d) | %s | `%s` | %d | %.0f | %.0f | %d | %d | %d | %d | %d | %v | %s |\n",
+			c.Binary, c.Tasks, c.Active, c.Scenario, c.Command, len(c.Samples), c.P50, c.P95, c.TaskReads, c.Subprocess, c.HerdrCalls, c.GHCalls, c.Deferred, c.OutputBytes, c.Unavailable)
 	}
 	if err := os.WriteFile(filepath.Join(out, "table.md"), table.Bytes(), 0o644); err != nil {
 		t.Fatal(err)

@@ -96,12 +96,18 @@ func ReadVersions(s *store.Store, task *ordjson.Object) (*ordjson.Object, error)
 		return nil, err
 	}
 	path := filepath.Join(taskPath, File)
-	if info, statErr := os.Lstat(path); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+	info, statErr := os.Lstat(path)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
+			return legacyVersions(task), nil
+		}
+		return nil, statErr
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("%s must not be a symlink", path)
 	}
-	info, statErr := os.Stat(path)
-	if statErr != nil || info.IsDir() {
-		return legacyVersions(task), nil
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s must be a regular file", path)
 	}
 	value, err := ordjson.ReadFile(path)
 	if err != nil {
@@ -584,11 +590,17 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 	}
 
 	revisionsValue, _ := versionsObj.Get("revisions")
-	revisionList, _ := revisionsValue.([]any)
+	revisionList, ok := revisionsValue.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s revisions must be an array", filepath.Join(taskPath, File))
+	}
 	revisionViews := make([]any, 0, len(revisionList))
 	ids := make([]string, 0, len(revisionList))
-	for _, r := range revisionList {
-		rev, _ := r.(*ordjson.Object)
+	for i, r := range revisionList {
+		rev, ok := r.(*ordjson.Object)
+		if !ok || rev == nil {
+			return nil, fmt.Errorf("%s revisions[%d] must be an object", filepath.Join(taskPath, File), i)
+		}
 		revisionViews = append(revisionViews, RevisionView(taskPath, rev))
 		revID, _ := rev.Get("id")
 		revIDStr, _ := revID.(string)
@@ -597,7 +609,10 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 
 	var evidence any
 	if reportValue, hasReport := task.Get("report"); hasReport && reportValue != nil {
-		report, _ := reportValue.(*ordjson.Object)
+		report, ok := reportValue.(*ordjson.Object)
+		if !ok || report == nil {
+			return nil, fmt.Errorf("task %s report must be an object or null", id)
+		}
 		madeUnderValue, _ := report.Get("brief_revision")
 		madeUnder, madeUnderIsString := madeUnderValue.(string)
 		if !madeUnderIsString {

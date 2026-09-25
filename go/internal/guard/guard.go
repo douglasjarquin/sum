@@ -13,7 +13,7 @@ var ReadOnlyCommands = map[string]bool{
 	"brief-list": true, "context": true, "doctor": true, "env-show": true, "execution-show": true,
 	"factory-merge-check": true, "factory-status": true,
 	"graph-config": true, "graph-status": true, "help": true, "hook-status": true, "inbox": true,
-	"metadata-snippet": true, "metadata-status": true, "preset-list": true, "preset-show": true,
+	"metadata-inbox": true, "metadata-snippet": true, "metadata-status": true, "preset-list": true, "preset-show": true,
 	"project-list": true, "project-show": true, "quota": true, "refresh-status": true,
 	"release-contract": true, "release-list": true, "release-show": true, "settings-show": true,
 	"show": true, "skills-check": true, "status": true, "update-status": true,

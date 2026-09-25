@@ -5,6 +5,7 @@ import (
 	"io"
 
 	"github.com/douglasjarquin/sum/go/internal/metadata"
+	"github.com/douglasjarquin/sum/go/internal/statuscmd"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -116,25 +117,24 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 		},
 	})
 
-	metadataCmd.AddCommand(&cobra.Command{
+	var after, limit, maxChars int
+	inboxCmd := &cobra.Command{
 		Use:  "inbox",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			st, err := o.openStore("metadata-inbox")
+			st, err := store.Open(o.home)
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
-			if err != nil {
-				return err
-			}
-			view, err := metadata.Sync(st, ctx, o.runtimeRoot)
+			view, err := statuscmd.Compact(st, statuscmd.Options{Inbox: true, After: after, Limit: limit, MaxChars: maxChars})
 			if err != nil {
 				return err
 			}
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},
-	})
+	}
+	compactFlags(inboxCmd, &after, &limit, &maxChars)
+	metadataCmd.AddCommand(inboxCmd)
 
 	root.AddCommand(metadataCmd)
 }

@@ -15,9 +15,29 @@ Read `execution show TASK_ID` for its reservations; unfinished cleanup does not 
 A `blocked` row names the blocker codes; relay them, do not clear them by force.
 A cleanup interrupted after the native removal shows as `removing`; run `sumctl cleanup TASK_ID` (or `sumctl sweep`) to reconcile it from records and observation. A rundown never reconciles it, and nothing polls for merges.
 
+## Compact presentation
+
+`status --compact` and `inbox --compact` derive presentation from saved records. `metadata inbox` uses the same compact inbox without requiring Herdr. Defaults are 20 items and 240 characters per text; `--limit` accepts 1..100, `--max-chars` accepts 1..2000, and `--after` selects a page. `counts` always covers all readable sources before paging. Decisions come first. `complete: false` and `unknown_sources` mean more work may be hidden by a failed source, never that the inbox is clear.
+
+An open question belongs to the human; an answered question is worker application work and remains in full records. Reports and review findings are coordinator work; native attention requires inspection. Passive pipeline and factory context does not become a human decision. Uncertain or submitted delivery never proves an obligation was handled.
+
+Follow `page.next_after` until the relevant items are covered. Pages are fresh reads without a receipt or stable cursor; restart at `--after 0` if records change. Truncated text says so. Each item has a detail route, and a decision has an answer route. These are argument arrays for the same helper and home; supply the actual user's answer after `--text`, without interpolating question prose into a shell command. The question detail route selects its page with `context --section decisions --limit 1 --max-chars 0` to read the complete text. The top-level `detail` route returns full status, including capacity and maintenance. Use the full rundown above for global live observation and maintenance processing.
+
+With `--compact --live`, observation covers only tasks represented on the rendered page; `observation_scope.omitted_tasks` names the rest. Counts still describe saved global facts. No compact view delivers returns, advances gates, releases capacity, marks attention seen, or writes a read receipt. Future project focus may restrict routine detail only; global obligations and decisions must remain covered.
+
+Keep processing separate from replies. Answer a direct question, raise a real decision or important exception, and report a meaningful result after the required checks. Successful commands, report arrivals, passing gates, unchanged status, and idle ticks need no individual narration. For example:
+
+- An ordinary completion report starts verification and independent review quietly. Report the verified result when ready.
+- An open question asking which supported behavior the user wants is a decision. Show its text and record their actual answer.
+- A blocked native status with ambiguous prose needs inspection. Save a real question if inspection finds one; never infer a quota failure or permission from the status alone.
+- A saved passing CI row is an observation at its recorded time. A direct question about current CI requires the existing explicit maintenance command.
+- An uncertain delivery remains uncertain. Inspect recorded evidence and follow supported recovery. Never automatically resend a possibly submitted prompt or claim receipt or processing; an idle recipient alone proves neither.
+
+Sum cannot suppress a harness's own reasoning, tool output, or progress messages. Running coordinators adopt this policy through the existing refresh procedure; a source edit alone does not change their contract.
+
 ## Maintenance
 
-`status`, `inbox`, and the coordinator's `init` and `pump` carry a `maintenance` view built from saved records only: `open_prs` (each recorded open PR with its `state` and `observed_at` as recorded, and `next: sumctl pr reconcile TASK_ID`), `cleanup` (pending, blocked, removing, or ready, with state, time, blockers, and `next: sumctl cleanup TASK_ID`), and `next: sumctl sweep` when anything is listed. Nothing in it was re-observed: an open PR's state and CI are as of its `observed_at`, so say so when you relay it.
+Full `status`, full `inbox`, and the coordinator's `init` and `pump` carry a `maintenance` view built from saved records only: `open_prs` (each recorded open PR with its `state` and `observed_at` as recorded, and `next: sumctl pr reconcile TASK_ID`), `cleanup` (pending, blocked, removing, or ready, with state, time, blockers, and `next: sumctl cleanup TASK_ID`), and `next: sumctl sweep` when anything is listed. Nothing in it was re-observed: an open PR's state and CI are as of its `observed_at`, so say so when you relay it.
 When the user says a PR merged or asks about PR or CI state, run `./bin/sumctl sweep` (or `sumctl pr reconcile TASK_ID` for one task).
 It is the coordinator's explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first (a failed observation counts, so an unreachable PR does not head every sweep), each task re-read before it acts.
 After a GitHub timeout it observes no further PR in that pass; no task starts after its budget (`--budget SECONDS`, default 60; `0` starts nothing), but a started task finishes under its own helpers' bounds, so the budget bounds admission, not wall time.
@@ -64,10 +84,11 @@ A rundown does not replay missed events: `inbox --live` shows each worker's obse
 
 ## Native metadata
 
-Native metadata is optional and display only, and only the user decides whether to enable it: `./bin/sumctl metadata enable` projects each task's sum state as namespaced `sum_*` tokens on the endpoints sum records, after the helper commands that change records and on handled events, writing only what changed. It never reports or overrides Herdr's agent lifecycle, never renames or relabels anything, never edits the user's configuration, and sends notifications only after `--notify`.
-`inbox`, `status`, and `init` also show a `metadata` field: whether sum's task state is projected into Herdr `sum_*` tokens, the last pass, and any `degraded` reason. When it is enabled, the user can read `needs-decision`, `review-ready`, `merged-cleanup-pending`, `instruction-refresh-pending`, or an `attention-*` state in their own sidebar rows without asking you, alongside `sum_pipeline`, which names the one delivery gate the task is waiting on (`ci-fail`, `test-pending`, `settled`); that token is derived from the same records this rundown reads and changes task semantics in no way.
-`./bin/sumctl metadata status` lists the tokens sum currently owns per task and the bounded error log; `metadata sync` runs one bounded pass (only changed endpoints are written); `metadata snippet` prints the optional `config.toml` rows for the user to merge themselves. Do not edit their configuration, and do not use `pane report-agent`, `pane rename`, or metadata titles to make a task look finished: Herdr's lifecycle and labels are not yours.
-`metadata inbox` opens the read-only `sumctl inbox` listing as a Herdr pane through the linked plugin (`hook enable` first). A `degraded` metadata row means reduced visibility only, not a blocked task; nothing about ask, report, dispatch, update, or this rundown changed, and `inbox --live` stays the authoritative view.
+Native metadata is optional and display only. Only the user decides whether to enable it with `./bin/sumctl metadata enable`. The current projection writes namespaced `sum_*` tokens to recorded endpoints on explicit enable or sync. It uses the same saved presentation facts as compact views: open questions count as human decisions, answered questions as worker work, reports and reviews as coordinator work, and native attention as inspection. Unknown coverage stays explicit. These values never change Herdr's agent lifecycle or grant approval.
+
+`./bin/sumctl metadata status` reads saved projection health; `metadata sync` writes a projection pass, including unchanged endpoints. `metadata snippet` prints optional sidebar rows for the user to merge. Do not edit their configuration or use `pane report-agent`, `pane rename`, or metadata titles to make a task look finished. The `--notify` flag records a preference; transition notification delivery is not implemented. Endpoint ownership safeguards and writes only when values change remain follow-up work.
+
+`metadata inbox` prints the bounded saved compact inbox in the current output, including outside Herdr. It does not open a popup, require a hook, sync metadata, or mutate records. A degraded metadata summary concerns visibility only; continue the ordinary rundown and saved obligation processing.
 
 ## Code graph
 
