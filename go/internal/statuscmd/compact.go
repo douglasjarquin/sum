@@ -146,11 +146,14 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 
 func compactDetail(item presentation.Item, task inboxview.Task) []string {
 	id := item.Source.TaskID
+	if item.Source.Kind == presentation.Factory {
+		return []string{"factory", "status"}
+	}
 	if id == "" {
-		if item.Source.Kind == presentation.Factory {
-			return []string{"factory", "status"}
-		}
 		return nil
+	}
+	if item.Source.Kind == presentation.Pipeline {
+		return []string{"pipeline", "show", id}
 	}
 	if item.Source.Kind == presentation.Question && task.Record != nil {
 		raw, _ := task.Record.Get("questions")

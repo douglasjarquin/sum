@@ -1,16 +1,21 @@
 package cli
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func presentationHome(t *testing.T) string {
@@ -115,6 +120,156 @@ func TestCompactMalformedNeighborPreservesDecision(t *testing.T) {
 		if view["complete"] != false || counts["unknown_sources"] != float64(1) || counts["decisions"] != float64(2) {
 			t.Fatalf("coverage: %v", view)
 		}
+	}
+}
+
+func assertFullDecisionDetail(t *testing.T, detail map[string]any) {
+	t.Helper()
+	decision := detail["decisions"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	text := decision["text"].(map[string]any)
+	if decision["id"] != "q-first" || text["truncated"] != false || text["text"] != strings.Repeat("界", 700)+" $(touch should-not-exist)" {
+		t.Fatalf("detail lost question text: %v", decision)
+	}
+}
+
+func TestCompactDecisionDetailSurvivesMalformedVersionsAndReport(t *testing.T) {
+	clearHerdrEnv(t)
+	for _, fixture := range []struct {
+		name, revisions, report, errorText string
+	}{
+		{"null revision", `[null]`, `null`, "revisions[0] must be an object"},
+		{"scalar revision", `[42]`, `null`, "revisions[0] must be an object"},
+		{"object revisions", `{}`, `null`, "revisions must be an array"},
+		{"string report", `[]`, `"broken"`, "report must be an object or null"},
+		{"array report", `[]`, `[]`, "report must be an object or null"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			home := presentationHome(t)
+			taskDir := filepath.Join(home, "tasks", "t-aaaaaaaaaaaa")
+			taskPath := filepath.Join(taskDir, "task.json")
+			raw, err := os.ReadFile(taskPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw = bytes.Replace(raw, []byte(`"report":null`), []byte(`"report":`+fixture.report), 1)
+			if err := os.WriteFile(taskPath, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			version := `{"schema":1,"task":"t-aaaaaaaaaaaa","requested":"r1","revisions":` + fixture.revisions + `}`
+			if err := os.WriteFile(filepath.Join(taskDir, "versions.json"), []byte(version), 0600); err != nil {
+				t.Fatal(err)
+			}
+			before := snapshotPresentationFiles(t, home)
+			compact := compactRead(t, home, "inbox", "--compact", "--limit", "1", "--max-chars", "40")
+			item := compact["page"].(map[string]any)["items"].([]any)[0].(map[string]any)
+			if item["text"].(map[string]any)["truncated"] != true {
+				t.Fatal("fixture did not need a full-detail route")
+			}
+			detail := compactRead(t, home, stringArgs(item["detail"])...)
+			assertFullDecisionDetail(t, detail)
+			if problem, _ := detail["versions_error"].(string); !strings.Contains(problem, fixture.errorText) {
+				t.Fatalf("versions error = %q", problem)
+			}
+			if after := snapshotPresentationFiles(t, home); !reflect.DeepEqual(before, after) {
+				t.Fatal("detail read changed source files")
+			}
+		})
+	}
+}
+
+func TestCompactDecisionDetailRejectsVersionsFIFO(t *testing.T) {
+	clearHerdrEnv(t)
+	home := presentationHome(t)
+	path := filepath.Join(home, "tasks", "t-aaaaaaaaaaaa", "versions.json")
+	if err := syscall.Mkfifo(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	read := func(args ...string) map[string]any {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, filepath.Join(repoRoot(t), ".local", "bin", "sumctl"), append([]string{"--home", home, "--format", "json"}, args...)...)
+		for _, value := range os.Environ() {
+			if !strings.HasPrefix(value, "SUM_") && !strings.HasPrefix(value, "HERDR_") {
+				cmd.Env = append(cmd.Env, value)
+			}
+		}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v failed or blocked: %v, deadline: %v\n%s", args, err, ctx.Err(), out)
+		}
+		var result map[string]any
+		if err := json.Unmarshal(out, &result); err != nil {
+			t.Fatalf("decode %v: %v\n%s", args, err, out)
+		}
+		return result
+	}
+	compact := read("inbox", "--compact", "--limit", "1", "--max-chars", "40")
+	item := compact["page"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	detail := read(stringArgs(item["detail"])...)
+	assertFullDecisionDetail(t, detail)
+	if problem, _ := detail["versions_error"].(string); !strings.Contains(problem, "must be a regular file") {
+		t.Fatalf("versions error = %q", problem)
+	}
+}
+
+func TestCompactSidecarDetailRoutesReadSavedContentWithoutWrites(t *testing.T) {
+	clearHerdrEnv(t)
+	home := presentationHome(t)
+	result := strings.Repeat("saved failure 界 ", 100)
+	laneText := strings.Repeat("saved lane explanation ", 100)
+	lane := map[string]any{"task": "t-aaaaaaaaaaaa", "issue": 239, "state": "gated", "claimed_at": "2026-01-01T00:00:00Z", "reason": laneText}
+	fixtures := map[string]any{
+		"tasks/t-aaaaaaaaaaaa/pipeline.json": map[string]any{"schema": 1, "task": "t-aaaaaaaaaaaa", "candidate": "sha1", "rows": []any{map[string]any{"stage": "test", "status": "fail", "result": result, "at": "2026-01-01T00:00:00Z"}}},
+		"factory.json":                       map[string]any{"schema": 1, "projects": map[string]any{"owner/repo": map[string]any{"name": "owner/repo", "lanes": 1, "lanes_held": []any{lane}}}},
+	}
+	for path, fixture := range fixtures {
+		raw, err := json.Marshal(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, path), raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := snapshotPresentationFiles(t, home)
+	compact := compactRead(t, home, "inbox", "--compact", "--max-chars", "40")
+	found := map[string]bool{}
+	for _, raw := range compact["page"].(map[string]any)["items"].([]any) {
+		item := raw.(map[string]any)
+		kind := item["source"].(map[string]any)["kind"].(string)
+		if kind != "pipeline" && kind != "factory" {
+			continue
+		}
+		found[kind] = true
+		detail := compactRead(t, home, stringArgs(item["detail"])...)
+		if kind == "pipeline" {
+			if item["text"].(map[string]any)["truncated"] != true || detail["candidate"] != "sha1" {
+				t.Fatalf("pipeline detail: %v", detail)
+			}
+			matched := false
+			for _, raw := range detail["rows"].([]any) {
+				row := raw.(map[string]any)
+				if row["stage"] == "test" && row["result"] == result {
+					matched = true
+				}
+			}
+			if !matched {
+				t.Fatal("detail lost full saved pipeline result")
+			}
+		} else {
+			project := detail["projects"].([]any)[0].(map[string]any)
+			got := project["lanes_held"].([]any)[0].(map[string]any)
+			if got["task"] != lane["task"] || got["reason"] != laneText || got["state"] != "gated" {
+				t.Fatalf("detail lost saved factory lane: %v", got)
+			}
+		}
+	}
+	if !found["pipeline"] || !found["factory"] {
+		t.Fatalf("sidecar routes missing: %v", found)
+	}
+	if after := snapshotPresentationFiles(t, home); !reflect.DeepEqual(before, after) {
+		t.Fatal("detail read changed source files")
 	}
 }
 
