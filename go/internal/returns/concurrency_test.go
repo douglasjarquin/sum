@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -29,31 +31,117 @@ func TestDeliveryHelperProcess(t *testing.T) {
 	if os.Getenv(helperEnv) == "" {
 		t.Skip("helper process for the multi-process delivery tests")
 	}
+	if path := os.Getenv("HELPER_STARTED"); path != "" {
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ms := func(key string) time.Duration {
 		var n int
 		fmt.Sscan(os.Getenv(key), &n)
 		return time.Duration(n) * time.Millisecond
 	}
 	ObserveTimeout, PromptTimeout = ms("HELPER_OBSERVE_MS"), ms("HELPER_PROMPT_MS")
+	debug := ordjson.NewObject()
+	debug.Set("sum_herdr_bin", os.Getenv("SUM_HERDR_BIN"))
+	debug.Set("pass_fake", os.Getenv("PASS_FAKE"))
+	debug.Set("sum_now", os.Getenv("SUM_NOW"))
+	debug.Set("herdr_env", os.Getenv("HERDR_ENV"))
+	debug.Set("helper_home", os.Getenv("HELPER_HOME"))
+	debug.Set("helper_root", os.Getenv("HELPER_ROOT"))
+	debug.Set("helper_tasks", os.Getenv("HELPER_TASKS"))
+	debug.Set("helper_recipient", os.Getenv("HELPER_RECIPIENT"))
 	s, err := store.Open(os.Getenv("HELPER_HOME"))
 	if err != nil {
+		debug.Set("open_error", err.Error())
+		result := ordjson.NewObject()
+		result.Set("error", err.Error())
+		result.Set("helper_debug", debug)
+		_ = ordjson.WriteFile(os.Getenv("HELPER_OUT"), result)
 		t.Fatal(err)
+	}
+	if host, mErr := s.Machine(); mErr != nil {
+		debug.Set("machine_error", mErr.Error())
+	} else {
+		debug.Set("machine_id", host.ID)
+		tasks, _ := s.AllTasks()
+		debug.Set("task_count", len(tasks))
+		var ids []any
+		for _, task := range tasks {
+			recorded, _ := task.Get("machine")
+			id, _ := task.Get("id")
+			row := ordjson.NewObject()
+			row.Set("id", id)
+			row.Set("machine", recorded)
+			row.Set("host_is", host.Is(recorded))
+			ids = append(ids, row)
+		}
+		debug.Set("tasks", ids)
 	}
 	result, err := Pump(s, PumpOpts{RuntimeRoot: os.Getenv("HELPER_ROOT"), SumctlPath: "sumctl",
 		Tasks: strings.Split(os.Getenv("HELPER_TASKS"), ","), Recipient: os.Getenv("HELPER_RECIPIENT"), Budget: ms("HELPER_BUDGET_MS")})
-	if err != nil {
+	if result == nil {
 		result = ordjson.NewObject()
+	}
+	if err != nil {
 		result.Set("error", err.Error())
 	}
+	result.Set("helper_debug", debug)
 	if err := ordjson.WriteFile(os.Getenv("HELPER_OUT"), result); err != nil {
 		t.Fatal(err)
 	}
 }
 
 type helperProc struct {
-	cmd  *exec.Cmd
-	out  string
-	done chan error
+	cmd     *exec.Cmd
+	out     string
+	started string
+	done    chan error
+}
+
+const helperPromptTimeout = 20 * time.Second
+
+func parallelTestProcs() int {
+	n := runtime.GOMAXPROCS(0)
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// helperStartBudget is how long a helper process may take to reach a held Herdr call.
+// It is not a delivery-contract bound. The helper re-executes this test binary, then
+// Pump's first `agent list` execs the fake Herdr (Python). `go test ./...` runs up to
+// GOMAXPROCS package binaries at once; that contention delays process start without
+// changing whether B can deliver while A's prompt is held.
+func helperStartBudget() time.Duration {
+	const idle = 20 * time.Second
+	const perPeer = 8 * time.Second
+	return idle + perPeer*time.Duration(parallelTestProcs()-1)
+}
+
+// helperObserveTimeout is Pump's observation bound in the helper (and in the parent
+// after startHelper). Production ObserveTimeout is 5s; the lab used to pin 1s, which
+// kills the fake Herdr during Python startup under `go test ./...` so agent list
+// times out, calls stays empty, and the helper exits cleanly as not-delivered.
+func helperObserveTimeout() time.Duration {
+	const idle = 5 * time.Second
+	const perPeer = 2 * time.Second
+	return idle + perPeer*time.Duration(parallelTestProcs()-1)
+}
+
+func helperChildEnv(extra ...string) []string {
+	out := make([]string, 0, len(os.Environ())+len(extra)+1)
+	for _, e := range os.Environ() {
+		if strings.HasPrefix(e, "GOMAXPROCS=") {
+			continue
+		}
+		out = append(out, e)
+	}
+	// The helper runs one sequential Pump. Default GOMAXPROCS would start one OS thread
+	// per CPU in a process that already competes with every other package test.
+	out = append(out, "GOMAXPROCS=1")
+	return append(out, extra...)
 }
 
 // startHelper runs one Pump for tasks/recipient in a separate process with a long prompt timeout, so a held prompt
@@ -61,15 +149,24 @@ type helperProc struct {
 func (l *passLab) startHelper(name string, tasks []string, recipient string) *helperProc {
 	l.t.Helper()
 	out := filepath.Join(l.root, "helper-"+name+".json")
+	started := filepath.Join(l.root, "helper-"+name+".started")
+	observe := helperObserveTimeout()
+	// fits() requires remaining budget >= timeout+PipeGrace. A 1s observe bound
+	// expires during fake-Herdr Python startup under `go test ./...`; scaling
+	// observe without scaling the pass budget defers with zero Herdr calls.
+	budget := observe + helperPromptTimeout + 2*proc.PipeGrace + 5*time.Second
 	cmd := exec.Command(os.Args[0], "-test.run=^TestDeliveryHelperProcess$", "-test.count=1")
-	cmd.Env = append(os.Environ(), helperEnv+"=1", "HELPER_HOME="+l.s.Home, "HELPER_ROOT="+l.root,
+	cmd.Env = helperChildEnv(helperEnv+"=1", "HELPER_HOME="+l.s.Home, "HELPER_ROOT="+l.root,
 		"HELPER_TASKS="+strings.Join(tasks, ","), "HELPER_RECIPIENT="+recipient, "HELPER_OUT="+out,
-		"HELPER_OBSERVE_MS=1000", "HELPER_PROMPT_MS=20000", "HELPER_BUDGET_MS=30000")
+		"HELPER_STARTED="+started,
+		fmt.Sprintf("HELPER_OBSERVE_MS=%d", observe/time.Millisecond),
+		fmt.Sprintf("HELPER_PROMPT_MS=%d", helperPromptTimeout/time.Millisecond),
+		fmt.Sprintf("HELPER_BUDGET_MS=%d", budget/time.Millisecond))
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	if err := cmd.Start(); err != nil {
 		l.t.Fatal(err)
 	}
-	h := &helperProc{cmd: cmd, out: out, done: make(chan error, 1)}
+	h := &helperProc{cmd: cmd, out: out, started: started, done: make(chan error, 1)}
 	go func() { h.done <- cmd.Wait() }()
 	l.t.Cleanup(func() {
 		_ = cmd.Process.Kill()
@@ -109,18 +206,54 @@ func (h *helperProc) kill(t *testing.T) {
 	h.done <- err
 }
 
-// awaitHeld waits until the fake Herdr holds verb for pane.
-func (l *passLab) awaitHeld(verb, pane string) {
+// awaitHeld waits until the fake Herdr holds verb for pane. The wait follows the helper
+// process: it fails as soon as the helper exits without holding, and its cap scales with
+// GOMAXPROCS instead of assuming an idle `go test` of this package alone.
+func (l *passLab) awaitHeld(h *helperProc, verb, pane string) {
 	l.t.Helper()
 	path := filepath.Join(l.root, "held-"+verb+"-"+pane)
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
+	budget := helperStartBudget()
+	deadline := time.Now().Add(budget)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
 		if _, err := os.Stat(path); err == nil {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case err := <-h.done:
+			h.done <- err
+			if _, statErr := os.Stat(path); statErr == nil {
+				return
+			}
+			l.t.Fatalf("helper exited before holding %s for %s (%s): wait=%v; calls = %v; helper_out = %s",
+				verb, pane, helperExitReason(h), err, l.calls(), helperOutDump(h))
+		case <-ticker.C:
+			if time.Now().After(deadline) {
+				l.t.Fatalf("the fake Herdr never held %s for %s after %s (GOMAXPROCS=%d, %s); calls = %v; helper_out = %s",
+					verb, pane, budget, runtime.GOMAXPROCS(0), helperExitReason(h), l.calls(), helperOutDump(h))
+			}
+		}
 	}
-	l.t.Fatalf("the fake Herdr never held %s for %s; calls = %v", verb, pane, l.calls())
+}
+
+func helperExitReason(h *helperProc) string {
+	if _, err := os.Stat(h.started); err != nil {
+		return "never entered TestDeliveryHelperProcess"
+	}
+	return "entered TestDeliveryHelperProcess but Pump did not reach Herdr"
+}
+
+func helperOutDump(h *helperProc) string {
+	data, err := os.ReadFile(h.out)
+	if err != nil {
+		return fmt.Sprintf("<unreadable %s: %v>", h.out, err)
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return "<empty>"
+	}
+	return text
 }
 
 func (l *passLab) release(pane string) {
@@ -208,6 +341,31 @@ func prompts(calls [][]string, pane string) []string {
 	return out
 }
 
+func TestHelperStartBudgetScalesWithGOMAXPROCS(t *testing.T) {
+	orig := runtime.GOMAXPROCS(0)
+	t.Cleanup(func() { runtime.GOMAXPROCS(orig) })
+	runtime.GOMAXPROCS(1)
+	one := helperStartBudget()
+	if one != 20*time.Second {
+		t.Fatalf("GOMAXPROCS=1 budget = %s, want 20s idle floor", one)
+	}
+	runtime.GOMAXPROCS(4)
+	four := helperStartBudget()
+	if four != 20*time.Second+3*8*time.Second {
+		t.Fatalf("GOMAXPROCS=4 budget = %s, want idle plus 3 peers", four)
+	}
+	if four <= one {
+		t.Fatalf("budget did not grow with GOMAXPROCS: 1=%s 4=%s", one, four)
+	}
+	runtime.GOMAXPROCS(1)
+	obsOne := helperObserveTimeout()
+	runtime.GOMAXPROCS(4)
+	obsFour := helperObserveTimeout()
+	if obsOne != 5*time.Second || obsFour != 5*time.Second+3*2*time.Second || obsFour <= obsOne {
+		t.Fatalf("observe timeout did not scale: 1=%s 4=%s", obsOne, obsFour)
+	}
+}
+
 func fanoutField(result *ordjson.Object, key string) string {
 	fanout, _ := result.Get("fanout")
 	obj, _ := fanout.(*ordjson.Object)
@@ -226,7 +384,7 @@ func TestConcurrentPassDoesNotWaitForAnUnrelatedRecipient(t *testing.T) {
 	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "prompt"}, "panes": map[string]any{
 		"w1:p1": l.pane("idle", l.worktree(a)), "w2:p1": l.pane("idle", l.worktree(b))}})
 	h := l.startHelper("a", []string{a}, "worker")
-	l.awaitHeld("prompt", "w1:p1")
+	l.awaitHeld(h, "prompt", "w1:p1")
 
 	result, elapsed := l.pumpFor([]string{b}, "worker", 8*time.Second)
 	t.Logf("independent recipient: elapsed %s, lock_wait_ms %s, while A's prompt was held", elapsed, fanoutField(result, "lock_wait_ms"))
@@ -234,7 +392,7 @@ func TestConcurrentPassDoesNotWaitForAnUnrelatedRecipient(t *testing.T) {
 		t.Fatalf("B = %s after %s while A was held (%v), want submitted", got, elapsed, result)
 	}
 	if elapsed > 3*time.Second {
-		t.Fatalf("B took %s while A was held", elapsed)
+		t.Fatalf("B took %s while A was held; B must not wait for A's prompt", elapsed)
 	}
 	// An older runtime takes the compatibility lock exclusively; it must still wait for a new-runtime delivery.
 	handle, err := os.OpenFile(filepath.Join(l.s.Home, ".deliver.lock"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -271,7 +429,7 @@ func TestConcurrentPassesToOneRecipientPromptOnceAcrossMachineAliases(t *testing
 	l.session("lab", map[string]any{"hold": map[string]any{"w-root:p1": "prompt"}, "panes": map[string]any{
 		"w-root:p1": l.pane("idle", l.root)}})
 	h := l.startHelper("stable", []string{stable}, "parent")
-	l.awaitHeld("prompt", "w-root:p1")
+	l.awaitHeld(h, "prompt", "w-root:p1")
 
 	result, _ := l.pumpFor([]string{legacy}, "parent", 3*time.Second)
 	if got := states(result)["w-root:p1"]; got != "deferred" {
@@ -298,7 +456,7 @@ func TestCrashAfterPossibleSubmissionStaysUncertain(t *testing.T) {
 	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "prompt"}, "panes": map[string]any{
 		"w1:p1": l.pane("idle", l.worktree(a))}})
 	h := l.startHelper("a", []string{a}, "worker")
-	l.awaitHeld("prompt", "w1:p1")
+	l.awaitHeld(h, "prompt", "w1:p1")
 	h.kill(t)
 	l.release("w1:p1")
 
@@ -325,7 +483,7 @@ func TestCrashBeforeSubmissionLeavesThePendingReturn(t *testing.T) {
 	panes := map[string]any{"w1:p1": l.pane("idle", l.worktree(a))}
 	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "get"}, "panes": panes})
 	h := l.startHelper("a", []string{a}, "worker")
-	l.awaitHeld("get", "w1:p1")
+	l.awaitHeld(h, "get", "w1:p1")
 	h.kill(t)
 	l.release("w1:p1")
 	if d := deliveries(t, l.s, a); len(d) != 0 {
@@ -360,7 +518,7 @@ func TestChangeDuringObservationSendsNothing(t *testing.T) {
 			l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "get"}, "panes": map[string]any{
 				"w1:p1": l.pane("idle", l.worktree(a)), "w1:p9": l.pane("idle", l.worktree(a))}})
 			h := l.startHelper("a", []string{a}, "worker")
-			l.awaitHeld("get", "w1:p1")
+			l.awaitHeld(h, "get", "w1:p1")
 			l.mutate(a, tc.change)
 			l.release("w1:p1")
 			result := h.result(t)
@@ -382,7 +540,7 @@ func TestSurvivingObligationIsSentAloneAfterAConcurrentClose(t *testing.T) {
 	l.session("lab", map[string]any{"hold": map[string]any{"w-root:p1": "get"}, "panes": map[string]any{
 		"w-root:p1": l.pane("idle", l.root)}})
 	h := l.startHelper("both", []string{closing}, "parent")
-	l.awaitHeld("get", "w-root:p1")
+	l.awaitHeld(h, "get", "w-root:p1")
 	l.mutate(closing, func(task *ordjson.Object) {
 		questions, _ := task.Get("questions")
 		questions.([]any)[0].(*ordjson.Object).Set("status", "answered")
@@ -410,7 +568,7 @@ func TestContendedRecipientIsRevisitedLastWithinTheBudget(t *testing.T) {
 	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "prompt"}, "panes": map[string]any{
 		"w1:p1": l.pane("idle", l.worktree(a)), "w2:p1": l.pane("idle", l.worktree(b))}})
 	h := l.startHelper("a", []string{a}, "worker")
-	l.awaitHeld("prompt", "w1:p1")
+	l.awaitHeld(h, "prompt", "w1:p1")
 	// Release the held recipient only once this pass has prompted the free one and has been waiting on the held one,
 	// so the measured wait does not depend on how fast the free recipient's prompt is.
 	released := make(chan struct{})
@@ -508,7 +666,7 @@ func TestDeregistrationDuringObservationIsRefusedAtTheClaim(t *testing.T) {
 	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "get"}, "panes": map[string]any{
 		"w1:p1": l.pane("idle", l.worktree(a))}})
 	h := l.startHelper("a", []string{a}, "worker")
-	l.awaitHeld("get", "w1:p1")
+	l.awaitHeld(h, "get", "w1:p1")
 	key := store.RegistrationKey(store.Endpoint{Machine: l.host, Session: "lab", Pane: "w1:p1"})
 	if err := os.Remove(filepath.Join(l.s.Sessions, key+".json")); err != nil {
 		t.Fatal(err)
