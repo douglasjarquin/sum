@@ -164,6 +164,26 @@
       {
         "name": "--max-chars",
         "help": "Compact text bound, 1..2000 (default 240); item detail routes provide full text"
+      },
+      {
+        "name": "--grouped",
+        "help": "Read-only overview grouped by recorded project identity with global known counts; cannot combine with --compact or --live"
+      },
+      {
+        "name": "--project",
+        "help": "Focus one project key (requires --grouped); global counts, gaps, and needs_you stay"
+      },
+      {
+        "name": "--view",
+        "help": "Explicit-refresh terminal view of the grouped overview (requires --grouped): n/p move, o expand, d detail, b back, r refresh, c collapse-all, q quit"
+      },
+      {
+        "name": "--width",
+        "help": "View width in cells (default COLUMNS or 80)"
+      },
+      {
+        "name": "--height",
+        "help": "View height in lines (default LINES or 24)"
       }
     ],
     "subcommands": null,
@@ -193,6 +213,26 @@
       {
         "name": "--max-chars",
         "help": "Compact text bound, 1..2000 (default 240); item detail routes provide full text"
+      },
+      {
+        "name": "--grouped",
+        "help": "Read-only overview grouped by recorded project identity with global known counts; cannot combine with --compact or --live"
+      },
+      {
+        "name": "--project",
+        "help": "Focus one project key (requires --grouped); global counts, gaps, and needs_you stay"
+      },
+      {
+        "name": "--view",
+        "help": "Explicit-refresh terminal view of the grouped overview (requires --grouped): n/p move, o expand, d detail, b back, r refresh, c collapse-all, q quit"
+      },
+      {
+        "name": "--width",
+        "help": "View width in cells (default COLUMNS or 80)"
+      },
+      {
+        "name": "--height",
+        "help": "View height in lines (default LINES or 24)"
       }
     ],
     "subcommands": null,
@@ -890,12 +930,12 @@
     "help": "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle",
     "arguments": [],
     "subcommands": {
-      "enable": "Coordinator only: project saved task tokens to recorded endpoints and enable projection state",
-      "disable": "Coordinator only: mark saved metadata projection disabled",
-      "status": "Recorded projection summary and health; writes nothing and probes no live capabilities",
-      "sync": "Coordinator only: project saved tokens to recorded endpoints, including unchanged values",
+      "enable": "Coordinator only: probe the installed Herdr's schema, record the instance-derived source, and project changed tokens to verified recorded endpoints",
+      "disable": "Coordinator only: clear exactly the recorded owned keys per endpoint (failed clears stay diagnostic) and stop projecting",
+      "status": "Recorded projection summary, saved capabilities, applied tokens, ambiguous sources, error log, and native_open; writes nothing and calls no Herdr",
+      "sync": "Coordinator only: re-probe capabilities and project one full pass writing only differences; --force rewrites every recorded endpoint",
       "snippet": "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum",
-      "inbox": "Print the bounded saved compact inbox in this output, including outside Herdr; no popup, sync, or writes"
+      "inbox": "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the hook plugin and falls back to the overview; never syncs or writes"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1573,7 +1613,7 @@
   },
   "metadata-enable": {
     "topic": "metadata-enable",
-    "help": "Coordinator only: project saved task tokens to recorded endpoints and enable projection state",
+    "help": "Coordinator only: probe the installed Herdr's schema, record the instance-derived source, and project changed tokens to verified recorded endpoints",
     "arguments": [
       {
         "name": "--notify",
@@ -1586,7 +1626,7 @@
   },
   "metadata-disable": {
     "topic": "metadata-disable",
-    "help": "Coordinator only: mark saved metadata projection disabled",
+    "help": "Coordinator only: clear exactly the recorded owned keys per endpoint (failed clears stay diagnostic) and stop projecting",
     "arguments": [],
     "subcommands": null,
     "read_only": false,
@@ -1594,7 +1634,7 @@
   },
   "metadata-status": {
     "topic": "metadata-status",
-    "help": "Recorded projection summary and health; writes nothing and probes no live capabilities",
+    "help": "Recorded projection summary, saved capabilities, applied tokens, ambiguous sources, error log, and native_open; writes nothing and calls no Herdr",
     "arguments": [],
     "subcommands": null,
     "read_only": true,
@@ -1602,8 +1642,13 @@
   },
   "metadata-sync": {
     "topic": "metadata-sync",
-    "help": "Coordinator only: project saved tokens to recorded endpoints, including unchanged values",
-    "arguments": [],
+    "help": "Coordinator only: re-probe capabilities and project one full pass writing only differences; --force rewrites every recorded endpoint",
+    "arguments": [
+      {
+        "name": "--force",
+        "help": "Treat recorded tokens as unknown and rewrite every recorded endpoint (after a Herdr restart)"
+      }
+    ],
     "subcommands": null,
     "read_only": false,
     "read_only_subcommands": null
@@ -1623,7 +1668,7 @@
   },
   "metadata-inbox": {
     "topic": "metadata-inbox",
-    "help": "Print the bounded saved compact inbox in this output, including outside Herdr; no popup, sync, or writes",
+    "help": "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the hook plugin and falls back to the overview; never syncs or writes",
     "arguments": [
       {
         "name": "--after",
@@ -1636,6 +1681,22 @@
       {
         "name": "--max-chars",
         "help": "Compact text bound, 1..2000 (default 240); item detail routes provide full text"
+      },
+      {
+        "name": "--grouped",
+        "help": "Grouped read-only overview by recorded project identity; cannot combine with paging flags"
+      },
+      {
+        "name": "--project",
+        "help": "Focus one project key (requires --grouped); global counts stay"
+      },
+      {
+        "name": "--open",
+        "help": "Open the grouped view through the linked plugin's inbox entrypoint (needs `hook enable` and a saved plugin_pane_open capability); any failure falls back to the grouped overview with open.outcome fallback"
+      },
+      {
+        "name": "--placement",
+        "help": "With --open: split, overlay, tab, or zoomed; default is the manifest's popup"
       }
     ],
     "subcommands": null,
@@ -2255,7 +2316,12 @@
       {
         "name": "--ready",
         "help": "Ready signal: label, issues, roadmap, or project-status",
-        "choices": ["label", "issues", "roadmap", "project-status"],
+        "choices": [
+          "label",
+          "issues",
+          "roadmap",
+          "project-status"
+        ],
         "default": "label"
       },
       {
@@ -2362,7 +2428,11 @@
         "name": "--reason",
         "help": null,
         "required": true,
-        "choices": ["gated", "merged", "dropped"]
+        "choices": [
+          "gated",
+          "merged",
+          "dropped"
+        ]
       },
       {
         "name": "--continue",

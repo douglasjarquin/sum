@@ -86,6 +86,12 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		}
 		return nil
 	}
+	// Post-commit projection: only after a RunE succeeded (cobra skips post-runs on error), only for annotated
+	// write boundaries, never for reads.
+	root.PersistentPostRunE = func(cmd *cobra.Command, args []string) error {
+		opts.projectAfter(cmd, args)
+		return nil
+	}
 	root.SetHelpCommand(nil)
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
 		view, err := helpview.View(opts.runtimeRoot, "")

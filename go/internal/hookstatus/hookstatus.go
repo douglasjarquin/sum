@@ -267,9 +267,51 @@ func hookCommand(s *store.Store, sumctlPath string) []string {
 	return []string{sumctlPath, "--home", s.Home, "hook", "event"}
 }
 
+// inboxCommand is the plugin pane entrypoint: the read-only grouped view, which quits on its own `q`.
 func inboxCommand(s *store.Store, sumctlPath string) []string {
-	return []string{"/bin/sh", "-c", "\"$0\" \"$@\"; printf '\\n[sum inbox] records only; press Enter to close\\n'; read _",
-		sumctlPath, "--home", s.Home, "inbox"}
+	return []string{sumctlPath, "--home", s.Home, "inbox", "--grouped", "--view"}
+}
+
+// PluginID is this instance's Herdr plugin id, derived from the instance identity in state.json.
+func PluginID(s *store.Store) (string, error) { return hookPluginID(s) }
+
+// Health is the recorded hook health, records only.
+func Health(s *store.Store) (*ordjson.Object, error) { return readHealth(s) }
+
+// ManifestCurrent reports whether the linked manifest hash matches the manifest this build would write.
+func ManifestCurrent(s *store.Store, sumctlPath string) (bool, error) {
+	health, err := readHealth(s)
+	if err != nil {
+		return false, err
+	}
+	manifest, err := hookManifest(s, sumctlPath)
+	if err != nil {
+		return false, err
+	}
+	manifestSHA, _ := health.Get("manifest_sha256")
+	return asString(manifestSHA) == sha256Text(manifest), nil
+}
+
+// InboxOpenable is the plugin id whose linked manifest declares the inbox entrypoint, from records only, or the
+// reason it cannot be opened natively.
+func InboxOpenable(s *store.Store, sumctlPath string) (pluginID string, reason string) {
+	health, err := readHealth(s)
+	if err != nil {
+		return "", "hook health unreadable: " + err.Error()
+	}
+	enabled, _ := health.Get("enabled")
+	pluginID = asString(func() any { v, _ := health.Get("plugin_id"); return v }())
+	if !truthy(enabled) || pluginID == "" {
+		return "", "the inbox pane is an entrypoint of this instance's Herdr plugin; run `hook enable` first"
+	}
+	current, err := ManifestCurrent(s, sumctlPath)
+	if err != nil {
+		return "", "manifest cannot be compared: " + err.Error()
+	}
+	if !current {
+		return "", "the linked plugin manifest predates the current inbox entrypoint; run `hook enable` again to relink it"
+	}
+	return pluginID, ""
 }
 
 func tomlList(values []string) string {

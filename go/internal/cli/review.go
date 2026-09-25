@@ -11,8 +11,9 @@ func (o *rootOptions) addReviewCommand(root *cobra.Command) {
 	var policyReviewed bool
 	var focus, findings, limitations []string
 	cmd := &cobra.Command{
-		Use:  "review TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "review TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("review")
 			if err != nil {

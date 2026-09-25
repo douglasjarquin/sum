@@ -22,8 +22,9 @@ func (o *rootOptions) addPRCommands(root *cobra.Command) {
 	var repo string
 	var replace bool
 	reconcileCmd := &cobra.Command{
-		Use:  "reconcile TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "reconcile TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if number == 0 {
 				return usageError("pr reconcile", args)

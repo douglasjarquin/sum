@@ -10,8 +10,9 @@ func (o *rootOptions) addVerifyCommand(root *cobra.Command) {
 	var candidate, result, run, base, text, file string
 	var execute, acceptMissingEvidence bool
 	cmd := &cobra.Command{
-		Use:  "verify TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "verify TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if candidate == "" {
 				return usageError("verify", args)

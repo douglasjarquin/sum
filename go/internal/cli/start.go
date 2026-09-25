@@ -9,8 +9,9 @@ import (
 func (o *rootOptions) addStartCommand(root *cobra.Command) {
 	var extra []string
 	cmd := &cobra.Command{
-		Use:  "start TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "start TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("start")
 			if err != nil {

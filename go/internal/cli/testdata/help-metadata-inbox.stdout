@@ -1,9 +1,13 @@
 topic: metadata-inbox
-help: "Print the bounded saved compact inbox in this output, including outside Herdr; no popup, sync, or writes"
-arguments[3]{name,help}:
+help: "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the hook plugin and falls back to the overview; never syncs or writes"
+arguments[7]{name,help}:
   "--after",Skip presentation items in compact mode (default 0); pages are fresh reads
   "--limit","Compact page size, 1..100 (default 20)"
   "--max-chars","Compact text bound, 1..2000 (default 240); item detail routes provide full text"
+  "--grouped",Grouped read-only overview by recorded project identity; cannot combine with paging flags
+  "--project",Focus one project key (requires --grouped); global counts stay
+  "--open",Open the grouped view through the linked plugin's inbox entrypoint (needs `hook enable` and a saved plugin_pane_open capability); any failure falls back to the grouped overview with open.outcome fallback
+  "--placement","With --open: split, overlay, tab, or zoomed; default is the manifest's popup"
 subcommands: null
 read_only: true
 read_only_subcommands: null

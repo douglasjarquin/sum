@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
+	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -41,8 +42,9 @@ func (o *rootOptions) addHookCommands(root *cobra.Command) {
 	})
 
 	hookCmd.AddCommand(&cobra.Command{
-		Use:  "enable",
-		Args: cobra.NoArgs,
+		Use:         "enable",
+		Annotations: map[string]string{projectsAnnotation: "all"},
+		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st, err := o.openStore("hook-enable")
 			if err != nil {
@@ -100,6 +102,10 @@ func (o *rootOptions) addHookCommands(root *cobra.Command) {
 			view, err := hookstatus.Event(st, environ, o.runtimeRoot, o.sumctlPath())
 			if err != nil {
 				return err
+			}
+			outcomeValue, _ := view.Get("outcome")
+			if outcome, _ := outcomeValue.(string); outcome != "disabled" && outcome != "ignored" {
+				metadata.After(st, o.runtimeRoot, nil, "hook event")
 			}
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},

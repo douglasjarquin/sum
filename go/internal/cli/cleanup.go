@@ -10,8 +10,9 @@ func (o *rootOptions) addCleanupCommand(root *cobra.Command) {
 	var apply, reviewerOnly bool
 	var number int
 	cmd := &cobra.Command{
-		Use:  "cleanup TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "cleanup TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("cleanup")
 			if err != nil {
