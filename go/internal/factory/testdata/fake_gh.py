@@ -58,9 +58,26 @@ if args[:2] == ["issue", "comment"]:
 if args[:2] == ["project", "item-list"]:
     if load("project_error.json", None):
         fail(load("project_error.json", {}).get("message", "insufficient_scopes"))
-    # project_items.json is returned as-is. Each item may include
-    # "repository": "https://github.com/owner/repo" or "owner/repo".
-    print(json.dumps(load("project_items.json", [])))
+    # project_items.json is returned as-is, truncated to --limit like gh.
+    # Each item may include "repository": "https://github.com/owner/repo"
+    # or "owner/repo".
+    items = load("project_items.json", [])
+    if "--limit" in args:
+        try:
+            limit = int(args[args.index("--limit") + 1])
+        except (ValueError, IndexError):
+            limit = None
+        else:
+            if isinstance(items, list):
+                items = items[:limit]
+            elif isinstance(items, dict):
+                for key in ("items", "nodes"):
+                    inner = items.get(key)
+                    if isinstance(inner, list):
+                        items = dict(items)
+                        items[key] = inner[:limit]
+                        break
+    print(json.dumps(items))
     sys.exit(0)
 
 if args[:2] == ["pr", "merge"]:

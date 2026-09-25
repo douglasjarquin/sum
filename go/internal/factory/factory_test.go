@@ -229,6 +229,59 @@ func TestGhProjectReady_keepsOnlyEnrolledRepository(t *testing.T) {
 	}
 }
 
+func TestGhProjectReady_scansBeyondFirstHundredItems(t *testing.T) {
+	st := openStore(t)
+	root := fakeGh(t, nil, nil)
+	const board = 155
+	items := make([]map[string]any, 0, board)
+	for i := 1; i <= board; i++ {
+		item := map[string]any{
+			"status":     "Ready",
+			"number":     i,
+			"title":      fmt.Sprintf("other-%d", i),
+			"repository": "cofactorworks/cuttingtape",
+		}
+		if i == 103 {
+			item = map[string]any{
+				"status":     "Ready",
+				"number":     54,
+				"title":      "photo",
+				"repository": "https://github.com/cofactorworks/ilovethatphoto",
+			}
+		}
+		items = append(items, item)
+	}
+	gotLimit := strconv.Itoa(projectItemListLimit)
+	if projectItemListLimit <= 100 {
+		t.Fatalf("projectItemListLimit = %d, want above the GraphQL page size of 100", projectItemListLimit)
+	}
+	raw, err := json.Marshal(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "project_items.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ghProjectReady(st.Home, "cofactorworks/ilovethatphoto", 7, "Ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Number != 54 {
+		t.Fatalf("got %#v, want enrolled Ready #54 at board position 103", got)
+	}
+	calls, err := os.ReadFile(filepath.Join(root, "calls.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(calls)
+	if !strings.Contains(text, `"--limit", "`+gotLimit+`"`) {
+		t.Fatalf("item-list missing raised --limit %s: %s", gotLimit, text)
+	}
+	if strings.Contains(text, `"--limit", "100"`) {
+		t.Fatalf("item-list still uses the 100-item page cap: %s", text)
+	}
+}
+
 func TestTick_roadmapOrderSkipsClosedAndSkipped(t *testing.T) {
 	st := openStore(t)
 	enroll(t, st, "owner/app")
