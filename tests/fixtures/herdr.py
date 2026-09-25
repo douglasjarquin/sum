@@ -254,6 +254,17 @@ def lsof_scenario():
     path_ = pathlib.Path(root_) / "cwds.json"
     if not path_.exists(): return None, None  # No scenario was planted: the fake lsof answers from defaults, nothing to update.
     return path_, json.loads(path_.read_text())
+if args[:2] == ["tab", "create"]:
+    if "--workspace" not in args or "--cwd" not in args or "--no-focus" not in args: fail("wrong tab contract")
+    workspace = arg("--workspace")
+    if workspace not in state["workspaces"]: fail("workspace_not_found", f"workspace {workspace} not found")
+    pane = f"{workspace}:p{len(state['panes']) + 10}"
+    shell_pid = 5000 + len(state["panes"])
+    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "shell_pid": shell_pid, "processes": [], "terminal_id": "term-" + pane, "created": True}
+    path_, data_ = lsof_scenario()
+    if path_ is not None:
+        data_.setdefault("processes", []).append({"pid": shell_pid, "cwd": arg("--cwd")}); path_.write_text(json.dumps(data_))
+    emit({"tab": {"tab_id": f"{workspace}:t{len(state['panes'])}"}, "root_pane": {"pane_id": pane}})
 if args[:2] == ["pane", "split"]:
     if "--direction" not in args or "--cwd" not in args or "--no-focus" not in args: fail("wrong split contract")
     target = state["panes"].get(args[2])

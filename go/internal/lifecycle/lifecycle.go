@@ -38,6 +38,7 @@ func Pending(s *store.Store, sumctlPath string, tasks []*ordjson.Object) *ordjso
 	}
 	prs := []any{}
 	cleanups := []any{}
+	closable := []any{}
 	for _, task := range tasks {
 		id := asString(task, "id")
 		if !candidate(host.Is, task) {
@@ -70,10 +71,18 @@ func Pending(s *store.Store, sumctlPath string, tasks []*ordjson.Object) *ordjso
 			row.Set("next", shquote.CommandFor(sumctlPath, s.Home, "cleanup", id))
 			cleanups = append(cleanups, row)
 		}
+		if hasClosablePane(task) {
+			row := ordjson.NewObject()
+			row.Set("task", id)
+			row.Set("state", "closable")
+			row.Set("next", shquote.CommandFor(sumctlPath, s.Home, "sweep", "--task", id))
+			closable = append(closable, row)
+		}
 	}
 	view.Set("open_prs", prs)
 	view.Set("cleanup", cleanups)
-	if len(prs)+len(cleanups) > 0 {
+	view.Set("panes", closable)
+	if len(prs)+len(cleanups)+len(closable) > 0 {
 		view.Set("next", shquote.CommandFor(sumctlPath, s.Home, "sweep"))
 	} else {
 		view.Set("next", nil)
@@ -89,10 +98,11 @@ type SweepOpts struct {
 	SumctlPath string
 }
 
-// Sweep is one explicit maintenance pass as the coordinator: one PR observation per recorded open PR, then one cleanup
-// apply per task still pending cleanup. Tasks are visited least recently maintained first; no task starts after the
-// budget, and after a gh timeout or unknown effect no further PR is observed in this pass. Each task is re-read
-// before anything acts on it; per-task failures are named in their row and never abort the rest.
+// Sweep is one explicit maintenance pass as the coordinator: one PR observation per recorded open PR, then close of
+// settled worker and reviewer panes, then one cleanup apply per task still pending cleanup. Tasks are visited least
+// recently maintained first; no task starts after the budget, and after a gh timeout or unknown effect no further PR
+// is observed in this pass. Each task is re-read before anything acts on it; per-task failures are named in their row
+// and never abort the rest.
 func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOpts) (*ordjson.Object, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("sweep needs this pane's Herdr context; run it from the coordinator pane.")
@@ -129,7 +139,7 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 		if !candidate(host.Is, task) || (len(filter) > 0 && !filter[id]) {
 			continue
 		}
-		if openPRNumber(task) == 0 && cleanup.Pending(task) == nil {
+		if openPRNumber(task) == 0 && cleanup.Pending(task) == nil && !hasClosablePane(task) {
 			continue
 		}
 		queue = append(queue, work{id: id, last: lastMaintained(task)})
@@ -185,6 +195,15 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 				}
 			}
 		}
+		if fresh, err := s.ReadTask(item.id); err == nil {
+			task = fresh
+		}
+		if hasClosablePane(task) {
+			rows = append(rows, closeSettledPanes(s, ctx, runtimeRoot, item.id)...)
+			if fresh, err := s.ReadTask(item.id); err == nil {
+				task = fresh
+			}
+		}
 		if cleanup.Pending(task) == nil {
 			continue
 		}
@@ -211,7 +230,7 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 	result.Set("budget_ms", json.Number(fmt.Sprint(budget.Milliseconds())))
 	result.Set("elapsed_ms", json.Number(fmt.Sprint(time.Since(started).Milliseconds())))
 	result.Set("maintenance", Pending(s, opts.SumctlPath, after))
-	result.Set("note", "Explicit maintenance as the coordinator: each started task finished under its own helpers' bounds; deferred tasks were not touched and keep their exact next command. Nothing here merges, and a merged PR is cleaned up only through cleanup's guarded checks.")
+	result.Set("note", "Explicit maintenance as the coordinator: each started task finished under its own helpers' bounds; deferred tasks were not touched and keep their exact next command. Settled worker and reviewer panes are closed in this pass. Nothing here merges, and a merged PR is cleaned up only through cleanup's guarded checks.")
 	return result, nil
 }
 
@@ -273,6 +292,11 @@ func lastMaintained(task *ordjson.Object) string {
 	if record := asObject(field(task, "cleanup")); record != nil {
 		times = append(times, asString(record, "at"))
 	}
+	for _, row := range asList(field(task, "closed_panes")) {
+		if at := asString(asObject(row), "at"); at != "" {
+			times = append(times, at)
+		}
+	}
 	if len(times) == 0 {
 		return ""
 	}
@@ -318,4 +342,9 @@ func asString(obj *ordjson.Object, key string) string {
 func asObject(v any) *ordjson.Object {
 	obj, _ := v.(*ordjson.Object)
 	return obj
+}
+
+func asList(v any) []any {
+	list, _ := v.([]any)
+	return list
 }

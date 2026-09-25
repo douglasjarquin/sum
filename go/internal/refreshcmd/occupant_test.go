@@ -46,7 +46,7 @@ func TestAttemptDeliveryRefusesAReplacedTargetPane(t *testing.T) {
 	bound := incarnation.Evidence{Terminal: "term-w1:p1", Shell: &incarnation.Shell{PID: 4242, Started: "2025-01-01T00:00:00Z"}}.Record(store.Now())
 	record := occupantRecord{role: "worker", value: bound, occupiedAt: store.Now(), ok: true}
 
-	row := attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
+	row := attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record, nil)
 	if state, _ := row.Get("state"); state != "pending-unreachable" {
 		t.Fatalf("state = %v (%v), want pending-unreachable", state, row)
 	}
@@ -64,7 +64,7 @@ func TestAttemptDeliveryRefusesAReplacedTargetPane(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fake, "state.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	row = attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
+	row = attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record, nil)
 	if state, _ := row.Get("state"); state != "submitted-unconfirmed" {
 		t.Fatalf("recorded occupant state = %v (%v), want submitted-unconfirmed", state, row)
 	}
@@ -76,7 +76,7 @@ func TestAttemptDeliveryRefusesAReplacedTargetPane(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(fake, "state.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	row = attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
+	row = attemptDelivery(nil, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record, nil)
 	if state, _ := row.Get("state"); state != "submitted-unconfirmed" {
 		t.Fatalf("handoff state = %v (%v), want submitted-unconfirmed", state, row)
 	}
@@ -95,9 +95,37 @@ func TestAttemptDeliveryRefusesAReplacedTargetPane(t *testing.T) {
 		return incarnation.Evidence{Terminal: "term-someone-else"}.Record(store.Now()), nil
 	}
 	before := strings.Count(func() string { b, _ := os.ReadFile(filepath.Join(fake, "calls.jsonl")); return string(b) }(), `"prompt"`)
-	row = attemptDelivery(st, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record)
+	row = attemptDelivery(st, newSnapshots(root), endpoint, worktree, "sum refresh t-x: read the revision", host, record, nil)
 	after := strings.Count(func() string { b, _ := os.ReadFile(filepath.Join(fake, "calls.jsonl")); return string(b) }(), `"prompt"`)
 	if state, _ := row.Get("state"); state != "pending-unreachable" || after != before {
 		t.Fatalf("rebound record = %v with %d new prompts, want pending-unreachable and none", row, after-before)
+	}
+}
+
+func TestAttemptDeliveryNamesARecordedClosedPane(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := machine.Local(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := ordjson.NewObject()
+	endpoint.Set("machine", host.ID)
+	endpoint.Set("session", "sum-test")
+	endpoint.Set("pane", "w1:p1")
+	task := ordjson.NewObject()
+	task.Set("pane", "w1:p1")
+	closed := ordjson.NewObject()
+	closed.Set("pane", "w1:p1")
+	closed.Set("role", "worker")
+	closed.Set("reason", "report-submitted")
+	closed.Set("at", "2026-01-01T00:00:00+00:00")
+	task.Set("closed_panes", []any{closed})
+	record := occupantRecord{role: "worker", ok: true}
+	row := attemptDelivery(nil, newSnapshots(root), endpoint, t.TempDir(), "sum refresh t-x: read the revision", host, record, task)
+	if state, _ := row.Get("state"); state != "pane-closed" {
+		t.Fatalf("state = %v (%v), want pane-closed", state, row)
 	}
 }

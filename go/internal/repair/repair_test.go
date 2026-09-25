@@ -165,6 +165,19 @@ func TestRecordResume_recordsInScopeWithoutCharging(t *testing.T) {
 	}
 }
 
+func TestLedger_acceptsPendingResume(t *testing.T) {
+	op := `{"id": "r-aaaaaaaaaaa1", "kind": "send", "key": "k1", "attempt": "x-aaaaaaaaaaaa", "text": "fix the gate",
+"created_at": "2026-01-01T00:00:00+00:00", "state": "pending-resume", "pid": 4242, "class": "in-scope"}`
+	task := taskWith(t, ledgerFixture([]string{op}, 0))
+	if _, err := Ledger(task); err != nil {
+		t.Fatalf("pending-resume ledger refused: %v", err)
+	}
+	got := PendingResumeTexts(task)
+	if len(got) != 1 || got[0] != "fix the gate" {
+		t.Fatalf("PendingResumeTexts = %v", got)
+	}
+}
+
 func newStore(t *testing.T) *store.Store {
 	t.Helper()
 	home := t.TempDir()

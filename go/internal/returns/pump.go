@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -656,12 +657,15 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 	if err == nil {
 		err = checkAgent(listed, cwd)
 	} else if herdrclient.ErrorIsAbsent(err) {
-		err = &unreachableError{state: versions.RefreshUnreachable, msg: "Recipient pane is gone (" + err.Error() + "); delivery for this revision is terminal."}
+		err = absentPaneError(items, pane, err)
 	} else {
 		p.sn.Trip(session, "agent list failed: "+err.Error())
 		err = &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
 	}
 	if err != nil {
+		if u, ok := err.(*unreachableError); ok && u.state == "pane-closed" {
+			return "pane-closed", u.msg, ""
+		}
 		if u, ok := err.(*unreachableError); ok && u.state == versions.RefreshUnreachable {
 			_ = stampRefreshGone(p.s, items, u.msg)
 		}
@@ -677,8 +681,10 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 	if err == nil {
 		err = checkAgent(herdrclient.UnwrapAgent(agent), cwd)
 	} else if herdrclient.ErrorIsAbsent(err) {
-		err = &unreachableError{state: versions.RefreshUnreachable, msg: "Recipient pane is gone (" + err.Error() + "); delivery for this revision is terminal."}
-		_ = stampRefreshGone(p.s, items, err.Error())
+		err = absentPaneError(items, pane, err)
+		if u, ok := err.(*unreachableError); ok && u.state == versions.RefreshUnreachable {
+			_ = stampRefreshGone(p.s, items, u.msg)
+		}
 	} else {
 		if errors.Is(err, proc.ErrUncertain) || errors.Is(err, proc.ErrOutputLimit) || errors.Is(err, proc.ErrNotStarted) {
 			p.sn.Trip(session, "agent get failed: "+err.Error())
@@ -686,6 +692,9 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 		err = &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
 	}
 	if err != nil {
+		if u, ok := err.(*unreachableError); ok && u.state == "pane-closed" {
+			return "pane-closed", u.msg, ""
+		}
 		return notDelivered(err.Error())
 	}
 	// The occupant this fresh observation shows is judged against its record inside the claim; a shell probe the
@@ -782,6 +791,15 @@ func promptFailure(err error) (state, detail string) {
 func ObserveRecipient(s *store.Store, runtimeRoot string, route *ordjson.Object, expectedCwd string) error {
 	_, err := observeAgent(s, runtimeRoot, route, expectedCwd)
 	return err
+}
+
+func absentPaneError(items [][2]*ordjson.Object, pane string, cause error) error {
+	for _, pair := range items {
+		if panes.Closed(pair[0], pane) {
+			return &unreachableError{state: "pane-closed", msg: "Recipient pane is closed; resume via execution resume. Delivery is pane-closed, not unreachable."}
+		}
+	}
+	return &unreachableError{state: versions.RefreshUnreachable, msg: "Recipient pane is gone (" + cause.Error() + "); delivery for this revision is terminal."}
 }
 
 func observeAgent(s *store.Store, runtimeRoot string, route *ordjson.Object, expectedCwd string) (*ordjson.Object, error) {

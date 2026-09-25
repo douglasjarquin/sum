@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -35,7 +36,7 @@ var (
 	operationIDPat   = regexp.MustCompile(`^r-[0-9a-f]{12}$`)
 	attemptIDPat     = regexp.MustCompile(`^x-[0-9a-f]{12}$`)
 	operationKinds   = map[string]bool{"send": true, "resume": true}
-	operationStates  = map[string]bool{"reserved": true, "in-flight": true, "submitted": true, "uncertain": true}
+	operationStates  = map[string]bool{"reserved": true, "in-flight": true, "submitted": true, "uncertain": true, "pending-resume": true}
 	operationClasses = map[string]bool{ClassInScope: true, ClassExpansion: true}
 	grantStatuses    = map[string]bool{"answered": true, "applied": true, "settled": true, ask.ClosedUnapplied: true}
 )
@@ -753,7 +754,17 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	}
 	workerID, _ := worker.Get("id")
 	workerState, _ := worker.Get("state")
-	if workerID != args.Attempt || workerState != "running" {
+	closed := panes.WorkerIsClosed(task)
+	if workerID != args.Attempt {
+		unlock()
+		return nil, fmt.Errorf("Repair requires the exact running worker attempt.")
+	}
+	if closed {
+		if workerState != "running" && workerState != "released" {
+			unlock()
+			return nil, fmt.Errorf("Repair requires the exact running worker attempt.")
+		}
+	} else if workerState != "running" {
 		unlock()
 		return nil, fmt.Errorf("Repair requires the exact running worker attempt.")
 	}
@@ -762,6 +773,10 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	worktree, _ := task.Get("worktree")
 	worktreeStr, _ := worktree.(string)
 	unlock()
+
+	if closed {
+		return recordPendingResume(s, args)
+	}
 
 	occupant, err := returns.ObserveWorker(s, args.RuntimeRoot, task, route, worktreeStr)
 	if err != nil {
@@ -927,6 +942,82 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	result.Set("operation", saved)
 	result.Set("duplicate", false)
 	return result, nil
+}
+
+func recordPendingResume(s *store.Store, args SendArgs) (*ordjson.Object, error) {
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	current, err := s.ReadTask(args.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := RefuseDuringCleanup(current, "Repair"); err != nil {
+		return nil, err
+	}
+	if !panes.WorkerIsClosed(current) {
+		return nil, fmt.Errorf("Worker pane closed while recording the repair; retry the same repair key.")
+	}
+	value, err := Ledger(current)
+	if err != nil {
+		return nil, err
+	}
+	opID, err := newOperationID()
+	if err != nil {
+		return nil, err
+	}
+	operation := ordjson.NewObject()
+	operation.Set("id", opID)
+	operation.Set("kind", "send")
+	operation.Set("key", args.Key)
+	operation.Set("attempt", args.Attempt)
+	operation.Set("text", args.Text)
+	operation.Set("class", args.Class)
+	if args.Reason != "" {
+		operation.Set("reason", args.Reason)
+	}
+	operation.Set("created_at", store.Now())
+	operation.Set("state", "pending-resume")
+	operation.Set("pid", jsonInt(os.Getpid()))
+	ops := asList(func() any { v, _ := value.Get("operations"); return v }())
+	value.Set("operations", append(ops, operation))
+	if args.Class == ClassExpansion {
+		consumed, _ := intOf(func() any { v, _ := value.Get("consumed"); return v }())
+		value.Set("consumed", jsonInt(int(consumed+1)))
+	}
+	if err := s.SaveTask(current); err != nil {
+		return nil, err
+	}
+	result := ordjson.NewObject()
+	result.Set("task", args.TaskID)
+	result.Set("operation", operation)
+	result.Set("duplicate", false)
+	result.Set("state", "pane-closed")
+	result.Set("next", fmt.Sprintf("execution resume %s --attempt %s", args.TaskID, args.Attempt))
+	result.Set("note", "Repair recorded. The worker pane is closed; execution resume launches a fresh session that reconstitutes from records, including this instruction.")
+	return result, nil
+}
+
+// PendingResumeTexts are repair instructions recorded because the worker pane was
+// already closed, to be included in the next execution resume prompt.
+func PendingResumeTexts(task *ordjson.Object) []string {
+	value, err := Ledger(task)
+	if err != nil || value == nil {
+		return nil
+	}
+	var texts []string
+	for _, raw := range asList(func() any { v, _ := value.Get("operations"); return v }()) {
+		op := asObject(raw)
+		if asString(func() any { v, _ := op.Get("state"); return v }()) != "pending-resume" {
+			continue
+		}
+		if text := asString(func() any { v, _ := op.Get("text"); return v }()); text != "" {
+			texts = append(texts, text)
+		}
+	}
+	return texts
 }
 
 func routeToCtx(route *ordjson.Object) *ordjson.Object {

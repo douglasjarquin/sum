@@ -19,6 +19,7 @@ capacity:
 maintenance:
   open_prs: []
   cleanup: []
+  panes: []
   next: null
   note: "From saved records only; nothing was re-observed. An open PR's state and CI are as of its observed_at; merges are seen only by `sweep`, `pr reconcile`, or `cleanup`."
 guarantee: "Saved records only. Open attention includes the recorded excerpt. No background monitoring. Nothing is delivered, observed on GitHub, or cleaned up by this view."

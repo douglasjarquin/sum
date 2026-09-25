@@ -409,7 +409,19 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	actualBranch, branchErr := runGit("-C", preparedWorktree, "branch", "--show-current")
 	actualCommon, commonErr := runGit("-C", preparedWorktree, "rev-parse", "--git-common-dir")
 	repositoryCommon, repositoryCommonErr := runGit("-C", repository, "rev-parse", "--git-common-dir")
-	if rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualHead != asString(func() any { v, _ := task.Get("base_sha"); return v }()) || actualHead != asString(policyField(recordedWorktree, "head")) || actualBranch != asString(policyField(recordedWorktree, "branch")) || asString(func() any { v, _ := task.Get("workspace"); return v }()) != asString(policyField(recordedWorktree, "workspace")) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon) {
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if worker == nil {
+		unlock()
+		return nil, fmt.Errorf("Worker execution reservation is missing; start is refused.")
+	}
+	resuming := asString(func() any { v, _ := worker.Get("resumes"); return v }()) != ""
+	identityMismatch := rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualBranch != asString(policyField(recordedWorktree, "branch")) || asString(func() any { v, _ := task.Get("workspace"); return v }()) != asString(policyField(recordedWorktree, "workspace")) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon)
+	headPinned := actualHead == asString(func() any { v, _ := task.Get("base_sha"); return v }()) && actualHead == asString(policyField(recordedWorktree, "head"))
+	if identityMismatch || (!resuming && !headPinned) {
 		unlock()
 		return nil, fmt.Errorf("The prepared checkout does not match its saved Git identity; start is refused.")
 	}
@@ -419,11 +431,6 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	}
 	// A fresh session reads the active revision and its pinned procedure; refuse to launch an incomplete one.
 	briefFile, err := versions.ActiveBrief(s, task)
-	if err != nil {
-		unlock()
-		return nil, err
-	}
-	worker, err := reservations.Worker(task)
 	if err != nil {
 		unlock()
 		return nil, err
@@ -468,6 +475,33 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	session := asString(func() any { v, _ := task.Get("session"); return v }())
 	unlock()
 
+	pane, err = EnsureWorkerPane(runtimeRoot, session, task)
+	if err != nil {
+		return failStart(s, taskID, err)
+	}
+	unlock, err = s.Lock()
+	if err != nil {
+		return failStart(s, taskID, err)
+	}
+	currentPane, err := s.ReadTask(taskID)
+	if err != nil {
+		unlock()
+		return failStart(s, taskID, err)
+	}
+	if asString(func() any { v, _ := currentPane.Get("pane"); return v }()) != pane {
+		currentPane.Set("pane", pane)
+		if w, werr := reservations.Worker(currentPane); werr == nil && w != nil {
+			if owner := asObject(func() any { v, _ := w.Get("owner"); return v }()); owner != nil {
+				owner.Set("pane", pane)
+			}
+		}
+		if err := s.SaveTask(currentPane); err != nil {
+			unlock()
+			return failStart(s, taskID, err)
+		}
+	}
+	unlock()
+
 	startArgs := herdrclient.AgentStartArgs(taskID, harness, pane)
 	if len(argv) > 0 {
 		startArgs = append(startArgs, "--")
@@ -498,6 +532,12 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	}
 	observedKind := asString(func() any { v, _ := agent.Get("agent"); return v }())
 	prompt := fmt.Sprintf("You are the sum worker for %s, not the coordinator. Read the complete file %s and every required worker procedure file it names, then execute only that approved task. Questions and results must be saved using the commands in that brief.", taskID, quoteJSON(briefFile))
+	if extras := repair.PendingResumeTexts(task); len(extras) > 0 {
+		prompt += " Recorded repairs waiting on this resume:"
+		for _, extra := range extras {
+			prompt += " " + extra
+		}
+	}
 	if _, err := herdrclient.Call(herdrPath, session, 10*time.Second, "agent", "prompt", pane, prompt); err != nil {
 		return failStart(s, taskID, err)
 	}
@@ -768,6 +808,60 @@ func snapshotOptionalString(value *ordjson.Object, key string) bool {
 	}
 	_, stringOK := field.(string)
 	return stringOK
+}
+
+// EnsureWorkerPane returns a live shell pane in the task workspace at the recorded
+// checkout. When sweep closed the previous pane, it creates a fresh tab in that
+// workspace so execution resume starts a new session instead of requiring the old one.
+func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string, error) {
+	pane := asString(func() any { v, _ := task.Get("pane"); return v }())
+	workspace := asString(func() any { v, _ := task.Get("workspace"); return v }())
+	worktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
+	if pane == "" || workspace == "" || worktree == "" {
+		return "", fmt.Errorf("Worker pane, workspace, or checkout identity is missing; start is refused.")
+	}
+	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
+	if err != nil {
+		return "", err
+	}
+	observed, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", pane)
+	if err != nil {
+		return "", err
+	}
+	if observed != nil {
+		paneObj := asObject(observed)
+		if nested := asObject(func() any { v, _ := paneObj.Get("pane"); return v }()); nested != nil {
+			paneObj = nested
+		}
+		got := resolvePath(asString(func() any { v, _ := paneObj.Get("cwd"); return v }()))
+		want := resolvePath(worktree)
+		if got != want {
+			return "", fmt.Errorf("Recorded worker pane %s cwd %s does not match checkout %s; start is refused.", pane, got, want)
+		}
+		return pane, nil
+	}
+	if !herdrclient.IsAbsent(code) {
+		return "", fmt.Errorf("Worker pane %s cannot be observed (%s); start is refused.", pane, code)
+	}
+	ws, wsCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "workspace", "get", workspace)
+	if err != nil {
+		return "", err
+	}
+	if ws == nil {
+		return "", fmt.Errorf("Worker workspace %s is gone (%s); execution resume cannot create a pane without recreating the worktree.", workspace, wsCode)
+	}
+	created, err := herdrclient.Call(herdrPath, session, 15*time.Second, "tab", "create", "--workspace", workspace, "--cwd", worktree, "--no-focus")
+	if err != nil {
+		return "", fmt.Errorf("Could not create a fresh pane in workspace %s: %s", workspace, err)
+	}
+	createdObj := asObject(created)
+	rootPane := asObject(func() any { v, _ := createdObj.Get("root_pane"); return v }())
+	newPane := asString(func() any { v, _ := rootPane.Get("pane_id"); return v }())
+	if newPane == "" {
+		return "", fmt.Errorf("Herdr tab create returned no pane id in workspace %s.", workspace)
+	}
+	task.Set("pane", newPane)
+	return newPane, nil
 }
 
 func failStart(s *store.Store, taskID string, cause error) (*ordjson.Object, error) {

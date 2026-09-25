@@ -11,6 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -164,6 +165,11 @@ func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 	for _, key := range []string{"id", "status", "repository", "harness", "pane", "session", "worktree", "error"} {
 		v, _ := task.Get(key)
 		row.Set(key, v)
+	}
+	if panes.WorkerIsClosed(task) {
+		id, _ := task.Get("id")
+		row.Set("pane_closed", true)
+		row.Set("pane_note", panes.ResumeNote(fmt.Sprint(id)))
 	}
 
 	var model any
