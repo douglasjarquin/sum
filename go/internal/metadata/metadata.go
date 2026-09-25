@@ -3,6 +3,7 @@ package metadata
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/inboxview"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -34,7 +36,21 @@ const (
 	callTimeout  = 10 * time.Second
 	probeTimeout = 15 * time.Second
 	tokenMax     = 80
+
+	// lockPoll is how often a busy projection lock is retried within lockWait.
+	lockPoll = 50 * time.Millisecond
 )
+
+// lockWait bounds how long a pass waits for the projection lock: a task-writing command must not stall behind a
+// slow neighbour, so a busy lock skips the pass instead. Tests shorten it.
+var lockWait = 2 * time.Second
+
+// passBudget bounds every Herdr call of one pass together; once spent, the remaining tasks are reported as skipped
+// rather than projected. Tests shorten it.
+var passBudget = returns.DefaultPassBudget
+
+// errLockBusy is the bounded lock wait expiring; After turns it into a degraded, state-free result.
+var errLockBusy = errors.New("projection lock busy; skipped")
 
 func jsonInt(n int) json.Number {
 	return json.Number(fmt.Sprint(n))
@@ -170,7 +186,7 @@ func writeMetadata(s *store.Store, meta *ordjson.Object) error {
 }
 
 // lock serializes projection passes (a task write and a native event may coincide) without holding the task-state
-// lock during Herdr I/O.
+// lock during Herdr I/O. It never blocks past lockWait: a held lock returns errLockBusy.
 func lock(s *store.Store) (func(), error) {
 	if err := os.MkdirAll(filepath.Join(s.Home, Dir), 0o700); err != nil {
 		return nil, err
@@ -179,9 +195,21 @@ func lock(s *store.Store) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
+	deadline := time.Now().Add(lockWait)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			f.Close()
+			return nil, err
+		}
+		if time.Now().After(deadline) {
+			f.Close()
+			return nil, errLockBusy
+		}
+		time.Sleep(lockPoll)
 	}
 	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); f.Close() }, nil
 }
@@ -291,6 +319,9 @@ func Status(s *store.Store) *ordjson.Object {
 					row.Set(kind, view)
 				}
 			}
+			if pending := asList(get(rec, "pending_clears")); len(pending) > 0 {
+				row.Set("pending_clears", pending)
+			}
 			detail.Set(taskID, row)
 		}
 	}
@@ -393,18 +424,33 @@ type pass struct {
 	force     bool
 	calls     int
 	written   int
+	skipped   int
 	ambiguous []any
+	// ctx carries the pass budget; every Herdr call runs under it.
+	ctx context.Context
+}
+
+func (p *pass) context() context.Context {
+	if p.ctx == nil {
+		return context.Background()
+	}
+	return p.ctx
+}
+
+// exhausted reports the pass budget spent: the remaining work is skipped, not attempted.
+func (p *pass) exhausted() bool {
+	return p.context().Err() != nil
 }
 
 func (p *pass) observe(session string, args ...string) (any, string, error) {
 	p.calls++
-	return herdrclient.Observe(p.herdrPath, session, callTimeout, args...)
+	return herdrclient.ObserveContext(p.context(), p.herdrPath, session, callTimeout, args...)
 }
 
 func (p *pass) sessionCall(session string) incarnation.Call {
 	return func(timeout time.Duration, args ...string) (any, string, error) {
 		p.calls++
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(p.context(), timeout)
 		defer cancel()
 		return herdrclient.ObserveContext(ctx, p.herdrPath, session, timeout, args...)
 	}
@@ -421,7 +467,7 @@ func (p *pass) report(kind, session, id string, sets map[string]string, clears [
 		args = append(args, "--clear-token", key)
 	}
 	p.calls++
-	code, err := herdrclient.CallCode(p.herdrPath, session, callTimeout, args...)
+	code, err := herdrclient.CallCodeContext(p.context(), p.herdrPath, session, callTimeout, args...)
 	if err != nil {
 		return false, "", err
 	}
@@ -558,10 +604,11 @@ type observation struct {
 // verify is an endpoint identity check run before the first differing write in a pass.
 type verify func() observation
 
-// endpoint brings one pane or workspace to desired, writing only the differing keys. It returns the outcome row and
-// the record of what is now known to be applied there (nil when nothing owned remains).
-func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec *ordjson.Object, check verify) (*ordjson.Object, *ordjson.Object) {
-	row := ordjson.NewObject()
+// endpoint brings one pane or workspace to desired, writing only the differing keys. It returns the outcome row,
+// the record of what is now known to be applied there (nil when nothing owned remains), and, when the task moved
+// endpoints and the old one's keys could not be cleared, that old record as a pending clear for a later pass.
+func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec *ordjson.Object, check verify) (row, record, pending *ordjson.Object) {
+	row = ordjson.NewObject()
 	row.Set("kind", kind)
 	row.Set("id", id)
 	previous := map[string]string{}
@@ -569,9 +616,12 @@ func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec
 		previous = recordTokens(rec)
 	} else if rec != nil && asString(get(rec, "id")) != "" && len(recordTokens(rec)) > 0 {
 		// The task moved to another endpoint (rebind): clear only sum's keys on the old one, without observing it.
-		cleared, _ := p.clear(kind, asString(get(rec, "session")), asString(get(rec, "id")), recordTokens(rec))
+		cleared, ok := p.clear(kind, asString(get(rec, "session")), asString(get(rec, "id")), recordTokens(rec))
 		cleared.Set("id", get(rec, "id"))
 		row.Set("cleared_previous", cleared)
+		if !ok {
+			pending = pendingClear(kind, rec)
+		}
 	}
 	keep := func() *ordjson.Object {
 		if len(previous) == 0 {
@@ -593,13 +643,13 @@ func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec
 	}
 	if len(sets) == 0 && len(clears) == 0 {
 		row.Set("outcome", "unchanged")
-		return row, keep()
+		return row, keep(), pending
 	}
 	capability := kind + "_tokens"
 	if !truthy(get(asObject(get(p.meta, "capabilities")), capability)) {
 		row.Set("outcome", "unsupported")
 		row.Set("reason", capability+" not available in the probed Herdr build")
-		return row, keep()
+		return row, keep(), pending
 	}
 	if check != nil && len(sets) > 0 {
 		obs := check()
@@ -607,11 +657,11 @@ func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec
 		switch obs.identity {
 		case "absent":
 			row.Set("outcome", "absent")
-			return row, nil
+			return row, nil, pending
 		case "unobservable":
 			row.Set("outcome", "unobservable")
 			row.Set("reason", "the endpoint cannot be observed; nothing was written or cleared")
-			return row, keep()
+			return row, keep(), pending
 		case "ok":
 			// Keys another sum source holds (a legacy `sum:<basename>` reporter, another installation) are neither
 			// overwritten nor cleared; they are reported instead.
@@ -634,7 +684,7 @@ func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec
 			}
 			if len(sets) == 0 && len(clears) == 0 {
 				row.Set("outcome", "unchanged")
-				return row, keep()
+				return row, keep(), pending
 			}
 		default:
 			// stale: our own keys sit on a pane that no longer runs the task. Clear them, write nothing new.
@@ -646,12 +696,12 @@ func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec
 				if !ok {
 					row.Set("outcome", "stale")
 					row.Set("reason", "pane identity stale and its recorded keys could not be cleared")
-					return row, keep()
+					return row, keep(), pending
 				}
 			}
 			row.Set("outcome", "stale")
 			row.Set("reason", "pane identity stale; tokens are written only to a verified endpoint")
-			return row, nil
+			return row, nil, pending
 		}
 	}
 	ok, code, err := p.report(kind, session, id, sets, append([]string{}, clears...))
@@ -661,17 +711,17 @@ func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec
 		p.recordError("report", err.Error(), kind, id)
 		row.Set("outcome", "failed")
 		row.Set("reason", truncate(err.Error(), 200))
-		return row, keep()
+		return row, keep(), pending
 	case !ok && isAbsentCode(code):
 		row.Set("outcome", "absent")
 		row.Set("code", code)
-		return row, nil
+		return row, nil, pending
 	case !ok:
 		p.degrade(kind + " report-metadata refused: " + code)
 		p.recordError("report", code, kind, id)
 		row.Set("outcome", "refused")
 		row.Set("code", code)
-		return row, keep()
+		return row, keep(), pending
 	}
 	p.written++
 	p.bump("writes", 1)
@@ -689,9 +739,36 @@ func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec
 	row.Set("set", tokensToAny(sortedKeys(sets)))
 	row.Set("cleared", tokensToAny(clears))
 	if len(applied) == 0 {
-		return row, nil
+		return row, nil, pending
 	}
-	return row, newRecord(id, session, applied)
+	return row, newRecord(id, session, applied), pending
+}
+
+// pendingClear is an endpoint record sum still owes a clear on, kept under the task's pending_clears until a pass
+// clears it (or finds it absent), so the tokens are never orphaned by one refused or failed call.
+func pendingClear(kind string, rec *ordjson.Object) *ordjson.Object {
+	out := newRecord(asString(get(rec, "id")), asString(get(rec, "session")), recordTokens(rec))
+	out.Set("kind", kind)
+	out.Set("pending_clear", true)
+	return out
+}
+
+// retryPending attempts every pending clear on a task record; it returns the outcome rows and what still fails.
+func (p *pass) retryPending(rec *ordjson.Object) (rows []any, remaining []any) {
+	for _, item := range asList(get(rec, "pending_clears")) {
+		old := asObject(item)
+		if old == nil {
+			continue
+		}
+		kind := asString(get(old, "kind"))
+		row, ok := p.release(kind, old)
+		row.Set("retried", true)
+		rows = append(rows, row)
+		if !ok {
+			remaining = append(remaining, old)
+		}
+	}
+	return rows, remaining
 }
 
 func containsString(list []string, s string) bool {
@@ -844,33 +921,54 @@ func (p *pass) projectTask(row inboxview.Task, gapped, archived bool, resources 
 		session = asString(get(asObject(get(p.meta, "root")), "session"))
 	}
 
+	// Clears owed from earlier passes come first; whatever still fails stays owed.
+	retried, pending := p.retryPending(rec)
+	endpoints = append(endpoints, retried...)
+
 	workspace := asString(get(task, "workspace"))
 	if workspace != "" && session != "" {
-		endpointRow, record := p.endpoint("workspace", session, workspace, desired, asObject(get(rec, "workspace")), nil)
+		endpointRow, record, owed := p.endpoint("workspace", session, workspace, desired, asObject(get(rec, "workspace")), nil)
 		endpoints = append(endpoints, endpointRow)
 		if record != nil {
 			updated.Set("workspace", record)
 		}
+		if owed != nil {
+			pending = append(pending, owed)
+		}
 	} else if old := asObject(get(rec, "workspace")); old != nil {
-		endpoints = append(endpoints, p.release("workspace", old))
+		released, ok := p.release("workspace", old)
+		endpoints = append(endpoints, released)
+		if !ok {
+			pending = append(pending, pendingClear("workspace", old))
+		}
 	}
 
 	pane := asString(get(task, "pane"))
 	if pane != "" && session != "" {
 		worktree := asString(get(task, "worktree"))
 		check := func() observation { return p.verifyPane(session, pane, worktree) }
-		endpointRow, record := p.endpoint("pane", session, pane, desired, asObject(get(rec, "pane")), check)
+		endpointRow, record, owed := p.endpoint("pane", session, pane, desired, asObject(get(rec, "pane")), check)
 		endpoints = append(endpoints, endpointRow)
 		if record != nil {
 			updated.Set("pane", record)
 		}
+		if owed != nil {
+			pending = append(pending, owed)
+		}
 	} else if old := asObject(get(rec, "pane")); old != nil {
-		endpoints = append(endpoints, p.release("pane", old))
+		released, ok := p.release("pane", old)
+		endpoints = append(endpoints, released)
+		if !ok {
+			pending = append(pending, pendingClear("pane", old))
+		}
 	}
 	out.Set("endpoints", endpoints)
+	if len(pending) > 0 {
+		updated.Set("pending_clears", pending)
+	}
 	_, hasPane := updated.Get("pane")
 	_, hasWorkspace := updated.Get("workspace")
-	if state == "" && !hasPane && !hasWorkspace {
+	if state == "" && !hasPane && !hasWorkspace && len(pending) == 0 {
 		resources.Delete(row.ID)
 		out.Set("released", true)
 	} else {
@@ -879,13 +977,25 @@ func (p *pass) projectTask(row inboxview.Task, gapped, archived bool, resources 
 	return out
 }
 
-// release clears what sum wrote on an endpoint a task no longer names; a failed clear keeps the row for a retry.
-func (p *pass) release(kind string, old *ordjson.Object) *ordjson.Object {
-	cleared, _ := p.clear(kind, asString(get(old, "session")), asString(get(old, "id")), recordTokens(old))
+// release clears what sum wrote on an endpoint a task no longer names. ok is whether the keys are gone; a refused
+// or failed clear reports false so the caller keeps the record for a retry.
+func (p *pass) release(kind string, old *ordjson.Object) (*ordjson.Object, bool) {
+	cleared, ok := p.clear(kind, asString(get(old, "session")), asString(get(old, "id")), recordTokens(old))
 	cleared.Set("kind", kind)
 	cleared.Set("id", get(old, "id"))
 	cleared.Set("outcome", "released")
-	return cleared
+	return cleared, ok
+}
+
+// skippedTask is the row for a task the pass budget left unprojected; its record is untouched.
+func skippedTask(taskID string, previous any) *ordjson.Object {
+	out := ordjson.NewObject()
+	out.Set("task", taskID)
+	out.Set("previous", previous)
+	out.Set("endpoints", []any{})
+	out.Set("outcome", "skipped")
+	out.Set("reason", "pass budget exhausted")
+	return out
 }
 
 func inboxToken(snapshot inboxview.Snapshot) string {
@@ -955,7 +1065,7 @@ func (p *pass) projectRoot(snapshot inboxview.Snapshot, active int) *ordjson.Obj
 		return row
 	}
 	check := func() observation { return p.verifyOwner(owner) }
-	row, record := p.endpoint("pane", asString(get(owner, "session")), asString(get(owner, "pane")), rootTokens(snapshot, active), previous, check)
+	row, record, _ := p.endpoint("pane", asString(get(owner, "session")), asString(get(owner, "pane")), rootTokens(snapshot, active), previous, check)
 	row.Set("role", "coordinator")
 	if record == nil {
 		p.meta.Set("root", nil)
@@ -968,6 +1078,11 @@ func (p *pass) projectRoot(snapshot inboxview.Snapshot, active int) *ordjson.Obj
 // run is one pass: every task in scope is compared with its record and only differences are written; the coordinator
 // summary is always recomputed from the full snapshot.
 func (p *pass) run(scope []string, reason string) *ordjson.Object {
+	// degraded reflects the latest pass only; last_error and the bounded errors log keep the history.
+	p.meta.Set("degraded", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), passBudget)
+	defer cancel()
+	p.ctx = ctx
 	snapshot := inboxview.Read(p.s)
 	gapped := map[string]bool{}
 	for _, gap := range snapshot.Gaps {
@@ -1001,6 +1116,11 @@ func (p *pass) run(scope []string, reason string) *ordjson.Object {
 		if recorded := get(row.Record, "machine"); recorded != nil && (hostErr != nil || !host.Is(recorded)) {
 			continue
 		}
+		if p.exhausted() {
+			p.skipped++
+			rows = append(rows, skippedTask(row.ID, get(asObject(get(resources, row.ID)), "state")))
+			continue
+		}
 		rows = append(rows, p.projectTask(row, gapped[row.ID], archived, resources))
 	}
 	for _, taskID := range resources.Keys() {
@@ -1009,28 +1129,57 @@ func (p *pass) run(scope []string, reason string) *ordjson.Object {
 		}
 		// A task directory removed by hand: release what sum wrote, never anything else.
 		gone := asObject(get(resources, taskID))
+		if p.exhausted() {
+			p.skipped++
+			rows = append(rows, skippedTask(taskID, get(gone, "state")))
+			continue
+		}
 		out := ordjson.NewObject()
 		out.Set("task", taskID)
 		out.Set("state", nil)
 		out.Set("previous", get(gone, "state"))
-		endpoints := []any{}
+		retried, pending := p.retryPending(gone)
+		endpoints := append([]any{}, retried...)
 		for _, kind := range []string{"pane", "workspace"} {
 			if old := asObject(get(gone, kind)); old != nil {
-				endpoints = append(endpoints, p.release(kind, old))
+				released, ok := p.release(kind, old)
+				endpoints = append(endpoints, released)
+				if !ok {
+					pending = append(pending, pendingClear(kind, old))
+				}
 			}
 		}
 		out.Set("endpoints", endpoints)
-		out.Set("released", true)
-		resources.Delete(taskID)
+		if len(pending) == 0 {
+			out.Set("released", true)
+			resources.Delete(taskID)
+		} else {
+			// The record shrinks to what is still owed, so the next pass retries exactly those clears.
+			owed := ordjson.NewObject()
+			owed.Set("state", nil)
+			owed.Set("pending_clears", pending)
+			resources.Set(taskID, owed)
+			out.Set("released", false)
+		}
 		rows = append(rows, out)
 	}
-	root := p.projectRoot(snapshot, active)
+	var root *ordjson.Object
+	if p.exhausted() {
+		root = ordjson.NewObject()
+		root.Set("kind", "pane")
+		root.Set("role", "coordinator")
+		root.Set("outcome", "skipped")
+		root.Set("reason", "pass budget exhausted")
+	} else {
+		root = p.projectRoot(snapshot, active)
+	}
 	p.bump("passes", 1)
 	last := ordjson.NewObject()
 	last.Set("at", store.Now())
 	last.Set("reason", reason)
 	last.Set("tasks", jsonInt(len(rows)))
 	last.Set("written", jsonInt(p.written))
+	last.Set("skipped", jsonInt(p.skipped))
 	last.Set("herdr_calls", jsonInt(p.calls))
 	p.meta.Set("last_pass", last)
 	ambiguous := p.ambiguous
@@ -1266,8 +1415,30 @@ func Disable(s *store.Store, ctx *ordjson.Object, runtimeRoot string) (*ordjson.
 				rec.Delete(kind)
 			}
 		}
+		var stillPending []any
+		for _, item := range asList(get(rec, "pending_clears")) {
+			old := asObject(item)
+			if old == nil {
+				continue
+			}
+			kind := asString(get(old, "kind"))
+			row, ok := clearOne(kind, old)
+			row.Set("task", taskID)
+			row.Set("kind", kind)
+			row.Set("id", get(old, "id"))
+			row.Set("retried", true)
+			cleared = append(cleared, row)
+			if !ok {
+				stillPending = append(stillPending, old)
+			}
+		}
+		if len(stillPending) > 0 {
+			rec.Set("pending_clears", stillPending)
+		} else {
+			rec.Delete("pending_clears")
+		}
 		if _, hasPane := rec.Get("pane"); !hasPane {
-			if _, hasWorkspace := rec.Get("workspace"); !hasWorkspace {
+			if _, hasWorkspace := rec.Get("workspace"); !hasWorkspace && len(stillPending) == 0 {
 				resources.Delete(taskID)
 			}
 		}

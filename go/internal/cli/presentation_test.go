@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -16,6 +17,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/spf13/pflag"
 )
 
 func presentationHome(t *testing.T) string {
@@ -457,6 +460,33 @@ func TestMetadataProjectionAndCompactAgree(t *testing.T) {
 func TestPresentationHelpMatchesImplementedReadCommands(t *testing.T) {
 	for _, topic := range []string{"status", "inbox", "metadata", "metadata-inbox"} {
 		assertStdoutGolden(t, t.TempDir(), []string{"help", topic}, "help-"+topic)
+	}
+	// Every registered flag reaches the catalog, so a future flag cannot skip the help topic.
+	var out, errOut bytes.Buffer
+	root := NewRoot("sumctl", &out, &errOut)
+	for _, topic := range []string{"status", "inbox"} {
+		cmd, _, err := root.Find([]string{topic})
+		if err != nil || cmd == nil || cmd.Name() != topic {
+			t.Fatalf("command %s: %v", topic, err)
+		}
+		view, err := helpview.View("", topic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		listed := map[string]bool{}
+		rawArgs, _ := view.Get("arguments")
+		for _, raw := range rawArgs.([]any) {
+			name, _ := raw.(*ordjson.Object).Get("name")
+			listed[name.(string)] = true
+		}
+		cmd.NonInheritedFlags().VisitAll(func(flag *pflag.Flag) {
+			if flag.Hidden || flag.Name == "format" || flag.Name == "help" {
+				return
+			}
+			if !listed["--"+flag.Name] {
+				t.Errorf("help catalog topic %s omits registered flag --%s", topic, flag.Name)
+			}
+		})
 	}
 }
 

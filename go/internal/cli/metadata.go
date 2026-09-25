@@ -20,14 +20,6 @@ import (
 // PersistentPostRunE then runs one bounded metadata projection. "task" projects args[0]; "all" projects every task.
 const projectsAnnotation = "sum.projects"
 
-func projects(cmd *cobra.Command, scope string) *cobra.Command {
-	if cmd.Annotations == nil {
-		cmd.Annotations = map[string]string{}
-	}
-	cmd.Annotations[projectsAnnotation] = scope
-	return cmd
-}
-
 // projectAfter runs after a command's RunE succeeded. It is silent: none of the annotated commands emit a metadata
 // view, and a read never reaches here because reads carry no annotation. Failures are recorded in metadata state.
 func (o *rootOptions) projectAfter(cmd *cobra.Command, args []string) {

@@ -77,9 +77,28 @@ func (v *View) Refresh(overview Overview, err error) {
 		v.selectFirst()
 		return
 	}
-	if v.find(v.selected) < 0 {
-		v.unavailable = true
+	// Presence is decided by the data, not the visible line list, so a row restored by a later refresh clears the flag
+	// and a task hidden under a collapsed group is never reported as gone.
+	v.unavailable = !v.present(v.selected)
+}
+
+// present reports whether identity names a row of the current overview: a visible line, or a task hidden by a
+// collapsed group.
+func (v *View) present(identity string) bool {
+	if identity == "" {
+		return false
 	}
+	if v.find(identity) >= 0 {
+		return true
+	}
+	for _, group := range v.groups() {
+		for _, task := range group.Tasks {
+			if task.ID == identity {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SetScope keeps state for the same scope and starts empty for a different one.
@@ -202,6 +221,11 @@ func (v *View) Command(cmd string) Action {
 			if group.Healthy {
 				v.expanded[group.Key] = false
 			}
+		}
+		// Collapsing hides the task rows, so a selected task in a healthy group moves to its group row instead of
+		// vanishing, as with o.
+		if task, group, ok := v.selectedTask(); ok && !v.detail && v.selected == task.ID && !v.expanded[group.Key] {
+			v.selected = "project:" + group.Key
 		}
 	case "q":
 		return ActionQuit

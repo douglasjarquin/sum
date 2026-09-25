@@ -143,6 +143,55 @@ func TestViewRemovedSelectionBecomesExplicitlyUnavailable(t *testing.T) {
 	}
 }
 
+func TestViewCollapseAllMovesSelectionToGroupAndStaysAvailable(t *testing.T) {
+	snapshot := viewSnapshot(t)
+	view := NewView(Scope{Home: "/h"}, BuildOverview(snapshot))
+	for i := 0; i < 9; i++ {
+		view.Command("n")
+	}
+	if view.Selected() != "project:z/old" {
+		t.Fatalf("selected %q", view.Selected())
+	}
+	view.Command("o")
+	view.Command("n")
+	if view.Selected() != "t-eeeeeeeeeeee" {
+		t.Fatalf("expanded healthy group must expose its task: %q", view.Selected())
+	}
+	view.Command("c")
+	if view.Selected() != "project:z/old" || view.Unavailable() {
+		t.Fatalf("collapse-all must move the selection to the group row: selected=%q unavailable=%v", view.Selected(), view.Unavailable())
+	}
+	if view.Command("r") != ActionRefresh {
+		t.Fatal("r must ask the caller to reload")
+	}
+	view.Refresh(BuildOverview(snapshot), nil)
+	if view.Unavailable() || view.Selected() != "project:z/old" {
+		t.Fatalf("refresh after collapse-all must keep the group row present: selected=%q unavailable=%v", view.Selected(), view.Unavailable())
+	}
+	if strings.Contains(view.Render(80, 24), "no longer present") {
+		t.Fatal("present group row reported as missing")
+	}
+}
+
+func TestViewRestoredSelectionClearsUnavailable(t *testing.T) {
+	snapshot := viewSnapshot(t)
+	view := NewView(Scope{Home: "/h"}, BuildOverview(snapshot))
+	for i := 0; i < 4; i++ {
+		view.Command("n")
+	}
+	shrunk := snapshot
+	shrunk.Tasks = append([]Task{}, snapshot.Tasks[0], snapshot.Tasks[2], snapshot.Tasks[3], snapshot.Tasks[4])
+	countSnapshot(&shrunk)
+	view.Refresh(BuildOverview(shrunk), nil)
+	if !view.Unavailable() || view.Selected() != "t-aaaaaaaaaaaa" {
+		t.Fatalf("removed row must be reported: selected=%q unavailable=%v", view.Selected(), view.Unavailable())
+	}
+	view.Refresh(BuildOverview(snapshot), nil)
+	if view.Unavailable() || view.Selected() != "t-aaaaaaaaaaaa" || strings.Contains(view.Render(80, 24), "no longer present") {
+		t.Fatalf("restored row must clear the flag: selected=%q unavailable=%v", view.Selected(), view.Unavailable())
+	}
+}
+
 func TestViewFailedRefreshKeepsRowsMarksStaleAndDisablesActions(t *testing.T) {
 	snapshot := viewSnapshot(t)
 	view := NewView(Scope{Home: "/h"}, BuildOverview(snapshot))

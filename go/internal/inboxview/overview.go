@@ -26,7 +26,11 @@ type Overview struct {
 	Groups      []Group            `json:"groups"`
 	Standalone  *Group             `json:"standalone"`
 	Coordinator CoordinatorSummary `json:"coordinator"`
+	Note        string             `json:"note"`
 }
+
+// OverviewNote is the JSON caveat; the terminal view carries the same facts inline.
+const OverviewNote = "Known global counts precede project focus; incomplete coverage may hide more work. observed is a saved native lifecycle observation, not freshness or completion. Routes are sumctl argument arrays; reads write nothing."
 
 // CoordinatorSummary is the one global coordinator entry; there is never a coordinator per project.
 type CoordinatorSummary struct {
@@ -231,7 +235,7 @@ func (c *GroupCounts) add(item presentation.Item) {
 
 // BuildOverview groups a snapshot by canonical recorded project identity. It is pure: no I/O, no Herdr.
 func BuildOverview(snapshot Snapshot) Overview {
-	out := Overview{Counts: snapshot.Counts, Complete: snapshot.Complete, Gaps: []Gap{}, NeedsYou: []Row{}, Groups: []Group{}}
+	out := Overview{Counts: snapshot.Counts, Complete: snapshot.Complete, Gaps: []Gap{}, NeedsYou: []Row{}, Groups: []Group{}, Note: OverviewNote}
 	tasks := map[string]Task{}
 	for _, task := range snapshot.Tasks {
 		tasks[task.ID] = task

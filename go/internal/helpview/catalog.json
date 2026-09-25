@@ -164,6 +164,26 @@
       {
         "name": "--max-chars",
         "help": "Compact text bound, 1..2000 (default 240); item detail routes provide full text"
+      },
+      {
+        "name": "--grouped",
+        "help": "Read-only overview grouped by recorded project identity with global known counts; cannot combine with --compact or --live"
+      },
+      {
+        "name": "--project",
+        "help": "Focus one project key (requires --grouped); global counts, gaps, and needs_you stay"
+      },
+      {
+        "name": "--view",
+        "help": "Explicit-refresh terminal view of the grouped overview (requires --grouped): n/p move, o expand, d detail, b back, r refresh, c collapse-all, q quit"
+      },
+      {
+        "name": "--width",
+        "help": "View width in cells (default COLUMNS or 80)"
+      },
+      {
+        "name": "--height",
+        "help": "View height in lines (default LINES or 24)"
       }
     ],
     "subcommands": null,
@@ -193,6 +213,26 @@
       {
         "name": "--max-chars",
         "help": "Compact text bound, 1..2000 (default 240); item detail routes provide full text"
+      },
+      {
+        "name": "--grouped",
+        "help": "Read-only overview grouped by recorded project identity with global known counts; cannot combine with --compact or --live"
+      },
+      {
+        "name": "--project",
+        "help": "Focus one project key (requires --grouped); global counts, gaps, and needs_you stay"
+      },
+      {
+        "name": "--view",
+        "help": "Explicit-refresh terminal view of the grouped overview (requires --grouped): n/p move, o expand, d detail, b back, r refresh, c collapse-all, q quit"
+      },
+      {
+        "name": "--width",
+        "help": "View width in cells (default COLUMNS or 80)"
+      },
+      {
+        "name": "--height",
+        "help": "View height in lines (default LINES or 24)"
       }
     ],
     "subcommands": null,

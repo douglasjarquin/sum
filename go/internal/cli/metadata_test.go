@@ -386,6 +386,68 @@ func TestMetadataAfter_refusedWriteIsNotCachedAndDomainSucceeds(t *testing.T) {
 	if status["degraded"] != true || len(status["errors_log"].([]any)) == 0 {
 		t.Fatalf("status must show the failure: %v", status)
 	}
+
+	// Herdr accepts again: the next clean pass clears degraded while the error history stays.
+	herdrEnv(t, lab.home)
+	t.Setenv("FAKE_PARENT_CWD", readJSONFile(t, filepath.Join(lab.home, "context.json"))["cwd"].(string))
+	lab.run("metadata", "sync")
+	meta = lab.meta()
+	if meta["degraded"] != nil || meta["last_error"] == nil || len(meta["errors"].([]any)) == 0 {
+		t.Fatalf("a clean pass clears degraded and keeps history: degraded=%v last_error=%v", meta["degraded"], meta["last_error"])
+	}
+	status = lab.run("metadata", "status")
+	if status["degraded"] != false || len(status["errors_log"].([]any)) == 0 {
+		t.Fatalf("status after a clean pass: %v", status)
+	}
+	if got := lab.tokens(lab.pane)["sum_state"]; got != "needs-decision" {
+		t.Fatalf("the clean pass projects the facts the refused pass could not: %v", lab.tokens(lab.pane))
+	}
+}
+
+// hookEvent delivers one Herdr plugin event in-process, the way Herdr's plugin runner invokes `hook event`.
+func (l *metaLab) hookEvent(pluginID, pane, status string) map[string]any {
+	l.t.Helper()
+	payload, _ := json.Marshal(map[string]any{
+		"event": "pane_agent_status_changed",
+		"data":  map[string]any{"type": "pane_agent_status_changed", "pane_id": pane, "workspace_id": strings.Split(pane, ":")[0], "agent_status": status, "agent": "claude"},
+	})
+	l.t.Setenv("HERDR_PLUGIN_ID", pluginID)
+	l.t.Setenv("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+	l.t.Setenv("HERDR_PLUGIN_EVENT_JSON", string(payload))
+	return l.run("hook", "event")
+}
+
+func TestMetadataHookEvent_projectsHandledEventsOnlyAndNeverIgnoredOnes(t *testing.T) {
+	lab := newMetaLab(t)
+	lab.enable()
+	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
+	before := lab.meta()["last_pass"].(map[string]any)
+	base := len(lab.reportCalls())
+
+	// A stranger's pane: the event is ignored and no projection runs.
+	ignored := lab.hookEvent(pluginID, "w-stranger:p7", "idle")
+	if ignored["outcome"] != "ignored" {
+		t.Fatalf("stranger event: %v", ignored)
+	}
+	if n := len(lab.reportCalls()) - base; n != 0 {
+		t.Fatalf("an ignored event made %d report-metadata calls", n)
+	}
+	if last := lab.meta()["last_pass"].(map[string]any); last["at"] != before["at"] || last["reason"] != before["reason"] {
+		t.Fatalf("an ignored event must not run a pass: %v -> %v", before, last)
+	}
+
+	// The worker's pane goes idle: the event is handled and one projection follows without `metadata sync`.
+	handled := lab.hookEvent(pluginID, lab.pane, "idle")
+	if handled["outcome"] != "handled" && handled["outcome"] != "reconciled" {
+		t.Fatalf("worker event: %v", handled)
+	}
+	last := lab.meta()["last_pass"].(map[string]any)
+	if last["reason"] != "hook event" {
+		t.Fatalf("a handled event must run one projection: %v", last)
+	}
+	if got := lab.tokens(lab.pane)["sum_task"]; got != lab.task {
+		t.Fatalf("worker pane tokens after the event: %v", lab.tokens(lab.pane))
+	}
 }
 
 func TestMetadataPaneVerification_staleAbsentUnobservable(t *testing.T) {
