@@ -245,6 +245,11 @@ func (s *Snapshot) taskSources(record *ordjson.Object, path string) *ordjson.Obj
 				s.gap(id, fmt.Sprintf("%s#%s/%d", path, key, i), fmt.Errorf("duplicate %s id %q", key, str(row, "id")))
 			}
 			seen[str(row, "id")] = true
+			if text := field(row, "text"); text != nil {
+				if _, ok := text.(string); !ok {
+					s.gap(id, fmt.Sprintf("%s#%s/%d/text", path, key, i), fmt.Errorf("%s text must be a string", key))
+				}
+			}
 			if key != "questions" && str(row, "kind") == "" {
 				s.gap(id, fmt.Sprintf("%s#%s/%d", path, key, i), fmt.Errorf("%s record has no string kind", key))
 			}

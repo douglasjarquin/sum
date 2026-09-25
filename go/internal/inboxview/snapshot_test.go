@@ -237,3 +237,12 @@ func TestSavedPassingPipelineAndRunningLaneAreContext(t *testing.T) {
 		t.Fatalf("saved context became owed action: %+v", got)
 	}
 }
+
+func TestMalformedDecisionTextKeepsDecisionAndMarksCoverageUnknown(t *testing.T) {
+	s := fixture(t)
+	write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":1,"id":"t-aaaaaaaaaaaa","questions":[{"id":"q1","status":"open","text":{"unexpected":"object"}}]}`)
+	got := Read(s)
+	if got.Counts.Decisions != 1 || got.Complete || got.Counts.UnknownSources != 1 {
+		t.Fatalf("malformed decision prose silently disappeared: %+v", got)
+	}
+}
