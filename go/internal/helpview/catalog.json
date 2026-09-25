@@ -32,7 +32,7 @@
       "pump": "One budgeted delivery pass over saved pending returns: at most one coalesced notice per recipient, deferred recipients named; never calls GitHub or cleans up",
       "sweep": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
       "hook": "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon",
-      "metadata": "Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle",
+      "metadata": "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle",
       "attention": "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays",
       "bind": "Coordinator only: rebind this pane as a task's parent or adopt an existing worker pane; never launches",
       "backup": "Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code",
@@ -62,6 +62,7 @@
       "help",
       "hook-status",
       "inbox",
+      "metadata-inbox",
       "metadata-snippet",
       "metadata-status",
       "preset-list",
@@ -146,7 +147,23 @@
     "arguments": [
       {
         "name": "--live",
-        "help": "Add one bounded Herdr agent list per session (observed agent state per task); still writes nothing"
+        "help": "Add one bounded Herdr agent list per session; compact observes only rendered page tasks; writes nothing"
+      },
+      {
+        "name": "--compact",
+        "help": "Bounded saved presentation with global known counts; full output remains the default"
+      },
+      {
+        "name": "--after",
+        "help": "Skip presentation items in compact mode (default 0); pages are fresh reads"
+      },
+      {
+        "name": "--limit",
+        "help": "Compact page size, 1..100 (default 20)"
+      },
+      {
+        "name": "--max-chars",
+        "help": "Compact text bound, 1..2000 (default 240); item detail routes provide full text"
       }
     ],
     "subcommands": null,
@@ -159,7 +176,23 @@
     "arguments": [
       {
         "name": "--live",
-        "help": "Add one bounded Herdr agent list per session (observed agent state per task); still writes nothing"
+        "help": "Add one bounded Herdr agent list per session; compact observes only rendered page tasks; writes nothing"
+      },
+      {
+        "name": "--compact",
+        "help": "Bounded saved presentation with global known counts; full output remains the default"
+      },
+      {
+        "name": "--after",
+        "help": "Skip presentation items in compact mode (default 0); pages are fresh reads"
+      },
+      {
+        "name": "--limit",
+        "help": "Compact page size, 1..100 (default 20)"
+      },
+      {
+        "name": "--max-chars",
+        "help": "Compact text bound, 1..2000 (default 240); item detail routes provide full text"
       }
     ],
     "subcommands": null,
@@ -854,18 +887,19 @@
   },
   "metadata": {
     "topic": "metadata",
-    "help": "Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle",
+    "help": "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle",
     "arguments": [],
     "subcommands": {
-      "enable": "Coordinator only: probe the installed Herdr for report-metadata, record sum's source, project every saved task once",
-      "disable": "Coordinator only: clear the tokens sum recorded and stop projecting; nothing else in Herdr changes",
-      "status": "Recorded projection state, per-task tokens, errors, and (inside Herdr) the capabilities probed now; writes nothing",
-      "sync": "One bounded projection pass from records: only changed endpoints are written; no model, no polling",
+      "enable": "Coordinator only: project saved task tokens to recorded endpoints and enable projection state",
+      "disable": "Coordinator only: mark saved metadata projection disabled",
+      "status": "Recorded projection summary and health; writes nothing and probes no live capabilities",
+      "sync": "Coordinator only: project saved tokens to recorded endpoints, including unchanged values",
       "snippet": "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum",
-      "inbox": "Open the read-only `sumctl inbox` listing in a Herdr pane through the linked sum plugin entrypoint (needs `hook enable`)"
+      "inbox": "Print the bounded saved compact inbox in this output, including outside Herdr; no popup, sync, or writes"
     },
     "read_only": false,
     "read_only_subcommands": [
+      "inbox",
       "snippet",
       "status"
     ]
@@ -1539,11 +1573,11 @@
   },
   "metadata-enable": {
     "topic": "metadata-enable",
-    "help": "Coordinator only: probe the installed Herdr for report-metadata, record sum's source, project every saved task once",
+    "help": "Coordinator only: project saved task tokens to recorded endpoints and enable projection state",
     "arguments": [
       {
         "name": "--notify",
-        "help": "Also send one coalesced `notification show` per pass for new needs-decision/review-ready/cleanup/refresh/blocked transitions (task ids and states only)"
+        "help": "Record notification preference; transition notification delivery is not implemented"
       }
     ],
     "subcommands": null,
@@ -1552,7 +1586,7 @@
   },
   "metadata-disable": {
     "topic": "metadata-disable",
-    "help": "Coordinator only: clear the tokens sum recorded and stop projecting; nothing else in Herdr changes",
+    "help": "Coordinator only: mark saved metadata projection disabled",
     "arguments": [],
     "subcommands": null,
     "read_only": false,
@@ -1560,7 +1594,7 @@
   },
   "metadata-status": {
     "topic": "metadata-status",
-    "help": "Recorded projection state, per-task tokens, errors, and (inside Herdr) the capabilities probed now; writes nothing",
+    "help": "Recorded projection summary and health; writes nothing and probes no live capabilities",
     "arguments": [],
     "subcommands": null,
     "read_only": true,
@@ -1568,13 +1602,8 @@
   },
   "metadata-sync": {
     "topic": "metadata-sync",
-    "help": "One bounded projection pass from records: only changed endpoints are written; no model, no polling",
-    "arguments": [
-      {
-        "name": "--task",
-        "help": "Limit the pass to this task (repeatable)"
-      }
-    ],
+    "help": "Coordinator only: project saved tokens to recorded endpoints, including unchanged values",
+    "arguments": [],
     "subcommands": null,
     "read_only": false,
     "read_only_subcommands": null
@@ -1594,23 +1623,23 @@
   },
   "metadata-inbox": {
     "topic": "metadata-inbox",
-    "help": "Open the read-only `sumctl inbox` listing in a Herdr pane through the linked sum plugin entrypoint (needs `hook enable`)",
+    "help": "Print the bounded saved compact inbox in this output, including outside Herdr; no popup, sync, or writes",
     "arguments": [
       {
-        "name": "--placement",
-        "help": null,
-        "choices": [
-          "popup",
-          "split",
-          "tab",
-          "zoomed",
-          "overlay"
-        ],
-        "default": "popup"
+        "name": "--after",
+        "help": "Skip presentation items in compact mode (default 0); pages are fresh reads"
+      },
+      {
+        "name": "--limit",
+        "help": "Compact page size, 1..100 (default 20)"
+      },
+      {
+        "name": "--max-chars",
+        "help": "Compact text bound, 1..2000 (default 240); item detail routes provide full text"
       }
     ],
     "subcommands": null,
-    "read_only": false,
+    "read_only": true,
     "read_only_subcommands": null
   },
   "settings-show": {

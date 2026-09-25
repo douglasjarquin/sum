@@ -1,0 +1,11 @@
+topic: inbox
+help: "Only tasks that need attention: questions, reports, errors, cleanup; reads only, like status"
+arguments[5]{name,help}:
+  "--live",Add one bounded Herdr agent list per session; compact observes only rendered page tasks; writes nothing
+  "--compact",Bounded saved presentation with global known counts; full output remains the default
+  "--after",Skip presentation items in compact mode (default 0); pages are fresh reads
+  "--limit","Compact page size, 1..100 (default 20)"
+  "--max-chars","Compact text bound, 1..2000 (default 240); item detail routes provide full text"
+subcommands: null
+read_only: true
+read_only_subcommands: []

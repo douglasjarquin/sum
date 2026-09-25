@@ -9,10 +9,11 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/inboxview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/presentation"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -47,7 +48,7 @@ func snippetTOML() string {
 		"[ui.sidebar.spaces]",
 		`rows = [["state_icon", "workspace"], ["branch", "git_status"], ["$sum_state", "$sum_task"]]`,
 		"",
-		"# Optional: pop-up notifications for sum transitions need a toast delivery; sum sends them only after `metadata enable --notify`.",
+		"# Reserved: `metadata enable --notify` records a preference; transition notification delivery is not implemented.",
 		"# [ui.toast]",
 		`# delivery = "herdr"`,
 		"",
@@ -238,28 +239,37 @@ func reportTokens(runtimeRoot, session, kind, id, source string, tokens map[stri
 func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
 	source := sourceID(s)
-	tasks, err := s.AllTasks()
-	if err != nil {
-		return err
-	}
+	snapshot := inboxview.Read(s)
 	active := 0
-	decisions := 0
-	for _, task := range tasks {
+	for _, row := range snapshot.Tasks {
+		task := row.Record
 		if asString(func() any { v, _ := task.Get("status"); return v }()) == "archived" {
 			continue
 		}
 		active++
-		open := 0
-		for _, raw := range asList(func() any { v, _ := task.Get("questions"); return v }()) {
-			q := asObject(raw)
-			if s, _ := q.Get("status"); !ask.Discharged(s) {
-				open++
-			}
-		}
-		decisions += open
 		state := "running"
-		if open > 0 {
+		decision, inspection, review, answer, refresh := false, false, false, false, false
+		for _, item := range row.Items {
+			decision = decision || item.Kind == presentation.Decision
+			inspection = inspection || item.Kind == presentation.Inspection
+			review = review || (item.Owner == presentation.Coordinator && item.Kind == presentation.Routine)
+			answer = answer || item.Reason == "answer-unapplied"
+			refresh = refresh || item.Reason == "refresh-unapplied"
+		}
+		for _, gap := range snapshot.Gaps {
+			inspection = inspection || gap.TaskID == row.ID
+		}
+		switch {
+		case decision:
 			state = "needs-decision"
+		case inspection:
+			state = "needs-attention"
+		case review:
+			state = "review-ready"
+		case answer:
+			state = "answer-pending"
+		case refresh:
+			state = "instruction-refresh-pending"
 		}
 		repo := asString(func() any { v, _ := task.Get("repository"); return v }())
 		tokens := map[string]string{
@@ -282,14 +292,11 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 		}
 	}
 	rootTokens := map[string]string{}
-	if decisions == 1 {
-		rootTokens["sum_inbox"] = "1 decision"
-	} else if decisions > 1 {
-		rootTokens["sum_inbox"] = fmt.Sprintf("%d decisions", decisions)
-	} else {
-		rootTokens["sum_inbox"] = "clear"
-	}
+	rootTokens["sum_inbox"] = inboxToken(snapshot)
 	rootTokens["sum_tasks"] = fmt.Sprintf("%d active", active)
+	if !snapshot.Complete {
+		rootTokens["sum_tasks"] += "; coverage unknown"
+	}
 	coordPane := asString(func() any { v, _ := ctx.Get("pane"); return v }())
 	if coordPane != "" {
 		if err := reportTokens(runtimeRoot, session, "pane", coordPane, source, rootTokens); err != nil {
@@ -297,6 +304,42 @@ func project(s *store.Store, ctx *ordjson.Object, runtimeRoot string) error {
 		}
 	}
 	return nil
+}
+
+func inboxToken(snapshot inboxview.Snapshot) string {
+	labels := []string{}
+	if !snapshot.Complete {
+		labels = append(labels, "unknown")
+	}
+	for _, count := range []struct {
+		n                int
+		singular, plural string
+	}{
+		{snapshot.Counts.Decisions, "decision", "decisions"},
+		{snapshot.Counts.Coordinator - snapshot.Counts.Inspection, "coordinator", "coordinator"},
+		{snapshot.Counts.Worker, "worker", "worker"},
+		{snapshot.Counts.Inspection, "inspection", "inspections"},
+	} {
+		if count.n == 1 {
+			labels = append(labels, "1 "+count.singular)
+		} else if count.n > 1 {
+			labels = append(labels, fmt.Sprintf("%d %s", count.n, count.plural))
+		}
+	}
+	if len(labels) == 0 {
+		return "clear"
+	}
+	text := strings.Join(labels, "; ")
+	if len(text) <= 80 {
+		return text
+	}
+	// Herdr caps tokens at 80 bytes. Keep exact decisions and unknown coverage;
+	// full compact counts remain available when the other counts will not fit.
+	prefix := ""
+	if !snapshot.Complete {
+		prefix = "unknown; "
+	}
+	return fmt.Sprintf("%s%d decisions; other work pending", prefix, snapshot.Counts.Decisions)
 }
 
 // pipelineToken is the one gate the task is waiting on, derived from the same records the rundown reads.

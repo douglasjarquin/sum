@@ -27,6 +27,10 @@ func jsonInt(n int) json.Number {
 // per session and writes nothing. Delivery (`pump`, `init`) and maintenance (`sweep`, `pr reconcile`, `cleanup`) are
 // separate commands.
 type Options struct {
+	Compact     bool
+	After       int
+	Limit       int
+	MaxChars    int
 	Inbox       bool
 	Live        bool
 	Ctx         *ordjson.Object
@@ -35,6 +39,9 @@ type Options struct {
 }
 
 func Status(s *store.Store, opts Options) (*ordjson.Object, error) {
+	if opts.Compact {
+		return Compact(s, opts)
+	}
 	tasks, err := s.AllTasks()
 	if err != nil {
 		return nil, err

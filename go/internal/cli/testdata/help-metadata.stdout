@@ -1,0 +1,12 @@
+topic: metadata
+help: "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle"
+arguments: []
+subcommands:
+  enable: "Coordinator only: project saved task tokens to recorded endpoints and enable projection state"
+  disable: "Coordinator only: mark saved metadata projection disabled"
+  status: Recorded projection summary and health; writes nothing and probes no live capabilities
+  sync: "Coordinator only: project saved tokens to recorded endpoints, including unchanged values"
+  snippet: "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum"
+  inbox: "Print the bounded saved compact inbox in this output, including outside Herdr; no popup, sync, or writes"
+read_only: false
+read_only_subcommands[3]: inbox,snippet,status

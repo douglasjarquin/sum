@@ -30,7 +30,7 @@ commands:
   pump: "One budgeted delivery pass over saved pending returns: at most one coalesced notice per recipient, deferred recipients named; never calls GitHub or cleans up"
   sweep: "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks"
   hook: "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon"
-  metadata: "Optional native visibility: project sum task state into namespaced Herdr `sum_*` tokens (and, opt-in, notifications); display only, never the agent lifecycle"
+  metadata: "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle"
   attention: "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays"
   bind: "Coordinator only: rebind this pane as a task's parent or adopt an existing worker pane; never launches"
   backup: "Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code"
@@ -46,7 +46,7 @@ commands:
   refresh: "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status"
   release: "Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates"
   update: "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running"
-read_only[28]: brief-list,context,doctor,env-show,execution-show,factory-merge-check,factory-status,graph-config,graph-status,help,hook-status,inbox,metadata-snippet,metadata-status,preset-list,preset-show,project-list,project-show,quota,refresh-status,release-contract,release-list,release-show,settings-show,show,skills-check,status,update-status
+read_only[29]: brief-list,context,doctor,env-show,execution-show,factory-merge-check,factory-status,graph-config,graph-status,help,hook-status,inbox,metadata-inbox,metadata-snippet,metadata-status,preset-list,preset-show,project-list,project-show,quota,refresh-status,release-contract,release-list,release-show,settings-show,show,skills-check,status,update-status
 usage: sumctl help TOPIC for one command's arguments and subcommands
 context: "sumctl context TASK_ID [--section NAME ...] [--role worker|reviewer|coordinator] [--since CURSOR]"
 note: Generated from the CLI definition; no manual to page through. Herdr CLI facts come from `herdr --skill`.

@@ -73,12 +73,12 @@ Run `update apply` and `refresh request` while a service serves requests and con
 
 ## 10. Native metadata in the real sidebar
 
-With two real tasks running, run `sumctl metadata enable`, merge the printed `metadata snippet` rows into your own `config.toml`, and `herdr server reload-config`.
-Confirm that a worker asking through `sumctl ask` shows `needs-decision` beside its `working`/`idle` icon within one helper command, that answering and `resolve` return it to `running`, that a report shows `review-ready` and a merged PR `merged-cleanup-pending` until cleanup, and that `refresh request` shows `instruction-refresh-pending` with `r1>r2` until the worker adopts.
-Rename a worker pane by hand and give a workspace your own label; confirm both survive every transition and `metadata disable`.
-Enable `--notify` with `[ui.toast] delivery = "herdr"` and confirm one toast per transition naming only task id, state, and repository, none for duplicate events or unchanged rundowns, and none carrying question text.
-Run `metadata inbox` and confirm the popup shows the ordinary `sumctl inbox` JSON and closes on Enter.
-Record how often you asked the coordinator for a status explanation before and after; the intended result is fewer such turns, not a prettier sidebar.
+With two real tasks running and explicit authorization for the lab, run `sumctl metadata enable`, merge the printed `metadata snippet` rows into your own `config.toml`, and run `herdr server reload-config`.
+After recording each transition, run `metadata sync` explicitly. Confirm that an open question shows `needs-decision`, an answered question becomes `answer-pending`, a report or review shows `review-ready`, and native attention shows `needs-attention`. Compare the coordinator's known decision count with `inbox --compact`; an unreadable neighboring source must show unknown coverage. Herdr's own agent status and human labels must remain separate.
+Run `metadata inbox` outside Herdr and confirm it prints the bounded compact inbox, matching `inbox --compact` counts and leaving saved records unchanged.
+
+The #241 follow-up targets are native opening, capability probing, distinct installation ownership, occupant checks, safe clearing, and writes only when values change. Transition notification delivery is also unimplemented; `--notify` currently records a preference only. Do not record these checks as passed against this revision. Historical validation reports retain their original scope.
+Any observation of reduced coordinator narration needs a separate authenticated harness run after explicit instruction refresh and adoption. Compact byte measurements do not establish that behavior.
 
 ## 11. Managed project clones and explicit skill delivery
 

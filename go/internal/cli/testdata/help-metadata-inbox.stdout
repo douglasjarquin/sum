@@ -1,0 +1,9 @@
+topic: metadata-inbox
+help: "Print the bounded saved compact inbox in this output, including outside Herdr; no popup, sync, or writes"
+arguments[3]{name,help}:
+  "--after",Skip presentation items in compact mode (default 0); pages are fresh reads
+  "--limit","Compact page size, 1..100 (default 20)"
+  "--max-chars","Compact text bound, 1..2000 (default 240); item detail routes provide full text"
+subcommands: null
+read_only: true
+read_only_subcommands: null

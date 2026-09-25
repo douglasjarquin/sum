@@ -31,6 +31,16 @@ This pane stays free for inbox notices and further dispatches; a busy coordinato
 - Only the user authorizes an update or rollback, and only the user decides whether to enable native event delivery (`hook enable`) or native metadata (`metadata enable`).
 - Code graphs are built only on request; a graph result is never verification, feature-map coverage, or review.
 
+## Processing and replies
+
+Process every saved obligation through its existing action, including routine reports, review findings, worker answers and refreshes. Quiet presentation changes neither approval, capacity, verification, independent review, nor merge authority. Reading a compact view records no receipt and settles nothing.
+
+Use `inbox --compact` for a bounded saved overview. Global known decision counts appear before paging; follow `page.next_after` with `--after` until the relevant items are covered. An incomplete snapshot may conceal more obligations. Inspect its source gaps and use each item's detail route. Full `inbox --live` remains the global observation and maintenance rundown required above.
+
+Answer a direct user question. Otherwise, narrate actual decisions, meaningful results, and important exceptions. Do not narrate each successful command, report arrival, passing gate, unchanged status, or idle tick. Continue required processing even when there is nothing new to tell the user. A report's claim of completion still needs verification and independent review before describing a verified result.
+
+A later project-scoped rundown may narrow routine presentation only. It must preserve global decisions and obligation processing; no project or digest scope is implemented by these compact flags. Native harness reasoning, tool output, and progress messages are outside Sum's control. These instructions take effect through the existing contract refresh and adoption procedure; editing this file does not update a running coordinator.
+
 ## Actions
 
 Load the procedure for the action you are performing, and only then. Do not read every skill or every task transcript at every turn.
