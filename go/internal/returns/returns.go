@@ -82,10 +82,20 @@ func OpenAttention(task *ordjson.Object) []*ordjson.Object {
 }
 
 func OpenObligations(s *store.Store, task *ordjson.Object) ([]*ordjson.Object, error) {
+	if status, _ := task.Get("status"); status == "archived" {
+		return nil, nil
+	}
+	versionsObj, _ := versions.ReadVersions(s, task)
+	return OpenObligationsFromVersions(task, versionsObj), nil
+}
+
+// OpenObligationsFromVersions derives obligations from validated saved sources.
+// A nil versionsObj omits refresh facts; presentation readers must expose the read gap.
+func OpenObligationsFromVersions(task, versionsObj *ordjson.Object) []*ordjson.Object {
 	var items []*ordjson.Object
 	statusValue, _ := task.Get("status")
 	if statusValue == "archived" {
-		return items, nil
+		return items
 	}
 
 	if questionsValue, ok := task.Get("questions"); ok {
@@ -183,8 +193,7 @@ func OpenObligations(s *store.Store, task *ordjson.Object) ([]*ordjson.Object, e
 		items = append(items, item)
 	}
 
-	versionsObj, err := versions.ReadVersions(s, task)
-	if err == nil {
+	if versionsObj != nil {
 		requestedValue, _ := versionsObj.Get("requested")
 		requested, requestedIsString := requestedValue.(string)
 		if requestedIsString && requested != "" {
@@ -229,7 +238,7 @@ func OpenObligations(s *store.Store, task *ordjson.Object) ([]*ordjson.Object, e
 		}
 	}
 
-	return items, nil
+	return items
 }
 
 // reviewClosers are the delivery records through which the coordinator acts on a verdict for their candidate.
