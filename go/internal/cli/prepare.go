@@ -17,8 +17,9 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 			extra                                                               []string
 		)
 		cmd := &cobra.Command{
-			Use:  name,
-			Args: cobra.NoArgs,
+			Use:         name,
+			Annotations: map[string]string{projectsAnnotation: "all"},
+			Args:        cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
 				if brief == "" || (kind != "ship" && kind != "scout") {
 					return fmt.Errorf("invalid %s arguments", name)

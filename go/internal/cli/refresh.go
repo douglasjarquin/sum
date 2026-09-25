@@ -40,8 +40,9 @@ func (o *rootOptions) addRefreshCommands(root *cobra.Command) {
 	var requestTasks []string
 	var coordinator bool
 	requestCmd := &cobra.Command{
-		Use:  "request",
-		Args: cobra.NoArgs,
+		Use:         "request",
+		Annotations: map[string]string{projectsAnnotation: "all"},
+		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st, err := o.openStore("refresh-request")
 			if err != nil {
@@ -64,8 +65,9 @@ func (o *rootOptions) addRefreshCommands(root *cobra.Command) {
 
 	var adoptCoordinator bool
 	adoptCmd := &cobra.Command{
-		Use:  "adopt REVISION",
-		Args: cobra.ExactArgs(1),
+		Use:         "adopt REVISION",
+		Annotations: map[string]string{projectsAnnotation: "all"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !adoptCoordinator {
 				return usageError("refresh adopt", args)

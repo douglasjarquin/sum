@@ -410,7 +410,7 @@ func TestCompactLiveHasExplicitPageScopeAndNoStateWrites(t *testing.T) {
 func TestMetadataProjectionAndCompactAgree(t *testing.T) {
 	clearHerdrEnv(t)
 	home := presentationHome(t)
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema":1,"sum_version":"0.1.0","created_at":"2026-01-01T00:00:00Z"}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema":1,"sum_version":"0.1.0","created_at":"2026-01-01T00:00:00Z","instance":"presentation0001"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	herdrEnv(t, home)
@@ -443,7 +443,7 @@ func TestMetadataProjectionAndCompactAgree(t *testing.T) {
 	}
 	view := compactRead(t, home, "inbox", "--compact")
 	counts := view["counts"].(map[string]any)
-	compactRead(t, home, "metadata", "sync")
+	compactRead(t, home, "metadata", "enable")
 	calls, err := os.ReadFile(filepath.Join(fake, "calls.jsonl"))
 	if err != nil {
 		t.Fatal(err)

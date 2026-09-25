@@ -123,9 +123,10 @@ if args[:2] == ["api", "schema"]:
     if "--json" not in args: fail("text_output", "the fake only speaks --json")
     defs = {"PaneReportMetadataParams": {"properties": {"pane_id": {}, "source": {}, "tokens": {}, "title": {}, "state_labels": {}}},
             "WorkspaceReportMetadataParams": {"properties": {"workspace_id": {}, "source": {}, "tokens": {}}},
-            "NotificationShowParams": {"properties": {"title": {}, "body": {}, "sound": {}}}}
-    if os.environ.get("FAKE_NO_METADATA"): defs = {"NotificationShowParams": defs["NotificationShowParams"]}
-    save(); print(json.dumps({"protocol": 20, "schema_version": 1, "schemas": {"request": {"$defs": defs}}})); sys.exit(0)
+            "NotificationShowParams": {"properties": {"title": {}, "body": {}, "sound": {}}},
+            "PluginPaneOpenParams": {"properties": {"entrypoint": {}, "placement": {}, "plugin_id": {}, "target_pane": {}, "focus": {}, "direction": {}, "cwd": {}, "env": {}}}}
+    if os.environ.get("FAKE_NO_METADATA"): defs = {"NotificationShowParams": defs["NotificationShowParams"]}  # An older build: no token or plugin-pane surface.
+    save(); print(json.dumps({"protocol": 22, "schema_version": 1, "schemas": {"request": {"$defs": defs}}})); sys.exit(0)
 if args[1:2] == ["report-metadata"] and args[0] in ("pane", "workspace"):
     if os.environ.get("FAKE_NO_METADATA"): print(f"herdr {args[0]} commands:\n  ...", file=sys.stderr); sys.exit(2)  # An older build: usage text, exit 2, no JSON.
     if "--source" not in args: fail("invalid_params", "source required")

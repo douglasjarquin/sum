@@ -165,6 +165,40 @@ func CallRawContext(ctx context.Context, herdrPath, session string, timeout time
 	return run(ctx, herdrPath, timeout, fullArgs...)
 }
 
+// CallCode runs a mutation whose success prints nothing (0.9.0 report-metadata). A refused call returns Herdr's
+// error code with a nil error; a helper that did not run, timed out, or failed without a code returns the error.
+func CallCode(herdrPath, session string, timeout time.Duration, args ...string) (string, error) {
+	if !sessionNamePattern.MatchString(session) {
+		return "", fmt.Errorf("Invalid session name.")
+	}
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "--session" || strings.HasPrefix(a, "--session=") {
+			return "", fmt.Errorf("Do not override sum's explicit Herdr session inside command arguments.")
+		}
+	}
+	stdout, stderr, code, err := runRaw(context.Background(), herdrPath, timeout, append([]string{"--session", session}, args...)...)
+	if err != nil {
+		return "", err
+	}
+	if code == 0 {
+		return "", nil
+	}
+	if herdrCode := ErrorCode(stderr); herdrCode != "" {
+		return herdrCode, nil
+	}
+	detail := strings.TrimSpace(stderr)
+	if detail == "" {
+		detail = strings.TrimSpace(stdout)
+	}
+	if len(detail) > 300 {
+		detail = detail[len(detail)-300:]
+	}
+	return "", fmt.Errorf("%s %s exited %d: %s", filepath.Base(herdrPath), strings.Join(args[:min(2, len(args))], " "), code, detail)
+}
+
 func Call(herdrPath, session string, timeout time.Duration, args ...string) (any, error) {
 	return CallContext(context.Background(), herdrPath, session, timeout, args...)
 }

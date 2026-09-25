@@ -202,38 +202,49 @@ def main():
             assert logs and all(l["status"] == "succeeded" for l in logs), [(l.get("event"), l.get("status"), l.get("exit_code"), (l.get("stderr") or "")[-300:]) for l in logs]
             status = sumctl("--home", str(state), "hook", "status")
             assert status["enabled"] and status["registry"]["enabled"] and not status["degraded"], status
-            # Native metadata lab (#18): real `report-metadata` tokens on the task workspaces, the verified worker pane, and the coordinator
-            # pane; an unrelated workspace untouched; the read-only inbox entrypoint opened as an ordinary pane; disable clears only sum's keys.
+            # Native metadata lab (#18, #241): real `report-metadata` tokens on the task workspaces, the verified worker pane, and the coordinator
+            # pane under an instance-derived source; an unrelated workspace untouched; the grouped view opened through the plugin entrypoint;
+            # disable clears only sum's recorded keys.
             started = time.monotonic()
             projected = sumctl("--home", str(state), "metadata", "enable")
             enable_wall = round((time.monotonic() - started) * 1000)
-            assert projected["capabilities"]["pane_tokens"] and projected["capabilities"]["workspace_tokens"] and projected["capabilities"]["notification"], projected["capabilities"]
+            assert projected["capabilities"]["pane_tokens"] and projected["capabilities"]["workspace_tokens"] and projected["capabilities"]["plugin_pane_open"], projected["capabilities"]
+            assert projected["source"].startswith("sum:") and not projected["source"].endswith(state.name), projected["source"]
             rows = {r["task"]: r for r in projected["sync"]["tasks"]}
             assert len(rows) == 13 and all(r["state"] == "needs-decision" for r in rows.values()), {k: v["state"] for k, v in rows.items()}
             workspace = cli("workspace", "get", task["workspace"])["workspace"]
-            assert workspace["tokens"] == {"sum_state": "needs-decision", "sum_task": task["id"], "sum_repo": "repo", "sum_rev": "r1>r2"}, workspace  # The earlier refresh request left r2 requested.
+            expected = {"sum_state": "needs-decision", "sum_task": task["id"], "sum_repo": "repo", "sum_rev": "r1>r2"}  # The earlier refresh request left r2 requested.
+            assert all(workspace["tokens"].get(k) == v for k, v in expected.items()) and "sum_pipeline" in workspace["tokens"], workspace
+            assert all(s == projected["source"] for s in workspace["token_sources"].values()), workspace
             assert workspace["label"] == f"sum-{task['id']}", workspace  # The label Herdr gave the worktree workspace is untouched.
             pane_row = next(e for e in rows[task["id"]]["endpoints"] if e["kind"] == "pane")
             assert pane_row["outcome"] == "written" and pane_row["identity"] == "ok", pane_row  # A shell pane in the checkout: verified by `pane get`, no agent needed.
             assert cli("pane", "get", task["pane"])["pane"]["tokens"]["sum_state"] == "needs-decision"
             root_tokens = cli("pane", "get", parent["root_pane"]["pane_id"])["pane"]["tokens"]
-            assert root_tokens == {"sum_inbox": "13 decision · contract r1", "sum_tasks": "13 active"}, root_tokens  # The refresh request also requested the coordinator contract.
+            assert root_tokens == {"sum_inbox": "13 decisions", "sum_tasks": "13 active"}, root_tokens
             assert "tokens" not in cli("workspace", "get", cli("pane", "get", stranger)["pane"]["workspace_id"])["workspace"], "unrelated workspace received tokens"
             again = sumctl("--home", str(state), "metadata", "sync")
-            assert again["forgotten"] == [] and again["herdr_calls"] == 2 and not any(e["outcome"] == "written" for r in again["tasks"] for e in r["endpoints"]), again  # Real Herdr still holds every token: one snapshot, one workspace list, nothing written.
-            opened = sumctl("--home", str(state), "metadata", "inbox", "--placement", "split")
-            inbox_pane = opened["pane"]
-            assert inbox_pane and inbox_pane.split(":")[0] == parent["workspace"]["workspace_id"], opened
-            cli("pane", "wait-output", inbox_pane, "--match", "records only; press Enter to close", "--timeout", "15000", timeout=20)
+            assert again["forgotten"] == [] and again["ambiguous"] == [] and again["herdr_calls"] == 1, again  # One schema probe; every endpoint unchanged, nothing observed or written.
+            assert not any(e["outcome"] == "written" for r in again["tasks"] for e in r["endpoints"]), again
+            status = sumctl("--home", str(state), "metadata", "status")
+            assert status["native_open"]["available"] and status["resources"] == 13 and not status["degraded"], status
+            opened = sumctl("--home", str(state), "metadata", "inbox", "--open", "--placement", "split")
+            assert opened["open"]["outcome"] == "opened" and opened["open"]["placement"] == "split", opened["open"]
+            inbox_pane = opened["open"]["pane"]
+            assert inbox_pane and inbox_pane.split(":")[0] == parent["workspace"]["workspace_id"], opened["open"]
+            cli("pane", "wait-output", inbox_pane, "--match", "q quit", "--timeout", "15000", timeout=20)  # The grouped view's command line.
             text = subprocess.run([str(binary), "--session", name, "pane", "read", inbox_pane, "--source", "recent-unwrapped", "--lines", "200"], env=env, check=True,
-                                  text=True, capture_output=True, timeout=10).stdout  # 0.9.0 prints the pane text itself, not JSON.
-            assert task["id"] in text and '"guarantee"' in text, text[-500:]
+                                  text=True, capture_output=True, timeout=10).stdout  # 0.9.0 prints the text itself, not JSON.
+            assert "SUM  13 decisions" in text, text[-500:]
             cli("pane", "close", inbox_pane)  # Only the pane this lab opened.
+            after_open = sumctl("--home", str(state), "metadata", "status")
+            assert after_open["last_pass"] == status["last_pass"], "opening the inbox must not project"
             cleared = sumctl("--home", str(state), "metadata", "disable")
             assert len(cleared["cleared"]) == 27, len(cleared["cleared"])  # 13 workspaces, 13 panes, the coordinator pane.
+            assert all(r["cleared"] and "refused" not in r and "failed" not in r for r in cleared["cleared"]), cleared["cleared"]
             assert "tokens" not in cli("workspace", "get", task["workspace"])["workspace"] and "tokens" not in cli("pane", "get", parent["root_pane"]["pane_id"])["pane"]
             print(f"PASS: real Herdr 0.9.0 accepted sum's namespaced tokens on 13 workspaces, 13 verified panes, and the coordinator pane in {enable_wall} ms "
-                  f"({projected['fanout']['herdr_calls']} observation calls), left labels and an unrelated workspace alone, opened the read-only inbox as an ordinary pane, and cleared exactly sum's keys on disable.")
+                  f"({projected['sync']['herdr_calls']} Herdr calls), left labels and an unrelated workspace alone, opened the grouped inbox view as a split pane, and cleared exactly sum's keys on disable.")
             disabled = sumctl("--home", str(state), "hook", "disable", "--unlink")
             assert disabled["action"] == "unlinked" and cli("plugin", "list", "--plugin", hook["plugin_id"], "--json")["plugins"] == []
             print(f"PASS: real Herdr 0.9.0 linked the lab plugin live, ran the handler for idle/blocked/working edges with the documented environment, "

@@ -188,8 +188,9 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 
 	var acknowledge bool
 	archiveCmd := &cobra.Command{
-		Use:  "archive TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "archive TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("archive")
 			if err != nil {
@@ -214,8 +215,9 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 
 	var askKey, askText, askFile string
 	askCmd := &cobra.Command{
-		Use:  "ask TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "ask TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("ask")
 			if err != nil {
@@ -244,8 +246,9 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	var answerText, answerFile, answerReason string
 	var answerClose bool
 	answerCmd := &cobra.Command{
-		Use:  "answer TASK QUESTION",
-		Args: cobra.ExactArgs(2),
+		Use:         "answer TASK QUESTION",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("answer")
 			if err != nil {
@@ -288,8 +291,9 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	root.AddCommand(answerCmd)
 
 	root.AddCommand(&cobra.Command{
-		Use:  "resolve TASK QUESTION",
-		Args: cobra.ExactArgs(2),
+		Use:         "resolve TASK QUESTION",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("resolve")
 			if err != nil {
@@ -434,8 +438,9 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 
 	var seen bool
 	attentionCmd := &cobra.Command{
-		Use:  "attention TASK ATTENTION",
-		Args: cobra.ExactArgs(2),
+		Use:         "attention TASK ATTENTION",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !seen {
 				return usageError("attention", []string{"--seen"})
@@ -462,8 +467,9 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	var workerPane string
 	var parentOnly bool
 	bindCmd := &cobra.Command{
-		Use:  "bind TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "bind TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("bind")
 			if err != nil {
@@ -486,8 +492,9 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 
 	var reportText, reportFile, handoffPath string
 	reportCmd := &cobra.Command{
-		Use:  "report TASK",
-		Args: cobra.ExactArgs(1),
+		Use:         "report TASK",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			st, err := o.openStore("report")
 			if err != nil {
