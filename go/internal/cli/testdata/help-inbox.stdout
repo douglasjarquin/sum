@@ -1,13 +1,14 @@
 topic: inbox
 help: "Only tasks that need attention: questions, reports, errors, cleanup; reads only, like status"
-arguments[10]{name,help}:
+arguments[11]{name,help}:
   "--live",Add one bounded Herdr agent list per session; compact observes only rendered page tasks; writes nothing
   "--compact",Bounded saved presentation with global known counts; full output remains the default
   "--after",Skip presentation items in compact mode (default 0); pages are fresh reads
-  "--limit","Compact page size, 1..100 (default 20)"
+  "--limit","Compact page size, or digest outcomes per response with --grouped, 1..100 (default 20)"
   "--max-chars","Compact text bound, 1..2000 (default 240); item detail routes provide full text"
-  "--grouped",Read-only overview grouped by recorded project identity with global known counts; cannot combine with --compact or --live
-  "--project","Focus one project key (requires --grouped); global counts, gaps, and needs_you stay"
+  "--grouped",Read-only overview grouped by recorded project identity with global known counts and each project's factory digest row; cannot combine with --compact or --live
+  "--project","Focus one project key (requires --grouped); global counts, gaps, and needs_you stay and the digest covers that project"
+  "--since","Digest cursor from an earlier grouped read (requires --grouped); labels new outcomes, or resyncs with the full digest when foreign, stale or truncated"
   "--view","Explicit-refresh terminal view of the grouped overview (requires --grouped): n/p move, o expand, d detail, b back, r refresh, c collapse-all, q quit"
   "--width",View width in cells (default COLUMNS or 80)
   "--height",View height in lines (default LINES or 24)

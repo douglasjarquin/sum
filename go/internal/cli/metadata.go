@@ -275,7 +275,15 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 				if paged {
 					return fmt.Errorf("--after, --limit, and --max-chars cannot combine with --grouped")
 				}
-				return grouped.run(cmd, o.home)
+				st, err := store.Open(o.home)
+				if err != nil {
+					return err
+				}
+				view, err := statuscmd.Grouped(st, grouped.project)
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
 			st, err := store.Open(o.home)
 			if err != nil {

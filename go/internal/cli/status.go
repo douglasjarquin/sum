@@ -17,9 +17,6 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 			Use:  name,
 			Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				if !compact && pagingFlagsChanged(cmd) {
-					return fmt.Errorf("--after, --limit, and --max-chars require --compact")
-				}
 				if err := grouped.check(cmd); err != nil {
 					return err
 				}
@@ -27,7 +24,16 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 					if compact || live {
 						return fmt.Errorf("--grouped cannot combine with --compact or --live")
 					}
-					return grouped.run(cmd, o.home)
+					if cmd.Flags().Changed("after") || cmd.Flags().Changed("max-chars") {
+						return fmt.Errorf("--after and --max-chars require --compact; --grouped takes --limit for the digest page")
+					}
+					if limit < 1 || limit > statuscmd.CompactMaxLimit {
+						return fmt.Errorf("--limit accepts 1..%d", statuscmd.CompactMaxLimit)
+					}
+					return grouped.run(cmd, o.home, limit)
+				}
+				if !compact && pagingFlagsChanged(cmd) {
+					return fmt.Errorf("--after, --limit, and --max-chars require --compact")
 				}
 				st, err := store.Open(o.home)
 				if err != nil {
@@ -60,6 +66,6 @@ func pagingFlagsChanged(cmd *cobra.Command) bool {
 
 func compactFlags(cmd *cobra.Command, after, limit, maxChars *int) {
 	cmd.Flags().IntVar(after, "after", 0, "Skip this many presentation items")
-	cmd.Flags().IntVar(limit, "limit", statuscmd.CompactLimit, "Maximum presentation items (1..100)")
+	cmd.Flags().IntVar(limit, "limit", statuscmd.CompactLimit, "Maximum presentation items, or digest outcomes with --grouped (1..100)")
 	cmd.Flags().IntVar(maxChars, "max-chars", statuscmd.CompactChars, "Maximum characters per text (1..2000); use detail for full text")
 }

@@ -834,8 +834,7 @@ func (b *Boundary) canonical() []byte {
 
 // Fingerprint identifies this exact boundary; the receipt records it.
 func (b *Boundary) Fingerprint() string {
-	sum := sha256.Sum256(b.canonical())
-	return hex.EncodeToString(sum[:])[:16]
+	return TokenFingerprint(b.canonical())
 }
 
 // Token is the opaque form: base64url(payload) + "." + fingerprint.
@@ -844,7 +843,33 @@ func (b *Boundary) Token() (string, error) {
 	if len(payload) == 0 {
 		return "", fmt.Errorf("boundary could not be encoded")
 	}
-	return base64.RawURLEncoding.EncodeToString(payload) + "." + b.Fingerprint(), nil
+	return EncodeToken(payload), nil
+}
+
+// TokenFingerprint is the shared self-check for opaque tokens: sha256 of the canonical payload, 16 hex chars.
+// The wake boundary and the factory digest cursor share this encoding but never each other's payload schema.
+func TokenFingerprint(canonical []byte) string {
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// EncodeToken is base64url(payload) + "." + fingerprint.
+func EncodeToken(canonical []byte) string {
+	return base64.RawURLEncoding.EncodeToString(canonical) + "." + TokenFingerprint(canonical)
+}
+
+// DecodeToken splits and decodes a token without validating the payload; the caller re-derives the fingerprint
+// from its own canonical form so a token of another kind never verifies.
+func DecodeToken(token string) (payload []byte, fingerprint string, err error) {
+	encoded, fingerprint, ok := strings.Cut(strings.TrimSpace(token), ".")
+	if !ok || encoded == "" || fingerprint == "" {
+		return nil, "", fmt.Errorf("not a token")
+	}
+	payload, err = base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, "", fmt.Errorf("payload is not base64url")
+	}
+	return payload, fingerprint, nil
 }
 
 // ParseBoundary decodes a token and verifies its fingerprint; anything else is unverifiable and consumes nothing.
@@ -852,13 +877,12 @@ func ParseBoundary(token string) (*Boundary, error) {
 	unverifiable := func(why string) (*Boundary, error) {
 		return nil, fmt.Errorf("The boundary token is not verifiable (%s); nothing was consumed. Take a fresh one from %s.", why, wakeShow)
 	}
-	payload, fingerprint, ok := strings.Cut(strings.TrimSpace(token), ".")
-	if !ok || payload == "" || fingerprint == "" {
-		return unverifiable("not a boundary token")
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(payload)
+	raw, fingerprint, err := DecodeToken(token)
 	if err != nil {
-		return unverifiable("payload is not base64url")
+		if err.Error() == "not a token" {
+			return unverifiable("not a boundary token")
+		}
+		return unverifiable(err.Error())
 	}
 	var b Boundary
 	if err := json.Unmarshal(raw, &b); err != nil {

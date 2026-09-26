@@ -1,3 +1,30 @@
 schema: 1
 projects: []
 note: Lane state only; tick observes GitHub. Nothing was dispatched.
+digest:
+  schema: 1
+  installation: ""
+  scope: factory
+  counts:
+    tasks: 0
+    decisions: 0
+    worker: 0
+    coordinator: 0
+    inspection: 0
+    resolved: 0
+    unknown_sources: 0
+  complete: true
+  gaps: []
+  needs_you: []
+  rows: []
+  since: false
+  deltas: []
+  page:
+    limit: 20
+    rendered: 0
+    total: 0
+    continuation: false
+    truncated: false
+  resync: null
+  cursor: eyJzY2hlbWEiOjEsImtpbmQiOiJmYWN0b3J5LWRpZ2VzdCIsImluc3RhbGxhdGlvbiI6IiIsInNjb3BlIjoiZmFjdG9yeSIsInByb2plY3QiOiIiLCJsZWF2ZXMiOltdLCJvdXRjb21lcyI6W10sInBhZ2UiOnsibGltaXQiOjIwLCJyZW5kZXJlZCI6MCwidG90YWwiOjAsImNvbnRpbnVhdGlvbiI6ZmFsc2UsInRydW5jYXRlZCI6ZmFsc2V9fQ.a6cd431b7059bf08
+  note: "A view of saved records: nothing was observed, ticked, claimed, merged or cleaned up. next_tick_at is the time the last idle tick recorded, not a scheduled wake. pr/ci times are saved observations, not freshness. Counts precede project focus and paging; a resync means the cursor could not be honoured and nothing here is labelled new."

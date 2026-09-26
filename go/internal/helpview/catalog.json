@@ -161,7 +161,7 @@
       },
       {
         "name": "--limit",
-        "help": "Compact page size, 1..100 (default 20)"
+        "help": "Compact page size, or digest outcomes per response with --grouped, 1..100 (default 20)"
       },
       {
         "name": "--max-chars",
@@ -169,11 +169,15 @@
       },
       {
         "name": "--grouped",
-        "help": "Read-only overview grouped by recorded project identity with global known counts; cannot combine with --compact or --live"
+        "help": "Read-only overview grouped by recorded project identity with global known counts and each project's factory digest row; cannot combine with --compact or --live"
       },
       {
         "name": "--project",
-        "help": "Focus one project key (requires --grouped); global counts, gaps, and needs_you stay"
+        "help": "Focus one project key (requires --grouped); global counts, gaps, and needs_you stay and the digest covers that project"
+      },
+      {
+        "name": "--since",
+        "help": "Digest cursor from an earlier grouped read (requires --grouped); labels new outcomes, or resyncs with the full digest when foreign, stale or truncated"
       },
       {
         "name": "--view",
@@ -210,7 +214,7 @@
       },
       {
         "name": "--limit",
-        "help": "Compact page size, 1..100 (default 20)"
+        "help": "Compact page size, or digest outcomes per response with --grouped, 1..100 (default 20)"
       },
       {
         "name": "--max-chars",
@@ -218,11 +222,15 @@
       },
       {
         "name": "--grouped",
-        "help": "Read-only overview grouped by recorded project identity with global known counts; cannot combine with --compact or --live"
+        "help": "Read-only overview grouped by recorded project identity with global known counts and each project's factory digest row; cannot combine with --compact or --live"
       },
       {
         "name": "--project",
-        "help": "Focus one project key (requires --grouped); global counts, gaps, and needs_you stay"
+        "help": "Focus one project key (requires --grouped); global counts, gaps, and needs_you stay and the digest covers that project"
+      },
+      {
+        "name": "--since",
+        "help": "Digest cursor from an earlier grouped read (requires --grouped); labels new outcomes, or resyncs with the full digest when foreign, stale or truncated"
       },
       {
         "name": "--view",
@@ -2327,7 +2335,7 @@
     "help": "Per-project software factory: enable a lane, tick for the next ready issue, claim it, and merge only at high confidence; never a daemon",
     "arguments": [],
     "subcommands": {
-      "status": "Enabled factories and held lanes; writes nothing",
+      "status": "Enabled factories and held lanes plus the evidence digest: per project the current issue, task, stage, action owner, saved blocker, rendered outcomes and a caller-held cursor; writes nothing",
       "enable": "Coordinator only: enable one enrolled project's factory lane",
       "disable": "Coordinator only: disable a factory that holds no lanes",
       "tick": "One GitHub observation for ready work; records next_tick_at when idle; never sleeps or dispatches",
@@ -2344,11 +2352,19 @@
   },
   "factory-status": {
     "topic": "factory-status",
-    "help": "Enabled factories and held lanes; writes nothing",
+    "help": "Enabled factories and held lanes plus the evidence digest: per project the current issue, task, stage, action owner, saved blocker, rendered outcomes and a caller-held cursor; writes nothing",
     "arguments": [
       {
         "name": "--project",
-        "help": "Limit the listing to one owner/repo"
+        "help": "Limit the listing and the digest to one owner/repo"
+      },
+      {
+        "name": "--since",
+        "help": "Digest cursor from an earlier factory status read; outcomes not covered are labelled new, a foreign, stale or truncated cursor resyncs with the full digest"
+      },
+      {
+        "name": "--limit",
+        "help": "Digest outcomes per response, 1..100 (default 20); continuation is explicit and the cursor covers only what was rendered"
       }
     ],
     "subcommands": null,

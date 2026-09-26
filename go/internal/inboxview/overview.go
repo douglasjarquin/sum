@@ -56,6 +56,9 @@ type Group struct {
 	Tasks   []TaskRow         `json:"tasks"`
 	Factory *FactoryOccupancy `json:"factory"`
 	Healthy bool              `json:"healthy"`
+	// Digest is the project's factory digest row (a *factoryview.FactoryRow) when a digest read attached one;
+	// factoryview consumes this package, so the row is carried untyped here and absent otherwise.
+	Digest any `json:"digest,omitempty"`
 }
 
 type FactoryOccupancy struct {
