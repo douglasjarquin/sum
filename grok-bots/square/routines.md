@@ -3,8 +3,8 @@
 Do not enable a routine until two manual runs look right.
 A routine performs real work.
 Keep write actions behind approval.
-When you create a routine from this file, name the current coordinator and control plane in its prompt.
-Do not carry retired Bot names, titles, or folders into a routine.
+Each routine prompt names Sum as the coordinator and `/workspace/square/` as the control plane.
+Never write a retired Bot name, title, or folder (for example Cleaner, Steward, `/workspace/cleaner/`) into a routine prompt.
 
 ## Cleanup
 
