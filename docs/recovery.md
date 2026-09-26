@@ -68,6 +68,24 @@ Limits:
 * The legacy proof assumes the wall clock was not stepped backwards by more than the gap between a record and a later Herdr restart.
 * An older sum helper neither records nor checks incarnation. While one runs (for example during a refresh), protection covers only this release's paths, and a record it rewrites becomes legacy again.
 
+## Wake recovery
+
+An adopted coordinator's routine wake episode lives in `.sum/deliver/<recipient key>.wake.json`, written before any prompt (`prepared`), after the in-flight attempts are stamped (`claimed`), right before the prompt call (`intent`), and after the attempt is finalized (`submitted`, `uncertain`, `not-delivered`, `not-submitted`). `sumctl wake show` reads every sidecar and writes nothing. Recovery is explicit; no timer, PID check, or elapsed time closes an episode or resends a prompt.
+
+| Phase found | What it means | `sumctl wake reconcile` | What remains |
+| --- | --- | --- | --- |
+| `prepared` | a pass crashed after persisting the claims and before stamping anything | closes it as `not-submitted` | nothing was sent; the next pass may prompt for the same returns |
+| `claimed` | the in-flight attempts are stamped; the prompt was never started | marks it `uncertain`, attempts untouched | outstanding; `wake consume` after reading the work; nothing is resent |
+| `intent` | the prompt call may have started | marks it `uncertain`, attempts untouched | outstanding; `wake consume`; nothing is resent |
+| `submitted`, `uncertain` | the prompt reached, or may have reached, the pane | no change | `wake consume --boundary TOKEN` from `wake show`, or `sumctl notice TASK --to parent` supersedes it explicitly |
+| `consumed`, `not-delivered`, `not-submitted`, `replaced` | closed | no change | the next pass may open a new episode |
+| any outstanding phase, occupant replaced | the owner record no longer names the occupant the episode was bound to | closes it as `replaced` | the old occupant's attempts are preserved; the new occupant gained no coverage and is prompted afresh |
+| unreadable, foreign, or unsupported file | the sidecar cannot be trusted | reports the diagnostic, rewrites nothing | nothing is submitted to that recipient until the user resolves the file by path |
+
+A consume receipt is an exact fingerprint of the boundary token: repeating it is idempotent (`repeated`, no write), even after a later episode or after coverage was pruned; a receipt for an older generation is `expired` and never adds coverage or closes the current episode; a receipt whose coverage differs from the one already consumed for that episode is refused. A directory-sync failure after the receipt's rename is reloaded from the persisted file, so a replay is safe. Consumption covers only the token's `included` identities: omitted tasks and later arrivals stay eligible, and nothing is ever presented as all clear on their behalf.
+
+Limits: an episode that reached a coordinator occupant who is now gone can only be closed by `wake reconcile` as `replaced`, never consumed; a prompt sent by an older or non-adopted helper is reported as uncoalesced and is never retroactively coalesced; and a target release without the wake protocol is refused by `update apply`/`update rollback` while an episode is outstanding, uncertain, or unreadable (see `docs/update.md`).
+
 ## Limits worth knowing
 
 * Plain-text questions from non-cooperative workers are found during a rundown, not guaranteed to be detected immediately while unattended.

@@ -529,6 +529,38 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 			}
 		}
 	}
+	// Identities a consumed wake already covered are presented, not repeated: they are withheld from a routine
+	// prompt (their attempt state is untouched) until canonical closure prunes them. An explicit forced notice and
+	// the coordinator's own inline listing still show them.
+	if adm != nil && adm.wake != nil && adm.decision == wakeDecisionPermitted && !b.inline && !opts.Force && len(adm.wake.Covered) > 0 {
+		covered := map[[2]string]bool{}
+		for _, c := range adm.wake.Covered {
+			covered[[2]string{c.Task, c.ID}] = true
+		}
+		var kept [][2]*ordjson.Object
+		for _, pair := range sendItems {
+			k := pairKey(pair)
+			if !covered[k] {
+				kept = append(kept, pair)
+				continue
+			}
+			delete(sendable, k)
+			w := ordjson.NewObject()
+			w.Set("task", k[0])
+			w.Set("id", k[1])
+			w.Set("state", "covered")
+			w.Set("reason", "presented by a consumed wake ("+wakeShow+"); not repeated until it closes")
+			withheld = append(withheld, w)
+		}
+		sendItems = kept
+		row.Set("withheld", withheld)
+		if len(sendItems) == 0 {
+			row.Set("wake", adm.view())
+			row.Set("state", "quiet")
+			row.Set("reason", "every open return to this coordinator was already presented by a consumed wake; nothing is sent until a new return arrives or `sumctl notice TASK --to parent` repeats one explicitly")
+			return row, nil
+		}
+	}
 	deliveryID, err := newDeliveryID()
 	if err != nil {
 		return nil, err

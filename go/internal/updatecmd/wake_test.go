@@ -2,7 +2,6 @@ package updatecmd
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,10 +27,15 @@ func labEndpoint(t *testing.T) [3]string {
 	return [3]string{host, "sum-test", "w-parent:p1"}
 }
 
-// plantWake writes the lab coordinator's sidecar in phase.
+// plantWake writes the lab coordinator's sidecar in phase, bound to the occupant the owner record records.
 func plantWake(t *testing.T, lab *applyLab, phase string) *returns.Wake {
 	t.Helper()
-	w, err := returns.NewWake(lab.store, labEndpoint(t), json.RawMessage(`{"terminal":"term-w-parent:p1"}`))
+	owner, err := lab.store.Owner()
+	if err != nil || owner == nil {
+		t.Fatalf("owner: %v %v", owner, err)
+	}
+	recorded, _ := owner.Get("incarnation")
+	w, err := returns.NewWake(lab.store, labEndpoint(t), returns.IncarnationJSON(recorded))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,4 +238,68 @@ func TestWakeGate_activationWaitsForADeliveryPassThenRefuses(t *testing.T) {
 	if _, err := os.Stat(lab.store.WakePath(labEndpoint(t))); !os.IsNotExist(err) {
 		t.Fatalf("the update touched the wake sidecar: %v", err)
 	}
+}
+
+// The way out of the gate is the protocol's own settlement, from the serving runtime: reconcile closes a prepared
+// episode, consume closes a submitted one, and the rollback then passes without an override.
+func TestWakeGate_rollbackPassesOnceTheEpisodeIsSettled(t *testing.T) {
+	t.Run("prepared then reconcile", func(t *testing.T) {
+		lab := newRollbackLab(t)
+		selectWorkingRelease(t, lab, lab.oldSHA)
+		selectWorkingRelease(t, lab, lab.newSHA)
+		plantWake(t, lab, returns.WakePrepared)
+		if _, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity); err == nil {
+			t.Fatal("rollback passed over a prepared episode")
+		}
+		view, err := returns.Reconcile(lab.store, lab.ctx, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strField(view, "after") != returns.WakeNotSubmitted {
+			t.Fatalf("reconcile = %s", dump(view))
+		}
+		if _, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity); err != nil {
+			t.Fatalf("rollback after reconcile: %v", err)
+		}
+		if got := currentSHA(t, lab.root); got != lab.oldSHA {
+			t.Fatalf("selected %s, want %s", got, lab.oldSHA)
+		}
+	})
+	t.Run("submitted then consume", func(t *testing.T) {
+		lab := newRollbackLab(t)
+		selectWorkingRelease(t, lab, lab.oldSHA)
+		selectWorkingRelease(t, lab, lab.newSHA)
+		plantWake(t, lab, returns.WakeSubmitted)
+		if _, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity); err == nil {
+			t.Fatal("rollback passed over a submitted episode")
+		}
+		// Reconcile holds a submitted episode as it is: it is not the way out.
+		held, err := returns.Reconcile(lab.store, lab.ctx, "")
+		if err != nil || strField(held, "after") != returns.WakeSubmitted || strField(held, "action") != "none" {
+			t.Fatalf("reconcile of a submitted episode = %s %v", dump(held), err)
+		}
+		if _, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity); err == nil {
+			t.Fatal("rollback passed after a no-op reconcile")
+		}
+		shown, err := returns.Show(lab.store, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := shown.Get("recipients")
+		entry := asObject(rows.([]any)[0])
+		consumed, err := returns.Consume(lab.store, lab.ctx, strField(entry, "boundary"))
+		if err != nil || strField(consumed, "result") != "consumed" {
+			t.Fatalf("consume = %s %v", dump(consumed), err)
+		}
+		view, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity)
+		if err != nil {
+			t.Fatalf("rollback after consume: %v", err)
+		}
+		if row := compatWake(t, view); strField(row, "result") != "unused" {
+			t.Fatalf("wake_protocol = %s, want unused once the episode is consumed", dump(row))
+		}
+		if got := currentSHA(t, lab.root); got != lab.oldSHA {
+			t.Fatalf("selected %s, want %s", got, lab.oldSHA)
+		}
+	})
 }

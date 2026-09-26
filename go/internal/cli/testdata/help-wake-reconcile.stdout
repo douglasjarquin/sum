@@ -1,0 +1,7 @@
+topic: wake-reconcile
+help: "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file"
+arguments[1]{name,help}:
+  "--recipient",Reconcile the sidecar with this key (as `wake show` lists it) instead of this pane's own
+subcommands: null
+read_only: false
+read_only_subcommands: null

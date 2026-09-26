@@ -32,6 +32,7 @@ commands:
   hook: "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon"
   metadata: "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle"
   attention: "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays"
+  wake: "Coordinator wake episodes (#240a): show every wake sidecar and the exact boundary of the outstanding work; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends"
   bind: "Coordinator only: rebind this pane as a task's parent or adopt an existing worker pane; never launches"
   backup: "Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code"
   settings: Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited
@@ -46,7 +47,7 @@ commands:
   refresh: "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status"
   release: "Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates"
   update: "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running"
-read_only[29]: brief-list,context,doctor,env-show,execution-show,factory-merge-check,factory-status,graph-config,graph-status,help,hook-status,inbox,metadata-inbox,metadata-snippet,metadata-status,preset-list,preset-show,project-list,project-show,quota,refresh-status,release-contract,release-list,release-show,settings-show,show,skills-check,status,update-status
+read_only[30]: brief-list,context,doctor,env-show,execution-show,factory-merge-check,factory-status,graph-config,graph-status,help,hook-status,inbox,metadata-inbox,metadata-snippet,metadata-status,preset-list,preset-show,project-list,project-show,quota,refresh-status,release-contract,release-list,release-show,settings-show,show,skills-check,status,update-status,wake-show
 usage: sumctl help TOPIC for one command's arguments and subcommands
 context: "sumctl context TASK_ID [--section NAME ...] [--role worker|reviewer|coordinator] [--since CURSOR]"
 note: Generated from the CLI definition; no manual to page through. Herdr CLI facts come from `herdr --skill`.
