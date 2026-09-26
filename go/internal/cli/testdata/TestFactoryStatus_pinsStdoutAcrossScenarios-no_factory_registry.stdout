@@ -26,5 +26,5 @@ digest:
     continuation: false
     truncated: false
   resync: null
-  cursor: eyJzY2hlbWEiOjEsImtpbmQiOiJmYWN0b3J5LWRpZ2VzdCIsImluc3RhbGxhdGlvbiI6IiIsInNjb3BlIjoiZmFjdG9yeSIsInByb2plY3QiOiIiLCJsZWF2ZXMiOltdLCJvdXRjb21lcyI6W10sInBhZ2UiOnsibGltaXQiOjIwLCJyZW5kZXJlZCI6MCwidG90YWwiOjAsImNvbnRpbnVhdGlvbiI6ZmFsc2UsInRydW5jYXRlZCI6ZmFsc2V9fQ.a6cd431b7059bf08
+  cursor: RI1NisMwDIXv8tYayMzSVxm6ELaSqnWkYCuFEnL30rSlu_fzwbeh57PMjPRLuKoVJIycw9v9p-gkPUBQ68G1cqgbEkDo2Rf5oiAszS-S43VX4Zt0pP8TwdfIPn_awpMgbag6ayD9DYQmVqRJQRoI4cH1SNkt1Na3dOTahRBttczxhI9l3x8BAAD__w.a6cd431b7059bf08
   note: "A view of saved records: nothing was observed, ticked, claimed, merged or cleaned up. next_tick_at is the time the last idle tick recorded, not a scheduled wake. pr/ci times are saved observations, not freshness. Counts precede project focus and paging; a resync means the cursor could not be honoured and nothing here is labelled new."

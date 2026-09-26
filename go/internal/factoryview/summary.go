@@ -4,11 +4,13 @@ package factoryview
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
+	"github.com/douglasjarquin/sum/go/internal/factory"
 	"github.com/douglasjarquin/sum/go/internal/inboxview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
@@ -23,6 +25,9 @@ const (
 	IntakeUnknown = "unknown (not yet observed)"
 
 	AttributionFactory = "factory"
+
+	KindPROpen         = "pr-open"
+	KindObservedMerged = "observed-merged"
 	AttributionProject = "project (factory linkage not recorded)"
 
 	Note = "A view of saved records: nothing was observed, ticked, claimed, merged or cleaned up. next_tick_at is the time the last idle tick recorded, not a scheduled wake. pr/ci times are saved observations, not freshness. Counts precede project focus and paging; a resync means the cursor could not be honoured and nothing here is labelled new."
@@ -159,6 +164,8 @@ func BuildFromOverview(snapshot inboxview.Snapshot, overview inboxview.Overview,
 		tasks[task.ID] = task
 	}
 	registry := registryOf(snapshot.Factory)
+	// An unreadable registry proves nothing about lanes: no task is called lane-free and no lane attributes.
+	registryReadable := snapshot.Factory != nil || !registryGap(snapshot.Gaps)
 	laneTasks := map[string]string{}
 	for name, rec := range registry {
 		for _, lane := range rec.lanes {
@@ -209,14 +216,10 @@ func BuildFromOverview(snapshot inboxview.Snapshot, overview inboxview.Overview,
 			}
 		}
 	}
-	// Global gaps stay global unless a lane names the unreadable task; then the factory row owns it.
+	// A gap on an unreadable task a lane names belongs to that factory row.
 	for _, gap := range snapshot.Gaps {
 		if name, held := laneTasks[gap.TaskID]; held && gap.TaskID != "" && tasks[gap.TaskID].Record == nil {
 			row(name).Gaps = append(row(name).Gaps, gap)
-			continue
-		}
-		if _, known := tasks[gap.TaskID]; gap.TaskID == "" || !known {
-			out.Gaps = append(out.Gaps, gap)
 		}
 	}
 	taskRows := map[string]inboxview.TaskRow{}
@@ -248,7 +251,22 @@ func BuildFromOverview(snapshot inboxview.Snapshot, overview inboxview.Overview,
 		}
 		return true
 	}
-	all := outcomes(snapshot, laneTasks, derived)
+	// Every gap is reported exactly once: on its row when that row is in scope, otherwise globally, so project
+	// focus never hides an unreadable source elsewhere (Counts and Complete stay global for the same reason).
+	onScopedRow := map[inboxview.Gap]bool{}
+	for key, r := range rows {
+		if key != "" && inScope(key) {
+			for _, gap := range r.Gaps {
+				onScopedRow[gap] = true
+			}
+		}
+	}
+	for _, gap := range snapshot.Gaps {
+		if !onScopedRow[gap] {
+			out.Gaps = append(out.Gaps, gap)
+		}
+	}
+	all := outcomes(snapshot, laneTasks, registryReadable, derived)
 	scoped := all[:0]
 	for _, o := range all {
 		if inScope(o.Project) {
@@ -372,12 +390,26 @@ func latestWrite(record *ordjson.Object) string {
 	return latest
 }
 
+// prKeyed lists the outcome kinds whose identity is a canonical PR (project#number) rather than a task; the
+// cursor's identityTask consults it so a PR outcome is never mistaken for a task-keyed one.
+var prKeyed = map[string]bool{KindPROpen: true, KindObservedMerged: true}
+
 type laneRecord struct{ issue, task string }
 
 type projectRecord struct {
 	enabled            bool
 	lanes              []laneRecord
 	lastTick, nextTick string
+}
+
+// registryGap reports whether the snapshot recorded the factory registry itself as unreadable.
+func registryGap(gaps []inboxview.Gap) bool {
+	for _, gap := range gaps {
+		if gap.TaskID == "" && filepath.Base(gap.Path) == factory.File {
+			return true
+		}
+	}
+	return false
 }
 
 func registryOf(record *ordjson.Object) map[string]projectRecord {
@@ -413,7 +445,7 @@ func registryOf(record *ordjson.Object) map[string]projectRecord {
 // number so one PR observed from two tasks or under two URL spellings counts once, while the same number on
 // another project stays distinct. Attribution is factory only when a retained lane record (or a saved
 // task.factory field) names the task; a removed lane leaves a project outcome.
-func outcomes(snapshot inboxview.Snapshot, laneTasks map[string]string, derived map[string]pipeline.Record) []Outcome {
+func outcomes(snapshot inboxview.Snapshot, laneTasks map[string]string, registryReadable bool, derived map[string]pipeline.Record) []Outcome {
 	var out []Outcome
 	byPR := map[string]int{}
 	for _, task := range snapshot.Tasks {
@@ -450,18 +482,18 @@ func outcomes(snapshot inboxview.Snapshot, laneTasks map[string]string, derived 
 			source := Source{Task: task.ID, Kind: "pr", ID: str(identity, "url"), Candidate: str(identity, "head_sha"), At: str(pr, "observed_at")}
 			switch str(pr, "state") {
 			case "open":
-				addPR(&out, byPR, Outcome{Identity: "pr-open:" + key, Project: task.ProjectID, Kind: "pr-open", Attribution: attribution, Source: source, Detail: show})
+				addPR(&out, byPR, Outcome{Identity: KindPROpen + ":" + key, Project: task.ProjectID, Kind: KindPROpen, Attribution: attribution, Source: source, Detail: show})
 			case "merged":
 				if field(pr, "merge_commit") != nil {
 					merged = true
-					addPR(&out, byPR, Outcome{Identity: "observed-merged:" + key, Project: task.ProjectID, Kind: "observed-merged", Attribution: attribution, Source: source, Detail: show})
+					addPR(&out, byPR, Outcome{Identity: KindObservedMerged + ":" + key, Project: task.ProjectID, Kind: KindObservedMerged, Attribution: attribution, Source: source, Detail: show})
 				}
 			}
 		}
 		if pending := cleanup.Pending(record); pending != nil {
 			add("cleanup-pending", task.ID, Source{Task: task.ID, Kind: "cleanup", ID: str(pending, "state"), At: fmt.Sprint(zero(field(pending, "at")))}, show)
 		}
-		if _, held := laneTasks[task.ID]; !held && (merged || str(record, "status") == "archived") {
+		if _, held := laneTasks[task.ID]; registryReadable && !held && (merged || str(record, "status") == "archived") {
 			at := str(obj(field(record, "cleanup")), "at")
 			if at == "" {
 				at = str(pr, "observed_at")

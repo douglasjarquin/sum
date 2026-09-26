@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -942,10 +943,17 @@ func (l *replayLab) burst(t *testing.T, tasks []replayTask, handoffs map[string]
 	return out
 }
 
+// burstTimeout bounds one helper call inside the concurrent burst, so a stuck delivery ends the run as a failure
+// instead of hanging the suite; the helper is killed and reaped when it elapses.
+const burstTimeout = 2 * time.Minute
+
 // ctlPaneNoFatal is ctlPane for goroutines: a failure is returned as an error row instead of ending the test.
 func (l *replayLab) ctlPaneNoFatal(pane string, args ...string) map[string]any {
-	cmd := exec.Command(l.helper, append([]string{"--format", "json", "--home", l.home}, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), burstTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, l.helper, append([]string{"--format", "json", "--home", l.home}, args...)...)
 	cmd.Env = append(append([]string{}, l.env...), "HERDR_PANE_ID="+pane)
+	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.Output()
 	var view map[string]any
 	if jsonErr := json.Unmarshal(out, &view); jsonErr != nil {

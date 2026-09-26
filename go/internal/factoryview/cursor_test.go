@@ -1,6 +1,8 @@
 package factoryview
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -281,9 +283,10 @@ func TestPagingIsExplicitAndNeverClaimsTheExcess(t *testing.T) {
 
 func TestTokenBoundLabelsTruncationAndParsesAsResync(t *testing.T) {
 	c := &Cursor{Schema: Schema, Kind: CursorKind, Installation: "x", Page: Page{Limit: 20}}
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < 20000; i++ {
+		digest := sha256.Sum256([]byte(fmt.Sprint(i)))
 		c.Outcomes = append(c.Outcomes, fmt.Sprintf("observed-merged:a/repo#%d", i))
-		c.Leaves = append(c.Leaves, Leaf{Task: fmt.Sprintf("t-%012d", i), Digest: "abcdef012345", Evidence: 3})
+		c.Leaves = append(c.Leaves, Leaf{Task: "t-" + hex.EncodeToString(digest[:6]), Digest: hex.EncodeToString(digest[6:12]), Evidence: 3})
 	}
 	token, truncated, err := c.Token()
 	if err != nil {
@@ -297,7 +300,7 @@ func TestTokenBoundLabelsTruncationAndParsesAsResync(t *testing.T) {
 		t.Fatalf("a bounded token that cannot retain coverage is labelled truncated: %+v %v", parsed, err)
 	}
 	raw, _ := json.Marshal(parsed)
-	if strings.Contains(string(raw), "observed-merged:a/repo#1999") {
+	if strings.Contains(string(raw), "observed-merged:a/repo#19999") {
 		t.Fatal("truncated coverage must not pretend to retain every outcome")
 	}
 }
@@ -365,4 +368,34 @@ func contains(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestRealisticScopeFitsTheTokenBound(t *testing.T) {
+	// The live installation carries dozens of tasks with several outcomes each; that coverage must round-trip
+	// untruncated, or every read would resync and nothing could ever be labelled new.
+	c := &Cursor{Schema: Schema, Kind: CursorKind, Installation: "inst-0123456789ab", Scope: ScopeFactory, Page: Page{Limit: 50}}
+	for i := 0; i < 120; i++ {
+		task := fmt.Sprintf("t-%012x", i*7919)
+		digest := sha256.Sum256([]byte(task))
+		c.Leaves = append(c.Leaves, Leaf{Task: task, Digest: hex.EncodeToString(digest[:])[:12], Evidence: 5 + i%4})
+		candidate := hex.EncodeToString(digest[4:24])
+		for _, kind := range []string{"reported", "verified", "review-accepted", "cleanup-pending", "lane-free"} {
+			c.Outcomes = append(c.Outcomes, kind+":"+task+":"+candidate)
+		}
+		c.Outcomes = append(c.Outcomes, fmt.Sprintf("observed-merged:acme/repo-%d#%d", i%3, 100+i))
+	}
+	token, truncated, err := c.Token()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if truncated || len(token) > MaxTokenBytes {
+		t.Fatalf("120 tasks with 6 identities each must fit: truncated=%v bytes=%d", truncated, len(token))
+	}
+	parsed, err := Parse(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.Leaves) != 120 || len(parsed.Outcomes) != 720 || parsed.Page.Truncated {
+		t.Fatalf("coverage did not round-trip: %d leaves %d outcomes truncated=%v", len(parsed.Leaves), len(parsed.Outcomes), parsed.Page.Truncated)
+	}
 }

@@ -1,10 +1,14 @@
 package factoryview
 
 import (
+	"bytes"
+	"compress/flate"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -16,8 +20,11 @@ import (
 const (
 	// CursorKind separates this envelope from the wake boundary, which shares the token encoding only.
 	CursorKind = "factory-digest"
-	// MaxTokenBytes bounds the opaque cursor; coverage that does not fit is dropped and labelled truncated.
+	// MaxTokenBytes bounds the opaque cursor; coverage that does not fit is dropped and labelled truncated. The
+	// payload is deflated before encoding, so the bound holds several hundred tasks of coverage, not a few dozen.
 	MaxTokenBytes = 16 * 1024
+	// maxPayloadBytes bounds what Parse inflates from a token, so a crafted token cannot expand without limit.
+	maxPayloadBytes = 4 * 1024 * 1024
 
 	DeltaChanged   = "leaf changed"
 	DeltaNewSource = "new source"
@@ -67,24 +74,50 @@ func sortLeaves(leaves []Leaf) {
 	sort.Slice(leaves, func(i, j int) bool { return leaves[i].Task < leaves[j].Task })
 }
 
-// Token encodes the cursor. When the bounded token cannot carry the coverage, the coverage is dropped and the
-// token says so (truncated), so the next read resyncs instead of calling repeated history new.
+// Token encodes the cursor: base64url of the deflated canonical form, fingerprinted over the canonical form.
+// When the bounded token cannot carry the coverage, the coverage is dropped and the token says so (truncated), so
+// the next read resyncs instead of calling repeated history new.
 func (c *Cursor) Token() (token string, truncated bool, err error) {
 	payload := c.canonical()
 	if len(payload) == 0 {
 		return "", false, fmt.Errorf("cursor could not be encoded")
 	}
-	token = returns.EncodeToken(payload)
+	token = encodeCursor(payload)
 	if len(token) <= MaxTokenBytes {
 		return token, c.Page.Truncated, nil
 	}
 	trimmed := Cursor{Schema: c.Schema, Kind: c.Kind, Installation: c.Installation, Scope: c.Scope, Project: c.Project, Leaves: []Leaf{}, Outcomes: []string{}, Page: Page{Limit: c.Page.Limit, Truncated: true}}
-	return returns.EncodeToken(trimmed.canonical()), true, nil
+	return encodeCursor(trimmed.canonical()), true, nil
+}
+
+func encodeCursor(canonical []byte) string {
+	var buf bytes.Buffer
+	w, _ := flate.NewWriter(&buf, flate.BestCompression)
+	w.Write(canonical)
+	w.Close()
+	return base64.RawURLEncoding.EncodeToString(buf.Bytes()) + "." + returns.TokenFingerprint(canonical)
+}
+
+// decodeCursor inverts encodeCursor; the caller re-derives the fingerprint from the parsed cursor's canonical
+// form, so a wake receipt or a token of any other kind never verifies.
+func decodeCursor(token string) (canonical []byte, fingerprint string, err error) {
+	compressed, fingerprint, err := returns.DecodeToken(token)
+	if err != nil {
+		return nil, "", err
+	}
+	canonical, err = io.ReadAll(io.LimitReader(flate.NewReader(bytes.NewReader(compressed)), maxPayloadBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("payload is not deflated")
+	}
+	if len(canonical) > maxPayloadBytes {
+		return nil, "", fmt.Errorf("payload exceeds the cursor bound")
+	}
+	return canonical, fingerprint, nil
 }
 
 // Parse decodes and self-checks a digest cursor; a wake receipt or any other token never verifies.
 func Parse(token string) (*Cursor, error) {
-	payload, fingerprint, err := returns.DecodeToken(token)
+	payload, fingerprint, err := decodeCursor(token)
 	if err != nil {
 		return nil, fmt.Errorf("not a digest cursor (%s)", err.Error())
 	}
@@ -276,11 +309,11 @@ func hiddenByGap(identity string, gapped map[string]bool) bool {
 	return gapped[task]
 }
 
-// identityTask is the task segment of a task-keyed identity ("kind:TASK[:candidate]"); PR-keyed identities
-// ("pr-open:project#n", "observed-merged:project#n") carry none.
+// identityTask is the task segment of a task-keyed identity ("kind:TASK[:candidate]"); a PR-keyed identity
+// ("kind:project#n", the kinds prKeyed lists next to where they are emitted) carries none.
 func identityTask(identity string) (string, bool) {
 	parts := strings.SplitN(identity, ":", 3)
-	if len(parts) < 2 || parts[0] == "pr-open" || parts[0] == "observed-merged" {
+	if len(parts) < 2 || prKeyed[parts[0]] {
 		return "", false
 	}
 	return parts[1], true

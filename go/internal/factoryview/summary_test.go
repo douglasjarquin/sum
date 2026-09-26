@@ -275,3 +275,65 @@ func TestUnreadableSourceIsAGapNotAHealthyRow(t *testing.T) {
 		}
 	}
 }
+
+func TestUnreadableRegistryProvesNoLaneFreeTask(t *testing.T) {
+	home := standardHome(t)
+	if err := os.WriteFile(filepath.Join(home, "factory.json"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := build(t, home, Options{})
+	if d.Complete {
+		t.Fatal("an unreadable registry leaves the digest incomplete")
+	}
+	registryGapSeen := false
+	for _, gap := range d.Gaps {
+		if gap.TaskID == "" && strings.HasSuffix(gap.Path, "factory.json") {
+			registryGapSeen = true
+		}
+	}
+	if !registryGapSeen {
+		t.Fatalf("the registry gap is reported globally: %+v", d.Gaps)
+	}
+	for _, row := range d.Rows {
+		for _, o := range row.Outcomes {
+			if o.Kind == "lane-free" {
+				t.Fatalf("no lane can be called free while the registry is unreadable: %+v", o)
+			}
+		}
+	}
+}
+
+func TestProjectFocusReportsOtherProjectsGapsGlobally(t *testing.T) {
+	home := standardHome(t)
+	if err := os.WriteFile(filepath.Join(home, "tasks", "t-a1aaaaaaaaaa", "task.json"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unfocused := build(t, home, Options{})
+	if len(unfocused.Gaps) != 0 || len(rowFor(t, unfocused, "a/repo").Gaps) != 1 {
+		t.Fatalf("unfocused: the row owns its gap once: global=%+v row=%+v", unfocused.Gaps, rowFor(t, unfocused, "a/repo").Gaps)
+	}
+	focused := build(t, home, Options{Project: "b/repo"})
+	if focused.Complete || len(focused.Gaps) != 1 || focused.Gaps[0].TaskID != "t-a1aaaaaaaaaa" {
+		t.Fatalf("focus on b/repo still reports a/repo's unreadable task globally: complete=%v gaps=%+v", focused.Complete, focused.Gaps)
+	}
+	for _, row := range focused.Rows {
+		if row.Project != "b/repo" {
+			t.Fatalf("focus renders only b/repo: %+v", row)
+		}
+	}
+}
+
+func TestMergedPRWithoutMergeCommitYieldsNoMergeOutcome(t *testing.T) {
+	home := standardHome(t)
+	task := fixture.Task{ID: "t-c9cccccccccc", Project: fixture.Project{Owner: "a", Repo: "repo"}, Status: "done", Candidate: "sha-c9",
+		PR: &fixture.PR{Number: 41, URL: "https://github.com/a/repo/pull/41", State: "merged", HeadSHA: "sha-c9", ObservedAt: "2026-02-01T00:00:00+00:00"}}
+	if err := fixture.WriteTask(home, task); err != nil {
+		t.Fatal(err)
+	}
+	got := kinds(rowFor(t, build(t, home, Options{}), "a/repo"))
+	for _, o := range append(got["observed-merged"], got["lane-free"]...) {
+		if o.Source.Task == task.ID {
+			t.Fatalf("a merged state without a merge commit is not an observed merge: %+v", o)
+		}
+	}
+}
