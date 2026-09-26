@@ -203,11 +203,11 @@ class OperatingFilesTest(unittest.TestCase):
             "Only the user authorizes an update or rollback",
             "only the user decides whether to enable native event delivery",
             "refresh adopt --coordinator rN",
-            "When a rundown shows `cleanup: pending`, run `./bin/sumctl cleanup TASK_ID`",
+            "When status shows `cleanup: pending`, run `./bin/sumctl cleanup TASK_ID`",
             "inbox --live",
         ):
             self.assertIn(rule, text)
-        for skill in ("sum-dispatch", "sum-delivery", "sum-rundown", "sum-update"):
+        for skill in ("sum-dispatch", "sum-delivery", "sum-status", "sum-update"):
             self.assertIn(f"`skills/{skill}/SKILL.md`", text)
 
     def test_worker_core_keeps_standing_prohibitions_of_on_demand_files(self):

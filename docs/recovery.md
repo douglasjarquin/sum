@@ -4,7 +4,7 @@ Backup, cleanup after a merge, and limits. Moved out of the README.
 
 ## Recovery and backup
 
-After reopening the coordinator, run `./bin/sumctl init`. If the previous coordinator pane is verifiably gone, run `./bin/sumctl init --role coordinator --reclaim`. It proceeds only when Herdr reports that pane as `pane_not_found`, or when a different occupant now holds that pane ID (`replaced`, see [Pane incarnation](#pane-incarnation)). A pane still held by the recorded occupant (even with its agent exited), or one whose occupant Herdr cannot establish, is refused, and reclaim never rebinds tasks by itself. Then run a rundown. To route an existing task back to the new coordinator:
+After reopening the coordinator, run `./bin/sumctl init`. If the previous coordinator pane is verifiably gone, run `./bin/sumctl init --role coordinator --reclaim`. It proceeds only when Herdr reports that pane as `pane_not_found`, or when a different occupant now holds that pane ID (`replaced`, see [Pane incarnation](#pane-incarnation)). A pane still held by the recorded occupant (even with its agent exited), or one whose occupant Herdr cannot establish, is refused, and reclaim never rebinds tasks by itself. Then check status. To route an existing task back to the new coordinator:
 
 ```sh
 ./bin/sumctl bind TASK_ID --parent-only
@@ -90,7 +90,7 @@ Limits: an episode that reached a coordinator occupant who is now gone can only 
 
 ## Limits worth knowing
 
-* Plain-text questions from non-cooperative workers are found during a rundown, not guaranteed to be detected immediately while unattended.
+* Plain-text questions from non-cooperative workers are found during a status check, not guaranteed to be detected immediately while unattended.
 
 * This is a trusted-local workflow, not an adversarial sandbox. Workers share your execution account unless you supply isolation. Profiles/instructions do not isolate credentials.
 
@@ -108,9 +108,9 @@ Limits: an episode that reached a coordinator occupant who is now gone can only 
 
 ### Cleanup after a merge
 
-A merged PR archives nothing by itself, and nothing observes a merge on its own: `init`, `pump`, `bind`, hook events, and rundowns never call GitHub or apply cleanup; they list recorded open PRs (with the time each was last observed) and pending cleanup under `maintenance`.
+A merged PR archives nothing by itself, and nothing observes a merge on its own: `init`, `pump`, `bind`, hook events, and status checks never call GitHub or apply cleanup; they list recorded open PRs (with the time each was last observed) and pending cleanup under `maintenance`.
 `cleanup: pending` appears only after `sweep`, `pr reconcile`, or `cleanup` observed the merge.
-When you say a task is merged, or a rundown shows a task as `cleanup: pending`, the coordinator runs the guarded cleanup:
+When you say a task is merged, or status shows a task as `cleanup: pending`, the coordinator runs the guarded cleanup:
 
 ```sh
 ./bin/sumctl cleanup TASK_ID                 # inspect: fresh GitHub observation, identity, occupants, artifacts; persists the plan, removes nothing
@@ -137,7 +137,7 @@ staged, modified, untracked, and ignored files block, except a fixed list of reg
 
 The checks run again right before the removal, the removal is one `herdr worktree remove --workspace ID` without `--force`, and the cleanup intent is saved before that call.
 Services the worker launched with `env start` (#17) are judged by identity: when the recorded pane, shell pid, pid, and argv still match, and only evidence-complete resource-state blockers remain, `--apply` stops exactly those first with one `ctrl+c`, a bounded exit wait, and a port check, closes the pane sum created, and re-inspects; a `service-unknown` blocker (restarted or replaced outside sum), a `writing` blocker (an owned log modified within the last seconds), or a survivor after the bound keeps the task cleanup-pending with the reason named. sum never kills by name, port, or cwd, never runs a broad compose down, and never closes a pane it did not create.
-If sum is interrupted between the removal and the archive, the task shows `removing` and the next `cleanup TASK_ID` or `sweep` reconciles from records and observation (a rundown does not): verifiably absent resources complete the archive, a still-present workspace returns the task to pending, anything else blocks with the observed state.
+If sum is interrupted between the removal and the archive, the task shows `removing` and the next `cleanup TASK_ID` or `sweep` reconciles from records and observation (a status check does not): verifiably absent resources complete the archive, a still-present workspace returns the task to pending, anything else blocks with the observed state.
 Already-absent resources are accepted only after that identity inspection; nothing is recreated.
 The task branch, `brief.md`, brief revisions, decisions, reports, handoffs, reviewer findings, and PR evidence always stay.
 Cleanup records the released reservation before archiving.

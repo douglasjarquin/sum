@@ -818,7 +818,7 @@ var ContextRoles = []string{"worker", "reviewer", "coordinator"}
 var roleSkills = map[string][]string{
 	"worker":      {"sum-worker"},
 	"reviewer":    {"sum-delivery"},
-	"coordinator": {"sum-rundown", "sum-delivery", "sum-dispatch"},
+	"coordinator": {"sum-status", "sum-delivery", "sum-dispatch"},
 }
 
 func pickPresent(o *ordjson.Object, keys []string) *ordjson.Object {

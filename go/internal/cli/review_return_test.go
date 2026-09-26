@@ -32,7 +32,7 @@ func fakePane(t *testing.T, base, pane string) map[string]any {
 	return asMap(asMap(state["panes"])[pane])
 }
 
-// reviewReturns lists the task's open review returns as the rundown shows them.
+// reviewReturns lists the task's open review returns as the status view shows them.
 func reviewReturns(d *demoLab, taskID string) []map[string]any {
 	var out []map[string]any
 	for _, raw := range asSlice(asMap(d.ctl(true, "context", taskID, "--role", "coordinator", "--section", "returns")["returns"])["open"]) {

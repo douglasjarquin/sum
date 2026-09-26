@@ -1,8 +1,21 @@
 ok: true
-active[6]: sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker
+active[6]: sum-delivery,sum-develop,sum-dispatch,sum-status,sum-update,sum-worker
 aliases:
+  "sum-assign": sum-dispatch
+  "sum-delegate": sum-dispatch
+  "sum-deliver": sum-delivery
+  "sum-dev": sum-develop
+  "sum-inbox": sum-status
+  "sum-pr": sum-delivery
+  "sum-recover": sum-status
+  "sum-rollback": sum-update
+  "sum-rundown": sum-status
+  "sum-ship": sum-delivery
+  "sum-sweep": sum-status
+  "sum-upgrade": sum-update
+  "sum-work": sum-worker
 routes:
-  agents[10]: create-verification,evidence,maintain-verification,sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker,verify
-  claude[10]: create-verification,evidence,maintain-verification,sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker,verify
+  agents[23]: create-verification,evidence,maintain-verification,sum-assign,sum-delegate,sum-deliver,sum-delivery,sum-dev,sum-develop,sum-dispatch,sum-inbox,sum-pr,sum-recover,sum-rollback,sum-rundown,sum-ship,sum-status,sum-sweep,sum-update,sum-upgrade,sum-work,sum-worker,verify
+  claude[23]: create-verification,evidence,maintain-verification,sum-assign,sum-delegate,sum-deliver,sum-delivery,sum-dev,sum-develop,sum-dispatch,sum-inbox,sum-pr,sum-recover,sum-rollback,sum-rundown,sum-ship,sum-status,sum-sweep,sum-update,sum-upgrade,sum-work,sum-worker,verify
 compatibility: []
 errors: []

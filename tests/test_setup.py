@@ -88,7 +88,8 @@ class SetupTest(unittest.TestCase):
 
     def test_all_skill_links_resolve(self):
         for parent in (ROOT / '.agents/skills', ROOT / '.claude/skills'):
-            for name in ('dispatch', 'worker', 'rundown', 'delivery', 'develop', 'update'):
+            for name in ('dispatch', 'worker', 'status', 'delivery', 'develop', 'update',
+                         'delegate', 'assign', 'work', 'deliver', 'ship', 'pr', 'inbox', 'sweep', 'recover', 'rundown', 'dev', 'upgrade', 'rollback'):
                 self.assertTrue((parent / ('sum-' + name) / 'SKILL.md').is_file())
         self.assertEqual((ROOT / 'CLAUDE.md').resolve(), ROOT / 'AGENTS.md')
 

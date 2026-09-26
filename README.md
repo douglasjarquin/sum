@@ -26,7 +26,7 @@ Roles and work objects use the dictionary in [docs/terminology.md](docs/terminol
 
 * **Evidence on the PR.** Before/after evidence publishes on `pr reconcile` unless you turn it off. See [docs/verification.md](docs/verification.md).
 
-* **Six bundled skills.** /sum-dispatch, /sum-worker, /sum-delivery, /sum-rundown, /sum-develop, and /sum-update with rolling session refresh and code-only rollback.
+* **Six bundled skills.** /sum-dispatch, /sum-worker, /sum-delivery, /sum-status, /sum-develop, and /sum-update with rolling session refresh and code-only rollback.
 
 * **Optional Herdr hook and metadata.** Native event delivery and sidebar tokens stay off until you enable them. See [docs/herdr-backend.md](docs/herdr-backend.md).
 
@@ -102,14 +102,16 @@ State files, returns, and manual dispatch are in [docs/architecture.md](docs/arc
 
 ## Built-in skills
 
-| Skill         | What it does                                                             |
-| :------------ | :----------------------------------------------------------------------- |
-| /sum-dispatch | Send one approved request to a worker                                    |
-| /sum-worker   | Do that task in its own Herdr worktree                                   |
-| /sum-delivery | Run the project's checks and prepare the PR                              |
-| /sum-rundown  | Reconcile saved tasks and pending returns                                |
-| /sum-develop  | Change sum from a development checkout that cannot claim the coordinator |
-| /sum-update   | Update or roll back the installation, then refresh running sessions      |
+| Skill         | What it does                                                             | Also answers to                          |
+| :------------ | :----------------------------------------------------------------------- | :--------------------------------------- |
+| /sum-dispatch | Send one approved request to a worker                                    | /sum-delegate, /sum-assign               |
+| /sum-worker   | Do that task in its own Herdr worktree                                   | /sum-work                                |
+| /sum-delivery | Run the project's checks and prepare the PR                              | /sum-deliver, /sum-ship, /sum-pr         |
+| /sum-status   | Show task status, pending returns, and maintenance                       | /sum-inbox, /sum-sweep, /sum-recover, /sum-rundown |
+| /sum-develop  | Change sum from a development checkout that cannot claim the coordinator | /sum-dev                                 |
+| /sum-update   | Update or roll back the installation, then refresh running sessions      | /sum-upgrade, /sum-rollback              |
+
+An alias is a one-line skill that names the real one, so the word you reach for loads the same procedure; `bin/sumctl skills check` lists them under `aliases`.
 
 `bin/sumctl skills install` delegates explicit skill and agent selections to the pinned Vercel Skills CLI in project copy mode. See [docs/sum-skills.md](docs/sum-skills.md).
 
