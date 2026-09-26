@@ -515,6 +515,10 @@ type wakeAdmission struct {
 	wake       *Wake
 	recorded   any
 	superseded string // the outstanding episode an explicit forced notice replaces
+	// pending is the episode a forced notice will open in place of the superseded one. The outstanding episode is
+	// left untouched (its boundary stays valid) until the new claims are stamped; only then is it superseded.
+	pending   *WakeEpisode
+	committed bool // pending replaced the superseded episode
 }
 
 const (
@@ -532,7 +536,11 @@ func (a *wakeAdmission) view() *ordjson.Object {
 	}
 	view := wakeView(a.wake, a.decision)
 	if a.superseded != "" {
-		view.Set("superseded", a.superseded)
+		if a.committed {
+			view.Set("superseded", a.superseded)
+		} else {
+			view.Set("kept", a.superseded)
+		}
 	}
 	return view
 }
@@ -560,6 +568,11 @@ func (p *pass) admitWake(route *ordjson.Object, force bool) (*wakeAdmission, err
 		}
 	}
 	adm := &wakeAdmission{wake: w, recorded: recorded}
+	if !IncarnationMatches(w.Incarnation, IncarnationJSON(recorded)) && len(w.Covered) > 0 {
+		// Coverage was consumed by another occupant; a new occupant inherits no consumption authority, so nothing
+		// is withheld from it. Persisted with the next episode (or by reconcile), never by itself.
+		w.Covered = []WakeCovered{}
+	}
 	switch {
 	case w.NeedsReconcile():
 		adm.decision = wakeDecisionBlocked
@@ -569,7 +582,8 @@ func (p *pass) admitWake(route *ordjson.Object, force bool) (*wakeAdmission, err
 		adm.reason = fmt.Sprintf("routine wake %s (generation %d, %s) is outstanding for a coordinator occupant that is no longer the recorded one; the old episode grants the new occupant nothing, so nothing is sent until it is reconciled with %s (inspect it with %s)", w.Episode.ID, w.Generation, w.Episode.Phase, wakeReconcile, wakeShow)
 	case w.IsOutstanding() && force:
 		// `sumctl notice --to parent` is the documented explicit single retry: it is not a routine arrival, so it
-		// supersedes the outstanding episode with the next generation rather than waiting behind it.
+		// supersedes the outstanding episode with the next generation rather than waiting behind it. The supersede
+		// is committed only once the new claims are stamped (claimed); until then the outstanding episode is kept.
 		adm.decision = wakeDecisionPermitted
 		adm.superseded = w.Episode.ID
 		PruneCovered(p.s, w)
@@ -597,14 +611,22 @@ func wakeRefs(items [][2]*ordjson.Object) []WakeRef {
 	return refs
 }
 
-// prepare persists the next episode with the claims about to be sent; a non-empty result is why nothing may proceed.
-func (a *wakeAdmission) prepare(s *store.Store, items [][2]*ordjson.Object) string {
+// prepare persists the next episode with the claims about to be sent and the delivery id the claim will stamp; a
+// non-empty result is why nothing may proceed. A forced notice over an outstanding episode prepares nothing durable:
+// the new episode is held on the admission and replaces the outstanding one only in claimed, so a claim that never
+// happens leaves the outstanding episode and its boundary exactly as they were.
+func (a *wakeAdmission) prepare(s *store.Store, items [][2]*ordjson.Object, deliveryID string) string {
 	id, err := newID("w-")
 	if err != nil {
 		return "the wake episode could not be identified: " + err.Error() + "; nothing was sent or recorded"
 	}
+	if a.superseded != "" {
+		a.pending = &WakeEpisode{ID: id, Delivery: deliveryID, Phase: WakePrepared, PreparedAt: store.Now(), Claims: wakeRefs(items)}
+		return ""
+	}
 	a.wake.Incarnation = IncarnationJSON(a.recorded)
 	a.wake.Prepare(id, wakeRefs(items))
+	a.wake.Episode.Delivery = deliveryID
 	if _, err := CommitWake(s, a.wake); err != nil {
 		return "the wake episode could not be persisted before the prompt: " + err.Error() + "; nothing was sent or recorded. Inspect it with " + wakeShow
 	}
@@ -612,7 +634,16 @@ func (a *wakeAdmission) prepare(s *store.Store, items [][2]*ordjson.Object) stri
 }
 
 // claimed records the delivery and the surviving claims once the in-flight attempts are stamped (state lock held).
+// A pending forced episode supersedes the outstanding one here: the old episode leaves a receipt carrying its
+// delivery (so `wake show` keeps accounting for its prompt) and the new one takes the next generation.
 func (a *wakeAdmission) claimed(s *store.Store, deliveryID string, survivors [][2]*ordjson.Object) error {
+	if a.pending != nil {
+		old := a.wake.Episode
+		a.wake.AddReceipt(WakeReceipt{Generation: a.wake.Generation, At: store.Now(), Result: "superseded", Delivery: old.Delivery})
+		a.wake.Prepare(a.pending.ID, a.pending.Claims)
+		a.wake.Episode.PreparedAt = a.pending.PreparedAt
+		a.committed = true
+	}
 	a.wake.Episode.Delivery = deliveryID
 	a.wake.Episode.Claims = wakeRefs(survivors)
 	a.wake.Episode.Phase = WakeClaimed
@@ -631,6 +662,11 @@ func (a *wakeAdmission) intent(s *store.Store) error {
 // outcome closes or settles the episode after the attempt was finalized. A failed write leaves the persisted phase
 // (at worst intent, still outstanding) and is disclosed on the row rather than failing the pass.
 func (a *wakeAdmission) outcome(s *store.Store, row *ordjson.Object, phase, reason string) {
+	if a.pending != nil && !a.committed {
+		// The forced notice never claimed: the outstanding episode is untouched and its boundary stays valid.
+		row.Set("wake", a.view())
+		return
+	}
 	a.wake.Episode.Phase = phase
 	a.wake.Episode.Reason = reason
 	a.wake.Episode.OutcomeAt = store.Now()
@@ -906,11 +942,13 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		return view
 	}
 	for _, r := range w.Receipts {
-		if r.Fingerprint == fingerprint {
-			view.Set("prior_result", r.Result)
-			view.Set("prior_at", r.At)
-			return finish("repeated"), nil
+		// Superseded and replaced receipts carry no fingerprint: they account for a delivery, not a consume.
+		if r.Fingerprint == "" || r.Fingerprint != fingerprint {
+			continue
 		}
+		view.Set("prior_result", r.Result)
+		view.Set("prior_at", r.At)
+		return finish("repeated"), nil
 	}
 	if b.Generation < w.Generation {
 		view.Set("reason", fmt.Sprintf("the boundary is generation %d and the current episode is generation %d; an older receipt consumes nothing and adds no coverage", b.Generation, w.Generation))
@@ -1085,17 +1123,58 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, recipientKey string) (*ordjs
 		return report(status, w, "none", fmt.Sprintf("episode %s is closed (%s); nothing is outstanding", w.Episode.ID, w.Episode.Phase)), nil
 	}
 	if !same {
+		// The new occupant inherits neither the old occupant's coverage nor its episode; the receipt keeps the old
+		// prompt accounted for in `wake show` without granting anything.
+		w.Covered = []WakeCovered{}
+		w.AddReceipt(WakeReceipt{Generation: w.Generation, At: store.Now(), Result: WakeReplaced, Delivery: w.Episode.Delivery})
 		return commit(WakeReplaced, "the recorded coordinator occupant changed; the episode reaches no one and grants the new occupant nothing; reconciled", "closed",
 			"the old occupant's attempts in returns.json are preserved as they are; the next pass decides afresh for the recorded coordinator")
 	}
 	switch w.Episode.Phase {
 	case WakePrepared:
+		if stamped, err := deliveryStamped(s, w.Episode); err != nil {
+			return nil, err
+		} else if stamped {
+			return commit(WakeUncertain, "interrupted between the attempt stamp and the claim; the prompt was not sent", "held",
+				fmt.Sprintf("delivery %s's attempts read uncertain; %s or a forced notice (`sumctl notice TASK --to parent`) settles it; nothing is resent", w.Episode.Delivery, wakeConsume))
+		}
 		return commit(WakeNotSubmitted, "prepared but never claimed; reconciled", "closed", "nothing was stamped or sent; the next pass may prompt for the same returns")
 	case WakeClaimed, WakeIntent:
 		return commit(WakeUncertain, fmt.Sprintf("interrupted at %s; the prompt may have reached the recipient", w.Episode.Phase), "held",
 			fmt.Sprintf("delivery %s's attempts stay in-flight and read as uncertain; the episode is outstanding until the coordinator consumes its boundary (%s, then %s); nothing is resent", w.Episode.Delivery, wakeShow, wakeConsume))
 	}
 	return report(status, w, "none", fmt.Sprintf("episode %s is %s and outstanding; %s after the coordinator has read its wake is the way out (%s shows the boundary), or `sumctl notice TASK --to parent` supersedes it explicitly", w.Episode.ID, w.Episode.Phase, wakeConsume, wakeShow)), nil
+}
+
+// deliveryStamped reports whether any claimed task's returns.json carries an attempt with the episode's delivery id:
+// the claim stamped before it could record itself.
+func deliveryStamped(s *store.Store, episode *WakeEpisode) (bool, error) {
+	if episode.Delivery == "" {
+		return false, nil
+	}
+	seen := map[string]bool{}
+	for _, c := range episode.Claims {
+		if seen[c.Task] {
+			continue
+		}
+		seen[c.Task] = true
+		returnsObj, err := ReadReturns(s, c.Task)
+		if err != nil {
+			return false, err
+		}
+		list, _ := returnsObj.Get("deliveries")
+		entries, _ := list.([]any)
+		for _, d := range entries {
+			obj, _ := d.(*ordjson.Object)
+			if obj == nil {
+				continue
+			}
+			if id, _ := obj.Get("id"); fmt.Sprint(id) == episode.Delivery {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 func recipientView(w *Wake) *ordjson.Object {

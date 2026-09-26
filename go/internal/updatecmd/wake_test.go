@@ -124,6 +124,63 @@ func TestWakeGate_unreadableSidecarRefusesAnIncapableTarget(t *testing.T) {
 	}
 }
 
+// A foreign sidecar is blocked, not reconciled: the refusal names the file by path and the by-hand step, since
+// neither consume nor reconcile rewrites it.
+func TestWakeGate_foreignSidecarRefusesAnIncapableTargetByPath(t *testing.T) {
+	lab := newRollbackLab(t)
+	selectWorkingRelease(t, lab, lab.oldSHA)
+	selectWorkingRelease(t, lab, lab.newSHA)
+	w := plantWake(t, lab, returns.WakeSubmitted)
+	w.Installation = "inst-elsewhere"
+	if err := returns.WriteWake(lab.store, w); err != nil {
+		t.Fatal(err)
+	}
+	path := lab.store.WakePath(labEndpoint(t))
+	_, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity)
+	if err == nil {
+		t.Fatal("rollback over a foreign sidecar succeeded")
+	}
+	msg := err.Error()
+	for _, want := range []string{"sidecar " + path + " is belongs to another installation", "sum never rewrites it", "move or remove the file by hand", "sumctl wake show"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("refusal %q does not name %q", msg, want)
+		}
+	}
+	if got := currentSHA(t, lab.root); got != lab.newSHA {
+		t.Fatalf("selection changed to %s", got)
+	}
+	if raw, err := os.ReadFile(path); err != nil || !strings.Contains(string(raw), "inst-elsewhere") {
+		t.Fatalf("the refusal touched the foreign sidecar: %v", err)
+	}
+}
+
+// The runtime serving now already serves over the episode, so reselecting it is exempt from the gate; a switch to
+// any other incapable runtime over the same episode is still refused.
+func TestWakeGate_servingRuntimeIsExemptEvenWithOutstandingEpisode(t *testing.T) {
+	lab := newRollbackLab(t)
+	selectWorkingRelease(t, lab, lab.oldSHA)
+	selectWorkingRelease(t, lab, lab.newSHA)
+	plantWake(t, lab, returns.WakeSubmitted)
+	view, err := Rollback(lab.store, lab.ctx, lab.newSHA, RefusePreIdentity)
+	if err != nil {
+		t.Fatalf("reselecting the serving runtime over an outstanding episode: %v", err)
+	}
+	row := compatWake(t, view)
+	if offers, _ := row.Get("target_offers"); strField(row, "result") != "serving" || offers != false {
+		t.Fatalf("wake_protocol = %s, want serving for an incapable target that serves now", dump(row))
+	}
+	if got := currentSHA(t, lab.root); got != lab.newSHA {
+		t.Fatalf("selected %s, want %s", got, lab.newSHA)
+	}
+	_, err = Rollback(lab.store, lab.ctx, lab.oldSHA, RefusePreIdentity)
+	if err == nil || !strings.Contains(err.Error(), "wake protocol") {
+		t.Fatalf("rollback to another incapable release over the same episode = %v, want the wake refusal", err)
+	}
+	if got := currentSHA(t, lab.root); got != lab.newSHA {
+		t.Fatalf("selection changed to %s", got)
+	}
+}
+
 func TestWakeGate_capableTargetAndClosedEpisodesPass(t *testing.T) {
 	lab := newRollbackLab(t)
 	selectWorkingRelease(t, lab, lab.oldSHA)

@@ -577,7 +577,98 @@ func TestWakeExplicitNoticeSupersedesTheOutstandingEpisode(t *testing.T) {
 	if superseded, _ := wake.(*ordjson.Object).Get("superseded"); superseded != first {
 		t.Fatalf("row wake = %v, want superseded %s", wake, first)
 	}
-	if w := l.wake(); w.Generation != 2 || w.Episode.ID == first || w.Episode.Phase != WakeSubmitted {
+	w := l.wake()
+	if w.Generation != 2 || w.Episode.ID == first || w.Episode.Phase != WakeSubmitted {
 		t.Fatalf("episode after the forced notice = %d %+v", w.Generation, w.Episode)
+	}
+	// The superseded episode leaves a receipt carrying its delivery (no coverage, no fingerprint), so `wake show`
+	// keeps accounting for its prompt instead of reporting it as a legacy uncoalesced one.
+	firstDelivery := field(t, deliveries(t, l.s, a)[0], "id")
+	if len(w.Receipts) != 1 || w.Receipts[0].Result != "superseded" || w.Receipts[0].Fingerprint != "" || w.Receipts[0].Generation != 1 || w.Receipts[0].Delivery != firstDelivery {
+		t.Fatalf("receipts after the supersede = %+v, want one superseded receipt for delivery %s", w.Receipts, firstDelivery)
+	}
+	if uncoalesced, _ := l.showEntry().Get("uncoalesced_legacy_prompts"); len(uncoalesced.([]any)) != 0 {
+		t.Fatalf("show lists the superseded prompt as uncoalesced: %v", uncoalesced)
+	}
+	if msg := prompts(l.calls(), "w-root:p1")[1]; !strings.Contains(msg, "Wake episode "+w.Episode.ID) || !strings.Contains(msg, "wake consume --boundary TOKEN") || !strings.Contains(msg, "wake show") {
+		t.Fatalf("prompt = %q, want the episode id and the show/consume commands", msg)
+	}
+}
+
+// A forced notice while the coordinator is busy claims nothing: the outstanding episode is kept byte for byte, its
+// boundary still consumes, and no replacement episode is opened that a routine pass could prompt over.
+func TestWakeForcedNoticeAgainstABusyCoordinatorKeepsTheOutstandingEpisode(t *testing.T) {
+	l := newPassLab(t)
+	l.adopt()
+	a := l.reporting()
+	l.coordinatorIdle()
+	if r, _ := l.pumpFor([]string{a}, "parent", 8*time.Second); rowField(t, r, "w-root:p1", "state") != "submitted" {
+		t.Fatalf("first pass = %v", r)
+	}
+	before := l.wakeBytes()
+	token := l.boundary([]WakeCovered{report(a)}, nil)
+	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": l.pane("working", l.root)}})
+	result, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Tasks: []string{a}, Recipient: "parent", Force: true, Budget: 8 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := row(t, result, "w-root:p1")
+	if state, _ := r.Get("state"); state != "not-delivered" {
+		t.Fatalf("forced notice to a busy coordinator = %v", r)
+	}
+	wake, _ := r.Get("wake")
+	if superseded, has := wake.(*ordjson.Object).Get("superseded"); has {
+		t.Fatalf("row claims a supersede that never happened: %v", superseded)
+	}
+	if l.wakeBytes() != before {
+		t.Fatalf("the sidecar changed although nothing was claimed:\n%s\n%s", before, l.wakeBytes())
+	}
+	// The busy attempt is recorded as not-delivered, as for any busy recipient; the original stays submitted.
+	if d := deliveries(t, l.s, a); len(d) != 2 || field(t, d[0], "state") != "submitted" || field(t, d[1], "state") != "not-delivered" {
+		t.Fatalf("deliveries = %s, want the original submitted attempt and a not-delivered one", text(d))
+	}
+	b := l.reporting()
+	l.coordinatorIdle()
+	next, _ := l.pumpFor([]string{a, b}, "parent", 8*time.Second)
+	if got := rowField(t, next, "w-root:p1", "state"); got != "coalesced" || len(prompts(l.calls(), "w-root:p1")) != 1 {
+		t.Fatalf("routine pass after the failed force = %s with %d prompts, want coalesced behind the kept episode", got, len(prompts(l.calls(), "w-root:p1")))
+	}
+	view, err := l.consume(token)
+	if err != nil || field(t, view, "result") != "consumed" {
+		t.Fatalf("the kept episode's boundary = %v %v, want still consumable", view, err)
+	}
+}
+
+// Coverage is bound to the occupant that consumed it: a new occupant of the coordinator pane inherits no consumption
+// authority, so a routine pass prompts it for the items the old occupant covered and withholds nothing as covered.
+func TestWakeCoverageDoesNotSurviveAnOccupantChange(t *testing.T) {
+	l := newPassLab(t)
+	l.adopt()
+	a := l.reporting()
+	l.coordinatorIdle()
+	if r, _ := l.pumpFor([]string{a}, "parent", 8*time.Second); rowField(t, r, "w-root:p1", "state") != "submitted" {
+		t.Fatalf("first pass = %v", r)
+	}
+	if view, err := l.consume(l.boundary([]WakeCovered{report(a)}, nil)); err != nil || field(t, view, "covered_count") != "1" {
+		t.Fatalf("consume = %v %v", view, err)
+	}
+	l.setOwner(func(owner *ordjson.Object) { owner.Set("incarnation", boundTo("w-root:p1-reborn")) })
+	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude", "terminal_id": "term-w-root:p1-reborn"}}})
+	b := l.reporting()
+	next, _ := l.pumpFor([]string{a, b}, "parent", 8*time.Second)
+	r := row(t, next, "w-root:p1")
+	if state, _ := r.Get("state"); state != "submitted" {
+		t.Fatalf("pass for the new occupant = %v", r)
+	}
+	if withheld, _ := r.Get("withheld"); strings.Contains(text(withheld), "covered") {
+		t.Fatalf("the new occupant had work withheld as covered: %s", text(withheld))
+	}
+	// a's attempt is already submitted, so it is named but not re-stamped; b is the new claim. Nothing is covered.
+	w := l.wake()
+	if len(w.Covered) != 0 || w.Generation != 2 || len(w.Episode.Claims) != 1 || w.Episode.Claims[0].Task != b {
+		t.Fatalf("sidecar for the new occupant = covered %+v gen %d claims %+v; want no inherited coverage and %s claimed", w.Covered, w.Generation, w.Episode.Claims, b)
+	}
+	if msg := prompts(l.calls(), "w-root:p1")[1]; !strings.Contains(msg, a) || !strings.Contains(msg, b) {
+		t.Fatalf("prompt to the new occupant = %q, want both %s and %s named", msg, a, b)
 	}
 }

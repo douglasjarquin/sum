@@ -77,6 +77,36 @@ func (l *passLab) showEntry() *ordjson.Object {
 	return nil
 }
 
+// stampInFlight records an in-flight attempt with deliveryID for task's open obligations, as a claim does right
+// before it records itself.
+func (l *passLab) stampInFlight(task, deliveryID string) {
+	l.t.Helper()
+	record, err := l.s.ReadTask(task)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	obligations, err := OpenObligations(l.s, record)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	var items [][2]*ordjson.Object
+	for _, o := range obligations {
+		items = append(items, [2]*ordjson.Object{record, o})
+	}
+	delivery := ordjson.NewObject()
+	delivery.Set("id", deliveryID)
+	delivery.Set("at", store.Now())
+	delivery.Set("state", "in-flight")
+	unlock, err := l.s.Lock()
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	defer unlock()
+	if err := stampDeliveryLocked(l.s, items, delivery, nil); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
 func (l *passLab) submittedFor(tasks ...string) {
 	l.t.Helper()
 	l.coordinatorIdle()
@@ -136,8 +166,12 @@ func TestConsumeCoversExactlyTheIncludedSnapshot(t *testing.T) {
 	if !strings.Contains(text(withheld), b) || !strings.Contains(text(withheld), "covered") {
 		t.Fatalf("withheld = %s, want %s named as covered", text(withheld), b)
 	}
-	if n := len(prompts(l.calls(), "w-root:p1")); n != 2 {
-		t.Fatalf("prompts = %d", n)
+	sent := prompts(l.calls(), "w-root:p1")
+	if len(sent) != 2 {
+		t.Fatalf("prompts = %d", len(sent))
+	}
+	if strings.Contains(sent[1], b) || !strings.Contains(sent[1], c) {
+		t.Fatalf("second prompt = %q, want %s omitted as covered and %s named", sent[1], b, c)
 	}
 }
 
@@ -491,11 +525,12 @@ func TestReconcileMatrix(t *testing.T) {
 		if field(t, view, "after") != WakeReplaced || field(t, view, "action") != "closed" {
 			t.Fatalf("reconcile = %v", view)
 		}
-		if w := l.wake(); len(w.Covered) != 0 || len(w.Receipts) != 0 {
-			t.Fatalf("reconcile granted coverage: %+v", w)
-		}
-		if d := deliveries(t, l.s, a); len(d) != 1 || field(t, d[0], "state") != "submitted" {
+		d := deliveries(t, l.s, a)
+		if len(d) != 1 || field(t, d[0], "state") != "submitted" {
 			t.Fatalf("the old attempt changed: %v", d)
+		}
+		if w := l.wake(); len(w.Covered) != 0 || len(w.Receipts) != 1 || w.Receipts[0].Result != WakeReplaced || w.Receipts[0].Fingerprint != "" || w.Receipts[0].Delivery != field(t, d[0], "id") {
+			t.Fatalf("reconcile granted coverage or left the old delivery unaccounted: %+v", w)
 		}
 		r, _ := l.pumpFor([]string{a, b}, "parent", 8*time.Second)
 		if got := rowField(t, r, "w-root:p1", "state"); got != "submitted" {
@@ -508,6 +543,37 @@ func TestReconcileMatrix(t *testing.T) {
 		}
 		if d := deliveries(t, l.s, a); len(d) != 1 {
 			t.Fatalf("the old submitted attempt was resent: %v", d)
+		}
+		if uncoalesced, _ := l.showEntry().Get("uncoalesced_legacy_prompts"); len(uncoalesced.([]any)) != 0 {
+			t.Fatalf("show lists the replaced episode's prompt as uncoalesced: %v", uncoalesced)
+		}
+	})
+	t.Run("prepared with a stamped attempt is uncertain, not unsubmitted", func(t *testing.T) {
+		l := newPassLab(t)
+		l.adopt()
+		a := l.reporting()
+		plant(l, WakePrepared, []WakeRef{{Task: a, ID: "report:r1"}})
+		l.stampInFlight(a, "d-planted")
+		l.coordinatorIdle()
+		view, err := Reconcile(l.s, l.ctx, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if field(t, view, "after") != WakeUncertain || field(t, view, "action") != "held" || !strings.Contains(field(t, view, "remaining"), "sumctl wake consume") || !strings.Contains(field(t, view, "remaining"), "forced notice") {
+			t.Fatalf("reconcile = %v", view)
+		}
+		if w := l.wake(); !w.IsOutstanding() || !strings.Contains(w.Episode.Reason, "between the attempt stamp and the claim") {
+			t.Fatalf("episode = %+v, want outstanding as uncertain with the interruption named", w.Episode)
+		}
+		if d := deliveries(t, l.s, a); len(d) != 1 || field(t, d[0], "state") != "in-flight" {
+			t.Fatalf("reconcile touched the attempt: %v", d)
+		}
+		next, _ := l.pumpFor([]string{a}, "parent", 8*time.Second)
+		if got := rowField(t, next, "w-root:p1", "state"); got != "coalesced" || countCalls(l.calls(), "prompt") != 0 {
+			t.Fatalf("pass after reconcile = %s, want coalesced behind the uncertain episode with nothing resent", got)
+		}
+		if _, has := l.showEntry().Get("boundary"); !has {
+			t.Fatal("show offers no boundary for the uncertain episode")
 		}
 	})
 	t.Run("absent", func(t *testing.T) {

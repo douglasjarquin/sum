@@ -74,7 +74,7 @@ func wakeCompatibility(s *store.Store, target targetIdentity, servesNow bool) (*
 		case entry.Status.State != returns.WakeOK:
 			item.Set("state", entry.Status.State)
 			item.Set("diagnostic", entry.Status.Diagnostic)
-			unresolved = append(unresolved, fmt.Sprintf("%s (%s)", entry.Path, entry.Status.Diagnostic))
+			unresolved = append(unresolved, fmt.Sprintf("sidecar %s is %s; sum never rewrites it. Inspect it (`sumctl wake show`) and move or remove the file by hand, then retry", entry.Path, blockedReason(entry.Status)))
 		default:
 			w := entry.Wake
 			item.Set("recipient", fmt.Sprintf("%s %s on %s", w.Recipient.Session, w.Recipient.Pane, w.Recipient.Machine))
@@ -106,7 +106,17 @@ func wakeCompatibility(s *store.Store, target targetIdentity, servesNow bool) (*
 		row.Set("result", "serving")
 	default:
 		row.Set("result", "refused")
-		blocking = fmt.Sprintf("the target has no coordinator wake protocol (%s), but this installation has a routine wake that only this protocol can settle: %s. That code would prompt the coordinator over it and cannot reconcile it. First settle the episode from the serving runtime: `sumctl wake consume` after the coordinator has read its wake, or `sumctl wake reconcile` for one that is prepared, uncertain, or unreadable (`sumctl wake show` inspects it). There is no override flag.", target.lacking, strings.Join(unresolved, "; "))
+		blocking = fmt.Sprintf("the target has no coordinator wake protocol (%s), but this installation has a routine wake that only this protocol can settle: %s. That code would prompt the coordinator over it and cannot reconcile it. First settle the episode from the serving runtime: `sumctl wake consume` after the coordinator has read its wake, or `sumctl wake reconcile` for one that is prepared or uncertain (`sumctl wake show` inspects it); an unreadable or foreign sidecar is never rewritten by sum: move or remove that file by hand. There is no override flag.", target.lacking, strings.Join(unresolved, "; "))
 	}
 	return row, blocking, nil
+}
+
+// blockedReason is the sidecar's diagnostic without the path prefix and the inspection sentence readWakeFile adds,
+// so the refusal can name the file once and say what to do with it.
+func blockedReason(status returns.WakeStatus) string {
+	reason := strings.TrimPrefix(status.Diagnostic, status.Path+" ")
+	if i := strings.Index(reason, "; inspect it with"); i >= 0 {
+		reason = reason[:i]
+	}
+	return reason
 }
