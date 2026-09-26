@@ -34,7 +34,7 @@
       "hook": "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon",
       "metadata": "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle",
       "attention": "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays",
-      "wake": "Coordinator wake episodes (#240a): show every wake sidecar and the exact boundary of the outstanding work; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends",
+      "wake": "Coordinator wake episodes (#240a) and decision priority (#240b): show every wake sidecar, the exact boundary of the outstanding work, and the decisions already prompted; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends",
       "bind": "Coordinator only: rebind this pane as a task's parent or adopt an existing worker pane; never launches",
       "backup": "Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code",
       "settings": "Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited",
@@ -972,10 +972,10 @@
   },
   "wake": {
     "topic": "wake",
-    "help": "Coordinator wake episodes (#240a): show every wake sidecar and the exact boundary of the outstanding work; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends",
+    "help": "Coordinator wake episodes (#240a) and decision priority (#240b): show every wake sidecar, the exact boundary of the outstanding work, and the decisions already prompted; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends",
     "arguments": [],
     "subcommands": {
-      "show": "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), and uncoalesced legacy prompts; writes nothing",
+      "show": "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), the decisions already prompted (priority_prompts, with their deliveries), and uncoalesced legacy prompts; writes nothing",
       "consume": "Coordinator only: record the exact consume receipt for one boundary after reading its included work; closes only that episode, answers/applies/verifies/approves nothing, changes no reservation",
       "reconcile": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file"
     },
@@ -986,7 +986,7 @@
   },
   "wake-show": {
     "topic": "wake-show",
-    "help": "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), and uncoalesced legacy prompts; writes nothing",
+    "help": "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), the decisions already prompted (priority_prompts, with their deliveries), and uncoalesced legacy prompts; writes nothing",
     "arguments": [
       {
         "name": "--recipient",
