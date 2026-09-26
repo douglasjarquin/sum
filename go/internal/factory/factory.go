@@ -1089,7 +1089,11 @@ func MergeCheck(s *store.Store, taskID string) (*ordjson.Object, error) {
 	result.Set("confidence", confidence)
 	result.Set("checks", checks)
 	result.Set("reasons", reasons)
-	result.Set("authorized_merge", AuthorizedMerge)
+	authorizedRepos := make([]any, len(AuthorizedMerge))
+	for i, repo := range AuthorizedMerge {
+		authorizedRepos[i] = repo
+	}
+	result.Set("authorized_merge", authorizedRepos)
 	if high {
 		result.Set("note", "High-confidence merge is allowed for this candidate. `factory merge` still requires the coordinator pane.")
 	} else {

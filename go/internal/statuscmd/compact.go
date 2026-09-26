@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/environment"
+	"github.com/douglasjarquin/sum/go/internal/factoryview"
 	"github.com/douglasjarquin/sum/go/internal/inboxview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/presentation"
@@ -149,8 +150,12 @@ func Grouped(s *store.Store, project string) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	converted, ok := compactJSON(overview).(*ordjson.Object)
-	if !ok {
+	return groupedObject(overview)
+}
+
+func groupedObject(overview inboxview.Overview) (*ordjson.Object, error) {
+	converted, err := ordjson.FromValue(overview)
+	if err != nil {
 		return nil, fmt.Errorf("grouped overview did not encode as an object")
 	}
 	return converted, nil
@@ -158,4 +163,28 @@ func Grouped(s *store.Store, project string) (*ordjson.Object, error) {
 
 func GroupedOverview(s *store.Store, project string) (inboxview.Overview, error) {
 	return inboxview.Focus(inboxview.BuildOverview(inboxview.Read(s)), project), nil
+}
+
+// GroupedDigest is the grouped overview with the factory digest attached, from one read of the saved records:
+// each group carries its digest row and `digest` carries the envelope (deltas, page, cursor, resync).
+func GroupedDigest(s *store.Store, project, since string, limit int) (*ordjson.Object, error) {
+	installation, err := s.Instance()
+	if err != nil {
+		return nil, err
+	}
+	snapshot := inboxview.Read(s)
+	full := inboxview.BuildOverview(snapshot)
+	digest := factoryview.BuildFromOverview(snapshot, full, installation, factoryview.Options{Project: project, Since: since, Limit: limit})
+	overview := inboxview.Focus(full, project)
+	factoryview.Attach(&overview, digest)
+	converted, err := groupedObject(overview)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := ordjson.FromValue(digest)
+	if err != nil {
+		return nil, err
+	}
+	converted.Set("digest", encoded)
+	return converted, nil
 }

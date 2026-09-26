@@ -1,0 +1,9 @@
+topic: factory-status
+help: "Enabled factories and held lanes plus the evidence digest: per project the current issue, task, stage, action owner, saved blocker, rendered outcomes and a caller-held cursor; writes nothing"
+arguments[3]{name,help}:
+  "--project",Limit the listing and the digest to one owner/repo
+  "--since","Digest cursor from an earlier factory status read; outcomes not covered are labelled new, a foreign, stale or truncated cursor resyncs with the full digest"
+  "--limit","Digest outcomes per response, 1..100 (default 20); continuation is explicit and the cursor covers only what was rendered"
+subcommands: null
+read_only: true
+read_only_subcommands: null

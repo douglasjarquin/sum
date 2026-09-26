@@ -27,6 +27,8 @@ type Overview struct {
 	Standalone  *Group             `json:"standalone"`
 	Coordinator CoordinatorSummary `json:"coordinator"`
 	Note        string             `json:"note"`
+	// Derived is each readable task's pipeline record, derived once here so digest readers reuse it; never encoded.
+	Derived map[string]pipeline.Record `json:"-"`
 }
 
 // OverviewNote is the JSON caveat; the terminal view carries the same facts inline.
@@ -56,6 +58,9 @@ type Group struct {
 	Tasks   []TaskRow         `json:"tasks"`
 	Factory *FactoryOccupancy `json:"factory"`
 	Healthy bool              `json:"healthy"`
+	// Digest is the project's factory digest row (a *factoryview.FactoryRow) when a digest read attached one;
+	// factoryview consumes this package, so the row is carried untyped here and absent otherwise.
+	Digest any `json:"digest,omitempty"`
 }
 
 type FactoryOccupancy struct {
@@ -156,7 +161,12 @@ func TaskState(row Task, gapped bool) string {
 
 // Stage is the one gate the task is waiting on, or "settled".
 func Stage(task *ordjson.Object) string {
-	if stage := pipeline.FirstUnsettled(pipeline.Derive(task)); stage != "" {
+	return StageOf(pipeline.Derive(task))
+}
+
+// StageOf is Stage for an already derived pipeline record.
+func StageOf(derived pipeline.Record) string {
+	if stage := pipeline.FirstUnsettled(derived); stage != "" {
 		return stage
 	}
 	return "settled"
@@ -235,7 +245,7 @@ func (c *GroupCounts) add(item presentation.Item) {
 
 // BuildOverview groups a snapshot by canonical recorded project identity. It is pure: no I/O, no Herdr.
 func BuildOverview(snapshot Snapshot) Overview {
-	out := Overview{Counts: snapshot.Counts, Complete: snapshot.Complete, Gaps: []Gap{}, NeedsYou: []Row{}, Groups: []Group{}, Note: OverviewNote}
+	out := Overview{Counts: snapshot.Counts, Complete: snapshot.Complete, Gaps: []Gap{}, NeedsYou: []Row{}, Groups: []Group{}, Note: OverviewNote, Derived: map[string]pipeline.Record{}}
 	tasks := map[string]Task{}
 	for _, task := range snapshot.Tasks {
 		tasks[task.ID] = task
@@ -287,7 +297,8 @@ func BuildOverview(snapshot Snapshot) Overview {
 	for _, task := range snapshot.Tasks {
 		g := group(task.ProjectID)
 		g.Gaps = append(g.Gaps, gapped[task.ID]...)
-		row := taskRow(task, len(gapped[task.ID]) > 0)
+		out.Derived[task.ID] = pipeline.Derive(task.Record)
+		row := taskRow(task, len(gapped[task.ID]) > 0, out.Derived[task.ID])
 		for _, item := range task.Items {
 			g.Counts.add(item)
 		}
@@ -313,8 +324,8 @@ func BuildOverview(snapshot Snapshot) Overview {
 	return out
 }
 
-func taskRow(task Task, gapped bool) TaskRow {
-	row := TaskRow{ID: task.ID, Project: task.ProjectID, State: TaskState(task, gapped), Stage: Stage(task.Record), Status: str(task.Record, "status"), Repository: str(task.Record, "repository"), Branch: str(task.Record, "branch"), Items: []Row{}, Detail: []string{"context", task.ID, "--role", "coordinator"}}
+func taskRow(task Task, gapped bool, derived pipeline.Record) TaskRow {
+	row := TaskRow{ID: task.ID, Project: task.ProjectID, State: TaskState(task, gapped), Stage: StageOf(derived), Status: str(task.Record, "status"), Repository: str(task.Record, "repository"), Branch: str(task.Record, "branch"), Items: []Row{}, Detail: []string{"context", task.ID, "--role", "coordinator"}}
 	row.Archived = row.Status == "archived"
 	if observed := obj(field(obj(field(task.Record, "launch")), "observed")); observed != nil && str(observed, "status") != "" {
 		row.Observed = &Observed{Status: str(observed, "status"), At: str(observed, "at")}

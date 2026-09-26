@@ -1,10 +1,28 @@
 package ordjson
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// FromValue re-encodes any JSON-marshalable value (typically a struct) as an ordered Object.
+func FromValue(v any) (*Object, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	decoded, err := Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	obj, ok := decoded.(*Object)
+	if !ok {
+		return nil, fmt.Errorf("%T did not encode as a JSON object", v)
+	}
+	return obj, nil
+}
 
 func ReadFile(path string) (any, error) {
 	data, err := os.ReadFile(path)

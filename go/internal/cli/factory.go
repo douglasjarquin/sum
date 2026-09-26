@@ -5,6 +5,9 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/factory"
+	"github.com/douglasjarquin/sum/go/internal/factoryview"
+	"github.com/douglasjarquin/sum/go/internal/inboxview"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -19,11 +22,15 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 		},
 	}
 
-	var statusProject string
+	var statusProject, statusSince string
+	var statusLimit int
 	statusCmd := &cobra.Command{
 		Use:  "status",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := boundedLimit(statusLimit, factoryview.MaxLimit); err != nil {
+				return err
+			}
 			st, err := store.Open(o.home)
 			if err != nil {
 				return err
@@ -32,10 +39,23 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
+			installation, err := st.Instance()
+			if err != nil {
+				return err
+			}
+			// The digest is a projection of the same saved records; the lane summary above is unchanged.
+			digest := factoryview.Build(inboxview.Read(st), installation, factoryview.Options{Project: statusProject, Since: statusSince, Limit: statusLimit, FactoryOnly: true})
+			decoded, err := ordjson.FromValue(digest)
+			if err != nil {
+				return err
+			}
+			view.Set("digest", decoded)
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},
 	}
 	statusCmd.Flags().StringVar(&statusProject, "project", "", "")
+	statusCmd.Flags().StringVar(&statusSince, "since", "", "Digest cursor from an earlier factory status read; labels new outcomes or resyncs")
+	statusCmd.Flags().IntVar(&statusLimit, "limit", factoryview.DefaultLimit, "Maximum digest outcomes per response (1..100)")
 	factoryCmd.AddCommand(statusCmd)
 
 	var (

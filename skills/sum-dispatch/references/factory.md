@@ -54,6 +54,18 @@ The 5-minute wake is external: cron, launchd, or the harness scheduler calling t
 A worker report or `hook enable` idle/done edge is the event-driven wake.
 On the next inbox pass, tick once if a factory is enabled and a lane is free.
 
+## Digest
+
+`./bin/sumctl factory status --project owner/repo` adds a `digest` to the lane summary: a view of saved records only.
+It never ticks, claims, merges, cleans up, calls GitHub, or writes; tick, claim and merge are unchanged.
+Each row gives the current issue and task from the held lane (never guessed), the pipeline stage, `action_owner` (`human decision`, `coordinator`, `worker`, `none`), a `blocker` only when a saved question, attention or failed gate record exists, and outcomes with their source record, candidate and time: `reported`, `verified`, `review-accepted`, `pr-open`, `observed-merged`, `cleanup-pending`, `lane-free`.
+A `factory merge` result is a request, never `observed-merged`; only a saved `pr reconcile` observation with a merge commit is.
+An outcome is attributed to the factory only while a lane record names its task; after release it is a project outcome labelled `factory linkage not recorded`.
+`next_tick_at` is the time the last idle tick recorded, not a scheduled wake. `pr_observed_at` and `ci_observed_at` are saved observation times; `ci_stale: true` means a later record exists.
+`next.intake` stays `unknown (not yet observed)` unless a record names it; nothing here promises the lane will advance without a tick.
+Pass the returned `cursor` back with `--since` to label outcomes not yet rendered `new`; `--limit` bounds the page and `page.continuation` says the rest is uncovered.
+A foreign, stale, truncated or shrunk-source cursor returns `resync` with the full digest and labels nothing new.
+
 ## Dispatch
 
 After `action: dispatch`, follow the factory claim procedure, then `sum-dispatch` with `--project owner/repo`.

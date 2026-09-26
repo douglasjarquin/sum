@@ -458,15 +458,15 @@ func TestMetadataProjectionAndCompactAgree(t *testing.T) {
 }
 
 func TestPresentationHelpMatchesImplementedReadCommands(t *testing.T) {
-	for _, topic := range []string{"status", "inbox", "metadata", "metadata-inbox"} {
+	for _, topic := range []string{"status", "inbox", "metadata", "metadata-inbox", "factory-status"} {
 		assertStdoutGolden(t, t.TempDir(), []string{"help", topic}, "help-"+topic)
 	}
 	// Every registered flag reaches the catalog, so a future flag cannot skip the help topic.
 	var out, errOut bytes.Buffer
 	root := NewRoot("sumctl", &out, &errOut)
-	for _, topic := range []string{"status", "inbox"} {
-		cmd, _, err := root.Find([]string{topic})
-		if err != nil || cmd == nil || cmd.Name() != topic {
+	for _, topic := range []string{"status", "inbox", "factory-status"} {
+		cmd, _, err := root.Find(strings.Split(topic, "-"))
+		if err != nil || cmd == nil || cmd.Name() != strings.TrimPrefix(topic, "factory-") {
 			t.Fatalf("command %s: %v", topic, err)
 		}
 		view, err := helpview.View("", topic)

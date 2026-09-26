@@ -14,6 +14,7 @@ import (
 type groupedFlags struct {
 	grouped       bool
 	project       string
+	since         string
 	view          bool
 	width, height int
 }
@@ -22,6 +23,7 @@ func (g *groupedFlags) add(cmd *cobra.Command, withView bool) {
 	cmd.Flags().BoolVar(&g.grouped, "grouped", false, "Grouped read-only overview by recorded project identity")
 	cmd.Flags().StringVar(&g.project, "project", "", "Focus one project key (requires --grouped); global counts stay")
 	if withView {
+		cmd.Flags().StringVar(&g.since, "since", "", "Digest cursor from an earlier grouped read (requires --grouped); labels new outcomes or resyncs")
 		cmd.Flags().BoolVar(&g.view, "view", false, "Explicit-refresh terminal view of the grouped overview (requires --grouped)")
 		cmd.Flags().IntVar(&g.width, "width", 0, "View width in cells (default COLUMNS or 80)")
 		cmd.Flags().IntVar(&g.height, "height", 0, "View height in lines (default LINES or 24)")
@@ -33,25 +35,29 @@ func (g *groupedFlags) check(cmd *cobra.Command) error {
 	if g.grouped {
 		return nil
 	}
-	for _, name := range []string{"project", "view", "width", "height"} {
+	for _, name := range []string{"project", "since", "view", "width", "height"} {
 		if cmd.Flags().Lookup(name) != nil && cmd.Flags().Changed(name) {
-			return fmt.Errorf("--project, --view, --width, and --height require --grouped")
+			return fmt.Errorf("--project, --since, --view, --width, and --height require --grouped")
 		}
 	}
 	return nil
 }
 
-func (g *groupedFlags) run(cmd *cobra.Command, home string) error {
+// run renders the grouped overview; limit bounds the digest page (1..100) and is checked by the caller.
+func (g *groupedFlags) run(cmd *cobra.Command, home string, limit int) error {
 	st, err := store.Open(home)
 	if err != nil {
 		return err
 	}
 	if !g.view {
-		view, err := statuscmd.Grouped(st, g.project)
+		view, err := statuscmd.GroupedDigest(st, g.project, g.since, limit)
 		if err != nil {
 			return err
 		}
 		return emitOrdjson(cmd.OutOrStdout(), view)
+	}
+	if g.since != "" {
+		return fmt.Errorf("--since is a JSON digest cursor; it does not apply to --view")
 	}
 	width, height := g.width, g.height
 	if width <= 0 {
