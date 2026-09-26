@@ -3,7 +3,6 @@ package returns
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -248,11 +247,27 @@ func canonicalJSON(raw json.RawMessage) string {
 	return string(out)
 }
 
+// installation is this installation's instance ID as state.json records it, read once per operation; a failed
+// read is carried so each sidecar check reports it at the same point a direct read would.
+type installation struct {
+	id  string
+	err error
+}
+
+func readInstallation(s *store.Store) installation {
+	id, err := s.Instance()
+	return installation{id: id, err: err}
+}
+
 // ReadWake reads endpoint's sidecar. Only an absent file means no episode; anything else that is not a valid file
 // for this installation and this recipient is blocked with a diagnostic.
 func ReadWake(s *store.Store, endpoint [3]string) (*Wake, WakeStatus) {
+	return readWake(s, readInstallation(s), endpoint)
+}
+
+func readWake(s *store.Store, inst installation, endpoint [3]string) (*Wake, WakeStatus) {
 	path := s.WakePath(endpoint)
-	w, status := readWakeFile(s, path)
+	w, status := readWakeFile(inst, path)
 	if status.State != WakeOK {
 		return nil, status
 	}
@@ -263,7 +278,7 @@ func ReadWake(s *store.Store, endpoint [3]string) (*Wake, WakeStatus) {
 }
 
 // readWakeFile reads one sidecar by path and validates everything but the recipient.
-func readWakeFile(s *store.Store, path string) (*Wake, WakeStatus) {
+func readWakeFile(inst installation, path string) (*Wake, WakeStatus) {
 	blocked := func(msg string) (*Wake, WakeStatus) {
 		return nil, WakeStatus{State: WakeBlocked, Path: path, Diagnostic: fmt.Sprintf("%s %s; inspect it with %s. Nothing is submitted to this recipient until it is resolved.", path, msg, wakeShow)}
 	}
@@ -292,12 +307,11 @@ func readWakeFile(s *store.Store, path string) (*Wake, WakeStatus) {
 	if w.Schema != WakeSchema {
 		return blocked(fmt.Sprintf("uses wake schema %d, which this release does not support (it supports %d); sum never migrates it in place", w.Schema, WakeSchema))
 	}
-	installation, err := s.Instance()
-	if err != nil {
-		return blocked("cannot be checked against state.json: " + err.Error())
+	if inst.err != nil {
+		return blocked("cannot be checked against state.json: " + inst.err.Error())
 	}
-	if w.Installation != installation {
-		return blocked(fmt.Sprintf("belongs to another installation (%q, this one is %q)", w.Installation, installation))
+	if w.Installation != inst.id {
+		return blocked(fmt.Sprintf("belongs to another installation (%q, this one is %q)", w.Installation, inst.id))
 	}
 	if w.Covered == nil {
 		w.Covered = []WakeCovered{}
@@ -391,6 +405,10 @@ func wakePhase(w *Wake) string {
 
 // ListWakes lists every wake sidecar in this home, valid or not, sorted by path.
 func ListWakes(s *store.Store) ([]WakeEntry, error) {
+	return listWakes(s, readInstallation(s))
+}
+
+func listWakes(s *store.Store, inst installation) ([]WakeEntry, error) {
 	dir := filepath.Join(s.Home, "deliver")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -401,11 +419,11 @@ func ListWakes(s *store.Store) ([]WakeEntry, error) {
 	}
 	var out []WakeEntry
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".wake.json") || strings.HasPrefix(entry.Name(), ".") {
+		if !strings.HasSuffix(entry.Name(), store.WakeSuffix) || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		w, status := readWakeFile(s, path)
+		w, status := readWakeFile(inst, path)
 		out = append(out, WakeEntry{Path: path, Wake: w, Status: status})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
@@ -467,14 +485,6 @@ func PruneCovered(s *store.Store, w *Wake) bool {
 	}
 	w.Covered = kept
 	return changed
-}
-
-func newWakeID() (string, error) {
-	buf := make([]byte, 5)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return "w-" + hex.EncodeToString(buf), nil
 }
 
 // wakeView is the row's `wake` object for a valid sidecar.
@@ -589,7 +599,7 @@ func wakeRefs(items [][2]*ordjson.Object) []WakeRef {
 
 // prepare persists the next episode with the claims about to be sent; a non-empty result is why nothing may proceed.
 func (a *wakeAdmission) prepare(s *store.Store, items [][2]*ordjson.Object) string {
-	id, err := newWakeID()
+	id, err := newID("w-")
 	if err != nil {
 		return "the wake episode could not be identified: " + err.Error() + "; nothing was sent or recorded"
 	}
@@ -648,16 +658,19 @@ type Boundary struct {
 
 // BuildBoundary binds the coverage a reader rendered to w's current episode.
 func BuildBoundary(s *store.Store, w *Wake, included, omitted []WakeCovered) (*Boundary, error) {
+	return buildBoundary(readInstallation(s), w, included, omitted)
+}
+
+func buildBoundary(inst installation, w *Wake, included, omitted []WakeCovered) (*Boundary, error) {
 	if w == nil || w.Episode == nil {
 		return nil, fmt.Errorf("no wake episode to bound")
 	}
-	installation, err := s.Instance()
-	if err != nil {
-		return nil, err
+	if inst.err != nil {
+		return nil, inst.err
 	}
 	return &Boundary{
 		Schema:       WakeSchema,
-		Installation: installation,
+		Installation: inst.id,
 		Recipient:    w.Recipient,
 		Incarnation:  json.RawMessage(canonicalJSON(w.Incarnation)),
 		Episode:      w.Episode.ID,
@@ -832,6 +845,7 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 	if err != nil {
 		return nil, err
 	}
+	inst := readInstallation(s)
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -849,7 +863,7 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		return nil, err
 	}
 	defer unlock()
-	w, status := ReadWake(s, caller)
+	w, status := readWake(s, inst, caller)
 	switch status.State {
 	case WakeBlocked:
 		return nil, fmt.Errorf("Nothing was consumed: %s", status.Diagnostic)
@@ -993,6 +1007,7 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 //	claimed | intent                        → uncertain (outstanding): the attempts stay as they are; consume is the way out
 //	submitted | uncertain                   → unchanged; consume is the way out
 func Reconcile(s *store.Store, ctx *ordjson.Object, recipientKey string) (*ordjson.Object, error) {
+	inst := readInstallation(s)
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -1005,7 +1020,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, recipientKey string) (*ordjs
 		if strings.ContainsAny(recipientKey, "/\\.") {
 			return nil, fmt.Errorf("--recipient takes a sidecar key as %s lists it", wakeShow)
 		}
-		path = filepath.Join(s.Home, "deliver", recipientKey+".wake.json")
+		path = filepath.Join(s.Home, "deliver", recipientKey+store.WakeSuffix)
 	}
 	view := ordjson.NewObject()
 	view.Set("path", path)
@@ -1033,7 +1048,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, recipientKey string) (*ordjs
 	}
 	// The endpoint to lock comes from the file; a first unlocked read learns it, and the decision re-reads under
 	// the locks.
-	w, status := readWakeFile(s, path)
+	w, status := readWakeFile(inst, path)
 	switch status.State {
 	case WakeAbsent:
 		return report(status, nil, "none", "no wake sidecar; nothing to reconcile"), nil
@@ -1046,7 +1061,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, recipientKey string) (*ordjs
 		return nil, err
 	}
 	defer unlock()
-	if w, status = readWakeFile(s, path); status.State != WakeOK {
+	if w, status = readWakeFile(inst, path); status.State != WakeOK {
 		return report(status, nil, "none", "the file changed while the locks were taken; run it again"), nil
 	}
 	view.Set("before", wakePhase(w))
@@ -1100,7 +1115,8 @@ func recipientView(w *Wake) *ordjson.Object {
 // to that recipient in returns.json that no episode accounts for: prompts an older or non-adopted helper sent.
 // It writes nothing.
 func Show(s *store.Store, recipientKey string) (*ordjson.Object, error) {
-	entries, err := ListWakes(s)
+	inst := readInstallation(s)
+	entries, err := listWakes(s, inst)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,7 +1127,7 @@ func Show(s *store.Store, recipientKey string) (*ordjson.Object, error) {
 	tasks, gaps := readTasksForShow(s, host)
 	rows := []any{}
 	for _, entry := range entries {
-		key := strings.TrimSuffix(filepath.Base(entry.Path), ".wake.json")
+		key := strings.TrimSuffix(filepath.Base(entry.Path), store.WakeSuffix)
 		if recipientKey != "" && key != recipientKey {
 			continue
 		}
@@ -1144,12 +1160,12 @@ func Show(s *store.Store, recipientKey string) (*ordjson.Object, error) {
 			}
 		}
 		endpoint := w.Endpoint()
-		included, omitted := currentCoverage(s, host, endpoint, tasks, gaps)
+		included, omitted := currentCoverage(host, endpoint, tasks, gaps)
 		row.Set("included", coveredList(included))
 		row.Set("omitted", omittedList(omitted))
 		switch {
 		case w.IsOutstanding():
-			b, err := BuildBoundary(s, w, included, omittedCovered(omitted))
+			b, err := buildBoundary(inst, w, included, omittedCovered(omitted))
 			if err != nil {
 				return nil, err
 			}
@@ -1164,7 +1180,7 @@ func Show(s *store.Store, recipientKey string) (*ordjson.Object, error) {
 		default:
 			row.Set("next", "nothing outstanding; the next pass may open a new episode")
 		}
-		row.Set("uncoalesced_legacy_prompts", legacyPrompts(s, host, endpoint, tasks, accounted))
+		row.Set("uncoalesced_legacy_prompts", legacyPrompts(host, endpoint, tasks, accounted))
 		rows = append(rows, row)
 	}
 	view := ordjson.NewObject()
@@ -1210,12 +1226,22 @@ type coverageGap struct {
 	reason string
 }
 
+// showTask is one local task as Show reads it: its record, open obligations (or why they could not be
+// established), and recorded deliveries, read once and filtered per recipient.
+type showTask struct {
+	id             string
+	task           *ordjson.Object
+	obligations    []*ordjson.Object
+	obligationsErr error
+	deliveries     []any
+}
+
 // readTasksForShow reads every local task record one by one, so one unreadable record is a named gap rather than
 // a failed view.
-func readTasksForShow(s *store.Store, host machine.Identity) ([]*ordjson.Object, []coverageGap) {
+func readTasksForShow(s *store.Store, host machine.Identity) ([]showTask, []coverageGap) {
 	paths, _ := filepath.Glob(filepath.Join(s.Tasks, "t-*", "task.json"))
 	sort.Strings(paths)
-	var tasks []*ordjson.Object
+	var tasks []showTask
 	var gaps []coverageGap
 	for _, path := range paths {
 		id := filepath.Base(filepath.Dir(path))
@@ -1227,31 +1253,35 @@ func readTasksForShow(s *store.Store, host machine.Identity) ([]*ordjson.Object,
 		if machineValue, _ := task.Get("machine"); !host.Is(machineValue) {
 			continue
 		}
-		tasks = append(tasks, task)
+		idValue, _ := task.Get("id")
+		st := showTask{id: fmt.Sprint(idValue), task: task}
+		st.obligations, st.obligationsErr = OpenObligations(s, task)
+		if returnsObj, err := ReadReturns(s, st.id); err == nil {
+			deliveriesValue, _ := returnsObj.Get("deliveries")
+			st.deliveries, _ = deliveriesValue.([]any)
+		}
+		tasks = append(tasks, st)
 	}
 	return tasks, gaps
 }
 
 // currentCoverage lists the open obligations owed to endpoint's coordinator now, and the tasks whose obligations
 // could not be established.
-func currentCoverage(s *store.Store, host machine.Identity, endpoint [3]string, tasks []*ordjson.Object, gaps []coverageGap) ([]WakeCovered, []coverageGap) {
+func currentCoverage(host machine.Identity, endpoint [3]string, tasks []showTask, gaps []coverageGap) ([]WakeCovered, []coverageGap) {
 	var included []WakeCovered
 	omitted := append([]coverageGap{}, gaps...)
-	for _, task := range tasks {
-		idValue, _ := task.Get("id")
-		taskID := fmt.Sprint(idValue)
-		obligations, err := OpenObligations(s, task)
-		if err != nil {
-			omitted = append(omitted, coverageGap{task: taskID, reason: "obligations are unreadable: " + err.Error()})
+	for _, t := range tasks {
+		if t.obligationsErr != nil {
+			omitted = append(omitted, coverageGap{task: t.id, reason: "obligations are unreadable: " + t.obligationsErr.Error()})
 			continue
 		}
-		for _, o := range obligations {
+		for _, o := range t.obligations {
 			recipient, _ := o.Get("recipient")
-			if identity(host, ReturnRoute(task, fmt.Sprint(recipient))) != endpoint {
+			if identity(host, ReturnRoute(t.task, fmt.Sprint(recipient))) != endpoint {
 				continue
 			}
 			id, _ := o.Get("id")
-			c := WakeCovered{Task: taskID, ID: fmt.Sprint(id)}
+			c := WakeCovered{Task: t.id, ID: fmt.Sprint(id)}
 			if ref, ok := o.Get("ref"); ok && ref != nil {
 				c.Revision = fmt.Sprint(ref)
 			}
@@ -1282,7 +1312,7 @@ func omittedList(gaps []coverageGap) []any {
 
 // legacyPrompts lists prompt attempts to endpoint recorded in returns.json that no episode or receipt accounts for,
 // still submitted or uncertain: what an older or non-adopted helper sent outside the wake protocol.
-func legacyPrompts(s *store.Store, host machine.Identity, endpoint [3]string, tasks []*ordjson.Object, accounted map[string]bool) []any {
+func legacyPrompts(host machine.Identity, endpoint [3]string, tasks []showTask, accounted map[string]bool) []any {
 	route := ordjson.NewObject()
 	route.Set("machine", endpoint[0])
 	route.Set("session", endpoint[1])
@@ -1292,16 +1322,8 @@ func legacyPrompts(s *store.Store, host machine.Identity, endpoint [3]string, ta
 		keys[k] = true
 	}
 	out := []any{}
-	for _, task := range tasks {
-		idValue, _ := task.Get("id")
-		taskID := fmt.Sprint(idValue)
-		returnsObj, err := ReadReturns(s, taskID)
-		if err != nil {
-			continue
-		}
-		deliveriesValue, _ := returnsObj.Get("deliveries")
-		list, _ := deliveriesValue.([]any)
-		for _, d := range list {
+	for _, t := range tasks {
+		for _, d := range t.deliveries {
 			delivery, _ := d.(*ordjson.Object)
 			if delivery == nil {
 				continue
@@ -1323,7 +1345,7 @@ func legacyPrompts(s *store.Store, host machine.Identity, endpoint [3]string, ta
 				continue
 			}
 			row := ordjson.NewObject()
-			row.Set("task", taskID)
+			row.Set("task", t.id)
 			row.Set("delivery", deliveryID)
 			row.Set("state", state)
 			at, _ := delivery.Get("at")

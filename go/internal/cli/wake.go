@@ -50,11 +50,7 @@ func (o *rootOptions) addWakeCommands(root *cobra.Command) {
 			if boundary == "" {
 				return usageError("wake consume", []string{"--boundary"})
 			}
-			st, err := o.openStore("wake-consume")
-			if err != nil {
-				return err
-			}
-			ctx, err := store.Context(o.installRoot)
+			st, ctx, err := o.coordinatorContext("wake-consume")
 			if err != nil {
 				return err
 			}
@@ -75,11 +71,7 @@ func (o *rootOptions) addWakeCommands(root *cobra.Command) {
 		Annotations: map[string]string{projectsAnnotation: "all"},
 		Args:        cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			st, err := o.openStore("wake-reconcile")
-			if err != nil {
-				return err
-			}
-			ctx, err := store.Context(o.installRoot)
+			st, ctx, err := o.coordinatorContext("wake-reconcile")
 			if err != nil {
 				return err
 			}

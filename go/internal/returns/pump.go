@@ -561,7 +561,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 			return row, nil
 		}
 	}
-	deliveryID, err := newDeliveryID()
+	deliveryID, err := newID("d-")
 	if err != nil {
 		return nil, err
 	}
@@ -704,7 +704,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		// The attempt is finalized first, so an old reader sees the uncertain attempt before the episode says
 		// anything; a not-delivered or never-claimed outcome closes the episode.
 		phase := WakeNotSubmitted
-		if claimed && (state == "submitted" || state == "uncertain" || state == "not-delivered") {
+		if claimed && (state == WakeSubmitted || state == WakeUncertain || state == WakeNotDelivered) {
 			phase = state
 		}
 		adm.outcome(s, row, phase, detail)
@@ -1085,12 +1085,13 @@ func runtimeSHA(runtimeRoot string) any {
 	return sha
 }
 
-func newDeliveryID() (string, error) {
+// newID is a short random identifier with prefix ("d-" for deliveries, "w-" for wake episodes).
+func newID(prefix string) (string, error) {
 	buf := make([]byte, 5)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return "d-" + hex.EncodeToString(buf), nil
+	return prefix + hex.EncodeToString(buf), nil
 }
 
 func resolve(path string) string {
