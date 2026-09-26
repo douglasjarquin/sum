@@ -63,7 +63,7 @@ def frequency_rows():
     return [
         {"command": "ask", "calls_per_task": 1, "busy_session_calls": 1, "basis": "observed-lab", "source": "worker question-to-inbox scenario"},
         {"command": "report", "calls_per_task": 1, "busy_session_calls": 1, "basis": "observed-lab", "source": "durable worker callback scenario"},
-        {"command": "inbox", "calls_per_task": 1, "busy_session_calls": 4, "basis": "simulated-fixture", "source": "representative coordinator rundown"},
+        {"command": "inbox", "calls_per_task": 1, "busy_session_calls": 4, "basis": "simulated-fixture", "source": "representative coordinator status check"},
         {"command": "status", "calls_per_task": 1, "busy_session_calls": 4, "basis": "simulated-fixture", "source": "representative coordinator checks; no background poll"},
         {"command": "context", "calls_per_task": 2, "busy_session_calls": 4, "basis": "simulated-fixture", "source": "bounded worker/coordinator reads"},
         {"command": "show", "calls_per_task": 1, "busy_session_calls": 2, "basis": "simulated-fixture", "source": "full-record fallback"},
