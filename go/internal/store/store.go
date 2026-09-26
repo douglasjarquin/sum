@@ -255,8 +255,41 @@ func (s *Store) DeliveryShared(ctx context.Context) (func() error, error) {
 // RecipientLockPath is the lock file for one canonical recipient endpoint (machine, session, pane). Callers pass the
 // machine already canonicalized, so every spelling of one host's endpoint names one file.
 func (s *Store) RecipientLockPath(endpoint [3]string) string {
+	return s.deliverPath(endpoint, ".lock")
+}
+
+// WakeSuffix is the file suffix of a coordinator wake sidecar under <home>/deliver/.
+const WakeSuffix = ".wake.json"
+
+// WakePath is the coordinator wake sidecar for one canonical recipient endpoint, beside its recipient lock and
+// keyed the same way, so every spelling of one host's endpoint names one file.
+func (s *Store) WakePath(endpoint [3]string) string {
+	return s.deliverPath(endpoint, WakeSuffix)
+}
+
+// deliverPath is the per-recipient file under <home>/deliver/ for one canonical endpoint and suffix.
+func (s *Store) deliverPath(endpoint [3]string, suffix string) string {
 	key := RegistrationKey(Endpoint{Machine: endpoint[0], Session: endpoint[1], Pane: endpoint[2]})
-	return filepath.Join(s.Home, "deliver", key+".lock")
+	return filepath.Join(s.Home, "deliver", key+suffix)
+}
+
+// Instance is this installation's recorded instance ID from state.json ("" when none is recorded yet).
+func (s *Store) Instance() (string, error) {
+	statePath := filepath.Join(s.Home, "state.json")
+	if info, err := os.Stat(statePath); err != nil || info.IsDir() {
+		return "", nil
+	}
+	value, err := ordjson.ReadFile(statePath)
+	if err != nil {
+		return "", err
+	}
+	state, ok := value.(*ordjson.Object)
+	if !ok {
+		return "", fmt.Errorf("state.json is not a JSON object")
+	}
+	instance, _ := state.Get("instance")
+	text, _ := instance.(string)
+	return text, nil
 }
 
 // RecipientLock takes one recipient's delivery lock exclusively, after the compatibility lock and before the state

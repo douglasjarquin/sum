@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,4 +180,19 @@ func readContextFile(t *testing.T, home string) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// A verified coordinator adopts the wake protocol (#240a) at init: a fresh claim records it, and an owner record an
+// older helper wrote gains it on the next verified init. Until then delivery to that coordinator is legacy.
+func TestInit_coordinatorAdoptsTheWakeProtocol(t *testing.T) {
+	home := legacyHome(t, "dev")
+	herdrEnv(t, home)
+	onHost(t, thisHostRaw, "dev")
+	if owner := readJSON(t, filepath.Join(home, "context.json")); owner["wake_protocol"] != nil {
+		t.Fatalf("legacy owner already carries wake_protocol: %v", owner)
+	}
+	mustRole(t, home, "coordinator")
+	if owner := readJSON(t, filepath.Join(home, "context.json")); fmt.Sprint(owner["wake_protocol"]) != "1" {
+		t.Fatalf("after a verified init, owner = %v, want wake_protocol 1", owner)
+	}
 }

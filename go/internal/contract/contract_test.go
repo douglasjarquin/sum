@@ -30,6 +30,9 @@ func TestBuildRelease_matchesThePythonReferenceShape(t *testing.T) {
     ],
     "machine_identity": [
       1
+    ],
+    "wake_protocol": [
+      1
     ]
   }
 }`

@@ -9,6 +9,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 // supportedFloor is the oldest runtime a current updater accepts as a release target: the first tree on main with
@@ -139,6 +142,14 @@ func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates,
 		t.Fatalf("candidate ask notice = %v", asked["notice"])
 	}
 	parentPrompts := len(d.prompts(t, "w-parent:p1"))
+	candidateDelivery := asString(asMap(asked["notice"])["delivery"])
+
+	// #240a: the wake sidecar is opaque to the older helper. A candidate-created home has an outstanding episode from
+	// that ask; an older-created home is not adopted (its owner record predates the protocol), so the candidate
+	// prompted legacy-uncoalesced and wrote no sidecar, and one is planted so the older helper meets the file either
+	// way. The older helper must leave it byte-identical and leave the candidate's submitted attempt as it is.
+	wakePath := candidateWakeSidecar(t, d, olderCreates, asked)
+	wakeBefore := readFileString(t, wakePath)
 
 	// Reads: the older helper shows the record's own field, which the candidate did not touch.
 	var row map[string]any
@@ -181,6 +192,40 @@ func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates,
 		}
 	}
 
+	olderDelivery := ""
+	for _, recipient := range asSlice(asMap(asMap(reported["notice"])["returns"])["recipients"]) {
+		if asString(asMap(recipient)["state"]) == "submitted" {
+			olderDelivery = asString(asMap(recipient)["delivery"])
+		}
+	}
+	if readFileString(t, wakePath) != wakeBefore {
+		t.Fatalf("the older helper changed the wake sidecar %s", wakePath)
+	}
+	if state := deliveryState(t, d.home, taskID, candidateDelivery); state != "submitted" {
+		t.Fatalf("the candidate's submitted attempt %s reads %q after the older helper's pass, want submitted", candidateDelivery, state)
+	}
+	if !stableIdentity {
+		t.Logf("pre-identity runtime recorded its own prompt under the hostname key; the candidate cannot attribute it to this recipient")
+	} else {
+		if olderDelivery == "" {
+			t.Fatalf("older helper report recorded no submitted delivery: %v", reported["notice"])
+		}
+		entry := candidateWakeEntry(t, d)
+		uncoalesced := asSlice(entry["uncoalesced_legacy_prompts"])
+		found := false
+		for _, item := range uncoalesced {
+			if asString(asMap(item)["delivery"]) == olderDelivery {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("candidate wake show does not report the older helper's prompt %s as uncoalesced: %v", olderDelivery, uncoalesced)
+		}
+		if asString(asMap(entry["episode"])["phase"]) != "submitted" {
+			t.Fatalf("the episode changed under the older helper: %v", entry["episode"])
+		}
+	}
+
 	// The coordinator answers through the older helper; the candidate then derives what that helper recorded.
 	settleFakePane(t, d.base, pane)
 	answered := old("", "answer", taskID, questionID, "--text", "This way.")
@@ -192,6 +237,86 @@ func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates,
 	if asString(derived["status"]) != "submitted-not-acknowledged" {
 		t.Fatalf("answer notice = %v, want submitted to the settled worker", derived)
 	}
+}
+
+// candidateWakeSidecar returns the path of the coordinator's wake sidecar: the one the candidate's ask left (its row
+// says so), or, in an older-created home that is not adopted, one planted with an outstanding episode.
+func candidateWakeSidecar(t *testing.T, d *demoLab, olderCreates bool, asked map[string]any) string {
+	t.Helper()
+	st, err := store.Open(d.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wakeField any
+	for _, recipient := range asSlice(asMap(asMap(asked["notice"])["returns"])["recipients"]) {
+		wakeField = asMap(recipient)["wake"]
+	}
+	entries, err := returns.ListWakes(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !olderCreates {
+		if len(entries) != 1 || entries[0].Wake == nil || !entries[0].Wake.IsOutstanding() {
+			t.Fatalf("candidate ask left wake entries %v, want one outstanding episode (row wake %v)", entries, wakeField)
+		}
+		return entries[0].Path
+	}
+	if asString(wakeField) != returns.WakeLegacy || len(entries) != 0 {
+		t.Fatalf("older-created home: row wake = %v, sidecars = %v; want legacy-uncoalesced and none", wakeField, entries)
+	}
+	owner, err := st.Owner()
+	if err != nil || owner == nil {
+		t.Fatalf("owner: %v %v", owner, err)
+	}
+	machineValue, _ := owner.Get("machine")
+	w, err := returns.NewWake(st, [3]string{asString(machineValue), "sum-test", "w-parent:p1"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Prepare("w-planted", []returns.WakeRef{{Task: "t-planted", ID: "report:r1"}})
+	w.Episode.Phase = returns.WakeSubmitted
+	w.Episode.Delivery = "d-planted"
+	if err := returns.WriteWake(st, w); err != nil {
+		t.Fatal(err)
+	}
+	return st.WakePath(w.Endpoint())
+}
+
+func candidateWakeEntry(t *testing.T, d *demoLab) map[string]any {
+	t.Helper()
+	rows := asSlice(d.ctl(true, "wake", "show")["recipients"])
+	if len(rows) != 1 {
+		t.Fatalf("candidate wake show = %v", rows)
+	}
+	return asMap(rows[0])
+}
+
+func readFileString(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// deliveryState reads one delivery's recorded state from the task's returns sidecar.
+func deliveryState(t *testing.T, home, taskID, deliveryID string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(home, "tasks", taskID, returns.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sidecar map[string]any
+	if err := json.Unmarshal(raw, &sidecar); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range asSlice(sidecar["deliveries"]) {
+		if asString(asMap(item)["id"]) == deliveryID {
+			return asString(asMap(item)["state"])
+		}
+	}
+	return ""
 }
 
 // newOlderLab is newPolicyLab with the coordinator initialized by the older helper when it creates the records.

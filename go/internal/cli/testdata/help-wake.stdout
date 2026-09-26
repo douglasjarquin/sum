@@ -1,0 +1,9 @@
+topic: wake
+help: "Coordinator wake episodes (#240a): show every wake sidecar and the exact boundary of the outstanding work; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends"
+arguments: []
+subcommands:
+  show: "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), and uncoalesced legacy prompts; writes nothing"
+  consume: "Coordinator only: record the exact consume receipt for one boundary after reading its included work; closes only that episode, answers/applies/verifies/approves nothing, changes no reservation"
+  reconcile: "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file"
+read_only: false
+read_only_subcommands[1]: show

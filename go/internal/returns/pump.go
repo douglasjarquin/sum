@@ -267,7 +267,7 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 	}
 	note := "One bounded pass over saved returns: at most one prompt per recipient identity, nothing slept or polled, no obligation deleted."
 	if p.deferred > 0 {
-		note += fmt.Sprintf(" %d recipient(s) were deferred by the pass budget or a busy delivery lock; they stay pending and are visited first on the next explicit pass (`sumctl pump`).", p.deferred)
+		note += fmt.Sprintf(" %d recipient(s) were deferred by the pass budget, a busy delivery lock, or a wake sidecar that needs inspection; they stay pending and are visited first on the next explicit pass (`sumctl pump`).", p.deferred)
 	}
 	result.Set("note", note)
 	return result, nil
@@ -507,7 +507,69 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		}
 	}
 	row.Set("withheld", withheld)
-	deliveryID, err := newDeliveryID()
+	// Coordinator wake admission (wake.go), decided under the compatibility and recipient locks already held. Worker
+	// routes never pass through it.
+	var adm *wakeAdmission
+	if fmt.Sprint(routeValue(route, "role")) == "coordinator" {
+		if adm, err = p.admitWake(route, opts.Force && !b.inline); err != nil {
+			return nil, err
+		}
+		if !b.inline {
+			switch adm.decision {
+			case wakeDecisionLegacy:
+				row.Set("wake", WakeLegacy)
+			case wakeDecisionBlocked:
+				row.Set("wake", adm.view())
+				return p.deferRow(row, adm.reason), nil
+			case wakeDecisionCoalesced:
+				row.Set("wake", adm.view())
+				row.Set("state", "coalesced")
+				row.Set("reason", adm.reason)
+				return row, nil
+			}
+		}
+	}
+	// Identities a consumed wake already covered are presented, not repeated: they are withheld from a routine
+	// prompt (their attempt state is untouched) until canonical closure prunes them. An explicit forced notice and
+	// the coordinator's own inline listing still show them.
+	if adm != nil && adm.wake != nil && adm.decision == wakeDecisionPermitted && !b.inline && !opts.Force && len(adm.wake.Covered) > 0 {
+		covered := map[[2]string]bool{}
+		for _, c := range adm.wake.Covered {
+			covered[[2]string{c.Task, c.ID}] = true
+		}
+		var kept [][2]*ordjson.Object
+		for _, pair := range sendItems {
+			k := pairKey(pair)
+			if !covered[k] {
+				kept = append(kept, pair)
+				continue
+			}
+			delete(sendable, k)
+			w := ordjson.NewObject()
+			w.Set("task", k[0])
+			w.Set("id", k[1])
+			w.Set("state", "covered")
+			w.Set("reason", "presented by a consumed wake ("+wakeShow+"); not repeated until it closes")
+			withheld = append(withheld, w)
+		}
+		sendItems = kept
+		// A covered identity is neither listed by the notice nor counted twice in its withheld total.
+		var stillMentioned [][2]*ordjson.Object
+		for _, pair := range mentioned {
+			if !covered[pairKey(pair)] {
+				stillMentioned = append(stillMentioned, pair)
+			}
+		}
+		mentioned = stillMentioned
+		row.Set("withheld", withheld)
+		if len(sendItems) == 0 {
+			row.Set("wake", adm.view())
+			row.Set("state", "quiet")
+			row.Set("reason", "every open return to this coordinator was already presented by a consumed wake; nothing is sent until a new return arrives or `sumctl notice TASK --to parent` repeats one explicitly")
+			return row, nil
+		}
+	}
+	deliveryID, err := newID("d-")
 	if err != nil {
 		return nil, err
 	}
@@ -551,12 +613,27 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 			return row, nil
 		}
 		row.Set("via", "inline")
+		if adm != nil {
+			// The caller's own listing presents everything and neither creates nor consumes an episode.
+			row.Set("wake", adm.view())
+		}
 		row.Set("message", noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), mentioned, len(withheld)))
 		if _, err := finish("submitted", "inline", "presented in the recipient's own command output"); err != nil {
 			return nil, err
 		}
 		row.Set("reason", "you are the recipient; this listing is the notice. Nothing is answered, applied, or verified by reading it.")
 		return row, nil
+	}
+	// An adopted coordinator's episode is durable before anything can reach its pane: prepared now with the exact
+	// claims, claimed after the in-flight stamp, intent right before the prompt, and its outcome after the attempt
+	// is finalized.
+	episode := adm != nil && adm.decision == wakeDecisionPermitted
+	if episode {
+		if reason := adm.prepare(s, sendItems, deliveryID); reason != "" {
+			row.Set("wake", adm.view())
+			return p.deferRow(row, reason), nil
+		}
+		row.Set("wake", adm.view())
 	}
 	// claim runs under the state lock right before the prompt: it keeps only the returns still open and still routed
 	// here, rebuilds the notice from them, confirms the prompt still fits the pass, and records the in-flight attempt.
@@ -585,6 +662,17 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		if msg := p.checkOccupant(route, survivors, occ); msg != "" {
 			return claimResult{stale: msg}, nil
 		}
+		if episode {
+			// The owner record is re-read here, still under the compatibility lock: an adoption that changed while
+			// the recipient was observed sends nothing rather than sending under the wrong policy.
+			owner, err := s.Owner()
+			if err != nil {
+				return claimResult{}, err
+			}
+			if !WakeAdopted(owner) {
+				return claimResult{stale: "the coordinator's wake protocol adoption changed while its pane was observed; nothing was sent or recorded. The next pass decides afresh."}, nil
+			}
+		}
 		if !p.fits(PromptTimeout) {
 			return claimResult{deferReason: "the pass budget ran out after this recipient was observed and before the prompt; nothing was sent or recorded"}, nil
 		}
@@ -592,13 +680,27 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 			return claimResult{}, err
 		}
 		sendItems, claimed = survivors, true
-		return claimResult{message: noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), current, len(withheld))}, nil
+		result := claimResult{message: noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), current, len(withheld))}
+		if episode {
+			if err := adm.claimed(s, deliveryID, survivors); err != nil {
+				return claimResult{}, err
+			}
+			result.message += wakeNoticeLine(s, opts.SumctlPath, adm.wake.Episode.ID)
+			result.beforePrompt = func() error { return adm.intent(s) }
+		}
+		return result, nil
 	}
 	state, detail, deferReason := p.promptRecipient(route, sendItems, claim)
 	if deferReason != "" {
+		if episode {
+			adm.outcome(s, row, WakeNotSubmitted, deferReason)
+		}
 		return p.deferRow(row, deferReason), nil
 	}
 	if state == "quiet" || state == "refused" {
+		if episode {
+			adm.outcome(s, row, WakeNotSubmitted, detail)
+		}
 		row.Set("state", state)
 		row.Set("reason", detail)
 		return row, nil
@@ -606,6 +708,15 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	row.Set("via", "prompt")
 	if _, err := finish(state, "prompt", detail); err != nil {
 		return nil, err
+	}
+	if episode {
+		// The attempt is finalized first, so an old reader sees the uncertain attempt before the episode says
+		// anything; a not-delivered or never-claimed outcome closes the episode.
+		phase := WakeNotSubmitted
+		if claimed && (state == WakeSubmitted || state == WakeUncertain || state == WakeNotDelivered) {
+			phase = state
+		}
+		adm.outcome(s, row, phase, detail)
 	}
 	sent := []any{}
 	for _, pair := range sendItems {
@@ -715,6 +826,11 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 		return "", "", claimed.deferReason
 	case claimed.quiet != "":
 		return "quiet", claimed.quiet, ""
+	}
+	if claimed.beforePrompt != nil {
+		if err := claimed.beforePrompt(); err != nil {
+			return notDelivered("prompt was not sent: " + err.Error())
+		}
 	}
 	if _, err := p.sn.Call(session, PromptTimeout, "agent", "prompt", pane, claimed.message); err != nil {
 		state, detail := promptFailure(err)
@@ -910,6 +1026,12 @@ func noticeText(s *store.Store, sumctlPath, role string, items [][2]*ordjson.Obj
 	return text
 }
 
+// wakeNoticeLine names the episode a coordinator prompt opened and the commands that inspect and consume it.
+func wakeNoticeLine(s *store.Store, sumctlPath, episode string) string {
+	return fmt.Sprintf(" Wake episode %s: %s shows it and its boundary; after reading, record it with %s.", episode,
+		shquote.CommandFor(sumctlPath, s.Home, "wake", "show"), shquote.CommandFor(sumctlPath, s.Home, "wake", "consume", "--boundary", "TOKEN"))
+}
+
 func identity(host machine.Identity, obj *ordjson.Object) [3]string {
 	if obj == nil {
 		return [3]string{}
@@ -978,12 +1100,13 @@ func runtimeSHA(runtimeRoot string) any {
 	return sha
 }
 
-func newDeliveryID() (string, error) {
+// newID is a short random identifier with prefix ("d-" for deliveries, "w-" for wake episodes).
+func newID(prefix string) (string, error) {
 	buf := make([]byte, 5)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return "d-" + hex.EncodeToString(buf), nil
+	return prefix + hex.EncodeToString(buf), nil
 }
 
 func resolve(path string) string {

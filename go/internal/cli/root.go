@@ -133,6 +133,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addRefreshCommands(root)
 	opts.addCleanupCommand(root)
 	opts.addExecutionCommands(root)
+	opts.addWakeCommands(root)
 	opts.addRepairCommands(root)
 	opts.addStartCommand(root)
 	opts.addReviewCommand(root)

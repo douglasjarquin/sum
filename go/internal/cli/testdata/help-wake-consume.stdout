@@ -1,0 +1,7 @@
+topic: wake-consume
+help: "Coordinator only: record the exact consume receipt for one boundary after reading its included work; closes only that episode, answers/applies/verifies/approves nothing, changes no reservation"
+arguments[1]{name,help,required}:
+  "--boundary","The opaque boundary token from `wake show`; it binds installation, recipient, occupant, episode, generation, and the exact included/omitted identities",true
+subcommands: null
+read_only: false
+read_only_subcommands: null

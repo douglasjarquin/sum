@@ -10,7 +10,12 @@ const (
 	// it is. Staging never copies it into release.json, where it would describe
 	// the stager rather than the staged tree.
 	MachineIdentity = 1
-	HerdrCLI        = "0.9.0"
+	// WakeProtocol 1 says this binary keeps the coordinator wake sidecar
+	// (internal/returns/wake.go): at most one outstanding routine wake per
+	// adopted coordinator, persisted before any prompt. Reported the same way
+	// as MachineIdentity, by release-contract only.
+	WakeProtocol = 1
+	HerdrCLI     = "0.9.0"
 )
 
 var MCP = MCPContract{Server: "herdr-mesh-sum", Version: SumVersion, Tools: 10}
@@ -30,6 +35,7 @@ type Supports struct {
 	StateSchema     []int `json:"state_schema"`
 	BriefSchema     []int `json:"brief_schema"`
 	MachineIdentity []int `json:"machine_identity"`
+	WakeProtocol    []int `json:"wake_protocol"`
 }
 
 type Release struct {
@@ -42,6 +48,6 @@ func BuildRelease() Release {
 	return Release{
 		SumVersion: SumVersion,
 		Contracts:  Contracts{HerdrCLI: HerdrCLI, MCP: MCP},
-		Supports:   Supports{StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}},
+		Supports:   Supports{StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}},
 	}
 }
