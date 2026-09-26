@@ -98,7 +98,9 @@ func trackedThroughLink(t *testing.T, root, rel string, tracked map[string]bool)
 // Every installed helper since the namespace check refuses to stage a tree with an unknown `sum-*` skill
 // directory or projection, and `update apply` stages with the installed helper. Adding one would make the
 // release uninstallable through `update`, so role and action procedures live inside these skills or beside
-// AGENTS.md instead. Changing this set needs a release that accepts the new name first.
+// AGENTS.md instead. A canonical rename or a new alias directory needs a release whose checker accepts the
+// new name first (see `canonicalSkills` and the `alias` frontmatter line in `internal/skills`); this test pins
+// what the tree ships today.
 func TestSumSkillSetIsWhatInstalledHelpersAccept(t *testing.T) {
 	root := repoRoot(t)
 	want := []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker"}

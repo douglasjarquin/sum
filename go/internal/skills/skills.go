@@ -20,10 +20,30 @@ const Version = "1.5.25"
 const engineeringPrinciplesReference = ".agents/skills/verify/references/engineering-principles.md"
 
 var (
-	sumSkillNames      = []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker"}
+	// canonicalSkills lists each Sum action once. A group with several names accepts exactly one of them
+	// in a tree: the first is the current name and the rest are earlier names, so the installed helper
+	// stages a release from either side of a rename. `update apply` checks the candidate tree with the
+	// helper already installed, so a name enters this list one release before a tree may use it.
+	canonicalSkills = [][]string{
+		{"sum-delivery"},
+		{"sum-develop"},
+		{"sum-dispatch"},
+		{"sum-status", "sum-rundown"},
+		{"sum-update"},
+		{"sum-worker"},
+	}
 	portableSkillNames = []string{"create-verification", "evidence", "maintain-verification", "verify"}
 	skillArgument      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 )
+
+// canonicalNames flattens every accepted canonical name.
+func canonicalNames() []string {
+	var names []string
+	for _, group := range canonicalSkills {
+		names = append(names, group...)
+	}
+	return names
+}
 
 func Check(root string) (*ordjson.Object, error) {
 	skillsDir := filepath.Join(root, "skills")
@@ -32,6 +52,7 @@ func Check(root string) (*ordjson.Object, error) {
 		result := ordjson.NewObject()
 		result.Set("ok", true)
 		result.Set("active", []any{})
+		result.Set("aliases", ordjson.NewObject())
 		result.Set("routes", ordjson.NewObject())
 		result.Set("compatibility", []any{})
 		result.Set("errors", []any{})
@@ -43,22 +64,42 @@ func Check(root string) (*ordjson.Object, error) {
 func inventory(root string) (*ordjson.Object, error) {
 	var errors []any
 	var compatibility []any
-	active := make([]any, len(sumSkillNames))
-	for i, name := range sumSkillNames {
-		active[i] = name
-	}
+	var activeNames []string
+	aliases := map[string]string{}
 	canonicalRoot := filepath.Join(root, "skills")
 	entries, err := os.ReadDir(canonicalRoot)
 	if err != nil {
 		errors = append(errors, fmt.Sprintf("missing skill source directory: %s", canonicalRoot))
 	} else {
+		// A directory whose SKILL.md declares an alias is never a canonical candidate, so the earlier
+		// name of a renamed skill can live on as an alias of the current one.
+		present := map[string]bool{}
+		declaredAlias := map[string]string{}
 		for _, child := range entries {
 			name := child.Name()
-			if strings.HasPrefix(name, "sum-") && !contains(sumSkillNames, name) {
-				errors = append(errors, fmt.Sprintf("namespace collision: unexpected Sum skill %s", name))
+			present[name] = true
+			if target := frontmatterField(filepath.Join(canonicalRoot, name, "SKILL.md"), "alias"); target != "" {
+				declaredAlias[name] = target
 			}
 		}
-		for _, name := range sumSkillNames {
+		for _, group := range canonicalSkills {
+			var found []string
+			for _, name := range group {
+				if present[name] && declaredAlias[name] == "" {
+					found = append(found, name)
+				}
+			}
+			switch len(found) {
+			case 0:
+				errors = append(errors, fmt.Sprintf("missing canonical skill directory: %s", filepath.Join(canonicalRoot, group[0])))
+				continue
+			case 1:
+				activeNames = append(activeNames, found[0])
+			default:
+				errors = append(errors, fmt.Sprintf("duplicate canonical skill: %s are the same skill under two names in %s", strings.Join(found, " and "), canonicalRoot))
+				continue
+			}
+			name := found[0]
 			path := filepath.Join(canonicalRoot, name)
 			skillFile := filepath.Join(path, "SKILL.md")
 			info, statErr := os.Lstat(path)
@@ -74,7 +115,38 @@ func inventory(root string) (*ordjson.Object, error) {
 				errors = append(errors, fmt.Sprintf("skill name mismatch: %s is %s, expected %s", skillFile, pyrepr.Repr(foundName(skillFile)), pyrepr.Repr(name)))
 			}
 		}
-		for _, canonical := range sumSkillNames {
+		sort.Strings(activeNames)
+		for _, child := range entries {
+			name := child.Name()
+			if !strings.HasPrefix(name, "sum-") || contains(activeNames, name) {
+				continue
+			}
+			path := filepath.Join(canonicalRoot, name)
+			skillFile := filepath.Join(path, "SKILL.md")
+			target := declaredAlias[name]
+			if target == "" {
+				if contains(canonicalNames(), name) {
+					continue
+				}
+				errors = append(errors, fmt.Sprintf("namespace collision: unexpected Sum skill %s", name))
+				continue
+			}
+			info, statErr := os.Lstat(path)
+			if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				errors = append(errors, fmt.Sprintf("alias must be a real directory: %s", path))
+				continue
+			}
+			if found := frontmatterName(skillFile); found != name {
+				errors = append(errors, fmt.Sprintf("skill name mismatch: %s is %s, expected %s", skillFile, pyrepr.Repr(foundName(skillFile)), pyrepr.Repr(name)))
+				continue
+			}
+			if !contains(activeNames, target) {
+				errors = append(errors, fmt.Sprintf("alias target mismatch: %s names %s, which is not an active Sum skill", skillFile, pyrepr.Repr(target)))
+				continue
+			}
+			aliases[name] = target
+		}
+		for _, canonical := range canonicalNames() {
 			legacy := strings.TrimPrefix(canonical, "sum-")
 			path := filepath.Join(canonicalRoot, legacy)
 			if exists(path) {
@@ -86,6 +158,12 @@ func inventory(root string) (*ordjson.Object, error) {
 			errors = append(errors, fmt.Sprintf("missing portable reference: %s", referencePath))
 		}
 	}
+	aliasNames := make([]string, 0, len(aliases))
+	for name := range aliases {
+		aliasNames = append(aliasNames, name)
+	}
+	sort.Strings(aliasNames)
+	projected := append(append([]string{}, activeNames...), aliasNames...)
 
 	routes := ordjson.NewObject()
 	for _, route := range []struct {
@@ -112,14 +190,14 @@ func inventory(root string) (*ordjson.Object, error) {
 		for _, child := range children {
 			name := child.Name()
 			if strings.HasPrefix(name, "sum-") {
-				if !contains(sumSkillNames, name) {
+				if !contains(projected, name) {
 					errors = append(errors, fmt.Sprintf("namespace collision: unexpected projected skill %s in %s", name, route.directory))
 				} else {
 					discovered = append(discovered, name)
 				}
 			}
 		}
-		for _, name := range sumSkillNames {
+		for _, name := range projected {
 			path := filepath.Join(route.directory, name)
 			target := "../../skills/" + name
 			if link, linkErr := os.Readlink(path); linkErr != nil || link != target {
@@ -153,9 +231,18 @@ func inventory(root string) (*ordjson.Object, error) {
 		routes.Set(route.name, combined)
 	}
 
+	active := make([]any, len(activeNames))
+	for i, name := range activeNames {
+		active[i] = name
+	}
+	aliasView := ordjson.NewObject()
+	for _, name := range aliasNames {
+		aliasView.Set(name, aliases[name])
+	}
 	result := ordjson.NewObject()
 	result.Set("ok", len(errors) == 0)
 	result.Set("active", active)
+	result.Set("aliases", aliasView)
 	result.Set("routes", routes)
 	result.Set("compatibility", compatibility)
 	result.Set("errors", errors)
@@ -273,6 +360,12 @@ func foundName(path string) any {
 }
 
 func frontmatterName(path string) string {
+	return frontmatterField(path, "name")
+}
+
+// frontmatterField returns the value of the first top-level or nested `key:` line in the SKILL.md
+// frontmatter, which is enough for `name` and for the `alias` line under `metadata`.
+func frontmatterField(path, key string) string {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
@@ -286,8 +379,8 @@ func frontmatterName(path string) string {
 		if strings.TrimSpace(line) == "---" {
 			break
 		}
-		key, value, ok := strings.Cut(line, ":")
-		if ok && strings.TrimSpace(key) == "name" {
+		k, value, ok := strings.Cut(line, ":")
+		if ok && strings.TrimSpace(k) == key {
 			return strings.Trim(strings.TrimSpace(value), `"'`)
 		}
 	}
