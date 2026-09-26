@@ -439,8 +439,8 @@ func TestWakeUnsafeRecipientsLeaveNoOutstandingEpisode(t *testing.T) {
 	}
 }
 
-// One wake file serves every machine spelling of the coordinator; a legacy-spelled arrival is coalesced behind the
-// stable-spelled episode.
+// One wake file serves every machine spelling of the coordinator; a legacy-spelled arrival is admitted behind the
+// stable-spelled episode (here a question, so it takes the decision priority path under that same episode).
 func TestWakeMachineAliasesShareOneEpisode(t *testing.T) {
 	l := newPassLab(t)
 	identity, err := machine.Local(l.s.Home)
@@ -456,10 +456,17 @@ func TestWakeMachineAliasesShareOneEpisode(t *testing.T) {
 	if r, _ := l.pumpFor([]string{stable}, "parent", 8*time.Second); rowField(t, r, "w-root:p1", "state") != "submitted" {
 		t.Fatalf("stable-spelled pass = %v", r)
 	}
+	episode := l.wake().Episode.ID
 	legacy := l.asking(identity.Hostname)
 	result, _ := l.pumpFor([]string{legacy}, "parent", 8*time.Second)
-	if got := rowField(t, result, "w-root:p1", "state"); got != "coalesced" {
-		t.Fatalf("legacy-spelled pass = %s, want coalesced behind the same episode", got)
+	r := row(t, result, "w-root:p1")
+	wake, _ := r.Get("wake")
+	admission, _ := wake.(*ordjson.Object).Get("admission")
+	if priority, _ := r.Get("priority"); admission != wakeDecisionCoalesced || priority != true {
+		t.Fatalf("legacy-spelled pass = %v, want admitted coalesced behind the same episode with the decision on the priority path", r)
+	}
+	if w := l.wake(); w.Episode.ID != episode || w.Generation != 1 {
+		t.Fatalf("the legacy-spelled arrival changed the episode: gen %d %+v", w.Generation, w.Episode)
 	}
 	entries, err := ListWakes(l.s)
 	if err != nil || len(entries) != 1 {

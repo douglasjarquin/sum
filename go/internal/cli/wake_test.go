@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// `sumctl wake show|consume|reconcile` (#240a, U6).
+// `sumctl wake show|consume|reconcile` (#240a, U6) and the decision priority path (#240b, U7).
 
 func TestWakeCommandsUsageAndAuthority(t *testing.T) {
 	cases := []struct {
@@ -211,6 +212,106 @@ func TestWakeCommandsEndToEndWithTheHookDisabled(t *testing.T) {
 	entryAfter := asMap(asSlice(shownAfter["recipients"])[0])
 	if entryAfter["outstanding"] != false || fmt.Sprint(entryAfter["receipts_count"]) != "1" || asString(entryAfter["boundary"]) != "" {
 		t.Fatalf("entry after consume = %v", entryAfter)
+	}
+}
+
+// A second question behind the submitted routine episode reaches the coordinator once through a priority prompt
+// (#240b): the notice row says so, the routine episode is untouched, and `wake show` accounts for the delivery under
+// priority_prompts.
+func TestWakePriorityDecisionEndToEnd(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	if _, err := runCLI(t, home, "init"); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	host, err := machine.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", host, host, home))
+	t.Setenv("HERDR_PANE_ID", "w-worker:p1")
+	routine := decodeObject(t, mustCLI(t, home, "notice", "t-aaaaaaaaaaaa", "--to", "parent"))
+	rows := asSlice(asMap(routine["returns"])["recipients"])
+	if len(rows) != 1 || asString(asMap(rows[0])["state"]) != "submitted" || asMap(rows[0])["priority"] != nil {
+		t.Fatalf("routine notice = %v", routine)
+	}
+	// The fake marks a prompted pane working; the coordinator finishes its turn before the next arrival. The
+	// worker's next question is saved and its own routine (not forced) pass finds the episode outstanding.
+	setFakePaneStatus(t, home, "w-parent:p1", "idle")
+	asked := decodeObject(t, mustCLI(t, home, "ask", "t-aaaaaaaaaaaa", "--key", "second", "--text", "Which branch?"))
+	qid := asString(asMap(asked["question"])["id"])
+	rows = asSlice(asMap(asMap(asked["notice"])["returns"])["recipients"])
+	if len(rows) != 1 {
+		t.Fatalf("ask notice = %v", asked)
+	}
+	entry := asMap(rows[0])
+	if asString(entry["state"]) != "submitted" || entry["priority"] != true || asString(asMap(entry["wake"])["admission"]) != "coalesced" {
+		t.Fatalf("priority row = %v", entry)
+	}
+	decisions := asSlice(entry["decisions"])
+	if len(decisions) != 1 || asString(asMap(decisions[0])["id"]) != "question:"+qid || asString(asMap(decisions[0])["revision"]) != "second" {
+		t.Fatalf("decisions = %v", decisions)
+	}
+	if coalesced := asSlice(entry["coalesced_obligations"]); len(coalesced) != 1 || asString(asMap(coalesced[0])["id"]) != "question:q-aaaa" {
+		t.Fatalf("coalesced_obligations = %v", entry["coalesced_obligations"])
+	}
+	last := fakeLastPrompt(t, home, "w-parent:p1")
+	if sent := fakePrompts(t, home); len(sent) != 2 || !strings.Contains(last, "Decision(s) need you") || strings.Contains(last, "q-aaaa") {
+		t.Fatalf("prompts = %v, last = %q; want one priority prompt naming only the new question", sent, last)
+	}
+	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
+	shown := decodeObject(t, mustCLI(t, home, "wake", "show"))
+	wake := asMap(asSlice(shown["recipients"])[0])
+	if asString(asMap(wake["episode"])["phase"]) != "submitted" || fmt.Sprint(wake["generation"]) != "1" {
+		t.Fatalf("the priority prompt changed the routine episode: %v", wake["episode"])
+	}
+	// Both decisions are recorded: the first was named by the routine episode, the second by the priority prompt.
+	recorded := map[string]map[string]any{}
+	for _, raw := range asSlice(wake["priority_prompts"]) {
+		recorded[asString(asMap(raw)["id"])] = asMap(raw)
+	}
+	second := recorded["question:"+qid]
+	if len(recorded) != 2 || second == nil || asString(second["state"]) != "submitted" || asString(second["delivery"]) != asString(entry["delivery"]) || asString(second["revision"]) != "second" {
+		t.Fatalf("priority_prompts = %v", wake["priority_prompts"])
+	}
+	if len(asSlice(wake["uncoalesced_legacy_prompts"])) != 0 {
+		t.Fatalf("the priority prompt was reported as uncoalesced: %v", wake["uncoalesced_legacy_prompts"])
+	}
+	if included := asSlice(wake["included"]); len(included) != 2 {
+		t.Fatalf("included = %v, want both open questions still owed", included)
+	}
+}
+
+// fakeLastPrompt is the text the fake Herdr last accepted for pane.
+func fakeLastPrompt(t *testing.T, home, pane string) string {
+	t.Helper()
+	var state map[string]any
+	data, err := os.ReadFile(filepath.Join(home, "fake-herdr", "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	return asString(asMap(asMap(state["panes"])[pane])["last_prompt"])
+}
+
+// setFakePaneStatus edits the fake Herdr's store as a settled or busy occupant would appear.
+func setFakePaneStatus(t *testing.T, home, pane, status string) {
+	t.Helper()
+	path := filepath.Join(home, "fake-herdr", "state.json")
+	var state map[string]any
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	asMap(asMap(state["panes"])[pane])["agent_status"] = status
+	out, _ := json.Marshal(state)
+	if err := os.WriteFile(path, out, 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 

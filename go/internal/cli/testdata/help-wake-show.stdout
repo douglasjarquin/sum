@@ -1,5 +1,5 @@
 topic: wake-show
-help: "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), and uncoalesced legacy prompts; writes nothing"
+help: "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), the decisions already prompted (priority_prompts, with their deliveries), and uncoalesced legacy prompts; writes nothing"
 arguments[1]{name,help}:
   "--recipient",Limit to one sidecar by its key (as listed); default lists every sidecar
 subcommands: null

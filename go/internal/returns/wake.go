@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -24,8 +25,8 @@ import (
 
 // The coordinator wake sidecar: one versioned file per canonical coordinator recipient under <home>/deliver/, keyed
 // like its recipient lock. It records the current routine wake episode (the prompt an adopted coordinator may have
-// outstanding), the exact claims that episode carries, the presentation coverage a consume receipt records, and a
-// bounded set of receipt fingerprints. It is notification bookkeeping only: per-task returns.json attempts stay the
+// outstanding), the exact claims that episode carries, the presentation coverage a consume receipt records, the
+// decisions (open questions) any prompt already named, and a bounded set of receipt fingerprints. It is notification bookkeeping only: per-task returns.json attempts stay the
 // authoritative delivery record and keep their vocabulary.
 //
 // Lock order for every reader and writer that decides anything: delivery compatibility lock (shared) → this
@@ -107,6 +108,17 @@ type WakeReceipt struct {
 	Delivery    string `json:"delivery,omitempty"`
 }
 
+// WakeDecision is one decision (an open question owed to this coordinator) a prompt named, by task, obligation and
+// the question's key at the time; it is what keeps an unchanged decision from being prompted again.
+type WakeDecision struct {
+	Task     string `json:"task"`
+	ID       string `json:"id"`
+	Revision string `json:"revision,omitempty"`
+	Delivery string `json:"delivery"`
+	State    string `json:"state"`
+	At       string `json:"at"`
+}
+
 type WakeEpisode struct {
 	ID         string    `json:"id"`
 	Delivery   string    `json:"delivery,omitempty"`
@@ -127,6 +139,7 @@ type Wake struct {
 	Generation   int             `json:"generation"`
 	Episode      *WakeEpisode    `json:"episode"`
 	Covered      []WakeCovered   `json:"covered"`
+	Decisions    []WakeDecision  `json:"decisions"`
 	Receipts     []WakeReceipt   `json:"receipts"`
 	UpdatedAt    string          `json:"updated_at"`
 }
@@ -217,8 +230,44 @@ func NewWake(s *store.Store, endpoint [3]string, incarnation json.RawMessage) (*
 		Recipient:    WakeRecipient{Machine: endpoint[0], Session: endpoint[1], Pane: endpoint[2], Role: "coordinator"},
 		Incarnation:  incarnation,
 		Covered:      []WakeCovered{},
+		Decisions:    []WakeDecision{},
 		Receipts:     []WakeReceipt{},
 	}, nil
+}
+
+// Decision returns the recorded entry for one decision identity (task and obligation), if any.
+func (w *Wake) Decision(task, id string) (WakeDecision, bool) {
+	for _, d := range w.Decisions {
+		if d.Task == task && d.ID == id {
+			return d, true
+		}
+	}
+	return WakeDecision{}, false
+}
+
+// RecordDecision adds or refreshes the entry for d's task and obligation: one entry per decision, carrying the
+// revision and delivery that last named it.
+func (w *Wake) RecordDecision(d WakeDecision) {
+	for i, existing := range w.Decisions {
+		if existing.Task == d.Task && existing.ID == d.ID {
+			w.Decisions[i] = d
+			return
+		}
+	}
+	w.Decisions = append(w.Decisions, d)
+}
+
+func (w *Wake) DropDecision(task, id string) {
+	w.Decisions = slices.DeleteFunc(w.Decisions, func(d WakeDecision) bool { return d.Task == task && d.ID == id })
+}
+
+// coveredSet indexes covered identities by task and obligation id.
+func coveredSet(items []WakeCovered) map[[2]string]bool {
+	covered := map[[2]string]bool{}
+	for _, c := range items {
+		covered[[2]string{c.Task, c.ID}] = true
+	}
+	return covered
 }
 
 // IncarnationJSON encodes a recorded incarnation (an ordjson value) for the sidecar.
@@ -315,6 +364,9 @@ func readWakeFile(inst installation, path string) (*Wake, WakeStatus) {
 	}
 	if w.Covered == nil {
 		w.Covered = []WakeCovered{}
+	}
+	if w.Decisions == nil {
+		w.Decisions = []WakeDecision{}
 	}
 	if w.Receipts == nil {
 		w.Receipts = []WakeReceipt{}
@@ -452,39 +504,70 @@ func WakeAdopted(owner *ordjson.Object) bool {
 	return false
 }
 
+// openIndex reads each task's open obligation ids once; a nil set means the task or its obligations could not be
+// read, so nothing of it is established closed.
+type openIndex struct {
+	s    *store.Store
+	open map[string]map[string]bool
+}
+
+func (x *openIndex) closed(task, id string) bool {
+	ids, seen := x.open[task]
+	if !seen {
+		record, err := x.s.ReadTask(task)
+		if err == nil {
+			obligations, oErr := OpenObligations(x.s, record)
+			if oErr == nil {
+				ids = map[string]bool{}
+				for _, o := range obligations {
+					oid, _ := o.Get("id")
+					ids[fmt.Sprint(oid)] = true
+				}
+			}
+		}
+		x.open[task] = ids
+	}
+	return ids != nil && !ids[id]
+}
+
 // PruneCovered drops covered identities whose obligation is established closed: the task reads and the obligation is
 // not among its open ones. Anything unreadable keeps its coverage.
-func PruneCovered(s *store.Store, w *Wake) bool {
+func PruneCovered(index *openIndex, w *Wake) bool {
 	if w == nil || len(w.Covered) == 0 {
 		return false
 	}
-	open := map[string]map[string]bool{}
-	kept := w.Covered[:0]
-	changed := false
-	for _, c := range w.Covered {
-		ids, seen := open[c.Task]
-		if !seen {
-			task, err := s.ReadTask(c.Task)
-			if err == nil {
-				obligations, oErr := OpenObligations(s, task)
-				if oErr == nil {
-					ids = map[string]bool{}
-					for _, o := range obligations {
-						id, _ := o.Get("id")
-						ids[fmt.Sprint(id)] = true
-					}
-				}
-			}
-			open[c.Task] = ids
-		}
-		if ids != nil && !ids[c.ID] {
-			changed = true
-			continue
-		}
-		kept = append(kept, c)
+	before := len(w.Covered)
+	w.Covered = slices.DeleteFunc(w.Covered, func(c WakeCovered) bool { return index.closed(c.Task, c.ID) })
+	return len(w.Covered) != before
+}
+
+// PruneDecisions drops recorded decisions whose question is no longer open (answered, applied, settled, or closed),
+// under the same rule as PruneCovered. A dropped decision's delivery stays accounted for by a `decision-closed`
+// receipt (no fingerprint, like a superseded or replaced episode's), so `wake show` never reports the priority
+// prompt as an uncoalesced legacy one once the question has closed.
+func PruneDecisions(index *openIndex, w *Wake) bool {
+	if w == nil || len(w.Decisions) == 0 {
+		return false
 	}
-	w.Covered = kept
-	return changed
+	before := len(w.Decisions)
+	w.Decisions = slices.DeleteFunc(w.Decisions, func(d WakeDecision) bool {
+		if !index.closed(d.Task, d.ID) {
+			return false
+		}
+		if d.Delivery != "" {
+			w.AddReceipt(WakeReceipt{Generation: w.Generation, At: store.Now(), Result: "decision-closed", Delivery: d.Delivery})
+		}
+		return true
+	})
+	return len(w.Decisions) != before
+}
+
+// pruneWake prunes coverage and decisions through one open-obligation index, so each task is read at most once.
+func pruneWake(s *store.Store, w *Wake) bool {
+	index := &openIndex{s: s, open: map[string]map[string]bool{}}
+	covered := PruneCovered(index, w)
+	decisions := PruneDecisions(index, w)
+	return covered || decisions
 }
 
 // wakeView is the row's `wake` object for a valid sidecar.
@@ -568,10 +651,11 @@ func (p *pass) admitWake(route *ordjson.Object, force bool) (*wakeAdmission, err
 		}
 	}
 	adm := &wakeAdmission{wake: w, recorded: recorded}
-	if !IncarnationMatches(w.Incarnation, IncarnationJSON(recorded)) && len(w.Covered) > 0 {
-		// Coverage was consumed by another occupant; a new occupant inherits no consumption authority, so nothing
-		// is withheld from it. Persisted with the next episode (or by reconcile), never by itself.
+	if !IncarnationMatches(w.Incarnation, IncarnationJSON(recorded)) && (len(w.Covered) > 0 || len(w.Decisions) > 0) {
+		// Coverage was consumed by, and decisions were named to, another occupant; a new occupant inherits neither,
+		// so nothing is withheld from it. Persisted with the next episode (or by reconcile), never by itself.
 		w.Covered = []WakeCovered{}
+		w.Decisions = []WakeDecision{}
 	}
 	switch {
 	case w.NeedsReconcile():
@@ -586,18 +670,18 @@ func (p *pass) admitWake(route *ordjson.Object, force bool) (*wakeAdmission, err
 		// is committed only once the new claims are stamped (claimed); until then the outstanding episode is kept.
 		adm.decision = wakeDecisionPermitted
 		adm.superseded = w.Episode.ID
-		PruneCovered(p.s, w)
+		pruneWake(p.s, w)
 	case w.IsOutstanding():
 		adm.decision = wakeDecisionCoalesced
 		adm.reason = fmt.Sprintf("routine wake %s (generation %d, %s) is outstanding for this coordinator; new returns accumulate behind it in their own delivery state until it is consumed (`sumctl wake consume`) or inspected (%s). Nothing was sent or stamped.", w.Episode.ID, w.Generation, w.Episode.Phase, wakeShow)
-		if PruneCovered(p.s, w) {
+		if pruneWake(p.s, w) {
 			if _, err := CommitWake(p.s, w); err != nil {
 				adm.reason += " Coverage pruning was not persisted: " + err.Error()
 			}
 		}
 	default:
 		adm.decision = wakeDecisionPermitted
-		PruneCovered(p.s, w)
+		pruneWake(p.s, w)
 	}
 	return adm, nil
 }
@@ -1123,9 +1207,10 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, recipientKey string) (*ordjs
 		return report(status, w, "none", fmt.Sprintf("episode %s is closed (%s); nothing is outstanding", w.Episode.ID, w.Episode.Phase)), nil
 	}
 	if !same {
-		// The new occupant inherits neither the old occupant's coverage nor its episode; the receipt keeps the old
-		// prompt accounted for in `wake show` without granting anything.
+		// The new occupant inherits neither the old occupant's coverage, nor the decisions named to it, nor its
+		// episode; the receipt keeps the old prompt accounted for in `wake show` without granting anything.
 		w.Covered = []WakeCovered{}
+		w.Decisions = []WakeDecision{}
 		w.AddReceipt(WakeReceipt{Generation: w.Generation, At: store.Now(), Result: WakeReplaced, Delivery: w.Episode.Delivery})
 		return commit(WakeReplaced, "the recorded coordinator occupant changed; the episode reaches no one and grants the new occupant nothing; reconciled", "closed",
 			"the old occupant's attempts in returns.json are preserved as they are; the next pass decides afresh for the recorded coordinator")
@@ -1190,9 +1275,10 @@ func recipientView(w *Wake) *ordjson.Object {
 // Show is the read-only view of every wake sidecar (or the one recipientKey names): status, episode, generation,
 // coverage and receipt counts, and for an outstanding episode the boundary token built from the CURRENT open
 // obligations to that coordinator (included = every readable open obligation owed to it; omitted = every task whose
-// record or obligations could not be read, with the gap reason). `uncoalesced_legacy_prompts` lists prompt attempts
-// to that recipient in returns.json that no episode accounts for: prompts an older or non-adopted helper sent.
-// It writes nothing.
+// record or obligations could not be read, with the gap reason). `priority_prompts` lists the decisions a priority
+// prompt named, with their deliveries; `uncoalesced_legacy_prompts` lists prompt attempts to that recipient in
+// returns.json that no episode, receipt, or priority prompt accounts for: prompts an older or non-adopted helper
+// sent. It writes nothing.
 func Show(s *store.Store, recipientKey string) (*ordjson.Object, error) {
 	inst := readInstallation(s)
 	entries, err := listWakes(s, inst)
@@ -1238,6 +1324,12 @@ func Show(s *store.Store, recipientKey string) (*ordjson.Object, error) {
 				accounted[r.Delivery] = true
 			}
 		}
+		for _, d := range w.Decisions {
+			if d.Delivery != "" {
+				accounted[d.Delivery] = true
+			}
+		}
+		row.Set("priority_prompts", decisionList(w.Decisions))
 		endpoint := w.Endpoint()
 		included, omitted := currentCoverage(host, endpoint, tasks, gaps)
 		row.Set("included", coveredList(included))
@@ -1266,6 +1358,23 @@ func Show(s *store.Store, recipientKey string) (*ordjson.Object, error) {
 	view.Set("recipients", rows)
 	view.Set("note", "Read-only: nothing is consumed, sent, or reconciled by showing it. A boundary covers exactly its included identities; omitted ones and later arrivals stay eligible.")
 	return view, nil
+}
+
+func decisionList(items []WakeDecision) []any {
+	out := []any{}
+	for _, d := range items {
+		row := ordjson.NewObject()
+		row.Set("task", d.Task)
+		row.Set("id", d.ID)
+		if d.Revision != "" {
+			row.Set("revision", d.Revision)
+		}
+		row.Set("delivery", d.Delivery)
+		row.Set("state", d.State)
+		row.Set("at", d.At)
+		out = append(out, row)
+	}
+	return out
 }
 
 func episodeView(w *Wake) any {
