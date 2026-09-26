@@ -267,7 +267,7 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 	}
 	note := "One bounded pass over saved returns: at most one prompt per recipient identity, nothing slept or polled, no obligation deleted."
 	if p.deferred > 0 {
-		note += fmt.Sprintf(" %d recipient(s) were deferred by the pass budget or a busy delivery lock; they stay pending and are visited first on the next explicit pass (`sumctl pump`).", p.deferred)
+		note += fmt.Sprintf(" %d recipient(s) were deferred by the pass budget, a busy delivery lock, or a wake sidecar that needs inspection; they stay pending and are visited first on the next explicit pass (`sumctl pump`).", p.deferred)
 	}
 	result.Set("note", note)
 	return result, nil
@@ -507,6 +507,28 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		}
 	}
 	row.Set("withheld", withheld)
+	// Coordinator wake admission (wake.go), decided under the compatibility and recipient locks already held. Worker
+	// routes never pass through it.
+	var adm *wakeAdmission
+	if fmt.Sprint(routeValue(route, "role")) == "coordinator" {
+		if adm, err = p.admitWake(route, opts.Force && !b.inline); err != nil {
+			return nil, err
+		}
+		if !b.inline {
+			switch adm.decision {
+			case wakeDecisionLegacy:
+				row.Set("wake", WakeLegacy)
+			case wakeDecisionBlocked:
+				row.Set("wake", adm.view())
+				return p.deferRow(row, adm.reason), nil
+			case wakeDecisionCoalesced:
+				row.Set("wake", adm.view())
+				row.Set("state", "coalesced")
+				row.Set("reason", adm.reason)
+				return row, nil
+			}
+		}
+	}
 	deliveryID, err := newDeliveryID()
 	if err != nil {
 		return nil, err
@@ -551,12 +573,27 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 			return row, nil
 		}
 		row.Set("via", "inline")
+		if adm != nil {
+			// The caller's own listing presents everything and neither creates nor consumes an episode.
+			row.Set("wake", adm.view())
+		}
 		row.Set("message", noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), mentioned, len(withheld)))
 		if _, err := finish("submitted", "inline", "presented in the recipient's own command output"); err != nil {
 			return nil, err
 		}
 		row.Set("reason", "you are the recipient; this listing is the notice. Nothing is answered, applied, or verified by reading it.")
 		return row, nil
+	}
+	// An adopted coordinator's episode is durable before anything can reach its pane: prepared now with the exact
+	// claims, claimed after the in-flight stamp, intent right before the prompt, and its outcome after the attempt
+	// is finalized.
+	episode := adm != nil && adm.decision == wakeDecisionPermitted
+	if episode {
+		if reason := adm.prepare(s, sendItems); reason != "" {
+			row.Set("wake", adm.view())
+			return p.deferRow(row, reason), nil
+		}
+		row.Set("wake", adm.view())
 	}
 	// claim runs under the state lock right before the prompt: it keeps only the returns still open and still routed
 	// here, rebuilds the notice from them, confirms the prompt still fits the pass, and records the in-flight attempt.
@@ -585,6 +622,17 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		if msg := p.checkOccupant(route, survivors, occ); msg != "" {
 			return claimResult{stale: msg}, nil
 		}
+		if episode {
+			// The owner record is re-read here, still under the compatibility lock: an adoption that changed while
+			// the recipient was observed sends nothing rather than sending under the wrong policy.
+			owner, err := s.Owner()
+			if err != nil {
+				return claimResult{}, err
+			}
+			if !WakeAdopted(owner) {
+				return claimResult{stale: "the coordinator's wake protocol adoption changed while its pane was observed; nothing was sent or recorded. The next pass decides afresh."}, nil
+			}
+		}
 		if !p.fits(PromptTimeout) {
 			return claimResult{deferReason: "the pass budget ran out after this recipient was observed and before the prompt; nothing was sent or recorded"}, nil
 		}
@@ -592,13 +640,26 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 			return claimResult{}, err
 		}
 		sendItems, claimed = survivors, true
-		return claimResult{message: noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), current, len(withheld))}, nil
+		result := claimResult{message: noticeText(s, opts.SumctlPath, fmt.Sprint(routeValue(route, "role")), current, len(withheld))}
+		if episode {
+			if err := adm.claimed(s, deliveryID, survivors); err != nil {
+				return claimResult{}, err
+			}
+			result.beforePrompt = func() error { return adm.intent(s) }
+		}
+		return result, nil
 	}
 	state, detail, deferReason := p.promptRecipient(route, sendItems, claim)
 	if deferReason != "" {
+		if episode {
+			adm.outcome(s, row, WakeNotSubmitted, deferReason)
+		}
 		return p.deferRow(row, deferReason), nil
 	}
 	if state == "quiet" || state == "refused" {
+		if episode {
+			adm.outcome(s, row, WakeNotSubmitted, detail)
+		}
 		row.Set("state", state)
 		row.Set("reason", detail)
 		return row, nil
@@ -606,6 +667,15 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	row.Set("via", "prompt")
 	if _, err := finish(state, "prompt", detail); err != nil {
 		return nil, err
+	}
+	if episode {
+		// The attempt is finalized first, so an old reader sees the uncertain attempt before the episode says
+		// anything; a not-delivered or never-claimed outcome closes the episode.
+		phase := WakeNotSubmitted
+		if claimed && (state == "submitted" || state == "uncertain" || state == "not-delivered") {
+			phase = state
+		}
+		adm.outcome(s, row, phase, detail)
 	}
 	sent := []any{}
 	for _, pair := range sendItems {
@@ -715,6 +785,11 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 		return "", "", claimed.deferReason
 	case claimed.quiet != "":
 		return "quiet", claimed.quiet, ""
+	}
+	if claimed.beforePrompt != nil {
+		if err := claimed.beforePrompt(); err != nil {
+			return notDelivered("prompt was not sent: " + err.Error())
+		}
 	}
 	if _, err := p.sn.Call(session, PromptTimeout, "agent", "prompt", pane, claimed.message); err != nil {
 		state, detail := promptFailure(err)

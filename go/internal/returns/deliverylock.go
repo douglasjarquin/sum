@@ -77,6 +77,9 @@ type claimResult struct {
 	refused     string // the recipient is no longer registered for these returns
 	stale       string // the recipient pane's occupant is not the recorded one; nothing was sent or recorded
 	deferReason string // the prompt no longer fits the pass; nothing was recorded
+	// beforePrompt persists the wake episode's submission intent immediately before the prompt call; an error sends
+	// nothing.
+	beforePrompt func() error
 }
 
 // record writes an attempt's outcome under one state-lock hold. A claimed attempt already has its in-flight entry and

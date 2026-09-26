@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -299,6 +300,12 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			changed = true
 			result.Set("upgraded", true)
 		}
+		// A verified occupant adopts the wake protocol this helper speaks; an owner record an older helper wrote
+		// stays legacy (uncoalesced) until it does.
+		if _, adopted := owner.Get("wake_protocol"); !adopted {
+			owner.Set("wake_protocol", json.Number(fmt.Sprint(contract.WakeProtocol)))
+			changed = true
+		}
 		// A verified occupant refreshes the evidence it is judged by next time: a legacy record is adopted here, and
 		// a handoff, restore, or new conversation records the terminal and session it now has.
 		recordedValue, _ := owner.Get("incarnation")
@@ -328,6 +335,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		owner.Set("sum_version", contract.SumVersion)
 		owner.Set("claimed_at", now)
 		owner.Set("incarnation", observed)
+		owner.Set("wake_protocol", json.Number(fmt.Sprint(contract.WakeProtocol)))
 		if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
 			return nil, err
 		}
@@ -362,6 +370,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		owner.Set("incarnation", observed)
 		owner.Set("reclaimed_from", from)
 		owner.Set("previous_observed", reclaimVerdict.Outcome)
+		owner.Set("wake_protocol", json.Number(fmt.Sprint(contract.WakeProtocol)))
 		if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
 			return nil, err
 		}

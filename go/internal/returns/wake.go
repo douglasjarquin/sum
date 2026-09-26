@@ -1,0 +1,615 @@
+package returns
+
+import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
+)
+
+// The coordinator wake sidecar: one versioned file per canonical coordinator recipient under <home>/deliver/, keyed
+// like its recipient lock. It records the current routine wake episode (the prompt an adopted coordinator may have
+// outstanding), the exact claims that episode carries, the presentation coverage a consume receipt records, and a
+// bounded set of receipt fingerprints. It is notification bookkeeping only: per-task returns.json attempts stay the
+// authoritative delivery record and keep their vocabulary.
+//
+// Lock order for every reader and writer that decides anything: delivery compatibility lock (shared) → this
+// recipient's lock → state lock. The sidecar is read and written while the recipient lock is held; the state lock is
+// never held across Herdr I/O. Phases, in the order one episode moves through them:
+//
+//	prepared      the claims to send are persisted; nothing is stamped or sent (needs reconciliation if left here)
+//	claimed       the per-task in-flight attempts are stamped; nothing is sent yet          (outstanding)
+//	intent        the prompt call is about to start                                          (outstanding)
+//	submitted     Herdr accepted the prompt                                                  (outstanding)
+//	uncertain     the prompt may have reached the recipient                                  (outstanding)
+//	not-delivered the prompt provably did not reach Herdr                                    (closed)
+//	not-submitted the claim sent nothing (quiet, refused, stale, deferred, busy)              (closed)
+//	consumed      the coordinator recorded an exact consume receipt (`sumctl wake consume`)  (closed)
+//
+// The pump writes prepared, claimed, intent and the outcome; the attempt finalize in returns.json always precedes the
+// outcome write so an old reader sees an uncertain attempt before the episode says anything. Recovery of a prepared,
+// claimed, intent, or uncertain episode is explicit (`sumctl wake reconcile`); no pass resends by itself.
+const (
+	WakeSchema        = 1
+	WakeReceiptsBound = 20
+
+	WakePrepared     = "prepared"
+	WakeClaimed      = "claimed"
+	WakeIntent       = "intent"
+	WakeSubmitted    = "submitted"
+	WakeUncertain    = "uncertain"
+	WakeNotDelivered = "not-delivered"
+	WakeNotSubmitted = "not-submitted"
+	WakeConsumed     = "consumed"
+
+	// WakeAbsent, WakeOK and WakeBlocked are the read states: only an absent file means no episode.
+	WakeAbsent  = "absent"
+	WakeOK      = "ok"
+	WakeBlocked = "blocked"
+
+	// WakeLegacy is the pass row's `wake` value for a coordinator that has not adopted the protocol: prompting is
+	// unchanged and uncoalesced, and the row says so.
+	WakeLegacy = "legacy-uncoalesced"
+
+	wakeShow      = "`sumctl wake show`"
+	wakeReconcile = "`sumctl wake reconcile`"
+)
+
+type WakeRecipient struct {
+	Machine string `json:"machine"`
+	Session string `json:"session"`
+	Pane    string `json:"pane"`
+	Role    string `json:"role"`
+}
+
+// WakeRef names one obligation of one task, as the pass listing does.
+type WakeRef struct {
+	Task string `json:"task"`
+	ID   string `json:"id"`
+}
+
+// WakeCovered is one presentation-consumed identity; it is pruned only after canonical closure is established.
+type WakeCovered struct {
+	Task     string `json:"task"`
+	ID       string `json:"id"`
+	Revision string `json:"revision,omitempty"`
+}
+
+type WakeReceipt struct {
+	Fingerprint string `json:"fingerprint"`
+	Generation  int    `json:"generation"`
+	At          string `json:"at"`
+	Result      string `json:"result"`
+}
+
+type WakeEpisode struct {
+	ID         string    `json:"id"`
+	Delivery   string    `json:"delivery,omitempty"`
+	Phase      string    `json:"phase"`
+	PreparedAt string    `json:"prepared_at"`
+	Claims     []WakeRef `json:"claims"`
+	IntentAt   string    `json:"intent_at,omitempty"`
+	OutcomeAt  string    `json:"outcome_at,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+}
+
+type Wake struct {
+	Schema       int             `json:"schema"`
+	Installation string          `json:"installation"`
+	Recipient    WakeRecipient   `json:"recipient"`
+	Incarnation  json.RawMessage `json:"incarnation"`
+	Generation   int             `json:"generation"`
+	Episode      *WakeEpisode    `json:"episode"`
+	Covered      []WakeCovered   `json:"covered"`
+	Receipts     []WakeReceipt   `json:"receipts"`
+	UpdatedAt    string          `json:"updated_at"`
+}
+
+// WakeStatus is the result of reading one recipient's sidecar. A blocked read names why and how to inspect it;
+// admission then submits nothing for that recipient.
+type WakeStatus struct {
+	State      string
+	Diagnostic string
+	Path       string
+}
+
+// WakeEntry is one listed sidecar, by path, for callers that do not know the endpoint (the update gate).
+type WakeEntry struct {
+	Path   string
+	Wake   *Wake
+	Status WakeStatus
+}
+
+// WakeSyncError reports a write whose rename succeeded but whose directory sync did not: the file may or may not be
+// durable, so the caller reloads under its locks (CommitWake) rather than assuming nothing was committed.
+type WakeSyncError struct{ Err error }
+
+func (e *WakeSyncError) Error() string {
+	return "wake sidecar renamed but its directory could not be synced: " + e.Err.Error()
+}
+func (e *WakeSyncError) Unwrap() error { return e.Err }
+
+// wakeSyncDir syncs the sidecar's directory after the rename; tests inject a failure here.
+var wakeSyncDir = func(dir string) error {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	return handle.Sync()
+}
+
+func (w *Wake) Endpoint() [3]string {
+	return [3]string{w.Recipient.Machine, w.Recipient.Session, w.Recipient.Pane}
+}
+
+// IsOutstanding reports an episode that may have a prompt in the recipient's pane: claimed, intent, submitted, or
+// uncertain. A prepared-only episode is not outstanding but needs reconciliation (NeedsReconcile).
+func (w *Wake) IsOutstanding() bool {
+	if w == nil || w.Episode == nil {
+		return false
+	}
+	switch w.Episode.Phase {
+	case WakeClaimed, WakeIntent, WakeSubmitted, WakeUncertain:
+		return true
+	}
+	return false
+}
+
+func (w *Wake) NeedsReconcile() bool {
+	return w != nil && w.Episode != nil && w.Episode.Phase == WakePrepared
+}
+
+// Prepare starts the next episode with the claims that are about to be sent.
+func (w *Wake) Prepare(id string, claims []WakeRef) {
+	w.Generation++
+	if claims == nil {
+		claims = []WakeRef{}
+	}
+	w.Episode = &WakeEpisode{ID: id, Phase: WakePrepared, PreparedAt: store.Now(), Claims: claims}
+}
+
+func (w *Wake) AddReceipt(receipt WakeReceipt) {
+	w.Receipts = append(w.Receipts, receipt)
+	if len(w.Receipts) > WakeReceiptsBound {
+		w.Receipts = w.Receipts[len(w.Receipts)-WakeReceiptsBound:]
+	}
+}
+
+// NewWake is an empty sidecar for endpoint bound to this installation and the coordinator incarnation recorded now.
+func NewWake(s *store.Store, endpoint [3]string, incarnation json.RawMessage) (*Wake, error) {
+	installation, err := s.Instance()
+	if err != nil {
+		return nil, err
+	}
+	if len(incarnation) == 0 {
+		incarnation = json.RawMessage("null")
+	}
+	return &Wake{
+		Schema:       WakeSchema,
+		Installation: installation,
+		Recipient:    WakeRecipient{Machine: endpoint[0], Session: endpoint[1], Pane: endpoint[2], Role: "coordinator"},
+		Incarnation:  incarnation,
+		Covered:      []WakeCovered{},
+		Receipts:     []WakeReceipt{},
+	}, nil
+}
+
+// IncarnationJSON encodes a recorded incarnation (an ordjson value) for the sidecar.
+func IncarnationJSON(recorded any) json.RawMessage {
+	encoded, err := ordjson.MarshalCompact(recorded)
+	if err != nil || len(encoded) == 0 {
+		return json.RawMessage("null")
+	}
+	return json.RawMessage(encoded)
+}
+
+// IncarnationMatches reports whether two encoded incarnations are the same record, independent of key order.
+func IncarnationMatches(a, b json.RawMessage) bool {
+	return canonicalJSON(a) == canonicalJSON(b)
+}
+
+func canonicalJSON(raw json.RawMessage) string {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return string(raw)
+	}
+	out, err := json.Marshal(value)
+	if err != nil {
+		return string(raw)
+	}
+	return string(out)
+}
+
+// ReadWake reads endpoint's sidecar. Only an absent file means no episode; anything else that is not a valid file
+// for this installation and this recipient is blocked with a diagnostic.
+func ReadWake(s *store.Store, endpoint [3]string) (*Wake, WakeStatus) {
+	path := s.WakePath(endpoint)
+	w, status := readWakeFile(s, path)
+	if status.State != WakeOK {
+		return nil, status
+	}
+	if w.Recipient.Role != "coordinator" || w.Endpoint() != endpoint {
+		return nil, WakeStatus{State: WakeBlocked, Path: path, Diagnostic: fmt.Sprintf("%s records another recipient (%s %s on %s); inspect it with %s. Nothing is submitted to this recipient until it is resolved.", path, w.Recipient.Session, w.Recipient.Pane, w.Recipient.Machine, wakeShow)}
+	}
+	return w, status
+}
+
+// readWakeFile reads one sidecar by path and validates everything but the recipient.
+func readWakeFile(s *store.Store, path string) (*Wake, WakeStatus) {
+	blocked := func(msg string) (*Wake, WakeStatus) {
+		return nil, WakeStatus{State: WakeBlocked, Path: path, Diagnostic: fmt.Sprintf("%s %s; inspect it with %s. Nothing is submitted to this recipient until it is resolved.", path, msg, wakeShow)}
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, WakeStatus{State: WakeAbsent, Path: path}
+		}
+		return blocked("cannot be read: " + err.Error())
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return blocked("is a symlink, which sum never follows for delivery state")
+	}
+	if info.IsDir() {
+		return blocked("is a directory, not a wake sidecar")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return blocked("cannot be read: " + err.Error())
+	}
+	var w Wake
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&w); err != nil {
+		return blocked("is not valid JSON for a wake sidecar: " + err.Error())
+	}
+	if w.Schema != WakeSchema {
+		return blocked(fmt.Sprintf("uses wake schema %d, which this release does not support (it supports %d); sum never migrates it in place", w.Schema, WakeSchema))
+	}
+	installation, err := s.Instance()
+	if err != nil {
+		return blocked("cannot be checked against state.json: " + err.Error())
+	}
+	if w.Installation != installation {
+		return blocked(fmt.Sprintf("belongs to another installation (%q, this one is %q)", w.Installation, installation))
+	}
+	if w.Covered == nil {
+		w.Covered = []WakeCovered{}
+	}
+	if w.Receipts == nil {
+		w.Receipts = []WakeReceipt{}
+	}
+	return &w, WakeStatus{State: WakeOK, Path: path}
+}
+
+// WriteWake replaces w's sidecar atomically: temp file, fsync, rename, directory sync. A *WakeSyncError means the
+// rename happened but its durability is unknown; CommitWake handles that by reloading.
+func WriteWake(s *store.Store, w *Wake) error {
+	return writeWakeAt(s.WakePath(w.Endpoint()), w)
+}
+
+func writeWakeAt(path string, w *Wake) error {
+	w.UpdatedAt = store.Now()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	encoded, err := json.MarshalIndent(w, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".wake-")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(append(encoded, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	if err := wakeSyncDir(dir); err != nil {
+		return &WakeSyncError{Err: err}
+	}
+	return nil
+}
+
+// CommitWake writes w and, when only the directory sync failed, reloads the sidecar under the caller's locks: the
+// persisted episode and phase decide, never an assumption that nothing was committed. It returns the persisted
+// record on success.
+func CommitWake(s *store.Store, w *Wake) (*Wake, error) {
+	err := WriteWake(s, w)
+	var syncErr *WakeSyncError
+	if err == nil {
+		return w, nil
+	}
+	if !errors.As(err, &syncErr) {
+		return nil, err
+	}
+	persisted, status := ReadWake(s, w.Endpoint())
+	if status.State != WakeOK {
+		return nil, fmt.Errorf("%v; reloading found %s", err, status.Diagnostic)
+	}
+	if persisted.Episode == nil || w.Episode == nil || persisted.Episode.ID != w.Episode.ID || persisted.Episode.Phase != w.Episode.Phase || persisted.Generation != w.Generation {
+		return nil, fmt.Errorf("%v; the persisted sidecar shows episode %s phase %s, not the write's %s phase %s", err, wakeEpisodeID(persisted), wakePhase(persisted), wakeEpisodeID(w), wakePhase(w))
+	}
+	return persisted, nil
+}
+
+func wakeEpisodeID(w *Wake) string {
+	if w == nil || w.Episode == nil {
+		return ""
+	}
+	return w.Episode.ID
+}
+
+func wakePhase(w *Wake) string {
+	if w == nil || w.Episode == nil {
+		return ""
+	}
+	return w.Episode.Phase
+}
+
+// ListWakes lists every wake sidecar in this home, valid or not, sorted by path.
+func ListWakes(s *store.Store) ([]WakeEntry, error) {
+	dir := filepath.Join(s.Home, "deliver")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []WakeEntry
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".wake.json") || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		w, status := readWakeFile(s, path)
+		out = append(out, WakeEntry{Path: path, Wake: w, Status: status})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out, nil
+}
+
+// WakeAdopted reports whether the coordinator owner record has adopted the wake protocol this binary speaks. An
+// owner record without the field was written by an older helper and is not adopted.
+func WakeAdopted(owner *ordjson.Object) bool {
+	if owner == nil {
+		return false
+	}
+	v, ok := owner.Get("wake_protocol")
+	if !ok {
+		return false
+	}
+	switch n := v.(type) {
+	case json.Number:
+		i, err := n.Int64()
+		return err == nil && int(i) == contract.WakeProtocol
+	case float64:
+		return int(n) == contract.WakeProtocol
+	case int:
+		return n == contract.WakeProtocol
+	}
+	return false
+}
+
+// PruneCovered drops covered identities whose obligation is established closed: the task reads and the obligation is
+// not among its open ones. Anything unreadable keeps its coverage.
+func PruneCovered(s *store.Store, w *Wake) bool {
+	if w == nil || len(w.Covered) == 0 {
+		return false
+	}
+	open := map[string]map[string]bool{}
+	kept := w.Covered[:0]
+	changed := false
+	for _, c := range w.Covered {
+		ids, seen := open[c.Task]
+		if !seen {
+			task, err := s.ReadTask(c.Task)
+			if err == nil {
+				obligations, oErr := OpenObligations(s, task)
+				if oErr == nil {
+					ids = map[string]bool{}
+					for _, o := range obligations {
+						id, _ := o.Get("id")
+						ids[fmt.Sprint(id)] = true
+					}
+				}
+			}
+			open[c.Task] = ids
+		}
+		if ids != nil && !ids[c.ID] {
+			changed = true
+			continue
+		}
+		kept = append(kept, c)
+	}
+	w.Covered = kept
+	return changed
+}
+
+func newWakeID() (string, error) {
+	buf := make([]byte, 5)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return "w-" + hex.EncodeToString(buf), nil
+}
+
+// wakeView is the row's `wake` object for a valid sidecar.
+func wakeView(w *Wake, admission string) *ordjson.Object {
+	view := ordjson.NewObject()
+	view.Set("admission", admission)
+	if w == nil {
+		view.Set("episode", nil)
+		view.Set("generation", jsonInt(0))
+		view.Set("phase", nil)
+		return view
+	}
+	view.Set("episode", wakeEpisodeID(w))
+	view.Set("generation", jsonInt(w.Generation))
+	if w.Episode == nil {
+		view.Set("phase", nil)
+	} else {
+		view.Set("phase", w.Episode.Phase)
+	}
+	return view
+}
+
+// wakeAdmission is one pass's decision for one coordinator recipient, taken under the compatibility (shared) and
+// recipient locks before anything is claimed.
+type wakeAdmission struct {
+	decision   string
+	reason     string
+	wake       *Wake
+	recorded   any
+	superseded string // the outstanding episode an explicit forced notice replaces
+}
+
+const (
+	wakeDecisionLegacy    = "legacy-uncoalesced" // owner not adopted: unchanged prompting, disclosed
+	wakeDecisionBlocked   = "blocked"            // invalid sidecar, or an episode that needs reconciliation
+	wakeDecisionCoalesced = "coalesced"          // an episode is outstanding; nothing new is sent
+	wakeDecisionPermitted = "permitted"          // a new episode may be prepared
+)
+
+func (a *wakeAdmission) view() *ordjson.Object {
+	if a.decision == wakeDecisionLegacy {
+		view := ordjson.NewObject()
+		view.Set("admission", WakeLegacy)
+		return view
+	}
+	view := wakeView(a.wake, a.decision)
+	if a.superseded != "" {
+		view.Set("superseded", a.superseded)
+	}
+	return view
+}
+
+// admitWake decides the coordinator recipient of route. Both the runtime (this binary, by construction) and the owner
+// record must speak the protocol; the record is read now, under the compatibility lock, so a helper that started
+// before a runtime switch decides from the record the switch left.
+func (p *pass) admitWake(route *ordjson.Object, force bool) (*wakeAdmission, error) {
+	owner, err := p.s.Owner()
+	if err != nil {
+		return nil, err
+	}
+	if !WakeAdopted(owner) {
+		return &wakeAdmission{decision: wakeDecisionLegacy}, nil
+	}
+	recorded, _ := incarnation.CoordinatorRecord(owner)
+	endpoint := identity(p.host, route)
+	w, status := ReadWake(p.s, endpoint)
+	switch status.State {
+	case WakeBlocked:
+		return &wakeAdmission{decision: wakeDecisionBlocked, reason: status.Diagnostic}, nil
+	case WakeAbsent:
+		if w, err = NewWake(p.s, endpoint, IncarnationJSON(recorded)); err != nil {
+			return nil, err
+		}
+	}
+	adm := &wakeAdmission{wake: w, recorded: recorded}
+	switch {
+	case w.NeedsReconcile():
+		adm.decision = wakeDecisionBlocked
+		adm.reason = fmt.Sprintf("routine wake %s (generation %d) was prepared and never claimed; nothing is sent to this coordinator until it is reconciled with %s (inspect it with %s)", w.Episode.ID, w.Generation, wakeReconcile, wakeShow)
+	case w.IsOutstanding() && !IncarnationMatches(w.Incarnation, IncarnationJSON(recorded)):
+		adm.decision = wakeDecisionBlocked
+		adm.reason = fmt.Sprintf("routine wake %s (generation %d, %s) is outstanding for a coordinator occupant that is no longer the recorded one; the old episode grants the new occupant nothing, so nothing is sent until it is reconciled with %s (inspect it with %s)", w.Episode.ID, w.Generation, w.Episode.Phase, wakeReconcile, wakeShow)
+	case w.IsOutstanding() && force:
+		// `sumctl notice --to parent` is the documented explicit single retry: it is not a routine arrival, so it
+		// supersedes the outstanding episode with the next generation rather than waiting behind it.
+		adm.decision = wakeDecisionPermitted
+		adm.superseded = w.Episode.ID
+		PruneCovered(p.s, w)
+	case w.IsOutstanding():
+		adm.decision = wakeDecisionCoalesced
+		adm.reason = fmt.Sprintf("routine wake %s (generation %d, %s) is outstanding for this coordinator; new returns accumulate behind it in their own delivery state until it is consumed (`sumctl wake consume`) or inspected (%s). Nothing was sent or stamped.", w.Episode.ID, w.Generation, w.Episode.Phase, wakeShow)
+		if PruneCovered(p.s, w) {
+			if _, err := CommitWake(p.s, w); err != nil {
+				adm.reason += " Coverage pruning was not persisted: " + err.Error()
+			}
+		}
+	default:
+		adm.decision = wakeDecisionPermitted
+		PruneCovered(p.s, w)
+	}
+	return adm, nil
+}
+
+func wakeRefs(items [][2]*ordjson.Object) []WakeRef {
+	refs := []WakeRef{}
+	for _, pair := range items {
+		k := pairKey(pair)
+		refs = append(refs, WakeRef{Task: k[0], ID: k[1]})
+	}
+	return refs
+}
+
+// prepare persists the next episode with the claims about to be sent; a non-empty result is why nothing may proceed.
+func (a *wakeAdmission) prepare(s *store.Store, items [][2]*ordjson.Object) string {
+	id, err := newWakeID()
+	if err != nil {
+		return "the wake episode could not be identified: " + err.Error() + "; nothing was sent or recorded"
+	}
+	a.wake.Incarnation = IncarnationJSON(a.recorded)
+	a.wake.Prepare(id, wakeRefs(items))
+	if _, err := CommitWake(s, a.wake); err != nil {
+		return "the wake episode could not be persisted before the prompt: " + err.Error() + "; nothing was sent or recorded. Inspect it with " + wakeShow
+	}
+	return ""
+}
+
+// claimed records the delivery and the surviving claims once the in-flight attempts are stamped (state lock held).
+func (a *wakeAdmission) claimed(s *store.Store, deliveryID string, survivors [][2]*ordjson.Object) error {
+	a.wake.Episode.Delivery = deliveryID
+	a.wake.Episode.Claims = wakeRefs(survivors)
+	a.wake.Episode.Phase = WakeClaimed
+	_, err := CommitWake(s, a.wake)
+	return err
+}
+
+// intent is written immediately before the prompt call.
+func (a *wakeAdmission) intent(s *store.Store) error {
+	a.wake.Episode.Phase = WakeIntent
+	a.wake.Episode.IntentAt = store.Now()
+	_, err := CommitWake(s, a.wake)
+	return err
+}
+
+// outcome closes or settles the episode after the attempt was finalized. A failed write leaves the persisted phase
+// (at worst intent, still outstanding) and is disclosed on the row rather than failing the pass.
+func (a *wakeAdmission) outcome(s *store.Store, row *ordjson.Object, phase, reason string) {
+	a.wake.Episode.Phase = phase
+	a.wake.Episode.Reason = reason
+	a.wake.Episode.OutcomeAt = store.Now()
+	if _, err := CommitWake(s, a.wake); err != nil {
+		row.Set("wake_error", err.Error())
+	}
+	row.Set("wake", a.view())
+}

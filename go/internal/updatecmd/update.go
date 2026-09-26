@@ -1,7 +1,9 @@
 package updatecmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -362,6 +364,21 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 	if identityBlocking != "" {
 		blocking = append(blocking, identityBlocking)
 	}
+	wakeTarget := releaseWake(manifest)
+	if checkout {
+		wakeTarget = checkoutWake(manifest)
+	}
+	// The runtime serving now is validated as known-good through this same path; it already serves over any
+	// episode, so only a switch to another runtime is gated.
+	servesNow := asString(func() any { v, _ := current.Get("sha"); return v }()) == candidateSHA &&
+		(asString(func() any { v, _ := current.Get("kind"); return v }()) == "checkout") == checkout
+	wake, wakeBlocking, err := wakeCompatibility(s, wakeTarget, servesNow)
+	if err != nil {
+		return nil, err
+	}
+	if wakeBlocking != "" {
+		blocking = append(blocking, wakeBlocking)
+	}
 	currentMCP := asObject(func() any {
 		if current == nil {
 			return nil
@@ -459,6 +476,7 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 	result.Set("probes", probes)
 	result.Set("tasks", tasks)
 	result.Set("machine_identity", identity)
+	result.Set("wake_protocol", wake)
 	result.Set("candidate", candidateObj)
 	result.Set("current", currentObj)
 	return result, nil
@@ -717,6 +735,25 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 	return activateLocked(s, root, target, action, source, allow)
 }
 
+// deliveryLockWait bounds how long final validation waits for delivery passes to finish before refusing.
+var deliveryLockWait = 30 * time.Second
+
+// holdDeliveryLock takes the delivery compatibility lock exclusively for the final validation and the switch: a pass
+// admitting a coordinator wake holds it shared, so its capability and adoption reads and the runtime selection never
+// interleave. It is ordered after the activation lock and before any recipient or state lock.
+func holdDeliveryLock(s *store.Store, action string) (func(), error) {
+	ctx, cancel := context.WithTimeout(context.Background(), deliveryLockWait)
+	defer cancel()
+	unlock, err := s.DeliveryLockContext(ctx)
+	if err != nil {
+		if errors.Is(err, store.ErrDeliveryLockBusy) {
+			return nil, fmt.Errorf("%s refused: a delivery pass held the delivery lock for %s; the current selection still serves. Retry once the pass finishes.", action, deliveryLockWait)
+		}
+		return nil, err
+	}
+	return func() { _ = unlock() }, nil
+}
+
 func activateLocked(s *store.Store, root, target, action string, source *ordjson.Object, allow PreIdentity) (*ordjson.Object, error) {
 	if err := requireNoPending(s, root); err != nil {
 		return nil, err
@@ -726,6 +763,11 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	if err != nil {
 		return nil, err
 	}
+	releaseDelivery, err := holdDeliveryLock(s, action)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseDelivery()
 	compat, intended, err := ValidateTarget(s, root, target, current, allow)
 	newSHA := asString(func() any {
 		if intended != nil {
@@ -1147,6 +1189,11 @@ func Recover(s *store.Store, ctx *ordjson.Object, generation string, allow PreId
 		return nil, lockErr
 	}
 	defer unlock()
+	releaseDelivery, err := holdDeliveryLock(s, "recover")
+	if err != nil {
+		return nil, err
+	}
+	defer releaseDelivery()
 	return recoverPendingLocked(s, root, generation, allow)
 }
 

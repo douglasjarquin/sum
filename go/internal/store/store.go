@@ -259,6 +259,32 @@ func (s *Store) RecipientLockPath(endpoint [3]string) string {
 	return filepath.Join(s.Home, "deliver", key+".lock")
 }
 
+// WakePath is the coordinator wake sidecar for one canonical recipient endpoint, beside its recipient lock and
+// keyed the same way, so every spelling of one host's endpoint names one file.
+func (s *Store) WakePath(endpoint [3]string) string {
+	key := RegistrationKey(Endpoint{Machine: endpoint[0], Session: endpoint[1], Pane: endpoint[2]})
+	return filepath.Join(s.Home, "deliver", key+".wake.json")
+}
+
+// Instance is this installation's recorded instance ID from state.json ("" when none is recorded yet).
+func (s *Store) Instance() (string, error) {
+	statePath := filepath.Join(s.Home, "state.json")
+	if info, err := os.Stat(statePath); err != nil || info.IsDir() {
+		return "", nil
+	}
+	value, err := ordjson.ReadFile(statePath)
+	if err != nil {
+		return "", err
+	}
+	state, ok := value.(*ordjson.Object)
+	if !ok {
+		return "", fmt.Errorf("state.json is not a JSON object")
+	}
+	instance, _ := state.Get("instance")
+	text, _ := instance.(string)
+	return text, nil
+}
+
 // RecipientLock takes one recipient's delivery lock exclusively, after the compatibility lock and before the state
 // lock, giving up with ErrRecipientBusy when ctx ends first. Lock files are never removed.
 func (s *Store) RecipientLock(ctx context.Context, endpoint [3]string) (func() error, error) {
