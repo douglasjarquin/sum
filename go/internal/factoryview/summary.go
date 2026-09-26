@@ -139,6 +139,12 @@ const observedNote = "next_tick_at is recorded by the last idle tick, not schedu
 
 // Build is pure: it joins the snapshot's saved facts and never reads or writes a source.
 func Build(snapshot inboxview.Snapshot, installation string, opts Options) Digest {
+	return BuildFromOverview(snapshot, inboxview.BuildOverview(snapshot), installation, opts)
+}
+
+// BuildFromOverview is Build with the snapshot's unfocused overview already built (inboxview.BuildOverview),
+// so a grouped read derives each task's pipeline once and builds the overview once.
+func BuildFromOverview(snapshot inboxview.Snapshot, overview inboxview.Overview, installation string, opts Options) Digest {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = DefaultLimit
@@ -146,7 +152,7 @@ func Build(snapshot inboxview.Snapshot, installation string, opts Options) Diges
 	if limit > MaxLimit {
 		limit = MaxLimit
 	}
-	overview := inboxview.BuildOverview(snapshot)
+	derived := derivedOf(snapshot, overview)
 	out := Digest{Schema: Schema, Installation: installation, Scope: opts.scope(), Project: opts.Project, Counts: snapshot.Counts, Complete: snapshot.Complete, Gaps: []inboxview.Gap{}, NeedsYou: overview.NeedsYou, Rows: []FactoryRow{}, Deltas: []Delta{}, Page: Page{Limit: limit}, Note: Note}
 	tasks := map[string]inboxview.Task{}
 	for _, task := range snapshot.Tasks {
@@ -227,7 +233,7 @@ func Build(snapshot inboxview.Snapshot, installation string, opts Options) Diges
 		if !ok {
 			continue
 		}
-		r.Stage = inboxview.Stage(task.Record)
+		r.Stage = inboxview.StageOf(derived[task.ID])
 		r.ActionOwner, r.Blocker = ownerAndBlocker(taskRows[task.ID])
 		r.Next.Command = []string{"context", task.ID, "--role", "coordinator"}
 		r.Observed.PRObservedAt = str(obj(field(task.Record, "pr")), "observed_at")
@@ -242,7 +248,7 @@ func Build(snapshot inboxview.Snapshot, installation string, opts Options) Diges
 		}
 		return true
 	}
-	all := outcomes(snapshot, laneTasks)
+	all := outcomes(snapshot, laneTasks, derived)
 	scoped := all[:0]
 	for _, o := range all {
 		if inScope(o.Project) {
@@ -256,7 +262,7 @@ func Build(snapshot inboxview.Snapshot, installation string, opts Options) Diges
 			leaves = append(leaves, leafOf(task))
 		}
 	}
-	sort.Slice(leaves, func(i, j int) bool { return leaves[i].Task < leaves[j].Task })
+	sortLeaves(leaves)
 	rendered := page(&out, all, leaves, snapshot.Gaps, installation, opts, limit)
 	for _, o := range rendered {
 		if r, ok := rows[o.Project]; ok {
@@ -270,6 +276,19 @@ func Build(snapshot inboxview.Snapshot, installation string, opts Options) Diges
 		out.Rows = append(out.Rows, *rows[key])
 	}
 	return out
+}
+
+// derivedOf is the overview's per-task pipeline records, derived here only for tasks the overview did not cover.
+func derivedOf(snapshot inboxview.Snapshot, overview inboxview.Overview) map[string]pipeline.Record {
+	derived := make(map[string]pipeline.Record, len(snapshot.Tasks))
+	for _, task := range snapshot.Tasks {
+		if record, ok := overview.Derived[task.ID]; ok {
+			derived[task.ID] = record
+			continue
+		}
+		derived[task.ID] = pipeline.Derive(task.Record)
+	}
+	return derived
 }
 
 // Attach places each project's row on its overview group so the grouped views carry the same digest facts.
@@ -394,7 +413,7 @@ func registryOf(record *ordjson.Object) map[string]projectRecord {
 // number so one PR observed from two tasks or under two URL spellings counts once, while the same number on
 // another project stays distinct. Attribution is factory only when a retained lane record (or a saved
 // task.factory field) names the task; a removed lane leaves a project outcome.
-func outcomes(snapshot inboxview.Snapshot, laneTasks map[string]string) []Outcome {
+func outcomes(snapshot inboxview.Snapshot, laneTasks map[string]string, derived map[string]pipeline.Record) []Outcome {
 	var out []Outcome
 	byPR := map[string]int{}
 	for _, task := range snapshot.Tasks {
@@ -411,15 +430,15 @@ func outcomes(snapshot inboxview.Snapshot, laneTasks map[string]string) []Outcom
 		add := func(kind string, key string, source Source, detail []string) {
 			out = append(out, Outcome{Identity: kind + ":" + key, Project: task.ProjectID, Kind: kind, Attribution: attribution, Source: source, Detail: detail})
 		}
-		derived := pipeline.Derive(record)
-		candidate := derived.Candidate
+		pipe := derived[task.ID]
+		candidate := pipe.Candidate
 		if report := reportSource(task.ID, record); report != nil {
 			add("reported", task.ID+":"+report.Candidate, *report, context)
 		}
-		if row := derived.Rows[pipeline.Index(pipeline.StageTest)]; row.Status == pipeline.Pass {
+		if row := pipe.Rows[pipeline.Index(pipeline.StageTest)]; row.Status == pipeline.Pass {
 			add("verified", task.ID+":"+candidate, Source{Task: task.ID, Kind: "verification", ID: first(row.Evidence), Candidate: candidate, At: row.At}, context)
 		}
-		if row := derived.Rows[pipeline.Index(pipeline.StageReview)]; row.Status == pipeline.Pass {
+		if row := pipe.Rows[pipeline.Index(pipeline.StageReview)]; row.Status == pipeline.Pass {
 			add("review-accepted", task.ID+":"+candidate, Source{Task: task.ID, Kind: "review", ID: last(row.Evidence), Candidate: candidate, At: row.At}, context)
 		}
 		pr := obj(field(record, "pr"))

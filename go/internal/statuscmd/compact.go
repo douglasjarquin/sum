@@ -150,8 +150,12 @@ func Grouped(s *store.Store, project string) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	converted, ok := compactJSON(overview).(*ordjson.Object)
-	if !ok {
+	return groupedObject(overview)
+}
+
+func groupedObject(overview inboxview.Overview) (*ordjson.Object, error) {
+	converted, err := ordjson.FromValue(overview)
+	if err != nil {
 		return nil, fmt.Errorf("grouped overview did not encode as an object")
 	}
 	return converted, nil
@@ -169,13 +173,18 @@ func GroupedDigest(s *store.Store, project, since string, limit int) (*ordjson.O
 		return nil, err
 	}
 	snapshot := inboxview.Read(s)
-	overview := inboxview.Focus(inboxview.BuildOverview(snapshot), project)
-	digest := factoryview.Build(snapshot, installation, factoryview.Options{Project: project, Since: since, Limit: limit})
+	full := inboxview.BuildOverview(snapshot)
+	digest := factoryview.BuildFromOverview(snapshot, full, installation, factoryview.Options{Project: project, Since: since, Limit: limit})
+	overview := inboxview.Focus(full, project)
 	factoryview.Attach(&overview, digest)
-	converted, ok := compactJSON(overview).(*ordjson.Object)
-	if !ok {
-		return nil, fmt.Errorf("grouped overview did not encode as an object")
+	converted, err := groupedObject(overview)
+	if err != nil {
+		return nil, err
 	}
-	converted.Set("digest", compactJSON(digest))
+	encoded, err := ordjson.FromValue(digest)
+	if err != nil {
+		return nil, err
+	}
+	converted.Set("digest", encoded)
 	return converted, nil
 }

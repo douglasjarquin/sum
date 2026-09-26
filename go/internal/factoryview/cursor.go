@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/inboxview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -54,7 +55,7 @@ type Page struct {
 func (c *Cursor) canonical() []byte {
 	copy := *c
 	copy.Leaves = append([]Leaf{}, c.Leaves...)
-	sort.Slice(copy.Leaves, func(i, j int) bool { return copy.Leaves[i].Task < copy.Leaves[j].Task })
+	sortLeaves(copy.Leaves)
 	copy.Outcomes = append([]string{}, c.Outcomes...)
 	sort.Strings(copy.Outcomes)
 	copy.Page = Page{Limit: c.Page.Limit, Truncated: c.Page.Truncated}
@@ -62,19 +63,23 @@ func (c *Cursor) canonical() []byte {
 	return encoded
 }
 
+func sortLeaves(leaves []Leaf) {
+	sort.Slice(leaves, func(i, j int) bool { return leaves[i].Task < leaves[j].Task })
+}
+
 // Token encodes the cursor. When the bounded token cannot carry the coverage, the coverage is dropped and the
-// token says so, so the next read resyncs instead of calling repeated history new.
-func (c *Cursor) Token() (string, error) {
+// token says so (truncated), so the next read resyncs instead of calling repeated history new.
+func (c *Cursor) Token() (token string, truncated bool, err error) {
 	payload := c.canonical()
 	if len(payload) == 0 {
-		return "", fmt.Errorf("cursor could not be encoded")
+		return "", false, fmt.Errorf("cursor could not be encoded")
 	}
-	token := returns.EncodeToken(payload)
+	token = returns.EncodeToken(payload)
 	if len(token) <= MaxTokenBytes {
-		return token, nil
+		return token, c.Page.Truncated, nil
 	}
 	trimmed := Cursor{Schema: c.Schema, Kind: c.Kind, Installation: c.Installation, Scope: c.Scope, Project: c.Project, Leaves: []Leaf{}, Outcomes: []string{}, Page: Page{Limit: c.Page.Limit, Truncated: true}}
-	return returns.EncodeToken(trimmed.canonical()), nil
+	return returns.EncodeToken(trimmed.canonical()), true, nil
 }
 
 // Parse decodes and self-checks a digest cursor; a wake receipt or any other token never verifies.
@@ -137,63 +142,22 @@ func leafOf(task inboxview.Task) Leaf {
 // Time never decides newness: a late record with an old stamp is new because its identity was never rendered.
 func page(out *Digest, all []Outcome, leaves []Leaf, gaps []inboxview.Gap, installation string, opts Options, limit int) []Outcome {
 	covered := map[string]bool{}
-	current := map[string]Leaf{}
-	for _, leaf := range leaves {
-		current[leaf.Task] = leaf
-	}
 	gapped := map[string]bool{}
 	for _, gap := range gaps {
 		if gap.TaskID != "" {
 			gapped[gap.TaskID] = true
 		}
 	}
-	resync := func(reason string) {
-		out.Resync = &Resync{Reason: reason}
-		out.Deltas = []Delta{}
-		covered = map[string]bool{}
-	}
 	if opts.Since != "" {
 		out.Since = true
-		cursor, err := Parse(opts.Since)
-		switch {
-		case err != nil:
-			resync(err.Error())
-		case cursor.Installation != installation:
-			resync("cursor is bound to another installation")
-		case cursor.Scope != opts.scope():
-			resync(fmt.Sprintf("cursor is bound to scope %q, not %q", cursor.Scope, opts.scope()))
-		case cursor.Project != opts.Project:
-			resync(fmt.Sprintf("cursor is bound to project %q, not %q", cursor.Project, opts.Project))
-		case cursor.Page.Truncated:
-			resync("cursor could not retain earlier coverage")
-		default:
-			seen := map[string]bool{}
-			for _, leaf := range cursor.Leaves {
-				seen[leaf.Task] = true
-				now, readable := current[leaf.Task]
-				switch {
-				case !readable && gapped[leaf.Task]:
-					// Unreadable now: outside coverage, reported as a gap, and back as a new source once readable.
-				case !readable:
-					resync(fmt.Sprintf("source shrink: task %s is no longer present", leaf.Task))
-				case now.Evidence < leaf.Evidence:
-					resync(fmt.Sprintf("history replaced: task %s has fewer records than the cursor covered", leaf.Task))
-				case now.Digest != leaf.Digest:
-					out.Deltas = append(out.Deltas, Delta{Task: leaf.Task, Reason: DeltaChanged})
-				}
-				if out.Resync != nil {
-					break
-				}
-			}
-			if out.Resync == nil {
-				for _, leaf := range leaves {
-					if !seen[leaf.Task] {
-						out.Deltas = append(out.Deltas, Delta{Task: leaf.Task, Reason: DeltaNewSource})
-					}
-				}
-				for _, id := range cursor.Outcomes {
-					covered[id] = true
-				}
+		if cursor, reason := validateCursor(opts.Since, installation, opts); reason != "" {
+			out.Resync = &Resync{Reason: reason}
+		} else if reason := coverageDeltas(out, cursor, leaves, gapped); reason != "" {
+			out.Resync = &Resync{Reason: reason}
+			out.Deltas = []Delta{}
+		} else {
+			for _, id := range cursor.Outcomes {
+				covered[id] = true
 			}
 		}
 	}
@@ -222,10 +186,10 @@ func page(out *Digest, all []Outcome, leaves []Leaf, gaps []inboxview.Gap, insta
 	for _, o := range all {
 		existing[o.Identity] = true
 	}
-	// Coverage of an identity that no longer exists is pruned only when every source was readable; behind a gap
+	// Coverage of an identity that no longer exists is pruned unless a gap hides its own source: behind that gap
 	// the identity may merely be hidden, and pruning it would relabel it new when the source returns.
 	for id := range covered {
-		if existing[id] || len(gaps) > 0 {
+		if existing[id] || hiddenByGap(id, gapped) {
 			next.Outcomes = append(next.Outcomes, id)
 		}
 	}
@@ -235,14 +199,89 @@ func page(out *Digest, all []Outcome, leaves []Leaf, gaps []inboxview.Gap, insta
 		}
 	}
 	sort.Strings(next.Outcomes)
-	token, err := next.Token()
+	token, truncated, err := next.Token()
 	if err == nil {
 		out.Cursor = token
-		if parsed, _ := Parse(token); parsed != nil {
-			out.Page.Truncated = parsed.Page.Truncated
-		}
+		out.Page.Truncated = truncated
 	} else if out.Resync == nil {
 		out.Resync = &Resync{Reason: err.Error()}
 	}
 	return rendered
+}
+
+// validateCursor parses the caller's cursor and checks it binds this installation, scope and project with
+// retained coverage; a non-empty reason means the read resyncs.
+func validateCursor(since, installation string, opts Options) (*Cursor, string) {
+	cursor, err := Parse(since)
+	switch {
+	case err != nil:
+		return nil, err.Error()
+	case cursor.Installation != installation:
+		return nil, "cursor is bound to another installation"
+	case cursor.Scope != opts.scope():
+		return nil, fmt.Sprintf("cursor is bound to scope %q, not %q", cursor.Scope, opts.scope())
+	case cursor.Project != opts.Project:
+		return nil, fmt.Sprintf("cursor is bound to project %q, not %q", cursor.Project, opts.Project)
+	case cursor.Page.Truncated:
+		return nil, "cursor could not retain earlier coverage"
+	}
+	return cursor, ""
+}
+
+// coverageDeltas compares the cursor's leaves with the current ones, appending a delta per changed or new
+// source; a non-empty reason means the sources shrank or their history was replaced and the read resyncs.
+func coverageDeltas(out *Digest, cursor *Cursor, leaves []Leaf, gapped map[string]bool) string {
+	current := map[string]Leaf{}
+	for _, leaf := range leaves {
+		current[leaf.Task] = leaf
+	}
+	seen := map[string]bool{}
+	for _, leaf := range cursor.Leaves {
+		seen[leaf.Task] = true
+		if reason := compareLeaf(out, leaf, current, gapped); reason != "" {
+			return reason
+		}
+	}
+	for _, leaf := range leaves {
+		if !seen[leaf.Task] {
+			out.Deltas = append(out.Deltas, Delta{Task: leaf.Task, Reason: DeltaNewSource})
+		}
+	}
+	return ""
+}
+
+// compareLeaf records one covered leaf's change as a delta, or returns the reason the coverage cannot be honoured.
+func compareLeaf(out *Digest, leaf Leaf, current map[string]Leaf, gapped map[string]bool) string {
+	now, readable := current[leaf.Task]
+	switch {
+	case !readable && gapped[leaf.Task]:
+		// Unreadable now: outside coverage, reported as a gap, and back as a new source once readable.
+	case !readable:
+		return fmt.Sprintf("source shrink: task %s is no longer present", leaf.Task)
+	case now.Evidence < leaf.Evidence:
+		return fmt.Sprintf("history replaced: task %s has fewer records than the cursor covered", leaf.Task)
+	case now.Digest != leaf.Digest:
+		out.Deltas = append(out.Deltas, Delta{Task: leaf.Task, Reason: DeltaChanged})
+	}
+	return ""
+}
+
+// hiddenByGap reports whether a covered identity's own source is unreadable. Task-keyed identities name their
+// task; a PR-keyed identity (project#number) names no task, so any gap may hide it.
+func hiddenByGap(identity string, gapped map[string]bool) bool {
+	task, keyed := identityTask(identity)
+	if !keyed {
+		return len(gapped) > 0
+	}
+	return gapped[task]
+}
+
+// identityTask is the task segment of a task-keyed identity ("kind:TASK[:candidate]"); PR-keyed identities
+// ("pr-open:project#n", "observed-merged:project#n") carry none.
+func identityTask(identity string) (string, bool) {
+	parts := strings.SplitN(identity, ":", 3)
+	if len(parts) < 2 || parts[0] == "pr-open" || parts[0] == "observed-merged" {
+		return "", false
+	}
+	return parts[1], true
 }

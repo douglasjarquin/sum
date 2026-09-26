@@ -201,7 +201,7 @@ func TestForeignOrUnsupportedTokensResync(t *testing.T) {
 
 func mustToken(t *testing.T, c *Cursor) string {
 	t.Helper()
-	token, err := c.Token()
+	token, _, err := c.Token()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,12 +285,12 @@ func TestTokenBoundLabelsTruncationAndParsesAsResync(t *testing.T) {
 		c.Outcomes = append(c.Outcomes, fmt.Sprintf("observed-merged:a/repo#%d", i))
 		c.Leaves = append(c.Leaves, Leaf{Task: fmt.Sprintf("t-%012d", i), Digest: "abcdef012345", Evidence: 3})
 	}
-	token, err := c.Token()
+	token, truncated, err := c.Token()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(token) > MaxTokenBytes {
-		t.Fatalf("token exceeds the bound: %d", len(token))
+	if len(token) > MaxTokenBytes || !truncated {
+		t.Fatalf("token exceeds the bound or is not labelled truncated: %d %v", len(token), truncated)
 	}
 	parsed, err := Parse(token)
 	if err != nil || !parsed.Page.Truncated {
@@ -310,4 +310,59 @@ func TestLimitBounds(t *testing.T) {
 	if d := build(t, home, Options{Limit: 500}); d.Page.Limit != MaxLimit {
 		t.Fatalf("max limit: %+v", d.Page)
 	}
+}
+
+func TestOnlyAGapOnItsOwnTaskRetainsAVanishedOutcome(t *testing.T) {
+	const reported = "reported:t-d1dddddddddd:c1g1"
+	home := standardHome(t)
+	first := build(t, home, Options{})
+	parsed, err := Parse(first.Cursor)
+	if err != nil || !contains(parsed.Outcomes, reported) {
+		t.Fatalf("initial coverage: %+v %v", parsed, err)
+	}
+	// The report vanishes from t-d1 while an unrelated task (t-b2) becomes unreadable.
+	unrelated := filepath.Join(home, "tasks", "t-b2bbbbbbbbbb", "task.json")
+	original, err := os.ReadFile(unrelated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d1 := fixture.StandardTasks()[5]
+	d1.Report = false
+	if err := fixture.WriteTask(home, d1); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unrelated, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pruned := build(t, home, Options{Since: first.Cursor})
+	if pruned.Resync != nil || len(pruned.Gaps)+len(rowFor(t, pruned, "b/repo").Gaps) != 1 {
+		t.Fatalf("unrelated gap: resync=%+v gaps=%+v", pruned.Resync, pruned.Gaps)
+	}
+	if parsed, err = Parse(pruned.Cursor); err != nil || contains(parsed.Outcomes, reported) {
+		t.Fatalf("a gap on another task must not pin a vanished outcome: %v %v", parsed.Outcomes, err)
+	}
+	// A gap on the outcome's own task keeps it covered, so it is not relabelled new when the source returns.
+	if err := os.WriteFile(unrelated, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	own := filepath.Join(home, "tasks", "t-d1dddddddddd", "task.json")
+	if err := os.WriteFile(own, []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pinned := build(t, home, Options{Since: first.Cursor})
+	if pinned.Resync != nil {
+		t.Fatalf("own gap: resync=%+v", pinned.Resync)
+	}
+	if parsed, err = Parse(pinned.Cursor); err != nil || !contains(parsed.Outcomes, reported) {
+		t.Fatalf("a gap on the outcome's own task retains its coverage: %v %v", parsed.Outcomes, err)
+	}
+}
+
+func contains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

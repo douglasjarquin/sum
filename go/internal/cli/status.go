@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/factoryview"
 	"github.com/douglasjarquin/sum/go/internal/statuscmd"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -27,8 +28,8 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 					if cmd.Flags().Changed("after") || cmd.Flags().Changed("max-chars") {
 						return fmt.Errorf("--after and --max-chars require --compact; --grouped takes --limit for the digest page")
 					}
-					if limit < 1 || limit > statuscmd.CompactMaxLimit {
-						return fmt.Errorf("--limit accepts 1..%d", statuscmd.CompactMaxLimit)
+					if err := boundedLimit(limit, factoryview.MaxLimit); err != nil {
+						return err
 					}
 					return grouped.run(cmd, o.home, limit)
 				}
@@ -58,6 +59,14 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 	}
 	add("status", false)
 	add("inbox", true)
+}
+
+// boundedLimit is the shared --limit check for the digest page bound.
+func boundedLimit(limit, max int) error {
+	if limit < 1 || limit > max {
+		return fmt.Errorf("--limit accepts 1..%d", max)
+	}
+	return nil
 }
 
 func pagingFlagsChanged(cmd *cobra.Command) bool {

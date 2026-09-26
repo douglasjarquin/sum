@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
@@ -29,8 +28,8 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 		Use:  "status",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if statusLimit < 1 || statusLimit > factoryview.MaxLimit {
-				return fmt.Errorf("--limit accepts 1..%d", factoryview.MaxLimit)
+			if err := boundedLimit(statusLimit, factoryview.MaxLimit); err != nil {
+				return err
 			}
 			st, err := store.Open(o.home)
 			if err != nil {
@@ -46,11 +45,7 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			}
 			// The digest is a projection of the same saved records; the lane summary above is unchanged.
 			digest := factoryview.Build(inboxview.Read(st), installation, factoryview.Options{Project: statusProject, Since: statusSince, Limit: statusLimit, FactoryOnly: true})
-			raw, err := json.Marshal(digest)
-			if err != nil {
-				return err
-			}
-			decoded, err := ordjson.Decode(raw)
+			decoded, err := ordjson.FromValue(digest)
 			if err != nil {
 				return err
 			}
