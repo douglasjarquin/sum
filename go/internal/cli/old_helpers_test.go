@@ -41,12 +41,16 @@ func TestOlderHelpersOnCandidateRecords(t *testing.T) {
 		// The updater's own evidence that a release tree resolves the stable machine identity (updatecmd.identityMarker).
 		_, markerErr := os.Stat(filepath.Join(tree, "go", "internal", "machine", "machine.go"))
 		stable := markerErr == nil
-		t.Run(name+"/upgraded", func(t *testing.T) { olderHelperOnCandidateRecords(t, helper, true, stable) })
+		// The tree ships the wake protocol (#240a): it adopts a home it creates and coalesces behind an outstanding
+		// episode; a tree without it prompts legacy-uncoalesced and treats the sidecar as an opaque file.
+		_, wakeErr := os.Stat(filepath.Join(tree, "go", "internal", "returns", "wake.go"))
+		wakeAware := wakeErr == nil
+		t.Run(name+"/upgraded", func(t *testing.T) { olderHelperOnCandidateRecords(t, helper, true, stable, wakeAware) })
 		t.Run(name+"/candidate", func(t *testing.T) {
 			if !stable {
 				t.Skip("predates the stable machine identity; the updater refuses it once records carry m- ids (#213)")
 			}
-			olderHelperOnCandidateRecords(t, helper, false, stable)
+			olderHelperOnCandidateRecords(t, helper, false, stable, wakeAware)
 		})
 	}
 }
@@ -107,7 +111,7 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
-func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates, stableIdentity bool) {
+func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates, stableIdentity, wakeAware bool) {
 	d := newOlderLab(t, oldHelper, olderCreates)
 	old := func(pane string, args ...string) map[string]any {
 		t.Helper()
@@ -144,11 +148,13 @@ func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates,
 	parentPrompts := len(d.prompts(t, "w-parent:p1"))
 	candidateDelivery := asString(asMap(asked["notice"])["delivery"])
 
-	// #240a: the wake sidecar is opaque to the older helper. A candidate-created home has an outstanding episode from
-	// that ask; an older-created home is not adopted (its owner record predates the protocol), so the candidate
-	// prompted legacy-uncoalesced and wrote no sidecar, and one is planted so the older helper meets the file either
-	// way. The older helper must leave it byte-identical and leave the candidate's submitted attempt as it is.
-	wakePath := candidateWakeSidecar(t, d, olderCreates, asked)
+	// #240a: a candidate-created home, or one an older wake-aware helper created and adopted, has an outstanding
+	// episode from that ask. An older-created home whose helper predates the protocol is not adopted (its owner
+	// record never recorded it), so the candidate prompted legacy-uncoalesced and wrote no sidecar, and one is
+	// planted so the older helper meets the file either way. A helper without the protocol treats the sidecar as an
+	// opaque file and must leave it byte-identical; a wake-aware one coalesces behind the outstanding episode and
+	// writes nothing either. Both leave the candidate's submitted attempt as it is.
+	wakePath := candidateWakeSidecar(t, d, olderCreates && !wakeAware, asked)
 	wakeBefore := readFileString(t, wakePath)
 
 	// Reads: the older helper shows the record's own field, which the candidate did not touch.
@@ -166,8 +172,9 @@ func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates,
 	}
 	t.Logf("older duplicate-ask notice: %v", duplicate["notice"])
 
-	// A new record from the older helper: its pass reads the candidate's submitted question from the sidecar and
-	// prompts the parent once, for the report.
+	// A new record from the older helper: its pass reads the candidate's submitted question from the sidecar and,
+	// without the wake protocol, prompts the parent once, for the report; with it, the report coalesces behind the
+	// episode the candidate's ask left outstanding and no prompt is sent.
 	settleFakePane(t, d.base, "w-parent:p1")
 	reported := old(pane, "report", taskID, "--text", "Candidate ready; not verified.")
 	state := ""
@@ -187,8 +194,12 @@ func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates,
 		if state != "submitted" {
 			t.Fatalf("older helper read the candidate-submitted question as %q, want submitted", state)
 		}
-		if got := len(d.prompts(t, "w-parent:p1")); got != parentPrompts+1 {
-			t.Fatalf("parent prompts = %d, want exactly one more (the report) after %d", got, parentPrompts)
+		want := parentPrompts + 1
+		if wakeAware {
+			want = parentPrompts
+		}
+		if got := len(d.prompts(t, "w-parent:p1")); got != want {
+			t.Fatalf("parent prompts = %d, want %d after %d (wake-aware older helper: %v)", got, want, parentPrompts, wakeAware)
 		}
 	}
 
@@ -206,6 +217,17 @@ func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates,
 	}
 	if !stableIdentity {
 		t.Logf("pre-identity runtime recorded its own prompt under the hostname key; the candidate cannot attribute it to this recipient")
+	} else if wakeAware {
+		if olderDelivery != "" {
+			t.Fatalf("wake-aware older helper prompted (delivery %s) instead of coalescing: %v", olderDelivery, reported["notice"])
+		}
+		entry := candidateWakeEntry(t, d)
+		if uncoalesced := asSlice(entry["uncoalesced_legacy_prompts"]); len(uncoalesced) != 0 {
+			t.Fatalf("candidate wake show reports uncoalesced prompts after a coalescing older helper: %v", uncoalesced)
+		}
+		if asString(asMap(entry["episode"])["phase"]) != "submitted" {
+			t.Fatalf("the episode changed under the older helper: %v", entry["episode"])
+		}
 	} else {
 		if olderDelivery == "" {
 			t.Fatalf("older helper report recorded no submitted delivery: %v", reported["notice"])
@@ -240,8 +262,9 @@ func olderHelperOnCandidateRecords(t *testing.T, oldHelper string, olderCreates,
 }
 
 // candidateWakeSidecar returns the path of the coordinator's wake sidecar: the one the candidate's ask left (its row
-// says so), or, in an older-created home that is not adopted, one planted with an outstanding episode.
-func candidateWakeSidecar(t *testing.T, d *demoLab, olderCreates bool, asked map[string]any) string {
+// says so), or, in a home an older helper without the wake protocol created (notAdopted), one planted with an
+// outstanding episode.
+func candidateWakeSidecar(t *testing.T, d *demoLab, notAdopted bool, asked map[string]any) string {
 	t.Helper()
 	st, err := store.Open(d.home)
 	if err != nil {
@@ -255,7 +278,10 @@ func candidateWakeSidecar(t *testing.T, d *demoLab, olderCreates bool, asked map
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !olderCreates {
+	if !notAdopted {
+		if admission := asString(asMap(wakeField)["admission"]); admission != "permitted" && admission != "coalesced" {
+			t.Fatalf("candidate ask row wake = %v, want an adopted home (permitted, or coalesced behind an outstanding episode)", wakeField)
+		}
 		if len(entries) != 1 || entries[0].Wake == nil || !entries[0].Wake.IsOutstanding() {
 			t.Fatalf("candidate ask left wake entries %v, want one outstanding episode (row wake %v)", entries, wakeField)
 		}

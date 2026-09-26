@@ -488,3 +488,91 @@ func TestPriorityRekeyedQuestionIsPromptedAfterAnEarlierObligationCloses(t *test
 		t.Fatalf("recorded decisions after the rekey = %v, want the identity refreshed to the new key", got)
 	}
 }
+
+// A decision whose attempts reached stalled while the coordinator stayed busy is not left waiting behind the routine
+// latch: the pass that retries stalled attempts (the idle hook) sends it once, like a stalled routine return.
+func TestPriorityStalledDecisionIsRetriedOnTheIdleHookPass(t *testing.T) {
+	l := newPassLab(t)
+	l.adopt()
+	a := l.reporting()
+	l.submittedFor(a)
+	q := l.asking(l.host)
+	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": l.pane("working", l.root)}})
+	for i := 0; i < AttemptsBound; i++ {
+		busy, _ := l.pumpFor([]string{a, q}, "parent", 8*time.Second)
+		priorityRow(t, busy, "not-delivered", q+"/question:q1")
+	}
+	d := deliveries(t, l.s, q)
+	if len(d) != AttemptsBound {
+		t.Fatalf("attempts = %d, want %d not-delivered ones", len(d), AttemptsBound)
+	}
+	// Still busy, then idle: an ordinary pass reads the bucket as stalled and stamps nothing more.
+	for _, idle := range []bool{false, true} {
+		if idle {
+			l.coordinatorIdle()
+		}
+		stalled, _ := l.pumpFor([]string{a, q}, "parent", 8*time.Second)
+		r := row(t, stalled, "w-root:p1")
+		if state, _ := r.Get("state"); state != "stalled" || len(deliveries(t, l.s, q)) != AttemptsBound || len(prompts(l.calls(), "w-root:p1")) != 1 {
+			t.Fatalf("ordinary pass (idle %v) on a stalled decision = %v (attempts %d, prompts %d), want stalled with nothing sent", idle, r, len(deliveries(t, l.s, q)), len(prompts(l.calls(), "w-root:p1")))
+		}
+	}
+	retried, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Tasks: []string{a, q}, Recipient: "parent", Budget: 8 * time.Second, RetryStalled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	priorityRow(t, retried, "submitted", q+"/question:q1")
+	if n := len(prompts(l.calls(), "w-root:p1")); n != 2 {
+		t.Fatalf("prompts = %d, want exactly one priority prompt from the retry pass", n)
+	}
+	if got := l.decisionKeys(); got[q+"/question:q1/"] != "submitted" {
+		t.Fatalf("recorded decisions = %v", got)
+	}
+	if l.wakePhase() != WakeSubmitted || l.wake().Generation != 1 {
+		t.Fatalf("the retry touched the routine episode: %s gen %d", l.wakePhase(), l.wake().Generation)
+	}
+}
+
+// Once its question is answered, a recorded decision is pruned and its delivery stays accounted for by a
+// decision-closed receipt: wake show lists it neither under priority_prompts nor as an uncoalesced legacy prompt.
+func TestPriorityAnsweredDecisionLeavesAnAccountedDelivery(t *testing.T) {
+	l := newPassLab(t)
+	l.adopt()
+	a := l.reporting()
+	l.submittedFor(a)
+	q := l.asking(l.host)
+	l.coordinatorIdle()
+	result, _ := l.pumpFor([]string{a, q}, "parent", 8*time.Second)
+	priorityRow(t, result, "submitted", q+"/question:q1")
+	priorityDelivery := field(t, deliveries(t, l.s, q)[0], "id")
+	l.answer(q, "q1")
+	// The next pass with something to consider (a new routine arrival) prunes the answered decision at admission.
+	c := l.reporting()
+	after, _ := l.pumpFor([]string{a, q, c}, "parent", 8*time.Second)
+	if state, _ := row(t, after, "w-root:p1").Get("state"); state != "coalesced" {
+		t.Fatalf("pass after the answer = %v", row(t, after, "w-root:p1"))
+	}
+	w := l.wake()
+	if len(w.Decisions) != 0 {
+		t.Fatalf("answered decision stayed recorded: %+v", w.Decisions)
+	}
+	closed := 0
+	for _, r := range w.Receipts {
+		if r.Result == "decision-closed" && r.Delivery == priorityDelivery && r.Fingerprint == "" && r.Generation == w.Generation {
+			closed++
+		}
+	}
+	if closed != 1 {
+		t.Fatalf("receipts = %+v, want one decision-closed receipt for %s", w.Receipts, priorityDelivery)
+	}
+	entry := l.showEntry()
+	if uncoalesced, _ := entry.Get("uncoalesced_legacy_prompts"); len(uncoalesced.([]any)) != 0 {
+		t.Fatalf("the answered decision's delivery is reported as uncoalesced: %v", uncoalesced)
+	}
+	if listed, _ := entry.Get("priority_prompts"); strings.Contains(text(listed), priorityDelivery) {
+		t.Fatalf("priority_prompts still lists the pruned decision: %s", text(listed))
+	}
+	if l.wakePhase() != WakeSubmitted || w.Generation != 1 {
+		t.Fatalf("the prune touched the routine episode: %s gen %d", l.wakePhase(), w.Generation)
+	}
+}

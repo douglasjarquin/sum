@@ -488,26 +488,14 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		oid, _ := obj.Get("id")
 		sendable[[2]string{fmt.Sprint(taskID), fmt.Sprint(oid)}] = true
 	}
-	var withheld []any
 	named := map[[2]string]bool{}
-	for _, item := range listing {
-		obj := item.(*ordjson.Object)
-		taskID, _ := obj.Get("task")
-		oid, _ := obj.Get("id")
-		pair := [2]string{fmt.Sprint(taskID), fmt.Sprint(oid)}
-		note, _ := obj.Get("notification")
-		noteObj, _ := note.(*ordjson.Object)
-		state, _ := noteObj.Get("state")
+	withheld := projectListing(listing, func(pair [2]string, state any) bool {
 		if sendable[pair] || state == "submitted" {
 			named[pair] = true
-		} else {
-			w := ordjson.NewObject()
-			w.Set("task", taskID)
-			w.Set("id", oid)
-			w.Set("state", state)
-			withheld = append(withheld, w)
+			return false
 		}
-	}
+		return true
+	})
 	var mentioned, sendItems [][2]*ordjson.Object
 	for _, pair := range items {
 		k := pairKey(pair)
@@ -532,7 +520,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 				return p.deferRow(row, adm.reason), nil
 			case wakeDecisionCoalesced:
 				row.Set("wake", adm.view())
-				eligible, prompted := priorityDecisions(adm.wake, items, listing)
+				eligible, prompted := priorityDecisions(adm.wake, items, listing, opts.RetryStalled)
 				if len(eligible) == 0 {
 					row.Set("state", "coalesced")
 					row.Set("reason", adm.reason)
@@ -547,22 +535,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 					d, _ := decisionIdentity(pair)
 					decisions = append(decisions, decisionRef(d))
 				}
-				coalesced := []any{}
-				for _, item := range listing {
-					obj := item.(*ordjson.Object)
-					taskID, _ := obj.Get("task")
-					oid, _ := obj.Get("id")
-					if sendable[[2]string{fmt.Sprint(taskID), fmt.Sprint(oid)}] {
-						continue
-					}
-					note, _ := obj.Get("notification")
-					state, _ := note.(*ordjson.Object).Get("state")
-					c := ordjson.NewObject()
-					c.Set("task", taskID)
-					c.Set("id", oid)
-					c.Set("state", state)
-					coalesced = append(coalesced, c)
-				}
+				coalesced := projectListing(listing, func(pair [2]string, _ any) bool { return !sendable[pair] })
 				mentioned, sendItems = eligible, eligible
 				row.Set("priority", true)
 				row.Set("decisions", decisions)
@@ -769,10 +742,11 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	// A decision named by a submitted or uncertain prompt is recorded so no pass repeats it; a prompt that provably
 	// did not reach the pane leaves the decision unrecorded, so the next eligible pass tries once more.
 	reached := claimed && (state == WakeSubmitted || state == WakeUncertain)
+	if reached && (priority || episode) {
+		recordDecisions(adm.wake, sendItems, deliveryID, state)
+	}
 	if priority {
-		if reached {
-			recordDecisions(adm.wake, sendItems, deliveryID, state)
-		} else {
+		if !reached {
 			for _, pair := range sendItems {
 				k := pairKey(pair)
 				adm.wake.DropDecision(k[0], k[1])
@@ -783,9 +757,6 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		}
 	}
 	if episode {
-		if reached {
-			recordDecisions(adm.wake, sendItems, deliveryID, state)
-		}
 		// The attempt is finalized first, so an old reader sees the uncertain attempt before the episode says
 		// anything; a not-delivered or never-claimed outcome closes the episode.
 		phase := WakeNotSubmitted
@@ -1156,12 +1127,36 @@ func namedDecision(w *Wake, pair [2]*ordjson.Object) (WakeDecision, bool) {
 	return WakeDecision{}, false
 }
 
+// projectListing projects each listing item that keep selects, by its (task, id) and attempt state, to a
+// {task, id, state} row. It always returns a non-nil list.
+func projectListing(listing []any, keep func(pair [2]string, state any) bool) []any {
+	out := []any{}
+	for _, item := range listing {
+		obj := item.(*ordjson.Object)
+		taskID, _ := obj.Get("task")
+		oid, _ := obj.Get("id")
+		note, _ := obj.Get("notification")
+		noteObj, _ := note.(*ordjson.Object)
+		state, _ := noteObj.Get("state")
+		pair := [2]string{fmt.Sprint(taskID), fmt.Sprint(oid)}
+		if !keep(pair, state) {
+			continue
+		}
+		row := ordjson.NewObject()
+		row.Set("task", taskID)
+		row.Set("id", oid)
+		row.Set("state", state)
+		out = append(out, row)
+	}
+	return out
+}
+
 // priorityDecisions selects, behind an outstanding routine episode, the decisions a priority prompt may name now:
-// open questions whose attempt is pending or not-delivered (an uncertain or stalled attempt is never resent by a
-// pass), not covered by a consume, and not already named under their current key. A question a prompt already
-// reached is eligible again only when its key changed since. prompted lists the bucket's decisions that are already
-// accounted for, so the row can say why nothing is sent.
-func priorityDecisions(w *Wake, items [][2]*ordjson.Object, listing []any) (eligible [][2]*ordjson.Object, prompted []any) {
+// open questions whose attempt is pending or not-delivered, or stalled when the pass retries stalled attempts (the
+// idle-hook pass; an uncertain attempt is never resent), not covered by a consume, and not already named under their
+// current key. A question a prompt already reached is eligible again only when its key changed since. prompted lists
+// the bucket's decisions that are already accounted for, so the row can say why nothing is sent.
+func priorityDecisions(w *Wake, items [][2]*ordjson.Object, listing []any, retryStalled bool) (eligible [][2]*ordjson.Object, prompted []any) {
 	covered := coveredSet(w.Covered)
 	prompted = []any{}
 	for i, pair := range items {
@@ -1184,7 +1179,7 @@ func priorityDecisions(w *Wake, items [][2]*ordjson.Object, listing []any) (elig
 			continue
 		}
 		switch {
-		case state == "pending" || state == "not-delivered":
+		case state == "pending" || state == "not-delivered" || (retryStalled && state == "stalled"):
 			eligible = append(eligible, pair)
 		case state == WakeSubmitted && has:
 			// The recorded prompt named an earlier key: a re-keyed question is a new decision, once.
@@ -1235,7 +1230,8 @@ func recordDecisions(w *Wake, items [][2]*ordjson.Object, deliveryID, state stri
 
 // priorityNoticeLine marks a decision notice and names the routine episode it leaves outstanding.
 func priorityNoticeLine(s *store.Store, sumctlPath, episode string) string {
-	return fmt.Sprintf(" Decision(s) need you; the routine wake %s stays outstanding until consumed: %s", episode, wakeBoundaryHint(s, sumctlPath))
+	return fmt.Sprintf(" Decision(s) need you; the routine wake %s stays outstanding until consumed: %s Consuming the routine wake does not close a decision; answering it (%s) does.",
+		episode, wakeBoundaryHint(s, sumctlPath), shquote.CommandFor(sumctlPath, s.Home, "answer", "TASK_ID", "QUESTION_ID", "--text", "..."))
 }
 
 // wakeNoticeLine names the episode a coordinator prompt opened and the commands that inspect and consume it.

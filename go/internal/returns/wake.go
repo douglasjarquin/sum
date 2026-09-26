@@ -542,13 +542,23 @@ func PruneCovered(index *openIndex, w *Wake) bool {
 }
 
 // PruneDecisions drops recorded decisions whose question is no longer open (answered, applied, settled, or closed),
-// under the same rule as PruneCovered.
+// under the same rule as PruneCovered. A dropped decision's delivery stays accounted for by a `decision-closed`
+// receipt (no fingerprint, like a superseded or replaced episode's), so `wake show` never reports the priority
+// prompt as an uncoalesced legacy one once the question has closed.
 func PruneDecisions(index *openIndex, w *Wake) bool {
 	if w == nil || len(w.Decisions) == 0 {
 		return false
 	}
 	before := len(w.Decisions)
-	w.Decisions = slices.DeleteFunc(w.Decisions, func(d WakeDecision) bool { return index.closed(d.Task, d.ID) })
+	w.Decisions = slices.DeleteFunc(w.Decisions, func(d WakeDecision) bool {
+		if !index.closed(d.Task, d.ID) {
+			return false
+		}
+		if d.Delivery != "" {
+			w.AddReceipt(WakeReceipt{Generation: w.Generation, At: store.Now(), Result: "decision-closed", Delivery: d.Delivery})
+		}
+		return true
+	})
 	return len(w.Decisions) != before
 }
 
