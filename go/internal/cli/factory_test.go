@@ -215,3 +215,22 @@ func TestGroupedProjectFocusAttachesDigestAndKeepsGlobalDecisions(t *testing.T) 
 		t.Fatal("compact output is unchanged")
 	}
 }
+
+// TestFactoryMergeCheck_emitsHumanGateForAnUnknownTask pins the CLI emit of merge-check: its result carries the
+// authorized repository list, which must encode. Before this test the command always exited 1 after evaluating the
+// gates, and `factory merge` would have mutated GitHub before failing to report.
+func TestFactoryMergeCheck_emitsHumanGateForAnUnknownTask(t *testing.T) {
+	clearHerdrEnv(t)
+	home := presentationHome(t)
+	out, stderr, err := runFactory(t, home, "--format", "json", "factory", "merge-check", "t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("merge-check must emit its result: %v %s", err, stderr)
+	}
+	view := decodeCLIMap(t, out)
+	if view["confidence"] != "human-gate" {
+		t.Fatalf("confidence = %v, want human-gate for a task without evidence", view["confidence"])
+	}
+	if list, ok := view["authorized_merge"].([]any); !ok || len(list) == 0 {
+		t.Fatalf("authorized_merge must encode as a list: %v", view["authorized_merge"])
+	}
+}

@@ -26,7 +26,9 @@ import (
 // unapplied answers, reports, open PRs, and merged cleanup-pending tasks), with healthy fakes and with a slow
 // dependency. It runs only when SUM_MEASURE_OUT names an output directory; SUM_MEASURE_BINS adds binaries to compare
 // as name=path[,name=path] (the candidate helper is always measured). Counts of task reads and subprocesses come from
-// one strace'd run per cell when strace is available.
+// one strace'd run per cell when strace is available. The integrated 12-worker replay (TestQuietCoordinationReplay)
+// records its own prompt, byte and call measurements over records it produced through real CLI operations; when it
+// wrote replay.json into the same SUM_MEASURE_OUT, raw.json points at it so the two are read together.
 func TestMeasureCoordinationPasses(t *testing.T) {
 	out := os.Getenv("SUM_MEASURE_OUT")
 	if out == "" {
@@ -125,7 +127,11 @@ func TestMeasureCoordinationPasses(t *testing.T) {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.MarshalIndent(map[string]any{"schema": 1, "generated_at": time.Now().UTC().Format(time.RFC3339), "cells": cells}, "", "  ")
+	replay := "not recorded in this directory: run TestQuietCoordinationReplay with the same SUM_MEASURE_OUT; it measures its own 12-task home"
+	if _, err := os.Stat(filepath.Join(out, "replay.json")); err == nil {
+		replay = filepath.Join(out, "replay.json")
+	}
+	raw, err := json.MarshalIndent(map[string]any{"schema": 1, "generated_at": time.Now().UTC().Format(time.RFC3339), "cells": cells, "replay": replay}, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
