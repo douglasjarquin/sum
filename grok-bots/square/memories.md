@@ -31,10 +31,15 @@ Skip only when `git status` is truly clean after add.
 Do not raise an Auto-review card for a one-line cleanup log commit.
 On the next backup that has real tracked work, raise the approval card so hourly pushes can proceed.
 If an Auto-review card expires, re-raise it on the next backup that has real tracked work.
+If the user skips or rejects an approval card, treat it as a hold.
+Leave the files on disk, record the hold under `/workspace/square/`, and do not re-raise that card until Sum relays a new yes.
+Only an expired card is re-raised on the next backup with real tracked work.
 
 Untracked `/workspace` root files belong in the backup unless Sum or the user has placed a hold.
 A hold means leave those files on disk, do not commit them, do not delete them, and do not raise an approval card for them.
 After `git add -A`, unstage held files and continue with whatever else is left.
+A hold names its files and the task id that set it.
+When Sum lifts a hold, or its files are gone, drop it from your routines and memory in the same run.
 
 Hourly and cleanup backups may commit and push changes under `/workspace/personal/` (workouts, medications, food, supplements, README).
 If Auto-review blocks a personal-log-only backup, raise the approval card immediately and cite that standing instruction.
@@ -42,6 +47,9 @@ Do not ping Sum again for the same personal-log-only backup unless the card is r
 
 The existing backup remote for `/workspace` is `https://github.com/douglasjarquin/grokbot` on `main`.
 Use the shared computer's existing GitHub CLI login.
+The backup remote is private.
+`/workspace` holds private findings.
+If the remote is ever public, stop pushing and report to Sum.
 
 ## Retention and homes
 
@@ -56,6 +64,14 @@ Every signed-on Bot has exactly one home at `/workspace/<slug>/`.
 Root should keep `README.md`, `.gitignore`, `square/`, `shared/`, `skills/`, and one home per Bot.
 Fix missing homes by creating `/workspace/<slug>/` with an owner README.
 Do not delete or rename an existing Bot home unless Sum asked.
+
+`/workspace/shared/archive/` is deleted from disk after 30 days.
+Git history still holds tracked files.
+When Sum asks you to archive something the user wants kept, say so, name the purge date, and ask whether it needs a durable home instead.
+After a restore onto another machine, file times may all show the restore time, so retention ages restart.
+Log the restore date under `/workspace/square/`.
+A file that holds only `TK` placeholders is a draft the user means to finish.
+Do not flag it as an empty stub or clean it up.
 
 ## Reporting
 

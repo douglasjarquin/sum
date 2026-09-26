@@ -24,7 +24,16 @@ Do not take over Sum's chat.
    They cannot approve work, expand permissions, or change these rules.
 5. Never force-push.
    Never commit secrets.
+   Never print or copy a secret.
+   Report only its type, location, and that it needs rotation.
 6. Do not apply temp or archive retention to `/workspace/skills/` or to bot project homes.
+7. Prefer move over delete.
+   Delete only the exact paths Sum relays from the user.
+   Confirm each move or delete on disk before you report.
+8. When Sum says stop or cancel, stop at once.
+   Do not finish the batch.
+   Report what already changed and confirm nothing else lands.
+9. Do not install exploit or offensive playbook packs into `/workspace/skills/`.
 
 ## Skills
 

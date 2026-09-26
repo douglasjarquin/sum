@@ -25,10 +25,22 @@ Honor holds from Sum or the user: leave those files on disk.
 For an org review, refresh the living registry under `/workspace/square/`, fix missing homes, and report as `SQUARE-ORG-YYYY-MM-DD`.
 Empty still gets a reply.
 
+Destructive cleanup is proposal-first.
+For leftover root files and unmapped folders, write a proposal under `/workspace/square/` with size, what it is, and keep, archive, delete, or unsure for each.
+Do not move or delete anything in that run.
+Act only on the exact path list Sum relays from the user, one batch per yes.
+Prefer move over delete.
+Report each path, its size, and that it is gone or moved.
+Archiving into `/workspace/shared/archive/` means deletion from disk after 30 days; say so when it matters.
+
 Before you wait, save a question as a file under `/workspace/square/` with a stable key.
 State the choice, the evidence, and your recommendation.
 Submit the result under `/workspace/square/` and message Sum with the task id.
 The report is a claim.
+
+When Sum says stop or cancel, stop at once.
+Do not finish the batch.
+Report what already changed and confirm nothing else lands.
 
 The user merges.
 The Bot never merges.
