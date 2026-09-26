@@ -450,3 +450,41 @@ func TestPriorityArrivalDuringAHeldPromptIsEligibleNext(t *testing.T) {
 		t.Fatalf("recorded decisions = %v", got)
 	}
 }
+
+// A re-keyed question is found by its own listing entry, not by its position in the bucket: an earlier obligation
+// closed after the pass read its task drops out of the revalidated listing, and the re-keyed question behind it is
+// still prompted.
+func TestPriorityRekeyedQuestionIsPromptedAfterAnEarlierObligationCloses(t *testing.T) {
+	l := newPassLab(t)
+	l.adopt()
+	a := l.reporting()
+	l.submittedFor(a)
+	q1 := l.asking(l.host)
+	q2 := l.asking(l.host)
+	l.question(q2, "q7", "k1")
+	l.coordinatorIdle()
+	result, _ := l.pumpFor([]string{a, q1, q2}, "parent", 8*time.Second)
+	priorityRow(t, result, "submitted", q1+"/question:q1", q2+"/question:q1", q2+"/question:q7")
+	l.rekey(q2, "q7", "k2")
+	stale, err := l.s.AllTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// q1's question closes after the pass read its task, so revalidation drops it ahead of the re-keyed question.
+	l.answer(q1, "q1")
+	rekeyed, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Tasks: []string{a, q1, q2}, Recipient: "parent", Budget: 8 * time.Second, Snapshot: stale})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := priorityRow(t, rekeyed, "submitted", q2+"/question:q7")
+	if revalidated, _ := r.Get("revalidated"); !strings.Contains(text(revalidated), q1) || !strings.Contains(text(revalidated), "question:q1") {
+		t.Fatalf("the closed question was not dropped by revalidation: %v", r)
+	}
+	sent := prompts(l.calls(), "w-root:p1")
+	if len(sent) != 3 || strings.Contains(sent[2], q1) || !strings.Contains(sent[2], "question q7 is open") {
+		t.Fatalf("prompts = %d, last = %q; want the re-keyed question alone", len(sent), sent[len(sent)-1])
+	}
+	if got := l.decisionKeys(); got[q2+"/question:q7/k2"] != "submitted" || got[q2+"/question:q7/k1"] != "" {
+		t.Fatalf("recorded decisions after the rekey = %v, want the identity refreshed to the new key", got)
+	}
+}

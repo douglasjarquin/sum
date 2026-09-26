@@ -430,6 +430,15 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		row.Set("reason", "every return in this group closed or was rebound after the pass read it; nothing was sent")
 		return row, nil
 	}
+	// Coordinator wake admission (wake.go), decided under the compatibility and recipient locks already held. Worker
+	// routes never pass through it. The sidecar is read once here: the re-key check below and the admission decision
+	// further down share it.
+	var adm *wakeAdmission
+	if fmt.Sprint(routeValue(route, "role")) == "coordinator" {
+		if adm, err = p.admitWake(route, opts.Force && !b.inline); err != nil {
+			return nil, err
+		}
+	}
 	var fresh, retry []any
 	held := map[string]bool{}
 	for _, item := range listing {
@@ -452,7 +461,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	}
 	// A question whose key changed since a prompt named it is a new decision: eligible once more although its
 	// obligation's attempt reads submitted.
-	fresh = append(fresh, p.rekeyedDecisions(b, listing)...)
+	fresh = append(fresh, rekeyedDecisions(b, adm, items, listing)...)
 	if len(fresh) == 0 && len(retry) == 0 && !opts.Force {
 		if held["stalled"] {
 			row.Set("state", "stalled")
@@ -510,16 +519,10 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		}
 	}
 	row.Set("withheld", withheld)
-	// Coordinator wake admission (wake.go), decided under the compatibility and recipient locks already held. Worker
-	// routes never pass through it.
-	var adm *wakeAdmission
 	// priority marks a decision prompt behind an outstanding routine episode: the same observation, occupant, identity,
 	// budget and claim as a routine prompt, restricted to new decisions, with the episode left untouched.
 	priority := false
-	if fmt.Sprint(routeValue(route, "role")) == "coordinator" {
-		if adm, err = p.admitWake(route, opts.Force && !b.inline); err != nil {
-			return nil, err
-		}
+	if adm != nil {
 		if !b.inline {
 			switch adm.decision {
 			case wakeDecisionLegacy:
@@ -572,10 +575,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	// canonical closure prunes them. An explicit forced notice and the coordinator's own inline listing still show
 	// them.
 	if adm != nil && adm.wake != nil && adm.decision == wakeDecisionPermitted && !b.inline && !opts.Force && (len(adm.wake.Covered) > 0 || len(adm.wake.Decisions) > 0) {
-		covered := map[[2]string]bool{}
-		for _, c := range adm.wake.Covered {
-			covered[[2]string{c.Task, c.ID}] = true
-		}
+		covered := coveredSet(adm.wake.Covered)
 		repeated := map[[2]string]bool{}
 		var kept [][2]*ordjson.Object
 		for _, pair := range sendItems {
@@ -1162,10 +1162,7 @@ func namedDecision(w *Wake, pair [2]*ordjson.Object) (WakeDecision, bool) {
 // reached is eligible again only when its key changed since. prompted lists the bucket's decisions that are already
 // accounted for, so the row can say why nothing is sent.
 func priorityDecisions(w *Wake, items [][2]*ordjson.Object, listing []any) (eligible [][2]*ordjson.Object, prompted []any) {
-	covered := map[[2]string]bool{}
-	for _, c := range w.Covered {
-		covered[[2]string{c.Task, c.ID}] = true
-	}
+	covered := coveredSet(w.Covered)
 	prompted = []any{}
 	for i, pair := range items {
 		d, ok := decisionIdentity(pair)
@@ -1198,15 +1195,13 @@ func priorityDecisions(w *Wake, items [][2]*ordjson.Object, listing []any) (elig
 }
 
 // rekeyedDecisions lists the coordinator bucket's questions whose attempt reads submitted but whose key changed since
-// the sidecar recorded a prompt naming them. Read-only: admission re-reads the sidecar and decides.
-func (p *pass) rekeyedDecisions(b *bucket, listing []any) []any {
-	if b.inline || fmt.Sprint(routeValue(b.route, "role")) != "coordinator" {
+// the sidecar recorded a prompt naming them. items and listing are the revalidated bucket, index-aligned. Read-only
+// over the sidecar admission already read: a legacy, blocked, or absent sidecar names no decision to re-key against.
+func rekeyedDecisions(b *bucket, adm *wakeAdmission, items [][2]*ordjson.Object, listing []any) []any {
+	if b.inline || adm == nil || adm.wake == nil || len(adm.wake.Decisions) == 0 {
 		return nil
 	}
-	w, status := ReadWake(p.s, identity(p.host, b.route))
-	if status.State != WakeOK || len(w.Decisions) == 0 {
-		return nil
-	}
+	w := adm.wake
 	var out []any
 	for i, item := range listing {
 		obj := item.(*ordjson.Object)
@@ -1214,7 +1209,7 @@ func (p *pass) rekeyedDecisions(b *bucket, listing []any) []any {
 		if state, _ := note.(*ordjson.Object).Get("state"); state != WakeSubmitted {
 			continue
 		}
-		d, ok := decisionIdentity(b.items[i])
+		d, ok := decisionIdentity(items[i])
 		if !ok {
 			continue
 		}
@@ -1240,13 +1235,17 @@ func recordDecisions(w *Wake, items [][2]*ordjson.Object, deliveryID, state stri
 
 // priorityNoticeLine marks a decision notice and names the routine episode it leaves outstanding.
 func priorityNoticeLine(s *store.Store, sumctlPath, episode string) string {
-	return fmt.Sprintf(" Decision(s) need you; the routine wake %s stays outstanding until consumed: %s shows it and its boundary; after reading, record it with %s.", episode,
-		shquote.CommandFor(sumctlPath, s.Home, "wake", "show"), shquote.CommandFor(sumctlPath, s.Home, "wake", "consume", "--boundary", "TOKEN"))
+	return fmt.Sprintf(" Decision(s) need you; the routine wake %s stays outstanding until consumed: %s", episode, wakeBoundaryHint(s, sumctlPath))
 }
 
 // wakeNoticeLine names the episode a coordinator prompt opened and the commands that inspect and consume it.
 func wakeNoticeLine(s *store.Store, sumctlPath, episode string) string {
-	return fmt.Sprintf(" Wake episode %s: %s shows it and its boundary; after reading, record it with %s.", episode,
+	return fmt.Sprintf(" Wake episode %s: %s", episode, wakeBoundaryHint(s, sumctlPath))
+}
+
+// wakeBoundaryHint names the commands that show an episode's boundary and consume it; both notice lines end with it.
+func wakeBoundaryHint(s *store.Store, sumctlPath string) string {
+	return fmt.Sprintf("%s shows it and its boundary; after reading, record it with %s.",
 		shquote.CommandFor(sumctlPath, s.Home, "wake", "show"), shquote.CommandFor(sumctlPath, s.Home, "wake", "consume", "--boundary", "TOKEN"))
 }
 

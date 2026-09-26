@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -257,13 +258,16 @@ func (w *Wake) RecordDecision(d WakeDecision) {
 }
 
 func (w *Wake) DropDecision(task, id string) {
-	kept := w.Decisions[:0]
-	for _, d := range w.Decisions {
-		if d.Task != task || d.ID != id {
-			kept = append(kept, d)
-		}
+	w.Decisions = slices.DeleteFunc(w.Decisions, func(d WakeDecision) bool { return d.Task == task && d.ID == id })
+}
+
+// coveredSet indexes covered identities by task and obligation id.
+func coveredSet(items []WakeCovered) map[[2]string]bool {
+	covered := map[[2]string]bool{}
+	for _, c := range items {
+		covered[[2]string{c.Task, c.ID}] = true
 	}
-	w.Decisions = kept
+	return covered
 }
 
 // IncarnationJSON encodes a recorded incarnation (an ordjson value) for the sidecar.
@@ -528,47 +532,31 @@ func (x *openIndex) closed(task, id string) bool {
 
 // PruneCovered drops covered identities whose obligation is established closed: the task reads and the obligation is
 // not among its open ones. Anything unreadable keeps its coverage.
-func PruneCovered(s *store.Store, w *Wake) bool {
+func PruneCovered(index *openIndex, w *Wake) bool {
 	if w == nil || len(w.Covered) == 0 {
 		return false
 	}
-	index := &openIndex{s: s, open: map[string]map[string]bool{}}
-	kept := w.Covered[:0]
-	changed := false
-	for _, c := range w.Covered {
-		if index.closed(c.Task, c.ID) {
-			changed = true
-			continue
-		}
-		kept = append(kept, c)
-	}
-	w.Covered = kept
-	return changed
+	before := len(w.Covered)
+	w.Covered = slices.DeleteFunc(w.Covered, func(c WakeCovered) bool { return index.closed(c.Task, c.ID) })
+	return len(w.Covered) != before
 }
 
 // PruneDecisions drops recorded decisions whose question is no longer open (answered, applied, settled, or closed),
 // under the same rule as PruneCovered.
-func PruneDecisions(s *store.Store, w *Wake) bool {
+func PruneDecisions(index *openIndex, w *Wake) bool {
 	if w == nil || len(w.Decisions) == 0 {
 		return false
 	}
-	index := &openIndex{s: s, open: map[string]map[string]bool{}}
-	kept := w.Decisions[:0]
-	changed := false
-	for _, d := range w.Decisions {
-		if index.closed(d.Task, d.ID) {
-			changed = true
-			continue
-		}
-		kept = append(kept, d)
-	}
-	w.Decisions = kept
-	return changed
+	before := len(w.Decisions)
+	w.Decisions = slices.DeleteFunc(w.Decisions, func(d WakeDecision) bool { return index.closed(d.Task, d.ID) })
+	return len(w.Decisions) != before
 }
 
+// pruneWake prunes coverage and decisions through one open-obligation index, so each task is read at most once.
 func pruneWake(s *store.Store, w *Wake) bool {
-	covered := PruneCovered(s, w)
-	decisions := PruneDecisions(s, w)
+	index := &openIndex{s: s, open: map[string]map[string]bool{}}
+	covered := PruneCovered(index, w)
+	decisions := PruneDecisions(index, w)
 	return covered || decisions
 }
 
