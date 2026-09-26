@@ -109,5 +109,5 @@ A trust/auth prompt can make startup uncertain while leaving a real agent alive.
 
 Tell the user what started and what it will deliver. End the turn rather than entering a repeated handoff/wait loop.
 The normal worker return path is `sumctl ask` or `sumctl report` from its brief. Those commands save data first and attempt a short notice only to a provably idle/done recipient.
-If a notice remains pending, saved work still exists, but automatic delivery is NOT guaranteed. Every open question and report stays listed under `returns` until a record closes it, and a later write to the same recipient coalesces them into one notice. Use a rundown on the next interaction.
+If a notice remains pending, saved work still exists, but automatic delivery is NOT guaranteed. Every open question and report stays listed under `returns` until a record closes it, and a later write to the same recipient coalesces them into one notice. Check status on the next interaction.
 With `sumctl hook enable` active, the recipient's next native `idle`/`done` edge runs the same bounded pump, so a pending notice usually arrives when the pane settles; that is still submitted, not read.

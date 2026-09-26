@@ -21,11 +21,11 @@ Record whether MCP or CLI was used, harness version, Herdr version, and any trus
 ## 3. Busy or closed coordinator
 
 Repeat while the coordinator is occupied, then while it is closed. The question must remain in `sumctl inbox`; prompt delivery may remain pending.
-Reopen the coordinator, run `sumctl init --role coordinator --reclaim` once the old pane is verifiably gone, bind the task's parent to the new pane, and perform a rundown. There must be no duplicate worker and no invented answer.
+Reopen the coordinator, run `sumctl init --role coordinator --reclaim` once the old pane is verifiably gone, bind the task's parent to the new pane, and check status. There must be no duplicate worker and no invented answer.
 
 ## 4. Non-cooperative worker
 
-Ask a worker deliberately to print a question without calling `sumctl ask`. Run a rundown. The coordinator should inspect the idle/blocked worker and save the question.
+Ask a worker deliberately to print a question without calling `sumctl ask`. Check status. The coordinator should inspect the idle/blocked worker and save the question.
 This measures the attended fallback. Instant unattended capture is NOT a passing criterion claimed by this MVP.
 With `sumctl hook enable` active, also record whether the worker's idle edge produced an `attention` record with a useful excerpt and how long after the pane settled it appeared; label by hand whether the excerpt contained the question. Report unsupported harness cases (no Herdr status, alternate-screen output) explicitly.
 
@@ -159,10 +159,10 @@ On a host with Herdr 0.9.0 and SSH to a second machine, run `herdr machine add` 
 Keep the coordinator on Local.
 Confirm a task whose recorded `machine` is the remote host's identity is ignored by the local `hook event` pump.
 Confirm a local task can still `sumctl ask` and appear in records-only `sumctl inbox`.
-Confirm the local read-only rundown (`inbox --live`) and local delivery (`init`, `bind --parent-only`, and `pump`) remain the degrade path when the remote Herdr session is disconnected.
+Confirm the local read-only status check (`inbox --live`) and local delivery (`init`, `bind --parent-only`, and `pump`) remain the degrade path when the remote Herdr session is disconnected.
 A real SSH canary is unrun if no second host is available.
 
 ## Record results
 
-For each real task, record all human-labeled questions, which were saved by workers, which were found during rundown, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.
+For each real task, record all human-labeled questions, which were saved by workers, which were found during a status check, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.
 A useful result is fewer manual inspections and no forgotten decisions in the tested cases, not merely a successful command exit.
