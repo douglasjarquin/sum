@@ -36,7 +36,7 @@ Read and follow `skills/sum-status/SKILL.md`.
 ```
 
 `skills check` lists aliases under `aliases`, requires each target to be an active Sum skill, and requires the same projections as a canonical skill.
-`update apply` checks a candidate tree with the helper already installed, so a renamed canonical skill is accepted under its new name one release before a tree may ship it; the current accepted rename is `sum-rundown` to `sum-status`.
+`update apply` checks a candidate tree with the helper already installed, so a renamed canonical skill is accepted under its new name one release before a tree may ship it; `sum-rundown` was renamed to `sum-status` this way and lives on as an alias.
 
 Vercel Skills owns source parsing, discovery, copying, and its `skills-lock.json` format.
 The `--yes` mode can overwrite a same-named third-party destination, so inspect the target's Git diff after installation and review copied skills before use.

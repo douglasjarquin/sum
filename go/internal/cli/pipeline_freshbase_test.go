@@ -35,7 +35,7 @@ func (lab gateLab) coordinatorRecords(t *testing.T, kind string) []map[string]an
 	return rows
 }
 
-// markLocal records this machine on the task, which is what puts it in the rundown's maintenance view.
+// markLocal records this machine on the task, which is what puts it in the status view's maintenance section.
 func (lab gateLab) markLocal(t *testing.T) {
 	t.Helper()
 	host, err := machine.ID()

@@ -103,7 +103,11 @@ func trackedThroughLink(t *testing.T, root, rel string, tracked map[string]bool)
 // what the tree ships today.
 func TestSumSkillSetIsWhatInstalledHelpersAccept(t *testing.T) {
 	root := repoRoot(t)
-	want := []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker"}
+	want := []string{
+		"sum-assign", "sum-delegate", "sum-deliver", "sum-delivery", "sum-dev", "sum-develop", "sum-dispatch",
+		"sum-inbox", "sum-pr", "sum-recover", "sum-rollback", "sum-rundown", "sum-ship", "sum-status", "sum-sweep",
+		"sum-update", "sum-upgrade", "sum-work", "sum-worker",
+	}
 	for _, dir := range []string{"skills", ".agents/skills", ".claude/skills"} {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
 		if err != nil {

@@ -126,7 +126,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	}
 	for _, c := range f.calls()[callsBefore:] {
 		if headsEqual(c, "agent", "start") || (len(c) > 1 && (c[1] == "stop" || c[1] == "kill" || c[1] == "restart")) {
-			t.Fatalf("rundown lifecycle %v", c)
+			t.Fatalf("status lifecycle %v", c)
 		}
 	}
 
