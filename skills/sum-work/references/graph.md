@@ -1,6 +1,6 @@
 # Worker procedure: code graph
 
-Part of the sum worker procedure, pinned with your brief. Read it when your brief's `## Code graph` section, or `context --section execution`, reports an index other than `not built`, or before you ask for one. It adds detail to the required core (`sum-worker`) and never replaces it.
+Part of the sum worker procedure, pinned with your brief. Read it when your brief's `## Code graph` section, or `context --section execution`, reports an index other than `not built`, or before you ask for one. It adds detail to the required core (`sum-work`) and never replaces it.
 
 Your brief's `## Code graph` section says whether your checkout has a codegraph index. It is usually `not built`: sum indexes a checkout only when the coordinator asks. Otherwise it is `ready` with the exact CLI commands, or why not (`failed`, `exhausted`, `unavailable`).
 A `ready` index is `.codegraph/` inside your checkout, built by the pinned codegraph of the runtime, in CLI mode: nothing watches it, so run the brief's `sync` command after you edit or commit and before you query; `status --json` reports only uncommitted edits as pending, and a commit, checkout, or rebase leaves the index silently behind until you sync.

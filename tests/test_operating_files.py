@@ -207,11 +207,11 @@ class OperatingFilesTest(unittest.TestCase):
             "inbox --live",
         ):
             self.assertIn(rule, text)
-        for skill in ("sum-dispatch", "sum-delivery", "sum-status", "sum-update"):
+        for skill in ("sum-dispatch", "sum-deliver", "sum-status", "sum-update"):
             self.assertIn(f"`skills/{skill}/SKILL.md`", text)
 
     def test_worker_core_keeps_standing_prohibitions_of_on_demand_files(self):
-        text = (ROOT / "skills" / "sum-worker" / "SKILL.md").read_text()
+        text = (ROOT / "skills" / "sum-work" / "SKILL.md").read_text()
         for rule in (
             "You are not the coordinator",
             "never point a query at the primary clone or another worktree",

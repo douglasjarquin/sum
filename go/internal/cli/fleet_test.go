@@ -130,11 +130,11 @@ func TestFleetTwelveWorkers(t *testing.T) {
 		}
 	}
 
-	skill, err := os.ReadFile(filepath.Join(f.root, "skills/sum-worker/SKILL.md"))
+	skill, err := os.ReadFile(filepath.Join(f.root, "skills/sum-work/SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sha1 := f.commitUpstream("skills/sum-worker/SKILL.md", string(skill)+"\nUpdate one: reread decisions before continuing.\n")
+	sha1 := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nUpdate one: reread decisions before continuing.\n")
 	applied := f.ctl(true, "update", "apply", "--no-fetch")
 	if applied["changed"] != true {
 		t.Fatalf("apply one changed = %v", applied["changed"])
@@ -265,7 +265,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.commitUpstream("AGENTS.md", string(agents)+"\nUpdate two.\n")
-	sha2 := f.commitUpstream("skills/sum-worker/SKILL.md", string(skill)+"\nUpdate two: reread decisions before continuing.\n")
+	sha2 := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nUpdate two: reread decisions before continuing.\n")
 	if asString(asMap(f.ctl(true, "update", "apply", "--no-fetch")["default"])["sha"]) != sha2 {
 		t.Fatalf("apply two sha = %v, want %s", f.ctl(true, "update", "status")["default"], sha2)
 	}
@@ -406,7 +406,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	for _, raw := range asSlice(coopVersions["revisions"]) {
 		rev := asMap(raw)
 		for _, row := range asSlice(asMap(rev["policy"])["procedure"]) {
-			if asString(asMap(row)["name"]) == "sum-worker" {
+			if asString(asMap(row)["name"]) == "sum-work" {
 				pinnedByRevision[asString(rev["id"])] = asString(asMap(row)["path"])
 			}
 		}

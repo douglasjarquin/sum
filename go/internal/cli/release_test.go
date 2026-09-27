@@ -42,7 +42,7 @@ func buildValidRelease(t *testing.T, releasesRoot, sha string) {
 		{"bin/herdr-mesh", "#!/bin/sh\necho herdr-mesh\n"},
 		{"bin/herdr-scoped", "#!/bin/sh\necho herdr-scoped\n"},
 		{"go/cmd/sumctl/main.go", "package main\n"},
-		{"skills/sum-worker/SKILL.md", "# worker\n"},
+		{"skills/sum-work/SKILL.md", "# worker\n"},
 	}
 	var filesEntries []string
 	for _, entry := range requiredContents {

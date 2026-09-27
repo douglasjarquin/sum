@@ -18,7 +18,7 @@ func writeSource(t *testing.T, runtime, body string) string {
 	for _, src := range Sources[1:] {
 		writeFile(t, filepath.Join(runtime, filepath.FromSlash(src.Path)), "# "+src.Name+"\n")
 	}
-	path := filepath.Join(runtime, "skills", "sum-worker", "SKILL.md")
+	path := filepath.Join(runtime, "skills", "sum-work", "SKILL.md")
 	writeFile(t, path, body)
 	return path
 }
@@ -35,7 +35,7 @@ func writeFile(t *testing.T, path, body string) {
 
 // manifestFiles lists every on-demand source at its real hash plus the core at coreHash.
 func manifestFiles(coreHash string) string {
-	entries := []string{`"skills/sum-worker/SKILL.md": "sha256:` + coreHash + `"`}
+	entries := []string{`"skills/sum-work/SKILL.md": "sha256:` + coreHash + `"`}
 	for _, src := range Sources[1:] {
 		entries = append(entries, `"`+src.Path+`": "sha256:`+hashOf("# "+src.Name+"\n")+`"`)
 	}
@@ -66,7 +66,7 @@ func field(r *ordjson.Object, key string) string {
 
 func TestPinWritesContentAddressedWriteOnceResource(t *testing.T) {
 	runtime := t.TempDir()
-	body := "# sum-worker\nprocedure one\n"
+	body := "# sum-work\nprocedure one\n"
 	writeSource(t, runtime, body)
 	taskDir := filepath.Join(t.TempDir(), "state home", "tasks", "t-aaaaaaaaaaaa")
 
@@ -76,11 +76,11 @@ func TestPinWritesContentAddressedWriteOnceResource(t *testing.T) {
 	}
 	r := row(t, rows, 0)
 	sha := hashOf(body)
-	wantRel := "procedure/sum-worker-" + sha[:16] + ".md"
+	wantRel := "procedure/sum-work-" + sha[:16] + ".md"
 	if field(r, "path") != wantRel || field(r, "sha256") != sha || field(r, "bytes") != fmt.Sprint(len(body)) {
 		t.Fatalf("row = %v, want path %s sha %s bytes %d", r, wantRel, sha, len(body))
 	}
-	if field(r, "name") != "sum-worker" || field(r, "source") != "skills/sum-worker/SKILL.md" || field(r, "load") != Required {
+	if field(r, "name") != "sum-work" || field(r, "source") != "skills/sum-work/SKILL.md" || field(r, "load") != Required {
 		t.Fatalf("row identity = %v", r)
 	}
 	full := filepath.Join(taskDir, filepath.FromSlash(wantRel))
@@ -138,7 +138,7 @@ func TestSourceRefusals(t *testing.T) {
 			if err := os.WriteFile(real, []byte("# linked\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(runtime, "skills", "sum-worker", "SKILL.md")
+			path := filepath.Join(runtime, "skills", "sum-work", "SKILL.md")
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				t.Fatal(err)
 			}
@@ -147,19 +147,19 @@ func TestSourceRefusals(t *testing.T) {
 			}
 		},
 		"directory": func(t *testing.T, runtime string) {
-			if err := os.MkdirAll(filepath.Join(runtime, "skills", "sum-worker", "SKILL.md"), 0o755); err != nil {
+			if err := os.MkdirAll(filepath.Join(runtime, "skills", "sum-work", "SKILL.md"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"release manifest mismatch": func(t *testing.T, runtime string) {
-			writeSource(t, runtime, "# sum-worker\n")
+			writeSource(t, runtime, "# sum-work\n")
 			manifest := `{"schema": 1, "kind": "sum-release", "files": {` + manifestFiles(hashOf("something else")) + `}}`
 			if err := os.WriteFile(filepath.Join(runtime, "release.json"), []byte(manifest), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"release manifest without the source": func(t *testing.T, runtime string) {
-			writeSource(t, runtime, "# sum-worker\n")
+			writeSource(t, runtime, "# sum-work\n")
 			if err := os.WriteFile(filepath.Join(runtime, "release.json"), []byte(`{"schema": 1, "files": {}}`), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -172,7 +172,7 @@ func TestSourceRefusals(t *testing.T) {
 			taskDir := t.TempDir()
 			if err := Check(runtime); err == nil {
 				t.Fatal("Check accepted the source")
-			} else if !strings.Contains(err.Error(), "skills/sum-worker/SKILL.md") || !strings.Contains(err.Error(), "no brief was written") {
+			} else if !strings.Contains(err.Error(), "skills/sum-work/SKILL.md") || !strings.Contains(err.Error(), "no brief was written") {
 				t.Fatalf("Check error is not actionable: %v", err)
 			}
 			if _, err := Pin(runtime, taskDir); err == nil {
@@ -187,7 +187,7 @@ func TestSourceRefusals(t *testing.T) {
 
 func TestReleaseManifestMatchIsAccepted(t *testing.T) {
 	runtime := t.TempDir()
-	body := "# sum-worker\nreleased\n"
+	body := "# sum-work\nreleased\n"
 	writeSource(t, runtime, body)
 	manifest := `{"schema": 1, "kind": "sum-release", "files": {` + manifestFiles(hashOf(body)) + `}}`
 	if err := os.WriteFile(filepath.Join(runtime, "release.json"), []byte(manifest), 0o644); err != nil {
@@ -200,7 +200,7 @@ func TestReleaseManifestMatchIsAccepted(t *testing.T) {
 
 func TestTamperedPinnedFileIsNeverOverwritten(t *testing.T) {
 	runtime := t.TempDir()
-	writeSource(t, runtime, "# sum-worker\n")
+	writeSource(t, runtime, "# sum-work\n")
 	taskDir := t.TempDir()
 	rows, err := Pin(runtime, taskDir)
 	if err != nil {
@@ -238,7 +238,7 @@ func TestVerifyRefusesEscapingPaths(t *testing.T) {
 	taskDir := t.TempDir()
 	for _, path := range []string{"/etc/passwd", "../x.md", "procedure/../../x.md", "brief.md"} {
 		r := ordjson.NewObject()
-		r.Set("name", "sum-worker")
+		r.Set("name", "sum-work")
 		r.Set("path", path)
 		r.Set("sha256", hashOf(""))
 		if err := Verify(taskDir, []any{r}); err == nil {
@@ -250,15 +250,15 @@ func TestVerifyRefusesEscapingPaths(t *testing.T) {
 func TestRenderedRowsSupportSeveralResources(t *testing.T) {
 	runtime := t.TempDir()
 	writeSource(t, runtime, "# core\n")
-	extra := filepath.Join(runtime, "skills", "sum-worker", "refresh.md")
+	extra := filepath.Join(runtime, "skills", "sum-work", "refresh.md")
 	if err := os.WriteFile(extra, []byte("# refresh\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	saved := Sources
 	t.Cleanup(func() { Sources = saved })
 	Sources = []Source{
-		{Name: "sum-worker", Path: "skills/sum-worker/SKILL.md", Load: Required},
-		{Name: "sum-worker-refresh", Path: "skills/sum-worker/refresh.md", Load: OnDemand, When: "a refresh is requested"},
+		{Name: "sum-work", Path: "skills/sum-work/SKILL.md", Load: Required},
+		{Name: "sum-work-refresh", Path: "skills/sum-work/refresh.md", Load: OnDemand, When: "a refresh is requested"},
 	}
 	taskDir := t.TempDir()
 	rows, err := Pin(runtime, taskDir)
@@ -268,8 +268,8 @@ func TestRenderedRowsSupportSeveralResources(t *testing.T) {
 	if len(rows) != 2 || field(row(t, rows, 1), "load") != OnDemand || field(row(t, rows, 1), "when") != "a refresh is requested" {
 		t.Fatalf("rows = %v", rows)
 	}
-	if SHA(rows, "sum-worker") != hashOf("# core\n") || SHA(rows, "absent") != "" {
-		t.Fatalf("SHA lookup = %q", SHA(rows, "sum-worker"))
+	if SHA(rows, "sum-work") != hashOf("# core\n") || SHA(rows, "absent") != "" {
+		t.Fatalf("SHA lookup = %q", SHA(rows, "sum-work"))
 	}
 }
 

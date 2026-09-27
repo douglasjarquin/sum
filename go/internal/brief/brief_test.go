@@ -20,7 +20,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
-const procedureBody = "# sum-worker\n\nPROCEDURE-BODY-MARKER: follow the approved task.\n"
+const procedureBody = "# sum-work\n\nPROCEDURE-BODY-MARKER: follow the approved task.\n"
 
 type lab struct {
 	s       *store.Store
@@ -80,7 +80,7 @@ func writeProcedure(t *testing.T, runtime, body string) {
 			t.Fatal(err)
 		}
 	}
-	path := filepath.Join(runtime, "skills", "sum-worker", "SKILL.md")
+	path := filepath.Join(runtime, "skills", "sum-work", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +211,7 @@ func TestBriefReferencesPinnedProcedureInsteadOfCopyingIt(t *testing.T) {
 	regenerated, _ := l.regenerate(t)
 
 	sha := sha256Hex(procedureBody)
-	pinned := filepath.Join(l.taskDir, "procedure", "sum-worker-"+sha[:16]+".md")
+	pinned := filepath.Join(l.taskDir, "procedure", "sum-work-"+sha[:16]+".md")
 	if readText(t, pinned) != procedureBody {
 		t.Fatalf("pinned procedure content differs")
 	}
@@ -219,7 +219,7 @@ func TestBriefReferencesPinnedProcedureInsteadOfCopyingIt(t *testing.T) {
 		if strings.Contains(text, "PROCEDURE-BODY-MARKER") {
 			t.Fatalf("%s brief embeds the procedure body", name)
 		}
-		ref := "- Required before any other step: `" + pinned + "` (`sum-worker`, " + strconv.Itoa(len(procedureBody)) + " bytes, sha256 `" + sha + "`)."
+		ref := "- Required before any other step: `" + pinned + "` (`sum-work`, " + strconv.Itoa(len(procedureBody)) + " bytes, sha256 `" + sha + "`)."
 		if !strings.Contains(text, ref) {
 			t.Fatalf("%s brief lacks %q:\n%s", name, ref, text)
 		}
@@ -231,7 +231,7 @@ func TestBriefReferencesPinnedProcedureInsteadOfCopyingIt(t *testing.T) {
 		}
 	}
 	versions := readText(t, filepath.Join(l.taskDir, "versions.json"))
-	if !strings.Contains(versions, `"path": "procedure/sum-worker-`+sha[:16]+`.md"`) {
+	if !strings.Contains(versions, `"path": "procedure/sum-work-`+sha[:16]+`.md"`) {
 		t.Fatalf("versions.json does not record the task-relative procedure path:\n%s", versions)
 	}
 }
@@ -262,7 +262,7 @@ func TestReturnCommandsSurviveShellParsingWithSpaces(t *testing.T) {
 
 func TestMissingProcedurePublishesNothing(t *testing.T) {
 	l := newLab(t, false)
-	if _, err := WriteInitial(l.s, l.runtime, l.sumctl, l.task); err == nil || !strings.Contains(err.Error(), "skills/sum-worker/SKILL.md is missing") || !strings.Contains(err.Error(), "no brief was written") {
+	if _, err := WriteInitial(l.s, l.runtime, l.sumctl, l.task); err == nil || !strings.Contains(err.Error(), "skills/sum-work/SKILL.md is missing") || !strings.Contains(err.Error(), "no brief was written") {
 		t.Fatalf("WriteInitial without procedure = %v", err)
 	}
 	for _, name := range []string{"brief.md", "versions.json", "procedure"} {
@@ -273,7 +273,7 @@ func TestMissingProcedurePublishesNothing(t *testing.T) {
 
 	writeProcedure(t, l.runtime, procedureBody)
 	l.writeInitial(t)
-	if err := os.Remove(filepath.Join(l.runtime, "skills", "sum-worker", "SKILL.md")); err != nil {
+	if err := os.Remove(filepath.Join(l.runtime, "skills", "sum-work", "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
 	l.setQuestions(t, [4]string{"q-answer0001", "k", "answered", "Yes."})
@@ -309,7 +309,7 @@ func TestProcedureChangeIsSummarizedAndVerificationAffecting(t *testing.T) {
 	if affected != true || !strings.Contains(text, "worker procedure changed: ") {
 		t.Fatalf("procedure change not summarized (affected=%v):\n%s", affected, text)
 	}
-	old := filepath.Join(l.taskDir, "procedure", "sum-worker-"+sha256Hex(procedureBody)[:16]+".md")
+	old := filepath.Join(l.taskDir, "procedure", "sum-work-"+sha256Hex(procedureBody)[:16]+".md")
 	if readText(t, old) != procedureBody {
 		t.Fatal("the earlier pinned procedure changed")
 	}

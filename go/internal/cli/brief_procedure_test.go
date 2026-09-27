@@ -36,11 +36,11 @@ func newRuntimeLab(t *testing.T, withProcedure bool) *demoLab {
 	}
 	copyFile("bin/sumctl", 0o755)
 	copyFile(".local/bin/sumctl", 0o755)
-	copyFile("skills/sum-delivery/SKILL.md", 0o644)
+	copyFile("skills/sum-deliver/SKILL.md", 0o644)
 	copyFile("COORDINATOR.md", 0o644)
 	copyFile(".agents/skills/verify/references/engineering-principles.md", 0o644)
 	if withProcedure {
-		copyFile("skills/sum-worker/SKILL.md", 0o644)
+		copyFile("skills/sum-work/SKILL.md", 0o644)
 		for _, src := range procedure.Sources[1:] {
 			copyFile(src.Path, 0o644)
 		}
@@ -62,7 +62,7 @@ func newRuntimeLab(t *testing.T, withProcedure bool) *demoLab {
 
 func (d *demoLab) writeProcedure(t *testing.T, body string) {
 	t.Helper()
-	path := filepath.Join(d.root, "skills", "sum-worker", "SKILL.md")
+	path := filepath.Join(d.root, "skills", "sum-work", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -120,11 +120,11 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 	if resolved, err := filepath.EvalSymlinks(d.home); err == nil {
 		home = resolved
 	}
-	wantPrefix := filepath.Join(home, "tasks", taskID, "procedure", "sum-worker-")
-	if !strings.HasPrefix(pinned, wantPrefix) && !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure", "sum-worker-")) {
+	wantPrefix := filepath.Join(home, "tasks", taskID, "procedure", "sum-work-")
+	if !strings.HasPrefix(pinned, wantPrefix) && !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure", "sum-work-")) {
 		t.Fatalf("pinned procedure %s is not a task resource (want prefix %s)", pinned, wantPrefix)
 	}
-	source, _ := os.ReadFile(filepath.Join(d.root, "skills", "sum-worker", "SKILL.md"))
+	source, _ := os.ReadFile(filepath.Join(d.root, "skills", "sum-work", "SKILL.md"))
 	if got, _ := os.ReadFile(pinned); string(got) != string(source) {
 		t.Fatal("pinned procedure differs from the runtime source")
 	}
@@ -160,7 +160,7 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 	if strings.Count(string(brief), "- Required before any other step: ") != 1 {
 		t.Fatalf("brief requires more than the core:\n%s", brief)
 	}
-	// The worker's own reads name only the pinned copies: no live runtime sum-worker beside them.
+	// The worker's own reads name only the pinned copies: no live runtime sum-work beside them.
 	skills := asMap(asMap(d.ctlPane(pane, true, "context", taskID, "--role", "worker", "--section", "environment")["environment"])["skills"])
 	if files := asSlice(skills["files"]); len(files) != 0 {
 		t.Fatalf("worker context still offers live skill files %v", files)
@@ -171,7 +171,7 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 	}
 
 	// The procedure survives the runtime copy disappearing: a recovered worker reads it from the task.
-	if err := os.Remove(filepath.Join(d.root, "skills", "sum-worker", "SKILL.md")); err != nil {
+	if err := os.Remove(filepath.Join(d.root, "skills", "sum-work", "SKILL.md")); err != nil {
 		t.Fatal(err)
 	}
 	if rows := workerProcedureRows(t, d, taskID, pane); asMap(rows[0])["ok"] != true {
@@ -185,7 +185,7 @@ func TestDispatchRefusesARuntimeWithoutTheProcedure(t *testing.T) {
 	before := len(herdrCalls(t, d.base))
 	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
 	errText := asString(refused["error"])
-	if !strings.Contains(errText, "skills/sum-worker/SKILL.md is missing") || !strings.Contains(errText, "no brief was written") {
+	if !strings.Contains(errText, "skills/sum-work/SKILL.md is missing") || !strings.Contains(errText, "no brief was written") {
 		t.Fatalf("dispatch without procedure = %v", refused)
 	}
 	for _, call := range herdrCalls(t, d.base)[before:] {
@@ -278,7 +278,7 @@ func TestDecisionOnlyRefreshReadsThroughBoundedContext(t *testing.T) {
 	d.ctlPane(pane, true, "brief", "adopt", taskID, "r2")
 
 	// A procedure change staged but never adopted keeps a later decision from reading as decision-only.
-	d.writeProcedure(t, "# sum-worker\nchanged procedure\n")
+	d.writeProcedure(t, "# sum-work\nchanged procedure\n")
 	d.ctl(true, "brief", "regenerate", taskID)
 	d.ctl(true, "brief", "request", taskID, "r3")
 	d.ctl(true, "answer", taskID, ask("naming"), "--text", "greet.")
@@ -352,7 +352,7 @@ func TestStartLaunchesFromTheAdoptedRevision(t *testing.T) {
 	repo := policyProject(t, d.base, "relaunch", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
 	taskID, pane := asString(task["id"]), asString(task["pane"])
-	d.writeProcedure(t, "# sum-worker\nrevised procedure\n")
+	d.writeProcedure(t, "# sum-work\nrevised procedure\n")
 	staged := d.ctl(true, "brief", "regenerate", taskID)
 	r2 := asString(asMap(staged["revision"])["path"])
 	if !strings.HasSuffix(r2, filepath.Join("briefs", "r2.md")) {
@@ -370,7 +370,7 @@ func TestStartLaunchesFromTheAdoptedRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := os.ReadFile(pinnedProcedure(t, string(body))); string(got) != "# sum-worker\nrevised procedure\n" {
+	if got, _ := os.ReadFile(pinnedProcedure(t, string(body))); string(got) != "# sum-work\nrevised procedure\n" {
 		t.Fatalf("r2 names a procedure that is not the revised one: %q", got)
 	}
 }

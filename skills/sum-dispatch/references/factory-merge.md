@@ -2,7 +2,7 @@
 
 Part of `sum-dispatch`, read from the factory lane procedure. Merge a factory PR only at high confidence, or leave a human gate and free the lane when later issues do not depend on it.
 
-Coordinator only, after `sum-delivery` has independently verified and reviewed the candidate and `pipeline run` has published the gate table and evidence block.
+Coordinator only, after `sum-deliver` has independently verified and reviewed the candidate and `pipeline run` has published the gate table and evidence block.
 
 Standing merge authorization is only `douglasjarquin/remainder`, `cofactorworks/nicebaas`, and `cofactorworks/ilovethatphoto`, after independent verification/review and green required checks on the exact candidate.
 Do not widen that list.
@@ -42,7 +42,7 @@ Only when merge-check is `high`:
 
 Marks the PR ready (`gh pr ready`) and squash-merges it in the same action, matching the candidate head.
 A draft cannot merge, so promotion is part of the authorized merge.
-Then observe the merge (`pr reconcile` / cleanup inspection) and run guarded cleanup as `sum-delivery` already describes.
+Then observe the merge (`pr reconcile` / cleanup inspection) and run guarded cleanup as `sum-deliver` already describes.
 
 ```sh
 ./bin/sumctl factory release owner/repo --issue N --reason merged
