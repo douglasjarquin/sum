@@ -1,15 +1,15 @@
 # Suggested routines
 
-Do not enable a routine until two successful manual Rundowns look right.
-After two successful manual Rundowns, enable the weekday Inbox rundown.
+Do not enable a routine until two successful manual Status checks look right.
+After two successful manual Status checks, enable the weekday Inbox status.
 A routine performs real work.
 Keep write actions behind approval.
 
-## Inbox rundown
+## Inbox status
 
 - Owner: the coordinator Bot
 - Cadence: weekdays at 09:00 in the Bot time zone
-- Skill: Rundown
+- Skill: Status
 - Expected result: a short list of unanswered questions, unverified reports, and failures, or no message when the inbox is empty
 - Approval boundary: do not answer questions, dispatch work, merge, or message anyone except this conversation
 - Missing source: if `/workspace/sum/inbox.md` is missing, report that and stop

@@ -54,11 +54,11 @@ Do not paste them into this description.
 
 - Dispatch, when the user asks for work.
 - Persist, before you wait or relay a result.
-- Rundown, when reconciling inbox and recovery.
+- Status, when reconciling inbox and recovery.
 - Recap, when the user asks for a session recap or a status of what already happened.
 - Verify, when a worker reports a candidate.
 - Deliver, when preparing a reviewable PR.
-- Sweep, for standing sweeps other than the weekday Inbox rundown.
+- Sweep, for standing sweeps other than the weekday Inbox status.
 
 ## Secrets and learning notes
 
