@@ -106,9 +106,11 @@ func checkError(t *testing.T, root, want string) {
 }
 
 func TestCheckAcceptsEitherNameOfARenamedSkill(t *testing.T) {
-	for _, status := range []string{"sum-status", "sum-rundown"} {
+	for _, names := range [][]string{
+		{"sum-deliver", "sum-develop", "sum-dispatch", "sum-status", "sum-update", "sum-work"},
+		{"sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker"},
+	} {
 		root := t.TempDir()
-		names := []string{"sum-delivery", "sum-develop", "sum-dispatch", status, "sum-update", "sum-worker"}
 		writeTree(t, root, names, nil)
 		view := checkOK(t, root)
 		active, _ := view.Get("active")
@@ -120,11 +122,13 @@ func TestCheckAcceptsEitherNameOfARenamedSkill(t *testing.T) {
 
 func TestCheckAcceptsTheEarlierNameAsAnAlias(t *testing.T) {
 	root := t.TempDir()
-	writeTree(t, root, currentSkillNames(), map[string]string{"sum-rundown": "sum-status"})
+	writeTree(t, root, currentSkillNames(), map[string]string{"sum-rundown": "sum-status", "sum-delivery": "sum-deliver", "sum-worker": "sum-work"})
 	view := checkOK(t, root)
 	aliases, _ := view.Get("aliases")
-	if target, _ := aliases.(*ordjson.Object).Get("sum-rundown"); target != "sum-status" {
-		t.Fatalf("sum-rundown -> %v, want sum-status", target)
+	for old, current := range map[string]string{"sum-rundown": "sum-status", "sum-delivery": "sum-deliver", "sum-worker": "sum-work"} {
+		if target, _ := aliases.(*ordjson.Object).Get(old); target != current {
+			t.Fatalf("%s -> %v, want %s", old, target, current)
+		}
 	}
 }
 
@@ -136,15 +140,15 @@ func TestCheckRefusesBothNamesOfARenamedSkill(t *testing.T) {
 
 func TestCheckAcceptsDeclaredAliases(t *testing.T) {
 	root := t.TempDir()
-	writeTree(t, root, currentSkillNames(), map[string]string{"sum-inbox": "sum-status", "sum-ship": "sum-delivery"})
+	writeTree(t, root, currentSkillNames(), map[string]string{"sum-inbox": "sum-status", "sum-ship": "sum-deliver"})
 	view := checkOK(t, root)
 	aliases, _ := view.Get("aliases")
 	obj, _ := aliases.(*ordjson.Object)
 	if obj == nil || strings.Join(obj.Keys(), ",") != "sum-inbox,sum-ship" {
 		t.Fatalf("aliases = %v, want sum-inbox and sum-ship", aliases)
 	}
-	if target, _ := obj.Get("sum-ship"); target != "sum-delivery" {
-		t.Errorf("sum-ship -> %v, want sum-delivery", target)
+	if target, _ := obj.Get("sum-ship"); target != "sum-deliver" {
+		t.Errorf("sum-ship -> %v, want sum-deliver", target)
 	}
 	active, _ := view.Get("active")
 	if got := activeNames(active); contains(got, "sum-inbox") {
