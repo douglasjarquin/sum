@@ -45,6 +45,25 @@ func canonicalNames() []string {
 	return names
 }
 
+// SkillFiles returns the manifest paths skills/<name>/SKILL.md for the canonical
+// group whose current name is current. The first path is that current name and
+// the rest are earlier names, the same order as canonicalSkills. A release
+// satisfies the requirement by listing any one of them. An unknown current name
+// returns nil.
+func SkillFiles(current string) []string {
+	for _, group := range canonicalSkills {
+		if len(group) == 0 || group[0] != current {
+			continue
+		}
+		paths := make([]string, len(group))
+		for i, name := range group {
+			paths[i] = "skills/" + name + "/SKILL.md"
+		}
+		return paths
+	}
+	return nil
+}
+
 func Check(root string) (*ordjson.Object, error) {
 	skillsDir := filepath.Join(root, "skills")
 	info, err := os.Stat(skillsDir)

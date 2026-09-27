@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	"github.com/douglasjarquin/sum/go/internal/skills"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -28,7 +29,9 @@ var (
 	CoreTools = []string{"python3", "node", "herdr", "gh"}
 
 	requiredFiles = []string{"bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "go/cmd/sumctl/main.go"}
-	workerSkill   = "skills/sum-work/SKILL.md"
+
+	// workerSkillCurrent is the current name of the worker-skill group in skills.canonicalSkills.
+	workerSkillCurrent = "sum-work"
 
 	sha40Hex        = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	shaPrefix       = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
@@ -250,6 +253,20 @@ func isExecutable(path string) bool {
 	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
 }
 
+// manifestHasSkill reports whether the manifest lists any accepted path for the
+// canonical skill whose current name is current.
+func manifestHasSkill(files *ordjson.Object, current string) bool {
+	if files == nil {
+		return false
+	}
+	for _, rel := range skills.SkillFiles(current) {
+		if _, has := files.Get(rel); has {
+			return true
+		}
+	}
+	return false
+}
+
 // VerifyRelease ports `verify_release`: a bundle is usable only when its manifest and every referenced file
 // agree. Returns a *VerifyError for every expected validation failure (mirroring `raise SumError`); any other
 // error is an unexpected filesystem failure and is not meant to be caught the same way.
@@ -302,7 +319,13 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 			return nil, verifyErrorf("%s: release lacks %s", path, required)
 		}
 	}
-	if _, has := files.Get(workerSkill); !has {
+	// The worker skill is the only skill path a release must list. Any name in
+	// its canonical group counts, so a pre-rename manifest (skills/sum-worker)
+	// and a post-rename manifest (skills/sum-work, with or without the alias)
+	// both verify. Delivery, status, and the other alias skills are not required
+	// files. Stage, installRuntime, and BuildManifest do not demand the new names:
+	// inventory accepts either canonical name, and the manifest records the tree.
+	if !manifestHasSkill(files, workerSkillCurrent) {
 		return nil, verifyErrorf("%s: release lacks a Sum worker skill resource", path)
 	}
 	if !isExecutable(filepath.Join(path, "bin", "sumctl")) {
