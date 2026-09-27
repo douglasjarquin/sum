@@ -33,7 +33,8 @@ On-disk records stay JSON.
 
 Remainder is not a mise `which` tool.
 The pins are per platform in [`dependency-inventory.json`](dependency-inventory.json): linux-amd64 v0.2.2, darwin-arm64 v0.2.1, linux-arm64 v0.2.1.
-Setup and release staging are the only download.
+Setup is the only download.
+Release staging links the release's `.local/bin/remainder` to the executable setup verified under `.deps/remainder/<version>-<platform>/` for the bundled pin, and records it in `release.json`; without that directory, or on a platform without a pin, the release stages without Remainder.
 `sumctl quota --provider codex` invokes that binary with `--format toon` unless `--format json` or `--format compact` is set.
 Other providers keep quota-axi.
 A missing Remainder for Codex is a refusal, not a silent fallback.
@@ -136,6 +137,7 @@ The helper honors `SUM_INSTALL_ROOT` only when it runs from that installation or
 - the committed tree from `git archive` (no working-tree edits, `.sum`, `.deps`, `.local`, or credentials);
 - `.local/bin/*` links to the mise tool versions pinned by the bundled `mise.toml` (`mise install` may add a version; nothing is pruned);
 - `.local/bin/herdr-mesh` and `.local/bin/sumctl` built with `CGO_ENABLED=0`;
+- `.local/bin/remainder` linked to the installation's pinned Remainder when setup installed it;
 - `.local/skills/herdr/SKILL.md` from the pinned `herdr --skill`;
 - `release.json`: source SHA and tree, a content hash for every bundled file, native artifact hashes, tool pins and resolved paths, the Herdr CLI and MCP tool contract versions, the supported state and brief schema versions, and who staged it.
 
