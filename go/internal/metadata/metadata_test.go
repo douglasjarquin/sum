@@ -365,16 +365,19 @@ func TestProjectionBudgetExhaustedSkipsRemainingTasks(t *testing.T) {
 	writeRunningTask(t, home, "t-aaaaaaaaaaaa", "worker-a", worktree)
 	writeRunningTask(t, home, "t-bbbbbbbbbbbb", "worker-b", worktree)
 	runtime, log := scriptedHerdr(t, worktree)
-	t.Setenv("FAKE_SLEEP", "0.4")
+	// The sleep outlasts the budget, so the second task is skipped. The budget
+	// outlasts starting the fake under go test ./..., which can take longer than
+	// a 150ms deadline and then records no call at all.
+	t.Setenv("FAKE_SLEEP", "5")
 	st := coordinatorHome(t, home, worktree)
 	previous := passBudget
-	passBudget = 150 * time.Millisecond
+	passBudget = 2 * time.Second
 	defer func() { passBudget = previous }()
 
 	meta := enabledMeta()
 	started := time.Now()
 	result := runPass(t, st, meta, runtime)
-	if elapsed := time.Since(started); elapsed > 3*time.Second {
+	if elapsed := time.Since(started); elapsed > 8*time.Second {
 		t.Fatalf("the pass must stop at its budget, not run every task: %s", elapsed)
 	}
 	rows := taskRows(t, result)

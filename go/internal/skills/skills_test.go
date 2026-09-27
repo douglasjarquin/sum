@@ -18,6 +18,32 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
+func TestSkillFilesNamesCurrentThenEarlier(t *testing.T) {
+	cases := []struct {
+		current string
+		want    []string
+	}{
+		{"sum-work", []string{"skills/sum-work/SKILL.md", "skills/sum-worker/SKILL.md"}},
+		{"sum-deliver", []string{"skills/sum-deliver/SKILL.md", "skills/sum-delivery/SKILL.md"}},
+		{"sum-status", []string{"skills/sum-status/SKILL.md", "skills/sum-rundown/SKILL.md"}},
+		{"sum-develop", []string{"skills/sum-develop/SKILL.md"}},
+	}
+	for _, tc := range cases {
+		got := SkillFiles(tc.current)
+		if len(got) != len(tc.want) {
+			t.Fatalf("SkillFiles(%s) = %v, want %v", tc.current, got, tc.want)
+		}
+		for i := range tc.want {
+			if got[i] != tc.want[i] {
+				t.Fatalf("SkillFiles(%s) = %v, want %v", tc.current, got, tc.want)
+			}
+		}
+	}
+	if got := SkillFiles("sum-worker"); got != nil {
+		t.Fatalf("SkillFiles(earlier name) = %v, want nil", got)
+	}
+}
+
 // currentSkillNames is the current name of every Sum action, which is what this tree ships.
 func currentSkillNames() []string {
 	names := make([]string, 0, len(canonicalSkills))

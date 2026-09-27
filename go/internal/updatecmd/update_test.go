@@ -200,6 +200,13 @@ func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 
 func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
 	t.Helper()
+	buildCompatibleReleaseSkills(t, releasesRoot, sha, []string{"skills/sum-work/SKILL.md"})
+}
+
+// buildCompatibleReleaseSkills is buildCompatibleRelease with an explicit worker-skill
+// file list. An empty list omits every worker-skill path so verification must refuse.
+func buildCompatibleReleaseSkills(t *testing.T, releasesRoot, sha string, workerSkills []string) {
+	t.Helper()
 	root := filepath.Dir(filepath.Dir(releasesRoot))
 	if abs, err := filepath.Abs(root); err == nil {
 		root = abs
@@ -214,7 +221,9 @@ func buildCompatibleRelease(t *testing.T, releasesRoot, sha string) {
 		{"bin/herdr-mesh", "#!/bin/sh\necho herdr-mesh\n"},
 		{"bin/herdr-scoped", "#!/bin/sh\necho herdr-scoped\n"},
 		{"go/cmd/sumctl/main.go", "package main\n"},
-		{"skills/sum-work/SKILL.md", "# worker\n"},
+	}
+	for _, rel := range workerSkills {
+		required = append(required, struct{ rel, content string }{rel, "# worker\n"})
 	}
 	if exec.Command("git", "-C", root, "cat-file", "-e", sha+":"+identityMarker).Run() == nil {
 		required = append(required, struct{ rel, content string }{identityMarker, identityMarkerContent})
