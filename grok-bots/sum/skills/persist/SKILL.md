@@ -34,7 +34,7 @@ Chat is not the only copy.
 ## What to return
 
 The path, the task id, and the question key or report path.
-Update `inbox.md` so a later rundown can read it.
+Update `inbox.md` so a later status check can read it.
 
 ## What requires approval
 

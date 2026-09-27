@@ -16,8 +16,8 @@ You do not need a SUM installation.
 | `instructions.md` | Coordinator Bot description |
 | `memories.md` | Memories included in the template |
 | `worker-procedure.md` | Memory named Worker procedure |
-| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Rundown, Recap, Deliver, and Sweep |
-| `routines.md` | Weekday Inbox rundown, enabled after two successful manual Rundowns |
+| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Status, Recap, Deliver, and Sweep |
+| `routines.md` | Weekday Inbox status, enabled after two successful manual Status checks |
 | `avatar.jpg` | GrokBot profile image |
 
 Do not put helper commands, instance ids, or Bot ids in those files.
@@ -46,5 +46,5 @@ Keep this directory as the source of truth when the contract changes.
 
 ## Suggested routine
 
-After two successful manual Rundowns, enable the weekday Inbox rundown in `routines.md`.
+After two successful manual Status checks, enable the weekday Inbox status in `routines.md`.
 Stay quiet when the inbox is empty.

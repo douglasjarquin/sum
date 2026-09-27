@@ -1,20 +1,20 @@
 ---
-name: rundown
+name: status
 description: Reconcile /workspace/sum/inbox.md with live worker Bots. Use at the start of a turn when work is active, and when the user asks what is outstanding.
 ---
 
-# Rundown
+# Status
 
 ## When to use it
 
 The user asks for status, or you are starting a turn while tasks exist under `/workspace/sum/tasks/`.
-A rundown does not authorize doing requested work in this chat.
+A status check does not authorize doing requested work in this chat.
 
 ## Required inputs and access
 
 `/workspace/sum/inbox.md` and each task directory.
 The worker Bots those tasks name.
-Do not poll GitHub as the rundown.
+Do not poll GitHub as the status check.
 
 ## Sequence of work
 

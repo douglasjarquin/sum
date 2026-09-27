@@ -1,6 +1,6 @@
 ---
 name: sweep
-description: Put standing sweeps on a dedicated Sweep worker plus routine. Use for inbox digests and similar repeating work, not for the weekday Inbox rundown.
+description: Put standing sweeps on a dedicated Sweep worker plus routine. Use for inbox digests and similar repeating work, not for the weekday Inbox status.
 ---
 
 # Sweep
@@ -9,7 +9,7 @@ description: Put standing sweeps on a dedicated Sweep worker plus routine. Use f
 
 Standing sweeps such as inbox digests would otherwise hang timers on the coordinator chat.
 Use a dedicated Sweep worker plus routine instead.
-The weekday Inbox rundown in `routines.md` stays owned by the coordinator Bot.
+The weekday Inbox status in `routines.md` stays owned by the coordinator Bot.
 The coordinator remains the user-facing liaison.
 
 ## Required inputs and access
@@ -44,4 +44,4 @@ Then stop.
 
 Enabling a write-capable routine.
 Messaging anyone except the coordinator.
-Changing the weekday Inbox rundown owner away from the coordinator Bot.
+Changing the weekday Inbox status owner away from the coordinator Bot.

@@ -29,7 +29,7 @@ RECIPE_FILES = (
     "skills/dispatch/SKILL.md",
     "skills/persist/SKILL.md",
     "skills/verify/SKILL.md",
-    "skills/rundown/SKILL.md",
+    "skills/status/SKILL.md",
     "skills/recap/SKILL.md",
     "skills/deliver/SKILL.md",
     "skills/sweep/SKILL.md",
@@ -46,7 +46,7 @@ PACK_SKILLS = (
     "Dispatch",
     "Persist",
     "Verify",
-    "Rundown",
+    "Status",
     "Recap",
     "Deliver",
     "Sweep",
@@ -282,10 +282,10 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("do not invent live fleet state", text.casefold())
         self.assertIn("recap", text.casefold())
 
-    def test_routines_arm_inbox_rundown_after_two_manual_runs(self):
+    def test_routines_arm_inbox_status_after_two_manual_runs(self):
         routines = (GROK_BOT / "routines.md").read_text()
         readme = (GROK_BOT / "README.md").read_text()
-        self.assertIn("two successful manual Rundowns", routines)
+        self.assertIn("two successful manual Status checks", routines)
         self.assertIn("enable", routines.lower())
         self.assertIn("empty inbox", routines.lower())
         self.assertNotIn("leave it paused until a test run looks right", readme)
