@@ -76,6 +76,9 @@ func Stage(s *store.Store, ref string) (*ordjson.Object, error) {
 	if err := installRuntime(staging); err != nil {
 		return nil, fmt.Errorf("Staging %s failed and its partial bundle was removed; existing releases and the current setup are unchanged. %s", sha, err)
 	}
+	if err := linkRemainder(root, staging); err != nil {
+		return nil, fmt.Errorf("Staging %s failed and its partial bundle was removed; existing releases and the current setup are unchanged. %s", sha, err)
+	}
 	manifest, err := BuildManifest(s, root, sha, staging)
 	if err != nil {
 		return nil, fmt.Errorf("Staging %s failed and its partial bundle was removed; existing releases and the current setup are unchanged. %s", sha, err)
@@ -190,6 +193,44 @@ func installOffline(target string) error {
 		_ = linkTool(filepath.Join(parent, "herdr"), "../../.local/skills/herdr")
 	}
 	return nil
+}
+
+// linkRemainder links the Remainder that setup checksum-verified into the installation for this tree's pin.
+// Remainder is optional: a platform without a pin or an installation without that pin stages without it.
+func linkRemainder(root, target string) error {
+	raw, err := ordjson.ReadFile(filepath.Join(target, "docs", "dependency-inventory.json"))
+	if err != nil {
+		return err
+	}
+	version := ""
+	for _, item := range asList(getPath(asObject(raw), "dependencies")) {
+		if id, _ := asObject(item).Get("id"); id == "remainder" {
+			version = asString(getPath(asObject(item), "pins", nativePlatform(), "version"))
+		}
+	}
+	if version == "" {
+		return nil
+	}
+	var found []string
+	walkErr := filepath.WalkDir(filepath.Join(root, ".deps", "remainder", version+"-"+nativePlatform()), func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Name() == "remainder" && d.Type().IsRegular() {
+			found = append(found, path)
+		}
+		return nil
+	})
+	if os.IsNotExist(walkErr) {
+		return nil
+	}
+	if walkErr != nil {
+		return walkErr
+	}
+	if len(found) != 1 || !isExecutable(found[0]) {
+		return nil
+	}
+	return linkTool(filepath.Join(target, ".local", "bin", "remainder"), found[0])
 }
 
 func linkTool(link, target string) error {
