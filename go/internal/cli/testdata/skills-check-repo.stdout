@@ -1,5 +1,6 @@
 ok: true
 active[6]: sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker
+aliases:
 routes:
   agents[10]: create-verification,evidence,maintain-verification,sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker,verify
   claude[10]: create-verification,evidence,maintain-verification,sum-delivery,sum-develop,sum-dispatch,sum-rundown,sum-update,sum-worker,verify

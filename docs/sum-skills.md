@@ -20,6 +20,24 @@ Wildcards, option-looking names, option-looking sources, and the reserved `sum-*
 `bin/sumctl skills check --root /path/to/sum` continues to validate Sum-owned skill names, projections, and portable imports, and refuses leftover unprefixed aliases.
 It does not checksum or certify third-party skill content.
 
+## Sum's own skill names
+
+Each Sum action has one canonical skill directory under `skills/`, projected by symlink into `.agents/skills` and `.claude/skills`.
+A `sum-*` directory that is not canonical must declare what it stands for, with an `alias` line under `metadata` in its frontmatter, so `/sum-inbox` can name the same procedure as `/sum-status` without a second copy of it:
+
+```markdown
+---
+name: sum-inbox
+description: Alias of sum-status.
+metadata:
+  alias: sum-status
+---
+Read and follow `skills/sum-status/SKILL.md`.
+```
+
+`skills check` lists aliases under `aliases`, requires each target to be an active Sum skill, and requires the same projections as a canonical skill.
+`update apply` checks a candidate tree with the helper already installed, so a renamed canonical skill is accepted under its new name one release before a tree may ship it; the current accepted rename is `sum-rundown` to `sum-status`.
+
 Vercel Skills owns source parsing, discovery, copying, and its `skills-lock.json` format.
 The `--yes` mode can overwrite a same-named third-party destination, so inspect the target's Git diff after installation and review copied skills before use.
 Sum does not run a copied skill, update it automatically, select every discovered skill, or change model, MCP, permission, or global harness settings.
