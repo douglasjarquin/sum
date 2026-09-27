@@ -1,6 +1,6 @@
 # Worker procedure: factory issue
 
-Part of the sum worker procedure, pinned with your brief. Read it when your brief says this task is a claimed factory issue. It adds detail to the required core (`sum-worker`) and never replaces it. Execute one factory issue with /lfg through an open PR, capture mandatory before/after evidence, and report. Do not merge.
+Part of the sum worker procedure, pinned with your brief. Read it when your brief says this task is a claimed factory issue. It adds detail to the required core (`sum-work`) and never replaces it. Execute one factory issue with /lfg through an open PR, capture mandatory before/after evidence, and report. Do not merge.
 
 You are the worker for one claimed issue.
 Do not enable a factory, dispatch, merge, or upload evidence into the PR.

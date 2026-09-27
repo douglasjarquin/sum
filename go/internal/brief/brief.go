@@ -36,7 +36,7 @@ func policyFor(rows []any) *ordjson.Object {
 	policy := ordjson.NewObject()
 	policy.Set("sum_version", contract.SumVersion)
 	policy.Set("brief_schema", jsonInt(contract.BriefSchema))
-	policy.Set("worker_skill_sha256", procedure.SHA(rows, "sum-worker"))
+	policy.Set("worker_skill_sha256", procedure.SHA(rows, "sum-work"))
 	policy.Set("procedure", rows)
 	return policy
 }

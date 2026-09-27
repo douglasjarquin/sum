@@ -1,6 +1,6 @@
 # Worker procedure: environment around the code
 
-Part of the sum worker procedure, pinned with your brief. Read it before you run the application or start, record, inspect, or stop a service for this task. It adds detail to the required core (`sum-worker`) and never replaces it.
+Part of the sum worker procedure, pinned with your brief. Read it before you run the application or start, record, inspect, or stop a service for this task. It adds detail to the required core (`sum-work`) and never replaces it.
 
 The `environment` section of your context view carries `dev`: the task-local environment record (declared commands, observed URLs, log paths, related panes/containers) as last observed, so nobody has to repeat how the repository starts or hunt for ports.
 Before you run the application, run `sumctl env discover TASK_ID` once: it reads the checkout's declared configuration (mise tasks, package scripts, Makefile/justfile targets, Procfile, compose, Dockerfile, devcontainer) into command references and a configuration revision. It executes nothing and generates no competing configuration; use the repository's own commands.

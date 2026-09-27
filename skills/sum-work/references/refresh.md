@@ -1,6 +1,6 @@
 # Worker procedure: brief revisions and refresh
 
-Part of the sum worker procedure, pinned with your brief. Read it when a `sum refresh` message or a `brief revision rN is requested` notice reaches you, or before you adopt any revision. It adds detail to the required core (`sum-worker`) and never replaces it.
+Part of the sum worker procedure, pinned with your brief. Read it when a `sum refresh` message or a `brief revision rN is requested` notice reaches you, or before you adopt any revision. It adds detail to the required core (`sum-work`) and never replaces it.
 
 Your brief is one numbered revision generated from the task record. The coordinator may stage a newer revision (updated procedure or newly recorded decisions) without touching the file you read.
 `sumctl brief list TASK_ID` (the `show` command also carries a `versions` field) shows revisions, their integrity, and whether one is `requested`.

@@ -8,7 +8,7 @@ Do not start a factory unless the user named the project and asked to run it.
 
 A factory is one sequential lane on one enrolled GitHub project.
 The coordinator still only routes.
-Implementation happens in a dispatched worker that reads the pinned on-demand worker file `skills/sum-worker/references/factory.md`.
+Implementation happens in a dispatched worker that reads the pinned on-demand worker file `skills/sum-work/references/factory.md`.
 Claim procedure is `skills/sum-dispatch/references/factory-claim.md`.
 Merge and human-gate procedure is `skills/sum-dispatch/references/factory-merge.md`.
 
@@ -76,7 +76,7 @@ Return control.
 
 ## After the report
 
-Follow `sum-delivery` through independent verify, review, and `pipeline run`.
+Follow `sum-deliver` through independent verify, review, and `pipeline run`.
 Then follow the factory merge procedure.
 Do not pick the next issue until that skill says the lane is free.
 

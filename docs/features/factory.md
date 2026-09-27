@@ -3,7 +3,7 @@
 A per-project sequential lane that picks a ready GitHub issue, claims it, dispatches one worker, runs the existing delivery pipeline, and either merges at high confidence or leaves a human gate.
 There is still no sum daemon: `sumctl factory tick` is one observation.
 
-Implementation: `go/internal/factory`, `go/internal/factoryview`, `go/internal/cli/factory.go`, `go/internal/cli/factory_test.go`, `go/internal/evidenceview/evidenceview.go`, `go/internal/helpview/catalog.json`, `go/internal/guard/guard.go`, `go/internal/procedure/procedure.go`, `skills/sum-dispatch/references/factory.md`, `skills/sum-dispatch/references/factory-claim.md`, `skills/sum-dispatch/references/factory-merge.md`, `skills/sum-worker/references/factory.md`.
+Implementation: `go/internal/factory`, `go/internal/factoryview`, `go/internal/cli/factory.go`, `go/internal/cli/factory_test.go`, `go/internal/evidenceview/evidenceview.go`, `go/internal/helpview/catalog.json`, `go/internal/guard/guard.go`, `go/internal/procedure/procedure.go`, `skills/sum-dispatch/references/factory.md`, `skills/sum-dispatch/references/factory-claim.md`, `skills/sum-dispatch/references/factory-merge.md`, `skills/sum-work/references/factory.md`.
 
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |

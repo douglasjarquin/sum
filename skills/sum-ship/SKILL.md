@@ -1,7 +1,7 @@
 ---
 name: sum-ship
-description: Alias of sum-delivery: verify a worker's result and prepare the PR.
+description: Alias of sum-deliver: verify a worker's result and prepare the PR.
 metadata:
-  alias: sum-delivery
+  alias: sum-deliver
 ---
-This is `sum-delivery` under another name. Read and follow `skills/sum-delivery/SKILL.md`; nothing else lives here.
+This is `sum-deliver` under another name. Read and follow `skills/sum-deliver/SKILL.md`; nothing else lives here.

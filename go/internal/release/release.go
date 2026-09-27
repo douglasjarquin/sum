@@ -28,7 +28,7 @@ var (
 	CoreTools = []string{"python3", "node", "herdr", "gh"}
 
 	requiredFiles = []string{"bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "go/cmd/sumctl/main.go"}
-	workerSkill   = "skills/sum-worker/SKILL.md"
+	workerSkill   = "skills/sum-work/SKILL.md"
 
 	sha40Hex        = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	shaPrefix       = regexp.MustCompile(`^[0-9a-f]{7,40}$`)

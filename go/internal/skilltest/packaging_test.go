@@ -24,7 +24,7 @@ func TestEngineeringPrinciplesReferenceIsPackagedAndPortable(t *testing.T) {
 	if !info.Mode().IsRegular() {
 		t.Fatalf("reference is not a regular file: %s", reference)
 	}
-	for _, relative := range []string{"skills/sum-worker/SKILL.md", "skills/sum-delivery/SKILL.md"} {
+	for _, relative := range []string{"skills/sum-work/SKILL.md", "skills/sum-deliver/SKILL.md"} {
 		body := readFile(t, filepath.Join(root, relative))
 		if !strings.Contains(body, "`"+engineeringPrinciplesReferencePath+"`") {
 			t.Fatalf("%s does not point at %s", relative, engineeringPrinciplesReferencePath)

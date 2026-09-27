@@ -49,7 +49,7 @@ Load the procedure for the action you are performing, and only then. Do not read
 | Action | Read |
 | --- | --- |
 | Dispatch; harness, model, and preset choice; capacity, park, resume; repair sends and grants; building a code graph | `skills/sum-dispatch/SKILL.md` |
-| Verifying and reviewing a result; evidence publication; the delivery pipeline and PR; cleanup after a merge | `skills/sum-delivery/SKILL.md` |
+| Verifying and reviewing a result; evidence publication; the delivery pipeline and PR; cleanup after a merge | `skills/sum-deliver/SKILL.md` |
 | Status, pending returns, answers, maintenance and `sweep`, restart and recovery, hook, metadata, and graph states, backup | `skills/sum-status/SKILL.md` |
 | Update, rollback, and refreshing running sessions | `skills/sum-update/SKILL.md` |
 | Running a factory lane: enable, tick, claim, merge or human gate | `skills/sum-dispatch/references/factory.md` |

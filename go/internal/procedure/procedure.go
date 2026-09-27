@@ -42,16 +42,16 @@ type Source struct {
 // Sources is the worker procedure, in reading order: the required core, then action-scoped files a
 // worker reads only when their condition applies.
 var Sources = []Source{
-	{Name: "sum-worker", Path: "skills/sum-worker/SKILL.md", Load: Required},
-	{Name: "sum-worker-evidence", Path: "skills/sum-worker/references/evidence.md", Load: OnDemand,
+	{Name: "sum-work", Path: "skills/sum-work/SKILL.md", Load: Required},
+	{Name: "sum-work-evidence", Path: "skills/sum-work/references/evidence.md", Load: OnDemand,
 		When: "the task fixes something a user can see, or a feature-map row covering your change names a screenshot, screencast, or red/green pair"},
-	{Name: "sum-worker-environment", Path: "skills/sum-worker/references/environment.md", Load: OnDemand,
+	{Name: "sum-work-environment", Path: "skills/sum-work/references/environment.md", Load: OnDemand,
 		When: "you run the application, or start, record, inspect, or stop a service for this task"},
-	{Name: "sum-worker-graph", Path: "skills/sum-worker/references/graph.md", Load: OnDemand,
+	{Name: "sum-work-graph", Path: "skills/sum-work/references/graph.md", Load: OnDemand,
 		When: "the `## Code graph` section or `context --section execution` reports an index other than `not built`, or before you ask for one"},
-	{Name: "sum-worker-refresh", Path: "skills/sum-worker/references/refresh.md", Load: OnDemand,
+	{Name: "sum-work-refresh", Path: "skills/sum-work/references/refresh.md", Load: OnDemand,
 		When: "a `sum refresh` message or a `brief revision rN is requested` notice reaches you, or before you adopt any revision"},
-	{Name: "sum-worker-factory", Path: "skills/sum-worker/references/factory.md", Load: OnDemand,
+	{Name: "sum-work-factory", Path: "skills/sum-work/references/factory.md", Load: OnDemand,
 		When: "your brief says this task is a claimed factory issue"},
 }
 

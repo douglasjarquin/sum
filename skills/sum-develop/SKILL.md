@@ -48,7 +48,7 @@ MISE_ENABLE_TOOLS=go,python,node python3 .agents/skills/verify/scripts/verify_ru
 Do not run the aggregate's constituent offline suites and demo in addition to that final aggregate for the same role.
 Run `mise run test-live` separately only when a real Herdr is available and the live smoke scenario applies; otherwise the verifier records it as `not-run`.
 
-Commit on the `sum-dev/<name>` branch, then follow `skills/sum-delivery/SKILL.md` like any other project: verification, a reviewable PR, no merge.
+Commit on the `sum-dev/<name>` branch, then follow `skills/sum-deliver/SKILL.md` like any other project: verification, a reviewable PR, no merge.
 Candidate code becomes installation code only when a human merges it and the coordinator picks it up; a checked-out branch is not an update.
 
 ## Clean up
