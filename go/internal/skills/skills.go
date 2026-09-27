@@ -25,12 +25,12 @@ var (
 	// stages a release from either side of a rename. `update apply` checks the candidate tree with the
 	// helper already installed, so a name enters this list one release before a tree may use it.
 	canonicalSkills = [][]string{
-		{"sum-delivery"},
+		{"sum-deliver", "sum-delivery"},
 		{"sum-develop"},
 		{"sum-dispatch"},
 		{"sum-status", "sum-rundown"},
 		{"sum-update"},
-		{"sum-worker"},
+		{"sum-work", "sum-worker"},
 	}
 	portableSkillNames = []string{"create-verification", "evidence", "maintain-verification", "verify"}
 	skillArgument      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
