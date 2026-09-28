@@ -1,0 +1,114 @@
+---
+import CodeBlock from "../../components/CodeBlock.astro";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import { sitePath } from "../../lib/site-path.mjs";
+---
+
+<SiteLayout title="remainder — Local evidence, not a dashboard." foot="remainder">
+  <main>
+    <div class="solo">
+      <div class="eyebrow">remainder · one-shot quota CLI</div>
+      <h1 style="font-size:clamp(48px,6vw,80px);line-height:.96">
+        Local evidence,<br /><em>not a dashboard.</em>
+      </h1>
+      <p class="lede">
+        Read remaining LLM quota from local credentials. A small one-shot Go
+        CLI for Codex, Claude, Grok, Cursor, and Devin. It does not log in,
+        refresh credentials, switch accounts, invoke another CLI, or make a
+        generative request.
+      </p>
+      <div class="actions">
+        <a class="btn" href={sitePath("remainder-cli")}>Providers &amp; CLI contract</a>
+        <a class="btn outline" href="https://github.com/douglasjarquin/remainder">github ↗</a>
+      </div>
+    </div>
+    <div class="band">
+      <div class="feature">
+        <div class="n">01</div>
+        <div class="t">Selected providers</div>
+        <p>
+          <code>--provider</code> and <code>--profile default</code> select
+          Codex, Claude, Grok, Cursor, or Devin.
+        </p>
+      </div>
+      <div class="feature">
+        <div class="n">02</div>
+        <div class="t">--all</div>
+        <p>
+          Reads the fixed default Codex, Claude, Grok, and Devin contexts
+          concurrently, followed by Cursor on Linux and macOS.
+        </p>
+      </div>
+      <div class="feature">
+        <div class="n">03</div>
+        <div class="t">Compact, JSON, TOON, scalar</div>
+        <p>
+          Deterministic one-line compact output by default.
+          <code>--format json</code>, <code>--format toon</code>, or one scalar
+          <code>value</code>.
+        </p>
+      </div>
+      <div class="feature">
+        <div class="n">04</div>
+        <div class="t">Pace</div>
+        <p>
+          A per-window status from the same observation: <code>ahead</code>,
+          <code>behind</code>, or <code>on_pace</code>.
+        </p>
+      </div>
+      <div class="feature">
+        <div class="n">05</div>
+        <div class="t">Observation cache</div>
+        <p>
+          The default <code>--cache auto --max-age 5s</code> policy reuses an
+          eligible complete provider observation.
+        </p>
+      </div>
+      <div class="feature">
+        <div class="n">06</div>
+        <div class="t">Exit codes</div>
+        <div
+          style="display:grid;grid-template-columns:36px 1fr;row-gap:2px;color:var(--body);font-size:12px"
+        >
+          <code>0</code><span>evidence usable, incl. zero, exhausted, unlimited</span>
+          <code>1</code><span>observation unavailable</span>
+          <code>2</code><span>invocation or selection invalid</span>
+          <code>3</code><span>partial observation rendered</span>
+          <code>130</code><span>interrupted</span>
+        </div>
+      </div>
+    </div>
+    <div class="band">
+      <div class="split">
+        <div class="eyebrow">Install · first report</div>
+        <CodeBlock>
+          <div class="wrap">curl -fsSL https://raw.githubusercontent.com/douglasjarquin/remainder/main/scripts/install.sh | bash</div>
+          <div>remainder --provider codex --profile default</div>
+        </CodeBlock>
+        <p style="margin:16px 0 0;font-size:12px">
+          The script resolves the newest GitHub release for the detected
+          platform (darwin_arm64, linux_arm64, linux_amd64), verifies it
+          against that release's SHA256SUMS, and installs the binary into
+          ~/.local/bin. Go 1.27.1 when building from source.
+        </p>
+      </div>
+      <div class="split">
+        <div class="eyebrow">How it works</div>
+        <div class="kv flow" style="grid-template-columns:150px 1fr">
+          <div class="k">you</div>
+          <div class="v">--provider NAME --profile default, or --all ↓</div>
+          <div class="k" style="color:var(--accent)">observation cache</div>
+          <div class="v">reuse if eligible, else read local credentials ↓</div>
+          <div class="k">report</div>
+          <div class="v">compact, JSON, TOON, or one scalar</div>
+        </div>
+        <p style="margin:18px 0 0;font-size:12px">
+          An invocation without a provider selection or --all writes an honest
+          unavailable message to stderr and exits nonzero. Exit 0 means the
+          selected evidence is usable, including zero, exhausted, and unlimited
+          values.
+        </p>
+      </div>
+    </div>
+  </main>
+</SiteLayout>
