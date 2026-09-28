@@ -5,10 +5,10 @@ Its copy is a snapshot ported from the design source; keep it truthful by hand w
 
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
-| `site.install` | Web dependencies resolve from the committed `aube-lock.yaml` | automated: `aube -C web install` inside `mise run verify` (`mise-tasks/verify`) | aggregate run record |
-| `site.check` | `astro check` is clean over layouts, components, and pages | automated: `aube -C web run check` inside `mise run verify` | aggregate run record |
-| `site.unit` | The `sitePath` base-join helper behaves under `node --test` | automated: `aube -C web run test:unit` inside `mise run verify` | aggregate run record |
-| `site.build` | `astro build` emits all eleven routes plus the 404 under the `/sum/` base in `web/dist` | automated: `aube -C web run build` inside `mise run verify` | aggregate run record |
-| `site.e2e` | Playwright drives preview: every route renders, internal links carry the `/sum/` prefix, theme override persists, the docs sidebar collapses to chips under 720px, and favicon/OG assets resolve | manual: `mise run web:deps` once, then `mise run web:test` (`web/tests/e2e/`) | playwright output; CI also runs it in `deploy.yml` |
+| `site.install` | Web dependencies resolve from the committed `web/aube-lock.yaml` | automated: `aube -C web install --frozen-lockfile` inside `mise run verify` (`mise-tasks/verify`); `aube -C web ci` in `.github/workflows/deploy.yml` | aggregate run record |
+| `site.check` | `astro check` is clean over layouts, components, and pages | automated: `aube -C web run check` inside `mise run verify` (`mise-tasks/verify`) | aggregate run record |
+| `site.unit` | The `sitePath` base-join helper behaves under `node --test` | automated: `aube -C web run test:unit` inside `mise run verify` (`web/test/site-path.test.mjs`) | aggregate run record |
+| `site.build` | `astro build` emits all eleven routes plus the 404 under the `/sum/` base in `web/dist` | automated: `aube -C web run build` plus a per-route `dist` emission check inside `mise run verify` (`mise-tasks/verify`) | aggregate run record |
+| `site.e2e` | Playwright drives preview: every route renders, internal links carry the `/sum/` prefix, theme override persists, the docs sidebar collapses to chips under 720px, and favicon/OG assets resolve | manual: `mise run web:deps` once, then `mise run web:test` (`web/tests/e2e/`) | playwright output; CI also runs it in `.github/workflows/deploy.yml` |
 | `site.visual` | Pages match the design in both themes at desktop and mobile widths | manual: `mise run web:dev` plus a browser pass against `web/DESIGN.md` | reviewer confirmation |
-| `site.deploy` | Merging to `main` deploys `web/dist` to GitHub Pages through the `github-pages` environment | manual: `.github/workflows/deploy.yml` on a non-PR event; requires the repo's Pages source set to GitHub Actions | Pages deployment URL |
+| `site.deploy` | Merging to `main` deploys `web/dist` to GitHub Pages through the `github-pages` environment | manual: `.github/workflows/deploy.yml` on a `main`-ref push or dispatch; requires the repo's Pages source set to GitHub Actions | Pages deployment URL |

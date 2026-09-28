@@ -19,6 +19,14 @@ for (const { route, h1 } of pages) {
     await expect(page.locator("h1")).toHaveText(h1);
   });
 
+  test(`${route} marks its own sidebar entry active`, async ({ page }) => {
+    await page.goto(route);
+    const active = page.locator(".side a.active");
+    await expect(active).toHaveCount(1);
+    await expect(active).toHaveAttribute("href", `/sum/${route}`);
+    await expect(active).toHaveAttribute("aria-current", "page");
+  });
+
   test(`${route} keeps internal links under the /sum/ base`, async ({
     page,
   }) => {

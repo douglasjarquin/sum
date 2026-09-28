@@ -1,5 +1,4 @@
 ---
-import CodeBlock from "../../components/CodeBlock.astro";
 import SiteLayout from "../../layouts/SiteLayout.astro";
 import { sitePath } from "../../lib/site-path.mjs";
 import { REMAINDER_URL } from "../../lib/links.mjs";
@@ -82,10 +81,10 @@ import { REMAINDER_URL } from "../../lib/links.mjs";
     <div class="band">
       <div class="split">
         <div class="eyebrow">Install · first report</div>
-        <CodeBlock>
+        <div class="codeblock">
           <div class="wrap">curl -fsSL https://raw.githubusercontent.com/douglasjarquin/remainder/main/scripts/install.sh | bash</div>
           <div>remainder --provider codex --profile default</div>
-        </CodeBlock>
+        </div>
         <p style="margin:16px 0 0;font-size:12px">
           The script resolves the newest GitHub release for the detected
           platform (darwin_arm64, linux_arm64, linux_amd64), verifies it

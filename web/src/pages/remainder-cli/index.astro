@@ -1,9 +1,8 @@
 ---
-import CodeBlock from "../../components/CodeBlock.astro";
 import DocsLayout from "../../layouts/DocsLayout.astro";
 ---
 
-<DocsLayout title="Providers &amp; CLI contract — sum" active="remainder-cli">
+<DocsLayout title="Providers &amp; CLI contract — sum">
   <div class="doc">
     <div class="eyebrow" style="margin-bottom:14px">remainder</div>
     <h1>Providers &amp; CLI contract</h1>
@@ -57,14 +56,14 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     </div>
     <div class="sec">
       <h2>Formats</h2>
-      <CodeBlock>
+      <div class="codeblock">
         <div>remainder --provider codex --profile default                   <span class="c"># deterministic one-line compact output</span></div>
         <div>remainder --provider codex --profile default --format json     <span class="c"># versioned JSON observation</span></div>
         <div>remainder --provider codex --profile default --format toon     <span class="c"># the same facts as a TOON document</span></div>
         <div>remainder value --provider PROVIDER --profile PROFILE --window WINDOW --field remaining</div>
         <div>remainder --all                                                <span class="c"># Codex, Claude, Grok, Devin concurrently, then Cursor on Linux and macOS</span></div>
-      </CodeBlock>
-      <p style="margin:14px 0 0">
+      </div>
+      <p>
         The scalar fields also include <code>reset</code>, <code>duration</code
         >, and <code>pace</code>. --all cannot be combined with provider,
         profile, or account flags and does not discover profiles. Mixed JSON

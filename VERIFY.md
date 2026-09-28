@@ -44,9 +44,9 @@ It runs, in order, the existing commands and stops at the first failure:
 | Check | Command | Proves |
 | --- | --- | --- |
 | Go CLI, Mesh, and skill tests | `cd go && go test ./...` | sumctl command contracts, Herdr Mesh, portable verify/evidence skills, and the offline demo |
-| Web site | `aube -C web install`, `aube -C web run check`, `aube -C web run test:unit`, `aube -C web run build` | the Astro site installs from the lockfile, typechecks, passes unit tests, and builds into `web/dist` under the `/sum/` base |
+| Web site | `aube -C web install --frozen-lockfile`, `aube -C web run check`, `aube -C web run test:unit`, `aube -C web run build`, then a `web/dist` route-emission check | the Astro site installs from the lockfile, typechecks, passes unit tests, and builds all routes into `web/dist` under the `/sum/` base |
 
-Scoped tasks stay available for iteration: `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`), `mise run demo`, and the `mise run web:*` tasks.
+Scoped tasks stay available for iteration: `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`), `mise run demo`, and the `web:`-prefixed mise tasks.
 `mise run web:test` also runs the Playwright end-to-end suite; it needs the browser once from `mise run web:deps`, so it is manual in the feature maps.
 `mise run lint` is the project's declared lint task (`mise-tasks/lint`); the delivery pipeline Lint gate runs it.
 `mise run test-live` is the explicit real-Herdr smoke test and is not part of the aggregate because it needs an installed Herdr; `mise run doctor` observes the installation and is not a check.

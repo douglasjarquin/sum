@@ -66,14 +66,14 @@ Font URL is exactly `css2?family=JetBrains+Mono:wght@400;500;600&family=Instrume
 
 ## Elements
 
-- `.topbar`: mark + `sum` wordmark (600) + muted tagline, right cluster of nav links (`--body`), `github ↗` in accent, theme toggle (1px `--rule` chip).
+- `.topbar`: mark + `sum` wordmark (600) + muted tagline, right cluster of nav links including `github ↗` (all `--body`), theme toggle (1px `--rule` chip).
 - `.side`: rail nav; entries are 7px/24px padded links with a transparent 2px left border; active entry is accent + 600 + accent left border and `aria-current="page"`.
   Group labels (`sum`, `remainder`, `source`) are eyebrow-style rows.
   Below 720px the rail collapses to wrapped chips (pure CSS media query — the mockup did this with a resize listener; same look, no JS).
 - `.kv`: grid label/value rows separated by hairlines; labels accent by default (`.kv.flow` uses serif 18px ink labels for the you/coordinator/worker flows).
   Column width is set per instance (110-160px, or `auto 1fr` for link rows); `.kv.md`/`.kv.lg` adjust row padding (12px/16px vs 10px).
 - `.cells` cards never nest; `.feature` cells carry the `NN` accent number and serif title.
-- `.chip`: 1px `--rule` border, 11px; `.chip.on` accent.
+- `.chip`: 1px `--rule` border, 11px.
 - `.btn`: solid `--ink` fill; `.btn.outline` transparent with `--rule` border, `--soft` hover.
 - `.foot`: per-screen footer strip (three variants: home, remainder, docs).
 

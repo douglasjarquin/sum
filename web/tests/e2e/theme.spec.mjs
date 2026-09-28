@@ -33,6 +33,25 @@ test("toggle writes an override that persists across reloads", async ({
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
 
+test("a light-OS toggle pins the dark palette and survives reload", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("./");
+  const toggle = page.locator("#theme-toggle");
+  await toggle.click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(toggle).toHaveText("light");
+  await expect(toggle).toHaveAttribute(
+    "title",
+    "Theme override on; following dark",
+  );
+  expect(await htmlBg(page)).toBe("rgb(19, 20, 21)");
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  expect(await htmlBg(page)).toBe("rgb(19, 20, 21)");
+});
+
 test.describe("without JavaScript", () => {
   test.use({ javaScriptEnabled: false });
 

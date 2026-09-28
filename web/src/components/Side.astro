@@ -2,12 +2,8 @@
 import { sitePath } from "../lib/site-path.mjs";
 import { repoBlob } from "../lib/links.mjs";
 
-interface Props {
-  active: string;
-}
-const { active } = Astro.props;
-
-const internal = (key: string, label: string) => ({ key, label, href: sitePath(key) });
+const current = Astro.url.pathname;
+const internal = (key: string, label: string) => ({ label, href: sitePath(key) });
 const groups = [
   {
     label: "sum",
@@ -32,21 +28,9 @@ const groups = [
   {
     label: "source",
     items: [
-      {
-        key: "agents-md",
-        label: "AGENTS.md ↗",
-        href: repoBlob("AGENTS.md"),
-      },
-      {
-        key: "coordinator-md",
-        label: "COORDINATOR.md ↗",
-        href: repoBlob("COORDINATOR.md"),
-      },
-      {
-        key: "verify-md",
-        label: "VERIFY.md ↗",
-        href: repoBlob("VERIFY.md"),
-      },
+      { label: "AGENTS.md ↗", href: repoBlob("AGENTS.md") },
+      { label: "COORDINATOR.md ↗", href: repoBlob("COORDINATOR.md") },
+      { label: "VERIFY.md ↗", href: repoBlob("VERIFY.md") },
     ],
   },
 ];
@@ -60,8 +44,8 @@ const groups = [
         {group.items.map((item) => (
           <a
             href={item.href}
-            class={item.key === active ? "active" : undefined}
-            aria-current={item.key === active ? "page" : undefined}
+            class={item.href === current ? "active" : undefined}
+            aria-current={item.href === current ? "page" : undefined}
           >
             {item.label}
           </a>

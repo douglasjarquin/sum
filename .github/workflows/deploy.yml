@@ -36,7 +36,7 @@ jobs:
           cache: false
 
       - name: Install web dependencies
-        run: aube -C web install
+        run: aube -C web ci
 
       - name: Build
         run: aube -C web run build
@@ -55,8 +55,8 @@ jobs:
           path: web/playwright-report/
 
       - name: Upload Pages artifact
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/upload-pages-artifact@v4
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
           path: web/dist
 
@@ -66,11 +66,11 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     needs: build
     runs-on: ubuntu-24.04
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     permissions:
       pages: write
       id-token: write
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

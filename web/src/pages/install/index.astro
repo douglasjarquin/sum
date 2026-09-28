@@ -1,10 +1,9 @@
 ---
-import CodeBlock from "../../components/CodeBlock.astro";
 import DocsLayout from "../../layouts/DocsLayout.astro";
 import { sitePath } from "../../lib/site-path.mjs";
 ---
 
-<DocsLayout title="Install — sum" active="install">
+<DocsLayout title="Install — sum">
   <div class="doc">
     <h1>Install</h1>
     <p class="lede">
@@ -16,7 +15,7 @@ import { sitePath } from "../../lib/site-path.mjs";
     <div class="sec">
       <h2>Install and launch</h2>
       <p>The shortest start is a clone and then a Herdr pane:</p>
-      <CodeBlock>
+      <div class="codeblock">
         <div>git clone https://github.com/douglasjarquin/sum.git</div>
         <div>herdr</div>
         <div class="c"># In a Herdr pane:</div>
@@ -24,8 +23,8 @@ import { sitePath } from "../../lib/site-path.mjs";
         <div>mise trust</div>
         <div>mise run setup</div>
         <div>codex                         <span class="c"># or claude, grok, cursor-agent, pi, opencode, devin, ...</span></div>
-      </CodeBlock>
-      <p style="margin:14px 0 0">
+      </div>
+      <p>
         If Herdr is not installed yet, run <code
           >mise trust &amp;&amp; mise run setup</code
         > in the clone first, then <code>mise exec -- herdr</code>. If mise is
@@ -52,7 +51,7 @@ import { sitePath } from "../../lib/site-path.mjs";
         <code>opencode.json</code>. Other shell-capable harnesses can use the
         same native Herdr CLI skill without MCP.
       </p>
-      <p style="margin:0">
+      <p>
         Harness choice, model flags, and presets are in <a
           href={sitePath("configuration")}>Configuration</a
         >.
@@ -60,11 +59,11 @@ import { sitePath } from "../../lib/site-path.mjs";
     </div>
     <div class="sec">
       <h2>No installed harness?</h2>
-      <CodeBlock>
+      <div class="codeblock">
         <div>mise run setup -- --install-codex</div>
         <div>mise exec -- codex             <span class="c"># authenticate using the normal provider flow</span></div>
-      </CodeBlock>
-      <p style="margin:14px 0 0">
+      </div>
+      <p>
         This optional path installs a pinned Codex CLI inside <code
           >.deps/harnesses</code
         >, not globally. Other harnesses are deliberately bring-your-own: no
@@ -83,7 +82,7 @@ import { sitePath } from "../../lib/site-path.mjs";
         review, and bring me a PR. Do not merge it. Ask before changing the
         public API.
       </blockquote>
-      <p style="margin:0">
+      <p>
         The coordinator creates a task brief, prepares a separate Herdr
         worktree, launches the selected worker, submits its brief, and returns
         control to you. Every session starts with <code>./bin/sumctl init</code>

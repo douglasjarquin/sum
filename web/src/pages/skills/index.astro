@@ -1,10 +1,9 @@
 ---
-import CodeBlock from "../../components/CodeBlock.astro";
 import DocsLayout from "../../layouts/DocsLayout.astro";
 import { repoBlob } from "../../lib/links.mjs";
 ---
 
-<DocsLayout title="Skills — sum" active="skills">
+<DocsLayout title="Skills — sum">
   <div class="doc">
     <h1>Skills</h1>
     <p class="lede">
@@ -52,7 +51,7 @@ import { repoBlob } from "../../lib/links.mjs";
     </div>
     <div class="sec">
       <h2>Factory lane</h2>
-      <p style="margin:0">
+      <p>
         A factory lane (<code>sumctl factory</code> plus the factory procedures
         in sum-dispatch and the worker procedure) can run sequential ready
         issues on an enrolled project without a sum daemon: tick is a one-shot
@@ -62,10 +61,10 @@ import { repoBlob } from "../../lib/links.mjs";
     </div>
     <div class="sec">
       <h2>Third-party skills</h2>
-      <CodeBlock>
+      <div class="codeblock">
         <div>./bin/sumctl skills install ...</div>
-      </CodeBlock>
-      <p style="margin:14px 0 0">
+      </div>
+      <p>
         Delegates explicit skill and agent selections to the pinned Vercel
         Skills CLI in project copy mode. Skills reach agents as explicit file
         references (path, size, hash) to read when needed, not as an assumed
@@ -76,7 +75,7 @@ import { repoBlob } from "../../lib/links.mjs";
     </div>
     <div class="sec">
       <h2>Verification authoring skills</h2>
-      <p style="margin:0">
+      <p>
         <code>.agents/skills/create-verification</code> inspects a repository,
         scaffolds its contract, verify task, seed feature maps, and vendored
         skills without inventing commands, then proves them once; <code

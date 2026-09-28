@@ -1,9 +1,8 @@
 ---
-import CodeBlock from "../../components/CodeBlock.astro";
 import DocsLayout from "../../layouts/DocsLayout.astro";
 ---
 
-<DocsLayout title="Verification — sum" active="verification">
+<DocsLayout title="Verification — sum">
   <div class="doc">
     <h1>Verification</h1>
     <p class="lede">
@@ -72,16 +71,16 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         because sum runs no daemon and polls nothing: a green row means green as
         of the time shown.
       </p>
-      <CodeBlock>
+      <div class="codeblock">
         <div>./bin/sumctl pipeline run TASK_ID            <span class="c"># gates in order through opening and reconciling the PR; stops at first failure</span></div>
         <div>./bin/sumctl pipeline run TASK_ID --no-pr    <span class="c"># stops after Push</span></div>
         <div>./bin/sumctl pipeline ci TASK_ID             <span class="c"># re-read the checks GitHub reports</span></div>
         <div>./bin/sumctl verify TASK_ID --accept-missing-evidence   <span class="c"># the user waives required evidence; recorded</span></div>
-      </CodeBlock>
+      </div>
     </div>
     <div class="sec">
       <h2>Evidence publication into the PR</h2>
-      <p style="margin:0">
+      <p>
         On by default: <code>pr reconcile</code> runs the evidence publisher for
         every evidence run the worker's handoff lists, and <code
           >sumctl pr evidence</code
@@ -107,7 +106,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         brief revisions. The file at <code>brief_path</code> and every earlier
         revision are never rewritten, so a worker mid-read keeps a valid brief.
       </p>
-      <CodeBlock>
+      <div class="codeblock">
         <div>./bin/sumctl brief list TASK_ID</div>
         <div>./bin/sumctl report TASK_ID --file r.md --handoff h.json               <span class="c"># worker</span></div>
         <div>./bin/sumctl review TASK_ID --verdict changes-requested --candidate SHA --file f.md   <span class="c"># reviewer</span></div>
@@ -117,7 +116,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <div>./bin/sumctl brief regenerate TASK_ID</div>
         <div>./bin/sumctl brief request TASK_ID rN</div>
         <div>./bin/sumctl brief adopt TASK_ID rN                                    <span class="c"># worker</span></div>
-      </CodeBlock>
+      </div>
     </div>
   </div>
 </DocsLayout>

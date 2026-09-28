@@ -1,5 +1,4 @@
 ---
-import CodeBlock from "../components/CodeBlock.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
 import { sitePath } from "../lib/site-path.mjs";
 ---
@@ -103,7 +102,7 @@ import { sitePath } from "../lib/site-path.mjs";
     <div class="band">
       <div class="split">
         <div class="eyebrow">Quick start</div>
-        <CodeBlock>
+        <div class="codeblock">
           <div>git clone https://github.com/douglasjarquin/sum.git</div>
           <div>herdr</div>
           <div class="c"># In a Herdr pane:</div>
@@ -111,7 +110,7 @@ import { sitePath } from "../lib/site-path.mjs";
           <div>mise trust</div>
           <div>mise run setup</div>
           <div>codex   <span class="c"># or claude, grok, cursor-agent, pi, opencode, devin</span></div>
-        </CodeBlock>
+        </div>
         <p style="margin:18px 0 0;font-size:12px">
           A harness that does not auto-load AGENTS.md needs this first prompt:
           <em class="serif">"Read AGENTS.md in this directory, initialize sum, and act as my coordinator."</em>

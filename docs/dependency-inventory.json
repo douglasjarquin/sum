@@ -87,6 +87,18 @@
       "contracts": {"cli": ["status --json", "init", "sync", "query", "explore"], "mcp": ["stdio optional"]}
     },
     {
+      "id": "aube",
+      "source": "https://github.com/jdx/aube",
+      "version": "2.2.4",
+      "checksum": "mise.toml#tools.aube",
+      "license": "MIT",
+      "platforms": ["darwin", "linux"],
+      "requirements": ["web/ aube-lock.yaml installs and scripts"],
+      "role": "setup",
+      "owner": "sum",
+      "contracts": {"cli": ["aube -C web install|ci|run|exec", "aubr"], "mcp": []}
+    },
+    {
       "id": "uv",
       "source": "https://github.com/astral-sh/uv",
       "version": "0.12.13",

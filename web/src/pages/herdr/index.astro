@@ -1,9 +1,8 @@
 ---
-import CodeBlock from "../../components/CodeBlock.astro";
 import DocsLayout from "../../layouts/DocsLayout.astro";
 ---
 
-<DocsLayout title="Herdr backend — sum" active="herdr">
+<DocsLayout title="Herdr backend — sum">
   <div class="doc">
     <h1>Herdr backend</h1>
     <p class="lede">
@@ -35,14 +34,14 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     </div>
     <div class="sec">
       <h2>Environments</h2>
-      <CodeBlock>
+      <div class="codeblock">
         <div>./bin/sumctl env discover TASK_ID        <span class="c"># declared dev commands from mise/package/Makefile/justfile/Procfile/compose/Dockerfile/devcontainer</span></div>
         <div>./bin/sumctl env record TASK_ID --url http://127.0.0.1:PORT [--log PATH | --pane ID | --container ID]</div>
         <div>./bin/sumctl env inspect TASK_ID         <span class="c"># re-observe once: stale URLs, configuration drift, missing logs</span></div>
         <div>./bin/sumctl env start TASK_ID --command NAME [--url ... | --match TEXT] [--log PATH] [--timeout S]</div>
         <div>./bin/sumctl env stop TASK_ID [--service ID]</div>
-      </CodeBlock>
-      <p style="margin:14px 0 0">
+      </div>
+      <p>
         <code>env start</code> launches one command the repository declares in a
         pane split under the worker pane inside the checkout. A timeout is an
         explicit failed state, never a retry or restart. <code>env stop</code>
@@ -54,12 +53,12 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     </div>
     <div class="sec">
       <h2>Native event delivery (optional)</h2>
-      <CodeBlock>
+      <div class="codeblock">
         <div>./bin/sumctl hook enable      <span class="c"># coordinator only; writes a Herdr plugin manifest under .sum/hook/plugin/ and links it live</span></div>
         <div>./bin/sumctl hook status</div>
         <div>./bin/sumctl hook disable     <span class="c"># or --unlink</span></div>
-      </CodeBlock>
-      <p style="margin:14px 0 0">
+      </div>
+      <p>
         On a recorded pane going idle/done, the handler re-observes the pane and
         runs one bounded pump toward that recipient: pending questions, reports,
         answers, and requested brief revisions are delivered at the boundary
@@ -74,13 +73,13 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     </div>
     <div class="sec">
       <h2>Native metadata (optional)</h2>
-      <CodeBlock>
+      <div class="codeblock">
         <div>./bin/sumctl metadata enable</div>
         <div>./bin/sumctl metadata sync [--force]</div>
         <div>./bin/sumctl metadata status</div>
         <div>./bin/sumctl metadata inbox [--grouped] [--open --placement split|overlay|tab|zoomed]</div>
         <div>./bin/sumctl metadata disable</div>
-      </CodeBlock>
+      </div>
       <p style="margin:14px 0 12px">
         sum task state projected as namespaced <code>sum_*</code> tokens on the
         endpoints sum owns, rendered by sidebar rows the user chooses to add.

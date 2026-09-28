@@ -33,22 +33,19 @@ h2{font-size:26px;line-height:1.1}
 h3{font-size:22px;line-height:1.15}
 p{margin:0 0 12px;color:var(--body);text-wrap:pretty}
 p.lede{font-size:13px;margin:0 0 28px}
-small,.small{font-size:11px;color:var(--muted)}
 .eyebrow{font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 em.serif{font-family:var(--serif);font-style:italic;font-size:1.2em;color:var(--ink)}
 strong{color:var(--ink);font-weight:600}
-code,kbd{font-family:var(--mono);color:var(--ink)}
+code{font-family:var(--mono);color:var(--ink)}
 
 /* links & buttons */
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
-a.quiet{color:var(--body)}
 .btn{display:inline-block;background:var(--ink);color:var(--bg);padding:9px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;border:1px solid var(--ink);cursor:pointer;font-family:var(--mono)}
 .btn:hover{opacity:.85;text-decoration:none}
 .btn.outline{background:transparent;color:var(--ink);border-color:var(--rule)}
 .btn.outline:hover{background:var(--soft);opacity:1}
 .chip{display:inline-block;border:1px solid var(--rule);padding:2px 8px;font-size:11px}
-.chip.on{border-color:var(--accent);color:var(--accent)}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 
 /* code & quote */
@@ -107,6 +104,8 @@ blockquote{margin:0;padding:14px 18px;border-left:2px solid var(--accent);font-f
 .doc{max-width:760px}
 .sec{padding:28px 0;border-top:1px solid var(--rule)}
 .doc .sec p{line-height:1.7}
+.doc .sec>:last-child{margin-bottom:0}
+.doc .sec .codeblock+p{margin:14px 0 0}
 .doc-body h1{margin:0 0 16px}
 
 /* nav */

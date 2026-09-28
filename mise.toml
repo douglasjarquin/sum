@@ -22,7 +22,8 @@ run = "aube -C web exec playwright install chromium"
 
 [tasks."web:dev"]
 description = "Start the Astro development server"
-run = "aube -C web run dev -- --host 127.0.0.1"
+# ASTRO_DEV_BACKGROUND=1 keeps astro dev foregrounded under agent detection.
+run = "ASTRO_DEV_BACKGROUND=1 aube -C web run dev -- --host 127.0.0.1"
 
 [tasks."web:check"]
 description = "Run Astro type and template checks"
