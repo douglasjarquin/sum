@@ -1,0 +1,76 @@
+---
+import CodeBlock from "../../components/CodeBlock.astro";
+import DocsLayout from "../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Update &amp; rollback — sum" active="update">
+  <div class="doc">
+    <h1 style="margin:0 0 16px">Update &amp; rollback</h1>
+    <p class="lede">
+      Update, rollback, refresh, and runtime releases. An update activates only
+      a revision merged on the sum origin default branch, resolved to an
+      immutable SHA.
+    </p>
+    <div class="sec">
+      <h2>Update and roll back</h2>
+      <CodeBlock>
+        <div>./bin/sumctl update check          <span style="color:var(--muted)"># fetch origin, resolve the merged revision, report default/active/compatibility</span></div>
+        <div>./bin/sumctl update apply          <span style="color:var(--muted)"># stage the release, validate coexistence, switch .local/current, fast-forward a clean clone</span></div>
+        <div>./bin/sumctl update status</div>
+        <div>./bin/sumctl update rollback       <span style="color:var(--muted)"># reselect the recorded previous approved runtime; records, questions, reports, worktrees stay</span></div>
+        <div>./bin/sumctl update recover --generation GENERATION</div>
+      </CodeBlock>
+      <p style="margin:14px 0 0">
+        It never resets, stashes, or force-updates a dirty or diverged tree,
+        never edits a development or task checkout, never restarts Herdr,
+        agents, dev services, or a connected MCP server, and never upgrades
+        Herdr. Staged files are not approval. An interrupted update requires
+        explicit generation-bound recovery before another apply or rollback.
+        Commands already running finish on the runtime they resolved; worker
+        briefs carry stable <code>&lt;installation&gt;/bin/sumctl</code>
+        commands, so their callbacks keep working across the switch. A refusal
+        names the exact incompatibility and leaves the old installation serving.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Refresh running sessions</h2>
+      <CodeBlock>
+        <div>./bin/sumctl refresh request               <span style="color:var(--muted)"># coordinator contract plus every non-archived task</span></div>
+        <div>./bin/sumctl refresh status                <span style="color:var(--muted)"># confirmed / submitted-unconfirmed / pending-busy / pending-unreachable / unreachable / capability-deferred</span></div>
+        <div>./bin/sumctl refresh adopt --coordinator rN</div>
+      </CodeBlock>
+      <p style="margin:14px 0 0">
+        An update changes which code new commands run; a refresh asks the
+        sessions that are already running to reread their operating
+        instructions, one at a time, without restarting anyone. Only a pane that
+        exists, runs in the recorded checkout, and is reported idle or done
+        receives a short fixed message naming the revision. A worker adopts at
+        its next safe point with <code>brief adopt</code>. Four things stay
+        separate: the installation default, the runtime a process actually
+        resolved, the revision requested of a session, and the revision that
+        session reports it has read. A submitted prompt is not a receipt and a
+        receipt is not proof of compliance.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Runtime releases</h2>
+      <CodeBlock>
+        <div>./bin/sumctl release stage            <span style="color:var(--muted)"># builds .local/releases/&lt;sha&gt; for HEAD; nothing is activated</span></div>
+        <div>./bin/sumctl release list</div>
+      </CodeBlock>
+      <p style="margin:14px 0 0">
+        A release holds the committed sum tree, its own pinned tool links, its
+        own Go Mesh binary, and a <code>release.json</code> manifest with source
+        SHA, content hashes, dependency pins, and contract versions. It is
+        validated before it appears, kept read-only, and never contains state.
+        Re-running mise run setup never rewrites an existing native binary or
+        retargets a tool link either.
+      </p>
+    </div>
+  </div>
+  <style>
+    .sec p {
+      line-height: 1.7;
+    }
+  </style>
+</DocsLayout>

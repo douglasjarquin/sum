@@ -1,0 +1,102 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import { sitePath } from "../../lib/site-path.mjs";
+---
+
+<DocsLayout title="Documentation — sum" active="docs">
+  <h1 style="margin:0 0 16px">Documentation</h1>
+  <p class="lede" style="max-width:640px;margin:0 0 32px">
+    Roles and work objects use the dictionary in docs/terminology.md: user,
+    coordinator, agent, reviewer, task, brief, question, inbox, result.
+    Everything below was moved out of the README.
+  </p>
+  <div class="cells">
+    <a href={sitePath("install")}>
+      <div style="font-family:var(--serif);font-size:22px;margin-bottom:6px">
+        Install
+      </div>
+      <div style="color:var(--body);font-size:12px">
+        Requirements, recommended harnesses, install and launch, first prompt.
+      </div>
+    </a>
+    <a href={sitePath("architecture")}>
+      <div style="font-family:var(--serif);font-size:22px;margin-bottom:6px">
+        Architecture
+      </div>
+      <div style="color:var(--body);font-size:12px">
+        Session roles, the no-harness install, what's included, and state and
+        communication.
+      </div>
+    </a>
+    <a href={sitePath("verification")}>
+      <div style="font-family:var(--serif);font-size:22px;margin-bottom:6px">
+        Verification
+      </div>
+      <div style="color:var(--body);font-size:12px">
+        Evidence publication, the nine gates, and brief revisions.
+      </div>
+    </a>
+    <a href={sitePath("skills")}>
+      <div style="font-family:var(--serif);font-size:22px;margin-bottom:6px">
+        Skills
+      </div>
+      <div style="color:var(--body);font-size:12px">
+        The six bundled skills and project-local third-party skills.
+      </div>
+    </a>
+    <a href={sitePath("configuration")}>
+      <div style="font-family:var(--serif);font-size:22px;margin-bottom:6px">
+        Configuration
+      </div>
+      <div style="color:var(--body);font-size:12px">
+        Worker harness, presets, and the capacity schema.
+      </div>
+    </a>
+    <a href={sitePath("herdr")}>
+      <div style="font-family:var(--serif);font-size:22px;margin-bottom:6px">
+        Herdr backend
+      </div>
+      <div style="color:var(--body);font-size:12px">
+        Pane identity, env start and stop, native event delivery, and native
+        metadata.
+      </div>
+    </a>
+    <a href={sitePath("update")}>
+      <div style="font-family:var(--serif);font-size:22px;margin-bottom:6px">
+        Update &amp; rollback
+      </div>
+      <div style="color:var(--body);font-size:12px">
+        Update, rollback, refresh, and runtime releases.
+      </div>
+    </a>
+    <a href={sitePath("remainder-cli")}>
+      <div style="font-family:var(--serif);font-size:22px;margin-bottom:6px">
+        remainder
+      </div>
+      <div style="color:var(--body);font-size:12px">
+        Provider selection, output formats, flags, --all, and exit codes.
+      </div>
+    </a>
+  </div>
+  <div
+    class="kv"
+    style="grid-template-columns:auto 1fr;column-gap:16px;font-size:12px;margin-top:32px"
+  >
+    <a
+      href="https://github.com/douglasjarquin/sum/blob/main/docs/repairs.md"
+      style="padding:8px 0">docs/repairs.md ↗</a>
+    <div class="v" style="padding:8px 0">in-scope and expansion repairs</div>
+    <a
+      href="https://github.com/douglasjarquin/sum/blob/main/docs/recovery.md"
+      style="padding:8px 0">docs/recovery.md ↗</a>
+    <div class="v" style="padding:8px 0">
+      backup, cleanup after a merge, and limits
+    </div>
+    <a
+      href="https://github.com/douglasjarquin/sum/blob/main/docs/terminology.md"
+      style="padding:8px 0">docs/terminology.md ↗</a>
+    <div class="v" style="padding:8px 0">
+      user, coordinator, agent, reviewer, task, brief, question, inbox, result
+    </div>
+  </div>
+</DocsLayout>

@@ -1,0 +1,94 @@
+---
+import CodeBlock from "../../components/CodeBlock.astro";
+import DocsLayout from "../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Skills — sum" active="skills">
+  <div class="doc">
+    <h1 style="margin:0 0 16px">Skills</h1>
+    <p class="lede">
+      Agent-loaded procedures ship with the distro: <code>AGENTS.md</code> is a
+      short role bootstrap every session loads, <code>COORDINATOR.md</code> is
+      the coordinator core init names, and each action's detail stays in the
+      bundled skills, loaded only for that action.
+    </p>
+    <div style="border-top:1px solid var(--rule)">
+      <div class="kv lg" style="grid-template-columns:160px 1fr">
+        <div class="k">/sum-dispatch</div>
+        <div class="v">
+          Send one approved request to a worker. Creates the task brief,
+          prepares a separate Herdr worktree, launches the selected worker,
+          submits its brief, and returns control to you.
+        </div>
+        <div class="k">/sum-work</div>
+        <div class="v">
+          Do that task in its own Herdr worktree. A worker is explicitly given
+          its own role; it does not become another coordinator.
+        </div>
+        <div class="k">/sum-deliver</div>
+        <div class="v">
+          Run the project's checks and prepare the PR. Verification and PR
+          delivery through the nine gates.
+        </div>
+        <div class="k">/sum-status</div>
+        <div class="v">
+          Reconcile saved tasks and pending returns. Finds workers that stopped
+          without a report.
+        </div>
+        <div class="k">/sum-develop</div>
+        <div class="v">
+          Change sum from a development checkout that cannot claim the
+          coordinator.
+        </div>
+        <div class="k" style="border-bottom:1px solid var(--rule)">
+          /sum-update
+        </div>
+        <div class="v" style="border-bottom:1px solid var(--rule)">
+          Update or roll back the installation, then refresh running sessions.
+          Atomic updates with rolling session refresh and code-only rollback.
+        </div>
+      </div>
+    </div>
+    <div class="sec">
+      <h2>Factory lane</h2>
+      <p style="margin:0">
+        A factory lane (<code>sumctl factory</code> plus the factory procedures
+        in sum-dispatch and the worker procedure) can run sequential ready
+        issues on an enrolled project without a sum daemon: tick is a one-shot
+        helper, dispatch stays with the coordinator, and merge happens only at
+        high confidence on authorized repositories.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Third-party skills</h2>
+      <CodeBlock>
+        <div>./bin/sumctl skills install ...</div>
+      </CodeBlock>
+      <p style="margin:14px 0 0">
+        Delegates explicit skill and agent selections to the pinned Vercel
+        Skills CLI in project copy mode. Skills reach agents as explicit file
+        references (path, size, hash) to read when needed, not as an assumed
+        skill standard. See <a
+          href="https://github.com/douglasjarquin/sum/blob/main/docs/sum-skills.md"
+          >docs/sum-skills.md ↗</a
+        >.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Verification authoring skills</h2>
+      <p style="margin:0">
+        <code>.agents/skills/create-verification</code> inspects a repository,
+        scaffolds its contract, verify task, seed feature maps, and vendored
+        skills without inventing commands, then proves them once; <code
+          >.agents/skills/maintain-verification</code
+        > audits stale tasks, paths, links, and coverage claims. Both work in
+        any clone.
+      </p>
+    </div>
+  </div>
+  <style>
+    .sec p {
+      line-height: 1.7;
+    }
+  </style>
+</DocsLayout>

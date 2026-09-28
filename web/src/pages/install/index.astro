@@ -1,0 +1,99 @@
+---
+import CodeBlock from "../../components/CodeBlock.astro";
+import DocsLayout from "../../layouts/DocsLayout.astro";
+import { sitePath } from "../../lib/site-path.mjs";
+---
+
+<DocsLayout title="Install — sum" active="install">
+  <div class="doc">
+    <h1 style="margin:0 0 16px">Install</h1>
+    <p class="lede">
+      Prerequisites: <code>mise</code>, Git, and an authenticated coding harness
+      available on the execution host. Setup installs the other dependencies
+      locally through mise. On a Mac without mise, install it through your
+      normal package manager first (<code>brew install mise</code>).
+    </p>
+    <div class="sec">
+      <h2>Install and launch</h2>
+      <p>The shortest start is a clone and then a Herdr pane:</p>
+      <CodeBlock>
+        <div>git clone https://github.com/douglasjarquin/sum.git</div>
+        <div>herdr</div>
+        <div class="c"># In a Herdr pane:</div>
+        <div>cd /path/to/sum</div>
+        <div>mise trust</div>
+        <div>mise run setup</div>
+        <div>codex                         <span style="color:var(--muted)"># or claude, grok, cursor-agent, pi, opencode, devin, ...</span></div>
+      </CodeBlock>
+      <p style="margin:14px 0 0">
+        If Herdr is not installed yet, run <code
+          >mise trust &amp;&amp; mise run setup</code
+        > in the clone first, then <code>mise exec -- herdr</code>. If mise is
+        not activated in your shell, launch the harness with <code
+          >mise exec -- codex</code
+        > instead of bare <code>codex</code>.
+      </p>
+      <p style="margin:14px 0 0">
+        A harness that does not auto-load AGENTS.md needs this first prompt:
+        <em class="serif"
+          >"Read AGENTS.md in this directory, initialize sum, and act as my
+          coordinator."</em
+        >
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Recommended harnesses</h2>
+      <p>
+        <code>codex</code> can be <code>claude</code>, <code>grok</code>,
+        <code>cursor-agent</code>, <code>pi</code>, <code>opencode</code>, or
+        <code>devin</code>. Accept the harness's normal project/MCP trust
+        prompt. Do not bypass permissions. Codex, Claude, and Cursor receive
+        repository-local MCP configuration; OpenCode receives
+        <code>opencode.json</code>. Other shell-capable harnesses can use the
+        same native Herdr CLI skill without MCP.
+      </p>
+      <p style="margin:0">
+        Harness choice, model flags, and presets are in <a
+          href={sitePath("configuration")}>Configuration</a
+        >.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>No installed harness?</h2>
+      <CodeBlock>
+        <div>mise run setup -- --install-codex</div>
+        <div>mise exec -- codex             <span style="color:var(--muted)"># authenticate using the normal provider flow</span></div>
+      </CodeBlock>
+      <p style="margin:14px 0 0">
+        This optional path installs a pinned Codex CLI inside <code
+          >.deps/harnesses</code
+        >, not globally. Other harnesses are deliberately bring-your-own: no
+        subscription, API key, or account is created or switched by setup.
+        Herdr's optional native integrations can be installed separately, for
+        example <code>herdr integration install codex</code>.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Talk to it</h2>
+      <p>Then delegate normally:</p>
+      <blockquote style="margin-bottom:14px">
+        Use Codex to fix the failing login test in <code style="font-size:13px"
+          >/Users/me/projects/myapp</code
+        >. Keep scope to the bug, run the existing checks, arrange independent
+        review, and bring me a PR. Do not merge it. Ask before changing the
+        public API.
+      </blockquote>
+      <p style="margin:0">
+        The coordinator creates a task brief, prepares a separate Herdr
+        worktree, launches the selected worker, submits its brief, and returns
+        control to you. Every session starts with <code>./bin/sumctl init</code>
+        and follows the role it returns.
+      </p>
+    </div>
+  </div>
+  <style>
+    .sec p {
+      line-height: 1.7;
+    }
+  </style>
+</DocsLayout>
