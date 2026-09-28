@@ -1,0 +1,13 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { sitePath } from "../lib/site-path.mjs";
+---
+
+<SiteLayout title="404 — sum" foot="docs">
+  <main class="pad">
+    <h1 class="display">Not found.</h1>
+    <p class="lede">
+      That page does not exist. <a href={sitePath()}>Back to sum</a>
+    </p>
+  </main>
+</SiteLayout>

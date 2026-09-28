@@ -1,0 +1,17 @@
+---
+import Side from "../components/Side.astro";
+import SiteLayout from "./SiteLayout.astro";
+
+interface Props {
+  title: string;
+  active: string;
+}
+const { title, active } = Astro.props;
+---
+
+<SiteLayout title={title} foot="docs">
+  <div class="shell">
+    <div class="rail"><Side active={active} /></div>
+    <main class="doc-body"><slot /></main>
+  </div>
+</SiteLayout>
