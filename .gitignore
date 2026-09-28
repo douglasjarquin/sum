@@ -34,4 +34,3 @@ web/dist/
 web/.astro/
 web/test-results/
 web/playwright-report/
-web/dev.url

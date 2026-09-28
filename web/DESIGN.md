@@ -81,7 +81,7 @@ Font URL is exactly `css2?family=JetBrains+Mono:wght@400;500;600&family=Instrume
 
 Six overlapping discs, `oklch(0.72 0.17 H)` at 85% opacity, `mix-blend-mode: var(--blend)` (`multiply` light, `screen` dark) — the only theme-dependent part.
 In a 22px box the 12.5px discs sit at left/top: (7.9,4.8) h25, (6.4,7.5) h80, (3.2,7.5) h145, (1.5,4.8) h200, (3.1,2) h250, (6.4,2) h300.
-`Mark.astro` scales these linearly from a `size` prop.
+`Mark.astro` renders them at that fixed 22px size — the only use is the topbar.
 `Sum Brand.dc.html` specifies a different dark recipe (oklch 0.68 / .6 opacity); the site mockup's single recipe is what the site uses.
 
 ## Content model
