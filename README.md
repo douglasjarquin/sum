@@ -4,6 +4,8 @@
 
 <img width="1280" height="640" alt="eBXSf" src="https://github.com/user-attachments/assets/97ef5898-7ff1-4405-bf5a-413738c2af62" />
 
+Site: <https://douglasjarquin.github.io/sum/>
+
 ## What it is
 
 sum is a small, Herdr-native agent distro. Launch a coding harness in this directory and it becomes the coordinator: it dispatches every approved request to a worker, stays free for inbox notices, gathers results, and brings decisions back to you.

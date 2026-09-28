@@ -16,18 +16,18 @@ timeout_seconds = 3600
 policy_files = ["COORDINATOR.md", "skills/"]
 
 [requires]
-commands = ["git", "mise", "go", "python3", "node"]
+commands = ["git", "mise", "go", "python3", "node", "aube"]
 ```
 
 ## Setup
 
-Run `mise install go python node` once so the pinned Go, Python, and Node tools required by the aggregate are available.
+Run `mise install go python node aube` once so the pinned Go, Python, Node, and aube tools required by the aggregate are available.
 Git must also be available from the host.
-CI enables only these three tools.
+CI enables only these four tools.
 Browser evidence uses the runner's preinstalled Google Chrome through `EVIDENCE_BROWSER`.
 The driver launches headless Chrome with container-safe flags (`--no-sandbox`, `--disable-setuid-sandbox`, `--disable-dev-shm-usage`, `--disable-gpu`) so `DevToolsActivePort` works on GitHub-hosted runners and similar environments.
 Each capture still uses a fresh ephemeral user-data-dir (`mkdtemp`), never the operator's real browser profile; the profile is removed after the job.
-For local verification, prefix the runner command with `MISE_ENABLE_TOOLS=go,python,node` so mise does not automatically install unrelated repository tools.
+For local verification, prefix the runner command with `MISE_ENABLE_TOOLS=go,python,node,aube` so mise does not automatically install unrelated repository tools.
 
 ## Readiness
 
@@ -44,8 +44,10 @@ It runs, in order, the existing commands and stops at the first failure:
 | Check | Command | Proves |
 | --- | --- | --- |
 | Go CLI, Mesh, and skill tests | `cd go && go test ./...` | sumctl command contracts, Herdr Mesh, portable verify/evidence skills, and the offline demo |
+| Web site | `aube -C web install`, `aube -C web run check`, `aube -C web run test:unit`, `aube -C web run build` | the Astro site installs from the lockfile, typechecks, passes unit tests, and builds into `web/dist` under the `/sum/` base |
 
-Scoped tasks stay available for iteration: `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`), and `mise run demo`.
+Scoped tasks stay available for iteration: `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`), `mise run demo`, and the `mise run web:*` tasks.
+`mise run web:test` also runs the Playwright end-to-end suite; it needs the browser once from `mise run web:deps`, so it is manual in the feature maps.
 `mise run lint` is the project's declared lint task (`mise-tasks/lint`); the delivery pipeline Lint gate runs it.
 `mise run test-live` is the explicit real-Herdr smoke test and is not part of the aggregate because it needs an installed Herdr; `mise run doctor` observes the installation and is not a check.
 

@@ -1,0 +1,78 @@
+name: Deploy Astro site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The repository must be public and its Pages source set to "GitHub Actions"
+# (Settings → Pages) before the first deploy; pull requests only build and test.
+# To roll back, revert the deployed commit and let this workflow redeploy it.
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      MISE_ENABLE_TOOLS: node,aube
+    steps:
+      - name: Check out candidate
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Set up pinned tools
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.9.3
+          install_args: node aube
+          cache: false
+
+      - name: Install web dependencies
+        run: aube -C web install
+
+      - name: Check
+        run: aube -C web run check
+
+      - name: Build
+        run: aube -C web run build
+
+      - name: Install Playwright Chromium
+        run: aube -C web exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: aube -C web run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: web/playwright-report/
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: web/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-24.04
+    if: ${{ github.event_name != 'pull_request' }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
