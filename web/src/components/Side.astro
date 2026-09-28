@@ -1,5 +1,6 @@
 ---
 import { sitePath } from "../lib/site-path.mjs";
+import { repoBlob } from "../lib/links.mjs";
 
 interface Props {
   active: string;
@@ -34,17 +35,17 @@ const groups = [
       {
         key: "agents-md",
         label: "AGENTS.md ↗",
-        href: "https://github.com/douglasjarquin/sum/blob/main/AGENTS.md",
+        href: repoBlob("AGENTS.md"),
       },
       {
         key: "coordinator-md",
         label: "COORDINATOR.md ↗",
-        href: "https://github.com/douglasjarquin/sum/blob/main/COORDINATOR.md",
+        href: repoBlob("COORDINATOR.md"),
       },
       {
         key: "verify-md",
         label: "VERIFY.md ↗",
-        href: "https://github.com/douglasjarquin/sum/blob/main/VERIFY.md",
+        href: repoBlob("VERIFY.md"),
       },
     ],
   },

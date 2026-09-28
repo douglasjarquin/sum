@@ -6,7 +6,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 <DocsLayout title="Providers &amp; CLI contract — sum" active="remainder-cli">
   <div class="doc">
     <div class="eyebrow" style="margin-bottom:14px">remainder</div>
-    <h1 style="margin:0 0 16px">Providers &amp; CLI contract</h1>
+    <h1>Providers &amp; CLI contract</h1>
     <p class="lede">
       Provider selection, output formats, flags, --all, and exit codes. An
       explicit selection first checks a short-lived, account/source-bound
@@ -58,11 +58,11 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     <div class="sec">
       <h2>Formats</h2>
       <CodeBlock>
-        <div>remainder --provider codex --profile default                   <span style="color:var(--muted)"># deterministic one-line compact output</span></div>
-        <div>remainder --provider codex --profile default --format json     <span style="color:var(--muted)"># versioned JSON observation</span></div>
-        <div>remainder --provider codex --profile default --format toon     <span style="color:var(--muted)"># the same facts as a TOON document</span></div>
+        <div>remainder --provider codex --profile default                   <span class="c"># deterministic one-line compact output</span></div>
+        <div>remainder --provider codex --profile default --format json     <span class="c"># versioned JSON observation</span></div>
+        <div>remainder --provider codex --profile default --format toon     <span class="c"># the same facts as a TOON document</span></div>
         <div>remainder value --provider PROVIDER --profile PROFILE --window WINDOW --field remaining</div>
-        <div>remainder --all                                                <span style="color:var(--muted)"># Codex, Claude, Grok, Devin concurrently, then Cursor on Linux and macOS</span></div>
+        <div>remainder --all                                                <span class="c"># Codex, Claude, Grok, Devin concurrently, then Cursor on Linux and macOS</span></div>
       </CodeBlock>
       <p style="margin:14px 0 0">
         The scalar fields also include <code>reset</code>, <code>duration</code
@@ -106,9 +106,4 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
     </div>
   </div>
-  <style>
-    .sec p {
-      line-height: 1.7;
-    }
-  </style>
 </DocsLayout>

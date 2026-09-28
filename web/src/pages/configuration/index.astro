@@ -5,7 +5,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 
 <DocsLayout title="Configuration — sum" active="configuration">
   <div class="doc">
-    <h1 style="margin:0 0 16px">Configuration</h1>
+    <h1>Configuration</h1>
     <p class="lede">
       Worker launch defaults, presets, and the capacity schema. <code
         >.sum/settings.json</code
@@ -24,10 +24,10 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
       <CodeBlock>
         <div>./bin/sumctl settings set --worker-harness codex --worker-model gpt-5-codex --worker-reasoning high</div>
-        <div>./bin/sumctl settings set --worker-harness claude        <span style="color:var(--muted)"># switching harness drops the old harness's model</span></div>
-        <div>./bin/sumctl settings set --clear-worker                 <span style="color:var(--muted)"># back to the coordinator's harness</span></div>
-        <div>./bin/sumctl dispatch --repo R --brief B --approved --model o4-mini      <span style="color:var(--muted)"># this task only</span></div>
-        <div>./bin/sumctl dispatch --repo R --brief B --approved --same-as-you        <span style="color:var(--muted)"># coordinator's harness and native model</span></div>
+        <div>./bin/sumctl settings set --worker-harness claude        <span class="c"># switching harness drops the old harness's model</span></div>
+        <div>./bin/sumctl settings set --clear-worker                 <span class="c"># back to the coordinator's harness</span></div>
+        <div>./bin/sumctl dispatch --repo R --brief B --approved --model o4-mini      <span class="c"># this task only</span></div>
+        <div>./bin/sumctl dispatch --repo R --brief B --approved --same-as-you        <span class="c"># coordinator's harness and native model</span></div>
       </CodeBlock>
       <p style="margin:14px 0 0">
         A model or reasoning value is translated only through a flag verified
@@ -52,7 +52,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <div>./bin/sumctl dispatch --repo R --brief B --approved --preset deep</div>
         <div>./bin/sumctl settings set --worker-preset deep</div>
         <div>./bin/sumctl settings set --reviewer-preset review</div>
-        <div>./bin/sumctl preset delete deep                  <span style="color:var(--muted)"># refused while a default still references it</span></div>
+        <div>./bin/sumctl preset delete deep                  <span class="c"># refused while a default still references it</span></div>
       </CodeBlock>
     </div>
     <div class="sec">
@@ -69,14 +69,14 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <div>./bin/sumctl settings set --global 12 --per-repository 1</div>
         <div>./bin/sumctl settings set --clear-capacity</div>
         <div>./bin/sumctl execution show TASK_ID</div>
-        <div>./bin/sumctl execution park TASK_ID --attempt ATTEMPT_ID     <span style="color:var(--muted)"># inspect stopped execution; preserve unfinished work</span></div>
-        <div>./bin/sumctl execution resume TASK_ID --attempt ATTEMPT_ID   <span style="color:var(--muted)"># reacquire capacity and launch approved work</span></div>
+        <div>./bin/sumctl execution park TASK_ID --attempt ATTEMPT_ID     <span class="c"># inspect stopped execution; preserve unfinished work</span></div>
+        <div>./bin/sumctl execution resume TASK_ID --attempt ATTEMPT_ID   <span class="c"># reacquire capacity and launch approved work</span></div>
       </CodeBlock>
       <p style="margin:14px 0 12px">The settings file shape:</p>
       <CodeBlock>
         <div>&#123;</div>
         <div>&#32;&#32;"schema": 1,</div>
-        <div>&#32;&#32;"capacity": &#123;"global": N, "per_repository": M&#125;,          <span style="color:var(--muted)"># 1–64; per_repository ≤ global</span></div>
+        <div>&#32;&#32;"capacity": &#123;"global": N, "per_repository": M&#125;,          <span class="c"># 1–64; per_repository ≤ global</span></div>
         <div>&#32;&#32;"worker": &#123;"harness": "codex", "model": "...", "reasoning": "..."&#125; | &#123;"preset": "deep"&#125;,</div>
         <div>&#32;&#32;"presets": &#123;"deep": &#123;"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1&#125;&#125;,</div>
         <div>&#32;&#32;"reviewer": &#123;"preset": "review"&#125;,</div>
@@ -91,9 +91,4 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
     </div>
   </div>
-  <style>
-    .sec p {
-      line-height: 1.7;
-    }
-  </style>
 </DocsLayout>

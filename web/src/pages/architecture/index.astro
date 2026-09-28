@@ -5,7 +5,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 
 <DocsLayout title="Architecture — sum" active="architecture">
   <div class="doc">
-    <h1 style="margin:0 0 16px">Architecture</h1>
+    <h1>Architecture</h1>
     <p class="lede">
       Roles, state, and what ships in the distro. Instructions and skills do
       the reasoning. Herdr owns processes and worktrees. A small synchronous
@@ -83,10 +83,10 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         > is the bounded read beside it:
       </p>
       <CodeBlock>
-        <div>./bin/sumctl context TASK_ID                              <span style="color:var(--muted)"># outline: counts, outstanding decisions, latest handoff, cursor</span></div>
+        <div>./bin/sumctl context TASK_ID                              <span class="c"># outline: counts, outstanding decisions, latest handoff, cursor</span></div>
         <div>./bin/sumctl context TASK_ID --role worker|reviewer|coordinator</div>
         <div>./bin/sumctl context TASK_ID --section decisions --after 20 --limit 20</div>
-        <div>./bin/sumctl context TASK_ID --section brief --revision r1 <span style="color:var(--muted)"># hash-verified, never rewritten</span></div>
+        <div>./bin/sumctl context TASK_ID --section brief --revision r1 <span class="c"># hash-verified, never rewritten</span></div>
         <div>./bin/sumctl context TASK_ID --since CURSOR</div>
         <div>./bin/sumctl notes TASK_ID --text 'finding'</div>
         <div>./bin/sumctl help [TOPIC]</div>
@@ -160,9 +160,4 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
     </div>
   </div>
-  <style>
-    .sec p {
-      line-height: 1.7;
-    }
-  </style>
 </DocsLayout>

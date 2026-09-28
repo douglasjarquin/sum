@@ -4,7 +4,17 @@ import SiteLayout from "./SiteLayout.astro";
 
 interface Props {
   title: string;
-  active: string;
+  active:
+    | "docs"
+    | "install"
+    | "architecture"
+    | "verification"
+    | "skills"
+    | "configuration"
+    | "herdr"
+    | "update"
+    | "remainder"
+    | "remainder-cli";
 }
 const { title, active } = Astro.props;
 ---

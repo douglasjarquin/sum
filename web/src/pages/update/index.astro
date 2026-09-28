@@ -5,7 +5,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 
 <DocsLayout title="Update &amp; rollback — sum" active="update">
   <div class="doc">
-    <h1 style="margin:0 0 16px">Update &amp; rollback</h1>
+    <h1>Update &amp; rollback</h1>
     <p class="lede">
       Update, rollback, refresh, and runtime releases. An update activates only
       a revision merged on the sum origin default branch, resolved to an
@@ -14,10 +14,10 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     <div class="sec">
       <h2>Update and roll back</h2>
       <CodeBlock>
-        <div>./bin/sumctl update check          <span style="color:var(--muted)"># fetch origin, resolve the merged revision, report default/active/compatibility</span></div>
-        <div>./bin/sumctl update apply          <span style="color:var(--muted)"># stage the release, validate coexistence, switch .local/current, fast-forward a clean clone</span></div>
+        <div>./bin/sumctl update check          <span class="c"># fetch origin, resolve the merged revision, report default/active/compatibility</span></div>
+        <div>./bin/sumctl update apply          <span class="c"># stage the release, validate coexistence, switch .local/current, fast-forward a clean clone</span></div>
         <div>./bin/sumctl update status</div>
-        <div>./bin/sumctl update rollback       <span style="color:var(--muted)"># reselect the recorded previous approved runtime; records, questions, reports, worktrees stay</span></div>
+        <div>./bin/sumctl update rollback       <span class="c"># reselect the recorded previous approved runtime; records, questions, reports, worktrees stay</span></div>
         <div>./bin/sumctl update recover --generation GENERATION</div>
       </CodeBlock>
       <p style="margin:14px 0 0">
@@ -35,8 +35,8 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     <div class="sec">
       <h2>Refresh running sessions</h2>
       <CodeBlock>
-        <div>./bin/sumctl refresh request               <span style="color:var(--muted)"># coordinator contract plus every non-archived task</span></div>
-        <div>./bin/sumctl refresh status                <span style="color:var(--muted)"># confirmed / submitted-unconfirmed / pending-busy / pending-unreachable / unreachable / capability-deferred</span></div>
+        <div>./bin/sumctl refresh request               <span class="c"># coordinator contract plus every non-archived task</span></div>
+        <div>./bin/sumctl refresh status                <span class="c"># confirmed / submitted-unconfirmed / pending-busy / pending-unreachable / unreachable / capability-deferred</span></div>
         <div>./bin/sumctl refresh adopt --coordinator rN</div>
       </CodeBlock>
       <p style="margin:14px 0 0">
@@ -55,7 +55,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     <div class="sec">
       <h2>Runtime releases</h2>
       <CodeBlock>
-        <div>./bin/sumctl release stage            <span style="color:var(--muted)"># builds .local/releases/&lt;sha&gt; for HEAD; nothing is activated</span></div>
+        <div>./bin/sumctl release stage            <span class="c"># builds .local/releases/&lt;sha&gt; for HEAD; nothing is activated</span></div>
         <div>./bin/sumctl release list</div>
       </CodeBlock>
       <p style="margin:14px 0 0">
@@ -68,9 +68,4 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
     </div>
   </div>
-  <style>
-    .sec p {
-      line-height: 1.7;
-    }
-  </style>
 </DocsLayout>

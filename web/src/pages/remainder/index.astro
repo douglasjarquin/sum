@@ -2,6 +2,7 @@
 import CodeBlock from "../../components/CodeBlock.astro";
 import SiteLayout from "../../layouts/SiteLayout.astro";
 import { sitePath } from "../../lib/site-path.mjs";
+import { REMAINDER_URL } from "../../lib/links.mjs";
 ---
 
 <SiteLayout title="remainder — Local evidence, not a dashboard." foot="remainder">
@@ -19,7 +20,7 @@ import { sitePath } from "../../lib/site-path.mjs";
       </p>
       <div class="actions">
         <a class="btn" href={sitePath("remainder-cli")}>Providers &amp; CLI contract</a>
-        <a class="btn outline" href="https://github.com/douglasjarquin/remainder">github ↗</a>
+        <a class="btn outline" href={REMAINDER_URL}>github ↗</a>
       </div>
     </div>
     <div class="band">

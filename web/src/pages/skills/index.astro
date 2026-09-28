@@ -1,11 +1,12 @@
 ---
 import CodeBlock from "../../components/CodeBlock.astro";
 import DocsLayout from "../../layouts/DocsLayout.astro";
+import { repoBlob } from "../../lib/links.mjs";
 ---
 
 <DocsLayout title="Skills — sum" active="skills">
   <div class="doc">
-    <h1 style="margin:0 0 16px">Skills</h1>
+    <h1>Skills</h1>
     <p class="lede">
       Agent-loaded procedures ship with the distro: <code>AGENTS.md</code> is a
       short role bootstrap every session loads, <code>COORDINATOR.md</code> is
@@ -68,8 +69,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         Delegates explicit skill and agent selections to the pinned Vercel
         Skills CLI in project copy mode. Skills reach agents as explicit file
         references (path, size, hash) to read when needed, not as an assumed
-        skill standard. See <a
-          href="https://github.com/douglasjarquin/sum/blob/main/docs/sum-skills.md"
+        skill standard. See <a href={repoBlob("docs/sum-skills.md")}
           >docs/sum-skills.md ↗</a
         >.
       </p>
@@ -86,9 +86,4 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
     </div>
   </div>
-  <style>
-    .sec p {
-      line-height: 1.7;
-    }
-  </style>
 </DocsLayout>

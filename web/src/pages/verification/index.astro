@@ -5,7 +5,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 
 <DocsLayout title="Verification — sum" active="verification">
   <div class="doc">
-    <h1 style="margin:0 0 16px">Verification</h1>
+    <h1>Verification</h1>
     <p class="lede">
       Evidence publication, the delivery pipeline, and brief revisions. The
       table records what has run, never that a change may merge.
@@ -73,10 +73,10 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         of the time shown.
       </p>
       <CodeBlock>
-        <div>./bin/sumctl pipeline run TASK_ID            <span style="color:var(--muted)"># gates in order through opening and reconciling the PR; stops at first failure</span></div>
-        <div>./bin/sumctl pipeline run TASK_ID --no-pr    <span style="color:var(--muted)"># stops after Push</span></div>
-        <div>./bin/sumctl pipeline ci TASK_ID             <span style="color:var(--muted)"># re-read the checks GitHub reports</span></div>
-        <div>./bin/sumctl verify TASK_ID --accept-missing-evidence   <span style="color:var(--muted)"># the user waives required evidence; recorded</span></div>
+        <div>./bin/sumctl pipeline run TASK_ID            <span class="c"># gates in order through opening and reconciling the PR; stops at first failure</span></div>
+        <div>./bin/sumctl pipeline run TASK_ID --no-pr    <span class="c"># stops after Push</span></div>
+        <div>./bin/sumctl pipeline ci TASK_ID             <span class="c"># re-read the checks GitHub reports</span></div>
+        <div>./bin/sumctl verify TASK_ID --accept-missing-evidence   <span class="c"># the user waives required evidence; recorded</span></div>
       </CodeBlock>
     </div>
     <div class="sec">
@@ -109,20 +109,15 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
       <CodeBlock>
         <div>./bin/sumctl brief list TASK_ID</div>
-        <div>./bin/sumctl report TASK_ID --file r.md --handoff h.json               <span style="color:var(--muted)"># worker</span></div>
-        <div>./bin/sumctl review TASK_ID --verdict changes-requested --candidate SHA --file f.md   <span style="color:var(--muted)"># reviewer</span></div>
-        <div>./bin/sumctl verify TASK_ID --candidate SHA --result pass --text '...'  <span style="color:var(--muted)"># coordinator</span></div>
-        <div>./bin/sumctl verify TASK_ID --candidate SHA --execute                  <span style="color:var(--muted)"># run VERIFY.md in a separate checkout</span></div>
+        <div>./bin/sumctl report TASK_ID --file r.md --handoff h.json               <span class="c"># worker</span></div>
+        <div>./bin/sumctl review TASK_ID --verdict changes-requested --candidate SHA --file f.md   <span class="c"># reviewer</span></div>
+        <div>./bin/sumctl verify TASK_ID --candidate SHA --result pass --text '...'  <span class="c"># coordinator</span></div>
+        <div>./bin/sumctl verify TASK_ID --candidate SHA --execute                  <span class="c"># run VERIFY.md in a separate checkout</span></div>
         <div>./bin/sumctl pr reconcile TASK_ID --number N</div>
         <div>./bin/sumctl brief regenerate TASK_ID</div>
         <div>./bin/sumctl brief request TASK_ID rN</div>
-        <div>./bin/sumctl brief adopt TASK_ID rN                                    <span style="color:var(--muted)"># worker</span></div>
+        <div>./bin/sumctl brief adopt TASK_ID rN                                    <span class="c"># worker</span></div>
       </CodeBlock>
     </div>
   </div>
-  <style>
-    .sec p {
-      line-height: 1.7;
-    }
-  </style>
 </DocsLayout>

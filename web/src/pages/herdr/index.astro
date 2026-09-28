@@ -5,7 +5,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 
 <DocsLayout title="Herdr backend — sum" active="herdr">
   <div class="doc">
-    <h1 style="margin:0 0 16px">Herdr backend</h1>
+    <h1>Herdr backend</h1>
     <p class="lede">
       Herdr owns processes and worktrees. Pane identity, env start and stop,
       native event delivery, and native metadata.
@@ -36,9 +36,9 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     <div class="sec">
       <h2>Environments</h2>
       <CodeBlock>
-        <div>./bin/sumctl env discover TASK_ID        <span style="color:var(--muted)"># declared dev commands from mise/package/Makefile/justfile/Procfile/compose/Dockerfile/devcontainer</span></div>
+        <div>./bin/sumctl env discover TASK_ID        <span class="c"># declared dev commands from mise/package/Makefile/justfile/Procfile/compose/Dockerfile/devcontainer</span></div>
         <div>./bin/sumctl env record TASK_ID --url http://127.0.0.1:PORT [--log PATH | --pane ID | --container ID]</div>
-        <div>./bin/sumctl env inspect TASK_ID         <span style="color:var(--muted)"># re-observe once: stale URLs, configuration drift, missing logs</span></div>
+        <div>./bin/sumctl env inspect TASK_ID         <span class="c"># re-observe once: stale URLs, configuration drift, missing logs</span></div>
         <div>./bin/sumctl env start TASK_ID --command NAME [--url ... | --match TEXT] [--log PATH] [--timeout S]</div>
         <div>./bin/sumctl env stop TASK_ID [--service ID]</div>
       </CodeBlock>
@@ -55,9 +55,9 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     <div class="sec">
       <h2>Native event delivery (optional)</h2>
       <CodeBlock>
-        <div>./bin/sumctl hook enable      <span style="color:var(--muted)"># coordinator only; writes a Herdr plugin manifest under .sum/hook/plugin/ and links it live</span></div>
+        <div>./bin/sumctl hook enable      <span class="c"># coordinator only; writes a Herdr plugin manifest under .sum/hook/plugin/ and links it live</span></div>
         <div>./bin/sumctl hook status</div>
-        <div>./bin/sumctl hook disable     <span style="color:var(--muted)"># or --unlink</span></div>
+        <div>./bin/sumctl hook disable     <span class="c"># or --unlink</span></div>
       </CodeBlock>
       <p style="margin:14px 0 0">
         On a recorded pane going idle/done, the handler re-observes the pane and
@@ -101,9 +101,4 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
     </div>
   </div>
-  <style>
-    .sec p {
-      line-height: 1.7;
-    }
-  </style>
 </DocsLayout>

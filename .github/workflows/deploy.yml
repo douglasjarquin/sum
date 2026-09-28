@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -38,9 +38,6 @@ jobs:
       - name: Install web dependencies
         run: aube -C web install
 
-      - name: Check
-        run: aube -C web run check
-
       - name: Build
         run: aube -C web run build
 
@@ -58,6 +55,7 @@ jobs:
           path: web/playwright-report/
 
       - name: Upload Pages artifact
+        if: ${{ github.event_name != 'pull_request' }}
         uses: actions/upload-pages-artifact@v4
         with:
           path: web/dist

@@ -6,7 +6,7 @@ import { sitePath } from "../../lib/site-path.mjs";
 
 <DocsLayout title="Install — sum" active="install">
   <div class="doc">
-    <h1 style="margin:0 0 16px">Install</h1>
+    <h1>Install</h1>
     <p class="lede">
       Prerequisites: <code>mise</code>, Git, and an authenticated coding harness
       available on the execution host. Setup installs the other dependencies
@@ -23,7 +23,7 @@ import { sitePath } from "../../lib/site-path.mjs";
         <div>cd /path/to/sum</div>
         <div>mise trust</div>
         <div>mise run setup</div>
-        <div>codex                         <span style="color:var(--muted)"># or claude, grok, cursor-agent, pi, opencode, devin, ...</span></div>
+        <div>codex                         <span class="c"># or claude, grok, cursor-agent, pi, opencode, devin, ...</span></div>
       </CodeBlock>
       <p style="margin:14px 0 0">
         If Herdr is not installed yet, run <code
@@ -62,7 +62,7 @@ import { sitePath } from "../../lib/site-path.mjs";
       <h2>No installed harness?</h2>
       <CodeBlock>
         <div>mise run setup -- --install-codex</div>
-        <div>mise exec -- codex             <span style="color:var(--muted)"># authenticate using the normal provider flow</span></div>
+        <div>mise exec -- codex             <span class="c"># authenticate using the normal provider flow</span></div>
       </CodeBlock>
       <p style="margin:14px 0 0">
         This optional path installs a pinned Codex CLI inside <code
@@ -91,9 +91,4 @@ import { sitePath } from "../../lib/site-path.mjs";
       </p>
     </div>
   </div>
-  <style>
-    .sec p {
-      line-height: 1.7;
-    }
-  </style>
 </DocsLayout>

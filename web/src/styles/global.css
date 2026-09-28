@@ -61,7 +61,6 @@ blockquote{margin:0;padding:14px 18px;border-left:2px solid var(--accent);font-f
 /* key/value grids — mockup row labels are accent by default, serif for flows */
 .kv{display:grid;grid-template-columns:140px 1fr;font-size:12.5px}
 .kv>*{padding:10px 0;border-bottom:1px solid var(--rule);margin:0}
-.kv>:last-child{border-bottom:0}
 .kv>:nth-last-child(-n+2){border-bottom:0}
 .kv.md>*{padding:12px 0}
 .kv.lg>*{padding:16px 0}
@@ -107,6 +106,8 @@ blockquote{margin:0;padding:14px 18px;border-left:2px solid var(--accent);font-f
 /* doc pages */
 .doc{max-width:760px}
 .sec{padding:28px 0;border-top:1px solid var(--rule)}
+.doc .sec p{line-height:1.7}
+.doc-body h1{margin:0 0 16px}
 
 /* nav */
 .topbar{display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center;padding:14px clamp(16px,3vw,32px);border-bottom:1px solid var(--rule);font-size:11px;text-transform:uppercase;letter-spacing:.08em}
