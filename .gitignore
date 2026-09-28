@@ -27,3 +27,10 @@ opencode.json
 
 # Codex omo ultrawork local state (never product).
 .omo/
+
+# Web build and test output under web/.
+web/node_modules/
+web/dist/
+web/.astro/
+web/test-results/
+web/playwright-report/
