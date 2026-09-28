@@ -1,0 +1,122 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Verification — sum">
+  <div class="doc">
+    <h1>Verification</h1>
+    <p class="lede">
+      Evidence publication, the delivery pipeline, and brief revisions. The
+      table records what has run, never that a change may merge.
+    </p>
+    <div class="sec">
+      <h2 style="margin:0 0 14px">Nine ordered gates</h2>
+      <div class="grid3" style="margin-bottom:14px">
+        <div>
+          <div class="n">1</div>
+          <div class="t">Intent</div>
+        </div>
+        <div>
+          <div class="n">2</div>
+          <div class="t">Rebase</div>
+          <div class="d">
+            observes the candidate against its base branch without ever
+            rewriting it
+          </div>
+        </div>
+        <div>
+          <div class="n">3</div>
+          <div class="t">Review</div>
+        </div>
+        <div>
+          <div class="n">4</div>
+          <div class="t">Test</div>
+          <div class="d">
+            blocked until required screenshot, screencast, or red/green evidence
+            exists
+          </div>
+        </div>
+        <div>
+          <div class="n">5</div>
+          <div class="t">Document</div>
+        </div>
+        <div>
+          <div class="n">6</div>
+          <div class="t">Lint</div>
+          <div class="d">runs whatever lint task the project itself declares</div>
+        </div>
+        <div>
+          <div class="n">7</div>
+          <div class="t">Push</div>
+          <div class="d">
+            fast-forward pushes the reported candidate and nothing else
+          </div>
+        </div>
+        <div>
+          <div class="n">8</div>
+          <div class="t">PR</div>
+        </div>
+        <div>
+          <div class="n">9</div>
+          <div class="t">CI</div>
+          <div class="d">
+            observed, never watched; read at pr reconcile and on demand
+          </div>
+        </div>
+      </div>
+      <p>
+        Derived from the task's own records and rendered as a status table in
+        one marked <code>&lt;!-- sum-pipeline:* --&gt;</code> block of the
+        reconciled PR, beside the evidence block. CI is observed, never watched,
+        because sum runs no daemon and polls nothing: a green row means green as
+        of the time shown.
+      </p>
+      <div class="codeblock">
+        <div>./bin/sumctl pipeline run TASK_ID            <span class="c"># gates in order through opening and reconciling the PR; stops at first failure</span></div>
+        <div>./bin/sumctl pipeline run TASK_ID --no-pr    <span class="c"># stops after Push</span></div>
+        <div>./bin/sumctl pipeline ci TASK_ID             <span class="c"># re-read the checks GitHub reports</span></div>
+        <div>./bin/sumctl verify TASK_ID --accept-missing-evidence   <span class="c"># the user waives required evidence; recorded</span></div>
+      </div>
+    </div>
+    <div class="sec">
+      <h2>Evidence publication into the PR</h2>
+      <p>
+        On by default: <code>pr reconcile</code> runs the evidence publisher for
+        every evidence run the worker's handoff lists, and <code
+          >sumctl pr evidence</code
+        > repeats it on demand. Validated before/after media (hashes,
+        containment, size, type, secret checks) is uploaded through <code
+          >gh pr edit --attach</code
+        > (GitHub CLI 2.99+) into one marked block of the reconciled PR;
+        receipts per content hash and destination so a second publish uploads
+        nothing; prose outside the block preserved; a foreign or hand-edited
+        block refused; every failure leaves the previous body and the local
+        originals intact. <code
+          >"evidence": &#123;"auto_publish": false&#125;</code
+        > in <code>.sum/settings.json</code> turns the automatic step off.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Brief revisions</h2>
+      <p>
+        A worker brief is generated from the record: the approved task text,
+        base, repository, and kind (immutable input), the decisions recorded so
+        far, the current worker procedure, and the return-channel commands. Each
+        task keeps a <code>versions.json</code> sidecar with a numbered list of
+        brief revisions. The file at <code>brief_path</code> and every earlier
+        revision are never rewritten, so a worker mid-read keeps a valid brief.
+      </p>
+      <div class="codeblock">
+        <div>./bin/sumctl brief list TASK_ID</div>
+        <div>./bin/sumctl report TASK_ID --file r.md --handoff h.json               <span class="c"># worker</span></div>
+        <div>./bin/sumctl review TASK_ID --verdict changes-requested --candidate SHA --file f.md   <span class="c"># reviewer</span></div>
+        <div>./bin/sumctl verify TASK_ID --candidate SHA --result pass --text '...'  <span class="c"># coordinator</span></div>
+        <div>./bin/sumctl verify TASK_ID --candidate SHA --execute                  <span class="c"># run VERIFY.md in a separate checkout</span></div>
+        <div>./bin/sumctl pr reconcile TASK_ID --number N</div>
+        <div>./bin/sumctl brief regenerate TASK_ID</div>
+        <div>./bin/sumctl brief request TASK_ID rN</div>
+        <div>./bin/sumctl brief adopt TASK_ID rN                                    <span class="c"># worker</span></div>
+      </div>
+    </div>
+  </div>
+</DocsLayout>

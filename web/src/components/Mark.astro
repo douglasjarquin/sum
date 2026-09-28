@@ -1,0 +1,31 @@
+---
+// Six overlapping discs; hues and offsets are the mark recipe from the site mockup.
+const discs = [
+  { h: 25, x: 7.9, y: 4.8 },
+  { h: 80, x: 6.4, y: 7.5 },
+  { h: 145, x: 3.2, y: 7.5 },
+  { h: 200, x: 1.5, y: 4.8 },
+  { h: 250, x: 3.1, y: 2 },
+  { h: 300, x: 6.4, y: 2 },
+];
+---
+
+<span class="mark" aria-hidden="true">
+  {
+    discs.map((disc) => (
+      <span
+        style={`position:absolute;width:12.5px;height:12.5px;border-radius:50%;background:oklch(0.72 0.17 ${disc.h});opacity:.85;mix-blend-mode:var(--blend);left:${disc.x}px;top:${disc.y}px`}
+      />
+    ))
+  }
+</span>
+
+<style>
+  .mark {
+    position: relative;
+    display: inline-block;
+    flex: none;
+    width: 22px;
+    height: 22px;
+  }
+</style>

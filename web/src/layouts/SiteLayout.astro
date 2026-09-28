@@ -1,0 +1,146 @@
+---
+import Mark from "../components/Mark.astro";
+import { sitePath } from "../lib/site-path.mjs";
+import { REPO_URL, REMAINDER_URL } from "../lib/links.mjs";
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  foot?: "home" | "remainder" | "docs";
+}
+const { title, foot = "docs" } = Astro.props;
+const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
+const ogImage = new URL(asset("og-1200x630.png"), import.meta.env.SITE)
+  .toString();
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Dispatch approved work to isolated agents. A small Herdr-native distro: coordinator, workers, verification."
+    />
+    <title>{title}</title>
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="32x32"
+      href={asset("favicon-32.png")}
+    />
+    <link rel="apple-touch-icon" href={asset("apple-touch-icon-180.png")} />
+    <meta
+      property="og:title"
+      content="sum — Many agents. One finished task."
+    />
+    <meta
+      property="og:description"
+      content="Dispatch approved work to isolated agents. A small Herdr-native distro: coordinator, workers, verification."
+    />
+    <meta property="og:image" content={ogImage} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <script is:inline>
+      document.documentElement.classList.add("js");
+      try {
+        var saved = localStorage.getItem("sum-site-theme");
+        if (saved === "light" || saved === "dark")
+          document.documentElement.dataset.theme = saved;
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <a class="brand" href={sitePath()}><Mark />sum</a>
+        <span class="tag">Herdr-native agent distro</span>
+        <span class="grow"></span>
+        <a href={sitePath("docs")}>docs</a>
+        <a href={sitePath("install")}>install</a>
+        <a href={sitePath("remainder")}>remainder</a>
+        <a href={REPO_URL}>github ↗</a>
+        <button
+          type="button"
+          class="theme"
+          id="theme-toggle"
+          aria-label="Toggle color theme"></button>
+      </header>
+      <slot />
+      {
+        foot === "home" && (
+          <footer class="foot">
+            <span>MIT</span>
+            <span>
+              Stands on Firstmate, Herdr, Oh My Pi, Solo, Unpeel, and others
+            </span>
+            <a href={sitePath("docs")}>Documentation</a>
+            <span class="grow" />
+            <span>
+              Sister project: <a href={sitePath("remainder")}>remainder</a>
+            </span>
+          </footer>
+        )
+      }
+      {
+        foot === "remainder" && (
+          <footer class="foot">
+            <span>MIT</span>
+            <a href={REMAINDER_URL}>github.com/douglasjarquin/remainder</a>
+            <span class="grow" />
+            <span>Pinchos and Sum remain independent consumers.</span>
+          </footer>
+        )
+      }
+      {
+        foot === "docs" && (
+          <footer class="foot">
+            <span>MIT</span>
+            <a href={REPO_URL}>github.com/douglasjarquin/sum</a>
+            <a href={REMAINDER_URL}>github.com/douglasjarquin/remainder</a>
+            <span class="grow" />
+            <a href={sitePath()}>↑ home</a>
+          </footer>
+        )
+      }
+    </div>
+    <script is:inline>
+      (function () {
+        var btn = document.getElementById("theme-toggle");
+        if (!btn) return;
+        var mq = window.matchMedia
+          ? window.matchMedia("(prefers-color-scheme: dark)")
+          : null;
+        function effective() {
+          return (
+            document.documentElement.dataset.theme ||
+            (mq && mq.matches ? "dark" : "light")
+          );
+        }
+        function paint() {
+          var override = document.documentElement.dataset.theme;
+          btn.textContent = effective() === "dark" ? "light" : "dark";
+          btn.title = override
+            ? "Theme override on; following " + override
+            : "Following system theme";
+        }
+        btn.addEventListener("click", function () {
+          var next = effective() === "dark" ? "light" : "dark";
+          try {
+            localStorage.setItem("sum-site-theme", next);
+          } catch (e) {}
+          document.documentElement.dataset.theme = next;
+          paint();
+        });
+        if (mq && mq.addEventListener) mq.addEventListener("change", paint);
+        paint();
+      })();
+    </script>
+  </body>
+</html>

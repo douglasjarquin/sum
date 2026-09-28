@@ -1,0 +1,56 @@
+---
+import { sitePath } from "../lib/site-path.mjs";
+import { repoBlob } from "../lib/links.mjs";
+
+const current = Astro.url.pathname;
+const internal = (key: string, label: string) => ({ label, href: sitePath(key) });
+const groups = [
+  {
+    label: "sum",
+    items: [
+      internal("docs", "Documentation"),
+      internal("install", "Install"),
+      internal("architecture", "Architecture"),
+      internal("verification", "Verification"),
+      internal("skills", "Skills"),
+      internal("configuration", "Configuration"),
+      internal("herdr", "Herdr backend"),
+      internal("update", "Update & rollback"),
+    ],
+  },
+  {
+    label: "remainder",
+    items: [
+      internal("remainder", "Overview"),
+      internal("remainder-cli", "Providers & CLI contract"),
+    ],
+  },
+  {
+    label: "source",
+    items: [
+      { label: "AGENTS.md ↗", href: repoBlob("AGENTS.md") },
+      { label: "COORDINATOR.md ↗", href: repoBlob("COORDINATOR.md") },
+      { label: "VERIFY.md ↗", href: repoBlob("VERIFY.md") },
+    ],
+  },
+];
+---
+
+<nav class="side" aria-label="Documentation">
+  {
+    groups.map((group) => (
+      <>
+        <div class="lbl">{group.label}</div>
+        {group.items.map((item) => (
+          <a
+            href={item.href}
+            class={item.href === current ? "active" : undefined}
+            aria-current={item.href === current ? "page" : undefined}
+          >
+            {item.label}
+          </a>
+        ))}
+      </>
+    ))
+  }
+</nav>

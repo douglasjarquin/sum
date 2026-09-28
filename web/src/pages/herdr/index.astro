@@ -1,0 +1,103 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Herdr backend — sum">
+  <div class="doc">
+    <h1>Herdr backend</h1>
+    <p class="lede">
+      Herdr owns processes and worktrees. Pane identity, env start and stop,
+      native event delivery, and native metadata.
+    </p>
+    <div class="sec">
+      <h2>Pane identity</h2>
+      <p>
+        Herdr 0.9.0 pane and agent objects carry a <code>terminal_id</code> and,
+        when an official integration reports it, an <code>agent_session</code>.
+        sum judges a recorded address against those fields. It invents no
+        generation field, and a socket path or a bare pid is never identity.
+      </p>
+      <div class="kv" style="grid-template-columns:1fr">
+        <div class="v">
+          A <code>server stop</code> and restart restores the saved layout under
+          the same pane IDs, with a new terminal_id and a new shell.
+        </div>
+        <div class="v" style="border-bottom:1px solid var(--rule)">
+          A <code>kill -9</code> restart restores only what was saved; a later
+          pane can receive a freed ID.
+        </div>
+        <div class="v">
+          A live handoff keeps pane IDs and the shell process, and still issues
+          a new terminal_id.
+        </div>
+      </div>
+    </div>
+    <div class="sec">
+      <h2>Environments</h2>
+      <div class="codeblock">
+        <div>./bin/sumctl env discover TASK_ID        <span class="c"># declared dev commands from mise/package/Makefile/justfile/Procfile/compose/Dockerfile/devcontainer</span></div>
+        <div>./bin/sumctl env record TASK_ID --url http://127.0.0.1:PORT [--log PATH | --pane ID | --container ID]</div>
+        <div>./bin/sumctl env inspect TASK_ID         <span class="c"># re-observe once: stale URLs, configuration drift, missing logs</span></div>
+        <div>./bin/sumctl env start TASK_ID --command NAME [--url ... | --match TEXT] [--log PATH] [--timeout S]</div>
+        <div>./bin/sumctl env stop TASK_ID [--service ID]</div>
+      </div>
+      <p>
+        <code>env start</code> launches one command the repository declares in a
+        pane split under the worker pane inside the checkout. A timeout is an
+        explicit failed state, never a retry or restart. <code>env stop</code>
+        re-proves that identity, sends exactly one ctrl+c through Herdr, waits a
+        bound for exit, verifies the port is released, and closes only the pane
+        sum created. Environments started by hand are never stop targets.
+        Credentials in URLs, labels, or paths are refused.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Native event delivery (optional)</h2>
+      <div class="codeblock">
+        <div>./bin/sumctl hook enable      <span class="c"># coordinator only; writes a Herdr plugin manifest under .sum/hook/plugin/ and links it live</span></div>
+        <div>./bin/sumctl hook status</div>
+        <div>./bin/sumctl hook disable     <span class="c"># or --unlink</span></div>
+      </div>
+      <p>
+        On a recorded pane going idle/done, the handler re-observes the pane and
+        runs one bounded pump toward that recipient: pending questions, reports,
+        answers, and requested brief revisions are delivered at the boundary
+        instead of waiting for the next rundown. A recorded worker seen blocked,
+        idle with nothing owed, exited, or closed produces an <strong
+          >attention</strong
+        > record on the task. It is evidence, not a question, a result, a quota
+        diagnosis, or permission to approve anything. Disabled, degraded, or
+        crashing, the handler changes nothing about ask/report, init, bind, and
+        pump.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Native metadata (optional)</h2>
+      <div class="codeblock">
+        <div>./bin/sumctl metadata enable</div>
+        <div>./bin/sumctl metadata sync [--force]</div>
+        <div>./bin/sumctl metadata status</div>
+        <div>./bin/sumctl metadata inbox [--grouped] [--open --placement split|overlay|tab|zoomed]</div>
+        <div>./bin/sumctl metadata disable</div>
+      </div>
+      <p style="margin:14px 0 12px">
+        sum task state projected as namespaced <code>sum_*</code> tokens on the
+        endpoints sum owns, rendered by sidebar rows the user chooses to add.
+        Task panes carry sum_state, sum_pipeline, sum_task, sum_repo, sum_rev,
+        and sum_pr; the coordinator pane carries sum_inbox and sum_tasks. Panes
+        this installation never recorded are never touched.
+      </p>
+      <div class="chips">
+        <span class="chip">needs-decision</span>
+        <span class="chip">needs-attention</span>
+        <span class="chip">review-ready</span>
+        <span class="chip">answer-pending</span>
+        <span class="chip">instruction-refresh-pending</span>
+        <span class="chip">running</span>
+      </div>
+      <p style="margin:12px 0 0">
+        These labels never prove verification or completion.
+      </p>
+    </div>
+  </div>
+</DocsLayout>

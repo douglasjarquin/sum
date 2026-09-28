@@ -1,0 +1,93 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Configuration — sum">
+  <div class="doc">
+    <h1>Configuration</h1>
+    <p class="lede">
+      Worker launch defaults, presets, and the capacity schema. <code
+        >.sum/settings.json</code
+      > is the one owner of executable admission values, worker launch defaults,
+      named presets, and the evidence publication switch.
+    </p>
+    <div class="sec">
+      <h2>Worker harness and model</h2>
+      <p>
+        <code>--harness</code> is optional. The precedence is fixed: an explicit
+        instruction (<code>--harness</code>, <code>--model</code>, <code
+          >--reasoning</code
+        >, or <code>--same-as-you</code>), then the saved worker default in
+        .sum/settings.json, then the reliably known root harness, then the
+        disclosed native default.
+      </p>
+      <div class="codeblock">
+        <div>./bin/sumctl settings set --worker-harness codex --worker-model gpt-5-codex --worker-reasoning high</div>
+        <div>./bin/sumctl settings set --worker-harness claude        <span class="c"># switching harness drops the old harness's model</span></div>
+        <div>./bin/sumctl settings set --clear-worker                 <span class="c"># back to the coordinator's harness</span></div>
+        <div>./bin/sumctl dispatch --repo R --brief B --approved --model o4-mini      <span class="c"># this task only</span></div>
+        <div>./bin/sumctl dispatch --repo R --brief B --approved --same-as-you        <span class="c"># coordinator's harness and native model</span></div>
+      </div>
+      <p>
+        A model or reasoning value is translated only through a flag verified
+        from the installed CLI's own help. A harness without a verified flag
+        refuses --model/--reasoning instead of guessing; pass the native
+        argument yourself with <code>--arg</code>. Saving a default affects
+        future dispatches only.
+      </p>
+    </div>
+    <div class="sec">
+      <h2>Named launch presets</h2>
+      <p>
+        A preset is a named, validated harness/model/argv shortcut in the same
+        .sum/settings.json, so you can say "use deep for this task" instead of
+        repeating launch arguments. It is not an agent, a role, a credential
+        store, or a default until you save it as one.
+      </p>
+      <div class="codeblock">
+        <div>./bin/sumctl preset set deep --harness codex --model gpt-5-codex --reasoning high --arg=--search</div>
+        <div>./bin/sumctl preset list</div>
+        <div>./bin/sumctl preset show deep</div>
+        <div>./bin/sumctl dispatch --repo R --brief B --approved --preset deep</div>
+        <div>./bin/sumctl settings set --worker-preset deep</div>
+        <div>./bin/sumctl settings set --reviewer-preset review</div>
+        <div>./bin/sumctl preset delete deep                  <span class="c"># refused while a default still references it</span></div>
+      </div>
+    </div>
+    <div class="sec">
+      <h2>Capacity</h2>
+      <p>
+        Admission is unlimited until a capacity block is configured. An
+        execution slot belongs to a recorded worker attempt or an independent
+        verification run, not to the unfinished task itself. A refused admission
+        launches nothing. Nothing schedules or dispatches work because a slot is
+        free; a dispatch is always an explicit approved instruction.
+      </p>
+      <div class="codeblock">
+        <div>./bin/sumctl settings show</div>
+        <div>./bin/sumctl settings set --global 12 --per-repository 1</div>
+        <div>./bin/sumctl settings set --clear-capacity</div>
+        <div>./bin/sumctl execution show TASK_ID</div>
+        <div>./bin/sumctl execution park TASK_ID --attempt ATTEMPT_ID     <span class="c"># inspect stopped execution; preserve unfinished work</span></div>
+        <div>./bin/sumctl execution resume TASK_ID --attempt ATTEMPT_ID   <span class="c"># reacquire capacity and launch approved work</span></div>
+      </div>
+      <p style="margin:14px 0 12px">The settings file shape:</p>
+      <div class="codeblock">
+        <div>&#123;</div>
+        <div>&#32;&#32;"schema": 1,</div>
+        <div>&#32;&#32;"capacity": &#123;"global": N, "per_repository": M&#125;,          <span class="c"># 1–64; per_repository ≤ global</span></div>
+        <div>&#32;&#32;"worker": &#123;"harness": "codex", "model": "...", "reasoning": "..."&#125; | &#123;"preset": "deep"&#125;,</div>
+        <div>&#32;&#32;"presets": &#123;"deep": &#123;"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1&#125;&#125;,</div>
+        <div>&#32;&#32;"reviewer": &#123;"preset": "review"&#125;,</div>
+        <div>&#32;&#32;"evidence": &#123;"auto_publish": false&#125;</div>
+        <div>&#125;</div>
+      </div>
+      <p>
+        An invalid file is refused with the exact defect before any side effect.
+        Lowering a limit affects future admission only. Raising global never
+        raises per_repository: one checkout gets one writer unless you say
+        otherwise. The settings file travels with <code>sumctl backup</code>.
+      </p>
+    </div>
+  </div>
+</DocsLayout>

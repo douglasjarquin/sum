@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     env:
-      MISE_ENABLE_TOOLS: go,python,node
+      MISE_ENABLE_TOOLS: go,python,node,aube
       EVIDENCE_BROWSER: /usr/bin/google-chrome
     steps:
       - name: Check out candidate
@@ -28,7 +28,7 @@ jobs:
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
           version: 2026.9.3
-          install_args: go python node
+          install_args: go python node aube
           cache: false
 
       - name: Run canonical verification
