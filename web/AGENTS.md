@@ -7,7 +7,7 @@ The repository-level guidance in `../AGENTS.md` still applies here.
 ## Conventions
 
 - Static output with `base: "/sum"`; every internal route URL goes through `sitePath()` in `src/lib/site-path.mjs` so preview, Playwright, and Pages agree on the trailing-slash contract. Files in `public/` are not routes — join `import.meta.env.BASE_URL` directly with no trailing slash (the `asset()` helper in `SiteLayout.astro`).
-- `SiteLayout.astro` owns the document shell: head meta, fonts, topbar, theme script, and the `foot` variant prop (`home` / `remainder` / `docs`). `DocsLayout.astro` adds the sidebar shell for the nine docs routes.
+- `SiteLayout.astro` owns the document shell: head meta, fonts, topbar, theme script, and the `foot` variant prop (`home` / `docs`). `DocsLayout.astro` adds the sidebar shell for the eight docs routes.
 - Tokens and shared element classes live in `src/styles/global.css`; route-only styling stays in the page. Where the design deviates per instance, prefer an inline `style` attribute (the source mockup's own idiom) over a new class.
 - The theme toggle is the only client JavaScript. Pages must render fully with JavaScript disabled.
 - Run repo-level commands as `mise run web:*`; from `web/` use `aube run <script>` or `aube -C web ...` from the root.

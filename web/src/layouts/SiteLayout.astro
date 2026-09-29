@@ -1,12 +1,12 @@
 ---
 import Mark from "../components/Mark.astro";
 import { sitePath } from "../lib/site-path.mjs";
-import { REPO_URL, REMAINDER_URL } from "../lib/links.mjs";
+import { REPO_URL } from "../lib/links.mjs";
 import "../styles/global.css";
 
 interface Props {
   title: string;
-  foot?: "home" | "remainder" | "docs";
+  foot?: "home" | "docs";
 }
 const { title, foot = "docs" } = Astro.props;
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
@@ -64,7 +64,6 @@ const ogImage = new URL(asset("og-1200x630.png"), import.meta.env.SITE)
         <span class="grow"></span>
         <a href={sitePath("docs")}>docs</a>
         <a href={sitePath("install")}>install</a>
-        <a href={sitePath("remainder")}>remainder</a>
         <a href={REPO_URL}>github ↗</a>
         <button
           type="button"
@@ -82,19 +81,6 @@ const ogImage = new URL(asset("og-1200x630.png"), import.meta.env.SITE)
             </span>
             <a href={sitePath("docs")}>Documentation</a>
             <span class="grow" />
-            <span>
-              Sister project: <a href={sitePath("remainder")}>remainder</a>
-            </span>
-          </footer>
-        )
-      }
-      {
-        foot === "remainder" && (
-          <footer class="foot">
-            <span>MIT</span>
-            <a href={REMAINDER_URL}>github.com/douglasjarquin/remainder</a>
-            <span class="grow" />
-            <span>Pinchos and Sum remain independent consumers.</span>
           </footer>
         )
       }
@@ -103,7 +89,6 @@ const ogImage = new URL(asset("og-1200x630.png"), import.meta.env.SITE)
           <footer class="foot">
             <span>MIT</span>
             <a href={REPO_URL}>github.com/douglasjarquin/sum</a>
-            <a href={REMAINDER_URL}>github.com/douglasjarquin/remainder</a>
             <span class="grow" />
             <a href={sitePath()}>↑ home</a>
           </footer>

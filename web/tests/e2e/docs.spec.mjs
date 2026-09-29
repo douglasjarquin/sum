@@ -9,7 +9,6 @@ const pages = [
   { route: "configuration/", h1: "Configuration" },
   { route: "herdr/", h1: "Herdr backend" },
   { route: "update/", h1: "Update & rollback" },
-  { route: "remainder-cli/", h1: "Providers & CLI contract" },
 ];
 
 for (const { route, h1 } of pages) {
@@ -40,13 +39,13 @@ for (const { route, h1 } of pages) {
   });
 }
 
-test("docs index links the eight sections and the docs/*.md sources", async ({
+test("docs index links the seven sections and the docs/*.md sources", async ({
   page,
 }) => {
   const response = await page.goto("docs/");
   expect(response?.status()).toBe(200);
   const cards = page.locator(".cells a");
-  await expect(cards).toHaveCount(8);
+  await expect(cards).toHaveCount(7);
   const hrefs = await cards.evaluateAll((els) =>
     els.map((el) => el.getAttribute("href")),
   );
@@ -58,7 +57,6 @@ test("docs index links the eight sections and the docs/*.md sources", async ({
     "/sum/configuration/",
     "/sum/herdr/",
     "/sum/update/",
-    "/sum/remainder-cli/",
   ]);
   const docLinks = page.locator(
     '.kv a[href*="github.com/douglasjarquin/sum/blob/main/docs/"]',

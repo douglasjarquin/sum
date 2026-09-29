@@ -10,6 +10,6 @@ aube -C web install --frozen-lockfile
 aube -C web run check
 aube -C web run test:unit
 aube -C web run build
-for page in index 404 docs/index install/index architecture/index verification/index skills/index configuration/index herdr/index update/index remainder/index remainder-cli/index; do
+for page in index 404 docs/index install/index architecture/index verification/index skills/index configuration/index herdr/index update/index; do
   test -f "web/dist/$page.html" || { echo "verify: missing web/dist/$page.html" >&2; exit 1; }
 done

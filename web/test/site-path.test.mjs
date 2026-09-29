@@ -5,7 +5,7 @@ import { sitePath } from "../src/lib/site-path.mjs";
 
 test("sitePath joins the base and a route with one trailing slash", () => {
   assert.equal(sitePath("install", "/sum/"), "/sum/install/");
-  assert.equal(sitePath("remainder-cli", "/sum/"), "/sum/remainder-cli/");
+  assert.equal(sitePath("update", "/sum/"), "/sum/update/");
 });
 
 test("sitePath returns the base for the root route", () => {

@@ -10,23 +10,21 @@ test("topbar shows the tagline and the nav links", async ({ page }) => {
   expect(hrefs).toContain("/sum/");
   expect(hrefs).toContain("/sum/docs/");
   expect(hrefs).toContain("/sum/install/");
-  expect(hrefs).toContain("/sum/remainder/");
   expect(hrefs).toContain("https://github.com/douglasjarquin/sum");
 });
 
 test.describe("docs sidebar at 1280px", () => {
   test.use({ viewport: { width: 1280, height: 800 } });
 
-  test("renders three labeled groups and marks the active entry", async ({
+  test("renders two labeled groups and marks the active entry", async ({
     page,
   }) => {
     await page.goto("install/");
     const side = page.locator(".side");
     const labels = side.locator(".lbl");
-    await expect(labels).toHaveCount(3);
+    await expect(labels).toHaveCount(2);
     await expect(labels.nth(0)).toHaveText("sum");
-    await expect(labels.nth(1)).toHaveText("remainder");
-    await expect(labels.nth(2)).toHaveText("source");
+    await expect(labels.nth(1)).toHaveText("source");
     const active = side.locator("a.active");
     await expect(active).toHaveCount(1);
     await expect(active).toHaveText("Install");

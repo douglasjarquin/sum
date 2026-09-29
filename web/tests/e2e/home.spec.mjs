@@ -26,7 +26,6 @@ test("home renders the hero, rail, features, quick start, and foot", async ({
   await expect(page.locator(".codeblock")).toContainText("mise run setup");
 
   const foot = page.locator("footer.foot");
-  await expect(foot).toContainText("Sister project:");
   await expect(foot).toContainText("Stands on");
 });
 
