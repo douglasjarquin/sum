@@ -46,7 +46,7 @@ The mockup writes `data-theme` on `<body>`; this implementation writes it on `<h
 - Body: JetBrains Mono 12.5px / 1.6, color `--body`; `--ink` for literal terms (`code`, strong).
 - Labels/eyebrows: 10.5px uppercase, letter-spacing .08em, `--muted`.
 - h1 (doc pages): Instrument Serif 400, 44px / 1.
-- `.display` (home hero): clamp(52px,7vw,92px) / .95; remainder hero uses clamp(48px,6vw,80px) inline.
+- `.display` (home hero): clamp(52px,7vw,92px) / .95.
 - `em` inside a display h1: serif italic in `--accent`.
 - h2 (doc sections): serif 26px / 1.1.
 - Cell titles: serif 24px (feature cells), 22px (docs index), 19px (gate grid); kv flow labels serif 18px.
@@ -68,14 +68,14 @@ Font URL is exactly `css2?family=JetBrains+Mono:wght@400;500;600&family=Instrume
 
 - `.topbar`: mark + `sum` wordmark (600) + muted tagline, right cluster of nav links including `github ↗` (all `--body`), theme toggle (1px `--rule` chip).
 - `.side`: rail nav; entries are 7px/24px padded links with a transparent 2px left border; active entry is accent + 600 + accent left border and `aria-current="page"`.
-  Group labels (`sum`, `remainder`, `source`) are eyebrow-style rows.
+  Group labels (`sum`, `source`) are eyebrow-style rows.
   Below 720px the rail collapses to wrapped chips (pure CSS media query — the mockup did this with a resize listener; same look, no JS).
 - `.kv`: grid label/value rows separated by hairlines; labels accent by default (`.kv.flow` uses serif 18px ink labels for the you/coordinator/worker flows).
   Column width is set per instance (110-160px, or `auto 1fr` for link rows); `.kv.md`/`.kv.lg` adjust row padding (12px/16px vs 10px).
 - `.cells` cards never nest; `.feature` cells carry the `NN` accent number and serif title.
 - `.chip`: 1px `--rule` border, 11px.
 - `.btn`: solid `--ink` fill; `.btn.outline` transparent with `--rule` border, `--soft` hover.
-- `.foot`: per-screen footer strip (three variants: home, remainder, docs).
+- `.foot`: per-screen footer strip (two variants: home, docs).
 
 ## The mark
 
@@ -86,7 +86,7 @@ In a 22px box the 12.5px discs sit at left/top: (7.9,4.8) h25, (6.4,7.5) h80, (3
 
 ## Content model
 
-Eleven designed routes plus a styled 404: `/`, `/remainder/`, `/docs/`, `/install/`, `/architecture/`, `/verification/`, `/skills/`, `/configuration/`, `/herdr/`, `/update/`, `/remainder-cli/`.
+Nine designed routes plus a styled 404: `/`, `/docs/`, `/install/`, `/architecture/`, `/verification/`, `/skills/`, `/configuration/`, `/herdr/`, `/update/`.
 Page copy is ported verbatim from the mockup; the one deliberate divergence is canonical skill names (`sum-work`/`sum-deliver`/`sum-status`) where the mockup used the old aliases (`sum-worker`/`sum-delivery`/`sum-rundown` — still present in `skills/` as aliases).
 This copy is a snapshot: when the in-repo docs change, the site is updated by hand; there is no generated sync.
 
