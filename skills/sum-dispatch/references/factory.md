@@ -1,5 +1,9 @@
 # Coordinator procedure: factory lane
 
+The front door is `skills/sum-factory/SKILL.md`.
+This file is the software directive (`runner: software`).
+A copy factory does not use these commands.
+
 Part of `sum-dispatch`. Read it when the user asks to run, tick, or stop a factory on an enrolled project. Run a per-project software factory: enable a lane, tick for the next ready GitHub issue, dispatch one worker, then merge or leave a human gate. Never a daemon.
 
 Use this only from the pane registered as coordinator.
