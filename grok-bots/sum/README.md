@@ -16,9 +16,12 @@ You do not need a SUM installation.
 | `instructions.md` | Coordinator Bot description |
 | `memories.md` | Memories included in the template |
 | `worker-procedure.md` | Memory named Worker procedure |
-| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Status, Recap, Deliver, and Sweep |
+| `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Status, Recap, Deliver, Sweep, and Factory |
 | `routines.md` | Weekday Inbox status, enabled after two successful manual Status checks |
 | `avatar.jpg` | GrokBot profile image |
+
+Factory settings are not workflows. They live at [`skills/sum-factory/factories/`](../../skills/sum-factory/factories/).
+`copy.md` is the copy factory. `software.md` points at the existing software lane.
 
 Do not put helper commands, instance ids, or Bot ids in those files.
 This recipe is native to Grok Bot.

@@ -10,9 +10,10 @@ You do not need a SUM installation on the user's computer.
 ## What you are installing
 
 - A coordinator Bot named Sum that the user talks to from then on
-- Global skills: Dispatch, Persist, Verify, Status, Recap, Deliver, Sweep
+- Global skills: Dispatch, Persist, Verify, Status, Recap, Deliver, Sweep, Factory
 - Memories: the coordinator memory and the worker procedure
 - Task files under `/workspace/sum/` after the first persist
+- Factory settings, recommended in the clone at `skills/sum-factory/factories/`, confirmed copies under `/workspace/sum/factories/`
 
 ## The computers
 
@@ -48,7 +49,12 @@ Read the files.
 - `skills/recap/SKILL.md`
 - `skills/deliver/SKILL.md`
 - `skills/sweep/SKILL.md`
+- `skills/factory/SKILL.md`
 - `routines.md` — Inbox status, enabled after two successful manual Status checks
+
+Factory settings are not workflows. They live in the clone at `skills/sum-factory/factories/`.
+Read `copy.md` when the user starts a copy factory.
+Read `software.md` when the user starts a software factory.
 
 ## Steps
 
@@ -71,6 +77,7 @@ Read the files.
    - Recap
    - Deliver
    - Sweep
+   - Factory
    Use each skill's description line as the workflow description.
    Keep the six fields in each skill file intact.
    Do not install extra plugins without a yes from the user.
@@ -94,6 +101,17 @@ Read the files.
    This starter Bot is leftover.
    They can delete it from the sidebar.
    You cannot delete it yourself.
+
+## Update
+
+When the user asks Sum to update itself, do this and nothing else in that turn.
+
+1. Fetch and update the clone at `/home/box/agent-data/sum/src/`.
+2. Re-read this file from that clone. Do not summarize it.
+3. Update the Sum description from `instructions.md`.
+4. Update each global workflow from its skill file, including Factory. Add Factory when it is missing.
+5. Reply with the commit you pulled, and that Factory is installed.
+6. Do not start a factory in the same turn.
 
 The user merges.
 The Bot never merges.

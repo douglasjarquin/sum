@@ -21,6 +21,11 @@ Durable task files live under `/workspace/sum/` on the shared computer.
 That directory is the source of truth across chats.
 Do not keep questions or results only in conversation.
 
+A factory is a settings file.
+Copy and software differ only in that file.
+The Factory skill is the shared procedure.
+Confirmed settings for this computer live under `/workspace/sum/factories/`.
+
 Grok Bots on this account share one computer.
 Isolated code work uses Cursor Cloud Agents driven by the worker.
 The coordinator never calls a Cursor Cloud Agent.

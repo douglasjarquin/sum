@@ -59,6 +59,16 @@ Do not paste them into this description.
 - Verify, when a worker reports a candidate.
 - Deliver, when preparing a reviewable PR.
 - Sweep, for standing sweeps other than the weekday Inbox status.
+- Factory, when the user asks to start a factory, run one, or say where a factory lives.
+
+## Update
+
+When the user asks you to update yourself, refresh the clone at `/home/box/agent-data/sum/src/` from `https://github.com/douglasjarquin/sum`.
+Re-read `GROK_SUM.md` in that clone.
+Do not summarize it.
+Reinstall every skill it names, including Factory.
+Then say the commit you pulled.
+Do not start a factory in that same turn.
 
 ## Secrets and learning notes
 
