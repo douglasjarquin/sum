@@ -219,7 +219,7 @@ func TestWakeGate_capableTargetAndClosedEpisodesPass(t *testing.T) {
 	}
 }
 
-const wakeContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.0","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1],"machine_identity":[1],"wake_protocol":[1]}}`
+const wakeContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.3","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1],"machine_identity":[1],"wake_protocol":[1]}}`
 
 // A checkout target's capability is what its prebuilt helper reports, never what HEAD carries.
 func TestWakeGate_checkoutHelperDecides(t *testing.T) {

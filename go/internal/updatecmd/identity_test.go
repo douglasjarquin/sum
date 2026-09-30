@@ -390,7 +390,7 @@ func TestPreIdentity_checkoutHelperDecidesNotItsHead(t *testing.T) {
 	}
 }
 
-const preIdentityContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.0","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1]}}`
+const preIdentityContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.3","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1]}}`
 
 // contractHelper is a checkout helper built before release-contract reported
 // machine_identity.

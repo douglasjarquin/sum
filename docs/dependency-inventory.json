@@ -41,7 +41,7 @@
     {
       "id": "herdr",
       "source": "https://github.com/herdrdev/herdr",
-      "version": "0.9.0",
+      "version": "0.9.3",
       "checksum": "mise.toml#tools.herdr",
       "license": "MIT",
       "platforms": ["darwin", "linux"],
