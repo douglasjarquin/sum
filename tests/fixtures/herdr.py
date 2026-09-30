@@ -7,7 +7,7 @@ _lock = (root / ".lock").open("a")  # Like Herdr's server, one invocation at a t
 fcntl.flock(_lock, fcntl.LOCK_EX)
 args = sys.argv[1:]
 if args == ["--version"]:
-    print(os.environ.get("FAKE_HERDR_VERSION", "herdr 0.9.0")); sys.exit(0)
+    print(os.environ.get("FAKE_HERDR_VERSION", "herdr 0.9.3")); sys.exit(0)
 if len(args) < 3 or args[0] != "--session":
     print("explicit session required", file=sys.stderr); sys.exit(2)
 session, args = args[1], args[2:]

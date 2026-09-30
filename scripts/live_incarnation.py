@@ -29,8 +29,8 @@ def main():
             raise RuntimeError("Run mise run setup first, or make the pinned herdr available on PATH.")
         binary = Path(found)
     version = subprocess.check_output([str(binary), "--version"], text=True)
-    if "0.9.0" not in version:
-        raise RuntimeError(f"Expected pinned Herdr 0.9.0, got {version.strip()}")
+    if "0.9.3" not in version:
+        raise RuntimeError(f"Expected pinned Herdr 0.9.3, got {version.strip()}")
     name = "sum-test-207-" + uuid.uuid4().hex[:8]
     assert name.startswith("sum-test-") and name != "default"
     # Herdr's socket lives under XDG_CONFIG_HOME; macOS caps sun_path at 104 bytes, so the lab needs a short root.
@@ -94,7 +94,7 @@ def main():
             recorded = json.loads((state / "context.json").read_text())["incarnation"]
             assert recorded["terminal"] == first["terminal_id"] and recorded["shell"]["pid"] > 0, recorded
             assert init()[:2] == ("coordinator", "same")
-            print(f"PASS: real Herdr 0.9.0 reports terminal_id {first['terminal_id']} and shell pid {recorded['shell']['pid']} for {root}; "
+            print(f"PASS: real Herdr 0.9.3 reports terminal_id {first['terminal_id']} and shell pid {recorded['shell']['pid']} for {root}; "
                   "repeated init is the same occupant.")
 
             assert name.startswith("sum-test-") and sock.is_socket(), sock

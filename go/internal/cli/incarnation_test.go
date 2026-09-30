@@ -277,7 +277,7 @@ func TestIncarnation_anUnreachableBackendIsNotIdentityProof(t *testing.T) {
 	herdrEnv(t, home)
 	initView(t, home)
 	stale := filepath.Join(t.TempDir(), "herdr")
-	if err := os.WriteFile(stale, []byte("#!/bin/sh\n[ \"$1\" = --version ] && { echo 'herdr 0.9.0'; exit 0; }\necho '{\"error\":{\"code\":\"server_not_running\",\"message\":\"connect: no such file or directory\"}}' >&2\nexit 1\n"), 0o755); err != nil {
+	if err := os.WriteFile(stale, []byte("#!/bin/sh\n[ \"$1\" = --version ] && { echo 'herdr 0.9.3'; exit 0; }\necho '{\"error\":{\"code\":\"server_not_running\",\"message\":\"connect: no such file or directory\"}}' >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SUM_HERDR_BIN", stale)

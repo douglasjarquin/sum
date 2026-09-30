@@ -102,6 +102,30 @@ func olderTrees(t *testing.T) map[string]string {
 	return trees
 }
 
+func olderHerdrVersion(helper string) string {
+	tree := filepath.Dir(filepath.Dir(helper))
+	raw, err := os.ReadFile(filepath.Join(tree, "go", "internal", "contract", "contract.go"))
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "HerdrCLI") || !strings.Contains(line, "=") {
+			continue
+		}
+		_, value, ok := strings.Cut(line, `"`)
+		if !ok {
+			return ""
+		}
+		version, _, ok := strings.Cut(value, `"`)
+		if !ok {
+			return ""
+		}
+		return version
+	}
+	return ""
+}
+
 func sortedKeys(m map[string]string) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -379,6 +403,10 @@ func runOlder(d *demoLab, helper, pane string, args ...string) ([]byte, error) {
 		cmd.Dir = d.root
 		// A rolled-back release still serves the same installation, as the release wrapper exports it.
 		env := append(append([]string{}, d.env...), "SUM_INSTALL_ROOT="+d.root)
+		// This helper and the candidate pin different Herdr CLIs. The fake reports this process's version.
+		if version := olderHerdrVersion(helper); version != "" {
+			env = append(env, "FAKE_HERDR_VERSION=herdr "+version)
+		}
 		if pane != "" {
 			env = append(env, "HERDR_PANE_ID="+pane)
 		}

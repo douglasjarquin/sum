@@ -19,8 +19,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
-const herdrVersionPin = "0.9.0"
-
 var toolNames = []string{"python3", "node", "git", "gh", "herdr", "quota-axi", "remainder", "lsof"}
 
 var harnessExecutables = []struct {
@@ -58,7 +56,7 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 	herdrVersionRow.Set("tool", "herdr-version")
 	herdrPath, herdrPathErr := toolpath.Find(runtimeRoot, "herdr")
 	if herdrPathErr == nil {
-		if found, err := herdrclient.EnsureVersion(herdrPath, herdrVersionPin); err == nil {
+		if found, err := herdrclient.EnsureVersion(herdrPath, contract.HerdrCLI); err == nil {
 			herdrVersionRow.Set("ok", true)
 			herdrVersionRow.Set("detail", found)
 		} else {

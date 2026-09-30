@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -23,7 +24,6 @@ const (
 	HookSchema = 1
 	HookErrors = 20
 
-	HerdrVersion    = "0.9.0"
 	InboxEntrypoint = "inbox"
 )
 
@@ -333,7 +333,7 @@ func hookManifest(s *store.Store, sumctlPath string) (string, error) {
 		"id = " + ordjson.QuoteString(pluginID),
 		"name = " + ordjson.QuoteString("sum returns "+filepath.Base(s.Home)),
 		"version = " + ordjson.QuoteString(store.SumVersion),
-		"min_herdr_version = " + ordjson.QuoteString(HerdrVersion),
+		"min_herdr_version = " + ordjson.QuoteString(contract.HerdrCLI),
 		"description = " + ordjson.QuoteString("Runs the bounded sum returns pump for "+s.Home+" when a recorded pane changes state"),
 		`platforms = ["linux", "macos"]`,
 		"",

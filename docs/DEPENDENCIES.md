@@ -5,7 +5,7 @@ Release manifests copy that inventory and add the platform-specific SHA-256 of e
 
 ## Installation contract
 
-`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.20.0, uv 0.12.13, aube 2.2.4, GitHub CLI 2.100.0, Herdr 0.9.0, quota-axi 0.1.37, codegraph 1.5.0 (`npm:@colbymchenry/codegraph`), Vercel Skills 1.5.25 (`npm:skills`), basedpyright 1.40.1 (`pipx:basedpyright`), and gopls 0.23.0 (`go:golang.org/x/tools/gopls`).
+`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.20.0, uv 0.12.13, aube 2.2.4, GitHub CLI 2.100.0, Herdr 0.9.3, quota-axi 0.1.37, codegraph 1.5.0 (`npm:@colbymchenry/codegraph`), Vercel Skills 1.5.25 (`npm:skills`), basedpyright 1.40.1 (`pipx:basedpyright`), and gopls 0.23.0 (`go:golang.org/x/tools/gopls`).
 Git and mise are host prerequisites.
 No global Node package installation is required.
 LSP binaries come from those mise pins.
