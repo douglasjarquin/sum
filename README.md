@@ -28,7 +28,7 @@ Roles and work objects use the dictionary in [docs/terminology.md](docs/terminol
 
 * **Evidence on the PR.** Before/after evidence publishes on `pr reconcile` unless you turn it off. See [docs/verification.md](docs/verification.md).
 
-* **Six bundled skills.** /sum-dispatch, /sum-work, /sum-deliver, /sum-status, /sum-develop, and /sum-update with rolling session refresh and code-only rollback.
+* **Seven bundled skills.** /sum-dispatch, /sum-work, /sum-deliver, /sum-status, /sum-develop, /sum-factory, and /sum-update with rolling session refresh and code-only rollback.
 
 * **Optional Herdr hook and metadata.** Native event delivery and sidebar tokens stay off until you enable them. See [docs/herdr-backend.md](docs/herdr-backend.md).
 
@@ -111,6 +111,7 @@ State files, returns, and manual dispatch are in [docs/architecture.md](docs/arc
 | /sum-deliver  | Run the project's checks and prepare the PR                              | /sum-ship, /sum-pr, /sum-delivery        |
 | /sum-status   | Show task status, pending returns, and maintenance                       | /sum-inbox, /sum-sweep, /sum-recover, /sum-rundown |
 | /sum-develop  | Change sum from a development checkout that cannot claim the coordinator | /sum-dev                                 |
+| /sum-factory  | Start or run a factory from a markdown settings file                     |                                          |
 | /sum-update   | Update or roll back the installation, then refresh running sessions      | /sum-upgrade, /sum-rollback              |
 
 An alias is a one-line skill that names the real one, so the word you reach for loads the same procedure; `bin/sumctl skills check` lists them under `aliases`.

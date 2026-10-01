@@ -71,7 +71,7 @@ test("docs index links the seven sections and the docs/*.md sources", async ({
   ]);
 });
 
-test("skills lists the six bundled skills under their canonical names", async ({
+test("skills lists the seven bundled skills under their canonical names", async ({
   page,
 }) => {
   await page.goto("skills/");
@@ -81,6 +81,7 @@ test("skills lists the six bundled skills under their canonical names", async ({
     "/sum-deliver",
     "/sum-status",
     "/sum-develop",
+    "/sum-factory",
     "/sum-update",
   ]);
 });

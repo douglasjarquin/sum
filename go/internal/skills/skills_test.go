@@ -133,8 +133,8 @@ func checkError(t *testing.T, root, want string) {
 
 func TestCheckAcceptsEitherNameOfARenamedSkill(t *testing.T) {
 	for _, names := range [][]string{
-		{"sum-deliver", "sum-develop", "sum-dispatch", "sum-status", "sum-update", "sum-work"},
-		{"sum-delivery", "sum-develop", "sum-dispatch", "sum-rundown", "sum-update", "sum-worker"},
+		{"sum-deliver", "sum-develop", "sum-dispatch", "sum-factory", "sum-status", "sum-update", "sum-work"},
+		{"sum-delivery", "sum-develop", "sum-dispatch", "sum-factory", "sum-rundown", "sum-update", "sum-worker"},
 	} {
 		root := t.TempDir()
 		writeTree(t, root, names, nil)
@@ -160,7 +160,7 @@ func TestCheckAcceptsTheEarlierNameAsAnAlias(t *testing.T) {
 
 func TestCheckRefusesBothNamesOfARenamedSkill(t *testing.T) {
 	root := t.TempDir()
-	writeTree(t, root, []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-status", "sum-rundown", "sum-update", "sum-worker"}, nil)
+	writeTree(t, root, []string{"sum-delivery", "sum-develop", "sum-dispatch", "sum-factory", "sum-status", "sum-rundown", "sum-update", "sum-worker"}, nil)
 	checkError(t, root, "duplicate canonical skill: sum-status and sum-rundown")
 }
 
