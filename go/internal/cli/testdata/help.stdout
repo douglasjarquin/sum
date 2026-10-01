@@ -23,6 +23,7 @@ commands:
   report: "Worker: submit the report (and --handoff) as a claim for the coordinator to verify"
   resolve: "Worker: mark an answered question applied"
   review: "Reviewer pane: append independent findings for one candidate, owed to the parent as a return until the coordinator acts on it; never replaces the worker report"
+  reviewer: "Coordinator: launch the independent reviewer in a labeled tab in the task workspace; never split the worker pane"
   verify: "Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)"
   pr: Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names
   pipeline: "The delivery gates one task has passed, and the status table sum owns in its PR body"

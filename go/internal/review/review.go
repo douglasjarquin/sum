@@ -2,14 +2,21 @@ package review
 
 import (
 	"fmt"
+	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/evidence"
+	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/settings"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 var (
@@ -17,6 +24,187 @@ var (
 	sha40       = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	toolNamePat = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$`)
 )
+
+// Launch opens the independent reviewer in a labeled tab in the task workspace.
+// It records the endpoint before starting the agent so ordinary reviewer cleanup
+// and occupancy logic can identify the pane even if agent start is uncertain.
+func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath, taskID string) (*ordjson.Object, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("A registered coordinator pane is required to launch a reviewer.")
+	}
+	session := asString(ctx, "session")
+	coordinatorPane := asString(ctx, "pane")
+	if session == "" || coordinatorPane == "" {
+		return nil, fmt.Errorf("A registered coordinator pane is required to launch a reviewer.")
+	}
+	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
+	if err != nil {
+		return nil, err
+	}
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.CheckMachine(task); err != nil {
+		return nil, err
+	}
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
+	parent := objectField(task, "parent")
+	if parent == nil || !host.SameEndpoint(parent, ctx) {
+		return nil, fmt.Errorf("Only the task's recorded coordinator can launch its reviewer.")
+	}
+	if existing, _ := task.Get("reviewer"); existing != nil {
+		return nil, fmt.Errorf("Task already has a reviewer endpoint; use the recorded reviewer pane.")
+	}
+	workspace := asString(task, "workspace")
+	worktree := asString(task, "worktree")
+	if workspace == "" || worktree == "" {
+		return nil, fmt.Errorf("Task workspace or checkout identity is missing; reviewer launch is refused.")
+	}
+	harness, argv, preset, err := reviewerLaunch(s, ctx, runtimeRoot)
+	if err != nil {
+		return nil, err
+	}
+	created, err := herdrclient.Call(herdrPath, session, 15*time.Second, "tab", "create", "--workspace", workspace, "--cwd", worktree, "--label", "reviewer", "--no-focus")
+	if err != nil {
+		return nil, fmt.Errorf("Could not create reviewer tab in workspace %s: %w", workspace, err)
+	}
+	createdObj := objectValue(created)
+	rootPane := objectField(createdObj, "root_pane")
+	pane := asString(rootPane, "pane_id")
+	if pane == "" {
+		return nil, fmt.Errorf("Herdr tab create returned no reviewer pane id in workspace %s.", workspace)
+	}
+	observed, err := herdrclient.Call(herdrPath, session, 5*time.Second, "pane", "get", pane)
+	if err != nil {
+		return nil, fmt.Errorf("Could not verify new reviewer pane %s: %w", pane, err)
+	}
+	observedPane := objectField(objectValue(observed), "pane")
+	if observedPane == nil {
+		observedPane = objectValue(observed)
+	}
+	if asString(observedPane, "workspace_id") != workspace || resolvePath(asString(observedPane, "cwd")) != resolvePath(worktree) {
+		return nil, fmt.Errorf("New reviewer pane %s does not match task workspace %s and checkout %s; it was not started.", pane, workspace, worktree)
+	}
+	endpoint := ordjson.NewObject()
+	endpoint.Set("machine", host.ID)
+	endpoint.Set("session", session)
+	endpoint.Set("pane", pane)
+	endpoint.Set("cwd", worktree)
+	endpoint.Set("bound_at", store.Now())
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.ReadTask(taskID)
+	if err == nil {
+		if existing, _ := current.Get("reviewer"); existing != nil {
+			err = fmt.Errorf("Task already has a reviewer endpoint; the new tab %s was created but not adopted.", pane)
+		} else {
+			current.Set("reviewer", endpoint)
+			err = s.SaveTask(current)
+		}
+	}
+	unlock()
+	if err != nil {
+		return nil, err
+	}
+	startArgs := herdrclient.AgentStartArgs("reviewer", harness, pane)
+	if len(argv) > 0 {
+		startArgs = append(startArgs, "--")
+		startArgs = append(startArgs, argv...)
+	}
+	if _, err := herdrclient.Call(herdrPath, session, herdrclient.AgentStartCallTimeout, startArgs...); err != nil {
+		return nil, fmt.Errorf("Reviewer endpoint %s is recorded, but agent start is uncertain: %w", pane, err)
+	}
+	command := shquote.Quote(sumctlPath)
+	prompt := fmt.Sprintf("You are the independent reviewer for %s. Read the task contract and current candidate with `%s context %s --role reviewer`, inspect the candidate read-only, and save findings with `%s review %s --verdict approve|changes-requested|blocked|comment --candidate SHA --file findings.md`. Do not edit the checkout or record verification.", taskID, command, taskID, command, taskID)
+	if _, err := herdrclient.Call(herdrPath, session, 10*time.Second, "agent", "prompt", pane, prompt); err != nil {
+		return nil, fmt.Errorf("Reviewer endpoint %s is recorded, but its task prompt could not be delivered: %w", pane, err)
+	}
+	result := ordjson.NewObject()
+	result.Set("task", taskID)
+	result.Set("workspace", workspace)
+	result.Set("worktree", worktree)
+	result.Set("reviewer", endpoint)
+	result.Set("harness", harness)
+	result.Set("preset", preset)
+	result.Set("placement", "tab")
+	result.Set("note", "Reviewer launched in its own labeled task tab; findings must be saved with `review` from that pane.")
+	return result, nil
+}
+
+func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string) (string, []string, any, error) {
+	loaded, err := settings.LoadSettings(s)
+	if err != nil {
+		return "", nil, nil, err
+	}
+	if loaded.Reviewer != nil {
+		name := asString(loaded.Reviewer, "preset")
+		resolved, err := launch.Resolve(s, ctx, launch.ResolveArgs{Preset: name, PresetSet: true, RuntimeRoot: runtimeRoot})
+		if err != nil {
+			return "", nil, nil, err
+		}
+		argv := []string{}
+		if list, ok := resolved.Get("argv"); ok {
+			if values, is := list.([]any); is {
+				for _, value := range values {
+					if arg, is := value.(string); is {
+						argv = append(argv, arg)
+					}
+				}
+			}
+		}
+		preset, _ := resolved.Get("preset")
+		return asString(resolved, "harness"), argv, preset, nil
+	}
+	root := launch.RootLaunch(runtimeRoot, ctx)
+	harness := asString(root, "harness")
+	if harness == "" {
+		return "", nil, nil, fmt.Errorf("Cannot determine the coordinator's harness (%s); configure `reviewer.preset` or start from the coordinator pane.", asString(root, "error"))
+	}
+	return harness, nil, nil, nil
+}
+
+func asString(obj *ordjson.Object, key string) string {
+	if obj == nil {
+		return ""
+	}
+	value, _ := obj.Get(key)
+	text, _ := value.(string)
+	return text
+}
+
+func objectField(obj *ordjson.Object, key string) *ordjson.Object {
+	if obj == nil {
+		return nil
+	}
+	value, _ := obj.Get(key)
+	result, _ := value.(*ordjson.Object)
+	return result
+}
+
+func objectValue(value any) *ordjson.Object {
+	result, _ := value.(*ordjson.Object)
+	return result
+}
+
+func resolvePath(path string) string {
+	if path == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved
+	}
+	return abs
+}
 
 func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string {
 	if endpoint == nil {

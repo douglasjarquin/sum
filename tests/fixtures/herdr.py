@@ -262,7 +262,7 @@ if args[:2] == ["tab", "create"]:
     if workspace not in state["workspaces"]: fail("workspace_not_found", f"workspace {workspace} not found")
     pane = f"{workspace}:p{len(state['panes']) + 10}"
     shell_pid = 5000 + len(state["panes"])
-    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "shell_pid": shell_pid, "processes": [], "terminal_id": "term-" + pane, "created": True}
+    state["panes"][pane] = {"pane_id": pane, "cwd": arg("--cwd"), "workspace_id": workspace, "agent_status": "unknown", "agent": None, "label": arg("--label") if "--label" in args else None, "shell_pid": shell_pid, "processes": [], "terminal_id": "term-" + pane, "created": True}
     path_, data_ = lsof_scenario()
     if path_ is not None:
         data_.setdefault("processes", []).append({"pid": shell_pid, "cwd": arg("--cwd")}); path_.write_text(json.dumps(data_))

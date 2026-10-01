@@ -12,6 +12,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
@@ -227,6 +228,9 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 		}
 		return nil, fmt.Errorf("Cleanup of %s refused; the task stays cleanup-pending. Blockers: %s", args.Task, stringsJoin(parts, "; "))
 	}
+	if args.ReviewerOnly {
+		return closeReviewerOnly(s, task, ctx, runtimeRoot, plan)
+	}
 	pr := asObject(func() any { v, _ := plan.Get("pr"); return v }())
 	mergedHead := stringField(pr, "head_sha")
 	execRow := asObject(func() any { v, _ := plan.Get("execution"); return v }())
@@ -370,6 +374,57 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	kept.Set("records", path)
 	result.Set("kept", kept)
 	result.Set("note", "Only the verified task workspace and its clean checkout were removed, through native Herdr without force. The branch, brief revisions, decisions, reports, and PR evidence stay.")
+	return result, nil
+}
+
+func closeReviewerOnly(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string, plan *ordjson.Object) (*ordjson.Object, error) {
+	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
+	pane := stringField(reviewer, "pane")
+	if pane == "" {
+		return nil, fmt.Errorf("No reviewer endpoint is recorded; the task checkout was left untouched.")
+	}
+	closedAlready := panes.ReviewerIsClosed(task)
+	if !closedAlready {
+		resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
+		if stringField(resources, "reviewer_pane") != "absent" {
+			_, code, err := observe(runtimeRoot, stringField(ctx, "session"), 10*time.Second, "pane", "close", pane)
+			if err != nil {
+				return nil, err
+			}
+			if code != "" && code != "pane_not_found" {
+				return nil, fmt.Errorf("Could not close reviewer pane %s (%s); the task checkout was left untouched.", pane, code)
+			}
+		}
+		unlock, err := s.Lock()
+		if err != nil {
+			return nil, err
+		}
+		current, err := s.ReadTask(stringField(task, "id"))
+		if err == nil {
+			currentReviewer := asObject(func() any { v, _ := current.Get("reviewer"); return v }())
+			for _, key := range []string{"machine", "session", "pane"} {
+				if stringField(currentReviewer, key) != stringField(reviewer, key) {
+					err = fmt.Errorf("Reviewer endpoint changed during close; inspect task %s before retrying.", stringField(task, "id"))
+					break
+				}
+			}
+			if err == nil {
+				panes.Append(current, pane, "reviewer", "", "reviewer-only cleanup")
+				err = s.SaveTask(current)
+			}
+		}
+		unlock()
+		if err != nil {
+			return nil, err
+		}
+	}
+	result := ordjson.NewObject()
+	result.Set("task", stringField(task, "id"))
+	result.Set("state", "reviewer-closed")
+	result.Set("pane", pane)
+	result.Set("already", closedAlready)
+	result.Set("checkout", stringField(task, "worktree"))
+	result.Set("note", "Only the settled reviewer pane was closed; the task workspace and checkout were left untouched.")
 	return result, nil
 }
 
