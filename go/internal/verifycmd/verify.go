@@ -209,11 +209,14 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 		return nil, fmt.Errorf("run %s has outcome %q; expected one of [pass, fail, blocked, error, checked]", runID, outcome)
 	}
 	candidateObj := objectField(record, "candidate")
+	if candidateObj == nil {
+		return nil, fmt.Errorf("run %s has no candidate object", runID)
+	}
 	ran := asString(candidateObj, "sha")
 	if ran != candidate {
 		return nil, fmt.Errorf("run %s verified %s, not --candidate %s. Evidence for another SHA is historical; run the contract against this candidate.", runID, ran, candidate)
 	}
-	dirty, _ := candidateObj.Get("dirty")
+	dirty := field(candidateObj, "dirty")
 	dirtyBool, _ := dirty.(bool)
 	policy := objectField(record, "policy")
 	dispatch := objectField(task, "verification_policy")
@@ -221,7 +224,7 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	contractSHA := asString(contractObj, "sha256")
 	contractChanged := asString(dispatch, "contract_sha256") != "" && contractSHA != "" && contractSHA != asString(dispatch, "contract_sha256")
 	snapshotChanged, snapshotReason := dispatchPolicyChanged(dispatch, record)
-	checked, _ := policy.Get("checked")
+	checked := field(policy, "checked")
 	requiresReview, _ := record.Get("requires_root_review")
 	requires := requiresReview == true || contractChanged || snapshotChanged || checked != true
 	result := runOutcomeMap[outcome]
@@ -258,7 +261,7 @@ func runEvidence(record *ordjson.Object, candidate string, task *ordjson.Object,
 	body.Set("policy_change_reason", snapshotReason)
 	policyBody := ordjson.NewObject()
 	policyBody.Set("checked", checked == true)
-	if policyBase, ok := policy.Get("base"); ok {
+	if policyBase := field(policy, "base"); policyBase != nil {
 		policyBody.Set("base", policyBase)
 	} else {
 		policyBody.Set("base", nil)

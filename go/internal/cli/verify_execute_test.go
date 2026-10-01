@@ -328,6 +328,81 @@ func TestVerifyExecute_standardizedCandidatePassesInSeparateCheckout(t *testing.
 	}
 }
 
+func TestVerifyExecute_recordsBlockedRunWithoutPanicking(t *testing.T) {
+	v := newVerifyLabWith(t, func(repo string) {
+		path := filepath.Join(repo, "VERIFY.md")
+		body, err := os.ReadFile(path)
+		if err != nil {
+			panic(err)
+		}
+		updated := strings.Replace(string(body), `commands = ["python3"]`, `commands = ["sum-blocked-test-command-that-does-not-exist"]`, 1)
+		if updated == string(body) {
+			panic("fixture VERIFY.md required-command row changed")
+		}
+		if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
+			panic(err)
+		}
+	})
+	sha := v.commit("NOTES.md", "notes\n")
+	v.report(t, sha)
+	beforeTrees := v.worktreeCount()
+
+	out := v.ctl(false, "verify", v.taskID, "--candidate", sha, "--execute")
+	ev := v.evidence(out)
+	if asString(ev["result"]) != "blocked" || asString(ev["outcome"]) != "blocked" {
+		t.Fatalf("result/outcome = %v/%v, want blocked; command output: %v", ev["result"], ev["outcome"], out)
+	}
+	wantReason := "Required command(s) not found on PATH: sum-blocked-test-command-that-does-not-exist. The run is blocked, not failed."
+	if asString(ev["blocked_reason"]) != wantReason {
+		t.Fatalf("blocked_reason %q, want %q", ev["blocked_reason"], wantReason)
+	}
+	if ev["certifies"] != nil {
+		t.Fatalf("certifies %v, want null for a blocked run", ev["certifies"])
+	}
+	recordPath := asString(ev["record"])
+	if recordPath == "" {
+		t.Fatal("blocked run record path missing")
+	} else {
+		data, err := os.ReadFile(recordPath)
+		if err != nil {
+			t.Fatalf("blocked run record missing: %v", err)
+		}
+		var run map[string]any
+		if err := json.Unmarshal(data, &run); err != nil {
+			t.Fatalf("blocked run JSON: %v", err)
+		}
+		if _, ok := run["policy"]; ok {
+			t.Fatalf("fixture no longer exercises omitted policy: %v", run["policy"])
+		}
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(recordPath), "checkout")); !os.IsNotExist(err) {
+		t.Fatalf("temporary verification checkout remains: %v", err)
+	}
+
+	context := v.ctl(true, "context", v.taskID, "--role", "coordinator", "--section", "evidence")
+	items := asSlice(asMap(context["evidence"])["items"])
+	found := false
+	for _, raw := range items {
+		row := asMap(raw)
+		if asString(row["kind"]) == "verification" && asString(row["result"]) == "blocked" {
+			found = asString(row["outcome"]) == "blocked"
+		}
+	}
+	if !found {
+		t.Fatalf("context evidence does not show blocked run: %v", context["evidence"])
+	}
+	if status := asString(v.pipelineRow(t, "test")["status"]); status != "blocked" {
+		t.Fatalf("test row status %q, want blocked", status)
+	}
+	if got := v.worktreeCount(); got != beforeTrees {
+		t.Fatalf("worktree count %d, want %d after blocked run cleanup", got, beforeTrees)
+	}
+	verifiers := asSlice(asMap(v.taskFile()["execution"])["verifiers"])
+	if len(verifiers) != 1 || asString(asMap(verifiers[0])["state"]) != "released" {
+		t.Fatalf("verifier reservation %v, want released after blocked run", verifiers)
+	}
+}
+
 func TestVerifyExecute_rootRunIdDiffersFromWorkerRunImport(t *testing.T) {
 	v := newVerifyLab(t)
 	sha := v.commit("NOTES.md", "notes\n")
