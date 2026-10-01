@@ -1,0 +1,7 @@
+topic: reviewer-launch
+help: "Create a `reviewer` tab in one task workspace, start its independent reviewer, and record the reviewer endpoint"
+arguments[1]{name,help,required}:
+  task,Task ID whose workspace and checkout the reviewer will use,true
+subcommands: null
+read_only: false
+read_only_subcommands: []

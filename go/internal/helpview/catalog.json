@@ -783,6 +783,20 @@
     "read_only": false,
     "read_only_subcommands": []
   },
+  "reviewer-launch": {
+    "topic": "reviewer-launch",
+    "help": "Create a `reviewer` tab in one task workspace, start its independent reviewer, and record the reviewer endpoint",
+    "arguments": [
+      {
+        "name": "task",
+        "help": "Task ID whose workspace and checkout the reviewer will use",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
   "verify": {
     "topic": "verify",
     "help": "Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)",

@@ -47,6 +47,7 @@ func buildCLIForTests(m *testing.M) int {
 func TestHelp_pinsStdout(t *testing.T) {
 	home := t.TempDir()
 	assertStdoutGolden(t, home, []string{"help"}, "help")
+	assertStdoutGolden(t, home, []string{"help", "reviewer-launch"}, "help-reviewer-launch")
 	assertStdoutGolden(t, home, []string{"help", "ask"}, "help-ask")
 	assertStdoutGolden(t, home, []string{"help", "skills-check"}, "help-skills-check")
 	assertErrorGolden(t, home, []string{"help", "not-a-command"}, "help-unknown")
