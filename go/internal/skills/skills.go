@@ -28,6 +28,7 @@ var (
 		{"sum-deliver", "sum-delivery"},
 		{"sum-develop"},
 		{"sum-dispatch"},
+		{"sum-factory"},
 		{"sum-status", "sum-rundown"},
 		{"sum-update"},
 		{"sum-work", "sum-worker"},

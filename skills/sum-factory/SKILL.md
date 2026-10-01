@@ -14,7 +14,7 @@ Read that file for the factory the user named. Do the software procedure only wh
 Look in this order:
 
 1. `/workspace/sum/factories/<name>.md` on the shared computer, when that file exists. That copy is the one the user confirmed.
-2. `skills/sum-factory/factories/<name>.md` in this repository. That copy is the recommendation.
+2. The `<name>.md` file under `skills/sum-factory/factories/` in this repository. That copy is the recommendation.
 
 `<name>` is `copy`, `software`, or a name the user chose. Match it without caring about case.
 
