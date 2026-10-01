@@ -198,8 +198,13 @@ func TestTick_issuesPicksOldestOpen(t *testing.T) {
 	}
 	calls, _ := os.ReadFile(filepath.Join(root, "calls.jsonl"))
 	text := string(calls)
-	if !strings.Contains(text, "--sort") || !strings.Contains(text, "created") || !strings.Contains(text, "--order") || !strings.Contains(text, "asc") || !strings.Contains(text, "--paginate") {
-		t.Fatalf("issue list missing created-asc pagination: %s", text)
+	if !strings.Contains(text, "--limit") {
+		t.Fatalf("issue list missing limit: %s", text)
+	}
+	for _, flag := range []string{"--sort", "--order", "--paginate"} {
+		if strings.Contains(text, flag) {
+			t.Fatalf("issue list passes flag %q that gh does not support: %s", flag, text)
+		}
 	}
 }
 

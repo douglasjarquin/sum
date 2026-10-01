@@ -626,7 +626,7 @@ func runGh(runtimeRoot string, args ...string) ([]byte, error) {
 }
 
 func ghIssueList(runtimeRoot, repo, label string) ([]ghIssue, error) {
-	args := []string{"issue", "list", "--repo", repo, "--state", "open", "--json", "number,title,state,labels", "--sort", "created", "--order", "asc", "--limit", "100", "--paginate"}
+	args := []string{"issue", "list", "--repo", repo, "--state", "open", "--json", "number,title,state,labels", "--limit", "100"}
 	if label != "" {
 		args = append(args, "--label", label)
 	}
