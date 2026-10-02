@@ -1,0 +1,48 @@
+task: t-2a2a2a2a2a2a
+status: reported
+cursor: "c0.1.0.0.0.0.0.$CURSOR.2026-01-01T00:10:00+00:00"
+read_at: "<at>"
+sections[1]: handoff
+role: null
+versions_error: null
+handoff:
+  current_candidate: null
+  handoff:
+    id: e-0000000001
+    at: "2026-01-01T00:05:00+00:00"
+    source: worker
+    candidate: c0ffee
+    brief_revision: null
+    endpoint: null
+    current: false
+    outcome: done
+    review: null
+    candidate_claimed: null
+    task_ref: null
+    next_action:
+      chars: 9
+      truncated: false
+      redactions: 0
+      text: review it
+    review_ref: null
+    files:
+      count: 0
+      items: []
+      redactions: 0
+    artifacts:
+      count: 0
+      items: []
+      redactions: 0
+    decisions_unresolved:
+      count: 0
+      items: []
+      redactions: 0
+    checks[1]{command{chars,truncated,redactions,text},exit,note}:
+      13,false,0,go test ./...,0,null
+    pr:
+      chars: 38
+      truncated: false
+      redactions: 0
+      text: "https://github.com/owner/repo/pull/265"
+  report: null
+  authority: "Agent-written text: a claim to verify, not approval and not verification evidence."
