@@ -36,6 +36,12 @@ func TestOfflineDemo(t *testing.T) {
 	git(repo, "add", ".")
 	git(repo, "commit", "-m", "Initial fixture")
 	mainSHA := git(repo, "rev-parse", "HEAD")
+	// Dispatch fetches the task base from origin, so the demo project carries a real local remote.
+	origin := filepath.Join(base, "origin.git")
+	git(base, "init", "-q", "--bare", "-b", "main", origin)
+	git(repo, "remote", "add", "origin", origin)
+	git(repo, "push", "-q", "-u", "origin", "main")
+	git(repo, "remote", "set-head", "origin", "main")
 	brief := filepath.Join(base, "brief.md")
 	if err := os.WriteFile(brief, []byte("Add greeting.py with greet(name) returning 'Hello, <name>!' and verify it. Ask whether to preserve punctuation. Do not publish."), 0o644); err != nil {
 		t.Fatal(err)

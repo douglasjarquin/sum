@@ -301,7 +301,7 @@
       },
       {
         "name": "--base",
-        "help": null,
+        "help": "The origin ref the task branches from, always fetched fresh just before the worktree is created; the default is the repository's base branch (its remote HEAD), any other value names that remote ref such as a branch for stacked work; a base the remote does not answer refuses the prepare, never a stale local ref",
         "default": "HEAD"
       },
       {
@@ -365,7 +365,7 @@
       },
       {
         "name": "--base",
-        "help": null,
+        "help": "The origin ref the task branches from, always fetched fresh just before the worktree is created; the default is the repository's base branch (its remote HEAD), any other value names that remote ref such as a branch for stacked work; a base the remote does not answer refuses the dispatch, never a stale local ref",
         "default": "HEAD"
       },
       {
