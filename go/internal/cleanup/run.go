@@ -181,6 +181,14 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 		changes.Set("state", func() any { v, _ := plan.Get("state"); return v }())
 		changes.Set("blockers", func() any { v, _ := plan.Get("blockers"); return v }())
 		changes.Set("resources", func() any { v, _ := plan.Get("resources"); return v }())
+		artifacts := asObject(func() any { v, _ := plan.Get("artifacts"); return v }())
+		if artifacts != nil {
+			for _, key := range []string{"ignored_paths", "ignored_count", "ignored_omitted"} {
+				if value, ok := artifacts.Get(key); ok {
+					changes.Set(key, value)
+				}
+			}
+		}
 		if _, err := saveCleanup(s, args.Task, changes); err != nil {
 			return nil, err
 		}
@@ -259,6 +267,14 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	}
 	removed := ordjson.NewObject()
 	removed.Set("performed", false)
+	artifacts := asObject(func() any { v, _ := plan.Get("artifacts"); return v }())
+	if artifacts != nil {
+		for _, key := range []string{"ignored_paths", "ignored_count", "ignored_omitted"} {
+			if value, ok := artifacts.Get(key); ok {
+				removed.Set(key, value)
+			}
+		}
+	}
 	if len(orphansStopped) > 0 {
 		removed.Set("orphans_stopped", orphansStopped)
 	}
