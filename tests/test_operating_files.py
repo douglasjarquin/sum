@@ -225,6 +225,34 @@ class OperatingFilesTest(unittest.TestCase):
         ):
             self.assertIn(rule, text)
 
+    def test_code_comment_rule_covers_workers_reviewers_repairs_and_grok_pack(self):
+        worker = (ROOT / "skills" / "sum-work" / "SKILL.md").read_text()
+        reviewer = (ROOT / "skills" / "sum-deliver" / "SKILL.md").read_text()
+        coordinator = (ROOT / "COORDINATOR.md").read_text()
+        grok_worker = (GROK_BOT / "worker-procedure.md").read_text()
+        grok_reviewer = (GROK_BOT / "skills" / "deliver" / "SKILL.md").read_text()
+        hard_rule = "Never add a code comment or edit an existing code comment."
+        exceptions = (
+            "repository-required license headers",
+            "build tags",
+            "lint-disable pragmas",
+            "`// @ts-expect-error`",
+            "only when the code cannot work without it",
+            "no explanatory prose in it",
+        )
+        for text in (worker, grok_worker):
+            self.assertIn(hard_rule, text)
+            for exception in exceptions:
+                self.assertIn(exception, text)
+            self.assertIn("Comments drift from code; the code, tests and commit messages carry intent.", text)
+        for text in (reviewer, grok_reviewer):
+            self.assertIn("Treat any added code comment or edit to an existing code comment", text)
+            self.assertIn("as a blocking finding", text)
+            self.assertIn("Do not flag comments left unchanged while surrounding code changes.", text)
+            for exception in exceptions:
+                self.assertIn(exception, text)
+        self.assertIn("never ask a worker to add or reword code comments", coordinator)
+
     def test_grok_bot_skills_state_the_six_fields(self):
         for name in RECIPE_FILES:
             if not name.startswith("skills/"):
@@ -439,4 +467,3 @@ class OperatingFilesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
