@@ -132,7 +132,7 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 		by.Set(k, v)
 	}
 	pr.Set("observed_by", by)
-	var findings []any
+	var findings, notes []any
 	headSHA := fmt.Sprint(data["headRefOid"])
 	var candidate string
 	if report := asObject(func() any { v, _ := task.Get("report"); return v }()); report != nil {
@@ -149,7 +149,12 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 		}
 	}
 	if candidate != "" && headSHA != candidate {
-		findings = append(findings, fmt.Sprintf("PR head %s is not the recorded candidate %s", headSHA, candidate))
+		text := fmt.Sprintf("PR head %s is not the recorded candidate %s", headSHA, candidate)
+		if verified := coordinatorVerification(task, headSHA); verified != nil {
+			notes = append(notes, fmt.Sprintf("%s; coordinator verification %s passed on that head", text, asString(verified, "id")))
+		} else {
+			findings = append(findings, text)
+		}
 	}
 	var mergeCommit any
 	if mc, ok := data["mergeCommit"]; ok && mc != nil {
@@ -160,6 +165,9 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 		}
 	}
 	pr.Set("findings", findings)
+	if len(notes) > 0 {
+		pr.Set("notes", notes)
+	}
 	pr.Set("merge_commit", mergeCommit)
 	complete := state == "merged" && mergeCommit != nil && len(findings) == 0
 	pr.Set("complete", complete)
@@ -178,6 +186,20 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 	_ = pipeline.RefreshNote(s, task)
 	recordID, _ := record.Get("id")
 	return pr, recordID, nil
+}
+
+func coordinatorVerification(task *ordjson.Object, sha string) *ordjson.Object {
+	for _, raw := range asList(func() any { v, _ := task.Get("evidence"); return v }()) {
+		rec := asObject(raw)
+		if rec == nil {
+			continue
+		}
+		if asString(rec, "kind") == "verification" && asString(rec, "source") == "coordinator" &&
+			asString(rec, "candidate") == sha && asString(rec, "result") == "pass" {
+			return rec
+		}
+	}
+	return nil
 }
 
 func Evidence(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PublishArgs) (*ordjson.Object, error) {

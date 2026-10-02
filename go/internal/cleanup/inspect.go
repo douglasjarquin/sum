@@ -805,9 +805,18 @@ func (ins *inspection) github(number int) (*ordjson.Object, error) {
 			row.Set("head_sha", func() any { v, _ := ident.Get("head_sha"); return v }())
 			row.Set("merge_commit", func() any { v, _ := recorded.Get("merge_commit"); return v }())
 			row.Set("findings", func() any { v, _ := recorded.Get("findings"); return v }())
+			row.Set("notes", func() any { v, _ := recorded.Get("notes"); return v }())
 			ins.view.Set("pr", row)
 			if stringField(recorded, "state") != "merged" {
 				ins.block("pr", fmt.Sprintf("PR #%d is %s, not merged with a merge commit; closed or open PRs never justify cleanup", number, stringField(recorded, "state")))
+			}
+			return recorded, nil
+		}
+		if stringField(recorded, "state") == "merged" {
+			if findings := asList(func() any { v, _ := recorded.Get("findings"); return v }()); len(findings) > 0 {
+				ins.block("pr", fmt.Sprintf("PR #%d is merged but its head is not attributed to this task: %v; a coordinator `verify --result pass` on the merged head explains a post-review push, then reconcile again", number, findings))
+			} else {
+				ins.block("pr", fmt.Sprintf("PR #%d is merged but the observation recorded no merge commit; reconcile again to re-observe it", number))
 			}
 			return recorded, nil
 		}
