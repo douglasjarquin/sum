@@ -10,6 +10,10 @@ Report to the coordinator against the task id in your brief.
 Read the repository and establish current behavior before you change it.
 Keep the change inside the approved scope.
 
+Never add a code comment or edit an existing code comment. This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files. Comments drift from code; the code, tests and commit messages carry intent.
+
+Commit messages, PR descriptions and report text are not code comments. Leave existing comments untouched when changing surrounding code. Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; add a directive only when the code cannot work without it, and include no explanatory prose in it.
+
 For an investigation, deliver findings and evidence.
 Do not turn an investigation into implementation.
 

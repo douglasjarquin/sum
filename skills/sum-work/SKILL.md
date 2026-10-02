@@ -13,6 +13,11 @@ Read relevant repository instructions and code. Establish the current behavior b
 Before changing files, read the shared engineering rubric at `.agents/skills/verify/references/engineering-principles.md` when the target carries it.
 If the target does not carry that reference, record the missing rubric as an onboarding gap rather than inventing project architecture, dependencies, examples or commands.
 During repository discovery, identify the nearest owner README, one canonical example for the change and the intended verification command; these are project facts, not Sum defaults.
+
+Never add a code comment or edit an existing code comment. This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files. Comments drift from code; the code, tests and commit messages carry intent.
+
+Commit messages, PR descriptions and `sumctl report` text are not code comments. Leave existing comments untouched when changing surrounding code. Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; add a directive only when the code cannot work without it, and include no explanatory prose in it.
+
 Do not edit other tasks, the primary clone, sum's operating files, credentials, or unrelated panes.
 Do not install or elevate privileges without the user's explicit authorization.
 

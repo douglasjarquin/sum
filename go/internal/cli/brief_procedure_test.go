@@ -128,6 +128,18 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 	if got, _ := os.ReadFile(pinned); string(got) != string(source) {
 		t.Fatal("pinned procedure differs from the runtime source")
 	}
+	for _, rule := range []string{
+		"Never add a code comment or edit an existing code comment.",
+		"This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files.",
+		"Comments drift from code; the code, tests and commit messages carry intent.",
+		"Commit messages, PR descriptions and `sumctl report` text are not code comments.",
+		"Leave existing comments untouched when changing surrounding code.",
+		"add a directive only when the code cannot work without it, and include no explanatory prose in it.",
+	} {
+		if !strings.Contains(string(source), rule) {
+			t.Fatalf("pinned worker procedure is missing rule %q", rule)
+		}
+	}
 	if strings.Contains(string(brief), string(source[:200])) {
 		t.Fatal("brief embeds the procedure body")
 	}
