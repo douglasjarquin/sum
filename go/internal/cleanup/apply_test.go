@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -140,6 +141,133 @@ func TestCleanup_applyAdoptsClosedPaneCheckout(t *testing.T) {
 	status, _ := task.Get("status")
 	if status != "archived" {
 		t.Fatalf("task status = %v, want archived", status)
+	}
+}
+
+func TestCleanup_applyRemovesIgnoredOutputsAndRecordsPaths(t *testing.T) {
+	l := newLab(t)
+	_ = l.makeWorktreeCheckout()
+	gitRun := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", l.checkout}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if err := os.WriteFile(filepath.Join(l.checkout, ".gitignore"), []byte(".env\nweb/.astro/\nweb/dist/\nbuild/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun("add", ".gitignore")
+	gitRun("commit", "-q", "-m", "ignore generated outputs")
+	head := gitRun("rev-parse", "HEAD")
+	for _, rel := range []string{".env", "web/.astro/cache", "web/dist/index.html", "build/output"} {
+		path := filepath.Join(l.checkout, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("generated"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l.saveTask(l.mergedTaskJSON(head, `[]`, "released"))
+	plan, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID})
+	if err != nil {
+		t.Fatalf("cleanup inspection: %v", err)
+	}
+	t.Logf("inspection artifacts: %v", func() any { v, _ := plan.Get("artifacts"); return v }())
+	if hasCode(blockerCodes(plan), "artifacts") {
+		t.Fatalf("ignored outputs blocked cleanup: %v", blockerCodes(plan))
+	}
+	artifacts := asObject(func() any { v, _ := plan.Get("artifacts"); return v }())
+	paths := asList(func() any { v, _ := artifacts.Get("ignored_paths"); return v }())
+	for _, want := range []string{".env", "web/.astro/", "web/dist/", "build/"} {
+		found := false
+		for _, raw := range paths {
+			if raw == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("inspection ignored_paths = %v, missing %s", paths, want)
+		}
+	}
+	task, err := l.store.ReadTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := asObject(func() any { v, _ := task.Get("cleanup"); return v }())
+	if got := asList(func() any { v, _ := cleanup.Get("ignored_paths"); return v }()); !reflect.DeepEqual(got, paths) {
+		t.Fatalf("recorded inspection ignored_paths = %v, want %v", got, paths)
+	}
+	result, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true})
+	if err != nil {
+		t.Fatalf("cleanup --apply: %v", err)
+	}
+	t.Logf("cleanup removed: %v", func() any { v, _ := result.Get("removed"); return v }())
+	removed := asObject(func() any { v, _ := result.Get("removed"); return v }())
+	removedPaths := asList(func() any { v, _ := removed.Get("ignored_paths"); return v }())
+	if !reflect.DeepEqual(removedPaths, paths) {
+		t.Fatalf("removed ignored_paths = %v, want %v", removedPaths, paths)
+	}
+	task, err = l.store.ReadTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup = asObject(func() any { v, _ := task.Get("cleanup"); return v }())
+	recorded := asObject(func() any { v, _ := cleanup.Get("removed"); return v }())
+	if got := asList(func() any { v, _ := recorded.Get("ignored_paths"); return v }()); !reflect.DeepEqual(got, paths) {
+		t.Fatalf("recorded ignored_paths = %v, want %v", got, paths)
+	}
+}
+
+func TestCleanup_dirtyNonIgnoredFilesAndCommitsStillBlock(t *testing.T) {
+	for _, scenario := range []string{"untracked", "modified", "local commit"} {
+		t.Run(scenario, func(t *testing.T) {
+			l := newLab(t)
+			head := l.makeWorktreeCheckout()
+			gitRun := func(args ...string) string {
+				t.Helper()
+				cmd := exec.Command("git", append([]string{"-C", l.checkout}, args...)...)
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+				return strings.TrimSpace(string(out))
+			}
+			if scenario == "modified" || scenario == "local commit" {
+				if err := os.WriteFile(filepath.Join(l.checkout, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				gitRun("add", "tracked.txt")
+				gitRun("commit", "-q", "-m", "add tracked file")
+				head = gitRun("rev-parse", "HEAD")
+			}
+			l.saveTask(l.mergedTaskJSON(head, `[]`, "released"))
+			switch scenario {
+			case "untracked":
+				if err := os.WriteFile(filepath.Join(l.checkout, "notes.txt"), []byte("keep me\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			case "modified":
+				if err := os.WriteFile(filepath.Join(l.checkout, "tracked.txt"), []byte("changed\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			case "local commit":
+				gitRun("commit", "--allow-empty", "-q", "-m", "local work")
+			}
+			plan := l.inspect()
+			if !hasCode(blockerCodes(plan), map[string]string{"untracked": "artifacts", "modified": "artifacts", "local commit": "commits"}[scenario]) {
+				t.Fatalf("blockers = %v, want blocker for %s", blockerCodes(plan), scenario)
+			}
+			if _, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true}); err == nil {
+				t.Fatal("cleanup --apply succeeded with a non-ignored change")
+			}
+			if _, err := os.Stat(l.checkout); err != nil {
+				t.Fatalf("cleanup removed checkout with %s change: %v", scenario, err)
+			}
+		})
 	}
 }
 

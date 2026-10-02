@@ -2,7 +2,6 @@ package cleanup
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -22,12 +21,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
-var disposableIgnored = []string{"__pycache__", "*.pyc", ".pytest_cache", ".mypy_cache", ".ruff_cache", "node_modules", ".DS_Store", ".artifacts", ".codegraph"}
-
-// generatedIgnored maps each exact checkout-relative file sum's own build writes into a sum checkout
-// to the tracked source that rebuilds it: mise run test, verify, and demo compile .local/bin/sumctl
-// from go/cmd/sumctl. Any other file beside it keeps the ignored entry preserved.
-var generatedIgnored = map[string]string{".local/bin/sumctl": "go/cmd/sumctl"}
+const ignoredPathLimit = 50
 
 var shells = map[string]bool{
 	"bash": true, "zsh": true, "sh": true, "fish": true, "dash": true, "ksh": true, "tcsh": true, "csh": true, "nu": true, "pwsh": true,
@@ -124,48 +118,6 @@ func worktreePaths(repo string) ([]string, error) {
 	return paths, nil
 }
 
-func disposable(relative string) bool {
-	parts := strings.Split(filepath.ToSlash(relative), "/")
-	for _, part := range parts {
-		for _, pattern := range disposableIgnored {
-			if matched, _ := filepath.Match(pattern, part); matched {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// regenerable reports whether an ignored entry holds only files in generatedIgnored, each a regular
-// file whose source the checkout tracks. A directory entry is walked without following symlinks.
-func regenerable(worktree, relative string) bool {
-	root := filepath.Join(worktree, filepath.FromSlash(strings.TrimSuffix(relative, "/")))
-	generated := 0
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		rel, err := filepath.Rel(worktree, path)
-		if err != nil {
-			return err
-		}
-		source, known := generatedIgnored[filepath.ToSlash(rel)]
-		if !known || !entry.Type().IsRegular() || !tracked(worktree, source) {
-			return errForeign
-		}
-		generated++
-		return nil
-	})
-	return err == nil && generated > 0
-}
-
-var errForeign = errors.New("not a file sum generates")
-
-func tracked(worktree, source string) bool {
-	out, err := proc.Run([]string{"git", "-C", worktree, "ls-files", "--", source}, "", 20*time.Second, true, nil)
-	return err == nil && strings.TrimSpace(out.Stdout) != ""
-}
-
 func worktreeArtifacts(worktree string) (*ordjson.Object, error) {
 	out, err := proc.Run([]string{"git", "-C", worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching"}, "", 30*time.Second, true, nil)
 	if err != nil {
@@ -175,8 +127,7 @@ func worktreeArtifacts(worktree string) (*ordjson.Object, error) {
 	tracked := []any{}
 	staged := []any{}
 	untracked := []any{}
-	ignoredPreserved := []any{}
-	ignoredDisposable := []any{}
+	ignored := []any{}
 	entries := strings.Split(out.Stdout, "\x00")
 	for i := 0; i < len(entries); i++ {
 		entry := entries[i]
@@ -189,11 +140,7 @@ func worktreeArtifacts(worktree string) (*ordjson.Object, error) {
 		}
 		switch code {
 		case "!!":
-			if disposable(path) || regenerable(worktree, path) {
-				ignoredDisposable = append(ignoredDisposable, path)
-			} else {
-				ignoredPreserved = append(ignoredPreserved, path)
-			}
+			ignored = append(ignored, path)
 		case "??":
 			untracked = append(untracked, path)
 		default:
@@ -208,8 +155,13 @@ func worktreeArtifacts(worktree string) (*ordjson.Object, error) {
 	result.Set("tracked_modified", tracked)
 	result.Set("staged", staged)
 	result.Set("untracked", untracked)
-	result.Set("ignored_preserved", ignoredPreserved)
-	result.Set("ignored_disposable", ignoredDisposable)
+	shownIgnored := ignored
+	if len(shownIgnored) > ignoredPathLimit {
+		shownIgnored = shownIgnored[:ignoredPathLimit]
+	}
+	result.Set("ignored_paths", shownIgnored)
+	result.Set("ignored_count", json.Number(fmt.Sprint(len(ignored))))
+	result.Set("ignored_omitted", json.Number(fmt.Sprint(len(ignored)-len(shownIgnored))))
 	return result, nil
 }
 
@@ -892,7 +844,6 @@ func (ins *inspection) checkout(mergedHead string) error {
 		{"staged", "staged changes"},
 		{"tracked_modified", "modified tracked files"},
 		{"untracked", "untracked files"},
-		{"ignored_preserved", "ignored files that are not known disposable caches"},
 	}
 	for _, item := range labels {
 		list := asList(func() any { v, _ := artifacts.Get(item.key); return v }())

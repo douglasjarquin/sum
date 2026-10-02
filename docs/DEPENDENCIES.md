@@ -109,7 +109,7 @@ Facts taken from the pinned binary in an isolated lab, not from its README:
 
 Measured on this machine (macOS, Apple Silicon, warm cache, real binary): `init` of sum's checkout 0.69 s wall (234 ms indexing), a repeated `init` on the existing index 0.08 s, `sync` after one edit 0.24 s, `query` 0.15 s, `explore` 0.14 s. Upstream's benchmark figures are not repeated here as local measurements.
 
-Cleanup classifies `.codegraph/` as a regenerable cache (with `__pycache__`, `node_modules`, `.artifacts`), so a merged task's checkout is removable with its index; a records backup carries `graph.json` and rebuild metadata, never an index; a release bundle is refused if it contains `.codegraph`. sum starts no watcher, so it stops none; a harness's own `codegraph serve --mcp` process inside a checkout is that session's and shows up as an ordinary occupant until the session exits.
+Cleanup treats every ignored path as disposable after the merge and identity checks, so a merged task's checkout is removable with its `.codegraph/` index; a records backup carries `graph.json` and rebuild metadata, never an index; a release bundle is refused if it contains `.codegraph`. sum starts no watcher, so it stops none; a harness's own `codegraph serve --mcp` process inside a checkout is that session's and shows up as an ordinary occupant until the session exits.
 
 ## Installation identity versus runtime tree
 
