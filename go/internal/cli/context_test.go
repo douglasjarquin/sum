@@ -117,6 +117,21 @@ func TestContextSections_pinStdoutAcrossScenarios(t *testing.T) {
 		assertContextSectionsMatch(t, home, "t-ffffffffffff", "handoff", "evidence")
 	})
 
+	t.Run("handoff section, pr recorded as a bare URL string", func(t *testing.T) {
+		home := t.TempDir()
+		taskJSON := fmt.Sprintf(`{"schema": 1, "id": "t-2a2a2a2a2a2a", "status": "reported", "repository": "owner/repoS",
+"questions": [], "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+"report": null, "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:10:00+00:00",
+"evidence": [
+  {"schema": 1, "id": "e-0000000001", "kind": "handoff", "source": "worker", "at": "2026-01-01T00:05:00+00:00",
+   "candidate": "c0ffee", "brief_revision": null, "sum_version": "0.1.0", "endpoint": null,
+   "handoff": {"outcome": "done", "next_action": "review it", "checks": [{"command": "go test ./...", "exit": 0}],
+    "pr": "https://github.com/owner/repo/pull/265"}}
+]}`, baseSha)
+		writeTaskFixture(t, home, "t-2a2a2a2a2a2a", taskJSON)
+		assertContextSectionsMatch(t, home, "t-2a2a2a2a2a2a", "handoff")
+	})
+
 	t.Run("brief section, legacy task with no versions.json", func(t *testing.T) {
 		home := t.TempDir()
 		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",

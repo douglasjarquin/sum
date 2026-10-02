@@ -602,17 +602,22 @@ func handoffView(record *ordjson.Object, head string, limit int) *ordjson.Object
 	result.Set("decisions_unresolved", handoffStringList(listField(handoff, "decisions_unresolved"), limit))
 	result.Set("checks", handoffChecks(listField(handoff, "checks"), limit))
 	if prValue := getField(handoff, "pr"); truthy(prValue) {
-		prObj := asObject(prValue)
-		outPR := ordjson.NewObject()
-		for _, k := range prObj.Keys() {
-			v, _ := prObj.Get(k)
-			if s, ok := v.(string); ok {
-				outPR.Set(k, environment.BoundedView(s, limit))
-			} else {
-				outPR.Set(k, v)
+		if prObj := asObject(prValue); prObj != nil {
+			outPR := ordjson.NewObject()
+			for _, k := range prObj.Keys() {
+				v, _ := prObj.Get(k)
+				if s, ok := v.(string); ok {
+					outPR.Set(k, environment.BoundedView(s, limit))
+				} else {
+					outPR.Set(k, v)
+				}
 			}
+			result.Set("pr", outPR)
+		} else if s, ok := prValue.(string); ok {
+			result.Set("pr", environment.BoundedView(s, limit))
+		} else {
+			result.Set("pr", prValue)
 		}
-		result.Set("pr", outPR)
 	} else {
 		result.Set("pr", nil)
 	}
