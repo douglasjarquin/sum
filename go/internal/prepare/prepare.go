@@ -19,6 +19,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/project"
@@ -31,6 +32,8 @@ import (
 )
 
 const MaxText = 256 * 1024
+
+const baseFetchBound = 5 * time.Minute
 
 // A freshly created pane can report agent_pane_busy while its shell is still
 // coming up. That refusal is definite (nothing launched), so a bounded retry
@@ -52,6 +55,31 @@ func runGit(args ...string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(out.Stdout), nil
+}
+
+func fetchBase(repo, ref string) (string, error) {
+	if ref == "" || ref == "HEAD" {
+		ref = pipeline.BaseBranch(repo, nil)
+	} else {
+		ref = strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/origin/"), "origin/")
+	}
+	fetch, err := proc.Run([]string{"git", "-C", repo, "fetch", "--quiet", "origin", ref}, "", baseFetchBound, false, gitBaseEnv())
+	if err != nil || fetch.Code != 0 {
+		detail := fetch.Detail()
+		if err != nil {
+			detail = err.Error()
+		}
+		return "", fmt.Errorf("Could not fetch %s from origin for the task base: %s", ref, detail)
+	}
+	sha, err := runGit("-C", repo, "rev-parse", "--verify", "FETCH_HEAD^{commit}", "--")
+	if err != nil {
+		return "", fmt.Errorf("Fetched %s but could not resolve the remote tip: %s", ref, err)
+	}
+	return sha, nil
+}
+
+func gitBaseEnv() []string {
+	return append(proc.ScrubbedEnv(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 }
 
 func resolvePath(path string) string {
@@ -131,10 +159,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if args.Kind == "" {
 		args.Kind = "ship"
 	}
-	baseSHA, err := runGit("-C", repo, "rev-parse", "--verify", args.Base+"^{commit}", "--")
-	if err != nil {
-		return nil, err
-	}
 	briefText, err := os.ReadFile(args.Brief)
 	if err != nil {
 		return nil, err
@@ -155,6 +179,10 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		PresetSet:   args.PresetSet,
 		RuntimeRoot: args.RuntimeRoot,
 	})
+	if err != nil {
+		return nil, err
+	}
+	baseSHA, err := fetchBase(repo, args.Base)
 	if err != nil {
 		return nil, err
 	}

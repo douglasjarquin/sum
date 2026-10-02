@@ -246,6 +246,13 @@ func TestPrepare_createsIsolatedWorktree(t *testing.T) {
 	}
 	run("add", ".")
 	run("commit", "-m", "fixture")
+	origin := filepath.Join(home, "origin.git")
+	if out := execGit(t, home, "init", "-q", "--bare", "-b", "main", origin); out != "" {
+		t.Fatal(out)
+	}
+	run("remote", "add", "origin", origin)
+	run("push", "-q", "-u", "origin", "main")
+	run("remote", "set-head", "origin", "main")
 	briefPath := filepath.Join(home, "brief.md")
 	if err := os.WriteFile(briefPath, []byte("Add a greeting and test it. Do not publish or merge.\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -303,13 +310,19 @@ func TestPrepare_usesEnrolledProject(t *testing.T) {
 	}
 	run("add", ".")
 	run("commit", "-m", "fixture")
-	run("remote", "add", "origin", "https://github.com/demo/project.git")
+	origin := filepath.Join(home, "origin.git")
+	if out := execGit(t, home, "init", "-q", "--bare", "-b", "main", origin); out != "" {
+		t.Fatal(out)
+	}
+	run("remote", "add", "origin", origin)
+	run("push", "-q", "-u", "origin", "main")
+	run("remote", "set-head", "origin", "main")
 	registry := fmt.Sprintf(`{"schema": 1, "projects": {"demo/project": {
 "name": "demo/project", "host": "github.com", "owner": "demo", "repo": "project", "kind": "managed",
-"path": %q, "remote": "https://github.com/demo/project.git",
+"path": %q, "remote": %q,
 "enrolled_at": "2026-01-01T00:00:00+00:00",
 "enrolled_by": {"machine": "m1", "session": "s1", "pane": "p1"},
-"canonical_path": %q, "note": null}}}`, repo, repo)
+"canonical_path": %q, "note": null}}}`, repo, origin, repo)
 	if err := os.WriteFile(filepath.Join(home, "projects.json"), []byte(registry), 0o600); err != nil {
 		t.Fatal(err)
 	}

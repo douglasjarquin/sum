@@ -227,6 +227,77 @@ func TestDispatchRetriesAgentPaneBusy(t *testing.T) {
 	}
 }
 
+func TestDispatchBranchesFromTheFetchedBase(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "moved-base", map[string]string{"README.md": "x\n"})
+	local := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
+	writeFile(t, filepath.Join(repo, "ADVANCED.md"), "y\n")
+	gitIn(t, repo, "add", "ADVANCED.md")
+	gitIn(t, repo, "commit", "-q", "-m", "advance")
+	gitIn(t, repo, "push", "-q", "origin", "main")
+	remote := strings.TrimSpace(gitIn(t, repo, "rev-parse", "origin/main"))
+	if remote == local {
+		t.Fatal("origin did not move")
+	}
+	gitIn(t, repo, "reset", "--hard", "-q", local)
+	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", local)
+
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if asString(task["base_sha"]) != remote {
+		t.Fatalf("base_sha = %v, want the fetched remote tip %s", task["base_sha"], remote)
+	}
+	if head := strings.TrimSpace(gitIn(t, asString(task["worktree"]), "rev-parse", "HEAD")); head != remote {
+		t.Fatalf("worktree HEAD = %s, want the fetched remote tip %s", head, remote)
+	}
+}
+
+func TestDispatchRefusesABaseTheRemoteDoesNotAnswer(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "dead-remote", map[string]string{"README.md": "x\n"})
+	gitIn(t, repo, "remote", "set-url", "origin", filepath.Join(d.base, "gone.git"))
+
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if msg := asString(refused["error"]); !strings.Contains(msg, "Could not fetch") {
+		t.Fatalf("dispatch error = %q, want a fetch refusal", msg)
+	}
+	entries, err := os.ReadDir(filepath.Join(d.home, "tasks"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a refused dispatch left task records: %v", entries)
+	}
+	for _, call := range herdrCalls(t, d.base) {
+		if len(call) >= 2 && call[0] == "worktree" && call[1] == "create" {
+			t.Fatalf("a refused dispatch still created a worktree: %v", call)
+		}
+	}
+}
+
+func TestDispatchHonorsAnExplicitBaseRef(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "stacked", map[string]string{"README.md": "x\n"})
+	gitIn(t, repo, "checkout", "-q", "-b", "feature")
+	writeFile(t, filepath.Join(repo, "FEATURE.md"), "f\n")
+	gitIn(t, repo, "add", "FEATURE.md")
+	gitIn(t, repo, "commit", "-q", "-m", "feature")
+	gitIn(t, repo, "push", "-q", "origin", "feature")
+	feature := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
+	gitIn(t, repo, "checkout", "-q", "main")
+
+	task := d.ctl(true, "dispatch", "--repo", repo, "--base", "feature", "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if asString(task["base_sha"]) != feature {
+		t.Fatalf("base_sha = %v, want the fetched feature tip %s", task["base_sha"], feature)
+	}
+	if head := strings.TrimSpace(gitIn(t, asString(task["worktree"]), "rev-parse", "HEAD")); head != feature {
+		t.Fatalf("worktree HEAD = %s, want %s", head, feature)
+	}
+	again := d.ctl(true, "prepare", "--repo", repo, "--base", "origin/feature", "--brief", policyBrief(t, d.base), "--approved")
+	if asString(again["base_sha"]) != feature {
+		t.Fatalf("origin/feature base_sha = %v, want %s", again["base_sha"], feature)
+	}
+}
+
 // Dispatch binds the worker registration to the occupant Herdr reports for the task's pane (its terminal and shell),
 // so the pane's own init and every later delivery are judged against it.
 func TestDispatchRecordsTheWorkerPanesIncarnation(t *testing.T) {

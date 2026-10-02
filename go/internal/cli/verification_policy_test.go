@@ -83,6 +83,13 @@ func policyProject(t *testing.T, base, name string, files map[string]string) str
 	}
 	git("add", ".")
 	git("commit", "-q", "-m", "fixture")
+	origin := filepath.Join(base, "remotes", name+".git")
+	if out, err := exec.Command("git", "init", "-q", "--bare", "-b", "main", origin).CombinedOutput(); err != nil {
+		t.Fatalf("bare origin: %v\n%s", err, out)
+	}
+	git("remote", "add", "origin", origin)
+	git("push", "-q", "-u", "origin", "main")
+	git("remote", "set-head", "origin", "main")
 	return repo
 }
 
@@ -357,6 +364,9 @@ func TestInFlightTaskKeepsPinnedPolicyAfterAdoptedRevision(t *testing.T) {
 	}
 	if out, err := exec.Command("git", "-C", repo, "commit", "-qam", "adopted revision").CombinedOutput(); err != nil {
 		t.Fatalf("commit adopted: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("git", "-C", repo, "push", "-q", "origin", "main").CombinedOutput(); err != nil {
+		t.Fatalf("push adopted: %v\n%s", err, out)
 	}
 	held := d.ctl(true, "show", asString(first["id"]))
 	if asString(asMap(held["verification_policy"])["contract_sha256"]) != firstHash {
