@@ -310,7 +310,6 @@ func TestPrepare_usesEnrolledProject(t *testing.T) {
 	}
 	run("add", ".")
 	run("commit", "-m", "fixture")
-	// Prepare fetches the task base from origin, so the enrolled clone needs a fetchable remote.
 	origin := filepath.Join(home, "origin.git")
 	if out := execGit(t, home, "init", "-q", "--bare", "-b", "main", origin); out != "" {
 		t.Fatal(out)

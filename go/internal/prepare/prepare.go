@@ -33,8 +33,6 @@ import (
 
 const MaxText = 256 * 1024
 
-// baseFetchBound bounds the fetch that observes the task base; a remote that cannot answer inside it fails
-// prepare closed.
 const baseFetchBound = 5 * time.Minute
 
 // A freshly created pane can report agent_pane_busy while its shell is still
@@ -59,11 +57,6 @@ func runGit(args ...string) (string, error) {
 	return strings.TrimSpace(out.Stdout), nil
 }
 
-// fetchBase returns the commit the task branches from. --base names a ref on origin: the default HEAD means the
-// repository's base branch, resolved the same way the delivery pipeline resolves it, and any other value is that
-// remote ref itself (a branch for stacked work, a tag, a commit the remote serves). The ref is fetched first so
-// base_sha records the remote tip the worktree actually branches from; a base the remote does not answer refuses
-// the dispatch outright rather than branching from a stale local ref, the same posture RecheckBase takes.
 func fetchBase(repo, ref string) (string, error) {
 	if ref == "" || ref == "HEAD" {
 		ref = pipeline.BaseBranch(repo, nil)
@@ -78,7 +71,6 @@ func fetchBase(repo, ref string) (string, error) {
 		}
 		return "", fmt.Errorf("Could not fetch %s from origin for the task base: %s", ref, detail)
 	}
-	// FETCH_HEAD is the tip of exactly the ref just fetched, whatever kind of ref it was.
 	sha, err := runGit("-C", repo, "rev-parse", "--verify", "FETCH_HEAD^{commit}", "--")
 	if err != nil {
 		return "", fmt.Errorf("Fetched %s but could not resolve the remote tip: %s", ref, err)
@@ -86,7 +78,6 @@ func fetchBase(repo, ref string) (string, error) {
 	return sha, nil
 }
 
-// A credential prompt inside a coordinator command would hang with nobody watching.
 func gitBaseEnv() []string {
 	return append(proc.ScrubbedEnv(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 }
@@ -191,7 +182,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if err != nil {
 		return nil, err
 	}
-	// Observe the base last so a refusal costs no fetch and base_sha is the freshest tip the worktree can get.
 	baseSHA, err := fetchBase(repo, args.Base)
 	if err != nil {
 		return nil, err

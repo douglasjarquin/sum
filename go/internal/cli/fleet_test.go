@@ -846,7 +846,6 @@ func (f *fleetLab) project(name string) string {
 	}
 	f.git(repo, "add", ".")
 	f.git(repo, "commit", "-q", "-m", "fixture")
-	// Dispatch fetches the task base from origin, so the fixture project carries a real local remote.
 	origin := filepath.Join(f.base, "remotes", name+".git")
 	f.git(f.base, "init", "-q", "--bare", "-b", "main", origin)
 	f.git(repo, "remote", "add", "origin", origin)

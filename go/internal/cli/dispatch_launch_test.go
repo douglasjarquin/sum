@@ -227,8 +227,6 @@ func TestDispatchRetriesAgentPaneBusy(t *testing.T) {
 	}
 }
 
-// The incident this guards: a clone that is behind origin still dispatches a task that branches from the fetched
-// remote tip, never from the stale local HEAD or remote-tracking ref.
 func TestDispatchBranchesFromTheFetchedBase(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "moved-base", map[string]string{"README.md": "x\n"})
@@ -241,7 +239,6 @@ func TestDispatchBranchesFromTheFetchedBase(t *testing.T) {
 	if remote == local {
 		t.Fatal("origin did not move")
 	}
-	// Rewind the clone, remote-tracking ref included, so only a fresh fetch can see the tip.
 	gitIn(t, repo, "reset", "--hard", "-q", local)
 	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", local)
 
@@ -254,7 +251,6 @@ func TestDispatchBranchesFromTheFetchedBase(t *testing.T) {
 	}
 }
 
-// A remote that cannot answer fails the dispatch closed: no task record, no worktree, never a stale local base.
 func TestDispatchRefusesABaseTheRemoteDoesNotAnswer(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "dead-remote", map[string]string{"README.md": "x\n"})
@@ -278,7 +274,6 @@ func TestDispatchRefusesABaseTheRemoteDoesNotAnswer(t *testing.T) {
 	}
 }
 
-// --base names a ref on origin, so stacked work can branch from a feature branch that is not the base branch.
 func TestDispatchHonorsAnExplicitBaseRef(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "stacked", map[string]string{"README.md": "x\n"})
@@ -297,7 +292,6 @@ func TestDispatchHonorsAnExplicitBaseRef(t *testing.T) {
 	if head := strings.TrimSpace(gitIn(t, asString(task["worktree"]), "rev-parse", "HEAD")); head != feature {
 		t.Fatalf("worktree HEAD = %s, want %s", head, feature)
 	}
-	// The origin/-spelled form of the same ref resolves identically.
 	again := d.ctl(true, "prepare", "--repo", repo, "--base", "origin/feature", "--brief", policyBrief(t, d.base), "--approved")
 	if asString(again["base_sha"]) != feature {
 		t.Fatalf("origin/feature base_sha = %v, want %s", again["base_sha"], feature)
