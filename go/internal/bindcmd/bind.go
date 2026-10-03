@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"time"
 
@@ -95,29 +96,8 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		if err != nil {
 			return nil, err
 		}
-		worktree, _ := preTask.Get("worktree")
-		worktreeStr, _ := worktree.(string)
-		if observedCwd == "" || resolve(observedCwd) != resolve(worktreeStr) {
-			return nil, fmt.Errorf("Reviewer cwd does not match the recorded worktree.")
-		}
-		if reviewerPane == stringField(preTask, "pane") {
-			return nil, fmt.Errorf("The worker pane cannot be adopted as the reviewer.")
-		}
 		oldValue, _ := preTask.Get("reviewer")
 		reviewerBefore, _ = oldValue.(*ordjson.Object)
-		if reviewerBefore == nil {
-			return nil, fmt.Errorf("No recorded reviewer endpoint exists to rebind; the first reviewer is recorded by `sumctl review`.")
-		}
-		oldPane := stringField(reviewerBefore, "pane")
-		if reviewerPane == oldPane {
-			return nil, fmt.Errorf("The replacement reviewer pane must differ from the recorded reviewer pane.")
-		}
-		if !host.Is(func() any { v, _ := reviewerBefore.Get("machine"); return v }()) || stringField(reviewerBefore, "session") != sessionStr {
-			return nil, fmt.Errorf("The recorded reviewer pane is in another machine or session; its stop cannot be proved here.")
-		}
-		if err := reviewerStopped(pump.RuntimeRoot, sessionStr, oldPane, worktreeStr, stringField(preTask, "pane"), reviewerPane, reviewerShell, reviewerAgent); err != nil {
-			return nil, err
-		}
 	}
 	unlock, err := s.Lock()
 	if err != nil {
@@ -159,8 +139,11 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		}
 		oldValue, hasReviewer := task.Get("reviewer")
 		old, _ := oldValue.(*ordjson.Object)
-		if !hasReviewer || old == nil || !sameEndpoint(old, reviewerBefore) {
+		if !hasReviewer || old == nil {
 			return nil, fmt.Errorf("No recorded reviewer endpoint exists to rebind; the first reviewer is recorded by `sumctl review`.")
+		}
+		if !sameEndpoint(old, reviewerBefore) {
+			return nil, fmt.Errorf("The recorded reviewer endpoint changed concurrently; inspect it again before rebinding.")
 		}
 		oldPane, _ := old.Get("pane")
 		oldSession, _ := old.Get("session")
@@ -172,25 +155,22 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		if !host.Is(func() any { v, _ := old.Get("machine"); return v }()) || oldSessionStr != sessionStr {
 			return nil, fmt.Errorf("The recorded reviewer pane is in another machine or session; its stop cannot be proved here.")
 		}
-		newEndpoint := ordjson.NewObject()
-		for _, key := range []string{"machine", "session", "pane", "cwd"} {
-			if key == "machine" {
-				newEndpoint.Set(key, host.ID)
-			} else if key == "session" {
-				newEndpoint.Set(key, session)
-			} else if key == "pane" {
-				newEndpoint.Set(key, reviewerPane)
-			} else {
-				newEndpoint.Set(key, observedCwd)
-			}
+		stopObservation, err := reviewerStopped(pump.RuntimeRoot, sessionStr, oldPaneStr, worktreeStr, stringField(task, "pane"), reviewerPane, reviewerShell, reviewerAgent)
+		if err != nil {
+			return nil, err
 		}
+		newEndpoint := ordjson.NewObject()
+		newEndpoint.Set("machine", host.ID)
+		newEndpoint.Set("session", session)
+		newEndpoint.Set("pane", reviewerPane)
+		newEndpoint.Set("cwd", observedCwd)
 		boundAt := store.Now()
 		newEndpoint.Set("bound_at", boundAt)
 		newEndpoint.Set("incarnation", bound.Record(boundAt))
 		rebind := ordjson.NewObject()
 		rebind.Set("from", endpointRecord(old))
 		rebind.Set("to", endpointRecord(newEndpoint))
-		rebind.Set("stop_evidence", "Herdr reported pane_not_found or agent_not_found; the prior pane had no foreground process, and no other process remained bound to the task checkout")
+		rebind.Set("stop_evidence", stopObservation)
 		record, err := evidence.Append(task, "reviewer-rebind", "coordinator", rebind, nil, ctx)
 		if err != nil {
 			return nil, err
@@ -232,27 +212,31 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 	return result, nil
 }
 
-func reviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPane string, newShell int, newAgent *ordjson.Object) error {
+func reviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPane string, newShell int, newAgent *ordjson.Object) (*ordjson.Object, error) {
+	observation := ordjson.NewObject()
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
 	if err != nil {
-		return err
+		return observation, err
 	}
 	oldAgent, agentCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", oldPane)
+	observation.Set("agent_code", agentCode)
 	if err != nil {
-		return fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone: %w", err)
+		return observation, fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone: %w", err)
 	}
 	if oldAgent != nil {
-		return fmt.Errorf("Recorded reviewer pane %s still holds a live reviewer agent; it cannot be replaced.", oldPane)
+		return observation, fmt.Errorf("Recorded reviewer pane %s still holds a live reviewer agent; it cannot be replaced.", oldPane)
 	}
 	if agentCode != "agent_not_found" && agentCode != "pane_not_found" {
-		return fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone (%s).", agentCode)
+		return observation, fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone (%s).", agentCode)
 	}
 	oldPaneInfo, paneCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", oldPane)
+	observation.Set("pane_code", paneCode)
+	observation.Set("pane_present", oldPaneInfo != nil)
 	if err != nil {
-		return fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone: %w", err)
+		return observation, fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone: %w", err)
 	}
 	if oldPaneInfo == nil && paneCode != "pane_not_found" {
-		return fmt.Errorf("Cannot prove the recorded reviewer pane is gone (%s).", paneCode)
+		return observation, fmt.Errorf("Cannot prove the recorded reviewer pane is gone (%s).", paneCode)
 	}
 	exclude := map[int]bool{}
 	if newShell > 0 {
@@ -266,10 +250,10 @@ func reviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPan
 	for _, paneID := range []string{workerPane, newPane} {
 		info, code, err := environment.PaneProcesses(runtimeRoot, session, paneID)
 		if err != nil {
-			return fmt.Errorf("Cannot inspect checkout endpoint %s: %w", paneID, err)
+			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s: %w", paneID, err)
 		}
 		if info == nil && code != "pane_not_found" && code != "agent_not_found" {
-			return fmt.Errorf("Cannot inspect checkout endpoint %s (%s).", paneID, code)
+			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s (%s).", paneID, code)
 		}
 		if info != nil {
 			if pid := numericPID(info, "shell_pid"); pid > 0 {
@@ -289,28 +273,30 @@ func reviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPan
 			paneObj, _ = nested.(*ordjson.Object)
 		}
 		oldCwd, _ := paneObj.Get("cwd")
+		observation.Set("old_cwd", oldCwd)
 		if resolve(fmt.Sprint(oldCwd)) != resolve(worktree) {
-			return fmt.Errorf("Recorded reviewer pane cwd changed; its stop cannot be proved.")
+			return observation, fmt.Errorf("Recorded reviewer pane cwd changed; its stop cannot be proved.")
 		}
 		info, code, err := environment.PaneProcesses(runtimeRoot, session, oldPane)
 		if err != nil {
-			return fmt.Errorf("Cannot inspect the recorded reviewer pane: %w", err)
+			return observation, fmt.Errorf("Cannot inspect the recorded reviewer pane: %w", err)
 		}
 		if info == nil {
-			return fmt.Errorf("Cannot prove the recorded reviewer pane is unoccupied (%s).", code)
+			return observation, fmt.Errorf("Cannot prove the recorded reviewer pane is unoccupied (%s).", code)
 		}
 		if pid := numericPID(info, "shell_pid"); pid > 0 {
+			observation.Set("old_shell_pid", pid)
 			exclude[pid] = true
 		}
 		processes, _ := info.Get("processes")
 		if rows, _ := processes.([]any); len(rows) > 0 {
-			return fmt.Errorf("Recorded reviewer pane %s still has foreground processes; its stop cannot be proved.", oldPane)
+			return observation, fmt.Errorf("Recorded reviewer pane %s still has foreground processes; its stop cannot be proved.", oldPane)
 		}
 	}
 	for _, paneID := range []string{workerPane, newPane} {
 		agent, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", paneID)
 		if err != nil {
-			return fmt.Errorf("Cannot inspect checkout endpoint %s: %w", paneID, err)
+			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s: %w", paneID, err)
 		}
 		if agent != nil {
 			agentObj := herdrclient.UnwrapAgent(agent)
@@ -320,17 +306,23 @@ func reviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPan
 				}
 			}
 		} else if code != "agent_not_found" && code != "pane_not_found" {
-			return fmt.Errorf("Cannot inspect checkout endpoint %s (%s).", paneID, code)
+			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s (%s).", paneID, code)
 		}
 	}
 	inside, err := proc.ProcessesBoundTo(worktree, exclude)
+	excluded := make([]any, 0, len(exclude))
+	for pid := range exclude {
+		excluded = append(excluded, pid)
+	}
+	sort.Slice(excluded, func(i, j int) bool { return excluded[i].(int) < excluded[j].(int) })
+	observation.Set("excluded_pids", excluded)
 	if err != nil {
-		return fmt.Errorf("Cannot prove there are no other processes in the task checkout: %w", err)
+		return observation, fmt.Errorf("Cannot prove there are no other processes in the task checkout: %w", err)
 	}
 	if len(inside) > 0 {
-		return fmt.Errorf("Cannot rebind reviewer while process %d remains bound to the task checkout.", inside[0].PID)
+		return observation, fmt.Errorf("Cannot rebind reviewer while process %d remains bound to the task checkout.", inside[0].PID)
 	}
-	return nil
+	return observation, nil
 }
 
 func numericPID(obj *ordjson.Object, key string) int {

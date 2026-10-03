@@ -75,6 +75,14 @@ func TestBindReviewerPaneRebindsAfterRecordedReviewerStops(t *testing.T) {
 	if asString(asMap(rebind["from"])["pane"]) != "w-review:p1" || asString(asMap(rebind["to"])["pane"]) != "w-review2:p1" || asString(rebind["source"]) != "coordinator" {
 		t.Fatalf("reviewer rebind evidence = %v", rebind)
 	}
+	stop := asMap(rebind["stop_evidence"])
+	if asString(stop["agent_code"]) != "agent_not_found" || stop["pane_present"] != true || stop["old_shell_pid"] != float64(6124) || asString(stop["old_cwd"]) != worktree || len(asSlice(stop["excluded_pids"])) == 0 {
+		t.Fatalf("reviewer stop observation = %v", stop)
+	}
+	cleanupBeforeNewReview := d.ctl(false, "cleanup", taskID, "--reviewer-only")
+	if asMap(asMap(cleanupBeforeNewReview["reviewer"]))["closable"] == true || asString(cleanupBeforeNewReview["state"]) != "blocked" {
+		t.Fatalf("cleanup accepted only the old reviewer's findings: %v", cleanupBeforeNewReview)
+	}
 	review := d.ctlPane("w-review2:p1", true, "review", taskID, "--verdict", "approve", "--candidate", reviewCandidate, "--text", "second review")
 	if asString(asMap(asMap(review["evidence"])["endpoint"])["pane"]) != "w-review2:p1" {
 		t.Fatalf("review evidence endpoint = %v", asMap(review["evidence"])["endpoint"])
@@ -119,6 +127,64 @@ func TestBindReviewerPaneRefusesWorkerPane(t *testing.T) {
 	}
 }
 
+func TestBindReviewerPaneRefusals(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*testing.T, *demoLab, string, string)
+		pane  string
+		want  string
+	}{
+		{name: "prior reviewer pane reused", pane: "w-review:p1", setup: func(t *testing.T, d *demoLab, _, worktree string) {
+			setReviewerPane(t, d.base, "w-review:p1", worktree, map[string]any{"agent": "codex", "agent_status": "idle", "agent_pid": 6123}, 6124)
+		}, want: "must differ from the recorded reviewer pane"},
+		{name: "reviewer on another machine", setup: func(t *testing.T, d *demoLab, taskID, _ string) {
+			editTaskObject(t, d.home, taskID, func(task map[string]any) { asMap(task["reviewer"])["machine"] = "m-other" })
+		}, want: "another machine or session"},
+		{name: "reviewer in another session", setup: func(t *testing.T, d *demoLab, taskID, _ string) {
+			editTaskObject(t, d.home, taskID, func(task map[string]any) { asMap(task["reviewer"])["session"] = "other-session" })
+		}, want: "another machine or session"},
+		{name: "old pane has foreground process", setup: func(t *testing.T, d *demoLab, _, worktree string) {
+			editFakePane(t, d, "w-review:p1", func(pane map[string]any) {
+				pane["processes"] = []any{map[string]any{"pid": 6124, "name": "sleep", "argv": []string{"sleep", "120"}}}
+			})
+		}, want: "still has foreground processes"},
+		{name: "another process is bound to checkout", setup: func(t *testing.T, d *demoLab, _, worktree string) {
+			path := filepath.Join(d.base, "fake-lsof", "cwds.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(`{"processes":[{"pid":8123,"cwd":"`+worktree+`"}]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, want: "process 8123 remains bound"},
+		{name: "process-info failure", setup: func(t *testing.T, d *demoLab, _, _ string) {
+			editFakePane(t, d, "w-review:p1", func(pane map[string]any) { pane["process_info_error"] = "server_busy" })
+		}, want: "server_busy"},
+		{name: "replacement cwd mismatch", setup: func(t *testing.T, d *demoLab, _, _ string) {
+			setReviewerPane(t, d.base, "w-review2:p1", "/tmp/not-the-checkout", map[string]any{"agent": "codex", "agent_status": "idle", "agent_pid": 6125}, 6126)
+		}, want: "Reviewer cwd does not match"},
+		{name: "old pane cwd changed", setup: func(t *testing.T, d *demoLab, _, _ string) {
+			editFakePane(t, d, "w-review:p1", func(pane map[string]any) { pane["cwd"] = "/tmp/not-the-checkout" })
+		}, want: "cwd changed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, taskID, worktree := reviewerRebindLab(t)
+			if tc.setup != nil {
+				tc.setup(t, d, taskID, worktree)
+			}
+			pane := tc.pane
+			if pane == "" {
+				pane = "w-review2:p1"
+			}
+			out := d.ctl(false, "bind", taskID, "--reviewer-pane", pane)
+			if !strings.Contains(asString(out["error"]), tc.want) {
+				t.Fatalf("bind output = %v, want refusal containing %q", out, tc.want)
+			}
+		})
+	}
+}
+
 func readTaskObject(t *testing.T, home, taskID string) map[string]any {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(home, "tasks", taskID, "task.json"))
@@ -130,4 +196,38 @@ func readTaskObject(t *testing.T, home, taskID string) map[string]any {
 		t.Fatal(err)
 	}
 	return task
+}
+
+func editTaskObject(t *testing.T, home, taskID string, edit func(map[string]any)) {
+	t.Helper()
+	task := readTaskObject(t, home, taskID)
+	edit(task)
+	raw, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "tasks", taskID, "task.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func editFakePane(t *testing.T, d *demoLab, pane string, edit func(map[string]any)) {
+	t.Helper()
+	path := filepath.Join(d.base, "fake", "state.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	edit(asMap(asMap(state["panes"])[pane]))
+	raw, err = json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

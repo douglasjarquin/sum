@@ -1034,7 +1034,7 @@
   },
   "bind": {
     "topic": "bind",
-    "help": "Coordinator only: rebind this pane as a task's parent or adopt an existing worker pane; never launches",
+    "help": "Coordinator only: rebind this pane as a task's parent, worker pane, or stopped reviewer pane; never launches",
     "arguments": [
       {
         "name": "task",
@@ -1044,6 +1044,10 @@
       {
         "name": "--worker-pane",
         "help": "Explicitly adopt an existing worker and record its occupant; never launch a replacement"
+      },
+      {
+        "name": "--reviewer-pane",
+        "help": "Adopt a reviewer pane after the recorded reviewer is proved stopped"
       },
       {
         "name": "--parent-only",
