@@ -196,3 +196,46 @@ func TestInit_coordinatorAdoptsTheWakeProtocol(t *testing.T) {
 		t.Fatalf("after a verified init, owner = %v, want wake_protocol 1", owner)
 	}
 }
+
+func TestInit_enablesNativeEventsByDefaultAndPreservesDisableChoice(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	if _, err := runCLI(t, home, "init"); err != nil {
+		t.Fatalf("first init: %v", err)
+	}
+	status, err := runCLI(t, home, "hook", "status")
+	if err != nil || decodeObject(t, status)["enabled"] != true {
+		t.Fatalf("hook status after first init = %s, err = %v", status, err)
+	}
+	if _, err := runCLI(t, home, "hook", "disable"); err != nil {
+		t.Fatalf("disable hook: %v", err)
+	}
+	if _, err := runCLI(t, home, "init"); err != nil {
+		t.Fatalf("init after disable: %v", err)
+	}
+	status, err = runCLI(t, home, "hook", "status")
+	view := decodeObject(t, status)
+	if err != nil || view["enabled"] != false {
+		t.Fatalf("hook status after opted-out init = %s, err = %v", status, err)
+	}
+}
+
+func TestInit_nativeEventEnableFailureIsDegradedAndFailOpen(t *testing.T) {
+	home := writeDesignatedHome(t)
+	herdrEnv(t, home)
+	wrapper := filepath.Join(t.TempDir(), "herdr-failing-plugin-link")
+	script := "#!/bin/sh\nif [ \"$3\" = plugin ] && [ \"$4\" = link ]; then echo registry unavailable >&2; exit 1; fi\nexec python3 \"" + os.Getenv("SUM_HERDR_BIN") + "\" \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUM_HERDR_BIN", wrapper)
+	out, err := runCLI(t, home, "init")
+	if err != nil {
+		t.Fatalf("init failed when automatic hook enable failed: %v\n%s", err, out)
+	}
+	view := decodeObject(t, out)
+	activation := view["hook_activation"].(map[string]any)
+	if activation["degraded"] != true || !strings.Contains(fmt.Sprint(activation["reason"]), "registry unavailable") {
+		t.Fatalf("hook activation = %v, want degraded reason", activation)
+	}
+}

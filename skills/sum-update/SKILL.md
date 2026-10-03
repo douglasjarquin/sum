@@ -33,6 +33,7 @@ All commands run from the installation directory with its own `./bin/sumctl`; ea
 An unmerged self-development or task branch is refused.
 `--no-fetch` reuses the already fetched `refs/remotes/origin/*` on an offline host.
 `check` and `stage` report checkout dirty state and leave the tree unchanged.
+After a successful `update apply`, native event delivery is enabled for installations without an explicit `hook disable` choice. This attempt is fail-open: a Herdr registry or plugin error is recorded as degraded in `hook status`, while the update remains successful and explicit delivery passes remain available.
 
 ## What apply does, in order
 

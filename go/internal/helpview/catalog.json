@@ -31,7 +31,7 @@
       "cleanup": "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay",
       "pump": "One budgeted delivery pass over saved pending returns: at most one coalesced notice per recipient, deferred recipients named; never calls GitHub or cleans up",
       "sweep": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
-      "hook": "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon",
+      "hook": "Default-on native Herdr event delivery: coordinator init and update apply enable the bounded pump plugin unless explicitly disabled; never a daemon",
       "metadata": "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle",
       "attention": "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays",
       "wake": "Coordinator wake episodes (#240a) and decision priority (#240b): show every wake sidecar, the exact boundary of the outstanding work, and the decisions already prompted; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends",
@@ -922,11 +922,11 @@
   },
   "hook": {
     "topic": "hook",
-    "help": "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon",
+    "help": "Default-on native Herdr event delivery: coordinator init and update apply enable the bounded pump plugin unless explicitly disabled; never a daemon",
     "arguments": [],
     "subcommands": {
-      "enable": "Coordinator only: write this instance's manifest under .sum/hook, link/enable it live, then reconcile once",
-      "disable": "Coordinator only: disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live",
+      "enable": "Coordinator only: explicitly enable or retry this instance's plugin, then reconcile once",
+      "disable": "Coordinator only: record the opt-out and disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live",
       "status": "Hook health from records plus one bounded registry observation: last event, errors, pending count/age, enabled",
       "event": "Internal: the handler Herdr runs for one event (reads HERDR_PLUGIN_* from the environment)"
     },
@@ -945,7 +945,7 @@
       "status": "Recorded projection summary, saved capabilities, applied tokens, ambiguous sources, error log, and native_open; writes nothing and calls no Herdr",
       "sync": "Coordinator only: re-probe capabilities and project one full pass writing only differences; --force rewrites every recorded endpoint",
       "snippet": "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum",
-      "inbox": "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the hook plugin and falls back to the overview; never syncs or writes"
+      "inbox": "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the linked default-on hook plugin and falls back to the overview; never syncs or writes"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1640,7 +1640,7 @@
   },
   "hook-enable": {
     "topic": "hook-enable",
-    "help": "Coordinator only: write this instance's manifest under .sum/hook, link/enable it live, then reconcile once",
+    "help": "Coordinator only: explicitly enable or retry this instance's plugin, then reconcile once",
     "arguments": [],
     "subcommands": null,
     "read_only": false,
@@ -1648,7 +1648,7 @@
   },
   "hook-disable": {
     "topic": "hook-disable",
-    "help": "Coordinator only: disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live",
+    "help": "Coordinator only: record the opt-out and disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live",
     "arguments": [
       {
         "name": "--unlink",
@@ -1732,7 +1732,7 @@
   },
   "metadata-inbox": {
     "topic": "metadata-inbox",
-    "help": "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the hook plugin and falls back to the overview; never syncs or writes",
+    "help": "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the linked default-on hook plugin and falls back to the overview; never syncs or writes",
     "arguments": [
       {
         "name": "--after",

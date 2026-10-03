@@ -14,6 +14,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/release"
@@ -1106,7 +1107,14 @@ func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool, allow 
 			src.Set(k, v)
 		}
 	}
-	return activate(s, root, relPath, "apply", src, allow)
+	result, err := activate(s, root, relPath, "apply", src, allow)
+	if err != nil {
+		return nil, err
+	}
+	active := DefaultRuntime(root)
+	activeRoot := asString(func() any { v, _ := active.Get("path"); return v }())
+	result.Set("hook_activation", hookstatus.EnableByDefault(s, ctx, activeRoot, filepath.Join(root, "bin", "sumctl")))
+	return result, nil
 }
 
 func Rollback(s *store.Store, ctx *ordjson.Object, to string, allow PreIdentity) (*ordjson.Object, error) {

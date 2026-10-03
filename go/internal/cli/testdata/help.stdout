@@ -29,7 +29,7 @@ commands:
   cleanup: "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay"
   pump: "One budgeted delivery pass over saved pending returns: at most one coalesced notice per recipient, deferred recipients named; never calls GitHub or cleans up"
   sweep: "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks"
-  hook: "Optional native Herdr event delivery: a plugin that runs the bounded pump when a recorded pane changes state; never a daemon"
+  hook: "Default-on native Herdr event delivery: coordinator init and update apply enable the bounded pump plugin unless explicitly disabled; never a daemon"
   metadata: "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle"
   attention: "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays"
   wake: "Coordinator wake episodes (#240a) and decision priority (#240b): show every wake sidecar, the exact boundary of the outstanding work, and the decisions already prompted; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends"

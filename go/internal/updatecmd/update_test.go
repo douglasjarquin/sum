@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -40,6 +41,40 @@ func TestApply_fastForwardsCleanInstallationCheckout(t *testing.T) {
 	}
 	if row := checkoutInstructions(view); row != nil {
 		t.Fatalf("clean fast-forward still deferred checkout-instructions: %s", dump(row))
+	}
+}
+
+func TestApply_preservesExplicitNativeEventOptOut(t *testing.T) {
+	lab := newApplyLab(t, applyLabOpts{})
+	if err := settings.SetNativeEventsEnabled(lab.store, false); err != nil {
+		t.Fatalf("disable native events: %v", err)
+	}
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	if err != nil {
+		t.Fatalf("apply after explicit disable: %v", err)
+	}
+	activation := asObject(func() any { v, _ := view.Get("hook_activation"); return v }())
+	if skipped, _ := activation.Get("skipped"); skipped != true {
+		t.Fatalf("hook activation = %v, want skipped", activation)
+	}
+	enabled, err := settings.NativeEventsEnabled(lab.store)
+	if err != nil || enabled {
+		t.Fatalf("native events enabled = %v, err = %v", enabled, err)
+	}
+}
+
+func TestApply_nativeEventEnableFailureIsFailOpen(t *testing.T) {
+	lab := newApplyLab(t, applyLabOpts{})
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	if err != nil {
+		t.Fatalf("apply failed when automatic hook enable failed: %v", err)
+	}
+	activation := asObject(func() any { v, _ := view.Get("hook_activation"); return v }())
+	if degraded, _ := activation.Get("degraded"); degraded != true {
+		t.Fatalf("hook activation = %v, want degraded", activation)
+	}
+	if !strings.Contains(strField(activation, "reason"), "could not be enabled") {
+		t.Fatalf("hook failure reason = %v", activation)
 	}
 }
 

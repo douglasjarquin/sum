@@ -12,6 +12,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -131,6 +132,7 @@ func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string)
 	changes.Set("command", cmd)
 	changes.Set("linked_at", store.Now())
 	changes.Set("linked_from", from)
+	changes.Set("disabled_at", nil)
 	changes.Set("degraded", nil)
 	warnings, has := plugin.Get("warnings")
 	if !has {
@@ -163,6 +165,58 @@ func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string)
 	result.Set("reconciliation", reconciliation)
 	result.Set("note", "Linked live without stopping Herdr. Registration is user-global; the handler acts only on panes recorded by this instance in the event's own Herdr session. Startup hooks do not run at link time, so one bounded reconciliation ran now. Disabling or a handler failure returns to the synchronous ask/report path and `inbox --live`; nothing stops.")
 	return result, nil
+}
+
+func EnableByDefault(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string) *ordjson.Object {
+	enabled, hasPreference, err := settings.NativeEventsPreference(s)
+	if err == nil && !hasPreference {
+		if health, healthErr := readHealth(s); healthErr == nil {
+			if disabledAt, _ := health.Get("disabled_at"); truthy(disabledAt) {
+				_ = settings.SetNativeEventsEnabled(s, false)
+				enabled = false
+				hasPreference = true
+			}
+		} else {
+			err = healthErr
+		}
+	}
+	if err == nil && hasPreference && !enabled {
+		result := ordjson.NewObject()
+		result.Set("enabled", false)
+		result.Set("skipped", true)
+		result.Set("reason", "native event delivery was explicitly disabled in settings.json")
+		return result
+	}
+	if err == nil {
+		var view *ordjson.Object
+		view, err = Enable(s, ctx, runtimeRoot, sumctlPath)
+		if err == nil {
+			view.Set("automatic", true)
+			return view
+		}
+	}
+	reason := "automatic native event delivery could not be enabled: " + err.Error()
+	changes := ordjson.NewObject()
+	changes.Set("degraded", reason)
+	changes.Set("last_error", reason)
+	entry := ordjson.NewObject()
+	entry.Set("at", store.Now())
+	entry.Set("stage", "default-enable")
+	entry.Set("error", reason)
+	if health, readErr := readHealth(s); readErr == nil {
+		errors := asList(func() any { v, _ := health.Get("errors"); return v }())
+		errors = append(errors, entry)
+		if len(errors) > HookErrors {
+			errors = errors[len(errors)-HookErrors:]
+		}
+		changes.Set("errors", errors)
+	}
+	_, _ = writeHealth(s, nil, changes)
+	result := ordjson.NewObject()
+	result.Set("enabled", false)
+	result.Set("degraded", true)
+	result.Set("reason", reason)
+	return result
 }
 
 func Disable(s *store.Store, ctx *ordjson.Object, runtimeRoot string, unlink bool) (*ordjson.Object, error) {

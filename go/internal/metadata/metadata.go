@@ -73,7 +73,7 @@ func snippetTOML() string {
 		"# `herdr server reload-config`. `rows` replaces the whole layout, so keep the built-in tokens you already use.",
 		"# Tokens: sum_state, sum_pipeline, sum_task, sum_repo, sum_rev (active>requested brief revision), sum_pr (recorded PR URL)",
 		"# on task panes and workspaces; sum_inbox and sum_tasks on the coordinator pane. Rows show one endpoint's tokens;",
-		"# the project grouping lives in `inbox --grouped`, and `metadata inbox --open` opens that view natively after `hook enable`.",
+		"# the project grouping lives in `inbox --grouped`, and `metadata inbox --open` opens that view natively through the linked default-on hook plugin.",
 		"[ui.sidebar.agents]",
 		`rows = [["state_icon", "workspace", "tab"], ["agent", "$sum_state", "$sum_pipeline"], ["$sum_task", "$sum_inbox"]]`,
 		"",

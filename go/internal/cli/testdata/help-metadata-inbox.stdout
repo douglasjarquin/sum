@@ -1,5 +1,5 @@
 topic: metadata-inbox
-help: "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the hook plugin and falls back to the overview; never syncs or writes"
+help: "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the linked default-on hook plugin and falls back to the overview; never syncs or writes"
 arguments[7]{name,help}:
   "--after",Skip presentation items in compact mode (default 0); pages are fresh reads
   "--limit","Compact page size, 1..100 (default 20)"
