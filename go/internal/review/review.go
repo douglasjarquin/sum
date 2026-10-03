@@ -164,7 +164,7 @@ func record(s *store.Store, taskID, verdict, candidate, toolName, text string, p
 			rev := existing.(*ordjson.Object)
 			pane, _ := rev.Get("pane")
 			session, _ := rev.Get("session")
-			return nil, nil, fmt.Errorf("Task already has reviewer pane %v in session %v; a second reviewer endpoint is not adopted silently.", pane, session)
+			return nil, nil, fmt.Errorf("Task already has reviewer pane %v in session %v; after proving that endpoint gone, adopt its replacement with `sumctl bind TASK --reviewer-pane PANE`.", pane, session)
 		}
 		bound := ordjson.NewObject()
 		for _, key := range []string{"machine", "session", "pane", "cwd"} {
