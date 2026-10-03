@@ -961,7 +961,8 @@ func (ins *inspection) reviewer() error {
 	var findings []any
 	for _, raw := range asList(func() any { v, _ := ins.task.Get("evidence"); return v }()) {
 		e := asObject(raw)
-		if stringField(e, "kind") == "review" {
+		endpoint := asObject(func() any { v, _ := e.Get("endpoint"); return v }())
+		if stringField(e, "kind") == "review" && stringField(endpoint, "pane") == stringField(reviewer, "pane") {
 			findings = append(findings, e)
 		}
 	}

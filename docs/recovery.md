@@ -12,6 +12,8 @@ After reopening the coordinator, run `./bin/sumctl init`. If the previous coordi
 
 If a worker's pane changed, inspect the actual agent and use `bind TASK_ID --worker-pane PANE_ID`. The helper checks the recorded worktree. It never creates a replacement automatically. Herdr remains the sole owner of process/session restoration; sum does not alter its auto-resume setting.
 
+If the task's recorded reviewer pane is gone or no longer has a live reviewer agent, inspect the replacement pane and run `bind TASK_ID --reviewer-pane PANE_ID`. Its cwd must match the task checkout, and the worker pane cannot be adopted. The recorded reviewer endpoint must be proved stopped: Herdr reports `pane_not_found` or `agent_not_found`, the old pane has no foreground process, and no other process remains bound to the checkout. A surviving old pane whose cwd moved out of the checkout is refused; close that pane so Herdr reports `pane_not_found`, then retry. A live old reviewer is never replaced. The rebind is appended to task evidence; context, reviewer-only cleanup, and sweep then use the new endpoint.
+
 ```sh
 ./bin/sumctl backup ~/backups/sum-records.tar.gz
 ```

@@ -464,7 +464,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	_ = attentionCmd.MarkFlagRequired("seen")
 	root.AddCommand(attentionCmd)
 
-	var workerPane string
+	var workerPane, reviewerPane string
 	var parentOnly bool
 	bindCmd := &cobra.Command{
 		Use:         "bind TASK",
@@ -479,7 +479,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := bindcmd.Run(st, ctx, args[0], workerPane, parentOnly, o.pumpOpts())
+			view, err := bindcmd.Run(st, ctx, args[0], workerPane, reviewerPane, parentOnly, o.pumpOpts())
 			if err != nil {
 				return err
 			}
@@ -487,6 +487,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 		},
 	}
 	bindCmd.Flags().StringVar(&workerPane, "worker-pane", "", "")
+	bindCmd.Flags().StringVar(&reviewerPane, "reviewer-pane", "", "")
 	bindCmd.Flags().BoolVar(&parentOnly, "parent-only", false, "")
 	root.AddCommand(bindCmd)
 
