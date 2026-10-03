@@ -930,6 +930,82 @@ func TestSweep_successorReviewerPaneSurvivesUntilNewVerdict(t *testing.T) {
 	}
 }
 
+func TestSweep_reboundReviewerClosesOnlyAfterItsOwnReview(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	l.writeGHScenario("OPEN", "")
+	l.clearReport()
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer := ordjson.NewObject()
+	reviewer.Set("machine", l.host)
+	reviewer.Set("session", "sum-test")
+	reviewer.Set("pane", "w-rev:p2")
+	reviewer.Set("cwd", l.home)
+	reviewer.Set("bound_at", "2026-01-02T00:00:00+00:00")
+	task.Set("reviewer", reviewer)
+	oldEndpoint := ordjson.NewObject()
+	oldEndpoint.Set("machine", l.host)
+	oldEndpoint.Set("session", "sum-test")
+	oldEndpoint.Set("pane", "w-rev:p1")
+	oldReview := ordjson.NewObject()
+	oldReview.Set("kind", "review")
+	oldReview.Set("source", "reviewer")
+	oldReview.Set("candidate", l.head)
+	oldReview.Set("verdict", "changes-requested")
+	oldReview.Set("at", "2026-01-01T00:00:00+00:00")
+	oldReview.Set("endpoint", oldEndpoint)
+	task.Set("evidence", []any{oldReview})
+	if err := l.store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	l.writeLivePanes(map[string]any{
+		"w-rev:p2": map[string]any{
+			"pane_id": "w-rev:p2", "cwd": l.home, "workspace_id": "w-rev",
+			"agent_status": "idle", "agent": "codex", "name": "reviewer",
+			"shell_pid": 5252, "created": true, "terminal_id": "term-w-rev:p2", "processes": []any{},
+		},
+	})
+	l.bindPane("w-rev:p2", "reviewer")
+	rows, _ := l.sweep(SweepOpts{})
+	if row := sweepRow(rows, "pane-close"); row != nil {
+		t.Fatalf("old reviewer verdict closed the rebound pane: %v", row)
+	}
+	if !l.paneExists("w-rev:p2") {
+		t.Fatal("rebound reviewer pane closed before it saved a verdict")
+	}
+	task, err = l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newEndpoint := ordjson.NewObject()
+	newEndpoint.Set("machine", l.host)
+	newEndpoint.Set("session", "sum-test")
+	newEndpoint.Set("pane", "w-rev:p2")
+	newReview := ordjson.NewObject()
+	newReview.Set("kind", "review")
+	newReview.Set("source", "reviewer")
+	newReview.Set("candidate", l.head)
+	newReview.Set("verdict", "approve")
+	newReview.Set("at", "2026-01-03T00:00:00+00:00")
+	newReview.Set("endpoint", newEndpoint)
+	task.Set("evidence", append(asList(field(task, "evidence")), newReview))
+	if err := l.store.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = l.sweep(SweepOpts{})
+	if row := sweepRow(rows, "pane-close"); row == nil {
+		t.Fatal("new reviewer's verdict did not close its pane")
+	} else if pane, _ := row.Get("pane"); pane != "w-rev:p2" {
+		t.Fatalf("closed pane = %v, want rebound reviewer", pane)
+	}
+	if l.paneExists("w-rev:p2") {
+		t.Fatal("rebound reviewer pane is still open after its verdict")
+	}
+}
+
 func TestSweep_reviewWithoutVerdictDoesNotClose(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())

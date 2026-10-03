@@ -50,6 +50,8 @@ Tasks it did not reach are listed under `deferred` with their exact `next` comma
 A second sweep with nothing pending does nothing.
 The pane that settled the obligation (the worker report or reviewer verdict for the current candidate, or a terminal task) is closed in that pass; a successor pane created by resume stays open until it files a new report or review. `status` shows `pane_closed` and `execution resume` is the path for a later repair, launching at the recorded worktree's current HEAD. Delivery and refresh to that pane are `pane-closed`, not `unreachable`.
 
+The recorded reviewer endpoint is the pane used by reviewer close operations and shown in task context. After a reviewer pane is gone or has no live reviewer agent, the coordinator can explicitly adopt a replacement with `sumctl bind TASK_ID --reviewer-pane PANE_ID`; the bind requires stop evidence and records the rebind. A live reviewer endpoint cannot be replaced.
+
 For a worker that is idle/done/blocked without a report, read bounded relevant output with MCP `herdr_agent_read` or `bin/herdr-scoped agent read PANE --source visible --lines 120`.
 Do not assume idle means done. Inspect ambiguous prose; ask for a file report when screen output is incomplete. If a question was never saved, capture it using `sumctl ask` before relaying it to the user.
 This is the MVP fallback for non-compliant agents. It runs during a status check, not continuously; do not promise instant unattended detection.
