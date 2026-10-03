@@ -216,19 +216,18 @@ func eventSession(environ map[string]string) (string, error) {
 	session := environ["HERDR_SESSION"]
 	socket := environ["HERDR_SOCKET_PATH"]
 	if socket != "" {
+		if session != "" {
+			if !sessionName.MatchString(session) {
+				return "", fmt.Errorf("Event carries no identifiable Herdr session; refusing to guess a default session.")
+			}
+			return session, nil
+		}
 		if !filepath.IsAbs(socket) {
 			return "", fmt.Errorf("Event carries a non-absolute Herdr socket path; refusing to guess a session.")
 		}
 		if match := socketSession.FindStringSubmatch(filepath.ToSlash(filepath.Clean(socket))); match != nil {
-			socketName := match[1]
-			if session != "" && session != socketName {
-				return "", fmt.Errorf("Event session %q conflicts with its Herdr socket session %q.", session, socketName)
-			}
-			session = socketName
+			session = match[1]
 		} else if defaultHerdrSocket(environ) == filepath.Clean(socket) {
-			if session != "" && session != "default" {
-				return "", fmt.Errorf("Event session %q conflicts with the default Herdr socket.", session)
-			}
 			session = "default"
 		} else {
 			return "", fmt.Errorf("Event carries no identifiable Herdr session; refusing to guess a default session.")
