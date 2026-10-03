@@ -202,8 +202,7 @@ func EnableByDefault(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPat
 	if err == nil {
 		if health, healthErr := readHealth(s); healthErr == nil {
 			healthEnabled, _ := health.Get("enabled")
-			degraded, _ := health.Get("degraded")
-			if truthy(healthEnabled) && !truthy(degraded) {
+			if truthy(healthEnabled) {
 				current, currentErr := ManifestCurrent(s, sumctlPath)
 				if currentErr != nil {
 					err = currentErr

@@ -495,9 +495,22 @@ func TestHookEvent_AmbiguousSessionIsRecordedAndDegraded(t *testing.T) {
 		t.Fatalf("failure details missing from hook status: %v", status)
 	}
 	init := lab.run("init")
+	activation := init["hook_activation"].(map[string]any)
+	if activation["skipped"] != true || activation["enabled"] != true {
+		t.Fatalf("init re-enabled a degraded but current hook: %v", activation)
+	}
 	hook := init["hook"].(map[string]any)
 	if hook["events"] != float64(1) || hook["errors"] != float64(1) || hook["degraded"] != true {
 		t.Fatalf("failed event missing from init hook summary: %v", hook)
+	}
+	after := lab.run("hook", "status")
+	if after["degraded"] != true || after["errors"] != float64(1) || after["last_error"] == nil {
+		t.Fatalf("init cleared hook degradation: %v", after)
+	}
+	lab.run("metadata", "sync")
+	synced := lab.run("hook", "status")
+	if synced["degraded"] != true || synced["errors"] != float64(1) {
+		t.Fatalf("metadata pass cleared hook degradation: %v", synced)
 	}
 }
 
