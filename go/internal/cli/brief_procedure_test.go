@@ -135,6 +135,9 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 		"Commit messages, PR descriptions and `sumctl report` text are not code comments.",
 		"Leave existing comments untouched when changing surrounding code.",
 		"add a directive only when the code cannot work without it, and include no explanatory prose in it.",
+		"When Sum starts or resumes a Claude worker, it adds the active brief's task directory to the effective harness arguments after validating the brief and required pinned procedures.",
+		"Claude's normal trust and permission behavior still applies; this is not a read-only grant or a sandbox.",
+		"Sum does not start reviewers: `sumctl review` records findings from an already-running pane",
 	} {
 		if !strings.Contains(string(source), rule) {
 			t.Fatalf("pinned worker procedure is missing rule %q", rule)

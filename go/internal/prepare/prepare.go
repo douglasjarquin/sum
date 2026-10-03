@@ -463,6 +463,11 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		unlock()
 		return nil, err
 	}
+	taskArgs, err := taskAccessArgs(s, task, briefFile, preparedWorktree)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
 	state := asString(func() any { v, _ := worker.Get("state"); return v }())
 	if state != "held" && state != "running" {
 		id, _ := worker.Get("id")
@@ -477,7 +482,15 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 			argv = append(argv, s)
 		}
 	}
-	argv = append(argv, extra...)
+	if harness == "claude" {
+		argv, err = applyTaskAccessArgs(launchSpec, argv, extra, taskArgs)
+		if err != nil {
+			unlock()
+			return nil, err
+		}
+	} else {
+		argv = append(argv, extra...)
+	}
 	launchSpec.Set("argv", anyStrings(argv))
 	explicit := []any{}
 	for _, a := range func() []any { v, _ := launchSpec.Get("explicit_args"); list, _ := v.([]any); return list }() {
