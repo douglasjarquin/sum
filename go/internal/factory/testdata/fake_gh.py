@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Strict fake gh for factory tests. Scenario files live under FAKE_GH_ROOT."""
 import json, os, pathlib, sys
+import time
 
 root = pathlib.Path(os.environ["FAKE_GH_ROOT"])
 root.mkdir(parents=True, exist_ok=True)
@@ -17,6 +18,15 @@ def load(name, default):
 def fail(message, code=1):
     print(message, file=sys.stderr)
     sys.exit(code)
+
+def next_value(name, counter, default):
+    values = load(name, default)
+    if not isinstance(values, list) or not values:
+        return default
+    path = root / counter
+    index = int(path.read_text()) if path.exists() else 0
+    path.write_text(str(index + 1))
+    return values[min(index, len(values) - 1)]
 
 if args[:2] == ["issue", "list"]:
     issues = load("issues.json", [])
@@ -80,11 +90,30 @@ if args[:2] == ["project", "item-list"]:
     print(json.dumps(items))
     sys.exit(0)
 
+if args[:2] == ["pr", "view"]:
+    delay = load("pr_view_delay.json", 0)
+    if delay:
+        time.sleep(float(delay))
+    observation = next_value("pr_views.json", "pr_view_count.txt", {})
+    print(json.dumps(observation))
+    sys.exit(0)
+
+if args[:2] == ["pr", "checks"]:
+    checks = next_value("pr_checks.json", "pr_checks_count.txt", [])
+    print(json.dumps(checks))
+    sys.exit(0)
+
 if args[:2] == ["pr", "ready"]:
     print("ready")
     sys.exit(0)
 
 if args[:2] == ["pr", "merge"]:
+    delay = load("pr_merge_delay.json", 0)
+    if delay:
+        time.sleep(float(delay))
+    if load("merge_error.json", None):
+        error = load("merge_error.json", {})
+        fail(error.get("message", "merge result unknown"), error.get("code", 1))
     print("merged")
     sys.exit(0)
 
