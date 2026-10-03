@@ -132,6 +132,14 @@ func newSweepLab(t *testing.T) *sweepLab {
 // must first observe the merge through gh.
 func (l *sweepLab) saveTask(pr string) {
 	l.t.Helper()
+	l.saveTaskAs(pr, l.head, "")
+}
+
+func (l *sweepLab) saveTaskAs(pr, candidate, extraEvidence string) {
+	l.t.Helper()
+	if extraEvidence != "" {
+		extraEvidence = ",\n" + extraEvidence
+	}
 	raw := fmt.Sprintf(`{
 "schema": 1, "id": %q, "status": "running", "repository": %q,
 "machine": %q, "session": "sum-test", "pane": "w-worker:p1", "workspace": "w-worker",
@@ -141,7 +149,7 @@ func (l *sweepLab) saveTask(pr string) {
   {"kind": "handoff", "source": "worker", "candidate": %q, "at": "2026-01-01T00:00:00+00:00",
    "endpoint": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}},
   {"kind": "report", "source": "worker", "candidate": %q, "at": "2026-01-01T00:00:00+00:00",
-   "endpoint": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}}
+   "endpoint": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}}%s
 ],
 "report": {"text": "done", "candidate": %q, "submitted_at": "2026-01-01T00:00:00+00:00"}, "notice": null, "attention": [],
 "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship",
@@ -151,7 +159,7 @@ func (l *sweepLab) saveTask(pr string) {
              "owner": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}, "checkout": %q,
              "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []},
   "verifiers": []}
-}`, sweepTaskID, l.repo, l.host, l.checkout, l.head, l.host, l.head, l.host, l.head, pr, sweepWorkerID, l.host, l.checkout)
+}`, sweepTaskID, l.repo, l.host, l.checkout, candidate, l.host, candidate, l.host, extraEvidence, candidate, pr, sweepWorkerID, l.host, l.checkout)
 	value, err := ordjson.Decode([]byte(raw))
 	if err != nil {
 		l.t.Fatal(err)
@@ -353,6 +361,99 @@ func TestSweep_openPRStaysUnclean(t *testing.T) {
 	}
 	if _, err := os.Stat(l.checkout); err != nil {
 		t.Fatal("checkout was removed for an open PR")
+	}
+}
+
+func TestSweep_closedPRNeverCleans(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	l.writeGHScenario("CLOSED", "")
+	rows, _ := l.sweep(SweepOpts{})
+	obs := sweepRow(rows, "pr-observe")
+	if obs == nil {
+		t.Fatalf("no pr-observe row in %v", rows)
+	}
+	if state, _ := obs.Get("state"); state != "closed" {
+		t.Fatalf("pr-observe state = %v err=%v", state, func() any { v, _ := obs.Get("error"); return v }())
+	}
+	if clean := sweepRow(rows, "cleanup"); clean != nil {
+		t.Fatalf("cleanup ran for a closed PR: %v", clean)
+	}
+	if _, err := os.Stat(l.checkout); err != nil {
+		t.Fatal("checkout was removed for a closed PR")
+	}
+}
+
+func TestSweep_squashMergeWithVerifiedHeadCleans(t *testing.T) {
+	l := newSweepLab(t)
+	stale := strings.Repeat("9", 40)
+	verify := fmt.Sprintf(`{"kind": "verification", "source": "coordinator", "candidate": %q, "result": "pass",
+		"id": "e-verify0000", "at": "2026-01-02T00:00:00+00:00"}`, l.head)
+	l.saveTaskAs(l.openPR(), stale, verify)
+	l.writeGHScenario("MERGED", strings.Repeat("b", 40))
+	rows, _ := l.sweep(SweepOpts{})
+	obs := sweepRow(rows, "pr-observe")
+	if obs == nil {
+		t.Fatalf("no pr-observe row in %v", rows)
+	}
+	if state, _ := obs.Get("state"); state != "merged" {
+		t.Fatalf("pr-observe state = %v err=%v", state, func() any { v, _ := obs.Get("error"); return v }())
+	}
+	clean := sweepRow(rows, "cleanup")
+	if clean == nil {
+		t.Fatalf("no cleanup row after a verified merge observation in %v", rows)
+	}
+	if state, _ := clean.Get("state"); state != "complete" {
+		t.Fatalf("cleanup state = %v err=%v", state, func() any { v, _ := clean.Get("error"); return v }())
+	}
+	if _, err := os.Stat(l.checkout); !os.IsNotExist(err) {
+		t.Fatalf("checkout still exists: %v", err)
+	}
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := asObject(field(task, "pr"))
+	if merged, _ := pr.Get("merged_for_task"); merged != true {
+		t.Fatalf("merged_for_task = %v", field(pr, "merged_for_task"))
+	}
+	if findings := asList(field(pr, "findings")); len(findings) != 0 {
+		t.Fatalf("findings = %v, want none", findings)
+	}
+	if notes := asList(field(pr, "notes")); len(notes) != 1 {
+		t.Fatalf("notes = %v, want the explained mismatch recorded", notes)
+	}
+}
+
+func TestSweep_squashMergeUnverifiedHeadStaysPending(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTaskAs(l.openPR(), strings.Repeat("9", 40), "")
+	l.writeGHScenario("MERGED", strings.Repeat("b", 40))
+	rows, _ := l.sweep(SweepOpts{})
+	obs := sweepRow(rows, "pr-observe")
+	if obs == nil {
+		t.Fatalf("no pr-observe row in %v", rows)
+	}
+	if state, _ := obs.Get("state"); state != "merged" {
+		t.Fatalf("pr-observe state = %v err=%v", state, func() any { v, _ := obs.Get("error"); return v }())
+	}
+	if clean := sweepRow(rows, "cleanup"); clean != nil {
+		t.Fatalf("cleanup ran for an unattributed merge: %v", clean)
+	}
+	if _, err := os.Stat(l.checkout); err != nil {
+		t.Fatal("checkout was removed for an unattributed merge")
+	}
+	task, err := l.store.ReadTask(sweepTaskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := asObject(field(task, "pr"))
+	if merged, _ := pr.Get("merged_for_task"); merged == true {
+		t.Fatal("unexplained head mismatch counted as merged for the task")
+	}
+	findings := asList(field(pr, "findings"))
+	if len(findings) != 1 || !strings.Contains(fmt.Sprint(findings[0]), "is not the recorded candidate") {
+		t.Fatalf("findings = %v, want the head mismatch named", findings)
 	}
 }
 
