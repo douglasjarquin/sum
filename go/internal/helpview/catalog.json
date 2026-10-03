@@ -1661,7 +1661,7 @@
   },
   "hook-status": {
     "topic": "hook-status",
-    "help": "Hook health from records plus one bounded registry observation: last event, errors, pending count/age, enabled",
+    "help": "Hook health from records plus one bounded registry observation: last event, failures and errors, pending count/age, enabled/degraded",
     "arguments": [],
     "subcommands": null,
     "read_only": true,
