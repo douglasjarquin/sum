@@ -276,15 +276,6 @@ func hookCommandEnvRefs(command string) []string {
 	return names
 }
 
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
 func copyLspEnsureHook(t *testing.T, root string) string {
 	t.Helper()
 	src := filepath.Join(repoRoot(t), "bin", "lsp-ensure")
