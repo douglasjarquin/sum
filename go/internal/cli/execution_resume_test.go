@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -12,7 +13,7 @@ import (
 func TestResumeLaunchesAtCurrentHEADAfterReportedCommit(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "resume-head", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--arg", "existing", "--approved")
 	id := asString(task["id"])
 	worktree := asString(task["worktree"])
 	pane := asString(task["pane"])
@@ -68,5 +69,15 @@ func TestResumeLaunchesAtCurrentHEADAfterReportedCommit(t *testing.T) {
 	starts := agentStartCalls(t, d.base)
 	if len(starts) < 2 {
 		t.Fatalf("agent start calls = %d, want dispatch plus resume", len(starts))
+	}
+	want := []string{"existing", "--add-dir", filepath.Join(d.home, "tasks", id)}
+	for i, start := range starts {
+		passed, ok := argsAfterSeparator(start)
+		if !ok || !reflect.DeepEqual(passed, want) {
+			t.Fatalf("Claude start %d args = %v, want -- followed by %v", i+1, start, want)
+		}
+	}
+	if got := startedArgv(resumed); !reflect.DeepEqual(got, want) {
+		t.Fatalf("resumed launch started_argv = %v, want %v", got, want)
 	}
 }
