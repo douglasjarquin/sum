@@ -12,7 +12,11 @@ LSP binaries come from those mise pins.
 `mise run setup` links `.local/bin/basedpyright-langserver` and `.local/bin/gopls` once.
 An existing link is never retargeted.
 Project Grok, Cursor, and Codex PostToolUse hooks run `bin/lsp-ensure`.
-That wrapper fails open with empty stdout when the staged helper is missing (a Herdr worktree) or when a lagging helper prints TOON or help.
+Grok expands `$VAR` and `${VAR}` in hook commands before spawn and treats a command without whitespace as a path relative to the JSON file, so `.grok/hooks/lsp-ensure.json` uses `../../bin/lsp-ensure`.
+A Codex-style `$root` shell is refused with `required env var(s) not set: ${root}`.
+Cursor uses `./bin/lsp-ensure` from the repository root.
+Codex keeps the git-toplevel shell in `.codex/hooks.json`.
+`bin/lsp-ensure` fails open with empty stdout when the staged helper is missing (a Herdr worktree) or when a lagging helper prints TOON or help.
 It calls `sumctl lsp ensure` when a staged helper exists.
 That command installs only allowlisted missing binaries the same way.
 Unknown binaries are refused.
