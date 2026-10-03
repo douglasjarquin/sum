@@ -840,6 +840,58 @@ func TestMerge_liveChecksOverrideSavedGreen(t *testing.T) {
 	}
 }
 
+func TestMerge_releasedLaneDuringPreflightStopsBeforeReady(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	writePRViews(t, root, []map[string]any{livePRView(sha, "MERGEABLE", false)})
+	writePRChecks(t, root, passedPRChecks())
+	if err := os.WriteFile(filepath.Join(root, "pr_view_pause.json"), []byte("true"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.WriteFile(filepath.Join(root, "pr_view_continue"), []byte("continue"), 0o600)
+	})
+
+	type mergeResult struct {
+		view *ordjson.Object
+		err  error
+	}
+	finished := make(chan mergeResult, 1)
+	go func() {
+		view, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+		finished <- mergeResult{view: view, err: err}
+	}()
+
+	paused := filepath.Join(root, "pr_view_paused")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(paused); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = os.WriteFile(filepath.Join(root, "pr_view_continue"), []byte("continue"), 0o600)
+			t.Fatal("fake PR observation did not pause")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := Release(st, ReleaseArgs{Project: "cofactorworks/nicebaas", Issue: 12, Reason: ReasonMerged}); err != nil {
+		_ = os.WriteFile(filepath.Join(root, "pr_view_continue"), []byte("continue"), 0o600)
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pr_view_continue"), []byte("continue"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := <-finished
+	if result.err == nil || !strings.Contains(result.err.Error(), "authorization or lane claim changed during preflight") {
+		t.Fatalf("merge error = %v, want changed lane refusal", result.err)
+	}
+	if got := countGhCall(t, root, "pr", "ready"); got != 0 {
+		t.Fatalf("ready calls = %d after lane release", got)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+		t.Fatalf("merge calls = %d after lane release", got)
+	}
+}
+
 func TestMerge_unknownRetriesFreshPreflight(t *testing.T) {
 	st, root, sha := mergeSetup(t)
 	writePRViews(t, root, []map[string]any{

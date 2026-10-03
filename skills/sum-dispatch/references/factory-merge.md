@@ -40,8 +40,12 @@ Only when merge-check is `high`:
 ./bin/sumctl factory merge TASK_ID
 ```
 
-Marks the PR ready (`gh pr ready`) and squash-merges it in the same action, matching the candidate head.
-A draft cannot merge, so promotion is part of the authorized merge.
+Before writing, `factory merge` runs a live preflight that re-reads the PR identity, state, candidate head, mergeability, conflict status, and required checks. It stops immediately if the PR identity, state, repository, base, or candidate changed; GitHub reports a conflict or blocked/behind state; mergeability is missing, unsupported, or `UNKNOWN` with a non-`UNKNOWN` merge state; the live checks are missing, failing, pending, unavailable, or for another candidate; the observation is malformed or fails; or the repository authorization or factory lane changed during preflight. It also stops if GitHub still reports the PR as a draft after accepting the ready request.
+
+Only `mergeable=UNKNOWN` with `mergeStateStatus=UNKNOWN` is retried, for at most three fresh preflight attempts two seconds apart. If mergeability is still unknown, the command exits successfully with `status: deferred`, `pending: true`, and `merged: false` (plus the task, repository, PR number, candidate, and note). Inspect the PR, then rerun `factory merge` explicitly when it is ready; the command does not retry the merge automatically.
+
+After a passing preflight, the command marks the PR ready (`gh pr ready`), observes it again, and squash-merges only if the live gates and authority still pass, matching the candidate head. A draft cannot merge, so promotion is part of the authorized merge.
+If the merge request itself has an uncertain result, observe the PR before any retry.
 Then observe the merge (`pr reconcile` / cleanup inspection) and run guarded cleanup as `sum-deliver` already describes.
 
 ```sh
