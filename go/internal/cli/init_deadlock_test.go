@@ -95,5 +95,37 @@ func TestInitAndBindDeliveryPassDoNotSelfDeadlock(t *testing.T) {
 
 	// init's post-registration delivery pass still owes task A's question to this
 	// pane; it used to hang while holding both .lock and .deliver.lock.
-	assertSubmitted(bound("init"), "init")
+	beforeInit := herdrCalls(t, d.base)
+	initView := bound("init")
+	assertSubmitted(initView, "init")
+	activation, _ := initView["hook_activation"].(map[string]any)
+	if activation["skipped"] != true {
+		t.Fatalf("hook activation = %v, want existing hook skipped", activation)
+	}
+	if _, hasReconciliation := activation["reconciliation"]; hasReconciliation {
+		t.Fatalf("hook activation = %v, want no second reconciliation", activation)
+	}
+	afterInit := herdrCalls(t, d.base)
+	countCall := func(calls [][]string, command ...string) int {
+		count := 0
+		for _, call := range calls {
+			for start := 0; start+len(command) <= len(call); start++ {
+				matches := true
+				for i := range command {
+					if call[start+i] != command[i] {
+						matches = false
+						break
+					}
+				}
+				if matches {
+					count++
+					break
+				}
+			}
+		}
+		return count
+	}
+	if countCall(afterInit, "plugin", "link") != countCall(beforeInit, "plugin", "link") {
+		t.Fatalf("second init linked the hook again: before=%v after=%v", beforeInit, afterInit)
+	}
 }

@@ -208,6 +208,26 @@ func Call(herdrPath, session string, timeout time.Duration, args ...string) (any
 	return CallContext(context.Background(), herdrPath, session, timeout, args...)
 }
 
+func CallCurrentContext(ctx context.Context, herdrPath string, timeout time.Duration, args ...string) (any, error) {
+	for _, arg := range args {
+		if arg == "--session" || strings.HasPrefix(arg, "--session=") {
+			return nil, fmt.Errorf("Do not override Herdr's current socket session inside command arguments.")
+		}
+	}
+	stdout, stderr, code, err := runRaw(ctx, herdrPath, timeout, args...)
+	if err != nil {
+		return nil, err
+	}
+	if code != 0 {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(stdout)
+		}
+		return nil, fmt.Errorf("%s exited %d: %s", filepath.Base(herdrPath), code, detail)
+	}
+	return decodeHerdr(stdout)
+}
+
 // CallContext is Call under the tighter of ctx and timeout.
 func CallContext(ctx context.Context, herdrPath, session string, timeout time.Duration, args ...string) (any, error) {
 	stdout, err := CallRawContext(ctx, herdrPath, session, timeout, args...)

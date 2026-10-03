@@ -153,7 +153,7 @@ func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
 	previousWorker := current.Worker
 	previousReviewer := current.Reviewer
 	previousEvidence := current.Evidence
-	path, err := save(s, mergedCapacity, mergedWorker, current.Presets, mergedReviewer, mergedEvidence)
+	path, err := save(s, mergedCapacity, mergedWorker, current.Presets, mergedReviewer, mergedEvidence, current.Hook)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func WritePreset(s *store.Store, args PresetWriteArgs) (*ordjson.Object, error) 
 		presets[k] = v
 	}
 	presets[args.Name] = spec
-	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence)
+	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence, current.Hook)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func DeletePreset(s *store.Store, name string) (*ordjson.Object, error) {
 			presets[k] = v
 		}
 	}
-	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence)
+	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence, current.Hook)
 	if err != nil {
 		return nil, err
 	}
@@ -322,7 +322,7 @@ func DeletePreset(s *store.Store, name string) (*ordjson.Object, error) {
 	return result, nil
 }
 
-func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*ordjson.Object, reviewer, evidenceBlock *ordjson.Object) (string, error) {
+func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*ordjson.Object, reviewer, evidenceBlock, hook *ordjson.Object) (string, error) {
 	path := filepath.Join(s.Home, File)
 	doc := ordjson.NewObject()
 	doc.Set("schema", json.Number(fmt.Sprint(Schema)))
@@ -350,6 +350,9 @@ func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*
 	if evidenceBlock != nil {
 		doc.Set("evidence", evidenceBlock)
 	}
+	if hook != nil {
+		doc.Set("hook", hook)
+	}
 	if err := ordjson.WriteFile(path, doc); err != nil {
 		return "", err
 	}
@@ -357,4 +360,20 @@ func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*
 		return "", err
 	}
 	return path, nil
+}
+
+func SetNativeEventsEnabled(s *store.Store, enabled bool) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := LoadSettings(s)
+	if err != nil {
+		return err
+	}
+	hook := ordjson.NewObject()
+	hook.Set("enabled", enabled)
+	_, err = save(s, current.Capacity, current.Worker, current.Presets, current.Reviewer, current.Evidence, hook)
+	return err
 }

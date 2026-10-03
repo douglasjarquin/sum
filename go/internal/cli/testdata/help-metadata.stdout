@@ -7,6 +7,6 @@ subcommands:
   status: "Recorded projection summary, saved capabilities, applied tokens, ambiguous sources, error log, and native_open; writes nothing and calls no Herdr"
   sync: "Coordinator only: re-probe capabilities and project one full pass writing only differences; --force rewrites every recorded endpoint"
   snippet: "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum"
-  inbox: "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the hook plugin and falls back to the overview; never syncs or writes"
+  inbox: "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the linked default-on hook plugin and falls back to the overview; never syncs or writes"
 read_only: false
 read_only_subcommands[3]: inbox,snippet,status

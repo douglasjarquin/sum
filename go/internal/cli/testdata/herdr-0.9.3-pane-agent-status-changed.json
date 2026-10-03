@@ -1,0 +1,1 @@
+{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed","pane_id":"w-task:p1","workspace_id":"w-task","agent_status":"idle","agent":"claude"}}

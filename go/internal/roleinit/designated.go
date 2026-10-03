@@ -459,6 +459,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			return nil, pumpErr
 		}
 		result.Set("returns", pumped)
+		result.Set("hook_activation", hookstatus.EnableByDefault(s, ctx, opts.RuntimeRoot, opts.SumctlPath, false))
 		result.Set("maintenance", lifecycle.Pending(s, opts.SumctlPath, tasks))
 		hook, hookErr := hookstatus.SummaryOf(s, tasks)
 		if hookErr != nil {
