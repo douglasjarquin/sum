@@ -52,9 +52,9 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       </p>
     </div>
     <div class="sec">
-      <h2>Native event delivery (optional)</h2>
+      <h2>Native event delivery (enabled by default)</h2>
       <div class="codeblock">
-        <div>./bin/sumctl hook enable      <span class="c"># coordinator only; writes a Herdr plugin manifest under .sum/hook/plugin/ and links it live</span></div>
+        <div>./bin/sumctl hook enable      <span class="c"># coordinator only; retry or re-enable this instance's Herdr plugin</span></div>
         <div>./bin/sumctl hook status</div>
         <div>./bin/sumctl hook disable     <span class="c"># or --unlink</span></div>
       </div>
@@ -69,6 +69,13 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         diagnosis, or permission to approve anything. Disabled, degraded, or
         crashing, the handler changes nothing about ask/report, init, bind, and
         pump.
+      </p>
+      <p>
+        Coordinator <code>init</code> enables the plugin for a new installation;
+        <code>update apply</code> enables it for an existing installation unless
+        <code>hook disable</code> was explicitly chosen. An enable failure is
+        recorded as degraded and does not fail init or update. The user's opt-out
+        is saved in <code>.sum/settings.json</code>.
       </p>
     </div>
     <div class="sec">
