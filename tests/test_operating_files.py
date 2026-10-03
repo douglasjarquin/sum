@@ -225,6 +225,28 @@ class OperatingFilesTest(unittest.TestCase):
         ):
             self.assertIn(rule, text)
 
+    def test_worker_waiting_contract_ends_blocked_turn_without_polling(self):
+        text = (ROOT / "skills" / "sum-work" / "SKILL.md").read_text()
+        self.assertIn("## Waiting\n", text)
+        waiting = text.split("## Waiting\n", 1)[1].split("\n## ", 1)[0]
+        for rule in (
+            "After saving a question that blocks further approved work, end the turn.",
+            "Do not repeatedly read task status or the inbox, resend the question, or create a timer",
+            "A failed notification does not lose the saved question",
+            "A notice is not an answer, approval, or acknowledgement.",
+            "Read the durable answer before acting",
+            "mark it applied with the existing `resolve` command",
+            "Do not promise an automatic wakeup when the optional hook is disabled or delivery is unavailable",
+            "existing coordinator, pump, and explicit resume operations",
+            "One-off reads on receiving a notice or at an actual work checkpoint remain allowed.",
+            "not necessary reads or independently authorized work",
+            "Do not background a bounded wait just to check it repeatedly.",
+            "A wait for your own active command follows that command's and harness's existing lifecycle and timeout rules.",
+        ):
+            self.assertIn(rule, waiting)
+        self.assertNotIn("gh pr checks --watch", waiting)
+        self.assertNotIn("sleep/status loop", waiting)
+
     def test_code_comment_rule_covers_workers_reviewers_repairs_and_grok_pack(self):
         worker = (ROOT / "skills" / "sum-work" / "SKILL.md").read_text()
         reviewer = (ROOT / "skills" / "sum-deliver" / "SKILL.md").read_text()

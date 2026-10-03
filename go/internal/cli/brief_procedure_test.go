@@ -135,6 +135,10 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 		"Commit messages, PR descriptions and `sumctl report` text are not code comments.",
 		"Leave existing comments untouched when changing surrounding code.",
 		"add a directive only when the code cannot work without it, and include no explanatory prose in it.",
+		"## Waiting",
+		"After saving a question that blocks further approved work, end the turn.",
+		"A notice is not an answer, approval, or acknowledgement.",
+		"mark it applied with the existing `resolve` command",
 	} {
 		if !strings.Contains(string(source), rule) {
 			t.Fatalf("pinned worker procedure is missing rule %q", rule)
