@@ -253,7 +253,7 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			if err := app.RequireCoordinator(st, ctx); err != nil {
 				return err
 			}
-			view, err := factory.Merge(st, o.runtimeRoot, args[0])
+			view, err := factory.Merge(st, ctx, o.runtimeRoot, args[0])
 			if err != nil {
 				return err
 			}
