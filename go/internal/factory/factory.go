@@ -3,6 +3,7 @@ package factory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -1102,7 +1103,33 @@ func MergeCheck(s *store.Store, taskID string) (*ordjson.Object, error) {
 	return result, nil
 }
 
-func Merge(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, error) {
+const (
+	factoryMergeAttempts = 3
+	factoryMergeDelay    = 2 * time.Second
+	factoryPRFields      = "number,url,state,headRefName,headRefOid,baseRefName,isDraft,mergeable,mergeStateStatus"
+)
+
+type livePR struct {
+	Number           int    `json:"number"`
+	URL              string `json:"url"`
+	State            string `json:"state"`
+	HeadBranch       string `json:"headRefName"`
+	HeadSHA          string `json:"headRefOid"`
+	BaseBranch       string `json:"baseRefName"`
+	Draft            *bool  `json:"isDraft"`
+	Mergeable        string `json:"mergeable"`
+	MergeStateStatus string `json:"mergeStateStatus"`
+}
+
+type mergeDeferredError struct {
+	detail string
+}
+
+func (e *mergeDeferredError) Error() string {
+	return e.detail
+}
+
+func Merge(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string) (*ordjson.Object, error) {
 	check, err := MergeCheck(s, taskID)
 	if err != nil {
 		return nil, err
@@ -1132,15 +1159,40 @@ func Merge(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, error) 
 	if err != nil {
 		return nil, err
 	}
+	preflightAttempts := 0
+	if _, err := liveMergePreflight(s, ctx, runtimeRoot, taskID, task, repo, number, &preflightAttempts); err != nil {
+		var deferred *mergeDeferredError
+		if errors.As(err, &deferred) {
+			return deferredMergeResult(taskID, repo, number, head, deferred), nil
+		}
+		return nil, err
+	}
+	if err := revalidateMergeAuthority(s, taskID, repo, identity); err != nil {
+		return nil, err
+	}
 	if err := pipeline.MarkReady(gh, "", repo, number, 0); err != nil {
 		return nil, fmt.Errorf("could not mark PR #%d ready for merge: %w", number, err)
+	}
+	preflight, err := liveMergePreflight(s, ctx, runtimeRoot, taskID, task, repo, number, &preflightAttempts)
+	if err != nil {
+		var deferred *mergeDeferredError
+		if errors.As(err, &deferred) {
+			return deferredMergeResult(taskID, repo, number, head, deferred), nil
+		}
+		return nil, err
+	}
+	if *preflight.Draft || preflight.MergeStateStatus == "DRAFT" {
+		return nil, fmt.Errorf("PR #%d is still a draft after GitHub accepted the ready request; observe it before retrying the merge", number)
+	}
+	if err := revalidateMergeAuthority(s, taskID, repo, identity); err != nil {
+		return nil, err
 	}
 	args := []string{"pr", "merge", fmt.Sprint(number), "--repo", repo, "--squash"}
 	if head != "" {
 		args = append(args, "--match-head-commit", head)
 	}
 	if _, err := runGh(runtimeRoot, args...); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("merge result for PR #%d is uncertain; observe the PR before any retry: %w", number, err)
 	}
 	result := ordjson.NewObject()
 	result.Set("task", taskID)
@@ -1150,6 +1202,151 @@ func Merge(s *store.Store, runtimeRoot, taskID string) (*ordjson.Object, error) 
 	result.Set("check", check)
 	result.Set("note", "GitHub squash-merge requested. Run cleanup after the merge is observed.")
 	return result, nil
+}
+
+func deferredMergeResult(taskID, repo string, number int, head string, deferred *mergeDeferredError) *ordjson.Object {
+	result := ordjson.NewObject()
+	result.Set("task", taskID)
+	result.Set("repository", repo)
+	result.Set("number", jsonInt(number))
+	result.Set("candidate", head)
+	result.Set("status", "deferred")
+	result.Set("pending", true)
+	result.Set("merged", false)
+	result.Set("note", deferred.Error())
+	return result
+}
+
+func revalidateMergeAuthority(s *store.Store, taskID, repo string, expectedIdentity *ordjson.Object) error {
+	check, err := MergeCheck(s, taskID)
+	if err != nil {
+		return err
+	}
+	if asString(get(check, "confidence")) != "high" {
+		return fmt.Errorf("Refusing merge: factory authority or saved gates changed during preflight; %s", asString(get(check, "note")))
+	}
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return err
+	}
+	if authorizedRepo(task) != repo || occupyingLane(s, taskID, repo) == nil {
+		return fmt.Errorf("Refusing merge: factory authorization or lane claim changed during preflight")
+	}
+	currentIdentity := asObject(get(asObject(get(task, "pr")), "identity"))
+	for _, key := range []string{"number", "url", "head_sha", "head_branch", "base_branch"} {
+		if fmt.Sprint(get(currentIdentity, key)) != fmt.Sprint(get(expectedIdentity, key)) {
+			return fmt.Errorf("Refusing merge: PR identity changed during preflight; reconcile and run the gates again")
+		}
+	}
+	if evidenceview.CurrentCandidate(task) != asString(get(expectedIdentity, "head_sha")) {
+		return fmt.Errorf("Refusing merge: candidate changed during preflight; reconcile and run the gates again")
+	}
+	return nil
+}
+
+func liveMergePreflight(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, task *ordjson.Object, repo string, number int, attempts *int) (*livePR, error) {
+	for *attempts < factoryMergeAttempts {
+		*attempts = *attempts + 1
+		current, err := observeFactoryPR(runtimeRoot, repo, number)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateFactoryPR(task, repo, number, current); err != nil {
+			return nil, err
+		}
+		conflict := ordjson.NewObject()
+		conflict.Set("state", "open")
+		conflict.Set("mergeable", current.Mergeable)
+		conflict.Set("merge_state_status", current.MergeStateStatus)
+		identity := ordjson.NewObject()
+		identity.Set("base_branch", current.BaseBranch)
+		identity.Set("url", current.URL)
+		conflict.Set("identity", identity)
+		if reason := pipeline.MergeConflict(conflict); reason != "" {
+			return nil, fmt.Errorf("Refusing merge: %s", reason)
+		}
+		if current.Mergeable != "MERGEABLE" && current.Mergeable != "UNKNOWN" {
+			return nil, fmt.Errorf("Refusing merge: GitHub returned unsupported or missing mergeability %q for PR #%d", current.Mergeable, number)
+		}
+		if current.MergeStateStatus == "BLOCKED" || current.MergeStateStatus == "BEHIND" {
+			return nil, fmt.Errorf("Refusing merge: GitHub reports mergeStateStatus=%s for PR #%d", current.MergeStateStatus, number)
+		}
+		if current.Mergeable == "UNKNOWN" && current.MergeStateStatus != "UNKNOWN" {
+			return nil, fmt.Errorf("Refusing merge: mergeability is UNKNOWN while mergeStateStatus=%s for PR #%d", current.MergeStateStatus, number)
+		}
+		ci, err := pipeline.ObserveCI(s, ctx, runtimeRoot, taskID, nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("factory merge preflight could not observe live checks: %w", err)
+		}
+		if asString(get(ci, "head_sha")) != evidenceview.CurrentCandidate(task) {
+			return nil, fmt.Errorf("factory merge preflight checks were observed for a different candidate")
+		}
+		record, err := pipeline.Load(s, taskID)
+		if err != nil {
+			return nil, err
+		}
+		if pass, detail := pipeline.GatesSettled(record); !pass {
+			return nil, fmt.Errorf("Refusing merge: live pipeline gates are not ready: %s", detail)
+		}
+		switch current.Mergeable {
+		case "MERGEABLE":
+			return current, nil
+		case "UNKNOWN":
+			if *attempts == factoryMergeAttempts {
+				return nil, &mergeDeferredError{detail: fmt.Sprintf("factory merge deferred: GitHub still reports mergeable=UNKNOWN for PR #%d after %d fresh preflight attempts; inspect the PR and retry explicitly", number, factoryMergeAttempts)}
+			}
+			time.Sleep(factoryMergeDelay)
+		}
+	}
+	return nil, &mergeDeferredError{detail: "factory merge deferred: mergeability could not be confirmed"}
+}
+
+func observeFactoryPR(runtimeRoot, repo string, number int) (*livePR, error) {
+	stdout, err := runGh(runtimeRoot, "pr", "view", fmt.Sprint(number), "--repo", repo, "--json", factoryPRFields)
+	if err != nil {
+		return nil, fmt.Errorf("factory merge preflight could not observe PR #%d: %w", number, err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(stdout, &fields); err != nil {
+		return nil, fmt.Errorf("factory merge preflight received malformed PR observation for #%d: %s", number, string(stdout[:min(300, len(stdout))]))
+	}
+	for _, key := range []string{"number", "url", "state", "headRefName", "headRefOid", "baseRefName", "isDraft", "mergeable", "mergeStateStatus"} {
+		if _, ok := fields[key]; !ok {
+			return nil, fmt.Errorf("factory merge preflight PR observation for #%d is missing %s", number, key)
+		}
+	}
+	var current livePR
+	if err := json.Unmarshal(stdout, &current); err != nil || current.Draft == nil {
+		return nil, fmt.Errorf("factory merge preflight received malformed PR observation for #%d", number)
+	}
+	if current.MergeStateStatus == "" {
+		return nil, fmt.Errorf("factory merge preflight PR observation for #%d has no mergeStateStatus", number)
+	}
+	return &current, nil
+}
+
+func validateFactoryPR(task *ordjson.Object, repo string, number int, current *livePR) error {
+	pr := asObject(get(task, "pr"))
+	identity := asObject(get(pr, "identity"))
+	candidate := evidenceview.CurrentCandidate(task)
+	expectedURL := asString(get(identity, "url"))
+	if current.Number != number || current.URL == "" || current.URL != expectedURL ||
+		current.State != "OPEN" || current.HeadSHA == "" || current.HeadSHA != candidate ||
+		current.HeadSHA != asString(get(identity, "head_sha")) ||
+		current.HeadBranch == "" || current.HeadBranch != asString(get(identity, "head_branch")) ||
+		current.BaseBranch == "" || current.BaseBranch != asString(get(identity, "base_branch")) ||
+		factoryRepositoryFromURL(current.URL) != repo {
+		return fmt.Errorf("Refusing merge: live PR identity, state, repository, base branch, or candidate changed; reconcile and run the gates again")
+	}
+	return nil
+}
+
+func factoryRepositoryFromURL(url string) string {
+	parts := strings.Split(strings.TrimPrefix(url, "https://"), "/")
+	if len(parts) < 3 || parts[0] != "github.com" {
+		return ""
+	}
+	return parts[1] + "/" + parts[2]
 }
 
 func setCheck(o *ordjson.Object, name string, pass bool, detail string) {

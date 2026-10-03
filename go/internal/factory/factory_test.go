@@ -10,8 +10,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -97,6 +99,92 @@ func fakeGh(t *testing.T, issues []map[string]any, bodies map[string]string) str
 		}
 	}
 	return root
+}
+
+func writePRViews(t *testing.T, root string, views []map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(views)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pr_views.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writePRChecks(t *testing.T, root string, checks []map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal([][]map[string]any{checks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pr_checks.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writePRCheckSequence(t *testing.T, root string, checks [][]map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(checks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pr_checks.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func livePRView(sha, mergeable string, draft bool) map[string]any {
+	mergeState := "CLEAN"
+	if mergeable == "UNKNOWN" {
+		mergeState = "UNKNOWN"
+	}
+	return map[string]any{
+		"number": 12, "url": "https://github.com/cofactorworks/nicebaas/pull/12", "state": "OPEN",
+		"headRefName": "sum/t-bbbbbbbbbbbb", "headRefOid": sha, "baseRefName": "main", "isDraft": draft,
+		"mergeable": mergeable, "mergeStateStatus": mergeState,
+	}
+}
+
+func passedPRChecks() []map[string]any {
+	return []map[string]any{{"name": "unit", "state": "SUCCESS", "bucket": "pass"}}
+}
+
+func mergeSetup(t *testing.T) (*store.Store, string, string) {
+	t.Helper()
+	st := openStore(t)
+	worktree, sha := gitWorktree(t)
+	enroll(t, st, "cofactorworks/nicebaas")
+	root := fakeGh(t, []map[string]any{issue(12, "ready", "ready")}, nil)
+	if _, err := Enable(st, ctx(), EnableArgs{Project: "cofactorworks/nicebaas"}); err != nil {
+		t.Fatal(err)
+	}
+	mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
+	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "cofactorworks/nicebaas", Issue: 12, Task: "t-bbbbbbbbbbbb"}); err != nil {
+		t.Fatal(err)
+	}
+	return st, root, sha
+}
+
+func countGhCall(t *testing.T, root, first, second string) int {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "calls.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var row struct {
+			Args []string `json:"args"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			t.Fatal(err)
+		}
+		if len(row.Args) >= 2 && row.Args[0] == first && row.Args[1] == second {
+			count++
+		}
+	}
+	return count
 }
 
 func issue(number int, title string, labels ...string) map[string]any {
@@ -688,7 +776,7 @@ func TestMerge_humanGateDoesNotCallGh(t *testing.T) {
 	if err := st.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Merge(st, st.Home, "t-ffffffffffff")
+	_, err := Merge(st, ctx(), st.Home, "t-ffffffffffff")
 	if err == nil || !strings.Contains(err.Error(), "human-gate") {
 		t.Fatalf("err = %v", err)
 	}
@@ -707,10 +795,12 @@ func TestMerge_highPassesMatchHeadCommit(t *testing.T) {
 		t.Fatal(err)
 	}
 	mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
+	writePRViews(t, root, []map[string]any{livePRView(sha, "MERGEABLE", false)})
+	writePRChecks(t, root, passedPRChecks())
 	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "cofactorworks/nicebaas", Issue: 12, Task: "t-bbbbbbbbbbbb"}); err != nil {
 		t.Fatal(err)
 	}
-	view, err := Merge(st, st.Home, "t-bbbbbbbbbbbb")
+	view, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -725,10 +815,256 @@ func TestMerge_highPassesMatchHeadCommit(t *testing.T) {
 	if !strings.Contains(text, `"pr", "merge"`) || !strings.Contains(text, "--match-head-commit") || !strings.Contains(text, sha) {
 		t.Fatalf("missing match-head-commit in %s", text)
 	}
-	readyAt := strings.Index(text, `"pr", "ready"`)
 	mergeAt := strings.Index(text, `"pr", "merge"`)
-	if readyAt < 0 || mergeAt < 0 || readyAt > mergeAt {
-		t.Fatalf("factory merge must mark ready then merge in the same action: %s", text)
+	readyAt := strings.Index(text, `"pr", "ready"`)
+	lastViewAt := strings.LastIndex(text, `"pr", "view"`)
+	if readyAt < 0 || lastViewAt <= readyAt || mergeAt <= lastViewAt {
+		t.Fatalf("factory merge must mark ready, observe the resulting state, then merge: %s", text)
+	}
+}
+
+func TestMerge_liveChecksOverrideSavedGreen(t *testing.T) {
+	for _, bucket := range []string{"fail", "pending"} {
+		t.Run(bucket, func(t *testing.T) {
+			st, root, sha := mergeSetup(t)
+			writePRViews(t, root, []map[string]any{livePRView(sha, "MERGEABLE", false)})
+			writePRChecks(t, root, []map[string]any{{"name": "unit", "state": "FAILURE", "bucket": bucket}})
+			_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+			if err == nil || !strings.Contains(err.Error(), "live pipeline gates are not ready") {
+				t.Fatalf("err = %v", err)
+			}
+			if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+				t.Fatalf("merge calls = %d", got)
+			}
+		})
+	}
+}
+
+func TestMerge_unknownRetriesFreshPreflight(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	writePRViews(t, root, []map[string]any{
+		livePRView(sha, "UNKNOWN", false),
+		livePRView(sha, "MERGEABLE", false),
+	})
+	writePRChecks(t, root, passedPRChecks())
+	if _, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb"); err != nil {
+		t.Fatal(err)
+	}
+	if got := countGhCall(t, root, "pr", "view"); got != 3 {
+		t.Fatalf("PR reads = %d", got)
+	}
+	if got := countGhCall(t, root, "pr", "checks"); got != 3 {
+		t.Fatalf("check reads = %d", got)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 1 {
+		t.Fatalf("merge calls = %d", got)
+	}
+}
+
+func TestMerge_persistentUnknownDefersWithoutMerge(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	writePRViews(t, root, []map[string]any{livePRView(sha, "UNKNOWN", false)})
+	writePRChecks(t, root, passedPRChecks())
+	view, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "status")) != "deferred" || !asBool(get(view, "pending")) || asBool(get(view, "merged")) ||
+		!strings.Contains(asString(get(view, "note")), "UNKNOWN") {
+		t.Fatalf("merge result = %v", view)
+	}
+	if got := countGhCall(t, root, "pr", "view"); got != factoryMergeAttempts {
+		t.Fatalf("PR reads = %d", got)
+	}
+	if got := countGhCall(t, root, "pr", "checks"); got != factoryMergeAttempts {
+		t.Fatalf("check reads = %d", got)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+		t.Fatalf("merge calls = %d", got)
+	}
+}
+
+func TestMerge_unknownAfterReadyUsesSharedAttemptBound(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	writePRViews(t, root, []map[string]any{
+		livePRView(sha, "MERGEABLE", false),
+		livePRView(sha, "UNKNOWN", false),
+		livePRView(sha, "UNKNOWN", false),
+	})
+	writePRChecks(t, root, passedPRChecks())
+	view, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(get(view, "status")) != "deferred" || !asBool(get(view, "pending")) || asBool(get(view, "merged")) {
+		t.Fatalf("merge result = %v", view)
+	}
+	if got := countGhCall(t, root, "pr", "view"); got != factoryMergeAttempts {
+		t.Fatalf("PR reads = %d", got)
+	}
+	if got := countGhCall(t, root, "pr", "checks"); got != factoryMergeAttempts {
+		t.Fatalf("check reads = %d", got)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+		t.Fatalf("merge calls = %d", got)
+	}
+}
+
+func TestMerge_unknownThenChangedHeadStops(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	changed := livePRView(strings.Repeat("b", 40), "MERGEABLE", false)
+	writePRViews(t, root, []map[string]any{livePRView(sha, "UNKNOWN", false), changed})
+	writePRChecks(t, root, passedPRChecks())
+	_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+	if err == nil || !strings.Contains(err.Error(), "candidate changed") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+		t.Fatalf("merge calls = %d", got)
+	}
+}
+
+func TestMerge_unknownThenFailingCheckStops(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	writePRViews(t, root, []map[string]any{
+		livePRView(sha, "UNKNOWN", false),
+		livePRView(sha, "UNKNOWN", false),
+	})
+	writePRCheckSequence(t, root, [][]map[string]any{
+		passedPRChecks(),
+		{{"name": "unit", "state": "FAILURE", "bucket": "fail"}},
+	})
+	_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+	if err == nil || !strings.Contains(err.Error(), "live pipeline gates are not ready") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+		t.Fatalf("merge calls = %d", got)
+	}
+}
+
+func TestMerge_unknownThenChangedBaseOrIdentityStops(t *testing.T) {
+	for _, change := range []string{"base", "identity"} {
+		t.Run(change, func(t *testing.T) {
+			st, root, sha := mergeSetup(t)
+			changed := livePRView(sha, "MERGEABLE", false)
+			if change == "base" {
+				changed["baseRefName"] = "release"
+			} else {
+				changed["url"] = "https://github.com/cofactorworks/other/pull/12"
+			}
+			writePRViews(t, root, []map[string]any{livePRView(sha, "UNKNOWN", false), changed})
+			writePRChecks(t, root, passedPRChecks())
+			_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+			if err == nil || !strings.Contains(err.Error(), "identity, state, repository, base branch, or candidate changed") {
+				t.Fatalf("err = %v", err)
+			}
+			if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+				t.Fatalf("merge calls = %d", got)
+			}
+		})
+	}
+}
+
+func TestMerge_draftReadyIsObservedBeforeMerge(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	writePRViews(t, root, []map[string]any{
+		livePRView(sha, "MERGEABLE", true),
+		livePRView(sha, "MERGEABLE", false),
+	})
+	writePRChecks(t, root, passedPRChecks())
+	if _, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "calls.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	readyAt := strings.Index(text, `"pr", "ready"`)
+	reads := strings.Index(text, `"pr", "view"`)
+	mergeAt := strings.Index(text, `"pr", "merge"`)
+	secondViewAt := strings.LastIndex(text, `"pr", "view"`)
+	if readyAt < 0 || reads < 0 || secondViewAt <= readyAt || mergeAt <= secondViewAt {
+		t.Fatalf("draft must be observed, marked ready, observed again, then merged: %s", text)
+	}
+}
+
+func TestMerge_ambiguousMergeResultIsNotRetried(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	writePRViews(t, root, []map[string]any{livePRView(sha, "MERGEABLE", false)})
+	writePRChecks(t, root, passedPRChecks())
+	if err := os.WriteFile(filepath.Join(root, "pr_merge_delay.json"), []byte("5"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	priorBound := pipeline.DefaultGHBound
+	pipeline.DefaultGHBound = 2 * time.Second
+	defer func() { pipeline.DefaultGHBound = priorBound }()
+	_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+	if err == nil || !strings.Contains(err.Error(), "merge result") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 1 {
+		t.Fatalf("merge calls = %d", got)
+	}
+	lane := occupyingLane(st, "t-bbbbbbbbbbbb", "cofactorworks/nicebaas")
+	if lane == nil || asString(get(lane, "state")) != "running" {
+		t.Fatalf("ambiguous merge changed lane state: %v", lane)
+	}
+}
+
+func TestMerge_PRReadTimeoutStops(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	writePRViews(t, root, []map[string]any{livePRView(sha, "MERGEABLE", false)})
+	writePRChecks(t, root, passedPRChecks())
+	if err := os.WriteFile(filepath.Join(root, "pr_view_delay.json"), []byte("5"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	priorBound := pipeline.DefaultGHBound
+	pipeline.DefaultGHBound = 2 * time.Second
+	defer func() { pipeline.DefaultGHBound = priorBound }()
+	_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+	if err == nil || !strings.Contains(err.Error(), "could not observe PR") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+		t.Fatalf("merge calls = %d", got)
+	}
+}
+
+func TestMerge_malformedPRObservationStops(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	view := livePRView(sha, "MERGEABLE", false)
+	delete(view, "baseRefName")
+	writePRViews(t, root, []map[string]any{view})
+	writePRChecks(t, root, passedPRChecks())
+	_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+	if err == nil || !strings.Contains(err.Error(), "missing baseRefName") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+		t.Fatalf("merge calls = %d", got)
+	}
+}
+
+func TestMerge_liveConflictStopsBeforeOtherReads(t *testing.T) {
+	st, root, sha := mergeSetup(t)
+	view := livePRView(sha, "CONFLICTING", false)
+	view["mergeStateStatus"] = "DIRTY"
+	writePRViews(t, root, []map[string]any{view})
+	writePRChecks(t, root, passedPRChecks())
+	_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
+	if err == nil || !strings.Contains(err.Error(), "Conflicts with main") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := countGhCall(t, root, "pr", "checks"); got != 0 {
+		t.Fatalf("check reads after live conflict = %d", got)
+	}
+	if got := countGhCall(t, root, "pr", "ready"); got != 0 {
+		t.Fatalf("ready calls after live conflict = %d", got)
+	}
+	if got := countGhCall(t, root, "pr", "merge"); got != 0 {
+		t.Fatalf("merge calls after live conflict = %d", got)
 	}
 }
 
@@ -741,7 +1077,7 @@ func TestMerge_refusesWithoutLane(t *testing.T) {
 		t.Fatal(err)
 	}
 	mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
-	_, err := Merge(st, st.Home, "t-bbbbbbbbbbbb")
+	_, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
 	if err == nil || !strings.Contains(err.Error(), "not occupying a factory lane") {
 		t.Fatalf("err = %v", err)
 	}
@@ -777,6 +1113,7 @@ func mergeTask(t *testing.T, st *store.Store, worktree, sha, taskID string) *ord
 	task.Set("schema", json.Number("1"))
 	task.Set("id", taskID)
 	task.Set("status", "running")
+	task.Set("brief", "approved task brief")
 	task.Set("worktree", worktree)
 	task.Set("candidate", sha)
 	policy := ordjson.NewObject()
@@ -815,20 +1152,48 @@ func mergeTask(t *testing.T, st *store.Store, worktree, sha, taskID string) *ord
 	root.Set("candidate", sha)
 	root.Set("result", "pass")
 	root.Set("outcome", "pass")
+	root.Set("certifies", sha)
 	review := ordjson.NewObject()
 	review.Set("kind", "review")
 	review.Set("source", "reviewer")
 	review.Set("current", true)
 	review.Set("candidate", sha)
 	review.Set("verdict", "approve")
-	task.Set("evidence", []any{handoff, root, review})
+	document := ordjson.NewObject()
+	document.Set("kind", "documentation")
+	document.Set("source", "coordinator")
+	document.Set("candidate", sha)
+	document.Set("result", "pass")
+	document.Set("summary", "Passed")
+	rebase := ordjson.NewObject()
+	rebase.Set("kind", "rebase")
+	rebase.Set("source", "coordinator")
+	rebase.Set("candidate", sha)
+	rebase.Set("outcome", "up-to-date")
+	rebase.Set("summary", "Up to date with main")
+	lint := ordjson.NewObject()
+	lint.Set("kind", "lint")
+	lint.Set("source", "coordinator")
+	lint.Set("candidate", sha)
+	lint.Set("outcome", "pass")
+	lint.Set("summary", "Passed")
+	ci := ordjson.NewObject()
+	ci.Set("kind", "ci")
+	ci.Set("source", "coordinator")
+	ci.Set("candidate", sha)
+	ci.Set("head_sha", sha)
+	ci.Set("outcome", "pass")
+	ci.Set("summary", "Passed 1/1 required checks")
+	task.Set("evidence", []any{handoff, root, review, document, rebase, lint, ci})
 	if err := os.MkdirAll(filepath.Join(st.Home, "tasks", taskID), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	writePipeline(t, st, taskID, sha, nil)
+	if _, err := pipeline.Refresh(st, taskID); err != nil {
+		t.Fatal(err)
+	}
 	return task
 }
 
