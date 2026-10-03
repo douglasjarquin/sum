@@ -79,10 +79,12 @@ func TestBindReviewerPaneRebindsAfterRecordedReviewerStops(t *testing.T) {
 	if asString(stop["agent_code"]) != "agent_not_found" || stop["pane_present"] != true || stop["old_shell_pid"] != float64(6124) || asString(stop["old_cwd"]) != worktree || len(asSlice(stop["excluded_pids"])) == 0 {
 		t.Fatalf("reviewer stop observation = %v", stop)
 	}
+	setReviewerPane(t, d.base, "w-review2:p1", worktree, nil, 6126)
 	cleanupBeforeNewReview := d.ctl(false, "cleanup", taskID, "--reviewer-only")
-	if asMap(asMap(cleanupBeforeNewReview["reviewer"]))["closable"] == true || asString(cleanupBeforeNewReview["state"]) != "blocked" {
+	if asMap(asMap(cleanupBeforeNewReview["reviewer"]))["closable"] == true || asString(cleanupBeforeNewReview["state"]) != "blocked" || asString(asMap(cleanupBeforeNewReview["reviewer"])["reason"]) != "no saved reviewer findings" {
 		t.Fatalf("cleanup accepted only the old reviewer's findings: %v", cleanupBeforeNewReview)
 	}
+	setReviewerPane(t, d.base, "w-review2:p1", worktree, map[string]any{"agent": "codex", "agent_status": "idle", "agent_pid": 6125}, 6126)
 	review := d.ctlPane("w-review2:p1", true, "review", taskID, "--verdict", "approve", "--candidate", reviewCandidate, "--text", "second review")
 	if asString(asMap(asMap(review["evidence"])["endpoint"])["pane"]) != "w-review2:p1" {
 		t.Fatalf("review evidence endpoint = %v", asMap(review["evidence"])["endpoint"])
@@ -159,6 +161,9 @@ func TestBindReviewerPaneRefusals(t *testing.T) {
 		}, want: "process 8123 remains bound"},
 		{name: "process-info failure", setup: func(t *testing.T, d *demoLab, _, _ string) {
 			editFakePane(t, d, "w-review:p1", func(pane map[string]any) { pane["process_info_error"] = "server_busy" })
+		}, want: "server_busy"},
+		{name: "unproven agent code", setup: func(t *testing.T, d *demoLab, _, _ string) {
+			editFakePane(t, d, "w-review:p1", func(pane map[string]any) { pane["agent_get_error"] = "server_busy" })
 		}, want: "server_busy"},
 		{name: "replacement cwd mismatch", setup: func(t *testing.T, d *demoLab, _, _ string) {
 			setReviewerPane(t, d.base, "w-review2:p1", "/tmp/not-the-checkout", map[string]any{"agent": "codex", "agent_status": "idle", "agent_pid": 6125}, 6126)

@@ -86,6 +86,7 @@ if args[:2] in (["agent", "get"], ["agent", "list"]) and os.environ.get("FAKE_OB
 if args[:2] in (["agent", "get"], ["pane", "get"]):
     pane = state["panes"].get(args[2])
     if not pane: fail("pane_not_found" if args[0] == "pane" else "agent_not_found")
+    if args[0] == "agent" and pane.get("agent_get_error"): fail(pane["agent_get_error"])
     if args[0] == "agent" and not pane.get("agent"): fail("agent_not_found")
     emit({args[0]: pane})
 if args[:2] == ["agent", "list"]: emit({"agents": [p for p in state["panes"].values() if p["agent"]]})

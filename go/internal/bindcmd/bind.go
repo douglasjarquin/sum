@@ -91,6 +91,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		cancel()
 	}
 	var reviewerBefore *ordjson.Object
+	var reviewerStopObservation *ordjson.Object
 	if reviewerPane != "" {
 		preTask, err := s.ReadTask(taskID)
 		if err != nil {
@@ -98,6 +99,19 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		}
 		oldValue, _ := preTask.Get("reviewer")
 		reviewerBefore, _ = oldValue.(*ordjson.Object)
+		if reviewerBefore != nil {
+			oldPaneStr := stringField(reviewerBefore, "pane")
+			oldSessionStr := stringField(reviewerBefore, "session")
+			oldMachine := stringField(reviewerBefore, "machine")
+			if host.Is(oldMachine) && oldSessionStr == sessionStr && oldPaneStr != reviewerPane {
+				worktree, _ := preTask.Get("worktree")
+				workerPane := stringField(preTask, "pane")
+				reviewerStopObservation, err = reviewerStopped(pump.RuntimeRoot, sessionStr, oldPaneStr, fmt.Sprint(worktree), workerPane, reviewerPane, reviewerShell, reviewerAgent)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	unlock, err := s.Lock()
 	if err != nil {
@@ -155,9 +169,8 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		if !host.Is(func() any { v, _ := old.Get("machine"); return v }()) || oldSessionStr != sessionStr {
 			return nil, fmt.Errorf("The recorded reviewer pane is in another machine or session; its stop cannot be proved here.")
 		}
-		stopObservation, err := reviewerStopped(pump.RuntimeRoot, sessionStr, oldPaneStr, worktreeStr, stringField(task, "pane"), reviewerPane, reviewerShell, reviewerAgent)
-		if err != nil {
-			return nil, err
+		if reviewerStopObservation == nil {
+			return nil, fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone.")
 		}
 		newEndpoint := ordjson.NewObject()
 		newEndpoint.Set("machine", host.ID)
@@ -170,7 +183,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		rebind := ordjson.NewObject()
 		rebind.Set("from", endpointRecord(old))
 		rebind.Set("to", endpointRecord(newEndpoint))
-		rebind.Set("stop_evidence", stopObservation)
+		rebind.Set("stop_evidence", reviewerStopObservation)
 		record, err := evidence.Append(task, "reviewer-rebind", "coordinator", rebind, nil, ctx)
 		if err != nil {
 			return nil, err
