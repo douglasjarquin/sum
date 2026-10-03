@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 // metaLab is a registered coordinator home beside the fake Herdr with one running task whose pane and workspace the
@@ -415,6 +417,159 @@ func (l *metaLab) hookEvent(pluginID, pane, status string) map[string]any {
 	l.t.Setenv("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
 	l.t.Setenv("HERDR_PLUGIN_EVENT_JSON", string(payload))
 	return l.run("hook", "event")
+}
+
+func (l *metaLab) herdr093HookEvent(pluginID, socketPath string) map[string]any {
+	l.t.Helper()
+	fixturePath := filepath.Join(repoRoot(l.t), "go", "internal", "cli", "testdata", "herdr-0.9.3-pane-agent-status-changed.json")
+	raw, err := os.ReadFile(fixturePath)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	l.t.Setenv("HERDR_SESSION", "")
+	l.t.Setenv("HERDR_SOCKET_PATH", socketPath)
+	l.t.Setenv("HERDR_PLUGIN_ID", pluginID)
+	l.t.Setenv("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+	l.t.Setenv("HERDR_PLUGIN_EVENT_JSON", string(raw))
+	return l.run("hook", "event")
+}
+
+func TestHookEvent_Herdr093DefaultSocketRunsPumpForRecordedPane(t *testing.T) {
+	lab := newMetaLab(t)
+	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
+	task := readJSONFile(t, filepath.Join(lab.home, "tasks", lab.task, "task.json"))
+	task["session"] = "default"
+	task["questions"] = []any{map[string]any{
+		"id": "q1", "key": "choice", "status": "answered", "created_at": "2026-01-01T00:00:00+00:00",
+		"answered_at": "2026-01-01T00:00:01+00:00", "text": "Which way?", "answer": "left",
+	}}
+	lab.writeTask(task)
+	st, err := store.Open(lab.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Register(store.Endpoint{
+		Machine: task["machine"].(string), Session: "default", Pane: lab.pane, Cwd: lab.worktree,
+	}, "worker", lab.task, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_SESSION", "default")
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("HERDR_CONFIG_PATH", "")
+	view := lab.herdr093HookEvent(pluginID, filepath.Join(configHome, "herdr", "herdr.sock"))
+	if view["outcome"] != "handled" || view["session"] != "default" {
+		t.Fatalf("event result = %v", view)
+	}
+	calledList := false
+	for _, call := range lab.calls() {
+		if len(call) >= 2 && call[0] == "agent" && call[1] == "list" {
+			calledList = true
+		}
+	}
+	if !calledList {
+		t.Fatalf("pump did not observe the settled recorded pane: %v", lab.calls())
+	}
+}
+
+func TestHookEvent_AmbiguousSessionIsRecordedAndDegraded(t *testing.T) {
+	lab := newMetaLab(t)
+	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
+	other := readJSONFile(t, filepath.Join(lab.home, "tasks", lab.task, "task.json"))
+	other["id"] = "t-bbbbbbbbbbbb"
+	other["session"] = "other"
+	lab.writeTask(other)
+	t.Setenv("HERDR_SESSION", "")
+	t.Setenv("HERDR_SOCKET_PATH", filepath.Join(t.TempDir(), "custom.sock"))
+	t.Setenv("HERDR_PLUGIN_ID", pluginID)
+	t.Setenv("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+	t.Setenv("HERDR_PLUGIN_EVENT_JSON", `{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed","pane_id":"w-task:p1","workspace_id":"w-task","agent_status":"idle","agent":"claude"}}`)
+	if out, err := runCLI(t, lab.home, "hook", "event"); err == nil || !strings.Contains(err.Error(), "session is ambiguous") {
+		t.Fatalf("ambiguous event = %q, %v", out, err)
+	}
+	status := lab.run("hook", "status")
+	if status["events"] != float64(1) || status["errors"] != float64(1) || status["degraded"] != true {
+		t.Fatalf("failed event status = %v", status)
+	}
+	if status["last_error"] == nil || len(status["errors_log"].([]any)) != 1 {
+		t.Fatalf("failure details missing from hook status: %v", status)
+	}
+	init := lab.run("init")
+	hook := init["hook"].(map[string]any)
+	if hook["events"] != float64(1) || hook["errors"] != float64(1) || hook["degraded"] != true {
+		t.Fatalf("failed event missing from init hook summary: %v", hook)
+	}
+}
+
+func TestHookEvent_UnownedPaneOnCustomSocketIsIgnored(t *testing.T) {
+	lab := newMetaLab(t)
+	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
+	t.Setenv("HERDR_SESSION", "")
+	t.Setenv("HERDR_SOCKET_PATH", filepath.Join(t.TempDir(), "custom.sock"))
+	t.Setenv("HERDR_PLUGIN_ID", pluginID)
+	t.Setenv("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+	t.Setenv("HERDR_PLUGIN_EVENT_JSON", `{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed","pane_id":"w-stranger:p7","workspace_id":"w-stranger","agent_status":"idle","agent":"claude"}}`)
+	view := lab.run("hook", "event")
+	if view["outcome"] != "ignored" {
+		t.Fatalf("unowned pane event = %v", view)
+	}
+	status := lab.run("hook", "status")
+	if status["events"] != float64(1) || status["ignored"] != float64(1) || status["errors"] != float64(0) || status["degraded"] != false {
+		t.Fatalf("unowned pane hook status = %v", status)
+	}
+}
+
+func TestHookEvent_HandledEventClearsDegradedAndKeepsErrorHistory(t *testing.T) {
+	lab := newMetaLab(t)
+	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
+	other := readJSONFile(t, filepath.Join(lab.home, "tasks", lab.task, "task.json"))
+	other["id"] = "t-bbbbbbbbbbbb"
+	other["session"] = "other"
+	lab.writeTask(other)
+	t.Setenv("HERDR_SESSION", "")
+	t.Setenv("HERDR_SOCKET_PATH", filepath.Join(t.TempDir(), "custom.sock"))
+	t.Setenv("HERDR_PLUGIN_ID", pluginID)
+	t.Setenv("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+	t.Setenv("HERDR_PLUGIN_EVENT_JSON", `{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed","pane_id":"w-task:p1","workspace_id":"w-task","agent_status":"idle","agent":"claude"}}`)
+	if out, err := runCLI(t, lab.home, "hook", "event"); err == nil || !strings.Contains(err.Error(), "session is ambiguous") {
+		t.Fatalf("ambiguous event = %q, %v", out, err)
+	}
+	failed := lab.run("hook", "status")
+	if failed["degraded"] != true || failed["errors"] != float64(1) {
+		t.Fatalf("failed event status = %v", failed)
+	}
+	t.Setenv("HERDR_SESSION", "sum-test")
+	t.Setenv("HERDR_SOCKET_PATH", "")
+	handled := lab.hookEvent(pluginID, lab.pane, "idle")
+	if handled["outcome"] != "handled" {
+		t.Fatalf("handled event = %v", handled)
+	}
+	status := lab.run("hook", "status")
+	if status["degraded"] != false || status["errors"] != float64(1) || status["last_error"] == nil || len(status["errors_log"].([]any)) != 1 {
+		t.Fatalf("handled event did not clear degradation while retaining failures: %v", status)
+	}
+}
+
+func TestHookEvent_CustomSocketResolvesUniqueRecordedPaneByObservation(t *testing.T) {
+	lab := newMetaLab(t)
+	lab.run("hook", "enable")
+	observedLog := filepath.Join(lab.home, "observed-pane.log")
+	wrapper := filepath.Join(lab.home, "herdr-current")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nif [ \"$1\" = pane ] && [ \"$2\" = get ]; then\nprintf '%s\\n' \"$*\" >> \"$OBSERVED_LOG\"\nprintf '%s\\n' \"$OBSERVED_PANE_JSON\"\nexit 0\nfi\nexec \"$FAKE_HERDR_BIN_REAL\" \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_HERDR_BIN_REAL", filepath.Join(repoRoot(t), "tests", "fixtures", "herdr.py"))
+	t.Setenv("OBSERVED_LOG", observedLog)
+	t.Setenv("OBSERVED_PANE_JSON", `{"result":{"pane":{"pane_id":"w-task:p1","workspace_id":"w-task","cwd":"`+lab.worktree+`","agent_status":"idle","agent":"claude"}}}`)
+	t.Setenv("SUM_HERDR_BIN", wrapper)
+	view := lab.herdr093HookEvent(lab.run("hook", "status")["plugin_id"].(string), filepath.Join(t.TempDir(), "custom.sock"))
+	if view["outcome"] != "handled" || view["session"] != "sum-test" {
+		t.Fatalf("event result = %v", view)
+	}
+	observation, err := os.ReadFile(observedLog)
+	if err != nil || !strings.Contains(string(observation), "pane get w-task:p1") {
+		t.Fatalf("Herdr pane observation = %q, %v", observation, err)
+	}
 }
 
 func TestMetadataHookEvent_projectsHandledEventsOnlyAndNeverIgnoredOnes(t *testing.T) {
