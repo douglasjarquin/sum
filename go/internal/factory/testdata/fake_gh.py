@@ -95,6 +95,12 @@ if args[:2] == ["pr", "view"]:
     if delay:
         time.sleep(float(delay))
     observation = next_value("pr_views.json", "pr_view_count.txt", {})
+    pause_at = load("pr_view_pause.json", 0)
+    view_count = int((root / "pr_view_count.txt").read_text())
+    if pause_at and int(pause_at) == view_count:
+        (root / "pr_view_paused").write_text("ready")
+        while not (root / "pr_view_continue").exists():
+            time.sleep(0.01)
     print(json.dumps(observation))
     sys.exit(0)
 
