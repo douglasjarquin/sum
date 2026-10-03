@@ -104,14 +104,14 @@ func TestDispatchOtherHarnessHasNoDevinArgv(t *testing.T) {
 func TestClaudeDispatchGrantsOnlyItsTaskInstructions(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "claude-task-access", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--approved")
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--arg", "existing", "--approved")
 	taskDir := filepath.Join(d.home, "tasks", asString(task["id"]))
-	want := []string{"--add-dir", taskDir}
+	want := []string{"existing", "--add-dir", taskDir}
 	if argv := startedArgv(task); !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Claude started_argv = %v, want only the active task directory %v", argv, want)
 	}
 	launch := asMap(task["launch"])
-	if got := asSlice(launch["argv"]); !reflect.DeepEqual(got, []any{"--add-dir", taskDir}) {
+	if got := asSlice(launch["argv"]); !reflect.DeepEqual(got, []any{"existing", "--add-dir", taskDir}) {
 		t.Fatalf("recorded launch argv = %v, want %v", got, want)
 	}
 	if got := asSlice(launch["task_access_args"]); !reflect.DeepEqual(got, []any{"--add-dir", taskDir}) {

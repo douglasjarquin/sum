@@ -955,7 +955,7 @@ func Dispatch(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, 
 		return nil, err
 	}
 	id := asString(func() any { v, _ := prepared.Get("id"); return v }())
-	return Start(s, ctx, args.RuntimeRoot, id, args.Extra)
+	return Start(s, ctx, args.RuntimeRoot, id, nil)
 }
 
 // observeBound is the occupant of a pane sum just bound to a task: what Herdr reports for it now (terminal, native

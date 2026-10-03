@@ -70,7 +70,7 @@ func TestResumeLaunchesAtCurrentHEADAfterReportedCommit(t *testing.T) {
 	if len(starts) < 2 {
 		t.Fatalf("agent start calls = %d, want dispatch plus resume", len(starts))
 	}
-	want := []string{"existing", "existing", "--add-dir", filepath.Join(d.home, "tasks", id)}
+	want := []string{"existing", "--add-dir", filepath.Join(d.home, "tasks", id)}
 	for i, start := range starts {
 		passed, ok := argsAfterSeparator(start)
 		if !ok || !reflect.DeepEqual(passed, want) {
