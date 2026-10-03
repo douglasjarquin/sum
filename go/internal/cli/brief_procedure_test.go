@@ -138,6 +138,10 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 		"When Sum starts or resumes a Claude worker, it adds the active brief's task directory to the effective harness arguments after validating the brief and required pinned procedures.",
 		"Claude's normal trust and permission behavior still applies; this is not a read-only grant or a sandbox.",
 		"Sum does not start reviewers: `sumctl review` records findings from an already-running pane",
+		"## Waiting",
+		"After saving a question that blocks further approved work, end the turn.",
+		"A notice is not an answer, approval, or acknowledgement.",
+		"mark it applied with the existing `resolve` command",
 	} {
 		if !strings.Contains(string(source), rule) {
 			t.Fatalf("pinned worker procedure is missing rule %q", rule)

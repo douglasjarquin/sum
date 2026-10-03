@@ -2,7 +2,7 @@
 
 **Many agents. One finished task.**
 
-<img width="1280" height="640" alt="eBXSf" src="https://github.com/user-attachments/assets/97ef5898-7ff1-4405-bf5a-413738c2af62" />
+<img width="1280" height="640" alt="sum-social-light-1280x640" src="https://github.com/user-attachments/assets/2d094c5d-7cf1-40f2-b994-887639610a2e" />
 
 Site: <https://douglasjarquin.github.io/sum/>
 
