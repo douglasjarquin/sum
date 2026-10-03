@@ -1756,7 +1756,7 @@
       },
       {
         "name": "--open",
-        "help": "Open the grouped view through the linked plugin's inbox entrypoint (needs `hook enable` and a saved plugin_pane_open capability); any failure falls back to the grouped overview with open.outcome fallback"
+        "help": "Open the grouped view through the linked plugin's inbox entrypoint (needs enabled hook delivery and a saved plugin_pane_open capability); any failure falls back to the grouped overview with open.outcome fallback"
       },
       {
         "name": "--placement",

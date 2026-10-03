@@ -30,7 +30,7 @@ Roles and work objects use the dictionary in [docs/terminology.md](docs/terminol
 
 * **Seven bundled skills.** /sum-dispatch, /sum-work, /sum-deliver, /sum-status, /sum-develop, /sum-factory, and /sum-update with rolling session refresh and code-only rollback.
 
-* **Native Herdr delivery by default.** Coordinator `init` enables event delivery on new installations, and `update apply` enables it on existing installations unless you ran `hook disable`. Sidebar metadata remains opt-in. See [docs/herdr-backend.md](docs/herdr-backend.md).
+* **Native Herdr delivery by default.** Coordinator `init` enables event delivery on new installations. Existing installations get it on the first successful `update apply` with this helper, or the coordinator `init` that follows it; an older helper cannot enable it during that first update. Sidebar metadata remains opt-in. See [docs/herdr-backend.md](docs/herdr-backend.md).
 
 * **Portable verification.** A project-root `VERIFY.md` and `mise run verify` work in any clone without sum or Herdr. The rest of the component list is in [docs/architecture.md](docs/architecture.md).
 

@@ -3,6 +3,7 @@ package updatecmd
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -63,8 +65,36 @@ func TestApply_preservesExplicitNativeEventOptOut(t *testing.T) {
 	}
 }
 
+func TestApply_enablesNativeEventsByDefault(t *testing.T) {
+	lab := newApplyLab(t, applyLabOpts{})
+	seedApplyLabInstance(t, lab)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	activation := asObject(func() any { v, _ := view.Get("hook_activation"); return v }())
+	if automatic, _ := activation.Get("automatic"); automatic != true {
+		t.Fatalf("hook activation = %v, want automatic enable", activation)
+	}
+	status, err := hookstatus.Status(lab.store, lab.ctx, lab.root, filepath.Join(lab.root, "bin", "sumctl"))
+	if err != nil {
+		t.Fatalf("hook status: %v", err)
+	}
+	if enabled, _ := status.Get("enabled"); enabled != true {
+		t.Fatalf("hook status = %v, want enabled", status)
+	}
+}
+
 func TestApply_nativeEventEnableFailureIsFailOpen(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
+	seedApplyLabInstance(t, lab)
+	wrapper := filepath.Join(t.TempDir(), "herdr-failing-plugin-link")
+	original := os.Getenv("SUM_HERDR_BIN")
+	script := "#!/bin/sh\nif [ \"$3\" = plugin ] && [ \"$4\" = link ]; then echo deliberate registry failure >&2; exit 1; fi\nexec python3 \"" + original + "\" \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUM_HERDR_BIN", wrapper)
 	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
 	if err != nil {
 		t.Fatalf("apply failed when automatic hook enable failed: %v", err)
@@ -73,8 +103,58 @@ func TestApply_nativeEventEnableFailureIsFailOpen(t *testing.T) {
 	if degraded, _ := activation.Get("degraded"); degraded != true {
 		t.Fatalf("hook activation = %v, want degraded", activation)
 	}
-	if !strings.Contains(strField(activation, "reason"), "could not be enabled") {
+	reason := strField(activation, "reason")
+	if !strings.Contains(reason, "deliberate registry failure") {
 		t.Fatalf("hook failure reason = %v", activation)
+	}
+	status, statusErr := hookstatus.Status(lab.store, lab.ctx, lab.root, filepath.Join(lab.root, "bin", "sumctl"))
+	if statusErr != nil {
+		t.Fatalf("hook status: %v", statusErr)
+	}
+	if degraded, _ := status.Get("degraded"); degraded != true {
+		t.Fatalf("hook status = %v, want degraded", status)
+	}
+	if statusReason, _ := status.Get("reason"); statusReason != reason {
+		t.Fatalf("hook status reason = %v, want %q", statusReason, reason)
+	}
+}
+
+func seedApplyLabInstance(t *testing.T, lab *applyLab) {
+	t.Helper()
+	path := filepath.Join(lab.home, "state.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	state["instance"] = "0123456789abcdef0123456789abcdef"
+	data, err = json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	releasePath := filepath.Join(lab.root, ".local", "releases", lab.newSHA, "release.json")
+	data, err = os.ReadFile(releasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	staged, _ := manifest["staged_by"].(map[string]any)
+	staged["instance"] = state["instance"]
+	data, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(releasePath, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

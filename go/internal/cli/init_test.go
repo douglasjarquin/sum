@@ -220,6 +220,50 @@ func TestInit_enablesNativeEventsByDefaultAndPreservesDisableChoice(t *testing.T
 	}
 }
 
+func TestInit_migratesOnlyLegacyHealthThatShowsTheHookOff(t *testing.T) {
+	tests := []struct {
+		name       string
+		enabled    bool
+		disabledAt string
+		linkedAt   string
+		wantEnable bool
+	}{
+		{name: "legacy disabled", disabledAt: "2026-01-01T00:00:00Z", wantEnable: false},
+		{name: "disabled then re-enabled", enabled: true, disabledAt: "2026-01-01T00:00:00Z", linkedAt: "2026-02-01T00:00:00Z", wantEnable: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := writeDesignatedHome(t)
+			herdrEnv(t, home)
+			if _, err := runCLI(t, home, "init"); err != nil {
+				t.Fatalf("initial init: %v", err)
+			}
+			healthPath := filepath.Join(home, "hook", "health.json")
+			health := readJSON(t, healthPath)
+			health["enabled"] = tt.enabled
+			health["disabled_at"] = tt.disabledAt
+			health["linked_at"] = tt.linkedAt
+			writeJSONFile(t, healthPath, health)
+			if err := os.Remove(filepath.Join(home, "settings.json")); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+
+			out, err := runCLI(t, home, "init")
+			if err != nil {
+				t.Fatalf("init: %v\n%s", err, out)
+			}
+			activation := decodeObject(t, out)["hook_activation"].(map[string]any)
+			if tt.wantEnable && activation["skipped"] != true {
+				t.Fatalf("activation = %v, want current enabled hook skipped", activation)
+			}
+			status, err := runCLI(t, home, "hook", "status")
+			if err != nil || decodeObject(t, status)["enabled"] != tt.wantEnable {
+				t.Fatalf("hook status = %s, want enabled %v; err = %v", status, tt.wantEnable, err)
+			}
+		})
+	}
+}
+
 func TestInit_nativeEventEnableFailureIsDegradedAndFailOpen(t *testing.T) {
 	home := writeDesignatedHome(t)
 	herdrEnv(t, home)
@@ -237,5 +281,10 @@ func TestInit_nativeEventEnableFailureIsDegradedAndFailOpen(t *testing.T) {
 	activation := view["hook_activation"].(map[string]any)
 	if activation["degraded"] != true || !strings.Contains(fmt.Sprint(activation["reason"]), "registry unavailable") {
 		t.Fatalf("hook activation = %v, want degraded reason", activation)
+	}
+	status, statusErr := runCLI(t, home, "hook", "status")
+	statusView := decodeObject(t, status)
+	if statusErr != nil || statusView["degraded"] != true || !strings.Contains(fmt.Sprint(statusView["reason"]), "registry unavailable") {
+		t.Fatalf("hook status = %s, err = %v; want degraded with registry unavailable", status, statusErr)
 	}
 }

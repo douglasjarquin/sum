@@ -1113,7 +1113,7 @@ func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool, allow 
 	}
 	active := DefaultRuntime(root)
 	activeRoot := asString(func() any { v, _ := active.Get("path"); return v }())
-	result.Set("hook_activation", hookstatus.EnableByDefault(s, ctx, activeRoot, filepath.Join(root, "bin", "sumctl")))
+	result.Set("hook_activation", hookstatus.EnableByDefault(s, ctx, activeRoot, filepath.Join(root, "bin", "sumctl"), true))
 	return result, nil
 }
 
