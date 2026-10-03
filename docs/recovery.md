@@ -128,7 +128,7 @@ A closed pane is recorded so later delivery and refresh are `pane-closed`; `repa
 A second sweep with nothing pending does nothing.
 
 `--apply` proceeds only when every check passes, and every failed check is a named blocker in the output and in `show TASK_ID`:
-the exact recorded PR must be observed **merged** with a merge commit and its head must be a recorded candidate (closed is not merged, a network or auth failure is uncertain and blocks);
+the exact recorded PR must be observed **merged** with a merge commit and its head must be a recorded candidate, unless the coordinator's `verify --result pass` names that exact merged head after a post-review push (closed is not merged, a mismatch without that verification blocks, a network or auth failure is uncertain and blocks);
 the checkout HEAD must be that merged head or an ancestor of it, so squash and rebase merges pass without the original commits being on the default branch, while an extra local commit blocks;
 all questions must be answered and applied and a structured handoff saved;
 the workspace, pane, checkout, branch, and repository must match the task record by identity (never by label), the workspace must not be the coordinator's, and an unknown extra pane in the task workspace blocks;
