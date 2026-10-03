@@ -94,6 +94,7 @@ func event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 		row.Set("handler_ms", jsonInt(int(time.Since(started).Milliseconds())))
 		changes := ordjson.NewObject()
 		changes.Set("last_event", row)
+		changes.Set("degraded", nil)
 		if _, err := writeHealth(s, map[string]int{"events": 1, "handled": 1}, changes); err != nil {
 			return nil, err
 		}
@@ -206,6 +207,7 @@ func event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 	row.Set("handler_ms", jsonInt(int(time.Since(started).Milliseconds())))
 	changes := ordjson.NewObject()
 	changes.Set("last_event", row)
+	changes.Set("degraded", nil)
 	if _, err := writeHealth(s, map[string]int{"events": 1, "handled": 1}, changes); err != nil {
 		return nil, err
 	}
@@ -291,6 +293,9 @@ func observeEventSession(s *store.Store, environ map[string]string, runtimeRoot 
 		sessions[owner.session] = true
 	}
 	if len(sessions) != 1 {
+		if len(sessions) == 0 {
+			return "", nil
+		}
 		return "", fmt.Errorf("Event session is ambiguous: pane %s matches %d recorded Herdr sessions.", pane, len(sessions))
 	}
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")

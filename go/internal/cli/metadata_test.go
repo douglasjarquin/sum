@@ -501,6 +501,55 @@ func TestHookEvent_AmbiguousSessionIsRecordedAndDegraded(t *testing.T) {
 	}
 }
 
+func TestHookEvent_UnownedPaneOnCustomSocketIsIgnored(t *testing.T) {
+	lab := newMetaLab(t)
+	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
+	t.Setenv("HERDR_SESSION", "")
+	t.Setenv("HERDR_SOCKET_PATH", filepath.Join(t.TempDir(), "custom.sock"))
+	t.Setenv("HERDR_PLUGIN_ID", pluginID)
+	t.Setenv("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+	t.Setenv("HERDR_PLUGIN_EVENT_JSON", `{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed","pane_id":"w-stranger:p7","workspace_id":"w-stranger","agent_status":"idle","agent":"claude"}}`)
+	view := lab.run("hook", "event")
+	if view["outcome"] != "ignored" {
+		t.Fatalf("unowned pane event = %v", view)
+	}
+	status := lab.run("hook", "status")
+	if status["events"] != float64(1) || status["ignored"] != float64(1) || status["errors"] != float64(0) || status["degraded"] != false {
+		t.Fatalf("unowned pane hook status = %v", status)
+	}
+}
+
+func TestHookEvent_HandledEventClearsDegradedAndKeepsErrorHistory(t *testing.T) {
+	lab := newMetaLab(t)
+	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
+	other := readJSONFile(t, filepath.Join(lab.home, "tasks", lab.task, "task.json"))
+	other["id"] = "t-bbbbbbbbbbbb"
+	other["session"] = "other"
+	lab.writeTask(other)
+	t.Setenv("HERDR_SESSION", "")
+	t.Setenv("HERDR_SOCKET_PATH", filepath.Join(t.TempDir(), "custom.sock"))
+	t.Setenv("HERDR_PLUGIN_ID", pluginID)
+	t.Setenv("HERDR_PLUGIN_EVENT", "pane.agent_status_changed")
+	t.Setenv("HERDR_PLUGIN_EVENT_JSON", `{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed","pane_id":"w-task:p1","workspace_id":"w-task","agent_status":"idle","agent":"claude"}}`)
+	if out, err := runCLI(t, lab.home, "hook", "event"); err == nil || !strings.Contains(err.Error(), "session is ambiguous") {
+		t.Fatalf("ambiguous event = %q, %v", out, err)
+	}
+	failed := lab.run("hook", "status")
+	if failed["degraded"] != true || failed["errors"] != float64(1) {
+		t.Fatalf("failed event status = %v", failed)
+	}
+	t.Setenv("HERDR_SESSION", "sum-test")
+	t.Setenv("HERDR_SOCKET_PATH", "")
+	handled := lab.hookEvent(pluginID, lab.pane, "idle")
+	if handled["outcome"] != "handled" {
+		t.Fatalf("handled event = %v", handled)
+	}
+	status := lab.run("hook", "status")
+	if status["degraded"] != false || status["errors"] != float64(1) || status["last_error"] == nil || len(status["errors_log"].([]any)) != 1 {
+		t.Fatalf("handled event did not clear degradation while retaining failures: %v", status)
+	}
+}
+
 func TestHookEvent_CustomSocketResolvesUniqueRecordedPaneByObservation(t *testing.T) {
 	lab := newMetaLab(t)
 	lab.run("hook", "enable")
