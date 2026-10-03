@@ -5,8 +5,10 @@ import (
 	"os"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -58,6 +60,9 @@ func (o *rootOptions) addHookCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
+			if err := settings.SetNativeEventsEnabled(st, true); err != nil {
+				return err
+			}
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},
 	})
@@ -73,6 +78,12 @@ func (o *rootOptions) addHookCommands(root *cobra.Command) {
 			}
 			ctx, err := store.Context(o.installRoot)
 			if err != nil {
+				return err
+			}
+			if err := app.RequireCoordinator(st, ctx); err != nil {
+				return err
+			}
+			if err := settings.SetNativeEventsEnabled(st, false); err != nil {
 				return err
 			}
 			view, err := hookstatus.Disable(st, ctx, o.runtimeRoot, unlink)

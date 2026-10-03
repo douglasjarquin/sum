@@ -12,6 +12,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -60,6 +61,10 @@ func intField(o *ordjson.Object, key string) int {
 }
 
 func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
+	return enable(s, ctx, runtimeRoot, sumctlPath, true)
+}
+
+func enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, reconcile bool) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -131,6 +136,7 @@ func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string)
 	changes.Set("command", cmd)
 	changes.Set("linked_at", store.Now())
 	changes.Set("linked_from", from)
+	changes.Set("disabled_at", nil)
 	changes.Set("degraded", nil)
 	warnings, has := plugin.Get("warnings")
 	if !has {
@@ -140,14 +146,17 @@ func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string)
 	if _, err := writeHealth(s, nil, changes); err != nil {
 		return nil, err
 	}
-	reconciliation, err := returns.Pump(s, returns.PumpOpts{
-		RuntimeRoot: runtimeRoot,
-		SumctlPath:  sumctlPath,
-		Ctx:         ctx,
-		Inline:      true,
-	})
-	if err != nil {
-		return nil, err
+	var reconciliation *ordjson.Object
+	if reconcile {
+		reconciliation, err = returns.Pump(s, returns.PumpOpts{
+			RuntimeRoot: runtimeRoot,
+			SumctlPath:  sumctlPath,
+			Ctx:         ctx,
+			Inline:      true,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	events := make([]any, len(HookEvents))
 	for i, e := range HookEvents {
@@ -160,9 +169,111 @@ func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string)
 	result.Set("command", cmd)
 	result.Set("events", events)
 	result.Set("warnings", warnings)
-	result.Set("reconciliation", reconciliation)
-	result.Set("note", "Linked live without stopping Herdr. Registration is user-global; the handler acts only on panes recorded by this instance in the event's own Herdr session. Startup hooks do not run at link time, so one bounded reconciliation ran now. Disabling or a handler failure returns to the synchronous ask/report path and `inbox --live`; nothing stops.")
+	if reconcile {
+		result.Set("reconciliation", reconciliation)
+		result.Set("note", "Linked live without stopping Herdr. Registration is user-global; the handler acts only on panes recorded by this instance in the event's own Herdr session. Startup hooks do not run at link time, so one bounded reconciliation ran now. Disabling or a handler failure returns to the synchronous ask/report path and `inbox --live`; nothing stops.")
+	} else {
+		result.Set("note", "Linked live without stopping Herdr. Registration is user-global; the handler acts only on panes recorded by this instance in the event's own Herdr session. Coordinator init already completed its bounded reconciliation pass. Disabling or a handler failure returns to the synchronous ask/report path and `inbox --live`; nothing stops.")
+	}
 	return result, nil
+}
+
+func EnableByDefault(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, reconcile bool) *ordjson.Object {
+	enabled, hasPreference, err := settings.NativeEventsPreference(s)
+	if err == nil && !hasPreference {
+		if health, healthErr := readHealth(s); healthErr == nil {
+			if legacyDisabled(health) {
+				err = settings.SetNativeEventsEnabled(s, false)
+				if err == nil {
+					enabled, hasPreference = false, true
+				}
+			}
+		} else {
+			err = healthErr
+		}
+	}
+	if err == nil && hasPreference && !enabled {
+		result := ordjson.NewObject()
+		result.Set("enabled", false)
+		result.Set("skipped", true)
+		result.Set("reason", "native event delivery was explicitly disabled in settings.json")
+		return result
+	}
+	if err == nil {
+		if health, healthErr := readHealth(s); healthErr == nil {
+			healthEnabled, _ := health.Get("enabled")
+			degraded, _ := health.Get("degraded")
+			if truthy(healthEnabled) && !truthy(degraded) {
+				current, currentErr := ManifestCurrent(s, sumctlPath)
+				if currentErr != nil {
+					err = currentErr
+				} else if current {
+					result := ordjson.NewObject()
+					result.Set("enabled", true)
+					result.Set("automatic", true)
+					result.Set("skipped", true)
+					result.Set("reason", "native event delivery is already enabled with the current manifest")
+					return result
+				}
+			}
+		} else {
+			err = healthErr
+		}
+	}
+	if err == nil {
+		var view *ordjson.Object
+		view, err = enable(s, ctx, runtimeRoot, sumctlPath, reconcile)
+		if err == nil {
+			view.Set("automatic", true)
+			return view
+		}
+	}
+	reason := "automatic native event delivery could not be enabled: " + err.Error()
+	changes := ordjson.NewObject()
+	changes.Set("degraded", reason)
+	changes.Set("last_error", reason)
+	entry := ordjson.NewObject()
+	entry.Set("at", store.Now())
+	entry.Set("stage", "default-enable")
+	entry.Set("error", reason)
+	if health, readErr := readHealth(s); readErr == nil {
+		errors := asList(func() any { v, _ := health.Get("errors"); return v }())
+		errors = append(errors, entry)
+		if len(errors) > HookErrors {
+			errors = errors[len(errors)-HookErrors:]
+		}
+		changes.Set("errors", errors)
+	}
+	_, _ = writeHealth(s, nil, changes)
+	result := ordjson.NewObject()
+	result.Set("enabled", false)
+	result.Set("degraded", true)
+	result.Set("reason", reason)
+	return result
+}
+
+func legacyDisabled(health *ordjson.Object) bool {
+	disabledAt, _ := health.Get("disabled_at")
+	if !truthy(disabledAt) {
+		return false
+	}
+	enabled, _ := health.Get("enabled")
+	if !truthy(enabled) {
+		return true
+	}
+	disabledTime, disabledOK := legacyTimestamp(disabledAt)
+	linkedAt, _ := health.Get("linked_at")
+	linkedTime, linkedOK := legacyTimestamp(linkedAt)
+	return disabledOK && linkedOK && disabledTime.After(linkedTime)
+}
+
+func legacyTimestamp(value any) (time.Time, bool) {
+	text, ok := value.(string)
+	if !ok || text == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, text)
+	return parsed, err == nil
 }
 
 func Disable(s *store.Store, ctx *ordjson.Object, runtimeRoot string, unlink bool) (*ordjson.Object, error) {

@@ -33,6 +33,7 @@ All commands run from the installation directory with its own `./bin/sumctl`; ea
 An unmerged self-development or task branch is refused.
 `--no-fetch` reuses the already fetched `refs/remotes/origin/*` on an offline host.
 `check` and `stage` report checkout dirty state and leave the tree unchanged.
+After a successful `update apply` with this helper, native event delivery is enabled for installations without an explicit `hook disable` choice. An older helper cannot enable it during the first update into this release; the coordinator `init` that follows that update enables it. This attempt is fail-open: a Herdr registry or plugin error is recorded as degraded in `hook status`, while the update remains successful and explicit delivery passes remain available.
 
 ## What apply does, in order
 
@@ -53,7 +54,8 @@ An unmerged self-development or task branch is refused.
    Dirty, conflicting untracked, or diverged trees stay put and are named in `deferred: checkout-instructions`.
    Those cases refuse Git mutation only; they do not refuse the symlink switch.
    No second fetch.
-7. Keep diagnostic history in `.local/updates.jsonl`; a history entry alone is never proof that activation completed.
+7. Enable default native event delivery unless `.sum/settings.json` records an explicit opt-out. This is best-effort: a Herdr registry or plugin error records `degraded` in `hook status` and leaves the update successful.
+8. Keep diagnostic history in `.local/updates.jsonl`; a history entry alone is never proof that activation completed.
 
 A refusal names each exact incompatibility and leaves the old selection serving.
 A candidate whose `release.json` needs a different Herdr CLI is refused here; upgrading Herdr is a separate global decision.

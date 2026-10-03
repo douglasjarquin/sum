@@ -832,11 +832,14 @@ func TestMetadataDisable_clearsRecordedKeysAndReportsFailedClears(t *testing.T) 
 	}
 }
 
-func TestMetadataInboxOpen_fallsBackWithoutHookAndOpensWithIt(t *testing.T) {
+func TestMetadataInboxOpen_fallsBackWithoutMetadataCapabilityAndOpensWithIt(t *testing.T) {
 	lab := newMetaLab(t)
+	if hook := lab.run("hook", "status"); hook["enabled"] != true {
+		t.Fatalf("native delivery should be enabled by default: %v", hook)
+	}
 	fallback := lab.run("metadata", "inbox", "--open")
 	open := fallback["open"].(map[string]any)
-	if open["outcome"] != "fallback" || !strings.Contains(open["reason"].(string), "hook enable") {
+	if open["outcome"] != "fallback" || !strings.Contains(open["reason"].(string), "metadata enable") {
 		t.Fatalf("fallback: %v", open)
 	}
 	if fallback["groups"] == nil || fallback["counts"] == nil {
