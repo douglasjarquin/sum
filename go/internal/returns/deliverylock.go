@@ -58,7 +58,11 @@ func (p *pass) lock(b *bucket, wait bool) (unlock func(), busy bool, deferReason
 		recipientCtx, cancel = context.WithTimeout(p.ctx, bound)
 		defer cancel()
 	}
-	unlock, err = lockRecipient(p.s, p.ctx, recipientCtx, identity(p.host, b.route))
+	sharedCtx := p.ctx
+	if !wait {
+		sharedCtx = recipientCtx
+	}
+	unlock, err = lockRecipient(p.s, sharedCtx, recipientCtx, identity(p.host, b.route))
 	switch {
 	case errors.Is(err, store.ErrDeliveryLockBusy):
 		return nil, false, "an older release's delivery pass held the delivery lock until this pass's budget ran out; nothing was sent or recorded", nil
