@@ -1,7 +1,11 @@
 topic: reviewer-launch
-help: "Create a `reviewer` tab in one task workspace, start its independent reviewer, and record the reviewer endpoint"
-arguments[1]{name,help,required}:
+help: "Create a `reviewer` tab in one task workspace, start its independent reviewer, record the reviewer endpoint, and prompt it once; with a live recorded reviewer pane, prompt that pane for the current candidate instead of opening a second tab"
+arguments[5]{name,help,required}:
   task,Task ID whose workspace and checkout the reviewer will use,true
+  "--harness",Herdr integration kind for a new reviewer; overrides the saved `reviewer.preset`,false
+  "--model",Model for a new reviewer; overrides the saved preset's model,false
+  "--reasoning",Reasoning effort for a new reviewer; overrides the saved preset's reasoning,false
+  "--preset",Saved preset for a new reviewer instead of `reviewer.preset`,false
 subcommands: null
 read_only: false
 read_only_subcommands: []
