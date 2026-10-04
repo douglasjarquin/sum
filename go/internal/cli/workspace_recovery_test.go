@@ -60,7 +60,15 @@ func TestReportedClosedWorkspaceRecoversThroughRebindAndResume(t *testing.T) {
 	worktree := asString(task["worktree"])
 	oldPane := asString(task["pane"])
 	oldAttempt := asString(asMap(asMap(task["execution"])["worker"])["id"])
-	d.ctlPane(oldPane, true, "report", id, "--text", "Candidate ready.")
+	handoff, err := json.Marshal(map[string]any{"outcome": "completed", "candidate": task["base_sha"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoffPath := filepath.Join(d.base, "handoff.json")
+	if err := os.WriteFile(handoffPath, handoff, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.ctlPane(oldPane, true, "report", id, "--text", "Candidate ready.", "--handoff", handoffPath)
 	settleFakeWorker(t, d.base, oldPane)
 	swept := d.ctl(true, "sweep")
 	var closed bool
@@ -97,6 +105,11 @@ func TestReportedClosedWorkspaceRecoversThroughRebindAndResume(t *testing.T) {
 	if asString(bound["workspace"]) != reboundWorkspace {
 		t.Fatalf("rebind result = %v", bound)
 	}
+	state = readFakeHerdrState(t, filepath.Join(d.base, "fake", "state.json"))
+	rebound := asMap(asMap(state["panes"])[reboundPane])
+	rebound["agent"] = nil
+	delete(rebound, "processes")
+	writeFakeHerdrState(t, filepath.Join(d.base, "fake", "state.json"), state)
 	parked := d.ctl(true, "execution", "park", id, "--attempt", uncertainID)
 	if parked["released"] != true {
 		t.Fatalf("park uncertain attempt after rebind = %v", parked)
@@ -117,7 +130,7 @@ func TestReportedClosedWorkspaceRecoversThroughRebindAndResume(t *testing.T) {
 		t.Fatalf("repair send after resume = %v", sent)
 	}
 
-	d.ctlPane(reboundPane, true, "report", id, "--text", "Corrected candidate ready.")
+	d.ctlPane(reboundPane, true, "report", id, "--text", "Corrected candidate ready.", "--handoff", handoffPath)
 	settleFakeWorker(t, d.base, reboundPane)
 	finalSweep := d.ctl(true, "sweep")
 	closed = false
