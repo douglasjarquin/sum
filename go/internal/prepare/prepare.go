@@ -875,6 +875,7 @@ func workspaceMatchesSnapshot(task, snapshot *ordjson.Object, actualCommon strin
 		from := asString(func() any { v, _ := row.Get("from_workspace"); return v }())
 		to := asString(func() any { v, _ := row.Get("to_workspace"); return v }())
 		valid := from == chain && to != "" && asString(func() any { v, _ := row.Get("old_workspace_code"); return v }()) == "workspace_not_found" && resolvePath(asString(func() any { v, _ := row.Get("checkout"); return v }())) == resolvePath(path) && resolvePath(asString(func() any { v, _ := row.Get("git_root"); return v }())) == resolvePath(root) && resolvePath(asString(func() any { v, _ := row.Get("repository"); return v }())) == resolvePath(repository) && resolveGitPath(path, asString(func() any { v, _ := row.Get("git_common_dir"); return v }())) == resolveGitPath(path, actualCommon) && asString(func() any { v, _ := row.Get("branch"); return v }()) == branch
+		valid = valid && asString(func() any { v, _ := row.Get("source"); return v }()) == "coordinator"
 		if valid {
 			chain = to
 		}
@@ -909,7 +910,7 @@ func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string
 		paneWorkspace := asString(func() any { v, _ := paneObj.Get("workspace_id"); return v }())
 		want := resolvePath(worktree)
 		if got != want || paneWorkspace != workspace {
-			return "", fmt.Errorf("Recorded worker pane %s does not match checkout %s and workspace %s; start is refused.", pane, want, workspace)
+			return "", fmt.Errorf("Recorded worker pane %s has observed cwd %s and pane workspace %s; expected checkout %s and workspace %s. Start is refused.", pane, got, paneWorkspace, want, workspace)
 		}
 		return pane, nil
 	}
@@ -921,7 +922,7 @@ func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string
 		return "", err
 	}
 	if ws == nil {
-		return "", fmt.Errorf("Worker workspace %s is gone (%s); execution resume cannot create a pane without recreating the worktree.", workspace, wsCode)
+		return "", fmt.Errorf("Worker workspace %s is gone (%s). Reopen the checkout with `herdr worktree open --path %s --no-focus`, then bind it with `bind TASK_ID --worker-pane PANE_ID` (see docs/recovery.md).", workspace, wsCode, worktree)
 	}
 	created, err := herdrclient.Call(herdrPath, session, 15*time.Second, "tab", "create", "--workspace", workspace, "--cwd", worktree, "--no-focus")
 	if err != nil {

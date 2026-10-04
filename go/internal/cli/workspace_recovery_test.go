@@ -50,6 +50,92 @@ func TestBindWorkerPaneRecoversGoneWorkspace(t *testing.T) {
 	}
 }
 
+func TestReportedClosedWorkspaceRecoversThroughRebindAndResume(t *testing.T) {
+	d := newPolicyLab(t)
+	d.setEnv("FAKE_CLOSE_LAST_WORKSPACE", "1")
+	d.setEnv("FAKE_AGENT_CHILDREN", "2")
+	repo := policyProject(t, d.base, "reported-workspace-recovery", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--approved")
+	id := asString(task["id"])
+	worktree := asString(task["worktree"])
+	oldPane := asString(task["pane"])
+	oldAttempt := asString(asMap(asMap(task["execution"])["worker"])["id"])
+	d.ctlPane(oldPane, true, "report", id, "--text", "Candidate ready.")
+	settleFakeWorker(t, d.base, oldPane)
+	swept := d.ctl(true, "sweep")
+	var closed bool
+	for _, raw := range asSlice(swept["rows"]) {
+		row := asMap(raw)
+		if asString(row["action"]) == "pane-close" && asString(row["pane"]) == oldPane && asString(row["state"]) == "closed" {
+			closed = true
+		}
+	}
+	if !closed {
+		t.Fatalf("sweep did not close the reported worker pane: %v", swept)
+	}
+	state := readFakeHerdrState(t, filepath.Join(d.base, "fake", "state.json"))
+	oldWorkspace := asString(task["workspace"])
+	if asMap(state["workspaces"])[oldWorkspace] != nil || asMap(state["panes"])[oldPane] != nil {
+		t.Fatal("closing the last reported worker pane did not remove its workspace")
+	}
+
+	failedResume := d.ctl(false, "execution", "resume", id, "--attempt", oldAttempt)
+	if !strings.Contains(asString(failedResume["error"]), "herdr worktree open --path "+worktree+" --no-focus") {
+		t.Fatalf("resume with removed workspace = %v", failedResume)
+	}
+	failedTask := readTaskObject(t, d.home, id)
+	uncertainAttempt := asMap(asMap(failedTask["execution"])["worker"])
+	uncertainID := asString(uncertainAttempt["id"])
+	if asString(uncertainAttempt["state"]) != "uncertain" {
+		t.Fatalf("attempt after failed resume = %v, want uncertain", uncertainAttempt)
+	}
+
+	const reboundWorkspace = "w-reopened"
+	const reboundPane = reboundWorkspace + ":p1"
+	writeReopenedWorkspace(t, d, worktree, reboundWorkspace, repo)
+	bound := d.ctl(true, "bind", id, "--worker-pane", reboundPane)
+	if asString(bound["workspace"]) != reboundWorkspace {
+		t.Fatalf("rebind result = %v", bound)
+	}
+	parked := d.ctl(true, "execution", "park", id, "--attempt", uncertainID)
+	if parked["released"] != true {
+		t.Fatalf("park uncertain attempt after rebind = %v", parked)
+	}
+	refused := d.ctl(false, "repair", "send", id, "--attempt", uncertainID, "--key", "before-resume", "--text", "Apply the correction.")
+	if errText := asString(refused["error"]); !strings.Contains(errText, "exact running worker attempt") {
+		t.Fatalf("repair send to released attempt = %v", refused)
+	}
+	resumed := d.ctl(true, "execution", "resume", id, "--attempt", uncertainID)
+	resumedAttempt := asMap(asMap(readTaskObject(t, d.home, id)["execution"])["worker"])
+	resumedID := asString(resumedAttempt["id"])
+	if asString(resumedAttempt["state"]) != "running" || resumedID == uncertainID {
+		t.Fatalf("attempt after successful resume = %v; command result %v", resumedAttempt, resumed)
+	}
+	settleFakeWorker(t, d.base, reboundPane)
+	sent := d.ctl(false, "repair", "send", id, "--attempt", resumedID, "--key", "after-resume", "--text", "Apply the correction.")
+	if errText := asString(sent["error"]); errText != "" {
+		t.Fatalf("repair send after resume = %v", sent)
+	}
+
+	d.ctlPane(reboundPane, true, "report", id, "--text", "Corrected candidate ready.")
+	settleFakeWorker(t, d.base, reboundPane)
+	finalSweep := d.ctl(true, "sweep")
+	closed = false
+	for _, raw := range asSlice(finalSweep["rows"]) {
+		row := asMap(raw)
+		if asString(row["action"]) == "pane-close" && asString(row["pane"]) == reboundPane && asString(row["state"]) == "closed" {
+			closed = true
+		}
+	}
+	if !closed {
+		t.Fatalf("sweep after rebind did not close the rebound worker pane: %v", finalSweep)
+	}
+	state = readFakeHerdrState(t, filepath.Join(d.base, "fake", "state.json"))
+	if asMap(state["workspaces"])[reboundWorkspace] != nil {
+		t.Fatal("sweep did not remove the rebound workspace after closing its last pane")
+	}
+}
+
 func TestBindWorkerPaneRefusesWorkspaceRebindWithoutIdentity(t *testing.T) {
 	d, task, worktree, pane := workspaceRecoveryFixture(t, false)
 	workspace := "w-reopened"
