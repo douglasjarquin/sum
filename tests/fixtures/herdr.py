@@ -336,7 +336,10 @@ if args[:2] == ["pane", "close"]:
         data_["processes"] = [p for p in data_.get("processes", []) if p["pid"] not in gone]
         data_["listeners"] = [l for l in data_.get("listeners", []) if l["pid"] not in gone]
         path_.write_text(json.dumps(data_))
+    workspace_id = state["panes"][args[2]].get("workspace_id")
     del state["panes"][args[2]]
+    if os.environ.get("FAKE_CLOSE_LAST_WORKSPACE") and not any(p.get("workspace_id") == workspace_id for p in state["panes"].values()):
+        state["workspaces"].pop(workspace_id, None)
     emit({"closed": args[2]})
 if args[:2] == ["worktree", "list"]:
     rows = []
