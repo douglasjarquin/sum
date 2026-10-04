@@ -32,6 +32,10 @@ func TestBindWorkerPaneRecoversGoneWorkspace(t *testing.T) {
 	if asString(rebind["from_workspace"]) != oldWorkspace || asString(rebind["to_workspace"]) != reopenedWorkspace || asString(rebind["old_workspace_code"]) != "workspace_not_found" {
 		t.Fatalf("workspace rebind evidence = %v", rebind)
 	}
+	cleanup := d.ctl(true, "cleanup", id)
+	if got := asString(asMap(cleanup["resources"])["workspace"]); got != "present" {
+		t.Fatalf("cleanup workspace resource after rebind = %v, want present", got)
+	}
 	attempt := asString(asMap(asMap(task["execution"])["worker"])["id"])
 	setReviewerPane(t, d.base, pane, worktree, nil, 7101)
 	parked := d.ctl(true, "execution", "park", id, "--attempt", attempt)
