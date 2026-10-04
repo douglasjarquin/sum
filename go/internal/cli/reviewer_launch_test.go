@@ -48,6 +48,25 @@ func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
 			if pane == "" {
 				t.Fatal("launch result has no reviewer pane")
 			}
+			wantArgv := append([]string(nil), tc.wantArgv...)
+			if tc.wantAgent == "claude" {
+				wantArgv = []string{"--add-dir", filepath.Join(d.home, "tasks", taskID)}
+			}
+			if !reflect.DeepEqual(asSlice(bound["argv"]), stringsToAny(wantArgv)) {
+				t.Fatalf("recorded reviewer argv = %v, want %v", bound["argv"], wantArgv)
+			}
+			if tc.wantAgent == "claude" {
+				pinned := asString(bound["skill_path"])
+				if !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure")+string(filepath.Separator)) {
+					t.Fatalf("reviewer delivery skill path = %q, want task-local procedure file", pinned)
+				}
+				context := d.ctl(true, "context", taskID, "--role", "reviewer")
+				environment := asMap(context["environment"])
+				files := asSlice(asMap(environment["skills"])["files"])
+				if len(files) != 1 || asString(asMap(files[0])["path"]) != pinned {
+					t.Fatalf("reviewer context skill reference = %v, want pinned task-local path %q", files, pinned)
+				}
+			}
 			var tabCreate []string
 			for _, call := range herdrCalls(t, d.base) {
 				if len(call) >= 2 && call[0] == "tab" && call[1] == "create" {
@@ -70,6 +89,9 @@ func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
 					t.Fatalf("reviewer start argv = %v, want suffix %v", starts[1], tc.wantArgv)
 				}
 			}
+			if tc.wantAgent == "claude" && !reflect.DeepEqual(starts[1][len(starts[1])-len(wantArgv):], wantArgv) {
+				t.Fatalf("reviewer start argv = %v, want task grant suffix %v", starts[1], wantArgv)
+			}
 			stateRaw, err := os.ReadFile(filepath.Join(d.base, "fake", "state.json"))
 			if err != nil {
 				t.Fatal(err)
@@ -90,6 +112,10 @@ func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
 			persisted := d.ctl(true, "show", taskID)
 			if asMap(persisted["reviewer"])["pane"] != pane {
 				t.Fatalf("saved task reviewer endpoint does not name %s: %#v", pane, persisted)
+			}
+			refused := d.ctl(false, "reviewer", "launch", taskID)
+			if !strings.Contains(asString(refused["error"]), "sumctl bind TASK --reviewer-pane PANE") {
+				t.Fatalf("second reviewer launch error = %v, want supported rebind route", refused)
 			}
 			d.ctlPane(pane, true, "review", taskID, "--verdict", "comment", "--candidate", asString(task["base_sha"]), "--text", "Inspected the current candidate.")
 			persisted = d.ctl(true, "show", taskID)
@@ -130,4 +156,12 @@ func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
 			}
 		})
 	}
+}
+
+func stringsToAny(values []string) []any {
+	result := make([]any, len(values))
+	for i, value := range values {
+		result[i] = value
+	}
+	return result
 }

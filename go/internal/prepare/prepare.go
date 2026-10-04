@@ -464,7 +464,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		unlock()
 		return nil, err
 	}
-	taskArgs, err := taskAccessArgs(s, task, briefFile, preparedWorktree)
+	taskArgs, err := TaskAccessArgs(s, task, asString(func() any { v, _ := task.Get("harness"); return v }()), briefFile, preparedWorktree)
 	if err != nil {
 		unlock()
 		return nil, err

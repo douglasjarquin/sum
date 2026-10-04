@@ -1,7 +1,10 @@
 package review
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"time"
@@ -12,11 +15,14 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/prepare"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
+	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
 var (
@@ -56,8 +62,8 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath, taskID
 	if parent == nil || !host.SameEndpoint(parent, ctx) {
 		return nil, fmt.Errorf("Only the task's recorded coordinator can launch its reviewer.")
 	}
-	if existing, _ := task.Get("reviewer"); existing != nil {
-		return nil, fmt.Errorf("Task already has a reviewer endpoint; use the recorded reviewer pane.")
+	if _, exists := store.RecordedReviewer(task); exists {
+		return nil, fmt.Errorf("Task already has a reviewer endpoint; use its recorded pane. If that pane is gone, first prove it stopped, then use `sumctl bind TASK --reviewer-pane PANE`.")
 	}
 	workspace := asString(task, "workspace")
 	worktree := asString(task, "worktree")
@@ -65,6 +71,19 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath, taskID
 		return nil, fmt.Errorf("Task workspace or checkout identity is missing; reviewer launch is refused.")
 	}
 	harness, argv, preset, err := reviewerLaunch(s, ctx, runtimeRoot)
+	if err != nil {
+		return nil, err
+	}
+	briefPath, err := versions.ActiveBrief(s, task)
+	if err != nil {
+		return nil, err
+	}
+	taskArgs, err := prepare.TaskAccessArgs(s, task, harness, briefPath, worktree)
+	if err != nil {
+		return nil, err
+	}
+	argv = append(append([]string(nil), argv...), taskArgs...)
+	skillPath, skillSHA, err := pinReviewerSkill(s, task, runtimeRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -94,6 +113,10 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath, taskID
 	endpoint.Set("session", session)
 	endpoint.Set("pane", pane)
 	endpoint.Set("cwd", worktree)
+	endpoint.Set("harness", harness)
+	endpoint.Set("argv", stringList(argv))
+	endpoint.Set("skill_path", skillPath)
+	endpoint.Set("skill_sha256", skillSHA)
 	endpoint.Set("bound_at", store.Now())
 	unlock, err := s.Lock()
 	if err != nil {
@@ -135,6 +158,50 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath, taskID
 	result.Set("placement", "tab")
 	result.Set("note", "Reviewer launched in its own labeled task tab; findings must be saved with `review` from that pane.")
 	return result, nil
+}
+
+func pinReviewerSkill(s *store.Store, task *ordjson.Object, runtimeRoot string) (string, string, error) {
+	taskID := asString(task, "id")
+	taskDir, err := s.TaskPath(taskID)
+	if err != nil {
+		return "", "", err
+	}
+	source := procedure.Source{Name: "sum-deliver", Path: "skills/sum-deliver/SKILL.md", Load: procedure.Required}
+	_, data, err := procedure.Load(runtimeRoot, source, "reviewer launch was refused")
+	if err != nil {
+		return "", "", err
+	}
+	digest := sha256.Sum256(data)
+	sha := hex.EncodeToString(digest[:])
+	policy := objectField(task, "verification_policy")
+	runtime := objectField(policy, "source_runtime")
+	if expected := asString(runtime, "reviewer_skill_sha256"); expected != "" && expected != sha {
+		return "", "", fmt.Errorf("The delivery skill does not match the task's dispatch snapshot; reviewer launch is refused.")
+	}
+	name := "sum-deliver-" + sha[:16] + ".md"
+	path := filepath.Join(taskDir, procedure.Dir, name)
+	if info, statErr := os.Lstat(path); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return "", "", fmt.Errorf("Pinned delivery skill %s is not a regular file.", path)
+		}
+		current, readErr := os.ReadFile(path)
+		if readErr != nil || sha256.Sum256(current) != digest {
+			return "", "", fmt.Errorf("Pinned delivery skill %s does not match its recorded content.", path)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return "", "", statErr
+	} else if err := procedure.WriteOnce(path, data); err != nil {
+		return "", "", err
+	}
+	return path, sha, nil
+}
+
+func stringList(values []string) []any {
+	result := make([]any, len(values))
+	for i, value := range values {
+		result[i] = value
+	}
+	return result
 }
 
 func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string) (string, []string, any, error) {

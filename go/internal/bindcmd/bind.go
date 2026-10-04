@@ -198,8 +198,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		if err != nil {
 			return nil, err
 		}
-		oldValue, _ := preTask.Get("reviewer")
-		reviewerBefore, _ = oldValue.(*ordjson.Object)
+		reviewerBefore, _ = store.RecordedReviewer(preTask)
 		if reviewerBefore != nil {
 			oldPaneStr := stringField(reviewerBefore, "pane")
 			oldSessionStr := stringField(reviewerBefore, "session")
@@ -266,9 +265,8 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		if reviewerPane == stringField(task, "pane") {
 			return nil, fmt.Errorf("The worker pane cannot be adopted as the reviewer.")
 		}
-		oldValue, hasReviewer := task.Get("reviewer")
-		old, _ := oldValue.(*ordjson.Object)
-		if !hasReviewer || old == nil {
+		old, hasReviewer := store.RecordedReviewer(task)
+		if !hasReviewer {
 			return nil, fmt.Errorf("No recorded reviewer endpoint exists to rebind; the first reviewer is recorded by `sumctl review`.")
 		}
 		if !sameEndpoint(old, reviewerBefore) {

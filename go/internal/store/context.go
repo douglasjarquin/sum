@@ -65,3 +65,15 @@ func EndpointFromContext(ctx *ordjson.Object) Endpoint {
 	c, _ := cwd.(string)
 	return Endpoint{Machine: m, Session: s, Pane: p, Cwd: c}
 }
+
+func RecordedReviewer(task *ordjson.Object) (*ordjson.Object, bool) {
+	if task == nil {
+		return nil, false
+	}
+	value, ok := task.Get("reviewer")
+	if !ok {
+		return nil, false
+	}
+	endpoint, ok := value.(*ordjson.Object)
+	return endpoint, ok && endpoint != nil
+}
