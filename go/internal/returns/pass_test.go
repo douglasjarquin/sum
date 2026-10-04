@@ -499,6 +499,35 @@ func TestPassDefersWhileAnotherPassHoldsTheDeliveryLock(t *testing.T) {
 	}
 }
 
+func TestPassDoesNotWaitForTheDeliveryLockOnFirstVisit(t *testing.T) {
+	l := newPassLab(t)
+	id := l.worker("lab", "w1:p1")
+	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": l.pane("idle", l.worktree(id))}})
+	legacy, err := store.Open(l.s.Home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := legacy.DeliveryLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	result, _ := l.pump(0)
+	if got := states(result)["w1:p1"]; got != "deferred" {
+		t.Fatalf("state = %s", got)
+	}
+	var wait int
+	if _, err := fmt.Sscan(fanoutField(result, "lock_wait_ms"), &wait); err != nil {
+		t.Fatal(err)
+	}
+	if wait > 100 {
+		t.Fatalf("lock_wait_ms = %d, want a single non-blocking attempt", wait)
+	}
+	if len(l.calls()) != 0 {
+		t.Fatalf("calls = %v", l.calls())
+	}
+}
+
 // A pass records every attempt in the returns sidecar only: the task records it delivers for are byte-identical
 // afterwards, and the legacy `notice` view is derived from the sidecar for each outcome.
 func TestPassRecordsAttemptsOnlyInTheReturnsSidecar(t *testing.T) {
