@@ -43,7 +43,7 @@ It runs, in order, the existing commands and stops at the first failure:
 
 | Check | Command | Proves |
 | --- | --- | --- |
-| Go CLI, Mesh, and skill tests | `cd go && go test -timeout 20m ./...` | sumctl command contracts, Herdr Mesh, portable verify/evidence skills, and the offline demo; each package gets up to 20 minutes |
+| Go CLI, Mesh, and skill tests | `cd go && go test ./...` | sumctl command contracts, Herdr Mesh, portable verify/evidence skills, and the offline demo |
 | Web site | `aube -C web install --frozen-lockfile`, `aube -C web run check`, `aube -C web run test:unit`, `aube -C web run build`, then a `web/dist` route-emission check | the Astro site installs from the lockfile, typechecks, passes unit tests, and builds all routes into `web/dist` under the `/sum/` base |
 
 Scoped tasks stay available for iteration: `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`), `mise run demo`, and the `web:`-prefixed mise tasks.
