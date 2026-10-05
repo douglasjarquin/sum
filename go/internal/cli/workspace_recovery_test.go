@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 )
 
 func TestBindWorkerPaneRecoversGoneWorkspace(t *testing.T) {
@@ -88,7 +90,8 @@ func TestReportedClosedWorkspaceRecoversThroughRebindAndResume(t *testing.T) {
 	}
 
 	failedResume := d.ctl(false, "execution", "resume", id, "--attempt", oldAttempt)
-	if !strings.Contains(asString(failedResume["error"]), "herdr worktree open --path "+worktree+" --no-focus") {
+	openCommand := shquote.Join([]string{"herdr", "worktree", "open", "--cwd", asString(task["repository"]), "--path", worktree, "--label", "sum-" + id, "--no-focus"})
+	if !strings.Contains(asString(failedResume["error"]), openCommand) {
 		t.Fatalf("resume with removed workspace = %v", failedResume)
 	}
 	failedTask := readTaskObject(t, d.home, id)

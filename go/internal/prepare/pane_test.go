@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 )
 
 func TestEnsureWorkerPane_createsFreshTabWhenPaneIsGone(t *testing.T) {
@@ -196,12 +197,16 @@ func TestEnsureWorkerPaneExplainsGoneWorkspaceRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
+	repository := t.TempDir()
 	task := ordjson.NewObject()
+	task.Set("id", "t-test")
 	task.Set("pane", "w-old:p1")
 	task.Set("workspace", "w-old")
 	task.Set("worktree", checkout)
+	task.Set("repository", repository)
 	_, err = EnsureWorkerPane(root, "sum-test", task)
-	if err == nil || !strings.Contains(err.Error(), "herdr worktree open --path "+checkout+" --no-focus") || !strings.Contains(err.Error(), "bind TASK_ID --worker-pane PANE_ID") || !strings.Contains(err.Error(), "docs/recovery.md") {
+	openCommand := shquote.Join([]string{"herdr", "worktree", "open", "--cwd", repository, "--path", checkout, "--label", "sum-t-test", "--no-focus"})
+	if err == nil || !strings.Contains(err.Error(), openCommand) || !strings.Contains(err.Error(), "bind t-test --worker-pane PANE_ID") || !strings.Contains(err.Error(), "docs/recovery.md") {
 		t.Fatalf("EnsureWorkerPane missing-workspace error = %v", err)
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 	"github.com/douglasjarquin/sum/go/internal/verifycontract"
@@ -922,7 +923,10 @@ func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string
 		return "", err
 	}
 	if ws == nil {
-		return "", fmt.Errorf("Worker workspace %s is gone (%s). Reopen the checkout with `herdr worktree open --path %s --no-focus`, then bind it with `bind TASK_ID --worker-pane PANE_ID` (see docs/recovery.md).", workspace, wsCode, worktree)
+		taskID := asString(func() any { v, _ := task.Get("id"); return v }())
+		repository := asString(func() any { v, _ := task.Get("repository"); return v }())
+		openCommand := shquote.Join([]string{"herdr", "worktree", "open", "--cwd", repository, "--path", worktree, "--label", "sum-" + taskID, "--no-focus"})
+		return "", fmt.Errorf("Worker workspace %s is gone (%s). Reopen the checkout with `%s`, then bind it with `bind %s --worker-pane PANE_ID` (see docs/recovery.md).", workspace, wsCode, openCommand, taskID)
 	}
 	created, err := herdrclient.Call(herdrPath, session, 15*time.Second, "tab", "create", "--workspace", workspace, "--cwd", worktree, "--no-focus")
 	if err != nil {
