@@ -105,7 +105,11 @@ func TestClaudeDispatchGrantsOnlyItsTaskInstructions(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "claude-task-access", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--arg", "existing", "--approved")
-	taskDir := filepath.Join(d.home, "tasks", asString(task["id"]))
+	home := d.home
+	if resolved, err := filepath.EvalSymlinks(d.home); err == nil {
+		home = resolved
+	}
+	taskDir := filepath.Join(home, "tasks", asString(task["id"]))
 	want := []string{"existing", "--add-dir", taskDir}
 	if argv := startedArgv(task); !reflect.DeepEqual(argv, want) {
 		t.Fatalf("Claude started_argv = %v, want only the active task directory %v", argv, want)
@@ -126,7 +130,7 @@ func TestClaudeDispatchGrantsOnlyItsTaskInstructions(t *testing.T) {
 		t.Fatalf("Claude agent start args = %v, want -- followed by %v", starts[0], want)
 	}
 	for _, arg := range passed {
-		if arg == d.home || arg == filepath.Join(d.home, "tasks") || arg == filepath.Join(d.home, "tasks", "t-other") {
+		if arg == home || arg == filepath.Join(home, "tasks") || arg == filepath.Join(home, "tasks", "t-other") {
 			t.Fatalf("Claude received a state-wide or unrelated task grant: %v", passed)
 		}
 	}
