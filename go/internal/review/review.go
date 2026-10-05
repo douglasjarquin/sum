@@ -9,12 +9,14 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
@@ -45,9 +47,6 @@ func (a LaunchArgs) explicit() bool {
 	return a.Harness != "" || a.Model != "" || a.Reasoning != "" || a.PresetSet
 }
 
-// Launch opens the independent reviewer in a labeled tab in the task workspace.
-// It records the endpoint before starting the agent so ordinary reviewer cleanup
-// and occupancy logic can identify the pane even if agent start is uncertain.
 func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, args LaunchArgs) (*ordjson.Object, error) {
 	taskID := args.Task
 	if ctx == nil {
@@ -82,11 +81,21 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if workspace == "" || worktree == "" {
 		return nil, fmt.Errorf("Task workspace or checkout identity is missing; reviewer launch is refused.")
 	}
+	var rebind *ordjson.Object
 	if recorded, exists := store.RecordedReviewer(task); exists {
-		if args.explicit() {
-			return nil, fmt.Errorf("Task already has a reviewer endpoint; --harness/--model/--reasoning/--preset apply only to a new reviewer. Prompt the recorded pane with a plain `reviewer launch`, or prove it stopped and use `sumctl bind TASK --reviewer-pane PANE`.")
+		agent, stop, err := recordedReviewerGone(host, runtimeRoot, herdrPath, session, task, recorded, worktree)
+		if err != nil {
+			return nil, err
 		}
-		return promptRecordedReviewer(s, host, herdrPath, session, sumctlPath, task, recorded, worktree)
+		if stop == nil {
+			if args.explicit() {
+				return nil, fmt.Errorf("Task already has a live reviewer endpoint; --harness/--model/--reasoning/--preset apply only to a new reviewer. Prompt the recorded pane with a plain `reviewer launch`.")
+			}
+			return promptRecordedReviewer(s, herdrPath, session, sumctlPath, task, recorded, agent, worktree)
+		}
+		rebind = ordjson.NewObject()
+		rebind.Set("from", bindcmd.EndpointRecord(recorded))
+		rebind.Set("stop_evidence", stop)
 	}
 	if _, wsCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "workspace", "get", workspace); err != nil {
 		return nil, err
@@ -147,11 +156,25 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	}
 	current, err := s.ReadTask(taskID)
 	if err == nil {
-		if existing, _ := current.Get("reviewer"); existing != nil {
+		existing, _ := store.RecordedReviewer(current)
+		switch {
+		case rebind == nil && existing != nil:
 			err = fmt.Errorf("Task already has a reviewer endpoint; the new tab %s was created but not adopted.", pane)
-		} else {
-			current.Set("reviewer", endpoint)
-			err = s.SaveTask(current)
+		case rebind != nil && !bindcmd.SameEndpoint(existing, objectField(rebind, "from")):
+			err = fmt.Errorf("The recorded reviewer endpoint changed concurrently; the new tab %s was created but not adopted.", pane)
+		default:
+			if rebind != nil {
+				rebind.Set("to", bindcmd.EndpointRecord(endpoint))
+				var record *ordjson.Object
+				record, err = evidence.Append(current, "reviewer-rebind", "coordinator", rebind, nil, ctx)
+				if err == nil {
+					record.Set("brief_revision", evidence.ActiveRevision(s, current))
+				}
+			}
+			if err == nil {
+				current.Set("reviewer", endpoint)
+				err = s.SaveTask(current)
+			}
 		}
 	}
 	unlock()
@@ -178,35 +201,46 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	result.Set("harness", harness)
 	result.Set("preset", preset)
 	result.Set("placement", "tab")
-	result.Set("action", "launched")
+	if rebind == nil {
+		result.Set("action", "launched")
+		result.Set("rebind", nil)
+		result.Set("note", "Reviewer launched in its own labeled task tab; findings must be saved with `review` from that pane.")
+	} else {
+		result.Set("action", "relaunched")
+		result.Set("rebind", rebind)
+		result.Set("note", "The recorded reviewer pane was proven gone, so a fresh labeled task tab replaced it and the rebind is recorded; findings must be saved with `review` from the new pane.")
+	}
 	result.Set("prompt", delivery)
-	result.Set("note", "Reviewer launched in its own labeled task tab; findings must be saved with `review` from that pane.")
 	return result, nil
 }
 
-func promptRecordedReviewer(s *store.Store, host machine.Identity, herdrPath, session, sumctlPath string, task, recorded *ordjson.Object, worktree string) (*ordjson.Object, error) {
-	taskID := asString(task, "id")
+func recordedReviewerGone(host machine.Identity, runtimeRoot, herdrPath, session string, task, recorded *ordjson.Object, worktree string) (*ordjson.Object, *ordjson.Object, error) {
 	pane := asString(recorded, "pane")
-	rebind := fmt.Sprintf("If that pane is gone, first prove it stopped, then use `sumctl bind %s --reviewer-pane PANE`.", taskID)
 	if !host.Is(asString(recorded, "machine")) || asString(recorded, "session") != session {
-		return nil, fmt.Errorf("Task already has a reviewer endpoint %s on another machine or session; use it from there. %s", pane, rebind)
+		return nil, nil, fmt.Errorf("Task already has a reviewer endpoint %s on another machine or session; use it from there, or prove it stopped there and use `sumctl bind %s --reviewer-pane PANE`.", pane, asString(task, "id"))
 	}
 	agent, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", pane)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if herdrclient.IsAbsent(code) {
-		return nil, fmt.Errorf("Task already has a reviewer endpoint %s, but Herdr reports %s. %s", pane, code, rebind)
+	if code == "" && !panes.ReviewerIsClosed(task) {
+		return herdrclient.UnwrapAgent(agent), nil, nil
 	}
-	if code != "" {
-		return nil, fmt.Errorf("Recorded reviewer pane %s cannot be observed (%s); nothing was prompted.", pane, code)
+	if code != "" && !herdrclient.IsAbsent(code) {
+		return nil, nil, fmt.Errorf("Recorded reviewer pane %s cannot be observed (%s); nothing was prompted or launched.", pane, code)
 	}
-	observed := objectField(objectValue(agent), "agent")
-	if observed == nil {
-		observed = objectValue(agent)
+	stop, err := bindcmd.ReviewerStopped(runtimeRoot, session, pane, worktree, asString(task, "pane"), "", 0, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Recorded reviewer pane %s is gone (%s) but its replacement is refused: %w", pane, code, err)
 	}
-	if got := asString(observed, "cwd"); got != "" && resolvePath(got) != resolvePath(worktree) {
-		return nil, fmt.Errorf("Recorded reviewer pane %s is live but its cwd %s is not the task checkout %s; close it so Herdr reports pane_not_found, then use `sumctl bind %s --reviewer-pane PANE`.", pane, got, worktree, taskID)
+	return nil, stop, nil
+}
+
+func promptRecordedReviewer(s *store.Store, herdrPath, session, sumctlPath string, task, recorded, agent *ordjson.Object, worktree string) (*ordjson.Object, error) {
+	taskID := asString(task, "id")
+	pane := asString(recorded, "pane")
+	if got := herdrclient.AgentCwd(agent); got != "" && resolvePath(got) != resolvePath(worktree) {
+		return nil, fmt.Errorf("Recorded reviewer pane %s is live but its cwd %s is not the task checkout %s; close it so Herdr reports pane_not_found, then run `reviewer launch` again.", pane, got, worktree)
 	}
 	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, asString(recorded, "skill_path"), worktree)
 	if err != nil {

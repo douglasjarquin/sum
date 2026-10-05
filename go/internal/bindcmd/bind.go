@@ -206,7 +206,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 			if host.Is(oldMachine) && oldSessionStr == sessionStr && oldPaneStr != reviewerPane {
 				worktree, _ := preTask.Get("worktree")
 				workerPane := stringField(preTask, "pane")
-				reviewerStopObservation, err = reviewerStopped(pump.RuntimeRoot, sessionStr, oldPaneStr, fmt.Sprint(worktree), workerPane, reviewerPane, reviewerShell, reviewerAgent)
+				reviewerStopObservation, err = ReviewerStopped(pump.RuntimeRoot, sessionStr, oldPaneStr, fmt.Sprint(worktree), workerPane, reviewerPane, reviewerShell, reviewerAgent)
 				if err != nil {
 					return nil, err
 				}
@@ -269,7 +269,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		if !hasReviewer {
 			return nil, fmt.Errorf("No recorded reviewer endpoint exists to rebind; the first reviewer is recorded by `sumctl review`.")
 		}
-		if !sameEndpoint(old, reviewerBefore) {
+		if !SameEndpoint(old, reviewerBefore) {
 			return nil, fmt.Errorf("The recorded reviewer endpoint changed concurrently; inspect it again before rebinding.")
 		}
 		oldPane, _ := old.Get("pane")
@@ -294,8 +294,8 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		newEndpoint.Set("bound_at", boundAt)
 		newEndpoint.Set("incarnation", bound.Record(boundAt))
 		rebind := ordjson.NewObject()
-		rebind.Set("from", endpointRecord(old))
-		rebind.Set("to", endpointRecord(newEndpoint))
+		rebind.Set("from", EndpointRecord(old))
+		rebind.Set("to", EndpointRecord(newEndpoint))
 		rebind.Set("stop_evidence", reviewerStopObservation)
 		record, err := evidence.Append(task, "reviewer-rebind", "coordinator", rebind, nil, ctx)
 		if err != nil {
@@ -338,7 +338,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 	return result, nil
 }
 
-func reviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPane string, newShell int, newAgent *ordjson.Object) (*ordjson.Object, error) {
+func ReviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPane string, newShell int, newAgent *ordjson.Object) (*ordjson.Object, error) {
 	observation := ordjson.NewObject()
 	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
 	if err != nil {
@@ -374,6 +374,9 @@ func reviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPan
 		}
 	}
 	for _, paneID := range []string{workerPane, newPane} {
+		if paneID == "" {
+			continue
+		}
 		info, code, err := environment.PaneProcesses(runtimeRoot, session, paneID)
 		if err != nil {
 			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s: %w", paneID, err)
@@ -420,6 +423,9 @@ func reviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPan
 		}
 	}
 	for _, paneID := range []string{workerPane, newPane} {
+		if paneID == "" {
+			continue
+		}
 		agent, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", paneID)
 		if err != nil {
 			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s: %w", paneID, err)
@@ -470,7 +476,7 @@ func asList(value any) []any {
 	return rows
 }
 
-func endpointRecord(endpoint *ordjson.Object) *ordjson.Object {
+func EndpointRecord(endpoint *ordjson.Object) *ordjson.Object {
 	row := ordjson.NewObject()
 	for _, key := range []string{"machine", "session", "pane", "incarnation"} {
 		value, _ := endpoint.Get(key)
@@ -479,7 +485,7 @@ func endpointRecord(endpoint *ordjson.Object) *ordjson.Object {
 	return row
 }
 
-func sameEndpoint(a, b *ordjson.Object) bool {
+func SameEndpoint(a, b *ordjson.Object) bool {
 	if a == nil || b == nil {
 		return a == b
 	}

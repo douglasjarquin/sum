@@ -785,7 +785,7 @@
   },
   "reviewer-launch": {
     "topic": "reviewer-launch",
-    "help": "Create a `reviewer` tab in one task workspace, start its independent reviewer, record the reviewer endpoint, and prompt it once; with a live recorded reviewer pane, prompt that pane for the current candidate instead of opening a second tab",
+    "help": "Create a `reviewer` tab in one task workspace, start its independent reviewer, record the reviewer endpoint, and prompt it once; with a live recorded reviewer pane, prompt that pane for the current candidate instead of opening a second tab; with a recorded reviewer proven gone, open a fresh tab, record the rebind, and prompt it",
     "arguments": [
       {
         "name": "task",
