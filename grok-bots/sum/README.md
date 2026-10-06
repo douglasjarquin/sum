@@ -17,7 +17,11 @@ You do not need a SUM installation.
 | `memories.md` | Memories included in the template |
 | `worker-procedure.md` | Memory named Worker procedure |
 | `skills/*/SKILL.md` | Skills named Dispatch, Persist, Verify, Status, Recap, Deliver, Sweep, and Factory |
-| `routines.md` | Weekday Inbox status, enabled after two successful manual Status checks |
+| `routines.md` | Weekday Inbox and ops brief, enabled after two successful manual Status checks |
+| `decisions.md` | Decision ledger schema; live lines stay in `/workspace/sum/decisions.md` |
+| `action-log.md` | Action log schema; live lines stay in `/workspace/sum/action-log.md` |
+| `permissions.md` | Auto, draft, and gated tiers |
+| `evals/` | Coordinator invariant seed; not a workflow |
 | `avatar.jpg` | GrokBot profile image |
 
 Factory settings are not workflows. They live at [`skills/sum-factory/factories/`](../../skills/sum-factory/factories/).
@@ -49,5 +53,7 @@ Keep this directory as the source of truth when the contract changes.
 
 ## Suggested routine
 
-After two successful manual Status checks, enable the weekday Inbox status in `routines.md`.
+After two successful manual Status checks, the user may enable the weekday Inbox status in `routines.md`.
+This repository does not enable it.
 Stay quiet when the inbox is empty.
+A digest is one line in chat plus the saved link.

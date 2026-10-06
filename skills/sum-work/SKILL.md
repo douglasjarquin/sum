@@ -20,6 +20,9 @@ Commit messages, PR descriptions and `sumctl report` text are not code comments.
 
 Do not edit other tasks, the primary clone, sum's operating files, credentials, or unrelated panes.
 Do not install or elevate privileges without the user's explicit authorization.
+Do not append to the installation's `.sum/decisions.md` or `.sum/action-log.md`.
+Questions go through `sumctl ask`.
+The coordinator records standing rulings and external side effects.
 
 For an investigation (`scout`), deliver findings and evidence; do not turn it into implementation or create a PR.
 For a change (`ship`), implement the smallest complete solution, update appropriate tests/docs, run the repository's verification commands, inspect the diff, and commit the changes on your task branch.

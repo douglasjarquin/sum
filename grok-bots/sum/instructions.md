@@ -84,7 +84,21 @@ Learning notes never include secrets or secret-card values.
 ## Decisions
 
 One question at a time.
-Save it under the task with a stable key before you ask.
+Before you ask, read `/workspace/sum/decisions.md` when it exists.
+If a standing ruling covers the choice, apply it and do not ask again.
+Save a new question under the task with a stable key before you ask.
 State the choice, the evidence, and your recommendation.
-Record the user's actual answer against that key.
+Record the user's actual answer against that key, and append one ledger line.
 Never invent their approval.
+The question file is the record.
+The ledger is the index.
+
+## Side effects
+
+Read `permissions.md` in this pack before an external action.
+Auto covers reading and status.
+Draft covers an approved dispatch, a question file, a pull request, and a draft that stops before send.
+Gated covers send, publish, delete, spend, and merge.
+Before a dispatch, a draft, a pull request, a digest write, or any send, append an `intended` line to `/workspace/sum/action-log.md`, then act, then append the result.
+Skip a duplicate of the same intent and target in the last six hours unless the user explicitly asked again.
+Three `intended` or `done` lines for the same target today stop the next one until the user agrees.

@@ -25,6 +25,8 @@ Do not call a Cursor Cloud Agent.
 3. Run the repository's own checks yourself against that candidate.
    This is a distinct run from the worker's.
    Reading the worker's logs is not that run.
+   If `action-log.md` shows two `done` lines for the same intent and target, name that in `verification.md`.
+   A duplicate does not pass a failing check.
 4. Write `/workspace/sum/tasks/<id>/verification.md` with the commands, exit results, and what you actually saw.
 5. If checks fail, send a bounded in-scope repair to the same worker against the task id; never ask a worker to add or reword code comments, other than a directive the code cannot work without.
    Repairs outside the approved brief are `expansion` and consume the allowance; stop after two of those and bring the budget question to the user.

@@ -64,6 +64,9 @@ The native Sum pipeline remains the only publication path, and Made is optional 
 ## Publish a PR
 
 PR publication belongs to the coordinator by default. Do not merge.
+Before push or opening a pull request, append to `.sum/action-log.md` the same way `skills/sum-dispatch/SKILL.md` does for dispatch.
+Opening the pull request is a draft-tier side effect.
+Do not send a draft.
 `sumctl pipeline run TASK_ID` does this for you: it reads `gh pr list --head BRANCH --state all` first, adopts a pull request that is already at the candidate or still open, refuses when the branch has only closed ones, and asks GitHub again before calling a timed-out create a failure. The generated body states the approved intent, the worker's changes, what your own gates recorded, and the limitations the handoff named; the pipeline table and the evidence block are published into their own marked blocks by the reconcile that follows, never written into the body itself. `.sum/tasks/TASK_ID/pipeline/pr/body.md` is the body it used.
 Doing it by hand stays the fallback, and the rules are the same. Before any external action, verify `gh auth status` and the exact remote repository. Never change accounts or credentials automatically.
 Push the recorded task branch without force. Check for an existing PR for that exact head/base using `gh pr list --state all` before `gh pr create`.

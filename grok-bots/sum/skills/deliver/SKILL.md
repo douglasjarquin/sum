@@ -20,6 +20,8 @@ The user merges.
 ## Sequence of work
 
 1. Confirm verification.md is your run for this candidate, not the worker's claim.
+   Before push or opening a pull request, append `intended` to `/workspace/sum/action-log.md`, then append `done` or `failed` after.
+   Do not send, publish, or merge.
 2. Default to a fresh independent review with the Compound Engineering review skills before opening or updating the PR.
    The worker Bot cannot review its own candidate.
    Treat any added code comment or edit to an existing code comment in the candidate diff as a blocking finding. This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files. Do not flag comments left unchanged while surrounding code changes. Commit messages, PR descriptions and report text are not code comments. Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; a directive may be added only when the code cannot work without it and must include no explanatory prose.

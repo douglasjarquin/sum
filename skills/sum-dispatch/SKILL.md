@@ -79,7 +79,15 @@ Do not run repeated quota checks while waiting.
 
 ## Submit
 
-Write the approved brief to a temporary file. Then run:
+Write the approved brief to a temporary file.
+Before `dispatch` or `start`, append an `intended` line to `.sum/action-log.md`.
+Create that file from `templates/action-log.md` on the first external side effect.
+After the command, append `done` or `failed`.
+If the same intent and target already has `intended` or `done` within six hours, append `skipped-duplicate` and do not dispatch again unless the user explicitly asked for that action again.
+A duplicate native message is not that ask.
+Three `intended` or `done` lines for the same target on the same calendar day stop the next one until the user agrees.
+The log does not grant merge, send, or delete.
+Then run:
 
 ```sh
 ./bin/sumctl dispatch --repo /absolute/path/to/repo \

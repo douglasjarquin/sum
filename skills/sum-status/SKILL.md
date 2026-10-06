@@ -40,6 +40,24 @@ Keep processing separate from replies. Answer a direct question, raise a real de
 
 Sum cannot suppress a harness's own reasoning, tool output, or progress messages. Running coordinators adopt this policy through the existing refresh procedure; a source edit alone does not change their contract.
 
+## Inbox and ops brief
+
+When the user asks for a weekday morning brief, answer from saved records in this order and omit empty lines:
+
+1. Unanswered questions, with task id and question id.
+2. Reports that still need coordinator verification. Reading worker logs is not that run.
+3. Failed verifications and repairs still owed.
+4. Pending approvals: merge, send, publish, delete, spend, `repair extend`, capacity, update, and rollback.
+5. Factory Review count from the saved factory digest, as a count.
+6. Up to three priorities already written in task records. Do not invent one.
+7. Digests: one line plus the saved link. Do not paste the digest body.
+
+Stay quiet when every line is empty.
+A status check does not enable a routine.
+This skill does not arm a schedule.
+After two successful manual Status checks the user called clean, they may ask for this shape again.
+That request still does not create a Herdr routine.
+
 ## Maintenance
 
 Full `status`, full `inbox`, and the coordinator's `init` and `pump` carry a `maintenance` view built from saved records only: `open_prs` (each recorded open PR with its `state` and `observed_at` as recorded, and `next: sumctl pr reconcile TASK_ID`), `cleanup` (pending, blocked, removing, or ready, with state, time, blockers, and `next: sumctl cleanup TASK_ID`), and `next: sumctl sweep` when anything is listed. Nothing in it was re-observed: an open PR's state and CI are as of its `observed_at`, so say so when you relay it.
