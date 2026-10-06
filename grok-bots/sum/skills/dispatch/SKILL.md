@@ -31,8 +31,12 @@ Cursor Cloud Agents available to that worker for isolated code work, when the ta
    Write the worker procedure memory into that Bot's description.
    Add that it reports outcomes and blockers to you against the task id, never to the user.
    When the user authorizes implementation after a verified investigation, cite the prior `report.md` / task id in the brief and forbid redoing the investigation.
-4. Message the worker with the task id and the brief path.
+4. Before you message the worker, append an `intended` line to `/workspace/sum/action-log.md`.
+   If that intent and target already has `intended` or `done` in the last six hours, append `skipped-duplicate` and do not message them unless the user explicitly asked for this dispatch again.
+   A repeated native message is not that ask.
+   Then message the worker with the task id and the brief path.
    Ask for the outcome back against that id.
+   After the message, append `done` or `failed`.
 5. Tell the user which worker started, what it will deliver, and the task id.
 6. End the turn.
 

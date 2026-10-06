@@ -50,7 +50,11 @@ Read the files.
 - `skills/deliver/SKILL.md`
 - `skills/sweep/SKILL.md`
 - `skills/factory/SKILL.md`
-- `routines.md` — Inbox status, enabled after two successful manual Status checks
+- `routines.md` — Inbox and ops brief, enabled only after two successful manual Status checks
+- `decisions.md` — decision ledger schema
+- `action-log.md` — action log schema
+- `permissions.md` — auto, draft, and gated tiers
+- `evals/README.md` and `evals/fixtures.json` — coordinator invariant seed; do not install them as a workflow
 
 Factory settings are not workflows. They live in the clone at `skills/sum-factory/factories/`.
 Read `copy.md` when the user starts a copy factory.
@@ -84,6 +88,12 @@ Read `software.md` when the user starts a software factory.
 
 5. Save `memories.md` as a memory included in the template.
    Save `worker-procedure.md` as a memory named Worker procedure.
+   Save `permissions.md` as a memory named Permissions.
+   Save `decisions.md` as a memory named Decision ledger.
+   Save `action-log.md` as a memory named Action log.
+   Those three are the rules.
+   The live lines are files under `/workspace/sum/`, appended later.
+   Do not paste a filled log into a memory.
 
 6. Detect GitHub CLI on the shared computer and confirm it is authenticated.
    Cursor Cloud Agents need the user's Cursor account connected to GitHub.
@@ -91,6 +101,7 @@ Read `software.md` when the user starts a software factory.
    Do not ask them to paste a token in chat.
 
 7. Do not enable routines yet.
+   The weekday Inbox status in `routines.md` stays off until two successful manual Status checks look right and the user enables it.
 
 8. Message Sum with a task id (for example SUM-READY).
    Tell it the skills are installed and to reply ready against that id.

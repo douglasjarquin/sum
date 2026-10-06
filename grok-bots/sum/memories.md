@@ -20,6 +20,12 @@ Do not use themed role titles.
 Durable task files live under `/workspace/sum/` on the shared computer.
 That directory is the source of truth across chats.
 Do not keep questions or results only in conversation.
+`/workspace/sum/decisions.md` is an append-only index of answers and standing rulings.
+Read it before asking again.
+`/workspace/sum/action-log.md` is written before an external side effect.
+Permissions are auto, draft, and gated.
+Draft stops before send.
+A digest is one line in chat plus the saved link.
 
 A factory is a settings file.
 Copy and software differ only in that file.

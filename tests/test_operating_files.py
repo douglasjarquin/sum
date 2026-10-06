@@ -24,6 +24,10 @@ RECIPE_FILES = (
     "instructions.md",
     "memories.md",
     "routines.md",
+    "decisions.md",
+    "action-log.md",
+    "permissions.md",
+    "evals/README.md",
     "worker-procedure.md",
     "avatar.jpg",
     "skills/dispatch/SKILL.md",
@@ -116,7 +120,7 @@ class OperatingFilesTest(unittest.TestCase):
         text = (GROK_BOT / "README.md").read_text()
         self.assertIn("GROK_SUM.md", text)
         self.assertIn("| `avatar.jpg` | GrokBot profile image |", text)
-        self.assertIn("Recap, Deliver, and Sweep", text)
+        self.assertIn("Recap, Deliver, Sweep, and Factory", text)
         self.assertNotIn("What you paste", text)
         self.assertNotIn("Paste `instructions.md`", text)
 
@@ -148,18 +152,17 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("coordinator", text.lower())
 
     def test_agents_md_still_forbids_coordinator_pane_work(self):
-        for name in ("AGENTS.md", "COORDINATOR.md"):
-            text = (ROOT / name).read_text()
-            self.assertIn(
-                "Never do the requested work in this coordinator pane",
-                text,
-                name,
-            )
-            self.assertIn(
-                "not research, not planning, not investigation, not implementation",
-                text,
-                name,
-            )
+        agents = (ROOT / "AGENTS.md").read_text()
+        self.assertIn(
+            "Never research, plan, investigate, implement, or edit repository files in this coordinator pane",
+            agents,
+        )
+        coordinator = (ROOT / "COORDINATOR.md").read_text()
+        self.assertIn("Never do the requested work in this coordinator pane", coordinator)
+        self.assertIn(
+            "not research, not planning, not investigation, not implementation",
+            coordinator,
+        )
 
     def test_bootstrap_is_small_routes_each_role_and_keeps_shared_authority(self):
         text = (ROOT / "AGENTS.md").read_text()
@@ -312,6 +315,10 @@ class OperatingFilesTest(unittest.TestCase):
             ROOT / "GROK_SUM.md",
             ROOT / "GROK_SQUARE.md",
             ROOT / "templates" / "task.md",
+            ROOT / "templates" / "decisions.md",
+            ROOT / "templates" / "action-log.md",
+            ROOT / "templates" / "permissions.md",
+            ROOT / "docs" / "coordinator-durability" / "AUDIT.md",
             *_sum_pack_markdown(),
             *_square_pack_markdown(),
         ]

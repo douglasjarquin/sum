@@ -17,12 +17,14 @@ Create it if it is missing.
 
 ## Sequence of work
 
-1. Ensure `/workspace/sum/inbox.md` and `/workspace/sum/tasks/` exist.
+1. Ensure `/workspace/sum/inbox.md`, `/workspace/sum/tasks/`, `/workspace/sum/decisions.md`, and `/workspace/sum/action-log.md` exist. Copy only the header from the pack schema when a log is missing. Do not replace a log that already has lines.
 2. For new approved work, allocate the next task id `t-N` by counting existing task directories, then write `/workspace/sum/tasks/t-N/brief.md` from the user's words.
-3. For a question, write `/workspace/sum/tasks/<id>/questions/<key>.md` with the choice, evidence, and recommendation. Set status to open. Add a line to `inbox.md`.
-4. For the user's answer, open that question file, write their actual words, and set status to answered.
-5. For a worker result, require `/workspace/sum/tasks/<id>/report.md` written by the worker. Do not author or overwrite that claim. Add a line to `inbox.md` that verify is owed.
-6. After your verification run, write `/workspace/sum/tasks/<id>/verification.md` as that run, distinct from the report.
+3. Before a question, read `decisions.md`. If a standing ruling covers the choice, apply it and do not write a question.
+4. For a question, write `/workspace/sum/tasks/<id>/questions/<key>.md` with the choice, evidence, and recommendation. Set status to open. Add a line to `inbox.md`.
+5. For the user's answer, open that question file, write their actual words, and set status to answered. Append one line to `decisions.md`. Do not edit older lines.
+6. For a worker result, require `/workspace/sum/tasks/<id>/report.md` written by the worker. Do not author or overwrite that claim. Add a line to `inbox.md` that verify is owed.
+7. After your verification run, write `/workspace/sum/tasks/<id>/verification.md` as that run, distinct from the report.
+8. Before an external side effect, append `intended` to `action-log.md`, then act, then append `done`, `failed`, or `skipped-duplicate`. If the same intent and target already has `intended` or `done` in the last six hours, append `skipped-duplicate` and do not act unless the user explicitly asked again.
 
 ## How to validate the result
 

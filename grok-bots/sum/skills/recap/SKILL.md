@@ -14,13 +14,13 @@ Do not invent live fleet state.
 
 ## Required inputs and access
 
-Saved files under `/workspace/sum/`: `inbox.md`, task briefs, questions, reports, and verification files.
+Saved files under `/workspace/sum/`: `inbox.md`, `decisions.md`, `action-log.md`, task briefs, questions, reports, and verification files.
 Do not poll workers or GitHub to fill gaps.
 
 ## Sequence of work
 
 1. Read `/workspace/sum/inbox.md` and the open task files.
-2. Recap only what those files already record: questions, answers, results, and verification.
+2. Recap only what those files already record: questions, answers, ledger lines, action-log lines, results, and verification.
 3. If a file is missing, say it is missing.
    Do not guess what a worker is doing now.
 4. Do not dispatch work, answer a question, or invent live fleet state.

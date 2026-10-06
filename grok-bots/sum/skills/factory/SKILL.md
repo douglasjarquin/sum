@@ -34,7 +34,7 @@ Write the confirmed answers to `/workspace/sum/factories/<name>.md`. Read the fi
 
 A run comes after that confirmation, as its own request.
 
-- `runner: software` means follow the software settings file. That lane is Sum's `sumctl` factory. Do not tick it from this chat. Tell the user it runs on a Sum installation, and dispatch a worker only when they asked you to run it there.
+- `runner: software` means follow the software settings file. That lane is the software factory on a Sum installation. Do not tick it from this chat. Dispatch a worker only when the user asked you to run it there.
 - `runner: directive` means dispatch one worker. The brief is the confirmed settings file plus the piece URL or path they named. The worker does only the pickup lanes, then stops. You do not call Spiral in this chat.
 
 On a Notion floor, a piece URL is the reliable trigger. Search does not see a status property.

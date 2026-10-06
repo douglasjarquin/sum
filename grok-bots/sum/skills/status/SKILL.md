@@ -12,15 +12,18 @@ A status check does not authorize doing requested work in this chat.
 
 ## Required inputs and access
 
-`/workspace/sum/inbox.md` and each task directory.
+`/workspace/sum/inbox.md`, `/workspace/sum/decisions.md`, `/workspace/sum/action-log.md`, and each task directory.
 The worker Bots those tasks name.
 Do not poll GitHub as the status check.
 
 ## Sequence of work
 
-1. Read `inbox.md` and each open task's brief, questions, report, and verification files.
+1. Read `inbox.md`, `decisions.md`, `action-log.md`, and each open task's brief, questions, report, and verification files.
 2. Surface unanswered questions first, then reports ready for verify, then failures, then merged work that still needs cleanup.
+   If the ledger already rules a choice, do not ask it again.
+   When a ledger line is dated today, mention it in one short line.
 3. Keep unchanged status silent unless the user asked for a full list.
+   When the weekday routine runs, or the user asks for the Inbox and ops brief, return the lines in `routines.md` and stay quiet when every line is empty.
 4. If a worker looks idle without a report, read that Bot's chat.
    Idle is not done.
    If a question was never saved, persist it with a stable key before relaying it.
@@ -37,6 +40,7 @@ You did not answer a question yourself.
 
 The outstanding questions, unverified reports, and failures.
 Name task ids and question keys.
+For the Inbox and ops brief, use the lines in `routines.md`.
 Then stop.
 
 ## What requires approval

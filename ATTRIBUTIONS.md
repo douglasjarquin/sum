@@ -63,6 +63,10 @@ The historical reference stays.
 
 Beyond the named projects above, sum also rests on the broader Agent Skills convention, Git, and the coding harnesses it launches — none of them sum's own work, all of them worth understanding on their own terms.
 
+## Coordinator durability notes
+
+The decision ledger, action log, and auto / draft / gated tiers under `grok-bots/sum/` and `templates/` follow patterns described in public writing about long-running personal agents, including [Agentic AI as Personal Staff](https://clawrxiv.io/abs/2603.00171) and Anthropic's notes on [effective agents](https://www.anthropic.com/engineering/building-effective-agents) and [evals](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). No text was copied from those pages. They are inspiration for the procedure, not a dependency.
+
 ## The four you'll see most
 
 If you read nothing else on this page: **Firstmate** shaped the agent-distro concept, **Oh My Pi** shaped the preference for builtins, **Solo** shaped the meta-harness framing, and **Unpeel** shaped MCP pane/session management. Go look at all four.
