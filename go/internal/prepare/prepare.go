@@ -25,6 +25,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 	"github.com/douglasjarquin/sum/go/internal/verifycontract"
@@ -447,7 +448,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		return nil, fmt.Errorf("Worker execution reservation is missing; start is refused.")
 	}
 	resuming := asString(func() any { v, _ := worker.Get("resumes"); return v }()) != ""
-	identityMismatch := rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualBranch != asString(policyField(recordedWorktree, "branch")) || asString(func() any { v, _ := task.Get("workspace"); return v }()) != asString(policyField(recordedWorktree, "workspace")) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon)
+	identityMismatch := rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualBranch != asString(policyField(recordedWorktree, "branch")) || !workspaceMatchesSnapshot(task, recordedWorktree, actualCommon) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon)
 	headPinned := actualHead == asString(func() any { v, _ := task.Get("base_sha"); return v }()) && actualHead == asString(policyField(recordedWorktree, "head"))
 	if identityMismatch || (!resuming && !headPinned) {
 		unlock()
@@ -851,6 +852,38 @@ func snapshotOptionalString(value *ordjson.Object, key string) bool {
 	return stringOK
 }
 
+func workspaceMatchesSnapshot(task, snapshot *ordjson.Object, actualCommon string) bool {
+	original := asString(policyField(snapshot, "workspace"))
+	current := asString(func() any { v, _ := task.Get("workspace"); return v }())
+	if original == "" || current == "" {
+		return false
+	}
+	if original == current {
+		return true
+	}
+	path := asString(policyField(snapshot, "path"))
+	root := asString(policyField(snapshot, "git_root"))
+	branch := asString(policyField(snapshot, "branch"))
+	repository := asString(func() any { v, _ := task.Get("repository"); return v }())
+	chain := original
+	evidenceValue, _ := task.Get("evidence")
+	rows, _ := evidenceValue.([]any)
+	for _, raw := range rows {
+		row := asObject(raw)
+		if asString(func() any { v, _ := row.Get("kind"); return v }()) != "worker-workspace-rebind" {
+			continue
+		}
+		from := asString(func() any { v, _ := row.Get("from_workspace"); return v }())
+		to := asString(func() any { v, _ := row.Get("to_workspace"); return v }())
+		valid := from == chain && to != "" && asString(func() any { v, _ := row.Get("old_workspace_code"); return v }()) == "workspace_not_found" && resolvePath(asString(func() any { v, _ := row.Get("checkout"); return v }())) == resolvePath(path) && resolvePath(asString(func() any { v, _ := row.Get("git_root"); return v }())) == resolvePath(root) && resolvePath(asString(func() any { v, _ := row.Get("repository"); return v }())) == resolvePath(repository) && resolveGitPath(path, asString(func() any { v, _ := row.Get("git_common_dir"); return v }())) == resolveGitPath(path, actualCommon) && asString(func() any { v, _ := row.Get("branch"); return v }()) == branch
+		valid = valid && asString(func() any { v, _ := row.Get("source"); return v }()) == "coordinator"
+		if valid {
+			chain = to
+		}
+	}
+	return chain == current
+}
+
 // EnsureWorkerPane returns a live shell pane in the task workspace at the recorded
 // checkout. When sweep closed the previous pane, it creates a fresh tab in that
 // workspace so execution resume starts a new session instead of requiring the old one.
@@ -875,9 +908,10 @@ func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string
 			paneObj = nested
 		}
 		got := resolvePath(asString(func() any { v, _ := paneObj.Get("cwd"); return v }()))
+		paneWorkspace := asString(func() any { v, _ := paneObj.Get("workspace_id"); return v }())
 		want := resolvePath(worktree)
-		if got != want {
-			return "", fmt.Errorf("Recorded worker pane %s cwd %s does not match checkout %s; start is refused.", pane, got, want)
+		if got != want || paneWorkspace != workspace {
+			return "", fmt.Errorf("Recorded worker pane %s has observed cwd %s and pane workspace %s; expected checkout %s and workspace %s. Start is refused.", pane, got, paneWorkspace, want, workspace)
 		}
 		return pane, nil
 	}
@@ -889,7 +923,10 @@ func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string
 		return "", err
 	}
 	if ws == nil {
-		return "", fmt.Errorf("Worker workspace %s is gone (%s); execution resume cannot create a pane without recreating the worktree.", workspace, wsCode)
+		taskID := asString(func() any { v, _ := task.Get("id"); return v }())
+		repository := asString(func() any { v, _ := task.Get("repository"); return v }())
+		openCommand := shquote.Join([]string{"herdr", "worktree", "open", "--cwd", repository, "--path", worktree, "--label", "sum-" + taskID, "--no-focus"})
+		return "", fmt.Errorf("Worker workspace %s is gone (%s). Reopen the checkout with `%s`, then bind it with `bind %s --worker-pane PANE_ID` (see docs/recovery.md).", workspace, wsCode, openCommand, taskID)
 	}
 	created, err := herdrclient.Call(herdrPath, session, 15*time.Second, "tab", "create", "--workspace", workspace, "--cwd", worktree, "--no-focus")
 	if err != nil {

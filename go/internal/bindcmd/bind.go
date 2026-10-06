@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
@@ -29,6 +30,92 @@ func resolve(path string) string {
 		return resolved
 	}
 	return abs
+}
+
+func observeWorkspaceRebind(herdrPath, session, paneID string, task, agent *ordjson.Object, cwd string) (*ordjson.Object, error) {
+	oldWorkspace := stringField(task, "workspace")
+	if oldWorkspace == "" {
+		parts := strings.SplitN(stringField(task, "pane"), ":", 2)
+		if len(parts) == 2 {
+			oldWorkspace = parts[0]
+		}
+	}
+	newWorkspace := stringField(agent, "workspace_id")
+	if oldWorkspace == "" || newWorkspace == "" {
+		return nil, fmt.Errorf("Worker workspace identity is missing; rebind is refused.")
+	}
+	if oldWorkspace == newWorkspace {
+		return nil, nil
+	}
+	if stringField(agent, "pane_id") != paneID {
+		return nil, fmt.Errorf("Worker pane identity does not match the requested pane; rebind is refused.")
+	}
+	old, oldCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "workspace", "get", oldWorkspace)
+	if err != nil {
+		return nil, fmt.Errorf("Cannot prove recorded worker workspace %s is gone: %w", oldWorkspace, err)
+	}
+	if old != nil || oldCode != "workspace_not_found" {
+		return nil, fmt.Errorf("Recorded worker workspace %s is not proven gone (%s); inspect it before rebinding.", oldWorkspace, oldCode)
+	}
+	newValue, newCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "workspace", "get", newWorkspace)
+	if err != nil {
+		return nil, fmt.Errorf("Cannot verify replacement worker workspace %s: %w", newWorkspace, err)
+	}
+	if newCode != "" || newValue == nil {
+		return nil, fmt.Errorf("Replacement worker workspace %s cannot be verified (%s).", newWorkspace, newCode)
+	}
+	workspace := asObject(newValue)
+	if nested := asObject(func() any { v, _ := workspace.Get("workspace"); return v }()); nested != nil {
+		workspace = nested
+	}
+	if stringField(workspace, "workspace_id") != newWorkspace {
+		return nil, fmt.Errorf("Replacement worker workspace identity does not match the pane.")
+	}
+	worktree := asObject(func() any { v, _ := workspace.Get("worktree"); return v }())
+	checkout := stringField(worktree, "checkout_path")
+	repoRoot := stringField(worktree, "repo_root")
+	repository := stringField(task, "repository")
+	worktreePath := stringField(task, "worktree")
+	branch := stringField(task, "branch")
+	if checkout == "" || resolve(checkout) != resolve(worktreePath) || resolve(cwd) != resolve(worktreePath) || repository == "" || (repoRoot != "" && resolve(repoRoot) != resolve(repository)) || branch == "" {
+		return nil, fmt.Errorf("Replacement worker workspace does not match the recorded checkout identity.")
+	}
+	top, err := gitValue(worktreePath, "rev-parse", "--show-toplevel")
+	if err != nil || resolve(top) != resolve(worktreePath) {
+		return nil, fmt.Errorf("Replacement worker checkout is not the recorded Git worktree.")
+	}
+	common, err := gitValue(worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return nil, fmt.Errorf("Replacement worker checkout Git identity cannot be verified.")
+	}
+	repositoryCommon, err := gitValue(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil || resolve(common) != resolve(repositoryCommon) {
+		return nil, fmt.Errorf("Replacement worker checkout belongs to a different Git repository.")
+	}
+	actualBranch, err := gitValue(worktreePath, "branch", "--show-current")
+	if err != nil || actualBranch != branch {
+		return nil, fmt.Errorf("Replacement worker checkout branch does not match the recorded task branch.")
+	}
+	rebind := ordjson.NewObject()
+	rebind.Set("from_workspace", oldWorkspace)
+	rebind.Set("to_workspace", newWorkspace)
+	rebind.Set("old_workspace_code", oldCode)
+	rebind.Set("checkout", resolve(worktreePath))
+	rebind.Set("repository", resolve(repository))
+	rebind.Set("git_root", resolve(top))
+	rebind.Set("git_common_dir", resolve(common))
+	rebind.Set("branch", branch)
+	rebind.Set("pane", stringField(agent, "pane_id"))
+	return rebind, nil
+}
+
+func gitValue(worktree string, args ...string) (string, error) {
+	argv := append([]string{"git", "-C", worktree}, args...)
+	out, err := proc.Run(argv, "", 20*time.Second, true, nil)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out.Stdout), nil
 }
 
 func stringField(obj *ordjson.Object, key string) string {
@@ -60,8 +147,16 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 	var observedCwd string
 	var reviewerAgent *ordjson.Object
 	var reviewerShell int
+	var preTask *ordjson.Object
 	session, _ := ctx.Get("session")
 	sessionStr, _ := session.(string)
+	if workerPane != "" {
+		preTask, err = s.ReadTask(taskID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var workspaceRebind *ordjson.Object
 	if workerPane != "" || reviewerPane != "" {
 		herdrPath, err := toolpath.Find(pump.RuntimeRoot, "herdr")
 		if err != nil {
@@ -78,6 +173,12 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		agentObj := herdrclient.UnwrapAgent(agent)
 		observedCwd = herdrclient.AgentCwd(agentObj)
 		bound = incarnation.FromInfo(agentObj)
+		if workerPane != "" {
+			workspaceRebind, err = observeWorkspaceRebind(herdrPath, sessionStr, workerPane, preTask, agentObj, observedCwd)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if reviewerPane != "" {
 			reviewerAgent = agentObj
 		}
@@ -137,6 +238,20 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane s
 		worktreeStr, _ := worktree.(string)
 		if observedCwd == "" || resolve(observedCwd) != resolve(worktreeStr) {
 			return nil, fmt.Errorf("Worker cwd does not match the recorded worktree.")
+		}
+		if workspaceRebind != nil {
+			for _, key := range []string{"workspace", "worktree", "repository", "branch"} {
+				before, _ := preTask.Get(key)
+				after, _ := task.Get(key)
+				if before != after {
+					return nil, fmt.Errorf("Task checkout identity changed while the replacement workspace was being verified; inspect it again before rebinding.")
+				}
+			}
+			workspace, _ := workspaceRebind.Get("to_workspace")
+			task.Set("workspace", workspace)
+			if _, err := evidence.Append(task, "worker-workspace-rebind", "coordinator", workspaceRebind, nil, ctx); err != nil {
+				return nil, err
+			}
 		}
 		task.Set("pane", workerPane)
 		task.Set("session", session)

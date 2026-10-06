@@ -12,6 +12,10 @@ After reopening the coordinator, run `./bin/sumctl init`. If the previous coordi
 
 If a worker's pane changed, inspect the actual agent and use `bind TASK_ID --worker-pane PANE_ID`. The helper checks the recorded worktree. It never creates a replacement automatically. Herdr remains the sole owner of process/session restoration; sum does not alter its auto-resume setting.
 
+If closing the last worker pane also removed its Herdr workspace while the Git worktree still exists, reopen that checkout with `herdr worktree open --cwd <task repository> --path <task checkout> --label sum-<task> --no-focus`, start or adopt the worker in the new workspace, then run `sumctl bind TASK_ID --worker-pane PANE_ID`. Keep the rebound pane open; closing it removes the reopened workspace again. Binding changes the recorded workspace only when Herdr reports the old workspace as `workspace_not_found`, the new workspace reports the same checkout path, the pane cwd is that checkout, and Git reports the saved task branch and repository identity. Sum records those observations in task evidence; a live old workspace or a mismatch is refused. The ordinary same-workspace bind path does not change.
+
+After rebinding, `execution park` still requires conclusive stop evidence: the worker agent must be gone and no process may remain bound to the checkout. Once the attempt is released, use `execution resume` for a fresh worker at the checkout's current HEAD. Send corrections with `repair send` after resume starts the worker; it refuses a released attempt. `sweep` and `cleanup` use the rebound workspace identity for pane and workspace checks.
+
 If the task's recorded reviewer pane is gone or no longer has a live reviewer agent, inspect the replacement pane and run `bind TASK_ID --reviewer-pane PANE_ID`. Its cwd must match the task checkout, and the worker pane cannot be adopted. The recorded reviewer endpoint must be proved stopped: Herdr reports `pane_not_found` or `agent_not_found`, the old pane has no foreground process, and no other process remains bound to the checkout. A surviving old pane whose cwd moved out of the checkout is refused; close that pane so Herdr reports `pane_not_found`, then retry. A live old reviewer is never replaced. The rebind is appended to task evidence; context, reviewer-only cleanup, and sweep then use the new endpoint.
 
 ```sh
@@ -126,7 +130,7 @@ A started task finishes under its helpers' own bounds (each `gh` call up to 120 
 The same pass closes only the pane that settled the obligation: the pane recorded on the worker report or reviewer verdict for the current candidate (or a terminal task state), via native `pane close`, after the pane cwd matches the recorded checkout and occupant incarnation is verified.
 A successor pane created by resume stays open until it files a new report or review.
 Unanswered questions do not keep those panes open: `answer` writes the decision, and `execution resume` launches a fresh session at the recorded worktree's current HEAD that reads `context --role worker --section decisions`.
-A closed pane is recorded so later delivery and refresh are `pane-closed`; `repair send` records the instruction and names resume.
+A closed pane is recorded so later delivery and refresh are `pane-closed`. After `execution resume` starts a worker, use `repair send` with its current attempt ID to send a correction.
 A second sweep with nothing pending does nothing.
 
 `--apply` proceeds only when every check passes, and every failed check is a named blocker in the output and in `show TASK_ID`:
