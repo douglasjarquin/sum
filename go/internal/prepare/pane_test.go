@@ -170,8 +170,16 @@ func TestEnsureWorkerPaneReportsObservedPaneIdentity(t *testing.T) {
 	task.Set("pane", "w-worker:p1")
 	task.Set("workspace", "w-expected")
 	task.Set("worktree", checkout)
+	resolvedHome := home
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		resolvedHome = resolved
+	}
+	resolvedCheckout := checkout
+	if resolved, err := filepath.EvalSymlinks(checkout); err == nil {
+		resolvedCheckout = resolved
+	}
 	_, err = EnsureWorkerPane(root, "sum-test", task)
-	if err == nil || !strings.Contains(err.Error(), "observed cwd "+home) || !strings.Contains(err.Error(), "pane workspace w-observed") || !strings.Contains(err.Error(), "expected checkout "+checkout) || !strings.Contains(err.Error(), "workspace w-expected") {
+	if err == nil || !strings.Contains(err.Error(), "observed cwd "+resolvedHome) || !strings.Contains(err.Error(), "pane workspace w-observed") || !strings.Contains(err.Error(), "expected checkout "+resolvedCheckout) || !strings.Contains(err.Error(), "workspace w-expected") {
 		t.Fatalf("EnsureWorkerPane mismatch error = %v", err)
 	}
 }
