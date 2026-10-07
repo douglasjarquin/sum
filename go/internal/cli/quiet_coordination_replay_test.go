@@ -47,6 +47,12 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not on PATH")
 	}
+	phaseStarted := time.Now()
+	phaseDurations := map[string]int64{}
+	markPhase := func(name string) {
+		phaseDurations[name] = time.Since(phaseStarted).Milliseconds()
+		phaseStarted = time.Now()
+	}
 	lab := newReplayLab(t)
 	m := lab.measure
 
@@ -106,6 +112,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 		t.Fatalf("occupied tick %v", ticks)
 	}
 	m.record("setup", map[string]any{"tasks": len(lab.tasks), "projects": 3, "factories": 2, "gh_calls": lab.ghCalls(), "herdr_calls": lab.herdrCalls()})
+	markPhase("setup")
 
 	// The lane-A worker finishes its change before the burst: a candidate commit and the project's own verify run, so
 	// its report is a real handoff the pipeline can act on later. Nothing here touches the home.
@@ -113,6 +120,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	handoff := lab.workerHandoff(laneA, candidate)
 
 	lab.readPhase(t, "reads-before-burst")
+	markPhase("handoff-and-preburst-reads")
 
 	// --- AE1: twelve concurrent routine reports, coordinator idle, one routine prompt ------------------------------
 	baseline := lab.snapshotForBaseline(t)
@@ -168,6 +176,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 		"pump_after_wake": map[string]any{"prompts": pump["prompts"], "state": pumpRow["state"], "via": pumpRow["via"], "deferred": fanout["deferred"], "lock_wait_ms": fanout["lock_wait_ms"], "herdr_calls": fanout["herdr_calls"]},
 		"wake_included":   len(asSlice(show["included"])), "wake_omitted": len(asSlice(show["omitted"])),
 	}
+	markPhase("candidate-burst-and-assertions")
 	lab.coordinatorStatus(t, "working")
 	lab.readPhase(t, "reads-after-burst")
 
@@ -183,6 +192,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 			"wake_sidecar":  baseline.wakeSidecarExists()},
 		"note": "identical inputs: the baseline home is a copy taken before the burst with wake_protocol removed from the owner record; both labs run six report processes started together while the coordinator is idle, one coordinator idle edge (hook event), six more concurrent reports, then two more idle edges; the fake marks a prompted pane working, as Herdr does, so per-run submitted/not-delivered splits inside a burst vary while the prompt count across arrivals and edges is the contract",
 	})
+	markPhase("baseline-burst-and-assertions")
 
 	// --- #240b: a new decision behind the routine wake ----------------------------------------------------------------
 	lab.coordinatorStatus(t, "idle")
@@ -225,6 +235,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 		t.Logf("second consume of the same boundary: %v", again)
 	}
 	m.record("consume", map[string]any{"included": len(asSlice(show["included"])), "omitted": len(asSlice(show["omitted"])), "result": consumed["result"], "open_obligations": openBefore})
+	markPhase("decision-and-wake-consumption")
 
 	// The answer reaches the worker; the worker applies it.
 	var questionID string
@@ -246,6 +257,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	if grouped := lab.ctl(true, "inbox", "--grouped"); countDecisions(grouped) != 0 {
 		t.Fatalf("an answered and applied question still counts as a decision: %v", grouped["counts"])
 	}
+	markPhase("answer-and-apply")
 
 	// --- #242: lane A progresses; the digest labels each step without performing it ---------------------------------
 	digest := lab.digest(t, "factory status", "--project", "a/repo")
@@ -375,6 +387,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	}
 	m.record("lane-a/close", map[string]any{"cleanup_state": cleaned["state"], "gh_calls_total": lab.ghCalls(), "occupied": settings["occupied"]})
 	lab.readPhase(t, "reads-after-cleanup")
+	markPhase("factory-lane-and-cleanup")
 
 	// --- Fallbacks: hook off, metadata off, native capability absent ---------------------------------------------------
 	lab.ctl(true, "hook", "disable")
@@ -403,6 +416,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	m.record("fallback", map[string]any{"prompts_added": 1, "hook": hookStatus["enabled"], "metadata": metaStatus, "wake_outstanding": fallbackWake["outstanding"],
 		"note": "older helpers on these records: TestOlderHelpersOnCandidateRecords (not rebuilt here)"})
 	lab.readPhase(t, "reads-fallback")
+	markPhase("fallback-and-read-purity")
 
 	// --- Remote mutation audit ---------------------------------------------------------------------------------------
 	verbs := lab.ghVerbs(t)
@@ -421,6 +435,8 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	m.record("not_run", map[string]any{"native_canary": "not-run: no real Herdr session or agent harness in this lab; simulated output proves no narration compliance",
 		"task_reads":     "unavailable: not strace-instrumented here; TestMeasureCoordinationPasses counts them under SUM_MEASURE_OUT",
 		"tokens_latency": "not measured; stdout bytes and call counts only"})
+	markPhase("audit-and-measure-write")
+	m.record("phase_timing_ms", phaseDurations)
 	m.write(t, lab.base)
 }
 

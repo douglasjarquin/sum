@@ -47,6 +47,13 @@ func writeDesignatedHome(t *testing.T) string {
 	return home
 }
 
+func disableNativeEventsForTest(t *testing.T, home string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte("{\"schema\": 1, \"hook\": {\"enabled\": false}}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func herdrEnv(t *testing.T, home string) {
 	t.Helper()
 	root := repoRoot(t)

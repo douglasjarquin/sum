@@ -86,7 +86,7 @@ func TestDispatchDevinWorkerCarriesTrustGateArgv(t *testing.T) {
 }
 
 func TestDispatchOtherHarnessHasNoDevinArgv(t *testing.T) {
-	d := newPolicyLab(t)
+	d := newPolicyLabWithoutNativeEvents(t)
 	repo := policyProject(t, d.base, "codex-worker", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
 	if argv := startedArgv(task); len(argv) != 0 {

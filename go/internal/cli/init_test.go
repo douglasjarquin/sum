@@ -93,6 +93,7 @@ func TestInitCommands(t *testing.T) {
 			home := writeDesignatedHome(t)
 			if tc.herdr {
 				herdrEnv(t, home)
+				disableNativeEventsForTest(t, home)
 			} else {
 				clearHerdrEnv(t)
 			}

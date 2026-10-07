@@ -38,6 +38,14 @@ const featureMap = "# Greeting\n\n" +
 	"| `greeting.exit-code` | The CLI exits zero | automated: `go test ./...` | offline suite |\n"
 
 func newPolicyLab(t *testing.T) *demoLab {
+	return newPolicyLabConfigured(t, false)
+}
+
+func newPolicyLabWithoutNativeEvents(t *testing.T) *demoLab {
+	return newPolicyLabConfigured(t, true)
+}
+
+func newPolicyLabConfigured(t *testing.T, disableNativeEvents bool) *demoLab {
 	t.Helper()
 	root, helper := repoReference(t)
 	base := t.TempDir()
@@ -47,6 +55,9 @@ func newPolicyLab(t *testing.T) *demoLab {
 	}
 	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	if disableNativeEvents {
+		disableNativeEventsForTest(t, home)
 	}
 	d := &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: demoEnv(t, root, base)}
 	if role := asString(d.ctl(true, "init")["role"]); role != "coordinator" {
