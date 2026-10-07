@@ -115,10 +115,12 @@ func TestWakeHelpMatchesImplementedCommands(t *testing.T) {
 // idempotently, and reconcile then has nothing to do.
 func TestWakeCommandsEndToEndWithTheHookDisabled(t *testing.T) {
 	home := writeDesignatedHome(t)
+	configureNativeEventsForTest(t, home, true)
 	herdrEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
+	assertNativeEventsEnabledForTest(t, home)
 	owner := readJSON(t, filepath.Join(home, "context.json"))
 	if fmt.Sprint(owner["wake_protocol"]) != "1" {
 		t.Fatalf("init did not adopt the wake protocol: %v", owner)
@@ -220,10 +222,12 @@ func TestWakeCommandsEndToEndWithTheHookDisabled(t *testing.T) {
 // priority_prompts.
 func TestWakePriorityDecisionEndToEnd(t *testing.T) {
 	home := writeDesignatedHome(t)
+	configureNativeEventsForTest(t, home, true)
 	herdrEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
+	assertNativeEventsEnabledForTest(t, home)
 	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)

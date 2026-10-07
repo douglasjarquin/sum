@@ -97,6 +97,7 @@ func newVerifyLabWith(t *testing.T, prepare func(repo string)) *verifyLab {
 		t.Fatal(err)
 	}
 	d := &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: env}
+	configureNativeEventsForTest(t, home, false)
 	if asString(d.ctl(true, "init")["role"]) != "coordinator" {
 		t.Fatal("first init")
 	}

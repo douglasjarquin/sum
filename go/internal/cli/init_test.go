@@ -199,6 +199,7 @@ func TestInit_coordinatorAdoptsTheWakeProtocol(t *testing.T) {
 
 func TestInit_enablesNativeEventsByDefaultAndPreservesDisableChoice(t *testing.T) {
 	home := writeDesignatedHome(t)
+	configureNativeEventsForTest(t, home, true)
 	herdrEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("first init: %v", err)
@@ -234,10 +235,12 @@ func TestInit_migratesOnlyLegacyHealthThatShowsTheHookOff(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			home := writeDesignatedHome(t)
+			configureNativeEventsForTest(t, home, true)
 			herdrEnv(t, home)
 			if _, err := runCLI(t, home, "init"); err != nil {
 				t.Fatalf("initial init: %v", err)
 			}
+			assertNativeEventsEnabledForTest(t, home)
 			healthPath := filepath.Join(home, "hook", "health.json")
 			health := readJSON(t, healthPath)
 			health["enabled"] = tt.enabled
@@ -266,6 +269,7 @@ func TestInit_migratesOnlyLegacyHealthThatShowsTheHookOff(t *testing.T) {
 
 func TestInit_nativeEventEnableFailureIsDegradedAndFailOpen(t *testing.T) {
 	home := writeDesignatedHome(t)
+	configureNativeEventsForTest(t, home, true)
 	herdrEnv(t, home)
 	wrapper := filepath.Join(t.TempDir(), "herdr-failing-plugin-link")
 	script := "#!/bin/sh\nif [ \"$3\" = plugin ] && [ \"$4\" = link ]; then echo registry unavailable >&2; exit 1; fi\nexec python3 \"" + os.Getenv("SUM_HERDR_BIN") + "\" \"$@\"\n"

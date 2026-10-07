@@ -25,7 +25,12 @@ type metaLab struct {
 
 func newMetaLab(t *testing.T) *metaLab {
 	t.Helper()
-	return newMetaLabAt(t, writeDesignatedHome(t))
+	return newMetaLabAtConfigured(t, writeDesignatedHome(t), false)
+}
+
+func newMetaLabWithNativeEvents(t *testing.T) *metaLab {
+	t.Helper()
+	return newMetaLabAtConfigured(t, writeDesignatedHome(t), true)
 }
 
 func designatedHomeAt(t *testing.T, home string) string {
@@ -36,14 +41,26 @@ func designatedHomeAt(t *testing.T, home string) string {
 	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	configureNativeEventsForTest(t, home, false)
 	return home
 }
 
 func newMetaLabAt(t *testing.T, home string) *metaLab {
 	t.Helper()
+	return newMetaLabAtConfigured(t, home, false)
+}
+
+func newMetaLabAtConfigured(t *testing.T, home string, nativeEvents bool) *metaLab {
+	t.Helper()
+	if nativeEvents {
+		configureNativeEventsForTest(t, home, true)
+	}
 	herdrEnv(t, home)
 	if out, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
+	}
+	if nativeEvents {
+		assertNativeEventsEnabledForTest(t, home)
 	}
 	owner := readJSONFile(t, filepath.Join(home, "context.json"))
 	// The coordinator pane runs where the owner record says; the fake reports that cwd for the parent pane.
@@ -435,7 +452,7 @@ func (l *metaLab) herdr093HookEvent(pluginID, socketPath string) map[string]any 
 }
 
 func TestHookEvent_Herdr093DefaultSocketRunsPumpForRecordedPane(t *testing.T) {
-	lab := newMetaLab(t)
+	lab := newMetaLabWithNativeEvents(t)
 	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
 	task := readJSONFile(t, filepath.Join(lab.home, "tasks", lab.task, "task.json"))
 	task["session"] = "default"
@@ -473,7 +490,7 @@ func TestHookEvent_Herdr093DefaultSocketRunsPumpForRecordedPane(t *testing.T) {
 }
 
 func TestHookEvent_AmbiguousSessionIsRecordedAndDegraded(t *testing.T) {
-	lab := newMetaLab(t)
+	lab := newMetaLabWithNativeEvents(t)
 	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
 	other := readJSONFile(t, filepath.Join(lab.home, "tasks", lab.task, "task.json"))
 	other["id"] = "t-bbbbbbbbbbbb"
@@ -515,7 +532,7 @@ func TestHookEvent_AmbiguousSessionIsRecordedAndDegraded(t *testing.T) {
 }
 
 func TestHookEvent_UnownedPaneOnCustomSocketIsIgnored(t *testing.T) {
-	lab := newMetaLab(t)
+	lab := newMetaLabWithNativeEvents(t)
 	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
 	t.Setenv("HERDR_SESSION", "")
 	t.Setenv("HERDR_SOCKET_PATH", filepath.Join(t.TempDir(), "custom.sock"))
@@ -533,7 +550,7 @@ func TestHookEvent_UnownedPaneOnCustomSocketIsIgnored(t *testing.T) {
 }
 
 func TestHookEvent_HandledEventClearsDegradedAndKeepsErrorHistory(t *testing.T) {
-	lab := newMetaLab(t)
+	lab := newMetaLabWithNativeEvents(t)
 	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
 	other := readJSONFile(t, filepath.Join(lab.home, "tasks", lab.task, "task.json"))
 	other["id"] = "t-bbbbbbbbbbbb"
@@ -564,7 +581,7 @@ func TestHookEvent_HandledEventClearsDegradedAndKeepsErrorHistory(t *testing.T) 
 }
 
 func TestHookEvent_CustomSocketResolvesUniqueRecordedPaneByObservation(t *testing.T) {
-	lab := newMetaLab(t)
+	lab := newMetaLabWithNativeEvents(t)
 	lab.run("hook", "enable")
 	observedLog := filepath.Join(lab.home, "observed-pane.log")
 	wrapper := filepath.Join(lab.home, "herdr-current")
@@ -586,7 +603,7 @@ func TestHookEvent_CustomSocketResolvesUniqueRecordedPaneByObservation(t *testin
 }
 
 func TestMetadataHookEvent_projectsHandledEventsOnlyAndNeverIgnoredOnes(t *testing.T) {
-	lab := newMetaLab(t)
+	lab := newMetaLabWithNativeEvents(t)
 	lab.enable()
 	pluginID := lab.run("hook", "enable")["plugin_id"].(string)
 	before := lab.meta()["last_pass"].(map[string]any)
@@ -846,7 +863,7 @@ func TestMetadataDisable_clearsRecordedKeysAndReportsFailedClears(t *testing.T) 
 }
 
 func TestMetadataInboxOpen_fallsBackWithoutMetadataCapabilityAndOpensWithIt(t *testing.T) {
-	lab := newMetaLab(t)
+	lab := newMetaLabWithNativeEvents(t)
 	if hook := lab.run("hook", "status"); hook["enabled"] != true {
 		t.Fatalf("native delivery should be enabled by default: %v", hook)
 	}

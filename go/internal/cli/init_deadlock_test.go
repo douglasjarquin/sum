@@ -30,10 +30,12 @@ func TestInitAndBindDeliveryPassDoNotSelfDeadlock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	configureNativeEventsForTest(t, home, true)
 	d := &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: demoEnv(t, root, base)}
 	if got := d.ctl(true, "init")["role"]; got != "coordinator" {
 		t.Fatalf("init role = %v, want coordinator", got)
 	}
+	assertNativeEventsEnabledForTest(t, home)
 
 	host, err := machine.ID()
 	if err != nil {

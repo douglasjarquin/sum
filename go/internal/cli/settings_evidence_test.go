@@ -41,6 +41,7 @@ func TestSettingsSetWritesAndClearsTheEvidenceBlock(t *testing.T) {
 	home := writeDesignatedHome(t)
 	herdrEnv(t, home)
 	writeSettingsFile(t, home, `{"schema": 1, "capacity": {"global": 2, "per_repository": 1}}`)
+	configureNativeEventsForTest(t, home, false)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("coordinator init: %v", err)
 	}

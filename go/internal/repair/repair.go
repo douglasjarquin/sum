@@ -641,6 +641,7 @@ func Extend(s *store.Store, ctx *ordjson.Object, args ExtendArgs) (*ordjson.Obje
 
 // SendLockWait bounds how long Send waits for another delivery to the same worker (a variable so tests can shorten it).
 var SendLockWait = returns.DefaultPassBudget
+var SendPromptTimeout = 5 * time.Second
 
 type SendArgs struct {
 	TaskID      string
@@ -875,7 +876,7 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 		session := asString(func() any { v, _ := route.Get("session"); return v }())
 		pane := asString(func() any { v, _ := route.Get("pane"); return v }())
 		var code string
-		_, code, sendErr = herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "prompt", pane, args.Text)
+		_, code, sendErr = herdrclient.Observe(herdrPath, session, SendPromptTimeout, "agent", "prompt", pane, args.Text)
 		if sendErr == nil && code != "" {
 			refuseErr = fmt.Errorf("Herdr refused the prompt: %s", code)
 			sendErr = nil

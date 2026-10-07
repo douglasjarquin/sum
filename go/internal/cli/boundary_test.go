@@ -17,7 +17,7 @@ import (
 // cleanup, while outstanding maintenance stays listed with its exact command; only the explicit `sweep` observes the
 // PR. The fake gh logs every call it receives.
 func TestFastPathsNeverReconcileOrCleanUp(t *testing.T) {
-	d := newPolicyLab(t)
+	d := newPolicyLabWithNativeEvents(t)
 	repo := policyProject(t, d.base, "boundary", map[string]string{"README.md": "A project.\n"})
 	open := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
 	merged := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
