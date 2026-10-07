@@ -21,6 +21,7 @@ Already-approved work, and artifacts the user asked to see.
 
 - `dispatch` / `start` for an explicit user instruction or an already-approved task
 - `ask`, `answer` with the user's actual words, `report`, `verify`, `review`
+- `reviewer launch` for a reported candidate, logged like dispatch
 - Open or update a pull request through the delivery pipeline
 - Create a draft and stop before send
 

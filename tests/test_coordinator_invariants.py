@@ -51,6 +51,12 @@ ANCHORS = (
     ("templates/decisions.md", "Append-only."),
     ("templates/action-log.md", "before the side effect"),
     ("templates/permissions.md", "Gated"),
+    ("templates/permissions.md", "`reviewer launch`"),
+    ("templates/action-log.md", "a reviewer launch"),
+    ("grok-bots/sum/action-log.md", "a reviewer launch"),
+    ("grok-bots/sum/permissions.md", "re-prompt the reviewer"),
+    ("skills/sum-deliver/SKILL.md", "Before `reviewer launch`"),
+    ("grok-bots/sum/skills/deliver/SKILL.md", "Before `reviewer launch`"),
 )
 
 

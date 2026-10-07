@@ -4,7 +4,7 @@ Copy this file to `.sum/action-log.md` before the first external side effect.
 Append-only. One line per status. Do not edit or delete a line.
 
 Append an `intended` line before the side effect, then `done`, `failed`, or `skipped-duplicate` after it.
-External side effects include dispatch, a worker prompt, opening or updating a pull request, a factory merge on an already-authorized lane, and any send, publish, or delete.
+External side effects include dispatch, a reviewer launch, a worker prompt, opening or updating a pull request, a factory merge on an already-authorized lane, and any send, publish, or delete.
 Reading status is not a side effect.
 Worker commits inside the task checkout are the task's own work; the coordinator logs the dispatch and the pull request.
 

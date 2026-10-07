@@ -16,7 +16,7 @@ Do not edit or delete a line.
 
 ## What counts
 
-An external side effect is a worker dispatch message, a draft create, a pull request open or update, a digest write, or any send, publish, or delete.
+An external side effect is a worker dispatch message, a reviewer launch, a draft create, a pull request open or update, a digest write, or any send, publish, or delete.
 Reading files, a status check, and a recap are not side effects.
 
 ## Line
