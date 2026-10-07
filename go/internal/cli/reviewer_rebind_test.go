@@ -130,6 +130,18 @@ func TestBindReviewerPaneRefusesWorkerPane(t *testing.T) {
 }
 
 func TestBindReviewerPaneRefusals(t *testing.T) {
+	d, taskID, worktree := reviewerRebindLab(t)
+	taskPath := filepath.Join(d.home, "tasks", taskID, "task.json")
+	taskState, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	herdrStatePath := filepath.Join(d.base, "fake", "state.json")
+	herdrState, err := os.ReadFile(herdrStatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lsofStatePath := filepath.Join(d.base, "fake-lsof", "cwds.json")
 	cases := []struct {
 		name  string
 		setup func(*testing.T, *demoLab, string, string)
@@ -174,7 +186,15 @@ func TestBindReviewerPaneRefusals(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			d, taskID, worktree := reviewerRebindLab(t)
+			if err := os.WriteFile(taskPath, taskState, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(herdrStatePath, herdrState, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(lsofStatePath); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
 			if tc.setup != nil {
 				tc.setup(t, d, taskID, worktree)
 			}

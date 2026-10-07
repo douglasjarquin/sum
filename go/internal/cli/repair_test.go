@@ -387,6 +387,9 @@ func TestRepairSend_deliveryRefusalRecordsAndChargesNothing(t *testing.T) {
 
 func TestRepairSend_uncertainExpansionStaysCharged(t *testing.T) {
 	home, _ := repairSendLab(t)
+	oldPromptTimeout := repair.SendPromptTimeout
+	repair.SendPromptTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { repair.SendPromptTimeout = oldPromptTimeout })
 	t.Setenv("FAKE_PROMPT_HANG", "10")
 
 	// The prompt reached the pane but the answer timed out: uncertain stays recorded and charged.
