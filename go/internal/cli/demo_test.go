@@ -52,6 +52,7 @@ func TestOfflineDemo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	configureNativeEventsForTest(t, home, true)
 	d := &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: demoEnv(t, root, base)}
 	d.ctl(false, "doctor")
 	if _, err := os.Stat(filepath.Join(home, "context.json")); err == nil {
@@ -60,6 +61,7 @@ func TestOfflineDemo(t *testing.T) {
 	if asString(d.ctl(true, "init")["role"]) != "coordinator" {
 		t.Fatal("first init")
 	}
+	assertNativeEventsEnabledForTest(t, home)
 	if asString(d.ctl(true, "init")["role"]) != "coordinator" {
 		t.Fatal("repeat init")
 	}

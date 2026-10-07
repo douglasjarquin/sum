@@ -17,7 +17,6 @@ func closeLab(t *testing.T, workerState string) string {
 	t.Helper()
 	home := writeDesignatedHome(t)
 	herdrEnv(t, home)
-	disableNativeEventsForTest(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}

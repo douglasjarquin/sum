@@ -344,7 +344,6 @@ func briefCoordinatorLab(t *testing.T) (home, worktree, taskID string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
 	herdrEnv(t, home)
-	disableNativeEventsForTest(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("coordinator init: %v", err)
 	}

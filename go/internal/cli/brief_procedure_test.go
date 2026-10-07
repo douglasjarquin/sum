@@ -52,6 +52,7 @@ func newRuntimeLab(t *testing.T, withProcedure bool) *demoLab {
 	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	configureNativeEventsForTest(t, home, false)
 	d := &demoLab{t: t, root: runtime, helper: filepath.Join(runtime, "bin", "sumctl"), home: home, base: base, env: demoEnv(t, root, base)}
 	d.setEnv("FAKE_PARENT_CWD", runtime)
 	if role := asString(d.ctl(true, "init")["role"]); role != "coordinator" {

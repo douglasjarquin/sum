@@ -55,11 +55,13 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	}
 	lab := newReplayLab(t)
 	m := lab.measure
+	configureNativeEventsForTest(t, lab.home, true)
 
 	// --- Setup: coordinator, projects, workers, factories -----------------------------------------------------------
 	if got := asString(lab.ctl(true, "init")["role"]); got != "coordinator" {
 		t.Fatalf("init role %q", got)
 	}
+	assertNativeEventsEnabledForTest(t, lab.home)
 	if owner := lab.owner(t); ownerField(owner, "wake_protocol") == "" {
 		t.Fatal("init did not adopt the wake protocol on the owner record")
 	}
@@ -471,6 +473,7 @@ func newReplayLab(t *testing.T) *replayLab {
 	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	configureNativeEventsForTest(t, home, false)
 	bin := filepath.Join(base, "bin")
 	if err := os.Mkdir(bin, 0o755); err != nil {
 		t.Fatal(err)

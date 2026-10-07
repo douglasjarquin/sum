@@ -44,13 +44,40 @@ func writeDesignatedHome(t *testing.T) string {
 	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	configureNativeEventsForTest(t, home, false)
 	return home
 }
 
-func disableNativeEventsForTest(t *testing.T, home string) {
+func configureNativeEventsForTest(t *testing.T, home string, enabled bool) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(home, "settings.json"), []byte("{\"schema\": 1, \"hook\": {\"enabled\": false}}\n"), 0o600); err != nil {
+	path := filepath.Join(home, "settings.json")
+	settings := map[string]any{"schema": 1}
+	if raw, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			t.Fatalf("read settings %s: %v", path, err)
+		}
+	} else if !os.IsNotExist(err) {
 		t.Fatal(err)
+	}
+	if enabled {
+		delete(settings, "hook")
+	} else {
+		settings["hook"] = map[string]any{"enabled": false}
+	}
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertNativeEventsEnabledForTest(t *testing.T, home string) {
+	t.Helper()
+	status, err := runCLI(t, home, "hook", "status")
+	if err != nil || decodeObject(t, status)["enabled"] != true {
+		t.Fatalf("native delivery should be enabled after coordinator init: %s, err = %v", status, err)
 	}
 }
 
@@ -179,10 +206,12 @@ func TestReport_recordsWorkerClaim(t *testing.T) {
 
 func TestAttention_marksOpenRecordSeen(t *testing.T) {
 	home := writeDesignatedHome(t)
+	configureNativeEventsForTest(t, home, true)
 	herdrEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
+	assertNativeEventsEnabledForTest(t, home)
 	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null,
 "attention": [{"id": "a-aaaaaaaaaa", "kind": "blocked", "status": "open", "at": "2026-01-01T00:00:00+00:00"}],
