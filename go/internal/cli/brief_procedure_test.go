@@ -132,7 +132,7 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 	for _, rule := range []string{
 		"Never add a code comment or edit an existing code comment.",
 		"This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files.",
-		"Comments drift from code; the code, tests and commit messages carry intent.",
+		"Comments drift from code; the code and commit messages carry intent.",
 		"Commit messages, PR descriptions and `sumctl report` text are not code comments.",
 		"Leave existing comments untouched when changing surrounding code.",
 		"add a directive only when the code cannot work without it, and include no explanatory prose in it.",
