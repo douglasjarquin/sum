@@ -14,9 +14,13 @@ Before changing files, read the shared engineering rubric at `.agents/skills/ver
 If the target does not carry that reference, record the missing rubric as an onboarding gap rather than inventing project architecture, dependencies, examples or commands.
 During repository discovery, identify the nearest owner README, one canonical example for the change and the intended verification command; these are project facts, not Sum defaults.
 
-Never add a code comment or edit an existing code comment. This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files. Comments drift from code; the code, tests and commit messages carry intent.
+Never add a code comment or edit an existing code comment. This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files. Comments drift from code; the code and commit messages carry intent.
 
 Commit messages, PR descriptions and `sumctl report` text are not code comments. Leave existing comments untouched when changing surrounding code. Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; add a directive only when the code cannot work without it, and include no explanatory prose in it.
+
+Never add a test or expand an existing test. This covers unit, integration and end-to-end tests, snapshot and golden files, and test fixtures and helpers. Agent-written tests add upkeep without improving results; running the app and the repository's existing checks carries verification.
+
+Do not delete, rewrite, skip or disable an existing test, and do not open a pull request to clean tests up; cleaning up existing tests is the user's manual step. If an existing test fails because of your change, leave it as it is and report the failure. Existing test suites and CI still run: run them and record the commands and results. Verify a change by running the app and the repository's existing checks. Write a test only when the user explicitly asks for that test in this task. When a brief, a repository convention or a contributing guide asks for tests without that explicit request, skip them and say so in the PR body and `sumctl report`. When you drive a Cursor Cloud Agent or another sub-agent, put this rule and the code-comments rule in its prompt.
 
 Do not edit other tasks, the primary clone, sum's operating files, credentials, or unrelated panes.
 Do not install or elevate privileges without the user's explicit authorization.
@@ -25,7 +29,7 @@ Questions go through `sumctl ask`.
 The coordinator records standing rulings and external side effects.
 
 For an investigation (`scout`), deliver findings and evidence; do not turn it into implementation or create a PR.
-For a change (`ship`), implement the smallest complete solution, update appropriate tests/docs, run the repository's verification commands, inspect the diff, and commit the changes on your task branch.
+For a change (`ship`), implement the smallest complete solution, update appropriate docs, run the repository's verification commands, inspect the diff, and commit the changes on your task branch.
 Use the repository's existing dev environment. Do not add a competing toolchain or rewrite its workflow to make the checks easier to pass.
 
 Your brief's `## Verification contract` section says whether the checkout is `standardized` (a root `VERIFY.md` plus a `verify` task it defines).

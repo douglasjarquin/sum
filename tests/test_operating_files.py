@@ -269,7 +269,7 @@ class OperatingFilesTest(unittest.TestCase):
             self.assertIn(hard_rule, text)
             for exception in exceptions:
                 self.assertIn(exception, text)
-            self.assertIn("Comments drift from code; the code, tests and commit messages carry intent.", text)
+            self.assertIn("Comments drift from code; the code and commit messages carry intent.", text)
             self.assertIn("include no explanatory prose in it", text)
         for text in (reviewer, grok_reviewer):
             self.assertIn("Treat any added code comment or edit to an existing code comment", text)
