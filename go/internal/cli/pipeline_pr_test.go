@@ -201,6 +201,20 @@ Taught the delivery pipeline to open the PR.
 	}
 }
 
+func TestPipelineRun_stampsTheCreatedBodyWithTheRuntimeMarker(t *testing.T) {
+	lab := prLab(t)
+
+	runGate(t, lab, "run", gateTaskID)
+
+	body := lab.createdBody(t)
+	if !strings.Contains(body, "<!-- sum:0.1.0") {
+		t.Fatalf("the created PR body carries no runtime marker:\n%s", body)
+	}
+	if !strings.HasSuffix(strings.TrimRight(body, "\n"), " -->") {
+		t.Fatalf("the runtime marker is not the body's last line:\n%s", body)
+	}
+}
+
 func TestPipelineRun_asecondRunCreatesNothingAndReportsTheExistingPR(t *testing.T) {
 	lab := prLab(t)
 	runGate(t, lab, "run", gateTaskID)

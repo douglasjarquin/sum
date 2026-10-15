@@ -288,7 +288,7 @@ def cmd_plan(args):
     rows = [plan_scenario(run_dir, s, args, redactor, media_dir) for s in scenarios]
     plan = {"schema": SCHEMA, "created_at": utc_now(), "run": args.run, "evidence_root": str(root_dir), "run_dir": str(run_dir), "publish_dir": str(publish_dir), "media_dir": str(media_dir),
             "destination": {"repository": args.repo, "number": args.pr}, "candidate": args.candidate, "base": args.base, "verification_runs": args.verification_run,
-            "captured_by": args.captured_by, "scenarios": rows, "publishable_media": sum(len(r["media"]) for r in rows if r["publishable"]),
+            "captured_by": args.captured_by, "sum_marker": args.sum_marker, "scenarios": rows, "publishable_media": sum(len(r["media"]) for r in rows if r["publishable"]),
             "publishable_scenarios": [r["id"] for r in rows if r["publishable"]], "refused_scenarios": {r["id"]: r["findings"] for r in rows if not r["publishable"]}}
     plan["block_preview"] = render_block(plan, lambda sha: None, final=False) if plan["publishable_scenarios"] else None
     if plan["block_preview"]:
@@ -320,8 +320,10 @@ def media_ref(entry, url, alt):
 def render_block(plan, url_for, final: bool):
     """The marked block. `url_for(sha)` gives a known attachment URL or None (then a local publish-copy reference `gh --attach` rewrites).
     `final` renders video pairs as an HTML table once every URL is known; before that videos stay on their own lines so `gh` can upload them."""
-    lines = [MARKER_START, f"<!-- sum-evidence: run={plan['run']} candidate={plan['candidate']} base={plan.get('base') or 'unknown'} scenarios={len(plan['publishable_scenarios'])} -->",
-             "### Before/after evidence", ""]
+    lines = [MARKER_START, f"<!-- sum-evidence: run={plan['run']} candidate={plan['candidate']} base={plan.get('base') or 'unknown'} scenarios={len(plan['publishable_scenarios'])} -->"]
+    if plan.get("sum_marker"):
+        lines.append(plan["sum_marker"])
+    lines += ["### Before/after evidence", ""]
     who = plan.get("captured_by") or "the task worker"
     runs = ", ".join(f"`{r}`" for r in plan.get("verification_runs") or []) or "none recorded"
     lines += [f"Captured by {who} from candidate `{plan['candidate'][:12]}`" + (f" against base `{plan['base'][:12]}`" if plan.get("base") else "")
@@ -676,6 +678,7 @@ def main(argv=None):
     plan.add_argument("--base", help="Base SHA the before captures must come from")
     plan.add_argument("--verification-run", action="append", default=[], help="Verification run id(s) to cite in the block")
     plan.add_argument("--captured-by", help="Who captured the evidence, for the provenance line (default: the task worker)")
+    plan.add_argument("--sum-marker", help="Sum runtime provenance stamp written inside the block (default: none)")
     plan.add_argument("--evidence-root", help="Evidence root directory (default: `evidence` from VERIFY.md or VERIFY_EVIDENCE_ROOT)")
     plan.add_argument("--publish-dir", help="Where plan.json, publish copies, and results go (default: <run>/publish)")
     plan.add_argument("--redact", action="append", default=[], metavar="REGEX", help="Extra secret pattern that must not appear in published text")

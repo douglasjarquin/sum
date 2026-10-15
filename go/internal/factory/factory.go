@@ -18,6 +18,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/project"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -884,7 +885,7 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	if host == "" {
 		host, _ = os.Hostname()
 	}
-	body := claimBody(host, pane, args.Task)
+	body := claimBody(host, pane, args.Task, sumruntime.Marker(runtimeRoot))
 	undoLabel := func() error {
 		_, err := runGh(runtimeRoot, "issue", "edit", fmt.Sprint(args.Issue), "--repo", name, "--remove-label", ClaimLabel)
 		return err
@@ -950,11 +951,11 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	return result, nil
 }
 
-func claimBody(host, pane, task string) string {
+func claimBody(host, pane, task, marker string) string {
 	if task == "" {
 		task = "none"
 	}
-	return fmt.Sprintf("<!-- %s -->\nhost: %s\npane: %s\ntask: %s\nat: %s\n", ClaimMark, host, pane, task, store.Now())
+	return fmt.Sprintf("<!-- %s -->\n%s\nhost: %s\npane: %s\ntask: %s\nat: %s\n", ClaimMark, marker, host, pane, task, store.Now())
 }
 
 func laneFor(rec *ordjson.Object, issue int) *ordjson.Object {

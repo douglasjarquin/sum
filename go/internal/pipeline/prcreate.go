@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -102,10 +103,10 @@ func PR(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PRArgs) (*
 			fmt.Sprintf("Refused: %s already has %s and none is open at this candidate. A closed PR is not permission to create another; reopen one, or pass --allow-new-after-closed.",
 				branch, describe(listed)))
 	}
-	return create(s, ctx, gh, repoDir, remote, branch, candidate, task, args)
+	return create(s, ctx, gh, runtimeRoot, repoDir, remote, branch, candidate, task, args)
 }
 
-func create(s *store.Store, ctx *ordjson.Object, gh, repoDir, remote, branch, candidate string, task *ordjson.Object, args PRArgs) (*ordjson.Object, error) {
+func create(s *store.Store, ctx *ordjson.Object, gh, runtimeRoot, repoDir, remote, branch, candidate string, task *ordjson.Object, args PRArgs) (*ordjson.Object, error) {
 	base := BaseBranch(repoDir, task)
 	title := args.Title
 	if title == "" {
@@ -114,7 +115,7 @@ func create(s *store.Store, ctx *ordjson.Object, gh, repoDir, remote, branch, ca
 	bodyFile := args.BodyFile
 	if bodyFile == "" {
 		var err error
-		if bodyFile, err = writeBody(s, args.Task, RenderBody(task)); err != nil {
+		if bodyFile, err = writeBody(s, args.Task, stampedBody(RenderBody(task), sumruntime.Marker(runtimeRoot))); err != nil {
 			return nil, err
 		}
 	}
@@ -282,6 +283,13 @@ func createReason(err error, stdout string) string {
 		return "no PR URL in `gh pr create` output: " + boundText(lastLineOf(trimmed), 300)
 	}
 	return "`gh pr create` reported nothing and GitHub shows no PR for this branch"
+}
+
+func stampedBody(body, marker string) string {
+	if trimmed := strings.TrimRight(body, "\n"); trimmed != "" {
+		return trimmed + "\n\n" + marker + "\n"
+	}
+	return marker + "\n"
 }
 
 func writeBody(s *store.Store, taskID, text string) (string, error) {

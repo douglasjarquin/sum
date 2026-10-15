@@ -8,7 +8,7 @@ Implementation: `go/internal/factory`, `go/internal/factoryview`, `go/internal/c
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
 | `factory.tick-idle` | An enabled factory with no ready issues records `action: idle` and `next_tick_at` five minutes later without starting an agent | automated: `go/internal/factory/factory_test.go` | offline suite |
-| `factory.claim-lane` | Claim occupies the only lane; a second tick is `occupied` and a second claim is refused at the lane limit | automated: `go/internal/factory/factory_test.go` | offline suite |
+| `factory.claim-lane` | Claim occupies the only lane; a second tick is `occupied` and a second claim is refused at the lane limit; the claim comment carries the `<!-- sum:* -->` runtime stamp beside the `sum-factory-claim` mark | automated: `go/internal/factory/factory_test.go`, `go/internal/factory/stamp_test.go` | offline suite |
 | `factory.roadmap-order` | Roadmap ready signal follows the parent issue table, skips closed and `--skip` issues, and picks the next open number | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.issues-oldest` | Issues ready signal picks the lowest-number open issue, skipping claimed and `--skip` issues | automated: `go/internal/factory/factory_test.go` | offline suite |
 | `factory.project-status-repo` | A GitHub Project Ready column that spans repositories yields only items whose repository matches the enrolled owner/repo | automated: `go/internal/factory/factory_test.go` | offline suite |

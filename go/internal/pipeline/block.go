@@ -89,6 +89,13 @@ type reviewNote struct {
 	link     string
 }
 
+func stampedBlock(block, marker string) string {
+	if marker == "" || !strings.HasPrefix(block, MarkerStart+"\n") {
+		return block
+	}
+	return MarkerStart + "\n" + marker + "\n" + block[len(MarkerStart)+1:]
+}
+
 // Render is the block sum owns in the PR body: the stage table, then a compact review summary of structured notes.
 func Render(record Record, task *ordjson.Object) string {
 	var out strings.Builder

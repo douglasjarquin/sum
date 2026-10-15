@@ -20,8 +20,8 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/panes"
-	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -48,24 +48,7 @@ func jsonNumber(n int) json.Number {
 }
 
 func runtimeSHA(runtimeRoot string) string {
-	manifest := filepath.Join(runtimeRoot, "release.json")
-	if raw, err := ordjson.ReadFile(manifest); err == nil {
-		if obj := asObject(raw); obj != nil {
-			src := asObject(func() any { v, _ := obj.Get("source"); return v }())
-			if src != nil {
-				if sha, ok := src.Get("sha"); ok {
-					if s, is := sha.(string); is {
-						return s
-					}
-				}
-			}
-		}
-	}
-	out, err := proc.Run([]string{"git", "-C", runtimeRoot, "rev-parse", "HEAD"}, "", 20*time.Second, false, nil)
-	if err == nil && out.Code == 0 {
-		return strings.TrimSpace(out.Stdout)
-	}
-	return ""
+	return sumruntime.SourceSHA(runtimeRoot)
 }
 
 func mcpObject() *ordjson.Object {
