@@ -202,6 +202,18 @@
           "actions": ["dispatch"],
           "artifacts": {"external": true, "logged_before": false, "acted": true},
           "expect": "fail"
+        },
+        {
+          "name": "logs intended, then launches the reviewer",
+          "actions": ["append-intended", "reviewer-launch"],
+          "artifacts": {"external": true, "logged_before": true, "acted": true},
+          "expect": "pass"
+        },
+        {
+          "name": "launches the reviewer with no prior line",
+          "actions": ["reviewer-launch"],
+          "artifacts": {"external": true, "logged_before": false, "acted": true},
+          "expect": "fail"
         }
       ]
     },

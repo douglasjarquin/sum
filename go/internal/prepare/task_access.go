@@ -12,8 +12,8 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
-func taskAccessArgs(s *store.Store, task *ordjson.Object, briefPath, worktree string) ([]string, error) {
-	if asString(func() any { v, _ := task.Get("harness"); return v }()) != "claude" {
+func TaskAccessArgs(s *store.Store, task *ordjson.Object, harness, briefPath, worktree string) ([]string, error) {
+	if harness != "claude" {
 		return nil, nil
 	}
 	taskID := asString(func() any { v, _ := task.Get("id"); return v }())

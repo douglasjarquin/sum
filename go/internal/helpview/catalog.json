@@ -25,6 +25,7 @@
       "report": "Worker: submit the report (and --handoff) as a claim for the coordinator to verify",
       "resolve": "Worker: mark an answered question applied",
       "review": "Reviewer pane: append independent findings for one candidate, owed to the parent as a return until the coordinator acts on it; never replaces the worker report",
+      "reviewer": "Coordinator: launch the independent reviewer in a labeled tab in the task workspace; never split the worker pane",
       "verify": "Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)",
       "pr": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names",
       "pipeline": "The delivery gates one task has passed, and the status table sum owns in its PR body",
@@ -766,6 +767,50 @@
       {
         "name": "--limitation",
         "help": "Repeatable verification limitation for the PR summary"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "reviewer": {
+    "topic": "reviewer",
+    "help": "Coordinator: launch an independent reviewer in the task workspace, using a labeled tab and the task checkout",
+    "arguments": [],
+    "subcommands": {
+      "launch": "Create a `reviewer` tab, start the reviewer with explicit flags, its saved preset, or the coordinator's harness, record its endpoint, and prompt it once to review the current candidate; a live recorded reviewer pane is prompted again instead"
+    },
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "reviewer-launch": {
+    "topic": "reviewer-launch",
+    "help": "Create a `reviewer` tab in one task workspace, start its independent reviewer, record the reviewer endpoint, and prompt it once; with a live recorded reviewer pane, prompt that pane for the current candidate instead of opening a second tab; with a recorded reviewer proven gone, open a fresh tab, record the rebind, and prompt it",
+    "arguments": [
+      {
+        "name": "task",
+        "help": "Task ID whose workspace and checkout the reviewer will use",
+        "required": true
+      },
+      {
+        "name": "--harness",
+        "help": "Herdr integration kind for a new reviewer; overrides the saved `reviewer.preset`",
+        "required": false
+      },
+      {
+        "name": "--model",
+        "help": "Model for a new reviewer; overrides the saved preset's model",
+        "required": false
+      },
+      {
+        "name": "--reasoning",
+        "help": "Reasoning effort for a new reviewer; overrides the saved preset's reasoning",
+        "required": false
+      },
+      {
+        "name": "--preset",
+        "help": "Saved preset for a new reviewer instead of `reviewer.preset`",
+        "required": false
       }
     ],
     "subcommands": null,

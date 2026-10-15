@@ -21,6 +21,7 @@ Do these for work the user already approved, or when they asked for the artifact
 
 - Write a brief, a question file, a verification file, a ledger line, or an action-log line
 - Message one worker for that approved task
+- Launch or re-prompt the reviewer for a reported candidate of that task
 - Open or update a pull request
 - Create a draft the user can review: email, Slack, X, Notion, or a digest page
 

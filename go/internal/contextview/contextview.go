@@ -845,7 +845,7 @@ func runtimeRootFrom(sumctlPath string) string {
 
 // skillReferences ports `skill_references`. `roles` is always `ContextRoles` until `--role` is supported (Python:
 // `skill_references(roles or CONTEXT_ROLES)`, and `roles` is always `[]` here since `--role` is unimplemented).
-func skillReferences(runtimeRoot, sumctlPath string, roles []string, pinnedWorker bool) *ordjson.Object {
+func skillReferences(runtimeRoot, sumctlPath string, roles []string, pinnedWorker bool, taskDir, reviewerSkillPath, reviewerSkillSHA string) *ordjson.Object {
 	if pinnedWorker {
 		// A worker whose active revision pins its procedure reads those files; the live runtime copy could
 		// differ from them, so it is not offered beside them.
@@ -868,6 +868,18 @@ func skillReferences(runtimeRoot, sumctlPath string, roles []string, pinnedWorke
 	rows := make([]any, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(runtimeRoot, "skills", name, "SKILL.md")
+		if name == "sum-deliver" && len(roles) == 1 && roles[0] == "reviewer" && reviewerSkillSHA != "" {
+			if !validSHA256(reviewerSkillSHA) {
+				rows = append(rows, missingSkill(name, filepath.Join(taskDir, procedure.Dir, "sum-deliver-invalid.md")))
+				continue
+			}
+			expected := filepath.Join(taskDir, procedure.Dir, "sum-deliver-"+reviewerSkillSHA[:16]+".md")
+			path = expected
+			if reviewerSkillPath != expected {
+				rows = append(rows, missingSkill(name, path))
+				continue
+			}
+		}
 		row := ordjson.NewObject()
 		info, statErr := os.Lstat(path)
 		isSymlink := statErr == nil && info.Mode()&os.ModeSymlink != 0
@@ -877,6 +889,10 @@ func skillReferences(runtimeRoot, sumctlPath string, roles []string, pinnedWorke
 			data, readErr = os.ReadFile(path)
 		}
 		if readErr == nil && data != nil {
+			if name == "sum-deliver" && len(roles) == 1 && roles[0] == "reviewer" && validSHA256(reviewerSkillSHA) && sha256Text(string(data)) != reviewerSkillSHA {
+				rows = append(rows, missingSkill(name, path))
+				continue
+			}
 			row.Set("skill", name)
 			row.Set("path", path)
 			row.Set("bytes", jsonInt(len(data)))
@@ -893,6 +909,19 @@ func skillReferences(runtimeRoot, sumctlPath string, roles []string, pinnedWorke
 	result.Set("helper", filepath.Join(runtimeRoot, "bin", "sumctl"))
 	result.Set("instruction", "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout.")
 	return result
+}
+
+func missingSkill(name, path string) *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("skill", name)
+	row.Set("path", path)
+	row.Set("missing", true)
+	return row
+}
+
+func validSHA256(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == 32
 }
 
 func returnCommands(sumctlPath, home, taskID string) *ordjson.Object {
@@ -968,7 +997,8 @@ func sectionEnvironment(s *store.Store, task *ordjson.Object, versionsObj *ordjs
 		effectiveRoles = ContextRoles
 	}
 	pinnedWorker := len(roles) == 1 && roles[0] == "worker" && procedureRows != nil
-	result.Set("skills", skillReferences(runtimeRoot, sumctlPath, effectiveRoles, pinnedWorker))
+	reviewer := asObject(getField(task, "reviewer"))
+	result.Set("skills", skillReferences(runtimeRoot, sumctlPath, effectiveRoles, pinnedWorker, taskPath, asString(getField(reviewer, "skill_path")), asString(getField(reviewer, "skill_sha256"))))
 	runtimeObj := ordjson.NewObject()
 	runtimeObj.Set("path", runtimeRoot)
 	runtimeObj.Set("sum_version", store.SumVersion)

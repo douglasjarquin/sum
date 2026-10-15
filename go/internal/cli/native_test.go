@@ -47,6 +47,7 @@ func buildCLIForTests(m *testing.M) int {
 func TestHelp_pinsStdout(t *testing.T) {
 	home := t.TempDir()
 	assertStdoutGolden(t, home, []string{"help"}, "help")
+	assertStdoutGolden(t, home, []string{"help", "reviewer-launch"}, "help-reviewer-launch")
 	assertStdoutGolden(t, home, []string{"help", "ask"}, "help-ask")
 	assertStdoutGolden(t, home, []string{"help", "skills-check"}, "help-skills-check")
 	assertErrorGolden(t, home, []string{"help", "not-a-command"}, "help-unknown")
@@ -68,7 +69,7 @@ func TestExecutionShow_pinsStdout(t *testing.T) {
 
 func TestSkillsAndExecutionAreOnTheCommandTree(t *testing.T) {
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
-	for _, name := range []string{"skills", "execution", "repair", "help", "quota", "notes", "herdr", "archive"} {
+	for _, name := range []string{"skills", "execution", "repair", "reviewer", "help", "quota", "notes", "herdr", "archive"} {
 		if root.Commands() == nil {
 			t.Fatal("no commands")
 		}
