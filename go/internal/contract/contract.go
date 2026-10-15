@@ -15,7 +15,7 @@ const (
 	// adopted coordinator, persisted before any prompt. Reported the same way
 	// as MachineIdentity, by release-contract only.
 	WakeProtocol = 1
-	HerdrCLI     = "0.9.3"
+	HerdrCLI     = "0.9.5"
 )
 
 var MCP = MCPContract{Server: "herdr-mesh-sum", Version: SumVersion, Tools: 10}
