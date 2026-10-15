@@ -14,7 +14,7 @@ func TestBuildRelease_matchesThePythonReferenceShape(t *testing.T) {
 	want := `{
   "sum_version": "0.1.0",
   "contracts": {
-    "herdr_cli": "0.9.3",
+    "herdr_cli": "0.9.5",
     "mcp": {
       "server": "herdr-mesh-sum",
       "version": "0.1.0",
