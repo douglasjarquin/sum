@@ -32,6 +32,7 @@ The helper adds label `sum-claimed` and an issue comment:
 
 ```
 <!-- sum-factory-claim -->
+<!-- sum:<version>[@<source sha>] -->
 host: <hostname>
 pane: <HERDR_PANE_ID>
 task: <task id or none>

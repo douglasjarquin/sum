@@ -205,6 +205,16 @@ class PublishTest(PublishLab):
         self.assertEqual(len(receipts["blocks"]), 2)
         self.assertTrue(Path(result["record"]).is_file())
 
+    def test_plan_and_publish_carry_the_sum_runtime_marker(self):
+        marker = "<!-- sum:0.1.0@0123456789abcdef0123456789abcdef01234567 -->"
+        self.scenario_pair()
+        plan = self.plan("run-1", "--sum-marker", marker)
+        self.assertIn(marker, plan["block_preview"])
+        result = self.publish(check=0)
+        self.assertEqual(result["outcome"], "published", result)
+        self.assertEqual(self.body().count(marker), 1)
+        self.assertIn(marker, self.block())
+
     def test_second_publish_reuses_every_attachment_and_replaces_the_same_block_in_place(self):
         self.scenario_pair()
         self.plan()

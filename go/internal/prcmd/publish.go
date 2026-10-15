@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -127,8 +128,9 @@ func Publish(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Publi
 	if err != nil {
 		return nil, err
 	}
+	marker := sumruntime.Marker(runtimeRoot)
 	for _, run := range runs {
-		publications = append(publications, publishRun(python, publisher, gh, taskDir, task, dest, run, visibility, args))
+		publications = append(publications, publishRun(python, publisher, gh, taskDir, task, dest, run, visibility, marker, args))
 	}
 	return publications, record(s, ctx, args, dest, publications)
 }
@@ -288,11 +290,11 @@ func observedVisibility(gh, repoDir, remote string) (string, error) {
 	return strings.ToLower(payload.Visibility), nil
 }
 
-func publishRun(python, publisher, gh, taskDir string, task *ordjson.Object, dest Destination, run Run, visibility string, args PublishArgs) Publication {
+func publishRun(python, publisher, gh, taskDir string, task *ordjson.Object, dest Destination, run Run, visibility, marker string, args PublishArgs) Publication {
 	publishDir := filepath.Join(taskDir, "publish", run.ID)
 	planPath := filepath.Join(publishDir, "plan.json")
 	planArgs := []string{publisher, "plan", "--run", run.ID, "--repo", dest.Repository, "--pr", fmt.Sprint(dest.Number),
-		"--candidate", dest.HeadSHA, "--evidence-root", run.Root, "--publish-dir", publishDir}
+		"--candidate", dest.HeadSHA, "--evidence-root", run.Root, "--publish-dir", publishDir, "--sum-marker", marker}
 	if base := asString(task, "base_sha"); sha40.MatchString(base) {
 		planArgs = append(planArgs, "--base", base)
 	}

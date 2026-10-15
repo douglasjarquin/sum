@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -114,11 +115,11 @@ func Publish(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Publi
 	if err != nil {
 		return Publication{}, err
 	}
-	publication := publish(gh, taskDir, task, dest, args)
+	publication := publish(gh, taskDir, task, dest, args, sumruntime.Marker(runtimeRoot))
 	return record(s, ctx, args, dest, publication)
 }
 
-func publish(gh, taskDir string, task *ordjson.Object, dest Destination, args PublishArgs) Publication {
+func publish(gh, taskDir string, task *ordjson.Object, dest Destination, args PublishArgs, marker string) Publication {
 	result := Publication{Destination: dest}
 	publishDir := filepath.Join(taskDir, "publish", publishSubdir)
 	receiptsPath := filepath.Join(taskDir, "publish", ReceiptsFile)
@@ -127,7 +128,7 @@ func publish(gh, taskDir string, task *ordjson.Object, dest Destination, args Pu
 		return refuse(result, err.Error())
 	}
 	repoDir := stringField(task, "repository")
-	block := Render(Derive(task), task)
+	block := stampedBlock(Render(Derive(task), task), marker)
 
 	// The block is spliced onto the body as it was read immediately before the edit, so a reviewer's
 	// concurrent paragraph is kept instead of clobbered. A body that will not hold still is refused.

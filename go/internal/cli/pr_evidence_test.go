@@ -285,6 +285,30 @@ func TestPREvidencePublishesAndThenReportsUnchanged(t *testing.T) {
 	}
 }
 
+func TestPREvidence_stampsTheBlockWithTheRuntimeMarker(t *testing.T) {
+	requirePython(t)
+	lab := newPublishLab(t, map[string]any{})
+	lab.writeSettings(t, `{"schema": 1, "evidence": {"auto_publish": false}}`)
+	reconcile(t, lab)
+
+	stdout, stderr, err := runPRCLI(t, lab.home, "pr", "evidence", lab.taskID)
+	if err != nil {
+		t.Fatalf("pr evidence: %v stderr=%s", err, stderr)
+	}
+	if got := publishedOutcomes(t, stdout); len(got) != 1 || got[0] != "published" {
+		t.Fatalf("pr evidence =\n%s\nwant one published outcome, got %v", stdout, got)
+	}
+	body := lab.prBody(t)
+	start := strings.Index(body, blockMarker)
+	end := strings.Index(body, "<!-- before-and-after:end -->")
+	if start == -1 || end == -1 || end < start {
+		t.Fatalf("PR body carries no evidence block:\n%s", body)
+	}
+	if !strings.Contains(body[start:end], "<!-- sum:0.1.0") {
+		t.Fatalf("the evidence block carries no runtime marker:\n%s", body[start:end])
+	}
+}
+
 func TestPRReconcilePublishesUnlessTheEvidenceBlockOptsOut(t *testing.T) {
 	requirePython(t)
 	t.Run("no settings block publishes", func(t *testing.T) {

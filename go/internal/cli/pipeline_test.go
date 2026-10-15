@@ -134,6 +134,28 @@ func TestPipelinePublish_secondPublishIsUnchanged(t *testing.T) {
 	}
 }
 
+func TestPipelinePublish_stampsTheBlockWithTheRuntimeMarker(t *testing.T) {
+	requirePython(t)
+	lab := newPublishLab(t, map[string]any{})
+	lab.writeSettings(t, `{"schema": 1, "evidence": {"auto_publish": false}}`)
+	reconcile(t, lab)
+
+	publication := publishPipeline(t, lab)
+
+	if publication["outcome"] != "published" {
+		t.Fatalf("publication = %v, want published", publication)
+	}
+	body := lab.prBody(t)
+	start := strings.Index(body, pipelineMarker)
+	end := strings.Index(body, pipelineMarkerEnd)
+	if start == -1 || end == -1 || end < start {
+		t.Fatalf("PR body carries no pipeline block:\n%s", body)
+	}
+	if !strings.Contains(body[start:end], "<!-- sum:0.1.0") {
+		t.Fatalf("the pipeline block carries no runtime marker:\n%s", body[start:end])
+	}
+}
+
 func TestPipelinePublish_handEditedBlockIsRefusedUntilItIsReplaced(t *testing.T) {
 	requirePython(t)
 	lab := newPublishLab(t, map[string]any{})
