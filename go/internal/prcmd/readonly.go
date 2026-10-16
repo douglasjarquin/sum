@@ -44,7 +44,12 @@ func readOnlyGH(argv []string, dir string, bound time.Duration) (readOutcome, er
 		return out, nil
 	}
 	time.Sleep(delay)
-	res, err = proc.RunContext(context.Background(), proc.Cmd{Argv: argv, Dir: dir, Timeout: time.Until(deadline)})
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		out.Deferred = true
+		return out, nil
+	}
+	res, err = proc.RunContext(context.Background(), proc.Cmd{Argv: argv, Dir: dir, Timeout: remaining})
 	out.Result, out.Attempts = res, 2
 	if err == nil && res.Code != 0 {
 		if category := transientCategory(res.Stderr); category != "" {

@@ -83,11 +83,11 @@ func viewPR(gh, repo, remote string, number int) (map[string]any, error) {
 	out, err := readOnlyGH(argv, repo, GHBound)
 	res := out.Result
 	if err != nil {
-		detail := strings.TrimSpace(res.Stderr)
+		detail := strings.TrimSpace(secretShapes.ReplaceAllString(res.Stderr, "[redacted]"))
 		if detail != "" {
 			detail = ": " + detail
 		}
-		return nil, fmt.Errorf("PR observation for #%d is uncertain: %w%s", number, err, detail)
+		return nil, fmt.Errorf("PR observation for #%d is uncertain%s: %w%s", number, out.attemptNote(), err, detail)
 	}
 	if res.Code != 0 {
 		return nil, fmt.Errorf("PR observation for #%d is uncertain%s: %s", number, out.attemptNote(), sanitizedDetail(res))

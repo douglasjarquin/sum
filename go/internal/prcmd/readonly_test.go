@@ -188,8 +188,8 @@ func TestViewPRTimeoutIsNotRetriedAndKeepsOneBound(t *testing.T) {
 }
 
 func TestViewPRSlowFirstAttemptLeavesNoBudgetForASecond(t *testing.T) {
-	shortBounds(t, time.Second, 150*time.Millisecond, 20*time.Millisecond)
-	gh := countingGh(t, `sleep 0.8; `+stderr502, validPRJSON)
+	shortBounds(t, 3*time.Second, 600*time.Millisecond, 20*time.Millisecond)
+	gh := countingGh(t, `sleep 2; `+stderr502, validPRJSON)
 	start := time.Now()
 	data, err := viewPR(gh.path, t.TempDir(), "", 7)
 	elapsed := time.Since(start)
@@ -202,7 +202,7 @@ func TestViewPRSlowFirstAttemptLeavesNoBudgetForASecond(t *testing.T) {
 	if calls := gh.calls(t); calls != 1 {
 		t.Fatalf("gh was invoked %d times, want 1", calls)
 	}
-	if elapsed > 2*time.Second {
+	if elapsed > 4*time.Second {
 		t.Fatalf("elapsed %s exceeds one bound", elapsed)
 	}
 }
