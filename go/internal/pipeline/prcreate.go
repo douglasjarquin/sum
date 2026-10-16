@@ -95,8 +95,11 @@ func PR(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PRArgs) (*
 		return nil, fmt.Errorf("could not read the pull requests for %s: %w; nothing was created", branch, listErr)
 	}
 	if adopted := adoptable(listed, candidate); adopted != nil {
-		return recordPR(s, ctx, args, candidate, prBody(prExisting, branch, remote, adopted.IsDraft, adopted.Number, adopted.URL, adopted.Base),
-			fmt.Sprintf("Adopted the existing #%d (%s): %s", adopted.Number, strings.ToLower(adopted.State), adopted.URL))
+		summary := fmt.Sprintf("Adopted the existing #%d (%s): %s", adopted.Number, strings.ToLower(adopted.State), adopted.URL)
+		if recorded, source := RecordedBase(task); recorded != "" && adopted.Base != recorded {
+			summary += fmt.Sprintf("; it targets %s while the task records %s (%s), which `pr reconcile` reports as a finding", adopted.Base, recorded, source)
+		}
+		return recordPR(s, ctx, args, candidate, prBody(prExisting, branch, remote, adopted.IsDraft, adopted.Number, adopted.URL, adopted.Base), summary)
 	}
 	if len(listed) > 0 && !args.AllowNewAfterClosed {
 		return recordPR(s, ctx, args, candidate, prBody(prRefused, branch, remote, false, 0, "", ""),
@@ -107,7 +110,7 @@ func PR(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args PRArgs) (*
 }
 
 func create(s *store.Store, ctx *ordjson.Object, gh, runtimeRoot, repoDir, remote, branch, candidate string, task *ordjson.Object, args PRArgs) (*ordjson.Object, error) {
-	base := BaseBranch(repoDir, task)
+	base, source := ResolveBase(repoDir, task)
 	title := args.Title
 	if title == "" {
 		title = Title(task)
@@ -121,12 +124,13 @@ func create(s *store.Store, ctx *ordjson.Object, gh, runtimeRoot, repoDir, remot
 	}
 	if args.DryRun {
 		planned := prBody(prPlanned, branch, remote, true, 0, "", base)
+		planned.Set("base_branch_source", source)
 		planned.Set("title", title)
 		planned.Set("body_file", bodyFile)
 		result := ordjson.NewObject()
 		result.Set("task", args.Task)
 		result.Set("pr", planned)
-		result.Set("summary", fmt.Sprintf("Would open %s against %s as %q; nothing was created", branch, base, title))
+		result.Set("summary", fmt.Sprintf("Would open %s against %s (%s) as %q; nothing was created", branch, base, source, title))
 		return result, nil
 	}
 
@@ -148,12 +152,14 @@ func create(s *store.Store, ctx *ordjson.Object, gh, runtimeRoot, repoDir, remot
 			}
 		}
 		body := prBody(prFailed, branch, remote, true, 0, "", base)
+		body.Set("base_branch_source", source)
 		body.Set("title", title)
 		body.Set("body_file", bodyFile)
 		return recordPR(s, ctx, args, candidate, body, "Failed to open the PR: "+createReason(runErr, stdout))
 	}
 
 	body := prBody(prCreated, branch, remote, true, number, url, base)
+	body.Set("base_branch_source", source)
 	body.Set("title", title)
 	body.Set("body_file", bodyFile)
 	return recordPR(s, ctx, args, candidate, body, fmt.Sprintf("Created #%d: %s", number, url))

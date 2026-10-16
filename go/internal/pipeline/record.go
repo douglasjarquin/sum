@@ -68,6 +68,7 @@ func decode(taskID string, stored *ordjson.Object) Record {
 			At:       stringField(row, "at"),
 			Evidence: stringList(row, "evidence"),
 			Advice:   stringField(row, "advice"),
+			Note:     stringField(row, "note"),
 		})
 	}
 	return record
@@ -91,6 +92,7 @@ func (r Record) Object() *ordjson.Object {
 		item.Set("at", nilIfEmpty(row.At))
 		item.Set("evidence", anyStrings(row.Evidence))
 		item.Set("advice", nilIfEmpty(row.Advice))
+		item.Set("note", nilIfEmpty(row.Note))
 		rows = append(rows, item)
 	}
 	out.Set("rows", rows)

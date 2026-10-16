@@ -47,7 +47,8 @@ func Rebase(s *store.Store, ctx *ordjson.Object, args RebaseArgs) (*ordjson.Obje
 	if err != nil {
 		return nil, err
 	}
-	body, summary := observeRebase(repo, dir, candidate, BaseBranch(repo, task))
+	base, source := ResolveBase(repo, task)
+	body, summary := observeRebase(repo, dir, candidate, base, source)
 	return recordGate(s, ctx, args.Task, rebaseGate, candidate, body, summary)
 }
 
@@ -61,7 +62,8 @@ func RecheckBase(s *store.Store, ctx *ordjson.Object, taskID string, task *ordjs
 	if err != nil {
 		return err
 	}
-	fresh, summary := observeRebase(repo, dir, candidate, BaseBranch(repo, task))
+	base, source := ResolveBase(repo, task)
+	fresh, summary := observeRebase(repo, dir, candidate, base, source)
 	fresh.Set("trigger", action)
 	if _, err := recordGate(s, ctx, taskID, rebaseGate, candidate, fresh, summary); err != nil {
 		return err
@@ -115,6 +117,13 @@ func deriveRebase(task *ordjson.Object) Row {
 		return row
 	}
 	latest := latestFor(task, rebaseGate, "coordinator", Candidate(task))
+	observed := stringField(latest, "base_branch")
+	if expected := expectedBase(task); expected != "" && observed != "" && observed != expected {
+		return Row{Stage: StageRebase, Status: Pending, Result: fmt.Sprintf("Not observed against origin/%s; the last Rebase observation was against origin/%s. Run `pipeline rebase`", expected, observed)}
+	}
+	if stringField(latest, "base_branch_source") == BaseSourceLegacy {
+		row.Note = "recorded target not in the task record (legacy-default)"
+	}
 	if baseSHA := stringField(latest, "base_sha"); baseSHA != "" {
 		row.Result += fmt.Sprintf(" (%s at %s, observed %s)", stringField(latest, "base_branch"), shortSHA(baseSHA), observedStamp(row.At))
 	} else {
@@ -123,28 +132,58 @@ func deriveRebase(task *ordjson.Object) Row {
 	return row
 }
 
-// BaseBranch is the base the change is actually going to: the reconciled PR's, and only without one the repository's default.
-func BaseBranch(repo string, task *ordjson.Object) string {
+const BaseSourceLegacy = "legacy-default"
+
+func RecordedBase(task *ordjson.Object) (string, string) {
+	branch := stringField(task, "base_branch")
+	if branch == "" {
+		return "", ""
+	}
+	return branch, stringField(task, "base_branch_source")
+}
+
+func prIdentityBase(task *ordjson.Object) string {
 	pr, _ := field(task, "pr").(*ordjson.Object)
 	identity, _ := field(pr, "identity").(*ordjson.Object)
-	if base := stringField(identity, "base_branch"); base != "" {
-		return base
+	return stringField(identity, "base_branch")
+}
+
+func expectedBase(task *ordjson.Object) string {
+	if branch, _ := RecordedBase(task); branch != "" {
+		return branch
+	}
+	return prIdentityBase(task)
+}
+
+func ResolveBase(repo string, task *ordjson.Object) (string, string) {
+	if branch, source := RecordedBase(task); branch != "" {
+		return branch, source
+	}
+	if base := prIdentityBase(task); base != "" {
+		return base, BaseSourceLegacy
 	}
 	head := gitIn(repo, gitBound, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
 	if head.Code == 0 {
 		if name := strings.TrimPrefix(strings.TrimSpace(head.Stdout), "origin/"); name != "" {
-			return name
+			return name, BaseSourceLegacy
 		}
 	}
-	return "main"
+	return "main", BaseSourceLegacy
 }
 
-func observeRebase(repo, dir, candidate, base string) (*ordjson.Object, string) {
+// BaseBranch is the base the change is actually going to: the reconciled PR's, and only without one the repository's default.
+func BaseBranch(repo string, task *ordjson.Object) string {
+	branch, _ := ResolveBase(repo, task)
+	return branch
+}
+
+func observeRebase(repo, dir, candidate, base, source string) (*ordjson.Object, string) {
 	body := ordjson.NewObject()
 	body.Set("base_branch", base)
+	body.Set("base_branch_source", source)
 	ref := "origin/" + base
 
-	if fetch := gitIn(repo, networkBound, "fetch", "origin", base); fetch.Code != 0 {
+	if fetch := gitIn(repo, networkBound, "fetch", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base); fetch.Code != 0 {
 		return unobservableRebase(body, fmt.Sprintf("Could not fetch %s: %s", ref, lastLineOf(fetch.Stderr)))
 	}
 	tip := gitIn(repo, gitBound, "rev-parse", "--verify", ref+"^{commit}")
