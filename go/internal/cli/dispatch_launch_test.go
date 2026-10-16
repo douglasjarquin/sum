@@ -71,7 +71,7 @@ func argsAfterSeparator(call []string) ([]string, bool) {
 func TestDispatchDevinWorkerCarriesTrustGateArgv(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "devin-worker", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--arg=--permission-mode", "--arg=dangerous", "--arg=--respect-workspace-trust", "--arg=false", "--permission-override", "--approved")
 	if argv := startedArgv(task); !reflect.DeepEqual(argv, devinWorkerArgv) {
 		t.Fatalf("devin worker started_argv = %v, want %v", argv, devinWorkerArgv)
 	}
