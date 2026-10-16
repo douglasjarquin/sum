@@ -74,7 +74,6 @@ func (lab gateLab) writeTask(t *testing.T, status string, evidence ...string) {
 		gateTaskID, status, lab.clone, lab.clone, base, recorded, gateBranch, lab.candidate, strings.Join(evidence, ",\n")))
 }
 
-// newReleaseGateLab records release/1.2 as the task's delivery branch while origin/HEAD stays main, with the two branches diverging.
 func newReleaseGateLab(t *testing.T) gateLab {
 	t.Helper()
 	lab := newGateLab(t)
