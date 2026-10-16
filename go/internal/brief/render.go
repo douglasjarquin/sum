@@ -38,6 +38,15 @@ func fenced(command string) string {
 	return "```sh\n" + command + "\n```"
 }
 
+func baseBranchText(task *ordjson.Object) string {
+	branch := field(task, "base_branch")
+	if branch == "" {
+		return "not recorded (legacy task; delivery resolves the reconciled PR's base, then the repository default)"
+	}
+	source := field(task, "base_branch_source")
+	return fmt.Sprintf("`%s` (%s)", branch, source)
+}
+
 // render is the only brief template.
 func render(s *store.Store, sumctlPath string, d briefData) string {
 	task := d.Task
@@ -61,6 +70,7 @@ func render(s *store.Store, sumctlPath string, d briefData) string {
 	line("- Repository: `%s`", field(task, "repository"))
 	line("- Your checkout: `%s`", field(task, "worktree"))
 	line("- Base commit: `%s`", field(task, "base_sha"))
+	line("- Base branch: %s", baseBranchText(task))
 	line("- Branch: `%s`", field(task, "branch"))
 	line("- Task kind: `%s`", field(task, "kind"))
 	line("- Harness: `%s`%s (keep your normal permissions; no bypass flags)", field(task, "harness"), launchNote(task))

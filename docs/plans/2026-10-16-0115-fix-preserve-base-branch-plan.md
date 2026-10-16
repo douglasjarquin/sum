@@ -43,7 +43,7 @@ Persist `base_branch` and `base_branch_source` on the task record beside the imm
 
 - R6. `pipeline rebase`, the fresh observations before push and PR, PR creation, and `pipeline pr --dry-run` use the recorded branch and fetch it as `refs/heads/NAME` so a same-named tag never shadows it; the rebase record and the PR gate record carry `base_branch_source`.
 - R7. A recorded branch that no longer exists on origin at delivery time refuses as it does today (uncertain, never a pass); no fallback to the default branch happens for any source.
-- R8. A legacy record without `base_branch` resolves as today (reconciled PR base, then `origin/HEAD`, then `main`), is never written back, and is disclosed as `legacy-default` in the rebase record, as a note on the rebase row, in the brief, and in `context`; the rendered row text and the published pipeline block stay unchanged.
+- R8. A legacy record without `base_branch` resolves as today (reconciled PR base, then `origin/HEAD`, then `main`), is never written back, and is disclosed as `legacy-default` in the rebase record, as a note on the rebase row, and in the brief; the rendered row text and the published pipeline block stay unchanged.
 
 **Disagreement between the PR and the record**
 
@@ -53,7 +53,7 @@ Persist `base_branch` and `base_branch_source` on the task record beside the imm
 
 **Surfaces and documentation**
 
-- R12. The brief's execution contract, `context --section execution`, and `status` open-PR rows name the branch and its source; factory merge-check inherits the blocking finding from R9; the help catalog documents `--base`, `--target-branch`, and `--accept-base-branch`.
+- R12. The brief's execution contract and `status` open-PR rows name the branch and its source; factory merge-check inherits the blocking finding from R9; the help catalog documents `--base`, `--target-branch`, and `--accept-base-branch`.
 - R13. The feature maps and the dispatch and deliver skills describe the recorded target, the refusal, the finding, the accept action, and the legacy fallback.
 
 ### Key Decisions
@@ -79,6 +79,7 @@ Persist `base_branch` and `base_branch_source` on the task record beside the imm
 - Considered and not built: a separate `MergeCheck` row naming the recorded branch. The finding from R9 already blocks merge admission and factory lanes are dispatched without `--base`; a factory lane that targets a non-default branch would change this.
 - Considered and not built: a second `ls-remote` after a failed delivery fetch to say the branch is gone and name the retarget route. The refusal already fails loudly and never passes; evidence that coordinators retry it indefinitely would change this.
 - Considered and not built: refusing to adopt an open PR whose base differs at the PR gate. Adoption prevents duplicate PRs, and the reconcile that follows in the same run raises the finding; evidence that a wrongly targeted PR reached merge admission without reconcile would change this.
+- Considered and not built: adding the branch to `context --section execution`. Its stdout is pinned by golden files under `go/internal/cli/testdata`, and rewriting golden files is the user's manual step under the worker procedure; the brief, the rebase record, and the PR gate record already carry the branch and source.
 - Considered and not built: printing the source in the PR body. GitHub shows the base itself; the dry-run summary and gate record carry the source for the coordinator.
 
 #### Deferred to Follow-Up Work
@@ -234,18 +235,16 @@ U1 first (the record), then U2 before U3 because U3 depends on the resolver U2 i
 
 ### U4. Surfaces: brief, context, status, factory
 
-- **Goal:** the branch and its source are visible wherever the base is shown.
+- **Goal:** the branch and its source are visible in the worker brief.
 - **Requirements:** R12 (KTD2).
 - **Dependencies:** U2.
-- **Files:** `go/internal/brief/render.go`, `go/internal/contextview/contextview.go`, `go/internal/brief/brief_test.go` (one new assertion).
+- **Files:** `go/internal/brief/render.go`, `go/internal/brief/brief_test.go` (one new test).
 - **Approach:**
   1. Brief: a `- Base branch:` line after `Base commit` reading `NAME (source)`, or `not recorded (legacy task; delivery resolves the reconciled PR, then the repository default)` for a legacy record. The approved fingerprint is untouched, so `brief regenerate` keeps working.
-  2. `context`: compute `base_branch` and `base_branch_source` through `pipeline.RecordedBase` into the execution section (legacy records show `legacy-default` and an empty branch); `outline.approved` is unchanged.
-- **Patterns to follow:** `executionTaskKeys` in `contextview`; the `line(...)` helper in `brief/render.go`.
+- **Patterns to follow:** the `line(...)` helper in `brief/render.go`.
 - **Test scenarios:**
   - Brief render for a task with `release/1.2` explicit contains the `Base branch` line; for a legacy task it contains the legacy wording.
-  - `context --section execution` on a legacy task shows `legacy-default` (covered by the existing `context_test.go` lab if cheap; otherwise the unit above suffices).
-- **Verification:** existing brief and contextview suites green; run against `d48e088`, the brief assertion fails because the line does not exist.
+- **Verification:** the brief suite green; run against `d48e088`, the brief assertion fails because the line does not exist.
 
 ### U5. Documentation and feature maps
 
