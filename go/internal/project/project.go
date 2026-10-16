@@ -535,7 +535,33 @@ func ByPath(s *store.Store, path string) *ordjson.Object {
 			return identityOf(record)
 		}
 	}
+	common, ok := gitCommonDir(resolved)
+	if !ok {
+		return nil
+	}
+	for _, key := range projectsObj.Keys() {
+		record := asObject(getPath(projectsObj, key))
+		if record == nil {
+			continue
+		}
+		recordCommon, ok := gitCommonDir(asString(getPath(record, "path")))
+		if ok && recordCommon == common {
+			return identityOf(record)
+		}
+	}
 	return nil
+}
+
+func gitCommonDir(path string) (string, bool) {
+	out, err := runGit("-C", path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", false
+	}
+	common := strings.TrimSpace(out)
+	if common == "" {
+		return "", false
+	}
+	return resolvePathOrSelf(common), true
 }
 
 // Show ports `project_show`.
