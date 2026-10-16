@@ -33,22 +33,121 @@ var (
 )
 
 type adapter struct {
-	Model     []string
-	Reasoning []string
-	Worker    []string
+	Model      []string
+	Reasoning  []string
+	Permission []string
 }
 
 var adapters = map[string]adapter{
-	"codex":   {Model: []string{"-m"}, Reasoning: []string{"-c", "model_reasoning_effort="}},
-	"claude":  {Model: []string{"--model"}, Reasoning: []string{"--effort"}},
-	"grok":    {Model: []string{"-m"}, Reasoning: []string{"--reasoning-effort"}},
-	"copilot": {Model: []string{"--model"}, Reasoning: []string{"--effort"}},
-	"cursor":  {Model: []string{"--model"}},
-	"pi":      {Model: []string{"--model"}},
-	"omp":     {Model: []string{"--model="}},
-	// devin's interactive trust gate swallows the prompt sum injects at start; workers run in
-	// isolated per-task worktrees, so skipping it adds no exposure (verified in `devin --help`).
-	"devin": {Worker: []string{"--permission-mode", "dangerous", "--respect-workspace-trust", "false"}},
+	"codex": {
+		Model:     []string{"-m"},
+		Reasoning: []string{"-c", "model_reasoning_effort="},
+		Permission: []string{
+			"-a=", "--ask-for-approval=", "-s=", "--sandbox=",
+			"--dangerously-bypass-approvals-and-sandbox", "--dangerously-bypass-hook-trust", "--approve-for-me",
+			"-c approval_policy=", "-c sandbox_mode=", "-c sandbox_permissions=",
+			"--config approval_policy=", "--config sandbox_mode=", "--config sandbox_permissions=",
+		},
+	},
+	"claude": {
+		Model:     []string{"--model"},
+		Reasoning: []string{"--effort"},
+		Permission: []string{
+			"--permission-mode=", "--permission-prompts=", "--permission-prompt-tool=",
+			"--allowedTools=", "--allowed-tools=", "--disallowedTools=", "--disallowed-tools=", "--tools=",
+			"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--restricted",
+		},
+	},
+	"grok": {Model: []string{"-m"}, Reasoning: []string{"--reasoning-effort"}},
+	"copilot": {
+		Model:     []string{"--model"},
+		Reasoning: []string{"--effort"},
+		Permission: []string{
+			"--allow-tool=", "--allow-url=", "--deny-tool=", "--deny-url=", "--mode=",
+			"--allow-all", "--allow-all-tools", "--allow-all-paths", "--allow-all-urls",
+			"--yolo", "--autopilot", "--disallow-temp-dir",
+		},
+	},
+	"cursor": {Model: []string{"--model"}},
+	"pi":     {Model: []string{"--model"}},
+	"omp":    {Model: []string{"--model="}},
+	"devin":  {Permission: []string{"--permission-mode=", "--respect-workspace-trust="}},
+}
+
+func PermissionFlags(harness string) ([]string, bool) {
+	a, ok := adapters[harness]
+	if !ok || len(a.Permission) == 0 {
+		return nil, false
+	}
+	flags := make([]string, 0, len(a.Permission))
+	for _, entry := range a.Permission {
+		flags = append(flags, strings.TrimSuffix(entry, "="))
+	}
+	return flags, true
+}
+
+func PermissionHarnesses() []string {
+	var names []string
+	for name, a := range adapters {
+		if len(a.Permission) > 0 {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func PermissionOverrides(harness string, argv []string) []string {
+	a, ok := adapters[harness]
+	if !ok || len(a.Permission) == 0 {
+		return nil
+	}
+	var out []string
+	for i := 0; i < len(argv); i++ {
+		for _, entry := range a.Permission {
+			matched, consumed := matchPermission(entry, argv, i)
+			if matched == "" {
+				continue
+			}
+			out = append(out, matched)
+			i += consumed
+			break
+		}
+	}
+	return out
+}
+
+func matchPermission(entry string, argv []string, i int) (string, int) {
+	arg := argv[i]
+	if flag, key, isConfig := strings.Cut(entry, " "); isConfig {
+		if arg == flag && i+1 < len(argv) && strings.HasPrefix(argv[i+1], key) {
+			return flag + " " + argv[i+1], 1
+		}
+		if strings.HasPrefix(arg, flag+"="+key) || (shortFlag(flag) && strings.HasPrefix(arg, flag+key)) {
+			return arg, 0
+		}
+		return "", 0
+	}
+	if flag, takesValue := strings.CutSuffix(entry, "="); takesValue {
+		if strings.HasPrefix(arg, flag+"=") || (shortFlag(flag) && len(arg) > len(flag) && strings.HasPrefix(arg, flag)) {
+			return arg, 0
+		}
+		if arg != flag {
+			return "", 0
+		}
+		if i+1 < len(argv) && !strings.HasPrefix(argv[i+1], "-") {
+			return arg + " " + argv[i+1], 1
+		}
+		return arg, 0
+	}
+	if arg == entry {
+		return arg, 0
+	}
+	return "", 0
+}
+
+func shortFlag(flag string) bool {
+	return len(flag) == 2 && flag[0] == '-' && flag[1] != '-'
 }
 
 func adapterPrefix(harness, field string) ([]string, bool) {
@@ -674,16 +773,6 @@ func CapacityViewOf(s *store.Store, tasks []*ordjson.Object) (*ordjson.Object, e
 	return result, nil
 }
 
-// WorkerArgv returns the fixed arguments every sum-launched worker of this harness kind
-// needs, verified from the installed CLI's help; nil when the harness needs none.
-func WorkerArgv(harness string) []string {
-	a, ok := adapters[harness]
-	if !ok {
-		return nil
-	}
-	return append([]string{}, a.Worker...)
-}
-
 func AdapterArgv(harness, field string, value string) []string {
 	prefix, _ := adapterPrefix(harness, field)
 	if len(prefix) == 0 {
@@ -729,12 +818,19 @@ func presetLaunch(spec *ordjson.Object) *ordjson.Object {
 		reasoning = nil
 	}
 	result.Set("reasoning", reasoning)
-	argvAny := make([]any, len(argv))
-	for i, a := range argv {
-		argvAny[i] = a
+	result.Set("argv", anyStrings(argv))
+	if overrides := PermissionOverrides(harness, argv); len(overrides) > 0 {
+		result.Set("permission_overrides", anyStrings(overrides))
 	}
-	result.Set("argv", argvAny)
 	return result
+}
+
+func anyStrings(values []string) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return out
 }
 
 func presetReferences(worker, reviewer *ordjson.Object, name string) []string {

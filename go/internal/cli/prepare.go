@@ -13,7 +13,7 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 	add := func(name string, run func(*store.Store, *ordjson.Object, prepare.Args) (*ordjson.Object, error)) {
 		var (
 			repo, project, brief, harness, model, reasoning, preset, base, targetBranch, kind string
-			sameAsYou, approved                                                               bool
+			sameAsYou, approved, permissionOverride                                           bool
 			extra                                                                             []string
 		)
 		cmd := &cobra.Command{
@@ -49,6 +49,8 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 					Extra:        extra,
 					RuntimeRoot:  o.runtimeRoot,
 					SumctlPath:   o.sumctlPath(),
+
+					PermissionOverride: permissionOverride,
 				})
 				if err != nil {
 					return err
@@ -69,6 +71,7 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 		cmd.Flags().StringVar(&kind, "kind", "ship", "")
 		cmd.Flags().BoolVar(&approved, "approved", false, "")
 		cmd.Flags().StringArrayVar(&extra, "arg", nil, "")
+		cmd.Flags().BoolVar(&permissionOverride, "permission-override", false, "")
 		root.AddCommand(cmd)
 	}
 	add("prepare", prepare.Prepare)

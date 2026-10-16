@@ -41,10 +41,16 @@ type LaunchArgs struct {
 	Reasoning string
 	Preset    string
 	PresetSet bool
+
+	PermissionOverride bool
 }
 
 func (a LaunchArgs) explicit() bool {
 	return a.Harness != "" || a.Model != "" || a.Reasoning != "" || a.PresetSet
+}
+
+func (a LaunchArgs) newReviewerOnly() bool {
+	return a.explicit() || a.PermissionOverride
 }
 
 func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, args LaunchArgs) (*ordjson.Object, error) {
@@ -88,8 +94,8 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 			return nil, err
 		}
 		if stop == nil {
-			if args.explicit() {
-				return nil, fmt.Errorf("Task already has a live reviewer endpoint; --harness/--model/--reasoning/--preset apply only to a new reviewer. Prompt the recorded pane with a plain `reviewer launch`.")
+			if args.newReviewerOnly() {
+				return nil, fmt.Errorf("Task already has a live reviewer endpoint; --harness/--model/--reasoning/--preset/--permission-override apply only to a new reviewer. Prompt the recorded pane with a plain `reviewer launch`.")
 			}
 			return promptRecordedReviewer(s, herdrPath, session, sumctlPath, task, recorded, agent, worktree)
 		}
@@ -102,7 +108,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	} else if wsCode != "" {
 		return nil, fmt.Errorf("Worker workspace %s is gone (%s); reviewer launch never opens a new workspace. Re-register the intact checkout with `herdr worktree open --path %s --no-focus`, then bind the worker with `sumctl bind %s --worker-pane PANE` before launching the reviewer.", workspace, wsCode, worktree, taskID)
 	}
-	harness, argv, preset, err := reviewerLaunch(s, ctx, runtimeRoot, args)
+	harness, argv, preset, permissions, err := reviewerLaunch(s, ctx, runtimeRoot, args)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +153,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	endpoint.Set("cwd", worktree)
 	endpoint.Set("harness", harness)
 	endpoint.Set("argv", stringList(argv))
+	endpoint.Set("permissions", permissions)
 	endpoint.Set("skill_path", skillPath)
 	endpoint.Set("skill_sha256", skillSHA)
 	endpoint.Set("bound_at", store.Now())
@@ -377,20 +384,20 @@ func stringList(values []string) []any {
 	return result
 }
 
-func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args LaunchArgs) (string, []string, any, error) {
+func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args LaunchArgs) (string, []string, any, *ordjson.Object, error) {
 	loaded, err := settings.LoadSettings(s)
 	if err != nil {
-		return "", nil, nil, err
+		return "", nil, nil, nil, err
 	}
-	resolve := launch.ResolveArgs{Harness: args.Harness, Model: args.Model, Reasoning: args.Reasoning, Preset: args.Preset, PresetSet: args.PresetSet, RuntimeRoot: runtimeRoot}
+	resolve := launch.ResolveArgs{Harness: args.Harness, Model: args.Model, Reasoning: args.Reasoning, Preset: args.Preset, PresetSet: args.PresetSet, PermissionOverride: args.PermissionOverride, RuntimeRoot: runtimeRoot}
 	if loaded.Reviewer != nil && !args.explicit() {
 		resolve.Preset = asString(loaded.Reviewer, "preset")
 		resolve.PresetSet = true
 	}
-	if resolve.PresetSet || args.explicit() {
+	if resolve.PresetSet || args.newReviewerOnly() {
 		resolved, err := launch.Resolve(s, ctx, resolve)
 		if err != nil {
-			return "", nil, nil, err
+			return "", nil, nil, nil, err
 		}
 		argv := []string{}
 		if list, ok := resolved.Get("argv"); ok {
@@ -403,14 +410,14 @@ func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string, arg
 			}
 		}
 		preset, _ := resolved.Get("preset")
-		return asString(resolved, "harness"), argv, preset, nil
+		return asString(resolved, "harness"), argv, preset, objectField(resolved, "permissions"), nil
 	}
 	root := launch.RootLaunch(runtimeRoot, ctx)
 	harness := asString(root, "harness")
 	if harness == "" {
-		return "", nil, nil, fmt.Errorf("Cannot determine the coordinator's harness (%s); configure `reviewer.preset` or start from the coordinator pane.", asString(root, "error"))
+		return "", nil, nil, nil, fmt.Errorf("Cannot determine the coordinator's harness (%s); configure `reviewer.preset` or start from the coordinator pane.", asString(root, "error"))
 	}
-	return harness, nil, nil, nil
+	return harness, nil, nil, launch.HarnessDefaultPermissions(harness), nil
 }
 
 func asString(obj *ordjson.Object, key string) string {

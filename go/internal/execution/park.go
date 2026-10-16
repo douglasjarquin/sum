@@ -297,6 +297,10 @@ func Resume(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID 
 		unlock()
 		return nil, fmt.Errorf("Worker attempt %s is stale or not released; nothing was launched.", attemptID)
 	}
+	if err := launch.CheckRecorded(launch.TaskLaunch(task)); err != nil {
+		unlock()
+		return nil, err
+	}
 	tasks, err := s.AllTasks()
 	if err != nil {
 		unlock()

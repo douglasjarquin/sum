@@ -10,6 +10,7 @@ import (
 func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 	cmd := &cobra.Command{Use: "reviewer", Short: "Launch an independent reviewer"}
 	var harness, model, reasoning, preset string
+	var permissionOverride bool
 	launchCmd := &cobra.Command{
 		Use:         "launch TASK",
 		Short:       "Launch the task reviewer in its own labeled tab",
@@ -34,6 +35,8 @@ func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 				Reasoning: reasoning,
 				Preset:    preset,
 				PresetSet: cmd.Flags().Changed("preset"),
+
+				PermissionOverride: permissionOverride,
 			})
 			if err != nil {
 				return err
@@ -45,6 +48,7 @@ func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 	launchCmd.Flags().StringVar(&model, "model", "", "")
 	launchCmd.Flags().StringVar(&reasoning, "reasoning", "", "")
 	launchCmd.Flags().StringVar(&preset, "preset", "", "")
+	launchCmd.Flags().BoolVar(&permissionOverride, "permission-override", false, "")
 	cmd.AddCommand(launchCmd)
 	root.AddCommand(cmd)
 }
