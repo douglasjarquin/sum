@@ -10,6 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/usage"
 )
 
 func Run(s *store.Store, taskID, text string, handoff *ordjson.Object, endpoint *ordjson.Object, pump returns.PumpOpts) (*ordjson.Object, error) {
@@ -100,6 +101,7 @@ func Run(s *store.Store, taskID, text string, handoff *ordjson.Object, endpoint 
 	}
 	note := pipeline.RefreshNote(s, task)
 	unlock()
+	usageResult := usage.BestEffort(s, taskID)
 
 	notice, err := returns.Notify(s, pump, taskID, "parent", "a worker report is available", false)
 	if err != nil {
@@ -111,6 +113,7 @@ func Run(s *store.Store, taskID, text string, handoff *ordjson.Object, endpoint 
 	result.Set("evidence", ids)
 	result.Set("notice", notice)
 	result.Set("pipeline_note", note)
+	result.Set("usage", usageResult)
 	return result, nil
 }
 

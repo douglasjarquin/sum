@@ -17,6 +17,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/usage"
 )
 
 type Args struct {
@@ -342,6 +343,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	if err := releaseCleanupReservations(s, args.Task, runtimeRoot, detail); err != nil {
 		return nil, err
 	}
+	usageResult := usage.BestEffort(s, args.Task)
 	complete := ordjson.NewObject()
 	complete.Set("state", "complete")
 	complete.Set("step", "archived")
@@ -373,6 +375,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	path, _ := s.TaskPath(args.Task)
 	kept.Set("records", path)
 	result.Set("kept", kept)
+	result.Set("usage", usageResult)
 	result.Set("note", "Only the verified task workspace and its clean checkout were removed, through native Herdr without force. The branch, brief revisions, decisions, reports, and PR evidence stay.")
 	return result, nil
 }
@@ -424,6 +427,7 @@ func closeReviewerOnly(s *store.Store, task, ctx *ordjson.Object, runtimeRoot st
 	result.Set("pane", pane)
 	result.Set("already", closedAlready)
 	result.Set("checkout", stringField(task, "worktree"))
+	result.Set("usage", usage.BestEffort(s, stringField(task, "id")))
 	result.Set("note", "Only the settled reviewer pane was closed; the task workspace and checkout were left untouched.")
 	return result, nil
 }
