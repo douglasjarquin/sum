@@ -48,6 +48,8 @@ func (o *rootOptions) addSettingsCommands(root *cobra.Command) {
 		clearReviewer                                             bool
 		autoPublishEvidence                                       string
 		clearEvidence                                             bool
+		usageAccounting                                           string
+		clearUsage                                                bool
 	)
 	setCmd := &cobra.Command{
 		Use:  "set",
@@ -65,6 +67,14 @@ func (o *rootOptions) addSettingsCommands(root *cobra.Command) {
 				WorkerPresetSet:   cmd.Flags().Changed("worker-preset"),
 				ReviewerPresetSet: cmd.Flags().Changed("reviewer-preset"),
 				ClearEvidence:     clearEvidence,
+				ClearUsage:        clearUsage,
+			}
+			if cmd.Flags().Changed("usage-accounting") {
+				enabled, boolErr := strconv.ParseBool(usageAccounting)
+				if boolErr != nil {
+					return fmt.Errorf("--usage-accounting takes true or false, got %q", usageAccounting)
+				}
+				parsed.UsageEnabled = &enabled
 			}
 			if cmd.Flags().Changed("auto-publish-evidence") {
 				enabled, boolErr := strconv.ParseBool(autoPublishEvidence)
@@ -108,6 +118,8 @@ func (o *rootOptions) addSettingsCommands(root *cobra.Command) {
 	setCmd.Flags().BoolVar(&clearReviewer, "clear-reviewer", false, "")
 	setCmd.Flags().StringVar(&autoPublishEvidence, "auto-publish-evidence", "", "")
 	setCmd.Flags().BoolVar(&clearEvidence, "clear-evidence", false, "")
+	setCmd.Flags().StringVar(&usageAccounting, "usage-accounting", "", "")
+	setCmd.Flags().BoolVar(&clearUsage, "clear-usage", false, "")
 	settingsCmd.AddCommand(setCmd)
 
 	root.AddCommand(settingsCmd)
@@ -145,8 +157,11 @@ func (o *rootOptions) runSettingsSet(cmd *cobra.Command, parsed settings.WriteAr
 	if parsed.ClearEvidence && parsed.AutoPublish != nil {
 		return fmt.Errorf("--clear-evidence conflicts with --auto-publish-evidence.")
 	}
-	if parsed.Global == nil && parsed.PerRepository == nil && len(parsed.ProjectLimits) == 0 && len(parsed.ClearProjectLimits) == 0 && !parsed.ClearCapacity && parsed.WorkerHarness == "" && parsed.WorkerModel == "" && parsed.WorkerReasoning == "" && !parsed.WorkerPresetSet && !parsed.ClearWorker && !parsed.ReviewerPresetSet && !parsed.ClearReviewer && parsed.AutoPublish == nil && !parsed.ClearEvidence {
-		return fmt.Errorf("Give --global, --per-repository, --project-limit, --clear-project-limit, --clear-capacity, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, --clear-reviewer, --auto-publish-evidence, or --clear-evidence.")
+	if parsed.ClearUsage && parsed.UsageEnabled != nil {
+		return fmt.Errorf("--clear-usage conflicts with --usage-accounting.")
+	}
+	if parsed.Global == nil && parsed.PerRepository == nil && len(parsed.ProjectLimits) == 0 && len(parsed.ClearProjectLimits) == 0 && !parsed.ClearCapacity && parsed.WorkerHarness == "" && parsed.WorkerModel == "" && parsed.WorkerReasoning == "" && !parsed.WorkerPresetSet && !parsed.ClearWorker && !parsed.ReviewerPresetSet && !parsed.ClearReviewer && parsed.AutoPublish == nil && !parsed.ClearEvidence && parsed.UsageEnabled == nil && !parsed.ClearUsage {
+		return fmt.Errorf("Give --global, --per-repository, --project-limit, --clear-project-limit, --clear-capacity, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, --clear-reviewer, --auto-publish-evidence, --clear-evidence, --usage-accounting, or --clear-usage.")
 	}
 	view, err := settings.Write(st, parsed)
 	if err != nil {

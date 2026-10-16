@@ -30,7 +30,7 @@ var (
 	presetNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	harnessKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	launchValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@,=\[\]-]{0,127}$`)
-	settingsKeys       = map[string]bool{"schema": true, "capacity": true, "worker": true, "presets": true, "reviewer": true, "evidence": true, "hook": true}
+	settingsKeys       = map[string]bool{"schema": true, "capacity": true, "worker": true, "presets": true, "reviewer": true, "evidence": true, "hook": true, "usage": true}
 	defaultCapacity    = map[string]int{"global": defaultGlobal, "per_repository": defaultPerRepository}
 	capacityKeys       = []string{"global", "per_repository", "projects"}
 )
@@ -215,6 +215,7 @@ type Settings struct {
 	Reviewer *ordjson.Object
 	Evidence *ordjson.Object
 	Hook     *ordjson.Object
+	Usage    *ordjson.Object
 	Source   string
 	Path     string
 }
@@ -284,7 +285,7 @@ func loadSettingsFile(path string) (*Settings, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		allowed := []string{"capacity", "evidence", "hook", "presets", "reviewer", "schema", "worker"}
+		allowed := []string{"capacity", "evidence", "hook", "presets", "reviewer", "schema", "usage", "worker"}
 		return nil, fmt.Errorf("unknown keys %s; allowed: %s", pyrepr.StrList(unknown), pyrepr.StrList(allowed))
 	}
 	var capacity *ordjson.Object
@@ -326,29 +327,74 @@ func loadSettingsFile(path string) (*Settings, error) {
 		}
 		hookBlock = validated
 	}
-	return &Settings{Capacity: capacity, Worker: worker, Presets: presets, Reviewer: reviewer, Evidence: evidenceBlock, Hook: hookBlock, Source: "settings.json", Path: path}, nil
+	var usageBlock *ordjson.Object
+	if usageValue, has := obj.Get("usage"); has {
+		validated, err := validateEnabledBlock("usage", usageValue)
+		if err != nil {
+			return nil, err
+		}
+		usageBlock = validated
+	}
+	return &Settings{Capacity: capacity, Worker: worker, Presets: presets, Reviewer: reviewer, Evidence: evidenceBlock, Hook: hookBlock, Usage: usageBlock, Source: "settings.json", Path: path}, nil
 }
 
 func validateHook(value any) (*ordjson.Object, error) {
+	return validateEnabledBlock("hook", value)
+}
+
+func validateEnabledBlock(name string, value any) (*ordjson.Object, error) {
 	obj, _ := value.(*ordjson.Object)
 	if obj == nil {
-		return nil, fmt.Errorf("hook must be an object")
+		return nil, fmt.Errorf("%s must be an object", name)
 	}
 	for _, key := range obj.Keys() {
 		if key != "enabled" {
-			return nil, fmt.Errorf("unknown hook keys %s; allowed: %s", pyrepr.StrList([]string{key}), pyrepr.StrList([]string{"enabled"}))
+			return nil, fmt.Errorf("unknown %s keys %s; allowed: %s", name, pyrepr.StrList([]string{key}), pyrepr.StrList([]string{"enabled"}))
 		}
 	}
 	enabled, has := obj.Get("enabled")
 	if !has {
-		return nil, fmt.Errorf("hook.enabled is required when a hook block is present")
+		return nil, fmt.Errorf("%s.enabled is required when a %s block is present", name, name)
 	}
 	if _, ok := enabled.(bool); !ok {
-		return nil, fmt.Errorf("hook.enabled must be true or false, got %s", pyrepr.Repr(enabled))
+		return nil, fmt.Errorf("%s.enabled must be true or false, got %s", name, pyrepr.Repr(enabled))
 	}
 	canonical := ordjson.NewObject()
 	canonical.Set("enabled", enabled)
 	return canonical, nil
+}
+
+func UsageEnabled(s *store.Store) (bool, error) {
+	loaded, err := LoadSettings(s)
+	if err != nil {
+		return false, err
+	}
+	return loaded.UsageEnabled(), nil
+}
+
+func (s *Settings) UsageEnabled() bool {
+	if s == nil || s.Usage == nil {
+		return false
+	}
+	enabled, _ := s.Usage.Get("enabled")
+	value, _ := enabled.(bool)
+	return value
+}
+
+func UsageView(block *ordjson.Object) *ordjson.Object {
+	view := ordjson.NewObject()
+	enabled := false
+	if block != nil {
+		value, _ := block.Get("enabled")
+		enabled, _ = value.(bool)
+	}
+	view.Set("enabled", enabled)
+	if block == nil {
+		view.Set("source", "default")
+	} else {
+		view.Set("source", "settings")
+	}
+	return view
 }
 
 func NativeEventsEnabled(s *store.Store) (bool, error) {
