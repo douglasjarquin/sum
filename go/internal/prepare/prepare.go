@@ -125,6 +125,8 @@ type Args struct {
 	Extra       []string
 	RuntimeRoot string
 	SumctlPath  string
+
+	PermissionOverride bool
 }
 
 func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error) {
@@ -179,6 +181,8 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		Preset:      args.Preset,
 		PresetSet:   args.PresetSet,
 		RuntimeRoot: args.RuntimeRoot,
+
+		PermissionOverride: args.PermissionOverride,
 	})
 	if err != nil {
 		return nil, err
@@ -493,6 +497,10 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		argv = append(argv, extra...)
 	}
 	launchSpec.Set("argv", anyStrings(argv))
+	if err := launch.CheckRecorded(launchSpec); err != nil {
+		unlock()
+		return nil, err
+	}
 	explicit := []any{}
 	for _, a := range func() []any { v, _ := launchSpec.Get("explicit_args"); list, _ := v.([]any); return list }() {
 		explicit = append(explicit, a)

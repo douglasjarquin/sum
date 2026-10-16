@@ -123,14 +123,129 @@ func intField(o *ordjson.Object, key string) (int, bool) {
 }
 
 type ResolveArgs struct {
-	Harness     string
-	Model       string
-	Reasoning   string
-	SameAsRoot  bool
-	Extra       []string
-	Preset      string
-	PresetSet   bool
-	RuntimeRoot string
+	Harness            string
+	Model              string
+	Reasoning          string
+	SameAsRoot         bool
+	Extra              []string
+	Preset             string
+	PresetSet          bool
+	PermissionOverride bool
+	RuntimeRoot        string
+}
+
+const PermissionOverrideFlag = "--permission-override"
+
+func HarnessDefaultPermissions(harness string) *ordjson.Object {
+	return permissionsRecord(harness, nil, false)
+}
+
+type overrideArgument struct {
+	argument string
+	source   string
+}
+
+func permissionsRecord(harness string, overrides []overrideArgument, authorized bool) *ordjson.Object {
+	result := ordjson.NewObject()
+	result.Set("override", authorized && len(overrides) > 0)
+	arguments := make([]any, 0, len(overrides))
+	for _, o := range overrides {
+		entry := ordjson.NewObject()
+		entry.Set("argument", o.argument)
+		entry.Set("source", o.source)
+		arguments = append(arguments, entry)
+	}
+	result.Set("arguments", arguments)
+	if authorized && len(overrides) > 0 {
+		result.Set("authorization", PermissionOverrideFlag)
+	} else {
+		result.Set("authorization", nil)
+	}
+	if len(overrides) > 0 {
+		result.Set("status", "requested")
+	} else {
+		result.Set("status", "harness-default")
+	}
+	if _, verified := settings.PermissionFlags(harness); verified {
+		result.Set("registry", "verified")
+	} else {
+		result.Set("registry", "none")
+	}
+	return result
+}
+
+func overridesOf(harness, source string, argv []string) []overrideArgument {
+	var out []overrideArgument
+	for _, a := range settings.PermissionOverrides(harness, argv) {
+		out = append(out, overrideArgument{argument: a, source: source})
+	}
+	return out
+}
+
+func overrideArguments(overrides []overrideArgument) []string {
+	out := make([]string, len(overrides))
+	for i, o := range overrides {
+		out[i] = o.argument
+	}
+	return out
+}
+
+func resolvePermissions(harness string, presetArgs, extra []string, authorized bool) (*ordjson.Object, error) {
+	overrides := append(overridesOf(harness, "preset", presetArgs), overridesOf(harness, "explicit", extra)...)
+	flags, verified := settings.PermissionFlags(harness)
+	switch {
+	case authorized && !verified:
+		return nil, fmt.Errorf("No verified permission/trust flags for harness %s, so sum cannot tell an override from an ordinary argument; %s is refused for it. Pass only arguments you accept as ordinary, or choose a harness with a verified list (%s). Nothing was created.", harness, PermissionOverrideFlag, strings.Join(knownPermissionHarnesses(), ", "))
+	case authorized && len(overrides) == 0:
+		return nil, fmt.Errorf("%s names no permission/trust argument for %s (verified flags: %s). Pass the native flag with --arg or through the preset, or drop %s. Nothing was created.", PermissionOverrideFlag, harness, strings.Join(flags, ", "), PermissionOverrideFlag)
+	case !authorized && len(overrides) > 0:
+		return nil, fmt.Errorf("%s is a permission/trust override for %s; sum never adds one itself and passes one only with the user's explicit authorization. Pass %s after the user authorized it, or drop the argument. Nothing was created.", strings.Join(overrideArguments(overrides), ", "), harness, PermissionOverrideFlag)
+	}
+	return permissionsRecord(harness, overrides, authorized), nil
+}
+
+func knownPermissionHarnesses() []string {
+	var names []string
+	for _, h := range []string{"claude", "codex", "copilot", "devin"} {
+		if _, ok := settings.PermissionFlags(h); ok {
+			names = append(names, h)
+		}
+	}
+	return names
+}
+
+func CheckRecorded(spec *ordjson.Object) error {
+	harness := asString(func() any { v, _ := spec.Get("harness"); return v }())
+	var argv []string
+	for _, a := range asList(func() any { v, _ := spec.Get("argv"); return v }()) {
+		if s, ok := a.(string); ok {
+			argv = append(argv, s)
+		}
+	}
+	overrides := settings.PermissionOverrides(harness, argv)
+	if len(overrides) == 0 {
+		return nil
+	}
+	recorded := map[string]bool{}
+	if permissions := asObject(func() any { v, _ := spec.Get("permissions"); return v }()); permissions != nil {
+		if override, _ := permissions.Get("override"); override == true {
+			for _, raw := range asList(func() any { v, _ := permissions.Get("arguments"); return v }()) {
+				if entry := asObject(raw); entry != nil {
+					recorded[asString(func() any { v, _ := entry.Get("argument"); return v }())] = true
+				}
+			}
+		}
+	}
+	var missing []string
+	for _, o := range overrides {
+		if !recorded[o] {
+			missing = append(missing, o)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("Permission/trust override %s for %s is not authorized by this task's record: a record prepared before sum required %s carries no authorization, and `start --arg` cannot add one. Nothing was started; dispatch the task again with %s after the user authorizes it.", strings.Join(missing, ", "), harness, PermissionOverrideFlag, PermissionOverrideFlag)
 }
 
 func RootLaunch(runtimeRoot string, ctx *ordjson.Object) *ordjson.Object {
@@ -279,6 +394,10 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		}
 	}
 	allExtra := append(append([]string{}, presetArgs...), args.Extra...)
+	permissions, err := resolvePermissions(harness, presetArgs, args.Extra, args.PermissionOverride)
+	if err != nil {
+		return nil, err
+	}
 	values := map[string]any{"model": nil, "reasoning": nil}
 	explicit := map[string]string{"model": args.Model, "reasoning": args.Reasoning}
 	for _, field := range []string{"model", "reasoning"} {
@@ -297,7 +416,6 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		}
 	}
 	argv := []any{}
-	argv = append(argv, anySlice(settings.WorkerArgv(harness))...)
 	if model, ok := values["model"].(string); ok && model != "" {
 		argv = append(argv, anySlice(adapterArgv(harness, "model", model))...)
 	}
@@ -317,6 +435,7 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 	result.Set("model", values["model"])
 	result.Set("reasoning", values["reasoning"])
 	result.Set("argv", argv)
+	result.Set("permissions", permissions)
 	result.Set("source", source)
 	extraAny := make([]any, len(args.Extra))
 	for i, a := range args.Extra {
@@ -387,6 +506,7 @@ func Confirmation(launch *ordjson.Object) string {
 	if preset := asObject(func() any { v, _ := launch.Get("preset"); return v }()); preset != nil {
 		parts = append(parts, fmt.Sprintf("preset %s r%v (%s)", asString(func() any { v, _ := preset.Get("name"); return v }()), func() any { v, _ := preset.Get("revision"); return v }(), asString(func() any { v, _ := preset.Get("source"); return v }())))
 	}
+	parts = append(parts, permissionsSummary(asObject(func() any { v, _ := launch.Get("permissions"); return v }())))
 	observed := asObject(func() any { v, _ := launch.Get("observed"); return v }())
 	status := asString(func() any { v, _ := observed.Get("status"); return v }())
 	verification := map[string]string{
@@ -401,9 +521,45 @@ func Confirmation(launch *ordjson.Object) string {
 	return fmt.Sprintf("Launch: %s; argv %v; %s.", strings.Join(parts, ", "), argv, verification)
 }
 
+func permissionsSummary(permissions *ordjson.Object) string {
+	if permissions == nil {
+		return "permissions unrecorded"
+	}
+	var described []string
+	for _, raw := range asList(func() any { v, _ := permissions.Get("arguments"); return v }()) {
+		entry := asObject(raw)
+		if entry == nil {
+			continue
+		}
+		described = append(described, fmt.Sprintf("%s (%s)", asString(func() any { v, _ := entry.Get("argument"); return v }()), asString(func() any { v, _ := entry.Get("source"); return v }())))
+	}
+	if len(described) == 0 {
+		return "permissions harness default (sum passed no override argument)"
+	}
+	authorization := "unauthorized"
+	if override, _ := permissions.Get("override"); override == true {
+		authorization = "authorized by " + PermissionOverrideFlag
+	}
+	return fmt.Sprintf("permission override %s, %s, requested and not runtime-verified", strings.Join(described, ", "), authorization)
+}
+
+func legacyPermissions(launch *ordjson.Object) *ordjson.Object {
+	harness := asString(func() any { v, _ := launch.Get("harness"); return v }())
+	var argv []string
+	for _, a := range asList(func() any { v, _ := launch.Get("argv"); return v }()) {
+		if s, ok := a.(string); ok {
+			argv = append(argv, s)
+		}
+	}
+	return permissionsRecord(harness, overridesOf(harness, "legacy-record", argv), false)
+}
+
 func TaskLaunch(task *ordjson.Object) *ordjson.Object {
 	if v, ok := task.Get("launch"); ok {
 		if obj := asObject(v); obj != nil {
+			if _, has := obj.Get("permissions"); !has {
+				obj.Set("permissions", legacyPermissions(obj))
+			}
 			return obj
 		}
 	}
@@ -422,6 +578,7 @@ func TaskLaunch(task *ordjson.Object) *ordjson.Object {
 	result.Set("model", nil)
 	result.Set("reasoning", nil)
 	result.Set("argv", []any{})
+	result.Set("permissions", HarnessDefaultPermissions(asString(harness)))
 	result.Set("source", source)
 	result.Set("explicit_args", []any{})
 	result.Set("same_as_root", false)

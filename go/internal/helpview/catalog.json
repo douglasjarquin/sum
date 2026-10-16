@@ -321,6 +321,10 @@
       {
         "name": "--arg",
         "help": "An explicitly chosen harness argument; use --arg=-m for leading dashes"
+      },
+      {
+        "name": "--permission-override",
+        "help": "Explicit user authorization for a permission/trust flag carried by --arg or the preset; without it such a flag is refused, with it the override is recorded with its source as requested, never runtime-verified"
       }
     ],
     "subcommands": null,
@@ -385,6 +389,10 @@
       {
         "name": "--arg",
         "help": "An explicitly chosen harness argument; use --arg=-m for leading dashes"
+      },
+      {
+        "name": "--permission-override",
+        "help": "Explicit user authorization for a permission/trust flag carried by --arg or the preset; without it such a flag is refused, with it the override is recorded with its source as requested, never runtime-verified"
       }
     ],
     "subcommands": null,
@@ -811,6 +819,10 @@
         "name": "--preset",
         "help": "Saved preset for a new reviewer instead of `reviewer.preset`",
         "required": false
+      },
+      {
+        "name": "--permission-override",
+        "help": "Explicit user authorization for a permission/trust flag carried by the preset; without it such a flag is refused, with it the override is recorded on the reviewer endpoint with its source as requested, never runtime-verified"
       }
     ],
     "subcommands": null,
