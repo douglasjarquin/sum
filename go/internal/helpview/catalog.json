@@ -1633,6 +1633,10 @@
       {
         "name": "--replace",
         "help": "Switch a task from one recorded PR number to another after inspecting both"
+      },
+      {
+        "name": "--accept-base-branch",
+        "help": "Record the PR's base branch as the task's delivery branch (source accepted) when it differs from the recorded one, after inspecting both; without it the disagreement stays a finding that blocks publication and merge admission, and the PR is never edited"
       }
     ],
     "subcommands": null,

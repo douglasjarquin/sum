@@ -814,7 +814,7 @@ func (ins *inspection) github(number int) (*ordjson.Object, error) {
 		}
 		if stringField(recorded, "state") == "merged" {
 			if findings := asList(func() any { v, _ := recorded.Get("findings"); return v }()); len(findings) > 0 {
-				ins.block("pr", fmt.Sprintf("PR #%d is merged but its head is not attributed to this task: %v; a coordinator `verify --result pass` on the merged head explains a post-review push, then reconcile again", number, findings))
+				ins.block("pr", fmt.Sprintf("PR #%d is merged but its observation carries findings: %v; resolve each through the action it names (a coordinator `verify --result pass` on the merged head explains a post-review push; `pr reconcile --accept-base-branch` records an accepted base), then reconcile again", number, findings))
 			} else {
 				ins.block("pr", fmt.Sprintf("PR #%d is merged but the observation recorded no merge commit; reconcile again to re-observe it", number))
 			}
