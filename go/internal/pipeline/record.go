@@ -92,7 +92,9 @@ func (r Record) Object() *ordjson.Object {
 		item.Set("at", nilIfEmpty(row.At))
 		item.Set("evidence", anyStrings(row.Evidence))
 		item.Set("advice", nilIfEmpty(row.Advice))
-		item.Set("note", nilIfEmpty(row.Note))
+		if row.Note != "" {
+			item.Set("note", row.Note)
+		}
 		rows = append(rows, item)
 	}
 	out.Set("rows", rows)
