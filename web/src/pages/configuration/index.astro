@@ -89,7 +89,8 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <div>&#32;&#32;"worker": &#123;"harness": "codex", "model": "...", "reasoning": "..."&#125; | &#123;"preset": "deep"&#125;,</div>
         <div>&#32;&#32;"presets": &#123;"deep": &#123;"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1&#125;&#125;,</div>
         <div>&#32;&#32;"reviewer": &#123;"preset": "review"&#125;,</div>
-        <div>&#32;&#32;"evidence": &#123;"auto_publish": false&#125;</div>
+        <div>&#32;&#32;"evidence": &#123;"auto_publish": false&#125;,</div>
+        <div>&#32;&#32;"usage": &#123;"enabled": true&#125;  <span class="c"># opt-in per-task Claude Code usage ledger; absent means off</span></div>
         <div>&#125;</div>
       </div>
       <p>
@@ -100,6 +101,25 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <code>status</code> list the effective limit, its source, enrollment,
         and held attempts per declared override and occupied scope. The
         settings file travels with <code>sumctl backup</code>.
+      </p>
+      <p>
+        <code>usage.enabled</code> turns on per-task usage accounting, off by
+        default. While it is off nothing reads a Claude Code transcript and no
+        usage record exists. While it is on, <code>usage collect TASK_ID</code>,
+        <code>report</code>, and <code>cleanup</code> fold the transcripts of the
+        panes sum bound to the task (the conversation id Herdr reports for the
+        worker and the reviewer) into the task's private
+        <code>usage.json</code>: one invocation and one token set per distinct
+        <code>message.id</code>, resumed from a recorded byte offset so repeated
+        collection never double counts, with a token field the source never
+        reported kept <code>null</code>. <code>usage show TASK_ID</code> prints
+        totals by category (implementation, review, repair, unknown) and a
+        coverage label: <code>complete</code>, <code>partial</code> with reasons,
+        or <code>unavailable</code>. Collection failures are warnings and never
+        change delivery, reservation release, or cleanup. The ledger travels with
+        <code>sumctl backup</code>; an older <code>sumctl</code> refuses a
+        settings file carrying the <code>usage</code> key, so remove it before a
+        rollback. Totals are counts, not a bill.
       </p>
     </div>
   </div>
