@@ -879,10 +879,10 @@
   },
   "pr": {
     "topic": "pr",
-    "help": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names",
+    "help": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names. The read is retried once, within the same bound, only for a positively transient gh failure (HTTP 5xx, 429, secondary rate limit, connection error); auth, 404, GraphQL, malformed output, and timeouts are never retried, and no write ever is",
     "arguments": [],
     "subcommands": {
-      "reconcile": "Coordinator only: inspect PR --number in the task repository with gh, record its exact identity, state, and mismatches, then publish the worker's before/after evidence",
+      "reconcile": "Coordinator only: inspect PR --number in the task repository with gh (one bounded retry of that read on a transient failure), record its exact identity, state, and mismatches, then publish the worker's before/after evidence",
       "evidence": "Coordinator only: publish each evidence run's before/after media into the reconciled PR's marked block; receipts and publish copies stay under the task record"
     },
     "read_only": false,
