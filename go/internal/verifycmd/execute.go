@@ -173,7 +173,8 @@ func reserveVerifier(s *store.Store, ctx *ordjson.Object, taskID, candidate, che
 	if err != nil {
 		return "", err
 	}
-	projectObj, _ := func() any { v, _ := current.Get("project"); return v }().(*ordjson.Object)
+	projectValue, _ := current.Get("project")
+	projectObj, _ := projectValue.(*ordjson.Object)
 	admission, err := launch.AdmitProject(s, tasks, asString(current, "repository"), projectObj)
 	if err != nil {
 		return "", err

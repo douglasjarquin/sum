@@ -113,6 +113,25 @@ func NormalizeHost(host string) (string, error) {
 	return normalized, nil
 }
 
+func ValidName(name string) bool {
+	parts := strings.Split(name, "/")
+	if len(parts) == 3 {
+		if !gitHostPattern.MatchString(strings.ToLower(parts[0])) {
+			return false
+		}
+		parts = parts[1:]
+	}
+	if len(parts) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		if !projectPartPattern.MatchString(part) || part == "." || part == ".." || strings.HasPrefix(part, ".") {
+			return false
+		}
+	}
+	return true
+}
+
 // ProjectIdentity ports `project_identity`.
 func ProjectIdentity(host, owner, repo string) (*Identity, error) {
 	normalizedHost, err := NormalizeHost(host)
@@ -223,8 +242,8 @@ func PaneInside(s *store.Store, root, cwd string) *ordjson.Object {
 	if cwd == "" {
 		return nil
 	}
-	resolved := resolvePathOrSelf(cwd)
-	base := resolvePathOrSelf(projectsRoot(root))
+	resolved := ResolvePathOrSelf(cwd)
+	base := ResolvePathOrSelf(projectsRoot(root))
 	if resolved == base || strings.HasPrefix(resolved, base+string(os.PathSeparator)) {
 		rel, err := filepath.Rel(base, resolved)
 		name := any(nil)
@@ -261,7 +280,7 @@ func PaneInside(s *store.Store, root, cwd string) *ordjson.Object {
 			continue
 		}
 		pathValue, _ := record.Get("path")
-		cloneBase := resolvePathOrSelf(asString(pathValue))
+		cloneBase := ResolvePathOrSelf(asString(pathValue))
 		if resolved == cloneBase || strings.HasPrefix(resolved, cloneBase+string(os.PathSeparator)) {
 			row := ordjson.NewObject()
 			name, _ := record.Get("name")
@@ -274,7 +293,7 @@ func PaneInside(s *store.Store, root, cwd string) *ordjson.Object {
 	return nil
 }
 
-func resolvePathOrSelf(path string) string {
+func ResolvePathOrSelf(path string) string {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return path
@@ -561,7 +580,7 @@ func gitCommonDir(path string) (string, bool) {
 	if common == "" {
 		return "", false
 	}
-	return resolvePathOrSelf(common), true
+	return ResolvePathOrSelf(common), true
 }
 
 // Show ports `project_show`.

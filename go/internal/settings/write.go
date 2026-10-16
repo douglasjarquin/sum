@@ -22,17 +22,17 @@ type WriteArgs struct {
 	ProjectLimits      map[string]int
 	ClearProjectLimits []string
 	ClearCapacity      bool
-	WorkerHarness     string
-	WorkerModel       string
-	WorkerReasoning   string
-	WorkerPreset      string
-	ClearWorker       bool
-	ReviewerPreset    string
-	ClearReviewer     bool
-	WorkerPresetSet   bool
-	ReviewerPresetSet bool
-	AutoPublish       *bool
-	ClearEvidence     bool
+	WorkerHarness      string
+	WorkerModel        string
+	WorkerReasoning    string
+	WorkerPreset       string
+	ClearWorker        bool
+	ReviewerPreset     string
+	ClearReviewer      bool
+	WorkerPresetSet    bool
+	ReviewerPresetSet  bool
+	AutoPublish        *bool
+	ClearEvidence      bool
 }
 
 func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
@@ -224,10 +224,11 @@ func mergeProjectLimits(s *store.Store, base *ordjson.Object, set map[string]int
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if enrolled == nil {
-			return nil, fmt.Errorf("No enrolled project %s; `project list` shows the registry and `project enroll owner/repo` adds exactly one repository.", pyrepr.Repr(name))
+		known := false
+		if enrolled != nil {
+			_, known = enrolled.Get(name)
 		}
-		if _, has := enrolled.Get(name); !has {
+		if !known {
 			return nil, fmt.Errorf("No enrolled project %s; `project list` shows the registry and `project enroll owner/repo` adds exactly one repository.", pyrepr.Repr(name))
 		}
 		projects.Set(name, json.Number(fmt.Sprint(set[name])))

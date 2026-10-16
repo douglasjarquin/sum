@@ -52,7 +52,7 @@ Add `capacity.projects`, a map from enrolled project name to a per-project execu
 **Disclosure**
 
 - R11. The capacity deferral names the scope, the resolved limit, its source (`projects.NAME` or `per_repository`), the holders, and the settings key to raise, while keeping the existing `N of M slots for` and `N of N global execution slots` phrasing that callers and the demo test match on.
-- R12. `settings show` and the `capacity` block of `status` and coordinator `init` list, when a `capacity` block is present, every declared project override and every scope holding reservations with its limit, source, enrollment state, and held attempt ids; `limits` echoes `projects` only when declared.
+- R12. `settings show` and the `capacity` block of `status` list, when a `capacity` block is present, every declared project override and every scope holding reservations with its limit, source, enrollment state, and held attempt ids; `limits` echoes `projects` only when declared.
 - R13. The help catalog, `docs/configuration.md`, the web configuration page, and `docs/features/coordination.md` describe the setting, the resolver order, the unenrolled-path rule, and the legacy-compatibility guarantee.
 
 ### Key Decisions
@@ -107,7 +107,7 @@ Add `capacity.projects`, a map from enrolled project name to a per-project execu
   1. Extend `validateCapacity` with the `projects` key: object, each key a plausible project name, each value an integer 1..64 and at most `global`; canonicalize sorted and omit when empty. Update the allowed-keys error text to list `projects`.
   2. Add an exported resolver returning the scope label, limit, and source for a capacity object, a project name, and a repository path, with the null-project registry adoption of KTD2.
   3. Add an exported held-reservation collector implementing KTD3 over the task list, reusing `reservations.Held`.
-  4. Extend `CapacityViewOf` with the `effective` list of KTD6 when `limits` is non-nil, reading the registry through `project.ReadProjects` for the `enrolled` flag; a registry read failure never fails the view, the entries then carry `enrolled: null`.
+  4. Extend `CapacityViewOf` (reached by `settings show` and `status`; coordinator `init` carries no capacity block and is intentionally left alone) with the `effective` list of KTD6 when `limits` is non-nil, reading the registry through `project.ReadProjects` for the `enrolled` flag; a registry read failure never fails the view, the entries then carry `enrolled: null`.
 - **Patterns to follow:** `validateCapacity` and `validateEvidence` for error wording; `presetSummary` for sorted canonical objects.
 - **Test scenarios:** Test expectation: none -- KTD7. Hand exercise in U6 covers: no `capacity` block leaves `settings show` byte-identical; `{"docs": 3}` with `global: 6` loads; `{"docs": 7}` with `global: 6` is refused naming the key; `{"docs": "3"}` and `"projects": []` are refused; a stale name shows `enrolled: false`.
 - **Verification:** `mise run lint` and `mise run test` pass; the existing capacity golden pins without a capacity block are unchanged.
