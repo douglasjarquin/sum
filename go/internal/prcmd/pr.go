@@ -1,7 +1,6 @@
 package prcmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -11,7 +10,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
-	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -82,7 +80,8 @@ func viewPR(gh, repo, remote string, number int) (map[string]any, error) {
 	if remote != "" {
 		argv = append(argv, "--repo", remote)
 	}
-	res, err := proc.RunContext(context.Background(), proc.Cmd{Argv: argv, Dir: repo, Timeout: GHBound})
+	out, err := readOnlyGH(argv, repo, GHBound)
+	res := out.Result
 	if err != nil {
 		detail := strings.TrimSpace(res.Stderr)
 		if detail != "" {
@@ -91,7 +90,7 @@ func viewPR(gh, repo, remote string, number int) (map[string]any, error) {
 		return nil, fmt.Errorf("PR observation for #%d is uncertain: %w%s", number, err, detail)
 	}
 	if res.Code != 0 {
-		return nil, fmt.Errorf("PR observation for #%d is uncertain: %s", number, res.Detail())
+		return nil, fmt.Errorf("PR observation for #%d is uncertain%s: %s", number, out.attemptNote(), sanitizedDetail(res))
 	}
 	var data map[string]any
 	if err := json.Unmarshal([]byte(res.Stdout), &data); err != nil {
