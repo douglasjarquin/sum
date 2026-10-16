@@ -3,13 +3,18 @@ package usage
 import (
 	"fmt"
 	"os"
+	"slices"
 
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
+
+const DisabledNote = "Usage accounting is off; nothing was read. Enable it with `settings set --usage-accounting true`."
 
 type observed struct {
 	id       string
@@ -32,7 +37,7 @@ func Collect(s *store.Store, taskID string) (*ordjson.Object, error) {
 	result.Set("enabled", enabled)
 	if !enabled {
 		result.Set("collected", false)
-		result.Set("note", "Usage accounting is off; nothing was read. Enable it with `settings set --usage-accounting true`.")
+		result.Set("note", DisabledNote)
 		return result, nil
 	}
 	unlock, err := s.Lock()
@@ -44,7 +49,7 @@ func Collect(s *store.Store, taskID string) (*ordjson.Object, error) {
 }
 
 func collectLocked(s *store.Store, taskID string, result *ordjson.Object) (*ordjson.Object, error) {
-	warnings := []any{}
+	warnings := []string{}
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
@@ -76,15 +81,16 @@ func collectLocked(s *store.Store, taskID string, result *ordjson.Object) (*ordj
 				ledger.Sessions = append(ledger.Sessions, session)
 			}
 			session.ProjectsDir = projectsDir
-			read(session, seen.live, projectsDir, stamp)
-			if session.Status == StatusUnavailable || (session.Status == StatusPartial && session.Reason != "session-live") {
+			if session.ProjectDir == "" {
+				session.ProjectDir = projectDir(projectsDir, session.Cwd)
+			}
+			read(session, seen.live, stamp)
+			if session.Status == StatusUnavailable || (session.Status == StatusPartial && session.Reason != ReasonSessionLive) {
 				warnings = append(warnings, fmt.Sprintf("session %s %s: %s", session.ID, session.Status, session.Reason))
 			}
 			for _, source := range session.Sources {
 				if source.Status == StatusPartial || (source.Status == StatusUnavailable && source.Subagent) {
-					if !contains(stringsOf(warnings), source.Reason) {
-						warnings = append(warnings, fmt.Sprintf("session %s source %s: %s", session.ID, source.Status, source.Reason))
-					}
+					warnings = append(warnings, fmt.Sprintf("session %s source %s: %s", session.ID, source.Status, source.Reason))
 				}
 			}
 		}
@@ -99,23 +105,16 @@ func collectLocked(s *store.Store, taskID string, result *ordjson.Object) (*ordj
 	result.Set("ledger", path)
 	result.Set("sessions", len(ledger.Sessions))
 	result.Set("coverage", coverageObject(ledger.Coverage))
-	result.Set("totals", bucketObject(ledger.Totals["task"]))
-	result.Set("warnings", warnings)
+	result.Set("totals", bucketObject(ledger.Totals[bucketTask]))
+	result.Set("warnings", stringsList(warnings))
 	return result, nil
 }
 
-func read(session *Session, live bool, projectsDir, stamp string) {
-	main := transcriptPath(projectsDir, session.Cwd, session.ID)
-	paths := append([]string{main}, subagentPaths(projectsDir, session.Cwd, session.ID)...)
+func read(session *Session, live bool, stamp string) {
+	main := transcriptPath(session.ProjectDir, session.ID)
+	paths := append([]string{main}, subagentPaths(session.ProjectDir, session.ID)...)
 	for _, path := range paths {
-		found := false
-		for _, source := range session.Sources {
-			if source.Path == path {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.ContainsFunc(session.Sources, func(source *Source) bool { return source.Path == path }) {
 			session.Sources = append(session.Sources, &Source{Path: path, Subagent: path != main})
 		}
 	}
@@ -130,13 +129,13 @@ func read(session *Session, live bool, projectsDir, stamp string) {
 		}
 	}
 	if status != StatusUnavailable && live {
-		status, reason = StatusPartial, "session-live"
+		status, reason = StatusPartial, ReasonSessionLive
 	}
 	session.Status, session.Reason, session.CollectedAt = status, reason, stamp
 }
 
-func discover(s *store.Store, task *ordjson.Object) ([]observed, []any) {
-	var warnings []any
+func discover(s *store.Store, task *ordjson.Object) ([]observed, []string) {
+	var warnings []string
 	taskID := stringOf(task, "id")
 	worker, workerErr := reservations.Worker(task)
 	attemptID, attemptLive, checkout := "", false, ""
@@ -158,10 +157,10 @@ func discover(s *store.Store, task *ordjson.Object) ([]observed, []any) {
 	var sessions []observed
 	registrations, err := s.Registrations()
 	if err != nil {
-		return nil, []any{"Cannot list pane registrations: " + err.Error()}
+		return nil, []string{"Cannot list pane registrations: " + err.Error()}
 	}
 	for _, registration := range registrations {
-		if stringOf(registration, "role") != "worker" || stringOf(registration, "task") != taskID {
+		if stringOf(registration, "role") != RoleWorker || stringOf(registration, "task") != taskID {
 			continue
 		}
 		id := claudeSession(objectOf(registration, "incarnation"))
@@ -169,7 +168,7 @@ func discover(s *store.Store, task *ordjson.Object) ([]observed, []any) {
 			warnings = append(warnings, fmt.Sprintf("worker registration %s names no Claude conversation", stringOf(registration, "key")))
 			continue
 		}
-		entry := observed{id: id, role: "worker", key: stringOf(registration, "key"), cwd: stringOf(registration, "cwd"), category: CategoryUnknown}
+		entry := observed{id: id, role: RoleWorker, key: stringOf(registration, "key"), cwd: stringOf(registration, "cwd"), category: CategoryUnknown}
 		if attemptID != "" && (checkout == "" || samePath(checkout, entry.cwd)) {
 			entry.attempt, entry.repairID, entry.category, entry.live = attemptID, repairID, category, attemptLive
 		}
@@ -177,7 +176,7 @@ func discover(s *store.Store, task *ordjson.Object) ([]observed, []any) {
 	}
 	if reviewer := objectOf(task, "reviewer"); reviewer != nil {
 		if id := claudeSession(objectOf(reviewer, "incarnation")); id != "" {
-			sessions = append(sessions, observed{id: id, role: "reviewer", cwd: stringOf(reviewer, "cwd"), category: CategoryReview, live: true})
+			sessions = append(sessions, observed{id: id, role: RoleReviewer, cwd: stringOf(reviewer, "cwd"), category: CategoryReview, live: !panes.ReviewerIsClosed(task)})
 		} else {
 			warnings = append(warnings, "the reviewer endpoint records no Claude conversation")
 		}
@@ -197,8 +196,8 @@ func knownFor(task *ordjson.Object, ledger *Ledger) Known {
 		if record == nil || stringOf(record, "kind") != "execution" {
 			continue
 		}
-		if attempt := objectOf(record, "attempt"); attempt != nil && stringOf(attempt, "kind") == "worker" {
-			if id := stringOf(attempt, "id"); id != "" && !contains(known.WorkerAttempts, id) {
+		if attempt := objectOf(record, "attempt"); attempt != nil && stringOf(attempt, "kind") == RoleWorker {
+			if id := stringOf(attempt, "id"); id != "" && !slices.Contains(known.WorkerAttempts, id) {
 				known.WorkerAttempts = append(known.WorkerAttempts, id)
 			}
 		}
@@ -229,12 +228,12 @@ func repairIsSend(task *ordjson.Object, repairID string) bool {
 	return false
 }
 
-func claudeSession(incarnation *ordjson.Object) string {
-	session := objectOf(incarnation, "agent_session")
-	if session == nil || stringOf(session, "agent") != "claude" || stringOf(session, "kind") != "id" {
+func claudeSession(record *ordjson.Object) string {
+	session := incarnation.FromInfo(record).Session
+	if session == nil || session.Agent != "claude" || session.Kind != "id" {
 		return ""
 	}
-	return stringOf(session, "value")
+	return session.Value
 }
 
 func samePath(a, b string) bool {
@@ -284,12 +283,4 @@ func BestEffort(s *store.Store, taskID string) *ordjson.Object {
 		result.Set("warnings", []any{"Usage collection failed and changed nothing else: " + err.Error()})
 	}
 	return result
-}
-
-func stringsOf(values []any) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		out = append(out, fmt.Sprint(value))
-	}
-	return out
 }

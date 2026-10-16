@@ -169,12 +169,8 @@ func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
 	case args.ClearUsage:
 		mergedUsage = nil
 	case args.UsageEnabled != nil:
-		obj := ordjson.NewObject()
-		obj.Set("enabled", *args.UsageEnabled)
-		mergedUsage, err = validateEnabledBlock("usage", obj)
-		if err != nil {
-			return nil, err
-		}
+		mergedUsage = ordjson.NewObject()
+		mergedUsage.Set("enabled", *args.UsageEnabled)
 	}
 
 	previousCapacity := current.Capacity

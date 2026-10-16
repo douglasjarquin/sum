@@ -321,7 +321,7 @@ func loadSettingsFile(path string) (*Settings, error) {
 	}
 	var hookBlock *ordjson.Object
 	if hookValue, has := obj.Get("hook"); has {
-		validated, err := validateHook(hookValue)
+		validated, err := validateEnabledBlock("hook", hookValue)
 		if err != nil {
 			return nil, err
 		}
@@ -336,10 +336,6 @@ func loadSettingsFile(path string) (*Settings, error) {
 		usageBlock = validated
 	}
 	return &Settings{Capacity: capacity, Worker: worker, Presets: presets, Reviewer: reviewer, Evidence: evidenceBlock, Hook: hookBlock, Usage: usageBlock, Source: "settings.json", Path: path}, nil
-}
-
-func validateHook(value any) (*ordjson.Object, error) {
-	return validateEnabledBlock("hook", value)
 }
 
 func validateEnabledBlock(name string, value any) (*ordjson.Object, error) {

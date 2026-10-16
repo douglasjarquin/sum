@@ -3,9 +3,10 @@ package usage
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -18,11 +19,16 @@ const (
 	StatusComplete    = "complete"
 	StatusPartial     = "partial"
 	StatusUnavailable = "unavailable"
+	ReasonSessionLive = "session-live"
 
 	CategoryImplementation = "implementation"
 	CategoryReview         = "review"
 	CategoryRepair         = "repair"
 	CategoryUnknown        = "unknown"
+
+	RoleWorker   = "worker"
+	RoleReviewer = "reviewer"
+	bucketTask   = "task"
 )
 
 type Tokens struct {
@@ -64,6 +70,7 @@ type Session struct {
 	RegistrationKey string    `json:"registration_key"`
 	Cwd             string    `json:"cwd"`
 	ProjectsDir     string    `json:"projects_dir"`
+	ProjectDir      string    `json:"project_dir"`
 	Sources         []*Source `json:"sources"`
 	FirstSeenAt     string    `json:"first_seen_at"`
 	Status          string    `json:"status"`
@@ -115,21 +122,18 @@ func Load(s *store.Store, taskID string) (*Ledger, bool, error) {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return nil, false, fmt.Errorf("%s must not be a symlink", path)
 	}
-	value, err := ordjson.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false, err
 	}
-	stored, ok := value.(*ordjson.Object)
-	if !ok {
-		return nil, false, fmt.Errorf("%s is not a usage ledger", path)
+	var header struct {
+		Schema json.Number `json:"schema"`
 	}
-	schema, _ := stored.Get("schema")
-	if number, isNumber := schema.(json.Number); !isNumber || number.String() != fmt.Sprint(Schema) {
-		return nil, false, fmt.Errorf("%s has usage schema %v; this release reads schema %d", path, schema, Schema)
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return nil, false, fmt.Errorf("%s is not a usage ledger: %w", path, err)
 	}
-	raw, err := ordjson.MarshalCompact(stored)
-	if err != nil {
-		return nil, false, err
+	if header.Schema.String() != fmt.Sprint(Schema) {
+		return nil, false, fmt.Errorf("%s has usage schema %v; this release reads schema %d", path, header.Schema, Schema)
 	}
 	if err := json.Unmarshal(raw, ledger); err != nil {
 		return nil, false, fmt.Errorf("%s: %w", path, err)
@@ -225,36 +229,34 @@ func (se *Session) aggregate() (Invocations, Tokens, int64, []string) {
 	if first != "" && last != "" {
 		wall = wallMs(first, last)
 	}
-	names := make([]string, 0, len(models))
-	for model := range models {
-		names = append(names, model)
-	}
-	sort.Strings(names)
 	if invocations.ByOutcome == nil {
 		invocations.ByOutcome = map[string]int64{}
 	}
-	return invocations, tokens, wall, names
+	return invocations, tokens, wall, slices.Sorted(maps.Keys(models))
 }
 
 type Known struct {
 	WorkerAttempts  []string
 	ReviewerPresent bool
-	Unfolded        []string
+}
+
+func newBucket() *Bucket {
+	return &Bucket{Invocations: Invocations{ByOutcome: map[string]int64{}}}
 }
 
 func (l *Ledger) finalize(known Known, at string) {
 	totals := map[string]*Bucket{}
-	for _, name := range []string{CategoryImplementation, CategoryReview, CategoryRepair, CategoryUnknown, "task"} {
-		totals[name] = &Bucket{Invocations: Invocations{ByOutcome: map[string]int64{}}}
+	for _, name := range []string{CategoryImplementation, CategoryReview, CategoryRepair, CategoryUnknown, bucketTask} {
+		totals[name] = newBucket()
 	}
 	var reasons []string
 	readable := 0
 	for _, session := range l.Sessions {
 		invocations, tokens, wall, _ := session.aggregate()
-		for _, name := range []string{session.Category, "task"} {
+		for _, name := range []string{session.Category, bucketTask} {
 			bucket := totals[name]
 			if bucket == nil {
-				bucket = &Bucket{Invocations: Invocations{ByOutcome: map[string]int64{}}}
+				bucket = newBucket()
 				totals[name] = bucket
 			}
 			bucket.Sessions++
@@ -274,31 +276,12 @@ func (l *Ledger) finalize(known Known, at string) {
 	}
 	l.Totals = totals
 	for _, attempt := range known.WorkerAttempts {
-		covered := false
-		for _, session := range l.Sessions {
-			if session.Attempt == attempt {
-				covered = true
-				break
-			}
-		}
-		if !covered {
+		if !slices.ContainsFunc(l.Sessions, func(session *Session) bool { return session.Attempt == attempt }) {
 			reasons = append(reasons, fmt.Sprintf("worker attempt %s has no recorded session", attempt))
 		}
 	}
-	if known.ReviewerPresent {
-		covered := false
-		for _, session := range l.Sessions {
-			if session.Role == "reviewer" {
-				covered = true
-				break
-			}
-		}
-		if !covered {
-			reasons = append(reasons, "the reviewer endpoint has no recorded session")
-		}
-	}
-	for _, id := range known.Unfolded {
-		reasons = append(reasons, fmt.Sprintf("registration names session %s that is not folded", id))
+	if known.ReviewerPresent && !slices.ContainsFunc(l.Sessions, func(session *Session) bool { return session.Role == RoleReviewer }) {
+		reasons = append(reasons, "the reviewer endpoint has no recorded session")
 	}
 	switch {
 	case l.Harness != "claude":

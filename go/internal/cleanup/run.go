@@ -343,6 +343,9 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	if err := releaseCleanupReservations(s, args.Task, runtimeRoot, detail); err != nil {
 		return nil, err
 	}
+	if err := recordReviewerClosed(s, args.Task); err != nil {
+		return nil, err
+	}
 	usageResult := usage.BestEffort(s, args.Task)
 	complete := ordjson.NewObject()
 	complete.Set("state", "complete")
@@ -378,6 +381,25 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	result.Set("usage", usageResult)
 	result.Set("note", "Only the verified task workspace and its clean checkout were removed, through native Herdr without force. The branch, brief revisions, decisions, reports, and PR evidence stay.")
 	return result, nil
+}
+
+func recordReviewerClosed(s *store.Store, taskID string) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return err
+	}
+	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
+	pane := stringField(reviewer, "pane")
+	if pane == "" || panes.ReviewerIsClosed(task) {
+		return nil
+	}
+	panes.Append(task, pane, "reviewer", "", "cleanup")
+	return s.SaveTask(task)
 }
 
 func closeReviewerOnly(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string, plan *ordjson.Object) (*ordjson.Object, error) {

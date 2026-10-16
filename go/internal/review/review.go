@@ -253,7 +253,12 @@ func promptRecordedReviewer(s *store.Store, herdrPath, session, sumctlPath strin
 	if got := herdrclient.AgentCwd(agent); got != "" && resolvePath(got) != resolvePath(worktree) {
 		return nil, fmt.Errorf("Recorded reviewer pane %s is live but its cwd %s is not the task checkout %s; close it so Herdr reports pane_not_found, then run `reviewer launch` again.", pane, got, worktree)
 	}
-	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, asString(recorded, "skill_path"), worktree, nil)
+	var bound *incarnation.Evidence
+	if incarnation.FromInfo(objectField(recorded, "incarnation")).Session == nil {
+		fresh := incarnation.FromInfo(agent)
+		bound = &fresh
+	}
+	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, asString(recorded, "skill_path"), worktree, bound)
 	if err != nil {
 		return nil, err
 	}

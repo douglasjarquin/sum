@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/usage"
 )
@@ -48,12 +49,16 @@ func (o *rootOptions) addUsageCommands(root *cobra.Command) {
 			if err := app.RequireCoordinator(st, ctx); err != nil {
 				return err
 			}
-			result, err := usage.Collect(st, args[0])
+			enabled, err := settings.UsageEnabled(st)
 			if err != nil {
 				return err
 			}
-			if enabled, _ := result.Get("enabled"); enabled == false {
-				return fmt.Errorf("Usage accounting is off; nothing was read. Enable it with `settings set --usage-accounting true`.")
+			if !enabled {
+				return fmt.Errorf("%s", usage.DisabledNote)
+			}
+			result, err := usage.Collect(st, args[0])
+			if err != nil {
+				return err
 			}
 			return emitOrdjson(cmd.OutOrStdout(), result)
 		},

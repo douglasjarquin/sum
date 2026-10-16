@@ -3,12 +3,15 @@ package usage
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
+
+const totalsNote = "Totals are counts from Claude Code transcripts, not a bill; a null token field means the source never reported it."
 
 func View(s *store.Store, taskID string) (*ordjson.Object, error) {
 	loaded, err := settings.LoadSettings(s)
@@ -31,7 +34,7 @@ func View(s *store.Store, taskID string) (*ordjson.Object, error) {
 		view.Set("coverage", coverageObject(Coverage{Status: StatusUnavailable, Reasons: []string{"no usage ledger; nothing was collected for this task"}}))
 		view.Set("totals", nil)
 		view.Set("sessions", []any{})
-		view.Set("note", "Totals are counts from Claude Code transcripts, not a bill; a null token field means the source never reported it.")
+		view.Set("note", totalsNote)
 		return view, nil
 	}
 	path, _ := Path(s, taskID)
@@ -40,12 +43,7 @@ func View(s *store.Store, taskID string) (*ordjson.Object, error) {
 	view.Set("collected_at", ledger.CollectedAt)
 	view.Set("coverage", coverageObject(ledger.Coverage))
 	totals := ordjson.NewObject()
-	names := make([]string, 0, len(ledger.Totals))
-	for name := range ledger.Totals {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(ledger.Totals)) {
 		totals.Set(name, bucketObject(ledger.Totals[name]))
 	}
 	view.Set("totals", totals)
@@ -54,7 +52,7 @@ func View(s *store.Store, taskID string) (*ordjson.Object, error) {
 		rows = append(rows, sessionObject(session))
 	}
 	view.Set("sessions", rows)
-	view.Set("note", "Totals are counts from Claude Code transcripts, not a bill; a null token field means the source never reported it.")
+	view.Set("note", totalsNote)
 	return view, nil
 }
 
@@ -86,12 +84,7 @@ func invocationsObject(invocations Invocations) *ordjson.Object {
 	obj := ordjson.NewObject()
 	obj.Set("total", jsonInt(invocations.Total))
 	outcomes := ordjson.NewObject()
-	names := make([]string, 0, len(invocations.ByOutcome))
-	for name := range invocations.ByOutcome {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(invocations.ByOutcome)) {
 		outcomes.Set(name, jsonInt(invocations.ByOutcome[name]))
 	}
 	obj.Set("by_outcome", outcomes)
@@ -119,7 +112,7 @@ func sessionObject(session *Session) *ordjson.Object {
 	obj.Set("repair", nilIfEmpty(session.Repair))
 	obj.Set("status", session.Status)
 	obj.Set("reason", nilIfEmpty(session.Reason))
-	obj.Set("source", transcriptPath(session.ProjectsDir, session.Cwd, session.ID))
+	obj.Set("source", transcriptPath(session.ProjectDir, session.ID))
 	obj.Set("sources", jsonInt(int64(len(session.Sources))))
 	obj.Set("models", stringsList(models))
 	obj.Set("invocations", invocationsObject(invocations))

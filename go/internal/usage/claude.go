@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 )
@@ -45,13 +45,17 @@ func Slug(cwd string) string {
 	return b.String()
 }
 
-func transcriptPath(projectsDir, cwd, sessionID string) string {
-	return filepath.Join(projectsDir, Slug(cwd), sessionID+".jsonl")
+func projectDir(projectsDir, cwd string) string {
+	return filepath.Join(projectsDir, Slug(cwd))
 }
 
-func subagentPaths(projectsDir, cwd, sessionID string) []string {
-	matches, _ := filepath.Glob(filepath.Join(projectsDir, Slug(cwd), sessionID, "subagents", "*.jsonl"))
-	sort.Strings(matches)
+func transcriptPath(projectDir, sessionID string) string {
+	return filepath.Join(projectDir, sessionID+".jsonl")
+}
+
+func subagentPaths(projectDir, sessionID string) []string {
+	matches, _ := filepath.Glob(filepath.Join(projectDir, sessionID, "subagents", "*.jsonl"))
+	slices.Sort(matches)
 	return matches
 }
 
@@ -95,6 +99,10 @@ func readSource(source *Source) {
 	}
 	if info.Size() < source.Offset {
 		*source = Source{Path: source.Path, Subagent: source.Subagent}
+	}
+	if info.Size() == source.Offset {
+		source.Status, source.Reason = StatusComplete, ""
+		return
 	}
 	file, err := os.Open(source.Path)
 	if err != nil {
@@ -194,22 +202,13 @@ func fold(source *Source, entry *line, seen map[string]string) {
 	if entry.IsSidechain || source.Subagent {
 		source.Invocations.Subagent++
 	}
-	if entry.Message.Model != "" && !contains(source.Models, entry.Message.Model) {
+	if entry.Message.Model != "" && !slices.Contains(source.Models, entry.Message.Model) {
 		source.Models = append(source.Models, entry.Message.Model)
-		sort.Strings(source.Models)
+		slices.Sort(source.Models)
 	}
 	if usage := entry.Message.Usage; usage != nil {
 		addTokens(&source.Tokens, Tokens{Input: usage.Input, Output: usage.Output, CacheCreation: usage.CacheCreation, CacheRead: usage.CacheRead})
 	}
-}
-
-func contains(list []string, value string) bool {
-	for _, item := range list {
-		if item == value {
-			return true
-		}
-	}
-	return false
 }
 
 func wallMs(first, last string) int64 {
