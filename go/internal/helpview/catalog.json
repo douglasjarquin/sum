@@ -401,7 +401,7 @@
   },
   "start": {
     "topic": "start",
-    "help": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch",
+    "help": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch; a recorded launch whose argv carries a permission/trust override the record did not authorize is refused before a pane is allocated",
     "arguments": [
       {
         "name": "task",
@@ -410,7 +410,7 @@
       },
       {
         "name": "--arg",
-        "help": null
+        "help": "An additional harness argument appended to the recorded launch; a permission/trust override the record did not authorize is refused here, so `start --arg` cannot add one"
       }
     ],
     "subcommands": null,
@@ -424,7 +424,7 @@
     "subcommands": {
       "show": "Show worker and independent verifier attempts without observing or launching anything",
       "park": "Release one exact worker or verifier attempt only after verified stop evidence; missing identity stays reserved",
-      "resume": "Reserve capacity for a successor to one exact released worker attempt, then launch it"
+      "resume": "Reserve capacity for a successor to one exact released worker attempt, then launch it; a recorded launch carrying an unauthorized permission/trust override is refused before the successor is recorded"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1364,7 +1364,7 @@
   },
   "execution-resume": {
     "topic": "execution-resume",
-    "help": "Reserve capacity for a successor to one exact released worker attempt, then launch it",
+    "help": "Reserve capacity for a successor to one exact released worker attempt, then launch it; a recorded launch carrying an unauthorized permission/trust override is refused before the successor is recorded",
     "arguments": [
       {
         "name": "task",

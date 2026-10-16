@@ -53,9 +53,9 @@ var adapters = map[string]adapter{
 		Model:     []string{"--model"},
 		Reasoning: []string{"--effort"},
 		Permission: []string{
-			"--permission-mode=", "--permission-prompts=",
+			"--permission-mode=", "--permission-prompts=", "--permission-prompt-tool=",
 			"--allowedTools=", "--allowed-tools=", "--disallowedTools=", "--disallowed-tools=", "--tools=",
-			"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions",
+			"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--restricted",
 		},
 	},
 	"grok": {Model: []string{"-m"}, Reasoning: []string{"--reasoning-effort"}},
@@ -63,7 +63,7 @@ var adapters = map[string]adapter{
 		Model:     []string{"--model"},
 		Reasoning: []string{"--effort"},
 		Permission: []string{
-			"--allow-tool=", "--allow-url=", "--deny-tool=", "--deny-url=",
+			"--allow-tool=", "--allow-url=", "--deny-tool=", "--deny-url=", "--mode=",
 			"--allow-all", "--allow-all-tools", "--allow-all-paths", "--allow-all-urls",
 			"--yolo", "--autopilot", "--disallow-temp-dir",
 		},
@@ -84,6 +84,17 @@ func PermissionFlags(harness string) ([]string, bool) {
 		flags = append(flags, strings.TrimSuffix(entry, "="))
 	}
 	return flags, true
+}
+
+func PermissionHarnesses() []string {
+	var names []string
+	for name, a := range adapters {
+		if len(a.Permission) > 0 {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 func PermissionOverrides(harness string, argv []string) []string {
@@ -112,13 +123,13 @@ func matchPermission(entry string, argv []string, i int) (string, int) {
 		if arg == flag && i+1 < len(argv) && strings.HasPrefix(argv[i+1], key) {
 			return flag + " " + argv[i+1], 1
 		}
-		if strings.HasPrefix(arg, flag+"="+key) {
+		if strings.HasPrefix(arg, flag+"="+key) || (shortFlag(flag) && strings.HasPrefix(arg, flag+key)) {
 			return arg, 0
 		}
 		return "", 0
 	}
 	if flag, takesValue := strings.CutSuffix(entry, "="); takesValue {
-		if strings.HasPrefix(arg, flag+"=") {
+		if strings.HasPrefix(arg, flag+"=") || (shortFlag(flag) && len(arg) > len(flag) && strings.HasPrefix(arg, flag)) {
 			return arg, 0
 		}
 		if arg != flag {
@@ -133,6 +144,10 @@ func matchPermission(entry string, argv []string, i int) (string, int) {
 		return arg, 0
 	}
 	return "", 0
+}
+
+func shortFlag(flag string) bool {
+	return len(flag) == 2 && flag[0] == '-' && flag[1] != '-'
 }
 
 func adapterPrefix(harness, field string) ([]string, bool) {
@@ -803,19 +818,19 @@ func presetLaunch(spec *ordjson.Object) *ordjson.Object {
 		reasoning = nil
 	}
 	result.Set("reasoning", reasoning)
-	argvAny := make([]any, len(argv))
-	for i, a := range argv {
-		argvAny[i] = a
-	}
-	result.Set("argv", argvAny)
+	result.Set("argv", anyStrings(argv))
 	if overrides := PermissionOverrides(harness, argv); len(overrides) > 0 {
-		overridesAny := make([]any, len(overrides))
-		for i, o := range overrides {
-			overridesAny[i] = o
-		}
-		result.Set("permission_overrides", overridesAny)
+		result.Set("permission_overrides", anyStrings(overrides))
 	}
 	return result
+}
+
+func anyStrings(values []string) []any {
+	out := make([]any, len(values))
+	for i, v := range values {
+		out[i] = v
+	}
+	return out
 }
 
 func presetReferences(worker, reviewer *ordjson.Object, name string) []string {

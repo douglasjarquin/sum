@@ -46,7 +46,11 @@ type LaunchArgs struct {
 }
 
 func (a LaunchArgs) explicit() bool {
-	return a.Harness != "" || a.Model != "" || a.Reasoning != "" || a.PresetSet || a.PermissionOverride
+	return a.Harness != "" || a.Model != "" || a.Reasoning != "" || a.PresetSet
+}
+
+func (a LaunchArgs) newReviewerOnly() bool {
+	return a.explicit() || a.PermissionOverride
 }
 
 func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, args LaunchArgs) (*ordjson.Object, error) {
@@ -90,7 +94,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 			return nil, err
 		}
 		if stop == nil {
-			if args.explicit() {
+			if args.newReviewerOnly() {
 				return nil, fmt.Errorf("Task already has a live reviewer endpoint; --harness/--model/--reasoning/--preset/--permission-override apply only to a new reviewer. Prompt the recorded pane with a plain `reviewer launch`.")
 			}
 			return promptRecordedReviewer(s, herdrPath, session, sumctlPath, task, recorded, agent, worktree)
@@ -390,7 +394,7 @@ func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string, arg
 		resolve.Preset = asString(loaded.Reviewer, "preset")
 		resolve.PresetSet = true
 	}
-	if resolve.PresetSet || args.explicit() {
+	if resolve.PresetSet || args.newReviewerOnly() {
 		resolved, err := launch.Resolve(s, ctx, resolve)
 		if err != nil {
 			return "", nil, nil, nil, err
