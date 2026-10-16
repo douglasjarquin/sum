@@ -85,6 +85,12 @@ An execution slot belongs to a recorded worker attempt or an independent verific
 Admission uses the same global and per-repository limits under the local record lock.
 A refused admission launches nothing.
 
+An enrolled project can declare its own limit: `capacity.projects` maps an enrolled project name to the slots that project may hold, overriding `per_repository` for it alone.
+Admission resolves the limit for one task as the project override when its enrolled project declares one, otherwise `per_repository`, and always enforces `global` first; worker preparation, `execution resume`, and `verify --execute` share that one resolver.
+The task's scope is its enrolled project, identified from the registry at `prepare` (`--project NAME`, or a `--repo` path that is the enrolled clone or a linked worktree of it), and adopted through the registry by repository path at each admission for a task recorded before its clone was enrolled.
+Held reservations for a project count every task recorded under that name, at the task's own repository path, or at the enrolled clone path, so a worktree, a symlink, or a pre-enrollment record never evades the override or gets its own writer.
+A `--repo` path that is not an enrolled clone or one of its linked worktrees, including a second independent clone of the same remote, keeps today's behavior: its scope is its resolved git toplevel and its limit is `per_repository`.
+
 Use `execution show TASK_ID` to read the current attempt IDs.
 A launched worker attempt becomes `running` only when Herdr's `pane process-info` shows its occupant: the leader of the pane's foreground process group (the process whose pid is that group id), not the shell, observed exactly once with a pid and argv.
 Children the agent forks into that group, such as a harness's MCP servers, do not make the identity ambiguous.
@@ -107,18 +113,22 @@ Parking does not remove a leftover verification checkout.
 ```sh
 ./bin/sumctl settings show                                   # limits, their source, and the held slots per repository
 ./bin/sumctl settings set --global 12 --per-repository 1     # coordinator only; validated and written atomically
+./bin/sumctl settings set --project-limit docs=3 --project-limit app=1   # per-project overrides; the name must be enrolled
+./bin/sumctl settings set --clear-project-limit docs           # that project returns to per_repository
 ./bin/sumctl settings set --clear-capacity                   # return to unlimited without changing worker or preset settings
 ./bin/sumctl execution show TASK_ID                         # read current attempt IDs and state
 ./bin/sumctl execution park TASK_ID --attempt ATTEMPT_ID     # inspect stopped execution; preserve unfinished work
 ./bin/sumctl execution resume TASK_ID --attempt ATTEMPT_ID   # reacquire capacity and launch approved work
 ```
 
-`.sum/settings.json` is the one owner of executable admission values, worker launch defaults, named presets, and the evidence publication switch (`{"schema": 1, "capacity": {"global": N, "per_repository": M}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."} | {"preset": "deep"}, "presets": {"deep": {"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1}}, "reviewer": {"preset": "review"}, "evidence": {"auto_publish": false}}`); capacity integers from 1 to 64, `per_repository` at most `global`; `capacity`, `worker`, `presets`, `reviewer`, and `evidence` are optional, a model/reasoning needs a verified adapter for its harness, and a referenced preset must exist.
+`.sum/settings.json` is the one owner of executable admission values, worker launch defaults, named presets, and the evidence publication switch (`{"schema": 1, "capacity": {"global": N, "per_repository": M, "projects": {"NAME": K}}, "worker": {"harness": "codex", "model": "...", "reasoning": "..."} | {"preset": "deep"}, "presets": {"deep": {"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1}}, "reviewer": {"preset": "review"}, "evidence": {"auto_publish": false}}`); capacity integers from 1 to 64, `per_repository` and every `projects` value at most `global`, `projects` keys enrolled project names; `capacity`, `capacity.projects`, `worker`, `presets`, `reviewer`, and `evidence` are optional, a model/reasoning needs a verified adapter for its harness, and a referenced preset must exist.
 An absent `evidence` block means `pr reconcile` publishes the worker's before/after evidence into the PR; `{"auto_publish": false}` is the only way to turn that off, and `settings show` reports the effective value with its source (`default` or `settings`).
 Absent `capacity` means no admission cap, including when the settings file exists for worker or preset defaults; `settings show` reports `limits: null` for this state.
+With a capacity block, `settings show`, `status`, and coordinator `init` add `effective`: one row per declared project override and per scope holding reservations, with the resolved `limit`, its `source` (`projects.NAME` or `per_repository`), whether the name is still `enrolled`, and the held attempt ids; a capacity refusal names the same scope, limit, source, holders, and the key to raise.
+A `projects` key naming a project that is no longer enrolled is reported `enrolled: false`, still caps at `global`, and governs only tasks recorded under that name; `settings set --project-limit` refuses a name that is not enrolled.
 `.sum/preferences.md` and `.sum/projects.md` stay narrative and never set a limit or a worker default; only your explicit "make this my default" becomes a `settings set --worker-*` write.
 An invalid file is refused with the exact defect before any side effect: nothing is admitted, no task or worker is touched, `ask`/`report`/`show` keep working, and `settings set` refuses to overwrite it silently.
-Lowering a limit affects future admission only; tasks above the new limit keep their slots, processes, and checkouts.
+Lowering a limit, global, per-repository, or per-project, affects future admission only; tasks above the new limit keep their slots, processes, and checkouts.
 Raising `global` never raises `per_repository`: one checkout gets one writer unless you say otherwise.
 Nothing schedules or dispatches work because a slot is free; a dispatch is always an explicit approved instruction.
 The settings file travels with `sumctl backup`.

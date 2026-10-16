@@ -61,11 +61,21 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         execution slot belongs to a recorded worker attempt or an independent
         verification run, not to the unfinished task itself. A refused admission
         launches nothing. Nothing schedules or dispatches work because a slot is
-        free; a dispatch is always an explicit approved instruction.
+        free; a dispatch is always an explicit approved instruction. An enrolled
+        project can declare its own limit under <code>capacity.projects</code>;
+        admission resolves the project override when one exists, otherwise
+        <code>per_repository</code>, and always enforces <code>global</code>
+        first, at preparation, resume, and independent verification alike. A
+        project's held count includes tasks at its enrolled clone path and its
+        linked worktrees, so a path alias never gets its own writer; an
+        unenrolled <code>--repo</code> path keeps its own path scope and the
+        <code>per_repository</code> default.
       </p>
       <div class="codeblock">
         <div>./bin/sumctl settings show</div>
         <div>./bin/sumctl settings set --global 12 --per-repository 1</div>
+        <div>./bin/sumctl settings set --project-limit docs=3 --project-limit app=1</div>
+        <div>./bin/sumctl settings set --clear-project-limit docs</div>
         <div>./bin/sumctl settings set --clear-capacity</div>
         <div>./bin/sumctl execution show TASK_ID</div>
         <div>./bin/sumctl execution park TASK_ID --attempt ATTEMPT_ID     <span class="c"># inspect stopped execution; preserve unfinished work</span></div>
@@ -75,7 +85,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       <div class="codeblock">
         <div>&#123;</div>
         <div>&#32;&#32;"schema": 1,</div>
-        <div>&#32;&#32;"capacity": &#123;"global": N, "per_repository": M&#125;,          <span class="c"># 1–64; per_repository ≤ global</span></div>
+        <div>&#32;&#32;"capacity": &#123;"global": N, "per_repository": M, "projects": &#123;"NAME": K&#125;&#125;,  <span class="c"># 1–64; per_repository and each project ≤ global</span></div>
         <div>&#32;&#32;"worker": &#123;"harness": "codex", "model": "...", "reasoning": "..."&#125; | &#123;"preset": "deep"&#125;,</div>
         <div>&#32;&#32;"presets": &#123;"deep": &#123;"harness": "codex", "model": "...", "reasoning": "...", "args": [...], "revision": 1&#125;&#125;,</div>
         <div>&#32;&#32;"reviewer": &#123;"preset": "review"&#125;,</div>
@@ -86,7 +96,10 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         An invalid file is refused with the exact defect before any side effect.
         Lowering a limit affects future admission only. Raising global never
         raises per_repository: one checkout gets one writer unless you say
-        otherwise. The settings file travels with <code>sumctl backup</code>.
+        otherwise. With a capacity block, <code>settings show</code> and
+        <code>status</code> list the effective limit, its source, enrollment,
+        and held attempts per declared override and occupied scope. The
+        settings file travels with <code>sumctl backup</code>.
       </p>
     </div>
   </div>
