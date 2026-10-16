@@ -1850,7 +1850,7 @@
   },
   "settings-set": {
     "topic": "settings-set",
-    "help": "Coordinator only: write validated capacity, worker, reviewer, and evidence settings atomically; future admissions only, nothing running is touched",
+    "help": "Coordinator only: write validated capacity (global, per-repository, per-project overrides), worker, reviewer, and evidence settings atomically; future admissions only, nothing running is touched",
     "arguments": [
       {
         "name": "--global",
@@ -1859,6 +1859,14 @@
       {
         "name": "--per-repository",
         "help": "Execution slots per repository (1-64, at most --global)"
+      },
+      {
+        "name": "--project-limit",
+        "help": "NAME=N (repeatable): execution slots for one enrolled project, overriding --per-repository for it (1-64, at most --global)"
+      },
+      {
+        "name": "--clear-project-limit",
+        "help": "NAME (repeatable): remove that project's override so --per-repository applies to it again"
       },
       {
         "name": "--clear-capacity",

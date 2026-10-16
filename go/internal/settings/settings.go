@@ -33,7 +33,8 @@ var (
 	settingsKeys       = map[string]bool{"schema": true, "capacity": true, "worker": true, "presets": true, "reviewer": true, "evidence": true, "hook": true}
 	defaultCapacity    = map[string]int{"global": defaultGlobal, "per_repository": defaultPerRepository}
 	capacityKeys       = []string{"global", "per_repository", "projects"}
-	projectNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+	projectPartPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
+	projectHostPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,252}(?::[0-9]{1,5})?$`)
 )
 
 type adapter struct {
@@ -451,8 +452,8 @@ func validateProjectLimits(value any, global int) (*ordjson.Object, error) {
 	sort.Strings(names)
 	canonical := ordjson.NewObject()
 	for _, name := range names {
-		if !projectNamePattern.MatchString(name) {
-			return nil, fmt.Errorf("capacity.projects key %s is not a project name", pyrepr.Repr(name))
+		if !validProjectName(name) {
+			return nil, fmt.Errorf("capacity.projects key %s is not a project name (owner/repo, or host/owner/repo)", pyrepr.Repr(name))
 		}
 		raw, _ := obj.Get(name)
 		n, ok := asInt(raw)
@@ -465,6 +466,25 @@ func validateProjectLimits(value any, global int) (*ordjson.Object, error) {
 		canonical.Set(name, json.Number(fmt.Sprint(n)))
 	}
 	return canonical, nil
+}
+
+func validProjectName(name string) bool {
+	parts := strings.Split(name, "/")
+	if len(parts) == 3 {
+		if !projectHostPattern.MatchString(parts[0]) {
+			return false
+		}
+		parts = parts[1:]
+	}
+	if len(parts) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		if !projectPartPattern.MatchString(part) || strings.HasPrefix(part, ".") {
+			return false
+		}
+	}
+	return true
 }
 
 // Scope is the admission scope one task competes in: an enrolled project by registry name, otherwise its repository path.
