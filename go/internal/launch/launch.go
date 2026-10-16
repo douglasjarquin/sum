@@ -65,6 +65,10 @@ func Occupancy(tasks []*ordjson.Object) (*ordjson.Object, error) {
 }
 
 func Admit(s *store.Store, tasks []*ordjson.Object, repository string) (*ordjson.Object, error) {
+	return AdmitProject(s, tasks, repository, nil)
+}
+
+func AdmitProject(s *store.Store, tasks []*ordjson.Object, repository string, project *ordjson.Object) (*ordjson.Object, error) {
 	loaded, err := settings.LoadSettings(s)
 	if err != nil {
 		return nil, err
@@ -81,28 +85,34 @@ func Admit(s *store.Store, tasks []*ordjson.Object, repository string) (*ordjson
 			globalN = int(g)
 		}
 	}
-	same := []any{}
-	if byRepo := asObject(func() any { v, _ := occupied.Get("by_repository"); return v }()); byRepo != nil {
-		if v, ok := byRepo.Get(repository); ok {
-			if list, is := v.([]any); is {
-				same = list
-			}
-		}
+	scope := settings.ResolveScope(s, limits, project, repository)
+	same, err := settings.HeldFor(s, tasks, scope)
+	if err != nil {
+		return nil, err
 	}
 	if limits != nil {
 		gLimit, _ := intField(limits, "global")
 		if globalN >= gLimit {
 			return nil, fmt.Errorf("Capacity: %d of %d global execution slots are held (%s). Park a conclusively stopped attempt with `execution park`, or raise capacity.global in .sum/settings.json; nothing was dispatched.", globalN, gLimit, loaded.Source)
 		}
-		pLimit, _ := intField(limits, "per_repository")
-		if len(same) >= pLimit {
-			return nil, fmt.Errorf("Capacity: %d of %d slots for %s are held by %v (%s). Park a conclusively stopped attempt, or raise capacity.per_repository in .sum/settings.json if this checkout needs another writer.", len(same), pLimit, repository, same, loaded.Source)
+		if len(same) >= scope.Limit {
+			return nil, fmt.Errorf("Capacity: %d of %d slots for %s (%s) are held by %v (%s). Park a conclusively stopped attempt, or raise %s in .sum/settings.json if this project needs another writer.", len(same), scope.Limit, scope.Label(), scope.Source, same, loaded.Source, scope.RaiseKey())
 		}
 	}
 	result := ordjson.NewObject()
 	result.Set("at", store.Now())
 	result.Set("limits", limits)
 	result.Set("source", loaded.Source)
+	scopeView := ordjson.NewObject()
+	scopeView.Set("scope", scope.Label())
+	if scope.Project != "" {
+		scopeView.Set("project", scope.Project)
+	} else {
+		scopeView.Set("project", nil)
+	}
+	scopeView.Set("limit", jsonInt(scope.Limit))
+	scopeView.Set("limit_source", scope.Source)
+	result.Set("scope", scopeView)
 	before := ordjson.NewObject()
 	before.Set("global", jsonInt(globalN))
 	before.Set("repository", jsonInt(len(same)))
