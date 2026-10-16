@@ -302,8 +302,12 @@
       },
       {
         "name": "--base",
-        "help": "The origin ref the task branches from, always fetched fresh just before the worktree is created; the default is the repository's base branch (its remote HEAD), any other value names that remote ref such as a branch for stacked work; a base the remote does not answer refuses the prepare, never a stale local ref",
+        "help": "The origin branch the task starts from and delivers to, always fetched fresh just before the worktree is created and recorded on the task as base_branch; the default is the repository's default branch (origin's HEAD, resolved once at prepare and recorded with source default), any other value names a branch on origin such as release/1.2 or a stacked parent (source explicit; origin/NAME and refs/heads/NAME spellings are accepted); a branch the remote does not answer, or a commit or tag given without --target-branch, refuses the prepare before any record or worktree exists",
         "default": "HEAD"
+      },
+      {
+        "name": "--target-branch",
+        "help": "The delivery branch for a task whose --base is a commit or tag rather than a branch; the start must be an ancestor of that branch's tip on origin, base_sha stays the start, and the branch is recorded with source explicit; refused when --base is omitted or already a branch"
       },
       {
         "name": "--kind",
@@ -366,8 +370,12 @@
       },
       {
         "name": "--base",
-        "help": "The origin ref the task branches from, always fetched fresh just before the worktree is created; the default is the repository's base branch (its remote HEAD), any other value names that remote ref such as a branch for stacked work; a base the remote does not answer refuses the dispatch, never a stale local ref",
+        "help": "The origin branch the task starts from and delivers to, always fetched fresh just before the worktree is created and recorded on the task as base_branch; the default is the repository's default branch (origin's HEAD, resolved once at dispatch and recorded with source default), any other value names a branch on origin such as release/1.2 or a stacked parent (source explicit; origin/NAME and refs/heads/NAME spellings are accepted); a branch the remote does not answer, or a commit or tag given without --target-branch, refuses the dispatch before any record or worktree exists",
         "default": "HEAD"
+      },
+      {
+        "name": "--target-branch",
+        "help": "The delivery branch for a task whose --base is a commit or tag rather than a branch; the start must be an ancestor of that branch's tip on origin, base_sha stays the start, and the branch is recorded with source explicit; refused when --base is omitted or already a branch"
       },
       {
         "name": "--kind",
