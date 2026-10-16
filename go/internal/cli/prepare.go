@@ -12,9 +12,9 @@ import (
 func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 	add := func(name string, run func(*store.Store, *ordjson.Object, prepare.Args) (*ordjson.Object, error)) {
 		var (
-			repo, project, brief, harness, model, reasoning, preset, base, kind string
-			sameAsYou, approved, permissionOverride                             bool
-			extra                                                               []string
+			repo, project, brief, harness, model, reasoning, preset, base, targetBranch, kind string
+			sameAsYou, approved, permissionOverride                                           bool
+			extra                                                                             []string
 		)
 		cmd := &cobra.Command{
 			Use:         name,
@@ -33,21 +33,22 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 					return err
 				}
 				view, err := run(st, ctx, prepare.Args{
-					Repo:        repo,
-					Project:     project,
-					Brief:       brief,
-					Harness:     harness,
-					Model:       model,
-					Reasoning:   reasoning,
-					SameAsYou:   sameAsYou,
-					Preset:      preset,
-					PresetSet:   cmd.Flags().Changed("preset"),
-					Base:        base,
-					Kind:        kind,
-					Approved:    approved,
-					Extra:       extra,
-					RuntimeRoot: o.runtimeRoot,
-					SumctlPath:  o.sumctlPath(),
+					Repo:         repo,
+					Project:      project,
+					Brief:        brief,
+					Harness:      harness,
+					Model:        model,
+					Reasoning:    reasoning,
+					SameAsYou:    sameAsYou,
+					Preset:       preset,
+					PresetSet:    cmd.Flags().Changed("preset"),
+					Base:         base,
+					TargetBranch: targetBranch,
+					Kind:         kind,
+					Approved:     approved,
+					Extra:        extra,
+					RuntimeRoot:  o.runtimeRoot,
+					SumctlPath:   o.sumctlPath(),
 
 					PermissionOverride: permissionOverride,
 				})
@@ -66,6 +67,7 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 		cmd.Flags().BoolVar(&sameAsYou, "same-as-you", false, "")
 		cmd.Flags().StringVar(&preset, "preset", "", "")
 		cmd.Flags().StringVar(&base, "base", "HEAD", "")
+		cmd.Flags().StringVar(&targetBranch, "target-branch", "", "")
 		cmd.Flags().StringVar(&kind, "kind", "ship", "")
 		cmd.Flags().BoolVar(&approved, "approved", false, "")
 		cmd.Flags().StringArrayVar(&extra, "arg", nil, "")

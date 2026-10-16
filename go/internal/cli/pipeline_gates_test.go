@@ -14,12 +14,14 @@ const gateBranch = "sum/t-aaaaaaaaaaaa"
 // gateLab is a real local Git topology: a bare origin, a clone standing in for the task repository, and a task
 // branch one commit ahead of main. The rebase and push gates read and write actual refs, never a stub.
 type gateLab struct {
-	home      string
-	origin    string
-	source    string
-	clone     string
-	candidate string
-	ghRoot    string
+	home       string
+	origin     string
+	source     string
+	clone      string
+	candidate  string
+	ghRoot     string
+	baseBranch string
+	base       string
 }
 
 func newGateLab(t *testing.T) gateLab {
@@ -58,11 +60,40 @@ func newGateLab(t *testing.T) gateLab {
 
 func (lab gateLab) writeTask(t *testing.T, status string, evidence ...string) {
 	t.Helper()
-	base := strings.TrimSpace(gitIn(t, lab.clone, "rev-parse", "HEAD~1"))
+	base := lab.base
+	if base == "" {
+		base = strings.TrimSpace(gitIn(t, lab.clone, "rev-parse", "HEAD~1"))
+	}
+	recorded := ""
+	if lab.baseBranch != "" {
+		recorded = fmt.Sprintf(`"base_branch": %q, "base_branch_source": "explicit", `, lab.baseBranch)
+	}
 	writeTaskFixture(t, lab.home, gateTaskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": %q, "repository": %q, "worktree": %q,
-"questions": [], "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "ship", "branch": %q,
+"questions": [], "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, %s"kind": "ship", "branch": %q,
 "report": {"text": "done", "candidate": %q}, "evidence": [%s]}`,
-		gateTaskID, status, lab.clone, lab.clone, base, gateBranch, lab.candidate, strings.Join(evidence, ",\n")))
+		gateTaskID, status, lab.clone, lab.clone, base, recorded, gateBranch, lab.candidate, strings.Join(evidence, ",\n")))
+}
+
+func newReleaseGateLab(t *testing.T) gateLab {
+	t.Helper()
+	lab := newGateLab(t)
+	gitIn(t, lab.source, "checkout", "-q", "-b", "release/1.2")
+	writeFile(t, filepath.Join(lab.source, "release.txt"), "release line\n")
+	gitIn(t, lab.source, "add", "-A")
+	gitIn(t, lab.source, "commit", "-q", "-m", "release work")
+	gitIn(t, lab.source, "push", "-q", "origin", "release/1.2")
+	gitIn(t, lab.source, "checkout", "-q", "main")
+	lab.advanceOrigin(t, "other.txt", "main moves on\n")
+
+	gitIn(t, lab.clone, "fetch", "-q", "origin")
+	gitIn(t, lab.clone, "checkout", "-q", "-B", gateBranch, "origin/release/1.2")
+	writeFile(t, filepath.Join(lab.clone, "app.txt"), "candidate\n")
+	gitIn(t, lab.clone, "commit", "-q", "-am", "candidate")
+	lab.candidate = strings.TrimSpace(gitIn(t, lab.clone, "rev-parse", "HEAD"))
+	lab.base = strings.TrimSpace(gitIn(t, lab.clone, "rev-parse", "origin/release/1.2"))
+	lab.baseBranch = "release/1.2"
+	lab.writeTask(t, "reported")
+	return lab
 }
 
 // advanceOrigin lands one more commit on origin/main, which is what leaves the candidate behind its base.
@@ -163,6 +194,57 @@ func TestPipelineRebase_candidateOnTopOfItsBasePasses(t *testing.T) {
 		t.Fatalf("rebase row = %v, want a pass naming the base SHA and when it was observed", row)
 	}
 	assertNoLeftovers(t, lab)
+}
+
+func TestPipelineRebase_observesTheRecordedReleaseBranchNotTheDefault(t *testing.T) {
+	lab := newReleaseGateLab(t)
+
+	result := runGate(t, lab, "rebase", gateTaskID)
+
+	record, _ := result["evidence"].(map[string]any)
+	if record["outcome"] != "up-to-date" || record["base_branch"] != "release/1.2" || record["base_branch_source"] != "explicit" {
+		t.Fatalf("rebase record = %v, want an up-to-date observation of the recorded release/1.2", record)
+	}
+	row := lab.row(t, "rebase")
+	result1, _ := row["result"].(string)
+	if row["status"] != "pass" || !strings.HasPrefix(result1, "Up to date with release/1.2 (release/1.2 at "+lab.base[:7]) || row["note"] != nil {
+		t.Fatalf("rebase row = %v, want a pass against release/1.2 with no legacy note", row)
+	}
+
+	lab.advanceOrigin(t, "later.txt", "main keeps moving\n")
+	runGate(t, lab, "rebase", gateTaskID)
+	if row := lab.row(t, "rebase"); row["status"] != "pass" {
+		t.Fatalf("rebase row after main moved = %v, want the release target to keep passing", row)
+	}
+	assertNoLeftovers(t, lab)
+}
+
+func TestPipelineRebase_legacyRecordIsDisclosedBesideAnUnchangedRow(t *testing.T) {
+	lab := newGateLab(t)
+
+	result := runGate(t, lab, "rebase", gateTaskID)
+
+	record, _ := result["evidence"].(map[string]any)
+	if record["base_branch_source"] != "legacy-default" {
+		t.Fatalf("rebase record = %v, want the legacy-default source disclosed", record)
+	}
+	row := lab.row(t, "rebase")
+	if !lab.rebaseResultIs(t, row, "Up to date with main") || row["note"] != "recorded target not in the task record (legacy-default)" {
+		t.Fatalf("rebase row = %v, want the pinned result text with the legacy note beside it", row)
+	}
+}
+
+func TestPipelineRebase_aTagSharingTheBranchNameDoesNotShadowIt(t *testing.T) {
+	lab := newReleaseGateLab(t)
+	gitIn(t, lab.source, "-c", "tag.gpgsign=false", "tag", "-a", "-m", "old", "release/1.2", "HEAD~1")
+	gitIn(t, lab.source, "push", "-q", "origin", "refs/tags/release/1.2")
+
+	result := runGate(t, lab, "rebase", gateTaskID)
+
+	record, _ := result["evidence"].(map[string]any)
+	if record["outcome"] != "up-to-date" || record["base_sha"] != lab.base {
+		t.Fatalf("rebase record = %v, want the branch tip %s, not the tag", record, lab.base)
+	}
 }
 
 func TestPipelineRebase_behindButCleanBlocksAndNamesTheCount(t *testing.T) {

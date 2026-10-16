@@ -24,9 +24,9 @@ environment:
   skills:
     files[4]{skill,path,bytes,sha256}:
       sum-work,$ROOT/skills/sum-work/SKILL.md,13989,a3107025691db95e
-      sum-deliver,$ROOT/skills/sum-deliver/SKILL.md,36201,cb5e7b1b8c4e4da2
+      sum-deliver,$ROOT/skills/sum-deliver/SKILL.md,36872,ce3e088954ee3aff
       sum-status,$ROOT/skills/sum-status/SKILL.md,27157,3ee594fa1d8735e9
-      sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,18120,3366a8bddc3157b4
+      sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,18763,5d3ffbf0f31c8b5d
     helper: $ROOT/bin/sumctl
     instruction: "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout."
   runtime:

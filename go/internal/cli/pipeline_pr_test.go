@@ -13,8 +13,12 @@ import (
 // what a coordinator has in hand when the only thing left is the PR.
 func prLab(t *testing.T) gateLab {
 	t.Helper()
+	return prLabFrom(t, newGateLab(t))
+}
+
+func prLabFrom(t *testing.T, lab gateLab) gateLab {
+	t.Helper()
 	requirePython(t)
-	lab := newGateLab(t)
 	lab.ghRoot = filepath.Join(lab.home, "fake-gh")
 	t.Setenv("SUM_GH_BIN", filepath.Join(repoRoot(t), "tests", "fixtures", "gh_attach.py"))
 	t.Setenv("FAKE_GH_ROOT", lab.ghRoot)
@@ -31,7 +35,53 @@ func prLab(t *testing.T) gateLab {
 
 func (lab gateLab) baseSHA(t *testing.T) string {
 	t.Helper()
+	if lab.base != "" {
+		return lab.base
+	}
 	return strings.TrimSpace(gitIn(t, lab.clone, "rev-parse", "HEAD~1"))
+}
+
+func (lab gateLab) createdBase(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(lab.ghRoot, "calls.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var call struct {
+			Created struct {
+				Base string `json:"base"`
+			} `json:"created"`
+		}
+		if json.Unmarshal([]byte(line), &call) == nil && call.Created.Base != "" {
+			return call.Created.Base
+		}
+	}
+	return ""
+}
+
+func TestPipelineRun_opensThePRAgainstTheRecordedReleaseBranch(t *testing.T) {
+	lab := prLabFrom(t, newReleaseGateLab(t))
+
+	result := runGate(t, lab, "run", gateTaskID)
+
+	if got := lab.creates(t); got != 1 {
+		t.Fatalf("gh pr create ran %d times, want exactly one", got)
+	}
+	if got := lab.createdBase(t); got != "release/1.2" {
+		t.Fatalf("gh pr create --base = %q, want the recorded release/1.2 while origin/HEAD is main", got)
+	}
+	pr, _ := result["pr"].(map[string]any)
+	if pr["base_branch"] != "release/1.2" {
+		t.Fatalf("reconciled pr = %v, want base_branch release/1.2", pr)
+	}
+	records := lab.prRecords(t)
+	if last := records[len(records)-1]; last["base_branch"] != "release/1.2" || last["base_branch_source"] != "explicit" {
+		t.Fatalf("pr gate record = %v, want release/1.2 recorded as explicit", last)
+	}
+	if row := lab.row(t, "pr"); row["status"] != "pass" {
+		t.Fatalf("pr row = %v, want pass", row)
+	}
 }
 
 func (lab gateLab) writeGitHub(t *testing.T, overrides map[string]any) {
