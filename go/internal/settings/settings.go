@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/pyrepr"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -30,6 +32,7 @@ var (
 	launchValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@,=\[\]-]{0,127}$`)
 	settingsKeys       = map[string]bool{"schema": true, "capacity": true, "worker": true, "presets": true, "reviewer": true, "evidence": true, "hook": true}
 	defaultCapacity    = map[string]int{"global": defaultGlobal, "per_repository": defaultPerRepository}
+	capacityKeys       = []string{"global", "per_repository", "projects"}
 )
 
 type adapter struct {
@@ -397,16 +400,19 @@ func validateCapacity(value any) (*ordjson.Object, error) {
 	}
 	var unknown []string
 	for _, k := range obj.Keys() {
-		if _, isDefault := defaultCapacity[k]; !isDefault {
+		if !slices.Contains(capacityKeys, k) {
 			unknown = append(unknown, k)
 		}
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		return nil, fmt.Errorf("unknown capacity keys %s; allowed: %s", pyrepr.StrList(unknown), pyrepr.StrList([]string{"global", "per_repository"}))
+		return nil, fmt.Errorf("unknown capacity keys %s; allowed: %s", pyrepr.StrList(unknown), pyrepr.StrList(capacityKeys))
 	}
 	result := map[string]int{"global": defaultCapacity["global"], "per_repository": defaultCapacity["per_repository"]}
 	for _, key := range obj.Keys() {
+		if key == "projects" {
+			continue
+		}
 		raw, _ := obj.Get(key)
 		n, ok := asInt(raw)
 		if !ok || n < 1 || n > CapacityMax {
@@ -420,6 +426,43 @@ func validateCapacity(value any) (*ordjson.Object, error) {
 	canonical := ordjson.NewObject()
 	canonical.Set("global", json.Number(fmt.Sprint(result["global"])))
 	canonical.Set("per_repository", json.Number(fmt.Sprint(result["per_repository"])))
+	if projectsValue, has := obj.Get("projects"); has {
+		projects, err := validateProjectLimits(projectsValue, result["global"])
+		if err != nil {
+			return nil, err
+		}
+		if projects != nil {
+			canonical.Set("projects", projects)
+		}
+	}
+	return canonical, nil
+}
+
+func validateProjectLimits(value any, global int) (*ordjson.Object, error) {
+	obj, ok := value.(*ordjson.Object)
+	if !ok {
+		return nil, fmt.Errorf("capacity.projects must be an object keyed by enrolled project name, got %s", pyrepr.Repr(value))
+	}
+	names := obj.Keys()
+	if len(names) == 0 {
+		return nil, nil
+	}
+	sort.Strings(names)
+	canonical := ordjson.NewObject()
+	for _, name := range names {
+		if !project.ValidName(name) {
+			return nil, fmt.Errorf("capacity.projects key %s is not a project name (owner/repo, or host/owner/repo)", pyrepr.Repr(name))
+		}
+		raw, _ := obj.Get(name)
+		n, ok := asInt(raw)
+		if !ok || n < 1 || n > CapacityMax {
+			return nil, fmt.Errorf("capacity.projects.%s must be an integer between 1 and %d, got %s", name, CapacityMax, pyrepr.Repr(raw))
+		}
+		if n > global {
+			return nil, fmt.Errorf("capacity.projects.%s (%d) exceeds capacity.global (%d)", name, n, global)
+		}
+		canonical.Set(name, json.Number(fmt.Sprint(n)))
+	}
 	return canonical, nil
 }
 
@@ -765,6 +808,9 @@ func CapacityViewOf(s *store.Store, tasks []*ordjson.Object) (*ordjson.Object, e
 	result.Set("worker", orNil(loaded.Worker))
 	result.Set("source", loaded.Source)
 	result.Set("occupied", occupied)
+	if loaded.Capacity != nil {
+		result.Set("effective", effectiveView(s, loaded.Capacity, tasks))
+	}
 	result.Set("presets", presetSummary(loaded.Presets))
 	result.Set("reviewer", orNil(loaded.Reviewer))
 	result.Set("evidence", EvidenceView(loaded.Evidence))

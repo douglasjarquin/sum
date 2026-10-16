@@ -307,7 +307,9 @@ func Resume(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID 
 		return nil, err
 	}
 	repo := asString(func() any { v, _ := task.Get("repository"); return v }())
-	admission, err := launch.Admit(s, tasks, repo)
+	projectValue, _ := task.Get("project")
+	projectObj, _ := projectValue.(*ordjson.Object)
+	admission, err := launch.AdmitProject(s, tasks, repo, projectObj)
 	if err != nil {
 		unlock()
 		return nil, err

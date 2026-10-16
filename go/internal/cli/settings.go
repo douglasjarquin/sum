@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/settings"
@@ -38,6 +40,7 @@ func (o *rootOptions) addSettingsCommands(root *cobra.Command) {
 
 	var (
 		global, perRepository                                     int
+		projectLimits, clearProjectLimits                         []string
 		clearCapacity                                             bool
 		workerHarness, workerModel, workerReasoning, workerPreset string
 		clearWorker                                               bool
@@ -76,11 +79,25 @@ func (o *rootOptions) addSettingsCommands(root *cobra.Command) {
 			if cmd.Flags().Changed("per-repository") {
 				parsed.PerRepository = &perRepository
 			}
+			if len(projectLimits) > 0 {
+				parsed.ProjectLimits = map[string]int{}
+				for _, spec := range projectLimits {
+					name, value, ok := strings.Cut(spec, "=")
+					n, numErr := strconv.Atoi(value)
+					if !ok || name == "" || numErr != nil {
+						return fmt.Errorf("--project-limit takes NAME=N with an enrolled project name and an integer, got %q", spec)
+					}
+					parsed.ProjectLimits[name] = n
+				}
+			}
+			parsed.ClearProjectLimits = clearProjectLimits
 			return o.runSettingsSet(cmd, parsed)
 		},
 	}
 	setCmd.Flags().IntVar(&global, "global", 0, "")
 	setCmd.Flags().IntVar(&perRepository, "per-repository", 0, "")
+	setCmd.Flags().StringArrayVar(&projectLimits, "project-limit", nil, "")
+	setCmd.Flags().StringArrayVar(&clearProjectLimits, "clear-project-limit", nil, "")
 	setCmd.Flags().BoolVar(&clearCapacity, "clear-capacity", false, "")
 	setCmd.Flags().StringVar(&workerHarness, "worker-harness", "", "")
 	setCmd.Flags().StringVar(&workerModel, "worker-model", "", "")
@@ -108,8 +125,13 @@ func (o *rootOptions) runSettingsSet(cmd *cobra.Command, parsed settings.WriteAr
 	if err := app.RequireCoordinator(st, ctx); err != nil {
 		return err
 	}
-	if parsed.ClearCapacity && (parsed.Global != nil || parsed.PerRepository != nil) {
-		return fmt.Errorf("--clear-capacity conflicts with --global/--per-repository.")
+	if parsed.ClearCapacity && (parsed.Global != nil || parsed.PerRepository != nil || len(parsed.ProjectLimits) > 0 || len(parsed.ClearProjectLimits) > 0) {
+		return fmt.Errorf("--clear-capacity conflicts with --global/--per-repository/--project-limit/--clear-project-limit.")
+	}
+	for name := range parsed.ProjectLimits {
+		if slices.Contains(parsed.ClearProjectLimits, name) {
+			return fmt.Errorf("--project-limit and --clear-project-limit both name %q; give one.", name)
+		}
 	}
 	if parsed.ClearWorker && (parsed.WorkerHarness != "" || parsed.WorkerModel != "" || parsed.WorkerReasoning != "" || parsed.WorkerPresetSet) {
 		return fmt.Errorf("--clear-worker conflicts with --worker-* values.")
@@ -123,8 +145,8 @@ func (o *rootOptions) runSettingsSet(cmd *cobra.Command, parsed settings.WriteAr
 	if parsed.ClearEvidence && parsed.AutoPublish != nil {
 		return fmt.Errorf("--clear-evidence conflicts with --auto-publish-evidence.")
 	}
-	if parsed.Global == nil && parsed.PerRepository == nil && !parsed.ClearCapacity && parsed.WorkerHarness == "" && parsed.WorkerModel == "" && parsed.WorkerReasoning == "" && !parsed.WorkerPresetSet && !parsed.ClearWorker && !parsed.ReviewerPresetSet && !parsed.ClearReviewer && parsed.AutoPublish == nil && !parsed.ClearEvidence {
-		return fmt.Errorf("Give --global, --per-repository, --clear-capacity, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, --clear-reviewer, --auto-publish-evidence, or --clear-evidence.")
+	if parsed.Global == nil && parsed.PerRepository == nil && len(parsed.ProjectLimits) == 0 && len(parsed.ClearProjectLimits) == 0 && !parsed.ClearCapacity && parsed.WorkerHarness == "" && parsed.WorkerModel == "" && parsed.WorkerReasoning == "" && !parsed.WorkerPresetSet && !parsed.ClearWorker && !parsed.ReviewerPresetSet && !parsed.ClearReviewer && parsed.AutoPublish == nil && !parsed.ClearEvidence {
+		return fmt.Errorf("Give --global, --per-repository, --project-limit, --clear-project-limit, --clear-capacity, --worker-harness/--worker-model/--worker-reasoning, --worker-preset, --clear-worker, --reviewer-preset, --clear-reviewer, --auto-publish-evidence, or --clear-evidence.")
 	}
 	view, err := settings.Write(st, parsed)
 	if err != nil {

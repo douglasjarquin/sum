@@ -308,7 +308,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		unlock()
 		return nil, err
 	}
-	admission, err := launch.Admit(s, tasks, repo)
+	admission, err := launch.AdmitProject(s, tasks, repo, projectObj)
 	if err != nil {
 		unlock()
 		return nil, err

@@ -1,7 +1,7 @@
 limits: null
 worker: null
 source: invalid
-error: "Invalid $HOME/settings.json: unknown capacity keys ['bogus']; allowed: ['global', 'per_repository']. Fix or remove the file; nothing was admitted or changed, and existing tasks keep running. Only an explicit capacity block configures admission."
+error: "Invalid $HOME/settings.json: unknown capacity keys ['bogus']; allowed: ['global', 'per_repository', 'projects']. Fix or remove the file; nothing was admitted or changed, and existing tasks keep running. Only an explicit capacity block configures admission."
 occupied:
   global: 0
   by_repository:

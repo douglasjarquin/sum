@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/pyrepr"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -16,20 +17,22 @@ import (
 const note = "Applies to future admissions and dispatches only. No worker was stopped, relaunched, or switched; the coordinator's own harness and model are untouched."
 
 type WriteArgs struct {
-	Global            *int
-	PerRepository     *int
-	ClearCapacity     bool
-	WorkerHarness     string
-	WorkerModel       string
-	WorkerReasoning   string
-	WorkerPreset      string
-	ClearWorker       bool
-	ReviewerPreset    string
-	ClearReviewer     bool
-	WorkerPresetSet   bool
-	ReviewerPresetSet bool
-	AutoPublish       *bool
-	ClearEvidence     bool
+	Global             *int
+	PerRepository      *int
+	ProjectLimits      map[string]int
+	ClearProjectLimits []string
+	ClearCapacity      bool
+	WorkerHarness      string
+	WorkerModel        string
+	WorkerReasoning    string
+	WorkerPreset       string
+	ClearWorker        bool
+	ReviewerPreset     string
+	ClearReviewer      bool
+	WorkerPresetSet    bool
+	ReviewerPresetSet  bool
+	AutoPublish        *bool
+	ClearEvidence      bool
 }
 
 func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
@@ -46,7 +49,7 @@ func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
 	switch {
 	case args.ClearCapacity:
 		mergedCapacity = nil
-	case args.Global != nil || args.PerRepository != nil:
+	case args.Global != nil || args.PerRepository != nil || len(args.ProjectLimits) > 0 || len(args.ClearProjectLimits) > 0:
 		base := ordjson.NewObject()
 		if current.Capacity != nil {
 			for _, k := range current.Capacity.Keys() {
@@ -59,6 +62,16 @@ func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
 		}
 		if args.PerRepository != nil {
 			base.Set("per_repository", json.Number(fmt.Sprint(*args.PerRepository)))
+		}
+		if len(args.ProjectLimits) > 0 || len(args.ClearProjectLimits) > 0 {
+			projects, projectsErr := mergeProjectLimits(s, base, args.ProjectLimits, args.ClearProjectLimits)
+			if projectsErr != nil {
+				return nil, projectsErr
+			}
+			base.Delete("projects")
+			if projects.Len() > 0 {
+				base.Set("projects", projects)
+			}
 		}
 		mergedCapacity, err = validateCapacity(base)
 		if err != nil {
@@ -178,6 +191,49 @@ func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
 	result.Set("occupied", occupied)
 	result.Set("note", note)
 	return result, nil
+}
+
+func mergeProjectLimits(s *store.Store, base *ordjson.Object, set map[string]int, clear []string) (*ordjson.Object, error) {
+	projects := ordjson.NewObject()
+	if existing, has := base.Get("projects"); has {
+		if obj, ok := existing.(*ordjson.Object); ok {
+			for _, name := range obj.Keys() {
+				v, _ := obj.Get(name)
+				projects.Set(name, v)
+			}
+		}
+	}
+	for _, name := range clear {
+		if _, has := projects.Get(name); !has {
+			return nil, fmt.Errorf("No project limit for %s to clear; `settings show` lists the declared overrides.", pyrepr.Repr(name))
+		}
+		projects.Delete(name)
+	}
+	if len(set) == 0 {
+		return projects, nil
+	}
+	registry, err := project.ReadProjects(s)
+	if err != nil {
+		return nil, err
+	}
+	enrolledValue, _ := registry.Get("projects")
+	enrolled, _ := enrolledValue.(*ordjson.Object)
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		known := false
+		if enrolled != nil {
+			_, known = enrolled.Get(name)
+		}
+		if !known {
+			return nil, fmt.Errorf("No enrolled project %s; `project list` shows the registry and `project enroll owner/repo` adds exactly one repository.", pyrepr.Repr(name))
+		}
+		projects.Set(name, json.Number(fmt.Sprint(set[name])))
+	}
+	return projects, nil
 }
 
 type PresetWriteArgs struct {
