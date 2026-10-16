@@ -28,8 +28,6 @@ type ReconcileArgs struct {
 	AcceptBaseBranch bool
 }
 
-const BaseSourceAccepted = "accepted"
-
 func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ReconcileArgs) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
@@ -172,7 +170,7 @@ func recordObservationWith(s *store.Store, ctx *ordjson.Object, taskID string, d
 			accepted.Set("from_source", source)
 			accepted.Set("to", baseRef)
 			task.Set("base_branch", baseRef)
-			task.Set("base_branch_source", BaseSourceAccepted)
+			task.Set("base_branch_source", pipeline.BaseSourceAccepted)
 		} else {
 			findings = append(findings, fmt.Sprintf("PR #%d targets %s; the task records %s (%s). Inspect both, then either retarget the task explicitly with `pr reconcile --number %d --accept-base-branch` or prepare a new task against %s; nothing is retargeted automatically",
 				intOf(data["number"]), baseRef, recorded, source, intOf(data["number"]), recorded))

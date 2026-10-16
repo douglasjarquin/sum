@@ -19,6 +19,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/project"
@@ -63,11 +64,6 @@ type taskBase struct {
 	Source string
 }
 
-const (
-	BaseSourceExplicit = "explicit"
-	BaseSourceDefault  = "default"
-)
-
 func branchName(ref string) string {
 	for _, prefix := range []string{"refs/remotes/origin/", "origin/", "refs/heads/"} {
 		ref = strings.TrimPrefix(ref, prefix)
@@ -86,11 +82,11 @@ func resolveBase(repo, ref, target string) (taskBase, error) {
 		if err != nil {
 			return taskBase{}, err
 		}
-		sha, err := fetchRef(repo, "refs/heads/"+branch, branch)
+		sha, err := fetchBranch(repo, branch)
 		if err != nil {
 			return taskBase{}, err
 		}
-		return taskBase{SHA: sha, Branch: branch, Source: BaseSourceDefault}, nil
+		return taskBase{SHA: sha, Branch: branch, Source: pipeline.BaseSourceDefault}, nil
 	}
 	name := branchName(ref)
 	isBranch, err := remoteHasBranch(repo, name)
@@ -101,11 +97,11 @@ func resolveBase(repo, ref, target string) (taskBase, error) {
 		if target != "" {
 			return taskBase{}, fmt.Errorf("--base %s already names a branch on origin; --target-branch is only for a commit or tag start.", name)
 		}
-		sha, err := fetchRef(repo, "refs/heads/"+name, name)
+		sha, err := fetchBranch(repo, name)
 		if err != nil {
 			return taskBase{}, err
 		}
-		return taskBase{SHA: sha, Branch: name, Source: BaseSourceExplicit}, nil
+		return taskBase{SHA: sha, Branch: name, Source: pipeline.BaseSourceExplicit}, nil
 	}
 	if target == "" {
 		return taskBase{}, fmt.Errorf("--base %s names no branch on origin, and a task needs a delivery branch: pass --base BRANCH, or keep this start and name its delivery branch with --target-branch BRANCH.", name)
@@ -118,7 +114,7 @@ func resolveBase(repo, ref, target string) (taskBase, error) {
 	if !targetIsBranch {
 		return taskBase{}, fmt.Errorf("--target-branch %s names no branch on origin.", targetName)
 	}
-	targetSHA, err := fetchRef(repo, "refs/heads/"+targetName, targetName)
+	targetSHA, err := fetchBranch(repo, targetName)
 	if err != nil {
 		return taskBase{}, err
 	}
@@ -129,7 +125,7 @@ func resolveBase(repo, ref, target string) (taskBase, error) {
 	if ancestor, _ := proc.Run([]string{"git", "-C", repo, "merge-base", "--is-ancestor", startSHA, targetSHA}, "", baseFetchBound, false, gitBaseEnv()); ancestor.Code != 0 {
 		return taskBase{}, fmt.Errorf("The start %s (%s) is not an ancestor of origin/%s, so a task from it could not deliver to that branch; choose a start on that branch or another --target-branch.", ref, startSHA[:7], targetName)
 	}
-	return taskBase{SHA: startSHA, Branch: targetName, Source: BaseSourceExplicit}, nil
+	return taskBase{SHA: startSHA, Branch: targetName, Source: pipeline.BaseSourceExplicit}, nil
 }
 
 func defaultBranch(repo string) (string, error) {
@@ -167,6 +163,10 @@ func remoteHasBranch(repo, name string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+func fetchBranch(repo, name string) (string, error) {
+	return fetchRef(repo, "refs/heads/"+name, name)
 }
 
 func fetchRef(repo, refspec, display string) (string, error) {

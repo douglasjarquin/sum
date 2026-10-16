@@ -122,7 +122,7 @@ func deriveRebase(task *ordjson.Object) Row {
 		return Row{Stage: StageRebase, Status: Pending, Result: fmt.Sprintf("Not observed against origin/%s; the last Rebase observation was against origin/%s. Run `pipeline rebase`", expected, observed)}
 	}
 	if stringField(latest, "base_branch_source") == BaseSourceLegacy {
-		row.Note = "recorded target not in the task record (legacy-default)"
+		row.Note = fmt.Sprintf("recorded target not in the task record (%s)", BaseSourceLegacy)
 	}
 	if baseSHA := stringField(latest, "base_sha"); baseSHA != "" {
 		row.Result += fmt.Sprintf(" (%s at %s, observed %s)", stringField(latest, "base_branch"), shortSHA(baseSHA), observedStamp(row.At))
@@ -132,7 +132,12 @@ func deriveRebase(task *ordjson.Object) Row {
 	return row
 }
 
-const BaseSourceLegacy = "legacy-default"
+const (
+	BaseSourceExplicit = "explicit"
+	BaseSourceDefault  = "default"
+	BaseSourceAccepted = "accepted"
+	BaseSourceLegacy   = "legacy-default"
+)
 
 func RecordedBase(task *ordjson.Object) (string, string) {
 	branch := stringField(task, "base_branch")
@@ -169,12 +174,6 @@ func ResolveBase(repo string, task *ordjson.Object) (string, string) {
 		}
 	}
 	return "main", BaseSourceLegacy
-}
-
-// BaseBranch is the base the change is actually going to: the reconciled PR's, and only without one the repository's default.
-func BaseBranch(repo string, task *ordjson.Object) string {
-	branch, _ := ResolveBase(repo, task)
-	return branch
 }
 
 func observeRebase(repo, dir, candidate, base, source string) (*ordjson.Object, string) {
