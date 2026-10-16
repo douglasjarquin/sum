@@ -20,7 +20,7 @@ func (o *rootOptions) addPRCommands(root *cobra.Command) {
 
 	var number int
 	var repo string
-	var replace bool
+	var replace, acceptBase bool
 	reconcileCmd := &cobra.Command{
 		Use:         "reconcile TASK",
 		Annotations: map[string]string{projectsAnnotation: "task"},
@@ -38,10 +38,11 @@ func (o *rootOptions) addPRCommands(root *cobra.Command) {
 				return err
 			}
 			view, err := prcmd.Reconcile(st, ctx, o.runtimeRoot, prcmd.ReconcileArgs{
-				Task:    args[0],
-				Number:  number,
-				Repo:    repo,
-				Replace: replace,
+				Task:             args[0],
+				Number:           number,
+				Repo:             repo,
+				Replace:          replace,
+				AcceptBaseBranch: acceptBase,
 			})
 			if err != nil {
 				return err
@@ -52,6 +53,7 @@ func (o *rootOptions) addPRCommands(root *cobra.Command) {
 	reconcileCmd.Flags().IntVar(&number, "number", 0, "")
 	reconcileCmd.Flags().StringVar(&repo, "repo", "", "")
 	reconcileCmd.Flags().BoolVar(&replace, "replace", false, "")
+	reconcileCmd.Flags().BoolVar(&acceptBase, "accept-base-branch", false, "")
 	_ = reconcileCmd.MarkFlagRequired("number")
 	prCmd.AddCommand(reconcileCmd)
 

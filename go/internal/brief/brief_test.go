@@ -351,3 +351,20 @@ func TestSplittingTheProcedureIsAnExplicitRevisionAndKeepsEarlierRows(t *testing
 		t.Fatalf("pre-split rows after the split: %v", err)
 	}
 }
+
+func TestBriefNamesTheRecordedBaseBranchOrDisclosesALegacyRecord(t *testing.T) {
+	legacy := newLab(t, true)
+	if initial := legacy.writeInitial(t); !strings.Contains(initial, "- Base branch: not recorded (legacy task; delivery resolves the reconciled PR's base, then the repository default)") {
+		t.Fatalf("legacy brief does not disclose the missing base branch:\n%s", initial)
+	}
+
+	recorded := newLab(t, true)
+	recorded.task.Set("base_branch", "release/1.2")
+	recorded.task.Set("base_branch_source", "explicit")
+	if err := recorded.s.SaveTask(recorded.task); err != nil {
+		t.Fatal(err)
+	}
+	if initial := recorded.writeInitial(t); !strings.Contains(initial, "- Base commit: `0123456789abcdef0123456789abcdef01234567`\n- Base branch: `release/1.2` (explicit)\n") {
+		t.Fatalf("brief does not name the recorded base branch beside the base commit:\n%s", initial)
+	}
+}

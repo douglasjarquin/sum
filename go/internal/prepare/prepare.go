@@ -58,23 +58,129 @@ func runGit(args ...string) (string, error) {
 	return strings.TrimSpace(out.Stdout), nil
 }
 
-func fetchBase(repo, ref string) (string, error) {
-	if ref == "" || ref == "HEAD" {
-		ref = pipeline.BaseBranch(repo, nil)
-	} else {
-		ref = strings.TrimPrefix(strings.TrimPrefix(ref, "refs/remotes/origin/"), "origin/")
+type taskBase struct {
+	SHA    string
+	Branch string
+	Source string
+}
+
+func branchName(ref string) string {
+	for _, prefix := range []string{"refs/remotes/origin/", "origin/", "refs/heads/"} {
+		ref = strings.TrimPrefix(ref, prefix)
 	}
-	fetch, err := proc.Run([]string{"git", "-C", repo, "fetch", "--quiet", "origin", ref}, "", baseFetchBound, false, gitBaseEnv())
+	return ref
+}
+
+func resolveBase(repo, ref, target string) (taskBase, error) {
+	ref = strings.TrimSpace(ref)
+	target = strings.TrimSpace(target)
+	if ref == "" || ref == "HEAD" {
+		if target != "" {
+			return taskBase{}, fmt.Errorf("--target-branch names the delivery branch for a commit or tag start, so give that start with --base; to branch from %s itself pass --base %s alone.", branchName(target), branchName(target))
+		}
+		branch, err := defaultBranch(repo)
+		if err != nil {
+			return taskBase{}, err
+		}
+		sha, err := fetchBranch(repo, branch)
+		if err != nil {
+			return taskBase{}, err
+		}
+		return taskBase{SHA: sha, Branch: branch, Source: pipeline.BaseSourceDefault}, nil
+	}
+	name := branchName(ref)
+	isBranch, err := remoteHasBranch(repo, name)
+	if err != nil {
+		return taskBase{}, err
+	}
+	if isBranch {
+		if target != "" {
+			return taskBase{}, fmt.Errorf("--base %s already names a branch on origin; --target-branch is only for a commit or tag start.", name)
+		}
+		sha, err := fetchBranch(repo, name)
+		if err != nil {
+			return taskBase{}, err
+		}
+		return taskBase{SHA: sha, Branch: name, Source: pipeline.BaseSourceExplicit}, nil
+	}
+	if target == "" {
+		return taskBase{}, fmt.Errorf("--base %s names no branch on origin, and a task needs a delivery branch: pass --base BRANCH, or keep this start and name its delivery branch with --target-branch BRANCH.", name)
+	}
+	targetName := branchName(target)
+	targetIsBranch, err := remoteHasBranch(repo, targetName)
+	if err != nil {
+		return taskBase{}, err
+	}
+	if !targetIsBranch {
+		return taskBase{}, fmt.Errorf("--target-branch %s names no branch on origin.", targetName)
+	}
+	targetSHA, err := fetchBranch(repo, targetName)
+	if err != nil {
+		return taskBase{}, err
+	}
+	startSHA, err := fetchRef(repo, ref, ref)
+	if err != nil {
+		return taskBase{}, err
+	}
+	if ancestor, _ := proc.Run([]string{"git", "-C", repo, "merge-base", "--is-ancestor", startSHA, targetSHA}, "", baseFetchBound, false, gitBaseEnv()); ancestor.Code != 0 {
+		return taskBase{}, fmt.Errorf("The start %s (%s) is not an ancestor of origin/%s, so a task from it could not deliver to that branch; choose a start on that branch or another --target-branch.", ref, startSHA[:7], targetName)
+	}
+	return taskBase{SHA: startSHA, Branch: targetName, Source: pipeline.BaseSourceExplicit}, nil
+}
+
+func defaultBranch(repo string) (string, error) {
+	symref, err := proc.Run([]string{"git", "-C", repo, "ls-remote", "--symref", "origin", "HEAD"}, "", baseFetchBound, false, gitBaseEnv())
+	if err == nil && symref.Code == 0 {
+		for _, line := range strings.Split(symref.Stdout, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 3 && fields[0] == "ref:" && fields[2] == "HEAD" && strings.HasPrefix(fields[1], "refs/heads/") {
+				return strings.TrimPrefix(fields[1], "refs/heads/"), nil
+			}
+		}
+	}
+	head, err := runGit("-C", repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	if err == nil {
+		if name := strings.TrimPrefix(strings.TrimSpace(head), "origin/"); name != "" {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("Could not determine the repository's default branch from origin or the clone's origin/HEAD; pass --base BRANCH.")
+}
+
+func remoteHasBranch(repo, name string) (bool, error) {
+	listed, err := proc.Run([]string{"git", "-C", repo, "ls-remote", "--heads", "origin", "refs/heads/" + name}, "", baseFetchBound, false, gitBaseEnv())
+	if err != nil || listed.Code != 0 {
+		detail := listed.Detail()
+		if err != nil {
+			detail = err.Error()
+		}
+		return false, fmt.Errorf("Could not fetch %s from origin for the task base: %s", name, detail)
+	}
+	for _, line := range strings.Split(listed.Stdout, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == "refs/heads/"+name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func fetchBranch(repo, name string) (string, error) {
+	return fetchRef(repo, "refs/heads/"+name, name)
+}
+
+func fetchRef(repo, refspec, display string) (string, error) {
+	fetch, err := proc.Run([]string{"git", "-C", repo, "fetch", "--quiet", "origin", refspec}, "", baseFetchBound, false, gitBaseEnv())
 	if err != nil || fetch.Code != 0 {
 		detail := fetch.Detail()
 		if err != nil {
 			detail = err.Error()
 		}
-		return "", fmt.Errorf("Could not fetch %s from origin for the task base: %s", ref, detail)
+		return "", fmt.Errorf("Could not fetch %s from origin for the task base: %s", display, detail)
 	}
 	sha, err := runGit("-C", repo, "rev-parse", "--verify", "FETCH_HEAD^{commit}", "--")
 	if err != nil {
-		return "", fmt.Errorf("Fetched %s but could not resolve the remote tip: %s", ref, err)
+		return "", fmt.Errorf("Fetched %s but could not resolve the remote tip: %s", display, err)
 	}
 	return sha, nil
 }
@@ -110,21 +216,22 @@ func newTaskID() (string, error) {
 }
 
 type Args struct {
-	Repo        string
-	Project     string
-	Brief       string
-	Harness     string
-	Model       string
-	Reasoning   string
-	SameAsYou   bool
-	Preset      string
-	PresetSet   bool
-	Base        string
-	Kind        string
-	Approved    bool
-	Extra       []string
-	RuntimeRoot string
-	SumctlPath  string
+	Repo         string
+	Project      string
+	Brief        string
+	Harness      string
+	Model        string
+	Reasoning    string
+	SameAsYou    bool
+	Preset       string
+	PresetSet    bool
+	Base         string
+	TargetBranch string
+	Kind         string
+	Approved     bool
+	Extra        []string
+	RuntimeRoot  string
+	SumctlPath   string
 }
 
 func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, error) {
@@ -183,10 +290,11 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if err != nil {
 		return nil, err
 	}
-	baseSHA, err := fetchBase(repo, args.Base)
+	base, err := resolveBase(repo, args.Base, args.TargetBranch)
 	if err != nil {
 		return nil, err
 	}
+	baseSHA := base.SHA
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -230,6 +338,8 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	task.Set("repository", repo)
 	task.Set("project", projectObj)
 	task.Set("base_sha", baseSHA)
+	task.Set("base_branch", base.Branch)
+	task.Set("base_branch_source", base.Source)
 	task.Set("branch", "sum/"+tid)
 	harness, _ := launchSpec.Get("harness")
 	task.Set("harness", harness)

@@ -226,3 +226,49 @@ func TestTable_foldsLineBreaksAndEscapesPipes(t *testing.T) {
 		t.Fatalf("table =\n%s\nwant a row %q", got, want)
 	}
 }
+
+func TestDeriveRebase_rowObservedAgainstAnotherBranchReadsAsUnobserved(t *testing.T) {
+	record := Derive(taskFrom(t, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "brief": "b", "base_branch": "release/1.2", "base_branch_source": "explicit",
+"report": {"candidate": "cccccccccccccccccccccccccccccccccccccccc"}, "evidence": [
+{"schema": 1, "id": "e-5", "kind": "rebase", "source": "coordinator", "at": "2026-01-01T05:00:00+00:00",
+"candidate": "cccccccccccccccccccccccccccccccccccccccc", "outcome": "up-to-date", "base_branch": "main", "base_branch_source": "legacy-default",
+"base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "behind": 0, "conflicts": [], "summary": "Up to date with main"}]}`))
+
+	row := record.Get(StageRebase)
+	if row.Status != Pending || row.Result != "Not observed against origin/release/1.2; the last Rebase observation was against origin/main. Run `pipeline rebase`" {
+		t.Fatalf("rebase row = %+v, want it unobserved for the recorded branch", row)
+	}
+}
+
+func TestDeriveRebase_legacyRecordKeepsItsRowAndCarriesTheNote(t *testing.T) {
+	record := Derive(taskFrom(t, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "brief": "b",
+"report": {"candidate": "cccccccccccccccccccccccccccccccccccccccc"}, "evidence": [
+{"schema": 1, "id": "e-5", "kind": "rebase", "source": "coordinator", "at": "2026-01-01T05:00:00+00:00",
+"candidate": "cccccccccccccccccccccccccccccccccccccccc", "outcome": "up-to-date", "base_branch": "main", "base_branch_source": "legacy-default",
+"base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "behind": 0, "conflicts": [], "summary": "Up to date with main"}]}`))
+
+	row := record.Get(StageRebase)
+	if row.Status != Pass || row.Result != "Up to date with main (main at bbbbbbb, observed 2026-01-01T05:00Z)" {
+		t.Fatalf("rebase row = %+v, want today's row text", row)
+	}
+	if row.Note != "recorded target not in the task record (legacy-default)" {
+		t.Fatalf("rebase note = %q, want the legacy disclosure", row.Note)
+	}
+	if strings.Contains(record.Table(), "legacy-default") {
+		t.Fatalf("table carries the note:\n%s", record.Table())
+	}
+	if note, _ := rowObject(record, StageRebase).Get("note"); note != "recorded target not in the task record (legacy-default)" {
+		t.Fatalf("record object note = %v, want the legacy disclosure", note)
+	}
+}
+
+func rowObject(record Record, stage Stage) *ordjson.Object {
+	rows, _ := field(record.Object(), "rows").([]any)
+	for _, raw := range rows {
+		row, _ := raw.(*ordjson.Object)
+		if stringField(row, "stage") == string(stage) {
+			return row
+		}
+	}
+	return nil
+}

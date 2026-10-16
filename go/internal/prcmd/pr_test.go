@@ -198,3 +198,106 @@ func TestObservedVisibilityReadsStdoutOnly(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func recordedTask(candidate, branch, source string) string {
+	return fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "reported", "base_branch": %q, "base_branch_source": %q,
+		"report": {"candidate": %q}, "evidence": []}`, branch, source, candidate)
+}
+
+func observeAccepting(t *testing.T, taskJSON, ghJSON string) (*store.Store, *ordjson.Object) {
+	t.Helper()
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Init(); err != nil {
+		t.Fatal(err)
+	}
+	value, err := ordjson.Decode([]byte(taskJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, _ := value.(*ordjson.Object)
+	if err := st.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	ctx := ordjson.NewObject()
+	ctx.Set("machine", "m-test")
+	ctx.Set("session", "sum-test")
+	ctx.Set("pane", "w-parent:p1")
+	raw, err := ordjson.Decode([]byte(ghJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := raw.(*ordjson.Object)
+	fields := map[string]any{}
+	for _, k := range data.Keys() {
+		v, _ := data.Get(k)
+		fields[k] = v
+	}
+	pr, _, err := recordObservationWith(st, ctx, "t-aaaaaaaaaaaa", fields, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return st, pr
+}
+
+func TestRecordObservation_prTargetingAnotherBranchIsAFinding(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	pr := observeInto(t, recordedTask(head, "release/1.2", "explicit"), ghView("OPEN", head, ""))
+	findings := asList(func() any { v, _ := pr.Get("findings"); return v }())
+	if len(findings) != 1 || !strings.Contains(fmt.Sprint(findings[0]), "PR #7 targets main; the task records release/1.2 (explicit)") || !strings.Contains(fmt.Sprint(findings[0]), "--accept-base-branch") {
+		t.Fatalf("findings = %v, want the base disagreement naming both branches and the accept action", findings)
+	}
+}
+
+func TestRecordObservation_headMismatchStaysFirstWhenTheBaseAlsoDiffers(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	stale := strings.Repeat("9", 40)
+	pr := observeInto(t, recordedTask(stale, "release/1.2", "explicit"), ghView("OPEN", head, ""))
+	findings := asList(func() any { v, _ := pr.Get("findings"); return v }())
+	if len(findings) != 2 || !strings.HasPrefix(fmt.Sprint(findings[0]), "PR head ") || !strings.HasPrefix(fmt.Sprint(findings[1]), "PR #7 targets main") {
+		t.Fatalf("findings = %v, want the head mismatch first and the base disagreement second", findings)
+	}
+}
+
+func TestRecordObservation_legacyRecordRaisesNoBaseFinding(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	pr := observeInto(t, observationTask(head, ""), ghView("OPEN", head, ""))
+	if findings := asList(func() any { v, _ := pr.Get("findings"); return v }()); len(findings) != 0 {
+		t.Fatalf("findings = %v, want none for a record without a base branch", findings)
+	}
+}
+
+func TestRecordObservation_matchingBaseRaisesNoFinding(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	pr := observeInto(t, recordedTask(head, "main", "default"), ghView("OPEN", head, ""))
+	if findings := asList(func() any { v, _ := pr.Get("findings"); return v }()); len(findings) != 0 {
+		t.Fatalf("findings = %v, want none when the PR targets the recorded branch", findings)
+	}
+}
+
+func TestRecordObservation_acceptBaseBranchRerecordsTheTask(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	st, pr := observeAccepting(t, recordedTask(head, "release/1.2", "explicit"), ghView("OPEN", head, ""))
+	if findings := asList(func() any { v, _ := pr.Get("findings"); return v }()); len(findings) != 0 {
+		t.Fatalf("findings = %v, want none once the base is accepted", findings)
+	}
+	task, err := st.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(task, "base_branch") != "main" || asString(task, "base_branch_source") != "accepted" {
+		t.Fatalf("task base = %s/%s, want main recorded as accepted", asString(task, "base_branch"), asString(task, "base_branch_source"))
+	}
+	records := asList(func() any { v, _ := task.Get("evidence"); return v }())
+	last := asObject(records[len(records)-1])
+	accepted := asObject(func() any { v, _ := last.Get("base_branch_accepted"); return v }())
+	if accepted == nil || asString(accepted, "from") != "release/1.2" || asString(accepted, "to") != "main" || asString(accepted, "from_source") != "explicit" {
+		t.Fatalf("publication record = %v, want base_branch_accepted from release/1.2 to main", last)
+	}
+	again := observeInto(t, recordedTask(head, "main", "accepted"), ghView("OPEN", head, ""))
+	if findings := asList(func() any { v, _ := again.Get("findings"); return v }()); len(findings) != 0 {
+		t.Fatalf("findings after acceptance = %v, want none", findings)
+	}
+}

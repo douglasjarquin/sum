@@ -19,10 +19,11 @@ var repoName = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 var sha40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type ReconcileArgs struct {
-	Task    string
-	Number  int
-	Repo    string
-	Replace bool
+	Task             string
+	Number           int
+	Repo             string
+	Replace          bool
+	AcceptBaseBranch bool
 }
 
 func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ReconcileArgs) (*ordjson.Object, error) {
@@ -49,7 +50,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Rec
 	if err != nil {
 		return nil, err
 	}
-	pr, recordID, err := recordObservation(s, ctx, args.Task, data)
+	pr, recordID, err := recordObservationWith(s, ctx, args.Task, data, args.AcceptBaseBranch)
 	if err != nil {
 		return nil, err
 	}
@@ -100,6 +101,10 @@ func viewPR(gh, repo, remote string, number int) (map[string]any, error) {
 }
 
 func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data map[string]any) (*ordjson.Object, any, error) {
+	return recordObservationWith(s, ctx, taskID, data, false)
+}
+
+func recordObservationWith(s *store.Store, ctx *ordjson.Object, taskID string, data map[string]any, acceptBase bool) (*ordjson.Object, any, error) {
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, nil, err
@@ -155,6 +160,21 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 			findings = append(findings, text)
 		}
 	}
+	var accepted *ordjson.Object
+	baseRef := fmt.Sprint(data["baseRefName"])
+	if recorded, source := pipeline.RecordedBase(task); recorded != "" && baseRef != recorded {
+		if acceptBase {
+			accepted = ordjson.NewObject()
+			accepted.Set("from", recorded)
+			accepted.Set("from_source", source)
+			accepted.Set("to", baseRef)
+			task.Set("base_branch", baseRef)
+			task.Set("base_branch_source", pipeline.BaseSourceAccepted)
+		} else {
+			findings = append(findings, fmt.Sprintf("PR #%d targets %s; the task records %s (%s). Inspect both, then either retarget the task explicitly with `pr reconcile --number %d --accept-base-branch` or prepare a new task against %s; nothing is retargeted automatically",
+				intOf(data["number"]), baseRef, recorded, source, intOf(data["number"]), recorded))
+		}
+	}
 	var mergeCommit any
 	if mc, ok := data["mergeCommit"]; ok && mc != nil {
 		if m, isMap := mc.(map[string]any); isMap {
@@ -175,6 +195,9 @@ func recordObservation(s *store.Store, ctx *ordjson.Object, taskID string, data 
 	body := ordjson.NewObject()
 	body.Set("outcome", "observed")
 	body.Set("pr", pr)
+	if accepted != nil {
+		body.Set("base_branch_accepted", accepted)
+	}
 	record, err := evidence.Append(task, "publication", "github", body, identityValue(identity, "head_sha"), ctx)
 	if err != nil {
 		return nil, nil, err

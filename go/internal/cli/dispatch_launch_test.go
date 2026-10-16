@@ -327,10 +327,161 @@ func TestDispatchHonorsAnExplicitBaseRef(t *testing.T) {
 	if head := strings.TrimSpace(gitIn(t, asString(task["worktree"]), "rev-parse", "HEAD")); head != feature {
 		t.Fatalf("worktree HEAD = %s, want %s", head, feature)
 	}
+	if asString(task["base_branch"]) != "feature" || asString(task["base_branch_source"]) != "explicit" {
+		t.Fatalf("recorded base = %v/%v, want feature recorded as explicit", task["base_branch"], task["base_branch_source"])
+	}
 	again := d.ctl(true, "prepare", "--repo", repo, "--base", "origin/feature", "--brief", policyBrief(t, d.base), "--approved")
 	if asString(again["base_sha"]) != feature {
 		t.Fatalf("origin/feature base_sha = %v, want %s", again["base_sha"], feature)
 	}
+	if asString(again["base_branch"]) != "feature" || asString(again["base_branch_source"]) != "explicit" {
+		t.Fatalf("origin/feature recorded base = %v/%v, want the bare name feature as explicit", again["base_branch"], again["base_branch_source"])
+	}
+}
+
+func pushDivergentRelease(t *testing.T, repo string) string {
+	t.Helper()
+	gitIn(t, repo, "checkout", "-q", "-b", "release/1.2")
+	writeFile(t, filepath.Join(repo, "RELEASE.md"), "1.2\n")
+	gitIn(t, repo, "add", "RELEASE.md")
+	gitIn(t, repo, "commit", "-q", "-m", "release work")
+	gitIn(t, repo, "push", "-q", "origin", "release/1.2")
+	release := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
+	gitIn(t, repo, "checkout", "-q", "main")
+	writeFile(t, filepath.Join(repo, "MAIN.md"), "main moves on\n")
+	gitIn(t, repo, "add", "MAIN.md")
+	gitIn(t, repo, "commit", "-q", "-m", "main work")
+	gitIn(t, repo, "push", "-q", "origin", "main")
+	return release
+}
+
+func assertNothingPrepared(t *testing.T, d *demoLab) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(d.home, "tasks"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a refused dispatch left task records: %v", entries)
+	}
+	for _, call := range herdrCalls(t, d.base) {
+		if len(call) >= 2 && call[0] == "worktree" && call[1] == "create" {
+			t.Fatalf("a refused dispatch still created a worktree: %v", call)
+		}
+	}
+}
+
+func TestDispatchRecordsAReleaseBranchAsTheDeliveryTarget(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "release-target", map[string]string{"README.md": "x\n"})
+	release := pushDivergentRelease(t, repo)
+
+	task := d.ctl(true, "dispatch", "--repo", repo, "--base", "release/1.2", "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if asString(task["base_sha"]) != release || asString(task["base_branch"]) != "release/1.2" || asString(task["base_branch_source"]) != "explicit" {
+		t.Fatalf("task base = %v/%v/%v, want the release tip recorded as release/1.2 explicit", task["base_sha"], task["base_branch"], task["base_branch_source"])
+	}
+	if head := strings.TrimSpace(gitIn(t, asString(task["worktree"]), "rev-parse", "HEAD")); head != release {
+		t.Fatalf("worktree HEAD = %s, want the release tip %s", head, release)
+	}
+}
+
+func TestDispatchResolvesTheDefaultBranchOnceAtPrepare(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "default-once", map[string]string{"README.md": "x\n"})
+	pushDivergentRelease(t, repo)
+
+	first := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if asString(first["base_branch"]) != "main" || asString(first["base_branch_source"]) != "default" {
+		t.Fatalf("default base = %v/%v, want main recorded as default", first["base_branch"], first["base_branch_source"])
+	}
+
+	origin := strings.TrimSpace(gitIn(t, repo, "remote", "get-url", "origin"))
+	gitIn(t, origin, "symbolic-ref", "HEAD", "refs/heads/release/1.2")
+	second := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	if asString(second["base_branch"]) != "release/1.2" || asString(second["base_branch_source"]) != "default" {
+		t.Fatalf("base after the remote default moved = %v/%v, want release/1.2 as default", second["base_branch"], second["base_branch_source"])
+	}
+	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", asString(first["id"]), "task.json"))
+	if asString(recorded["base_branch"]) != "main" {
+		t.Fatalf("first task now records %v, want its original main", recorded["base_branch"])
+	}
+}
+
+func TestDispatchRefusesATagAsBaseWithoutATargetBranch(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "tag-base", map[string]string{"README.md": "x\n"})
+	gitIn(t, repo, "-c", "tag.gpgsign=false", "tag", "-a", "-m", "v1.0", "v1.0")
+	gitIn(t, repo, "push", "-q", "origin", "v1.0")
+
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--base", "v1.0", "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if msg := asString(refused["error"]); !strings.Contains(msg, "names no branch on origin") || !strings.Contains(msg, "--target-branch") {
+		t.Fatalf("dispatch error = %q, want a non-branch refusal naming --target-branch", msg)
+	}
+	assertNothingPrepared(t, d)
+}
+
+func TestDispatchAcceptsATagStartOnlyWithAnAncestorTargetBranch(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "tag-start", map[string]string{"README.md": "x\n"})
+	start := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
+	gitIn(t, repo, "-c", "tag.gpgsign=false", "tag", "-a", "-m", "v1.0", "v1.0")
+	gitIn(t, repo, "push", "-q", "origin", "v1.0")
+	release := pushDivergentRelease(t, repo)
+	gitIn(t, repo, "checkout", "-q", "-b", "elsewhere", start)
+	writeFile(t, filepath.Join(repo, "ELSEWHERE.md"), "not on the release line\n")
+	gitIn(t, repo, "add", "ELSEWHERE.md")
+	gitIn(t, repo, "commit", "-q", "-m", "elsewhere")
+	gitIn(t, repo, "-c", "tag.gpgsign=false", "tag", "-a", "-m", "v2.0", "v2.0")
+	gitIn(t, repo, "push", "-q", "origin", "v2.0")
+	gitIn(t, repo, "checkout", "-q", "main")
+
+	task := d.ctl(true, "dispatch", "--repo", repo, "--base", "v1.0", "--target-branch", "release/1.2", "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if asString(task["base_sha"]) != start || asString(task["base_branch"]) != "release/1.2" || asString(task["base_branch_source"]) != "explicit" {
+		t.Fatalf("tag-start task = %v/%v/%v, want start %s delivering to release/1.2 explicit", task["base_sha"], task["base_branch"], task["base_branch_source"], start)
+	}
+	if head := strings.TrimSpace(gitIn(t, asString(task["worktree"]), "rev-parse", "HEAD")); head != start {
+		t.Fatalf("worktree HEAD = %s, want the tag's commit %s (not the release tip %s)", head, start, release)
+	}
+	herdrBefore := len(herdrCalls(t, d.base))
+
+	refusals := map[string][]string{
+		"not an ancestor":                      {"--base", "v2.0", "--target-branch", "release/1.2"},
+		"already names a branch":               {"--base", "main", "--target-branch", "release/1.2"},
+		"give that start with --base":          {"--target-branch", "release/1.2"},
+		"--target-branch nope names no branch": {"--base", "v1.0", "--target-branch", "nope"},
+	}
+	for want, flags := range refusals {
+		args := append([]string{"prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved"}, flags...)
+		refused := d.ctl(false, args...)
+		if msg := asString(refused["error"]); !strings.Contains(msg, want) {
+			t.Fatalf("prepare %v error = %q, want %q", flags, msg, want)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(d.home, "tasks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("task records = %d, want only the accepted tag-start task", len(entries))
+	}
+	for _, call := range herdrCalls(t, d.base)[herdrBefore:] {
+		if len(call) >= 2 && call[0] == "worktree" && call[1] == "create" {
+			t.Fatalf("a refused prepare still created a worktree: %v", call)
+		}
+	}
+}
+
+func readTaskJSON(t *testing.T, path string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var task map[string]any
+	if err := json.Unmarshal(data, &task); err != nil {
+		t.Fatal(err)
+	}
+	return task
 }
 
 // Dispatch binds the worker registration to the occupant Herdr reports for the task's pane (its terminal and shell),

@@ -57,6 +57,9 @@ func Pending(s *store.Store, sumctlPath string, tasks []*ordjson.Object) *ordjso
 			if conflict := pipeline.MergeConflict(pr); conflict != "" {
 				row.Set("blocked", conflict)
 				row.Set("fix", pipeline.MergeAdvice)
+			} else if findings := asList(field(pr, "findings")); len(findings) > 0 {
+				row.Set("blocked", fmt.Sprint(findings[0]))
+				row.Set("fix", "Inspect the PR against the task record and resolve the finding through the action it names; sum never retargets a task or PR on its own")
 			}
 			row.Set("next", shquote.CommandFor(sumctlPath, s.Home, "pr", "reconcile", id))
 			prs = append(prs, row)

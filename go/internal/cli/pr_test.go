@@ -59,6 +59,7 @@ func TestPRCommands(t *testing.T) {
 		{name: "valid reconcile --number --repo --replace", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--repo", "owner/repo", "--replace"}, domainErr: "Herdr pane"},
 		{name: "valid reconcile --number= --repo=", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number=12", "--repo=owner/repo", "--replace=true"}, domainErr: "Herdr pane"},
 		{name: "valid reconcile with herdr", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid reconcile --accept-base-branch", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--accept-base-branch"}, domainErr: "Herdr pane"},
 		{name: "valid evidence --run --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, domainErr: "Herdr pane"},
 		{name: "valid evidence --run= --visibility=", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run=r1", "--visibility=public"}, domainErr: "Herdr pane"},
 		{name: "valid evidence every flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--scenario", "web", "--scenario", "cli", "--evidence-root", "/tmp/promoted", "--verification-run", "20260906T010203Z-abcd", "--dry-run", "--timeout", "5", "--allow-head-mismatch", "--replace-foreign-block"}, domainErr: "Herdr pane"},
