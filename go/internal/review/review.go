@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -193,10 +195,12 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 		startArgs = append(startArgs, "--")
 		startArgs = append(startArgs, argv...)
 	}
-	if _, err := herdrclient.Call(herdrPath, session, herdrclient.AgentStartCallTimeout, startArgs...); err != nil {
+	started, err := herdrclient.Call(herdrPath, session, herdrclient.AgentStartCallTimeout, startArgs...)
+	if err != nil {
 		return nil, fmt.Errorf("Reviewer endpoint %s is recorded, but agent start is uncertain: %w", pane, err)
 	}
-	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, skillPath, worktree)
+	bound := observeReviewer(herdrPath, session, pane, started)
+	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, skillPath, worktree, &bound)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +253,12 @@ func promptRecordedReviewer(s *store.Store, herdrPath, session, sumctlPath strin
 	if got := herdrclient.AgentCwd(agent); got != "" && resolvePath(got) != resolvePath(worktree) {
 		return nil, fmt.Errorf("Recorded reviewer pane %s is live but its cwd %s is not the task checkout %s; close it so Herdr reports pane_not_found, then run `reviewer launch` again.", pane, got, worktree)
 	}
-	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, asString(recorded, "skill_path"), worktree)
+	var bound *incarnation.Evidence
+	if incarnation.FromInfo(objectField(recorded, "incarnation")).Session == nil {
+		fresh := incarnation.FromInfo(agent)
+		bound = &fresh
+	}
+	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, asString(recorded, "skill_path"), worktree, bound)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +276,16 @@ func promptRecordedReviewer(s *store.Store, herdrPath, session, sumctlPath strin
 	return result, nil
 }
 
-func deliverKickoff(s *store.Store, herdrPath, session, sumctlPath string, task *ordjson.Object, pane, skillPath, worktree string) (*ordjson.Object, error) {
+func observeReviewer(herdrPath, session, pane string, fallback any) incarnation.Evidence {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
+	defer cancel()
+	if fresh, code, err := incarnation.Observe(incarnation.SessionCall(ctx, herdrPath, session), pane); err == nil && code == "" && fresh.Terminal != "" {
+		return fresh
+	}
+	return incarnation.FromInfo(fallback)
+}
+
+func deliverKickoff(s *store.Store, herdrPath, session, sumctlPath string, task *ordjson.Object, pane, skillPath, worktree string, bound *incarnation.Evidence) (*ordjson.Object, error) {
 	taskID := asString(task, "id")
 	candidate := evidenceview.CurrentCandidate(task)
 	text := kickoffPrompt(sumctlPath, taskID, candidate, skillPath, policyCandidate(task, candidate))
@@ -296,6 +314,9 @@ func deliverKickoff(s *store.Store, herdrPath, session, sumctlPath string, task 
 		return nil, fmt.Errorf("Reviewer endpoint changed while prompting pane %s; the prompt outcome was not recorded.", pane)
 	}
 	reviewer.Set("prompt", delivery)
+	if bound != nil {
+		reviewer.Set("incarnation", bound.Record(store.Now()))
+	}
 	if err := s.SaveTask(current); err != nil {
 		return nil, err
 	}

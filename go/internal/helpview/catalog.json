@@ -50,7 +50,8 @@
       "brief": "Inspect, regenerate, request, or adopt versioned worker brief revisions; the brief a worker reads is never rewritten",
       "refresh": "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status",
       "release": "Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates",
-      "update": "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running"
+      "update": "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running",
+      "usage": "Opt-in per-task agent usage: `usage show TASK` reads the private ledger (counts, tokens, coverage); `usage collect TASK` folds the task's Claude Code transcripts into it (coordinator only, never when accounting is off)"
     },
     "read_only": [
       "brief-list",
@@ -82,6 +83,7 @@
       "skills-check",
       "status",
       "update-status",
+      "usage-show",
       "wake-show"
     ],
     "usage": "sumctl help TOPIC for one command's arguments and subcommands",
@@ -1963,6 +1965,14 @@
       {
         "name": "--clear-evidence",
         "help": "Remove the evidence block and return publication to the default, which is on"
+      },
+      {
+        "name": "--usage-accounting",
+        "help": "true or false: whether sum records per-task Claude Code usage (invocations and tokens) into the task's usage.json at report, cleanup, and `usage collect` (default when unset: false, nothing is read)"
+      },
+      {
+        "name": "--clear-usage",
+        "help": "Remove the usage block and return accounting to the default, which is off"
       }
     ],
     "subcommands": null,
@@ -2679,5 +2689,46 @@
     "subcommands": null,
     "read_only": false,
     "read_only_subcommands": null
+  },
+  "usage": {
+    "topic": "usage",
+    "help": "Opt-in per-task agent usage accounting over the Claude Code transcripts of the panes sum bound to one task; reports counts and coverage, never a bill, and never changes delivery or cleanup",
+    "arguments": [],
+    "subcommands": {
+      "show": "Print the task's usage ledger: configuration state, per-session rows, totals by category (implementation, review, repair, unknown) and task-wide, and coverage complete|partial|unavailable with reasons; reads only",
+      "collect": "Coordinator only: read each bound session's transcript from its recorded cursor and fold the delta into usage.json; refused when `usage.enabled` is not true, warns and changes nothing else on a source failure"
+    },
+    "read_only": false,
+    "read_only_subcommands": [
+      "show"
+    ]
+  },
+  "usage-show": {
+    "topic": "usage-show",
+    "help": "Print the task's usage ledger and coverage; reads only, works with accounting off",
+    "arguments": [
+      {
+        "name": "task",
+        "help": "Task id",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "usage-collect": {
+    "topic": "usage-collect",
+    "help": "Coordinator only: fold the task's bound Claude Code transcripts into usage.json from their recorded cursors; report and cleanup run the same collection when accounting is on",
+    "arguments": [
+      {
+        "name": "task",
+        "help": "Task id",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
   }
 }

@@ -49,7 +49,8 @@ commands:
   refresh: "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status"
   release: "Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates"
   update: "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running"
-read_only[30]: brief-list,context,doctor,env-show,execution-show,factory-merge-check,factory-status,graph-config,graph-status,help,hook-status,inbox,metadata-inbox,metadata-snippet,metadata-status,preset-list,preset-show,project-list,project-show,quota,refresh-status,release-contract,release-list,release-show,settings-show,show,skills-check,status,update-status,wake-show
+  usage: "Opt-in per-task agent usage: `usage show TASK` reads the private ledger (counts, tokens, coverage); `usage collect TASK` folds the task's Claude Code transcripts into it (coordinator only, never when accounting is off)"
+read_only[31]: brief-list,context,doctor,env-show,execution-show,factory-merge-check,factory-status,graph-config,graph-status,help,hook-status,inbox,metadata-inbox,metadata-snippet,metadata-status,preset-list,preset-show,project-list,project-show,quota,refresh-status,release-contract,release-list,release-show,settings-show,show,skills-check,status,update-status,usage-show,wake-show
 usage: sumctl help TOPIC for one command's arguments and subcommands
 context: "sumctl context TASK_ID [--section NAME ...] [--role worker|reviewer|coordinator] [--since CURSOR]"
 note: Generated from the CLI definition; no manual to page through. Herdr CLI facts come from `herdr --skill`.
