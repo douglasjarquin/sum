@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/bindcmd"
@@ -123,6 +124,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 		return nil, err
 	}
 	argv = append(append([]string(nil), argv...), taskArgs...)
+	argv = append(argv, prepare.ClaudeReviewerMCPIsolationArgs(harness)...)
 	skillPath, skillSHA, err := pinReviewerSkill(s, task, runtimeRoot)
 	if err != nil {
 		return nil, err
@@ -148,6 +150,32 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if asString(observedPane, "workspace_id") != workspace || resolvePath(asString(observedPane, "cwd")) != resolvePath(worktree) {
 		return nil, fmt.Errorf("New reviewer pane %s does not match task workspace %s and checkout %s; it was not started.", pane, workspace, worktree)
 	}
+	name := "reviewer-" + taskID
+	startArgs := herdrclient.AgentStartArgs(name, harness, pane)
+	if len(argv) > 0 {
+		startArgs = append(startArgs, "--")
+		startArgs = append(startArgs, argv...)
+	}
+	started, err := herdrclient.Call(herdrPath, session, herdrclient.AgentStartCallTimeout, startArgs...)
+	if err != nil {
+		code := herdrErrorCode(err)
+		if code != "" {
+			return nil, fmt.Errorf("Reviewer start was refused by Herdr (%s); task reviewer state was not changed: %w", code, err)
+		}
+		return nil, fmt.Errorf("Reviewer start is uncertain; task reviewer state was not changed: %w", err)
+	}
+	observedAgent, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", pane)
+	if err != nil {
+		return nil, fmt.Errorf("Reviewer agent %s started but could not be verified; task reviewer state was not changed: %w", name, err)
+	}
+	if code != "" {
+		return nil, fmt.Errorf("Reviewer agent %s started but is not live (%s); task reviewer state was not changed.", name, code)
+	}
+	started = herdrclient.UnwrapAgent(observedAgent)
+	if started == nil {
+		return nil, fmt.Errorf("Reviewer agent %s started but Herdr returned no live agent; task reviewer state was not changed.", name)
+	}
+	bound := observeReviewer(herdrPath, session, pane, started)
 	endpoint := ordjson.NewObject()
 	endpoint.Set("machine", host.ID)
 	endpoint.Set("session", session)
@@ -168,9 +196,9 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 		existing, _ := store.RecordedReviewer(current)
 		switch {
 		case rebind == nil && existing != nil:
-			err = fmt.Errorf("Task already has a reviewer endpoint; the new tab %s was created but not adopted.", pane)
+			err = fmt.Errorf("Task already has a reviewer endpoint; the new tab %s was started but not adopted.", pane)
 		case rebind != nil && !bindcmd.SameEndpoint(existing, objectField(rebind, "from")):
-			err = fmt.Errorf("The recorded reviewer endpoint changed concurrently; the new tab %s was created but not adopted.", pane)
+			err = fmt.Errorf("The recorded reviewer endpoint changed concurrently; the new tab %s was started but not adopted.", pane)
 		default:
 			if rebind != nil {
 				rebind.Set("to", bindcmd.EndpointRecord(endpoint))
@@ -190,16 +218,6 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if err != nil {
 		return nil, err
 	}
-	startArgs := herdrclient.AgentStartArgs("reviewer", harness, pane)
-	if len(argv) > 0 {
-		startArgs = append(startArgs, "--")
-		startArgs = append(startArgs, argv...)
-	}
-	started, err := herdrclient.Call(herdrPath, session, herdrclient.AgentStartCallTimeout, startArgs...)
-	if err != nil {
-		return nil, fmt.Errorf("Reviewer endpoint %s is recorded, but agent start is uncertain: %w", pane, err)
-	}
-	bound := observeReviewer(herdrPath, session, pane, started)
 	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, skillPath, worktree, &bound)
 	if err != nil {
 		return nil, err
@@ -221,8 +239,24 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 		result.Set("rebind", rebind)
 		result.Set("note", "The recorded reviewer pane was proven gone, so a fresh labeled task tab replaced it and the rebind is recorded; findings must be saved with `review` from the new pane.")
 	}
+	if herdrErrorCode(fmt.Errorf("%s", asString(delivery, "detail"))) == "agent_not_ready" {
+		result.Set("action", "needs-attention")
+		result.Set("note", "Reviewer startup is blocked and needs attention (agent_not_ready): "+asString(delivery, "detail"))
+	}
 	result.Set("prompt", delivery)
 	return result, nil
+}
+
+func herdrErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	detail := err.Error()
+	start := strings.IndexByte(detail, '{')
+	if start < 0 {
+		return ""
+	}
+	return herdrclient.ErrorCode(detail[start:])
 }
 
 func recordedReviewerGone(host machine.Identity, runtimeRoot, herdrPath, session string, task, recorded *ordjson.Object, worktree string) (*ordjson.Object, *ordjson.Object, error) {

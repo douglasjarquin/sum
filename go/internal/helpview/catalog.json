@@ -852,14 +852,14 @@
     "help": "Coordinator: launch an independent reviewer in the task workspace, using a labeled tab and the task checkout",
     "arguments": [],
     "subcommands": {
-      "launch": "Create a `reviewer` tab, start the reviewer with explicit flags, its saved preset, or the coordinator's harness, record its endpoint, and prompt it once to review the current candidate; a live recorded reviewer pane is prompted again instead"
+      "launch": "Create a `reviewer` tab, start the reviewer with explicit flags, its saved preset, or the coordinator's harness under the stable name `reviewer-TASK_ID`, record its endpoint only after Herdr confirms it is live, and prompt it once to review the current candidate; a live recorded reviewer pane is prompted again instead"
     },
     "read_only": false,
     "read_only_subcommands": []
   },
   "reviewer-launch": {
     "topic": "reviewer-launch",
-    "help": "Create a `reviewer` tab in one task workspace, start its independent reviewer, record the reviewer endpoint, and prompt it once; with a live recorded reviewer pane, prompt that pane for the current candidate instead of opening a second tab; with a recorded reviewer proven gone, open a fresh tab, record the rebind, and prompt it",
+    "help": "Create a `reviewer` tab in one task workspace and start its independent reviewer under the stable name `reviewer-TASK_ID`; a refused start names the Herdr error code and leaves the task's reviewer state unchanged. Claude reviewers use an explicit empty MCP configuration, so project and user MCP servers are not loaded or approved; a startup block is reported as needs-attention with its reason. Record the live reviewer endpoint and prompt it once; with a live recorded reviewer pane, prompt that pane for the current candidate instead of opening a second tab; with a recorded reviewer proven gone, open a fresh tab, record the rebind, and prompt it",
     "arguments": [
       {
         "name": "task",

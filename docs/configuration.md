@@ -48,15 +48,17 @@ A model in a preset is CLI-requested, never runtime-verified, and presets change
 
 ### Permission and trust overrides
 
-sum adds no permission or trust flag to any worker or reviewer launch; the only argument it adds itself is the Claude task-access grant (`--add-dir TASK_DIR`), which scopes file reach and changes no approval behavior.
+sum adds no permission or trust flag to any worker or reviewer launch. Claude receives a task-access grant (`--add-dir TASK_DIR`) when needed, which scopes file reach and changes no approval behavior.
 Selecting a harness, including `devin`, therefore never changes that harness's permission behavior: a Devin worker that stops at its trust gate is answered by a person or launched with an explicitly authorized override, never past the gate silently.
 
 A permission or trust flag reaches a launch only through `--arg` or a preset's `args`, and only when the same `prepare`, `dispatch`, or `reviewer launch` carries `--permission-override`, which records the user's explicit authorization for that one launch.
 Without the flag such an argument is refused before any record, slot, worktree, or Herdr call; with the flag the launch record carries a `permissions` object naming each override argument, its source (`explicit` or `preset`), the authorization, and `status: requested`, and the one-line `confirmation` repeats it.
 `requested` is the only status an override ever gets: no harness exposes its running permission mode, so sum never claims one was applied, and a per-task Git worktree is not a process or credential sandbox.
+
 `harness-default` means sum passed no override argument on argv; it does not describe on-disk harness settings or profiles (`codex -p/--profile`, `claude --settings`, whether given as a file or as inline JSON, user config files), other `codex -c` keys such as `sandbox_workspace_write.*`, environment variables such as copilot's `COPILOT_ALLOW_ALL`, or an agent started through the mesh `herdr_agent_start` tool, all of which are outside this gate.
 
 The flags sum recognizes per harness are verified from the installed CLI's help, the way model and reasoning flags are: `claude --permission-mode --permission-prompts --permission-prompt-tool --allowedTools --allowed-tools --disallowedTools --disallowed-tools --tools --dangerously-skip-permissions --allow-dangerously-skip-permissions --restricted`; `codex -a --ask-for-approval -s --sandbox --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --approve-for-me` plus the `-c`/`--config` keys `approval_policy`, `sandbox_mode`, and `sandbox_permissions`, in the spaced, `=`-joined, and attached short forms (`-a never`, `-a=never`, `-anever`, `-capproval_policy=never`); `copilot --allow-tool --allow-url --deny-tool --deny-url --mode --allow-all --allow-all-tools --allow-all-paths --allow-all-urls --yolo --autopilot --disallow-temp-dir`; `devin --permission-mode --respect-workspace-trust` (carried forward from the help recorded when Devin support landed; not re-verified on a machine without the CLI).
+
 A flag that narrows access counts too, because the record exists to disclose every explicit permission choice.
 A harness without a verified list (grok, cursor, pi, omp) fails closed: `--permission-override` is refused for it because sum cannot tell an override from an ordinary argument, and the record says `registry: none`.
 `--permission-override` with nothing to authorize is refused as well, so a dangling authorization never reaches a record.
@@ -73,6 +75,12 @@ A harness without a verified list (grok, cursor, pi, omp) fails closed: `--permi
 A recorded launch is checked again at `start` and `execution resume`, after any `start --arg` is appended and before a pane is allocated (and, for a resume, before the successor attempt is recorded): every override in the argv must appear in the record's authorized `permissions.arguments`, otherwise the start is refused and the task stays as it was.
 That covers a record prepared before this rule existed, whose Devin argv still carries the old implicit flags, and a `start --arg` that tries to add an override; the recovery is to dispatch the task again with `--permission-override` after the user authorizes it.
 A running worker is never reconfigured or interrupted; the rule applies to new launches only.
+
+### MCP startup behavior
+
+Claude reviewers, and Claude workers on Sum checkouts, start with `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`. This prevents a project `.mcp.json` approval prompt from blocking the initial prompt by excluding project and user MCP servers for that session; it does not approve or save trust for any server. Other Claude launches keep their normal MCP configuration. If Herdr still reports `agent_not_ready`, reviewer launch records the undelivered prompt and returns `action: needs-attention` with the exact reason; it never accepts a startup prompt.
+
+Each reviewer uses the stable Herdr agent name `reviewer-TASK_ID`, including relaunches. A refused Herdr start names its error code and leaves the task's reviewer endpoint unchanged. The endpoint is recorded only after Herdr confirms the started agent is live.
 Reading such a legacy record discloses its overrides with source `legacy-record` and no authorization rather than calling them the harness default.
 
 Admission is unlimited until a capacity block is configured; see [capacity](#capacity) for the optional settings file.

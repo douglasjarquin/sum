@@ -578,19 +578,20 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		unlock()
 		return nil, err
 	}
-	taskArgs, err := TaskAccessArgs(s, task, asString(func() any { v, _ := task.Get("harness"); return v }()), briefFile, preparedWorktree)
+	launchSpec := launch.TaskLaunch(task)
+	harness := asString(func() any { v, _ := launchSpec.Get("harness"); return v }())
+	taskArgs, err := TaskAccessArgs(s, task, harness, briefFile, preparedWorktree)
 	if err != nil {
 		unlock()
 		return nil, err
 	}
+	isolationArgs := ClaudeWorkerMCPIsolationArgs(harness, preparedWorktree)
 	state := asString(func() any { v, _ := worker.Get("state"); return v }())
 	if state != "held" && state != "running" {
 		id, _ := worker.Get("id")
 		unlock()
 		return nil, fmt.Errorf("Worker execution reservation %v is %s; start is refused.", id, state)
 	}
-	launchSpec := launch.TaskLaunch(task)
-	harness := asString(func() any { v, _ := launchSpec.Get("harness"); return v }())
 	argv := []string{}
 	for _, a := range func() []any { v, _ := launchSpec.Get("argv"); list, _ := v.([]any); return list }() {
 		if s, ok := a.(string); ok {
@@ -603,6 +604,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 			unlock()
 			return nil, err
 		}
+		argv = append(argv, isolationArgs...)
 	} else {
 		argv = append(argv, extra...)
 	}
