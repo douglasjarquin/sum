@@ -2,6 +2,7 @@ package inboxview
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -173,6 +174,25 @@ func TestArchivedTasksNeverOutrankLiveWork(t *testing.T) {
 	}
 	if last := overview.Groups[len(overview.Groups)-1]; last.Key != "z/old" {
 		t.Fatalf("archived-only group must sort last: %v", keys(overview.Groups))
+	}
+}
+
+func TestRecentlyHandledIsBoundedAndKeepsSavedDetail(t *testing.T) {
+	snapshot := Snapshot{Complete: true}
+	for i := 0; i < RecentlyHandledLimit+2; i++ {
+		id := fmt.Sprintf("q-%02d", i)
+		at := fmt.Sprintf("2026-01-%02dT00:00:00Z", i+1)
+		fact := presentation.Fact{Source: presentation.Source{TaskID: fmt.Sprintf("t-%02d", i), Kind: presentation.Question, ID: "question:" + id}, ProjectID: "owner/repo", State: "answered", At: "2026-01-01T00:00:00Z", OutcomeAt: at, Answer: "saved answer " + id, Delivery: "submitted", Details: []presentation.Detail{{Section: "decisions", Ref: id}}}
+		task := Task{ID: fact.Source.TaskID, ProjectID: fact.ProjectID, Record: record(t, fmt.Sprintf(`{"id":%q,"status":"running","questions":[{"id":%q,"status":"answered"}]}`, fact.Source.TaskID, id)), Items: []presentation.Item{presentation.Classify(fact)}}
+		snapshot.Tasks = append(snapshot.Tasks, task)
+	}
+	countSnapshot(&snapshot)
+	got := BuildOverview(snapshot).RecentlyHandled
+	if len(got) != RecentlyHandledLimit {
+		t.Fatalf("recently handled count = %d, want %d", len(got), RecentlyHandledLimit)
+	}
+	if got[0].Task != "t-21" || got[0].Feedback != "Waiting for worker to apply answer" || got[0].AnswerText.Text != "saved answer q-21" || got[0].OutcomeAt == "" || !reflect.DeepEqual(got[0].Detail, []string{"context", "t-21", "--section", "decisions", "--after", "0", "--limit", "1", "--max-chars", "0"}) {
+		t.Fatalf("newest saved outcome = %+v", got[0])
 	}
 }
 

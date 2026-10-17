@@ -531,12 +531,34 @@ func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expecte
 	unlock()
 	notice, err := pump()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Answer saved, but worker notification failed: %w. Refresh the inbox to inspect delivery; do not submit the answer again.", err)
 	}
 	result := ordjson.NewObject()
 	result.Set("question", question)
 	result.Set("notice", notice)
+	result.Set("feedback", answerFeedback(returns.NoticeOf(s, task)))
 	return result, nil
+}
+
+func answerFeedback(value any) string {
+	notice, _ := value.(*ordjson.Object)
+	if notice == nil {
+		return "Answer saved; waiting for worker"
+	}
+	status, _ := notice.Get("status")
+	switch status {
+	case "submitted-not-acknowledged":
+		return "Waiting for worker to apply answer"
+	case "uncertain":
+		return "Answer saved; delivery unconfirmed"
+	case "pending":
+		if problem, _ := notice.Get("error"); problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; notification pending: %v", problem)
+		}
+		return "Answer saved; waiting to notify worker"
+	default:
+		return "Answer saved; waiting for worker"
+	}
 }
 
 func Resolve(s *store.Store, taskID, questionID string) (*ordjson.Object, error) {

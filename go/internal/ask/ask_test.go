@@ -319,7 +319,7 @@ func TestAnswerExpectedPersistsBeforeNotificationFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = AnswerExpected(s, "t-aaaaaaaaaaaa", "q-one", "Custom answer", "", expected, ctx, func() (*ordjson.Object, error) { return nil, errNotification })
-	if err == nil {
+	if err == nil || !strings.Contains(err.Error(), "Answer saved, but worker notification failed") || !strings.Contains(err.Error(), "do not submit the answer again") {
 		t.Fatal("expected notification failure")
 	}
 	saved, err := s.ReadTask("t-aaaaaaaaaaaa")
@@ -332,6 +332,27 @@ func TestAnswerExpectedPersistsBeforeNotificationFailure(t *testing.T) {
 	}
 	if answer, _ := question.Get("answer"); answer != "Custom answer" {
 		t.Fatalf("answer after notification failure = %v", answer)
+	}
+}
+
+func TestAnswerFeedbackTracksDeliveryWithoutClaimingApplication(t *testing.T) {
+	for _, tc := range []struct{ status, want string }{
+		{"submitted-not-acknowledged", "Waiting for worker to apply answer"},
+		{"uncertain", "Answer saved; delivery unconfirmed"},
+		{"pending", "Answer saved; waiting to notify worker"},
+		{"", "Answer saved; waiting for worker"},
+	} {
+		notice := ordjson.NewObject()
+		notice.Set("status", tc.status)
+		if got := answerFeedback(notice); got != tc.want {
+			t.Fatalf("answer feedback for %q = %q, want %q", tc.status, got, tc.want)
+		}
+	}
+	notice := ordjson.NewObject()
+	notice.Set("status", "pending")
+	notice.Set("error", "worker is busy")
+	if got := answerFeedback(notice); got != "Answer saved; notification pending: worker is busy" {
+		t.Fatalf("pending delivery problem = %q", got)
 	}
 }
 
