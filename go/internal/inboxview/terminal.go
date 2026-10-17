@@ -407,11 +407,30 @@ func (v *View) detailBody() []line {
 				out = append(out, line{text: fmt.Sprintf("    (first %d of %d characters; the open route has the rest)", len([]rune(item.Text.Text)), item.Text.Chars)})
 			}
 		}
+		if item.Recommended != "" {
+			label := item.Recommended
+			for _, choice := range item.Choices {
+				if choice.ID == item.Recommended {
+					label = choice.Label
+					break
+				}
+			}
+			out = append(out, line{text: "    recommended: " + Sanitize(label) + " (" + Sanitize(item.Recommended) + ")"})
+		}
+		if item.Rationale != "" {
+			out = append(out, line{text: "    rationale: " + Sanitize(item.Rationale)})
+		}
+		for _, choice := range item.Choices {
+			out = append(out, line{text: "    choice " + Sanitize(choice.ID) + ": " + Sanitize(choice.Label)})
+		}
+		for _, source := range item.Sources {
+			out = append(out, line{text: "    source: " + Sanitize(source)})
+		}
 		if v.stale {
 			continue
 		}
-		if len(item.Answer) > 0 {
-			out = append(out, line{text: "    answer: sumctl " + strings.Join(item.Answer, " ") + " ..."})
+		for _, action := range item.Actions {
+			out = append(out, line{text: "    " + Sanitize(action.Label) + ": sumctl " + strings.Join(action.Arguments, " ")})
 		}
 		if len(item.Detail) > 0 {
 			out = append(out, line{text: "    detail: sumctl " + strings.Join(item.Detail, " ")})

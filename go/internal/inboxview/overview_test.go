@@ -20,7 +20,19 @@ func record(t *testing.T, raw string) *ordjson.Object {
 }
 
 func question(task, project, id, state, text string) presentation.Item {
-	return presentation.Classify(presentation.Fact{Source: presentation.Source{TaskID: task, Kind: presentation.Question, ID: "question:" + id}, ProjectID: project, State: state, At: "2026-01-0" + id[len(id)-1:] + "T00:00:00Z", Text: text, Details: []presentation.Detail{{Section: "decisions", Ref: id, Path: "task.json"}}})
+	source := presentation.Source{TaskID: task, Kind: presentation.Question, ID: "question:" + id}
+	var actions []presentation.Action
+	var choices []presentation.Choice
+	recommended, rationale := "", ""
+	var sources []string
+	if id == "q-1" {
+		choices = []presentation.Choice{{ID: "keep", Label: "Keep the change"}, {ID: "revert", Label: "Revert it"}}
+		recommended, rationale, sources = "keep", "The evidence supports keeping it.", []string{"docs/review.md#evidence"}
+	}
+	if state == "open" {
+		actions = presentation.QuestionActions(source, choices, "wr-test")
+	}
+	return presentation.Classify(presentation.Fact{Source: source, ProjectID: project, State: state, At: "2026-01-0" + id[len(id)-1:] + "T00:00:00Z", Text: text, Details: []presentation.Detail{{Section: "decisions", Ref: id, Path: "task.json"}}, Choices: choices, Recommended: recommended, Rationale: rationale, Sources: sources, Actions: actions})
 }
 
 func pipelineItem(task, project, stage, status string) presentation.Item {
@@ -133,8 +145,11 @@ func TestBuildOverviewGroupsByCanonicalProjectIdentity(t *testing.T) {
 		t.Fatalf("needs you = %+v", overview.NeedsYou)
 	}
 	row := overview.NeedsYou[0]
-	if !reflect.DeepEqual(row.Answer, []string{"answer", "t-aaaaaaaaaaaa", "q-1", "--text"}) || !reflect.DeepEqual(row.Detail, []string{"context", "t-aaaaaaaaaaaa", "--section", "decisions", "--after", "0", "--limit", "1", "--max-chars", "0"}) || row.Project != "a/repo" || row.Text.Text != "Which \x1b[31mpath\x1b[0m?" {
+	if !reflect.DeepEqual(row.Answer, []string{"answer", "t-aaaaaaaaaaaa", "q-1", "--expected-recipient", "wr-test", "--text"}) || !reflect.DeepEqual(row.Detail, []string{"context", "t-aaaaaaaaaaaa", "--section", "decisions", "--after", "0", "--limit", "1", "--max-chars", "0"}) || row.Project != "a/repo" || row.Text.Text != "Which \x1b[31mpath\x1b[0m?" {
 		t.Fatalf("needs-you row = %+v", row)
+	}
+	if row.Recommended != "keep" || row.Rationale == "" || len(row.Sources) != 1 || len(row.Choices) != 2 || len(row.Actions) != 4 {
+		t.Fatalf("structured decision/action fields = %+v", row)
 	}
 	raw, err := json.Marshal(overview)
 	if err != nil {

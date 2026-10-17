@@ -104,20 +104,25 @@ type Text struct {
 
 // Row is one presentation item with its routes; identical shape in NeedsYou and TaskRow.Items.
 type Row struct {
-	Project   string              `json:"project"`
-	Task      string              `json:"task"`
-	Identity  string              `json:"identity"`
-	Source    presentation.Source `json:"source"`
-	Owner     presentation.Owner  `json:"owner"`
-	Kind      presentation.Kind   `json:"presentation"`
-	Reason    string              `json:"reason"`
-	State     string              `json:"state,omitempty"`
-	At        string              `json:"at,omitempty"`
-	Delivery  string              `json:"delivery,omitempty"`
-	Uncertain bool                `json:"uncertain"`
-	Text      Text                `json:"text"`
-	Detail    []string            `json:"detail"`
-	Answer    []string            `json:"answer,omitempty"`
+	Project     string                `json:"project"`
+	Task        string                `json:"task"`
+	Identity    string                `json:"identity"`
+	Source      presentation.Source   `json:"source"`
+	Owner       presentation.Owner    `json:"owner"`
+	Kind        presentation.Kind     `json:"presentation"`
+	Reason      string                `json:"reason"`
+	State       string                `json:"state,omitempty"`
+	At          string                `json:"at,omitempty"`
+	Delivery    string                `json:"delivery,omitempty"`
+	Uncertain   bool                  `json:"uncertain"`
+	Text        Text                  `json:"text"`
+	Detail      []string              `json:"detail"`
+	Answer      []string              `json:"answer,omitempty"`
+	Choices     []presentation.Choice `json:"choices,omitempty"`
+	Recommended string                `json:"recommended,omitempty"`
+	Rationale   string                `json:"rationale,omitempty"`
+	Sources     []string              `json:"sources,omitempty"`
+	Actions     []presentation.Action `json:"actions,omitempty"`
 }
 
 // Rank orders presentation kinds: decisions before inspection before routine.
@@ -199,7 +204,12 @@ func AnswerRoute(item presentation.Item) []string {
 	if item.Kind != presentation.Decision || item.Source.Kind != presentation.Question {
 		return nil
 	}
-	return []string{"answer", item.Source.TaskID, strings.TrimPrefix(item.Source.ID, "question:"), "--text"}
+	for _, action := range item.Actions {
+		if action.Kind == "answer-custom" {
+			return action.Arguments
+		}
+	}
+	return nil
 }
 
 func boundedText(text string) Text {
@@ -214,7 +224,7 @@ func boundedText(text string) Text {
 }
 
 func rowOf(item presentation.Item, task Task) Row {
-	return Row{Project: item.ProjectID, Task: item.Source.TaskID, Identity: item.Identity, Source: item.Source, Owner: item.Owner, Kind: item.Kind, Reason: item.Reason, State: item.State, At: item.At, Delivery: item.Delivery, Uncertain: item.Uncertain, Text: boundedText(item.Text), Detail: DetailRoute(item, task), Answer: AnswerRoute(item)}
+	return Row{Project: item.ProjectID, Task: item.Source.TaskID, Identity: item.Identity, Source: item.Source, Owner: item.Owner, Kind: item.Kind, Reason: item.Reason, State: item.State, At: item.At, Delivery: item.Delivery, Uncertain: item.Uncertain, Text: boundedText(item.Text), Detail: DetailRoute(item, task), Answer: AnswerRoute(item), Choices: item.Choices, Recommended: item.Recommended, Rationale: item.Rationale, Sources: item.Sources, Actions: item.Actions}
 }
 
 func sortItems(items []presentation.Item) {

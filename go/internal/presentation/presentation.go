@@ -1,7 +1,10 @@
 // Package presentation classifies saved facts without reading or changing their sources.
 package presentation
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 type SourceKind string
 
@@ -57,14 +60,48 @@ type Detail struct {
 	Path    string `json:"path,omitempty"`
 }
 
+type Choice struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+type Action struct {
+	Target    Source   `json:"target"`
+	Kind      string   `json:"kind"`
+	Label     string   `json:"label"`
+	State     string   `json:"state"`
+	ChoiceID  string   `json:"choice_id,omitempty"`
+	Arguments []string `json:"arguments"`
+}
+
+func QuestionActions(source Source, choices []Choice, recipient string) []Action {
+	if recipient == "" || source.TaskID == "" || source.ID == "" {
+		return nil
+	}
+	questionID := strings.TrimPrefix(source.ID, "question:")
+	base := []string{"answer", source.TaskID, questionID, "--expected-recipient", recipient}
+	actions := make([]Action, 0, len(choices)+2)
+	for _, choice := range choices {
+		actions = append(actions, Action{Target: source, Kind: "answer-choice", Label: "Answer: " + choice.Label, State: "open", ChoiceID: choice.ID, Arguments: append(append([]string{}, base...), "--choice", choice.ID)})
+	}
+	actions = append(actions, Action{Target: source, Kind: "answer-custom", Label: "Submit a custom answer", State: "open", Arguments: append(append([]string{}, base...), "--text")})
+	actions = append(actions, Action{Target: source, Kind: "explain", Label: "Ask for an explanation", State: "open", Arguments: []string{"explain", source.TaskID, questionID, "--expected-recipient", recipient, "--text"}})
+	return actions
+}
+
 type Fact struct {
-	Source    Source   `json:"source"`
-	ProjectID string   `json:"project,omitempty"`
-	State     string   `json:"state,omitempty"`
-	At        string   `json:"at,omitempty"`
-	Text      string   `json:"text,omitempty"`
-	Delivery  string   `json:"delivery,omitempty"`
-	Details   []Detail `json:"details"`
+	Source      Source   `json:"source"`
+	ProjectID   string   `json:"project,omitempty"`
+	State       string   `json:"state,omitempty"`
+	At          string   `json:"at,omitempty"`
+	Text        string   `json:"text,omitempty"`
+	Delivery    string   `json:"delivery,omitempty"`
+	Details     []Detail `json:"details"`
+	Choices     []Choice `json:"choices,omitempty"`
+	Recommended string   `json:"recommended,omitempty"`
+	Rationale   string   `json:"rationale,omitempty"`
+	Sources     []string `json:"sources,omitempty"`
+	Actions     []Action `json:"actions,omitempty"`
 }
 
 type Item struct {

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/factory"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
@@ -149,12 +150,28 @@ func Read(s *store.Store) Snapshot {
 			fact.Delivery = deliveryState(clean, notices, obligation)
 			row.Items = append(row.Items, presentation.Classify(fact))
 		}
+		workerRecipient := ""
+		workerRecipientLoaded := false
 		for _, raw := range list(clean, "questions") {
 			question := obj(raw)
 			qid, state := str(question, "id"), str(question, "status")
 			sourceID := "question:" + qid
 			revision := str(question, "key")
-			fact := presentation.Fact{Source: presentation.Source{TaskID: id, Kind: presentation.Question, ID: sourceID, Revision: revision}, ProjectID: row.ProjectID, State: state, At: str(question, "created_at"), Text: str(question, "text"), Details: []presentation.Detail{{Section: "decisions", Ref: qid, Path: path}}}
+			source := presentation.Source{TaskID: id, Kind: presentation.Question, ID: sourceID, Revision: revision}
+			fact := presentation.Fact{Source: source, ProjectID: row.ProjectID, State: state, At: str(question, "created_at"), Text: str(question, "text"), Details: []presentation.Detail{{Section: "decisions", Ref: qid, Path: path}}, Recommended: str(question, "recommended"), Rationale: str(question, "rationale"), Sources: stringList(list(question, "sources"))}
+			for _, choiceRaw := range list(question, "choices") {
+				choice := obj(choiceRaw)
+				fact.Choices = append(fact.Choices, presentation.Choice{ID: str(choice, "id"), Label: str(choice, "label")})
+			}
+			if state == "open" {
+				if !workerRecipientLoaded {
+					workerRecipient, _ = ask.ExpectedWorkerRecipient(s, clean)
+					workerRecipientLoaded = true
+				}
+				if workerRecipient != "" {
+					fact.Actions = presentation.QuestionActions(source, fact.Choices, workerRecipient)
+				}
+			}
 			if obligation := byRef[qid]; obligation != nil {
 				fact.Delivery = deliveryState(clean, notices, obligation)
 			}
@@ -581,3 +598,13 @@ func field(o *ordjson.Object, key string) any {
 func str(o *ordjson.Object, key string) string { v, _ := field(o, key).(string); return v }
 func obj(v any) *ordjson.Object                { o, _ := v.(*ordjson.Object); return o }
 func list(o *ordjson.Object, key string) []any { v, _ := field(o, key).([]any); return v }
+
+func stringList(values []any) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			result = append(result, text)
+		}
+	}
+	return result
+}

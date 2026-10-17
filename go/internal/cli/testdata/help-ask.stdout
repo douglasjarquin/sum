@@ -1,6 +1,6 @@
 topic: ask
-help: "Worker: save a question before waiting; the parent is notified only after it is saved"
-arguments[4]:
+help: "Worker: save a question before waiting; structured choices require one recommendation and rationale; the parent is notified only after it is saved"
+arguments[8]:
   - name: task
     help: null
     required: true
@@ -10,6 +10,14 @@ arguments[4]:
     help: null
   - name: "--file"
     help: null
+  - name: "--choice"
+    help: Repeat ID=LABEL for each offered choice
+  - name: "--recommended"
+    help: ID of one offered choice
+  - name: "--rationale"
+    help: Short reason for the recommendation
+  - name: "--source"
+    help: Repeat a bounded evidence/source reference
 subcommands: null
 read_only: false
 read_only_subcommands: []

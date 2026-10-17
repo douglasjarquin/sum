@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/factoryview"
@@ -78,7 +77,24 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 			row.Set("detail", compactJSON(detail))
 		}
 		if item.Kind == presentation.Decision {
-			row.Set("answer", compactJSON([]string{"answer", item.Source.TaskID, strings.TrimPrefix(item.Source.ID, "question:"), "--text"}))
+			if route := inboxview.AnswerRoute(item); len(route) > 0 {
+				row.Set("answer", compactJSON(route))
+			}
+			if len(item.Choices) > 0 {
+				row.Set("choices", compactJSON(item.Choices))
+			}
+			if item.Recommended != "" {
+				row.Set("recommended", item.Recommended)
+			}
+			if item.Rationale != "" {
+				row.Set("rationale", item.Rationale)
+			}
+			if len(item.Sources) > 0 {
+				row.Set("sources", compactJSON(item.Sources))
+			}
+			if len(item.Actions) > 0 {
+				row.Set("actions", compactJSON(item.Actions))
+			}
 		}
 		if item.Source.Kind == presentation.Gap || len(detail) == 0 {
 			row.Set("sources", compactJSON(item.Details))

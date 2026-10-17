@@ -21,6 +21,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/presentation"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/pyrepr"
@@ -45,6 +46,18 @@ func jsonInt(n int) json.Number {
 func sha256Text(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
+}
+
+func jsonValue(value any) any {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	decoded, err := ordjson.Decode(data)
+	if err != nil {
+		return nil
+	}
+	return decoded
 }
 
 func truthy(v any) bool {
@@ -204,6 +217,9 @@ func outstanding(task *ordjson.Object) []any {
 		row.Set("key", getField(q, "key"))
 		row.Set("status", getField(q, "status"))
 		row.Set("created_at", getField(q, "created_at"))
+		if value, ok := q.Get("clarifications"); ok {
+			row.Set("clarifications", value)
+		}
 		rows = append(rows, row)
 	}
 	return rows
@@ -492,9 +508,10 @@ func paged(items []any, after, limit int) *ordjson.Object {
 }
 
 var questionRowKeys = []string{"id", "key", "status", "created_at", "answered_at", "applied_at"}
+var structuredQuestionRowKeys = []string{"answer_choice", "choices", "recommended", "rationale", "sources", "clarifications"}
 
 // sectionDecisions ports `section_decisions`. `role` is always "" until `--role` is supported.
-func sectionDecisions(task *ordjson.Object, role string, after, limit, maxChars int) *ordjson.Object {
+func sectionDecisions(s *store.Store, task *ordjson.Object, role string, after, limit, maxChars int) *ordjson.Object {
 	questions := listField(task, "questions")
 	filtered := questions
 	if role == "worker" || role == "coordinator" {
@@ -504,7 +521,9 @@ func sectionDecisions(task *ordjson.Object, role string, after, limit, maxChars 
 		}
 		filtered = nil
 		for _, qv := range questions {
-			if asString(getField(asObject(qv), "status")) == want {
+			question := asObject(qv)
+			status := asString(getField(question, "status"))
+			if status == want || (role == "worker" && status == "open" && len(listField(question, "clarifications")) > 0) {
 				filtered = append(filtered, qv)
 			}
 		}
@@ -512,11 +531,31 @@ func sectionDecisions(task *ordjson.Object, role string, after, limit, maxChars 
 	page := paged(filtered, after, limit)
 	items, _ := getField(page, "items").([]any)
 	reshaped := make([]any, len(items))
+	workerRecipient := ""
+	if role != "worker" {
+		workerRecipient, _ = ask.ExpectedWorkerRecipient(s, task)
+	}
 	for i, qv := range items {
 		q := asObject(qv)
 		row := pick(q, questionRowKeys)
+		for _, key := range structuredQuestionRowKeys {
+			if value, ok := q.Get(key); ok {
+				row.Set(key, value)
+			}
+		}
 		row.Set("text", environment.BoundedView(asString(getField(q, "text")), maxChars))
 		row.Set("answer", boundedViewOrNil(getField(q, "answer"), maxChars))
+		if role != "worker" && asString(getField(q, "status")) == "open" {
+			if workerRecipient != "" {
+				choices := make([]presentation.Choice, 0)
+				for _, raw := range listField(q, "choices") {
+					choice := asObject(raw)
+					choices = append(choices, presentation.Choice{ID: asString(getField(choice, "id")), Label: asString(getField(choice, "label"))})
+				}
+				source := presentation.Source{TaskID: asString(getField(task, "id")), Kind: presentation.Question, ID: "question:" + asString(getField(q, "id")), Revision: asString(getField(q, "key"))}
+				row.Set("actions", jsonValue(presentation.QuestionActions(source, choices, workerRecipient)))
+			}
+		}
 		reshaped[i] = row
 	}
 	page.Set("items", reshaped)
@@ -1363,7 +1402,7 @@ func View(s *store.Store, taskID, sumctlPath string, opts Options) (*ordjson.Obj
 			}
 			result.Set("brief", briefObj)
 		case "decisions":
-			result.Set("decisions", sectionDecisions(task, role, opts.After, opts.Limit, opts.MaxChars))
+			result.Set("decisions", sectionDecisions(s, task, role, opts.After, opts.Limit, opts.MaxChars))
 		case "handoff":
 			result.Set("handoff", sectionHandoff(task, head, opts.MaxChars))
 		case "evidence":

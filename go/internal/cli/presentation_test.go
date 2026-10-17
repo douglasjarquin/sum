@@ -24,20 +24,62 @@ import (
 func presentationHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
+	state, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Init(); err != nil {
+		t.Fatal(err)
+	}
+	host, err := state.Machine()
+	if err != nil {
+		t.Fatal(err)
+	}
 	questions := []map[string]any{
 		{"id": "q-answered", "status": "answered", "text": strings.Repeat("answered ", 100), "answer": "Proceed", "created_at": "2026-01-01T00:00:00Z"},
-		{"id": "q-first", "status": "open", "text": strings.Repeat("界", 700) + " $(touch should-not-exist)", "created_at": "2026-01-02T00:00:00Z"},
+		{"id": "q-first", "status": "open", "text": strings.Repeat("界", 700) + " $(touch should-not-exist)", "created_at": "2026-01-02T00:00:00Z", "choices": []any{map[string]any{"id": "keep", "label": "Keep it"}, map[string]any{"id": "revert", "label": "Revert it"}}, "recommended": "keep", "rationale": "The evidence supports keeping it.", "sources": []any{"docs/review.md#evidence"}, "clarifications": []any{map[string]any{"id": "clar-1", "text": "Please explain the rollout tradeoffs."}}},
 		{"id": "q-last", "status": "open", "text": "Which path?", "created_at": "2026-01-03T00:00:00Z"},
 	}
 	path := filepath.Join(home, "tasks", "t-aaaaaaaaaaaa", "task.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(map[string]any{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo", "questions": questions, "attention": []any{}, "evidence": []any{}, "report": nil})
+	worker := store.Endpoint{Machine: host.ID, Session: "worker-session", Pane: "w-worker:p1"}
+	raw, _ := json.Marshal(map[string]any{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo", "machine": worker.Machine, "session": worker.Session, "pane": worker.Pane, "questions": questions, "attention": []any{}, "evidence": []any{}, "report": nil})
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
+	inc := ordjson.NewObject()
+	inc.Set("terminal", "worker-terminal")
+	if _, err := state.Register(worker, "worker", "t-aaaaaaaaaaaa", inc); err != nil {
+		t.Fatal(err)
+	}
 	return home
+}
+
+func TestWorkerContextShowsClarificationWithoutActions(t *testing.T) {
+	clearHerdrEnv(t)
+	home := presentationHome(t)
+	out, err := runCLI(t, home, "--format", "json", "context", "t-aaaaaaaaaaaa", "--role", "worker", "--section", "decisions")
+	if err != nil {
+		t.Fatalf("worker context: %v\n%s", err, out)
+	}
+	var view map[string]any
+	if err := json.Unmarshal([]byte(out), &view); err != nil {
+		t.Fatal(err)
+	}
+	rows := view["decisions"].(map[string]any)["items"].([]any)
+	for _, raw := range rows {
+		row := raw.(map[string]any)
+		if row["id"] == "q-first" {
+			actions, _ := row["actions"].([]any)
+			if row["status"] != "open" || len(row["clarifications"].([]any)) != 1 || len(actions) != 0 {
+				t.Fatalf("worker clarification row = %v", row)
+			}
+			return
+		}
+	}
+	t.Fatalf("worker context omitted open clarification: %v", rows)
 }
 
 func compactRead(t *testing.T, home string, args ...string) map[string]any {
@@ -78,11 +120,22 @@ func TestCompactDecisionsPagingAndFullDetail(t *testing.T) {
 		detailArgs := stringArgs(item["detail"])
 		detail := compactRead(t, home, detailArgs...)
 		decision := detail["decisions"].(map[string]any)["items"].([]any)[0].(map[string]any)
-		if decision["id"] != "q-first" || decision["text"].(map[string]any)["truncated"] != false {
+		if decision["id"] != "q-first" || decision["text"].(map[string]any)["truncated"] != false || decision["recommended"] != "keep" || len(decision["choices"].([]any)) != 2 {
 			t.Fatalf("detail: %v", decision)
 		}
-		if !reflect.DeepEqual(stringArgs(item["answer"]), []string{"answer", "t-aaaaaaaaaaaa", "q-first", "--text"}) {
+		contextActions := decision["actions"].([]any)
+		if len(contextActions) != 4 || !containsString(stringArgs(contextActions[0].(map[string]any)["arguments"]), "--expected-recipient") {
+			t.Fatalf("context actions = %v", contextActions)
+		}
+		answerRoute := stringArgs(item["answer"])
+		if !reflect.DeepEqual(answerRoute[:3], []string{"answer", "t-aaaaaaaaaaaa", "q-first"}) || !reflect.DeepEqual(answerRoute[len(answerRoute)-1:], []string{"--text"}) || !containsString(answerRoute, "--expected-recipient") {
 			t.Fatalf("answer route: %v", item["answer"])
+		}
+		if len(item["actions"].([]any)) != 4 {
+			t.Fatalf("structured question actions = %v", item["actions"])
+		}
+		if item["recommended"] != "keep" || item["rationale"] != "The evidence supports keeping it." || len(item["choices"].([]any)) != 2 || len(item["sources"].([]any)) != 1 {
+			t.Fatalf("structured decision fields = %v", item)
 		}
 		second := compactRead(t, home, append(command, "--limit", "1", "--after", "1")...)
 		if second["counts"].(map[string]any)["decisions"] != float64(2) {

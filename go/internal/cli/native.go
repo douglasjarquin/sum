@@ -39,6 +39,33 @@ func (o *rootOptions) openStore(command string) (*store.Store, error) {
 	return st, nil
 }
 
+func observeExpectedWorker(st *store.Store, runtimeRoot, taskID, expectedRecipient string) (ask.RecipientCheck, error) {
+	task, err := st.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	currentRecipient, err := ask.ExpectedWorkerRecipient(st, task)
+	if err != nil {
+		return nil, err
+	}
+	if currentRecipient == "" || currentRecipient != expectedRecipient {
+		return nil, fmt.Errorf("The worker recipient changed since this action was presented. Refresh the inbox and choose again.")
+	}
+	route := returns.ReturnRoute(task, "worker")
+	cwd, _ := route.Get("cwd")
+	expectedCwd, _ := cwd.(string)
+	occupant, err := returns.ObserveWorker(st, runtimeRoot, task, route, expectedCwd)
+	if err != nil {
+		return nil, err
+	}
+	return func(s *store.Store, currentTask *ordjson.Object) error {
+		if message := occupant.Check(s, returns.ReturnRoute(currentTask, "worker")); message != "" {
+			return fmt.Errorf("%s", message)
+		}
+		return nil
+	}, nil
+}
+
 func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	root.AddCommand(&cobra.Command{
 		Use:  "help [TOPIC]",
@@ -213,7 +240,8 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	archiveCmd.Flags().BoolVar(&acknowledge, "acknowledge", false, "")
 	root.AddCommand(archiveCmd)
 
-	var askKey, askText, askFile string
+	var askKey, askText, askFile, askRecommended, askRationale string
+	var askChoices, askSources []string
 	askCmd := &cobra.Command{
 		Use:         "ask TASK",
 		Annotations: map[string]string{projectsAnnotation: "task"},
@@ -227,7 +255,18 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := ask.Ask(st, args[0], askKey, body, func() (*ordjson.Object, error) {
+			var decision *ask.StructuredDecision
+			if len(askChoices)+len(askSources) > 0 || askRecommended != "" || askRationale != "" {
+				decision = &ask.StructuredDecision{Recommended: askRecommended, Rationale: askRationale, Sources: askSources}
+				for _, value := range askChoices {
+					id, label, ok := strings.Cut(value, "=")
+					if !ok {
+						return fmt.Errorf("--choice must use ID=LABEL form.")
+					}
+					decision.Choices = append(decision.Choices, ask.Choice{ID: id, Label: label})
+				}
+			}
+			view, err := ask.AskStructured(st, args[0], askKey, body, decision, func() (*ordjson.Object, error) {
 				return returns.Notify(st, o.pumpOpts(), args[0], "parent", "a decision is waiting", false)
 			})
 			if err != nil {
@@ -239,11 +278,15 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	askCmd.Flags().StringVar(&askKey, "key", "", "")
 	askCmd.Flags().StringVar(&askText, "text", "", "")
 	askCmd.Flags().StringVar(&askFile, "file", "", "")
+	askCmd.Flags().StringArrayVar(&askChoices, "choice", nil, "")
+	askCmd.Flags().StringVar(&askRecommended, "recommended", "", "")
+	askCmd.Flags().StringVar(&askRationale, "rationale", "", "")
+	askCmd.Flags().StringArrayVar(&askSources, "source", nil, "")
 	askCmd.MarkFlagsOneRequired("text", "file")
 	askCmd.MarkFlagsMutuallyExclusive("text", "file")
 	root.AddCommand(askCmd)
 
-	var answerText, answerFile, answerReason string
+	var answerText, answerFile, answerReason, answerChoice, answerExpectedRecipient string
 	var answerClose bool
 	answerCmd := &cobra.Command{
 		Use:         "answer TASK QUESTION",
@@ -268,13 +311,39 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
-			body, err := app.TextInput(answerText, answerFile)
-			if err != nil {
-				return err
+			ctx := app.OptionalContext(o.installRoot)
+			if answerChoice != "" || answerExpectedRecipient != "" {
+				ctx, err = store.Context(o.installRoot)
+				if err != nil {
+					return err
+				}
+				if err := app.RequireCoordinator(st, ctx); err != nil {
+					return err
+				}
 			}
-			view, err := ask.Answer(st, args[0], args[1], body, app.OptionalContext(o.installRoot), func() (*ordjson.Object, error) {
+			body := ""
+			if answerChoice == "" {
+				body, err = app.TextInput(answerText, answerFile)
+				if err != nil {
+					return err
+				}
+			}
+			var checkRecipient ask.RecipientCheck
+			if answerExpectedRecipient != "" {
+				checkRecipient, err = observeExpectedWorker(st, o.runtimeRoot, args[0], answerExpectedRecipient)
+				if err != nil {
+					return err
+				}
+			}
+			pump := func() (*ordjson.Object, error) {
 				return returns.Notify(st, o.pumpOpts(), args[0], "worker", "an answer has been recorded", false)
-			})
+			}
+			var view *ordjson.Object
+			if answerChoice != "" || answerExpectedRecipient != "" {
+				view, err = ask.AnswerExpectedWithRecipientCheck(st, args[0], args[1], body, answerChoice, answerExpectedRecipient, ctx, checkRecipient, pump)
+			} else {
+				view, err = ask.Answer(st, args[0], args[1], body, ctx, pump)
+			}
 			if err != nil {
 				return err
 			}
@@ -283,12 +352,57 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	}
 	answerCmd.Flags().StringVar(&answerText, "text", "", "")
 	answerCmd.Flags().StringVar(&answerFile, "file", "", "")
+	answerCmd.Flags().StringVar(&answerChoice, "choice", "", "")
+	answerCmd.Flags().StringVar(&answerExpectedRecipient, "expected-recipient", "", "")
 	answerCmd.Flags().BoolVar(&answerClose, "close", false, "")
 	answerCmd.Flags().StringVar(&answerReason, "reason", "", "")
-	answerCmd.MarkFlagsOneRequired("text", "file", "close")
-	answerCmd.MarkFlagsMutuallyExclusive("text", "file", "close")
+	answerCmd.MarkFlagsOneRequired("text", "file", "choice", "close")
+	answerCmd.MarkFlagsMutuallyExclusive("text", "file", "choice", "close")
 	answerCmd.MarkFlagsRequiredTogether("close", "reason")
+	answerCmd.MarkFlagsRequiredTogether("choice", "expected-recipient")
 	root.AddCommand(answerCmd)
+
+	var explainText, explainFile, explainExpectedRecipient string
+	explainCmd := &cobra.Command{
+		Use:         "explain TASK QUESTION",
+		Annotations: map[string]string{projectsAnnotation: "task"},
+		Args:        cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, err := o.openStore("explain")
+			if err != nil {
+				return err
+			}
+			ctx, err := store.Context(o.installRoot)
+			if err != nil {
+				return err
+			}
+			if err := app.RequireCoordinator(st, ctx); err != nil {
+				return err
+			}
+			body, err := app.TextInput(explainText, explainFile)
+			if err != nil {
+				return err
+			}
+			checkRecipient, err := observeExpectedWorker(st, o.runtimeRoot, args[0], explainExpectedRecipient)
+			if err != nil {
+				return err
+			}
+			view, err := ask.ExplainWithRecipientCheck(st, args[0], args[1], body, explainExpectedRecipient, checkRecipient, func() (*ordjson.Object, error) {
+				return returns.Notify(st, o.pumpOpts(), args[0], "worker", "a clarification was requested", true)
+			})
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	}
+	explainCmd.Flags().StringVar(&explainText, "text", "", "")
+	explainCmd.Flags().StringVar(&explainFile, "file", "", "")
+	explainCmd.Flags().StringVar(&explainExpectedRecipient, "expected-recipient", "", "")
+	explainCmd.MarkFlagsOneRequired("text", "file")
+	explainCmd.MarkFlagsMutuallyExclusive("text", "file")
+	_ = explainCmd.MarkFlagRequired("expected-recipient")
+	root.AddCommand(explainCmd)
 
 	root.AddCommand(&cobra.Command{
 		Use:         "resolve TASK QUESTION",

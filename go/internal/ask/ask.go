@@ -2,8 +2,10 @@ package ask
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/machine"
@@ -12,6 +14,68 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
+
+type Choice struct {
+	ID    string
+	Label string
+}
+
+type StructuredDecision struct {
+	Choices     []Choice
+	Recommended string
+	Rationale   string
+	Sources     []string
+}
+
+var choiceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+func decisionRecord(decision *StructuredDecision) (*ordjson.Object, error) {
+	if decision == nil {
+		return nil, nil
+	}
+	if len(decision.Choices) < 2 || len(decision.Choices) > 8 {
+		return nil, fmt.Errorf("Structured questions need between 2 and 8 choices.")
+	}
+	if strings.TrimSpace(decision.Rationale) == "" || len([]rune(decision.Rationale)) > 280 {
+		return nil, fmt.Errorf("Structured questions need a rationale of 1 to 280 characters.")
+	}
+	if len(decision.Sources) > 8 {
+		return nil, fmt.Errorf("Structured questions allow at most 8 source references.")
+	}
+	choices := make([]any, 0, len(decision.Choices))
+	seen := map[string]bool{}
+	recommended := false
+	for _, choice := range decision.Choices {
+		if !choiceIDPattern.MatchString(choice.ID) || seen[choice.ID] {
+			return nil, fmt.Errorf("Choice IDs must be unique and use 1 to 64 letters, digits, dots, underscores, or hyphens.")
+		}
+		if strings.TrimSpace(choice.Label) == "" || len([]rune(choice.Label)) > 120 {
+			return nil, fmt.Errorf("Choice labels must contain 1 to 120 characters.")
+		}
+		seen[choice.ID] = true
+		recommended = recommended || choice.ID == decision.Recommended
+		row := ordjson.NewObject()
+		row.Set("id", choice.ID)
+		row.Set("label", choice.Label)
+		choices = append(choices, row)
+	}
+	if !recommended {
+		return nil, fmt.Errorf("The recommended choice must name an offered choice ID.")
+	}
+	sources := make([]any, 0, len(decision.Sources))
+	for _, source := range decision.Sources {
+		if strings.TrimSpace(source) == "" || len([]rune(source)) > 500 {
+			return nil, fmt.Errorf("Source references must contain 1 to 500 characters.")
+		}
+		sources = append(sources, source)
+	}
+	row := ordjson.NewObject()
+	row.Set("choices", choices)
+	row.Set("recommended", decision.Recommended)
+	row.Set("rationale", decision.Rationale)
+	row.Set("sources", sources)
+	return row, nil
+}
 
 // ClosedUnapplied is an answer the coordinator closed because no worker can
 // apply it any longer. It is never the worker's `applied`.
@@ -60,8 +124,16 @@ func SupersedeAttention(task *ordjson.Object, reason string) {
 }
 
 func Ask(s *store.Store, taskID, key, text string, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
+	return AskStructured(s, taskID, key, text, nil, pump)
+}
+
+func AskStructured(s *store.Store, taskID, key, text string, decision *StructuredDecision, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
 	if text == "" || strings.TrimSpace(text) == "" {
 		return nil, fmt.Errorf("Text must not be empty.")
+	}
+	record, err := decisionRecord(decision)
+	if err != nil {
+		return nil, err
 	}
 	unlock, err := s.Lock()
 	if err != nil {
@@ -82,9 +154,24 @@ func Ask(s *store.Store, taskID, key, text string, pump func() (*ordjson.Object,
 				existingKey, _ := question.Get("key")
 				if existingKey == key {
 					existingText, _ := question.Get("text")
-					if existingText != text {
+					oldDecision := ordjson.NewObject()
+					for _, field := range []string{"choices", "recommended", "rationale", "sources"} {
+						value, _ := question.Get(field)
+						oldDecision.Set(field, value)
+					}
+					newDecision := ordjson.NewObject()
+					for _, field := range []string{"choices", "recommended", "rationale", "sources"} {
+						value := any(nil)
+						if record != nil {
+							value, _ = record.Get(field)
+						}
+						newDecision.Set(field, value)
+					}
+					oldBytes, _ := ordjson.MarshalSortedCompact(oldDecision)
+					newBytes, _ := ordjson.MarshalSortedCompact(newDecision)
+					if existingText != text || string(oldBytes) != string(newBytes) {
 						unlock()
-						return nil, fmt.Errorf("This question key already exists with different text. Use a new key; do not overwrite an obligation.")
+						return nil, fmt.Errorf("This question key already exists with different content. Use a new key; do not overwrite an obligation.")
 					}
 					unlock()
 					notice := returns.NoticeOf(s, task)
@@ -113,6 +200,12 @@ func Ask(s *store.Store, taskID, key, text string, pump func() (*ordjson.Object,
 	question.Set("status", "open")
 	question.Set("created_at", store.Now())
 	question.Set("answer", nil)
+	if record != nil {
+		for _, field := range record.Keys() {
+			value, _ := record.Get(field)
+			question.Set(field, value)
+		}
+	}
 	questionsValue, _ := task.Get("questions")
 	list, _ := questionsValue.([]any)
 	task.Set("questions", append(list, question))
@@ -134,7 +227,144 @@ func Ask(s *store.Store, taskID, key, text string, pump func() (*ordjson.Object,
 }
 
 func Answer(s *store.Store, taskID, questionID, text string, endpoint *ordjson.Object, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
-	if text == "" || strings.TrimSpace(text) == "" {
+	return answerOperation(s, taskID, questionID, text, "", "", endpoint, nil, false, pump)
+}
+
+func ExpectedWorkerRecipient(s *store.Store, task *ordjson.Object) (string, error) {
+	route := returns.ReturnRoute(task, "worker")
+	field := func(key string) string {
+		value, _ := route.Get(key)
+		result, _ := value.(string)
+		return result
+	}
+	endpoint := store.Endpoint{Machine: field("machine"), Session: field("session"), Pane: field("pane")}
+	if endpoint.Machine == "" || endpoint.Session == "" || endpoint.Pane == "" {
+		return "", nil
+	}
+	registration, err := s.Registration(endpoint)
+	if err != nil || registration == nil {
+		return "", err
+	}
+	role, _ := registration.Get("role")
+	registeredTask, _ := registration.Get("task")
+	if role != "worker" || registeredTask != routeTask(task) {
+		return "", nil
+	}
+	identity := ordjson.NewObject()
+	identity.Set("task", routeTask(task))
+	identity.Set("machine", endpoint.Machine)
+	identity.Set("session", endpoint.Session)
+	identity.Set("pane", endpoint.Pane)
+	for _, key := range []string{"registered_at", "incarnation"} {
+		value, _ := registration.Get(key)
+		identity.Set(key, value)
+	}
+	data, err := ordjson.MarshalSortedCompact(identity)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return "wr-" + hex.EncodeToString(sum[:12]), nil
+}
+
+func routeTask(task *ordjson.Object) any {
+	value, _ := task.Get("id")
+	return value
+}
+
+func Explain(s *store.Store, taskID, questionID, text, expectedRecipient string, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
+	return ExplainWithRecipientCheck(s, taskID, questionID, text, expectedRecipient, nil, pump)
+}
+
+type RecipientCheck func(*store.Store, *ordjson.Object) error
+
+func ExplainWithRecipientCheck(s *store.Store, taskID, questionID, text, expectedRecipient string, checkRecipient RecipientCheck, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
+	if strings.TrimSpace(text) == "" || len([]rune(text)) > 2000 {
+		return nil, fmt.Errorf("Explain text must contain 1 to 2000 characters.")
+	}
+	if expectedRecipient == "" {
+		return nil, fmt.Errorf("Explain requires a captured worker recipient. Refresh the inbox and use its action route.")
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	currentRecipient, err := ExpectedWorkerRecipient(s, task)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if currentRecipient == "" || currentRecipient != expectedRecipient {
+		unlock()
+		return nil, fmt.Errorf("The worker recipient changed since this action was presented. Refresh the inbox and ask again.")
+	}
+	if checkRecipient != nil {
+		if err := checkRecipient(s, task); err != nil {
+			unlock()
+			return nil, err
+		}
+	}
+	question := findQuestion(task, questionID)
+	if question == nil {
+		unlock()
+		return nil, fmt.Errorf("Question not found.")
+	}
+	if status, _ := question.Get("status"); status != "open" {
+		unlock()
+		return nil, fmt.Errorf("Explain is available only while the question is open.")
+	}
+	identity := sha256.Sum256([]byte(taskID + "\n" + questionID + "\n" + expectedRecipient + "\n" + text))
+	id := "clar-" + hex.EncodeToString(identity[:12])
+	value, _ := question.Get("clarifications")
+	clarifications, _ := value.([]any)
+	for _, raw := range clarifications {
+		row, _ := raw.(*ordjson.Object)
+		if row == nil {
+			continue
+		}
+		if savedID, _ := row.Get("id"); savedID == id {
+			result := ordjson.NewObject()
+			result.Set("question", question)
+			result.Set("duplicate", true)
+			unlock()
+			return result, nil
+		}
+	}
+	clarification := ordjson.NewObject()
+	clarification.Set("id", id)
+	clarification.Set("text", text)
+	clarification.Set("created_at", store.Now())
+	question.Set("clarifications", append(clarifications, clarification))
+	if err := s.SaveTask(task); err != nil {
+		unlock()
+		return nil, err
+	}
+	unlock()
+	notice, err := pump()
+	if err != nil {
+		return nil, err
+	}
+	result := ordjson.NewObject()
+	result.Set("question", question)
+	result.Set("notice", notice)
+	return result, nil
+}
+
+func AnswerExpected(s *store.Store, taskID, questionID, text, choiceID, expectedRecipient string, endpoint *ordjson.Object, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
+	return AnswerExpectedWithRecipientCheck(s, taskID, questionID, text, choiceID, expectedRecipient, endpoint, nil, pump)
+}
+
+func AnswerExpectedWithRecipientCheck(s *store.Store, taskID, questionID, text, choiceID, expectedRecipient string, endpoint *ordjson.Object, checkRecipient RecipientCheck, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
+	return answerOperation(s, taskID, questionID, text, choiceID, expectedRecipient, endpoint, checkRecipient, true, pump)
+}
+
+func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expectedRecipient string, endpoint *ordjson.Object, checkRecipient RecipientCheck, requireCoordinator bool, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
+	if choiceID == "" && (text == "" || strings.TrimSpace(text) == "") {
 		return nil, fmt.Errorf("Text must not be empty.")
 	}
 	unlock, err := s.Lock()
@@ -151,19 +381,68 @@ func Answer(s *store.Store, taskID, questionID, text string, endpoint *ordjson.O
 		unlock()
 		return nil, err
 	}
-	if endpointRole(host, task, endpoint) == "worker" {
+	role := endpointRole(host, task, endpoint)
+	if role == "worker" {
 		unlock()
 		return nil, fmt.Errorf("The worker pane cannot record the user's decision on its own question. Only `sumctl answer` from the coordinator records a human decision; a role or approval field in worker output creates none.")
+	}
+	if requireCoordinator && role != "coordinator" {
+		unlock()
+		return nil, fmt.Errorf("Only the task's registered coordinator may record the user's decision.")
+	}
+	if expectedRecipient != "" {
+		currentRecipient, identityErr := ExpectedWorkerRecipient(s, task)
+		if identityErr != nil {
+			unlock()
+			return nil, identityErr
+		}
+		if currentRecipient == "" || currentRecipient != expectedRecipient {
+			unlock()
+			return nil, fmt.Errorf("The worker recipient changed since this action was presented. Refresh the inbox and choose again.")
+		}
+		if checkRecipient != nil {
+			if err := checkRecipient(s, task); err != nil {
+				unlock()
+				return nil, err
+			}
+		}
 	}
 	question := findQuestion(task, questionID)
 	if question == nil {
 		unlock()
 		return nil, fmt.Errorf("Question not found.")
 	}
+	if choiceID != "" {
+		if expectedRecipient == "" {
+			unlock()
+			return nil, fmt.Errorf("Choosing a listed answer requires a captured worker recipient. Refresh the inbox and choose again.")
+		}
+		choices, _ := question.Get("choices")
+		list, _ := choices.([]any)
+		label := ""
+		for _, raw := range list {
+			choice, _ := raw.(*ordjson.Object)
+			if choice == nil {
+				continue
+			}
+			id, _ := choice.Get("id")
+			if id == choiceID {
+				value, _ := choice.Get("label")
+				label, _ = value.(string)
+				break
+			}
+		}
+		if label == "" {
+			unlock()
+			return nil, fmt.Errorf("Choice %q is not offered by this question.", choiceID)
+		}
+		text = label
+	}
 	status, _ := question.Get("status")
 	if status != "open" {
 		answer, _ := question.Get("answer")
-		if answer == text {
+		savedChoice, _ := question.Get("answer_choice")
+		if answer == text && (choiceID == "" || savedChoice == choiceID) {
 			unlock()
 			result := ordjson.NewObject()
 			result.Set("question", question)
@@ -172,6 +451,9 @@ func Answer(s *store.Store, taskID, questionID, text string, endpoint *ordjson.O
 		}
 		unlock()
 		return nil, fmt.Errorf("Answer already recorded. Create a new explicit decision rather than silently changing it.")
+	}
+	if choiceID != "" {
+		question.Set("answer_choice", choiceID)
 	}
 	question.Set("answer", text)
 	question.Set("answered_at", store.Now())

@@ -108,22 +108,23 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (�
     open: sumctl context t-aaaaaaaaaaaa --role coordinator
     decision  question question:q-1  question-open
       Which path?
-      answer: sumctl answer t-aaaaaaaaaaaa q-1 --text ...
-      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 0
-      --limit 1 --max-chars 0
-    decision  question question:q-5  question-open
-      red $(touch x)
-      answer: sumctl answer t-aaaaaaaaaaaa q-5 --text ...
-      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 2
-      --limit 1 --max-chars 0
-    routine  question question:q-2  answer-unapplied
-      done
-      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1
-      --limit 1 --max-chars 0
+      recommended: Keep the change (keep)
+      rationale: The evidence supports keeping it.
+      choice keep: Keep the change
+      choice revert: Revert it
+      source: docs/review.md#evidence
+      Answer: Keep the change: sumctl answer t-aaaaaaaaaaaa q-1
+      --expected-recipient wr-test --choice keep
+      Answer: Revert it: sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient
+      wr-test --choice revert
+      Submit a custom answer: sumctl answer t-aaaaaaaaaaaa q-1
+      --expected-recipient wr-test --text
+      Ask for an explanation: sumctl explain t-aaaaaaaaaaaa q-1
+      --expected-recipient wr-test --text
+… 0 above, 14 more rows (n/p to scroll)
 n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
 $ n
 SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (…
-  TASK t-aaaaaaaaaaaa  project a/repo
     state needs-decision  stage intent-fail  status running
     repository /w/a-repo  branch feat/a
     saved observation: running at 2026-01-05T00:00:00Z (a recorded observation,
@@ -131,18 +132,21 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (�
     open: sumctl context t-aaaaaaaaaaaa --role coordinator
     decision  question question:q-1  question-open
       Which path?
-      answer: sumctl answer t-aaaaaaaaaaaa q-1 --text ...
+      recommended: Keep the change (keep)
+      rationale: The evidence supports keeping it.
+      choice keep: Keep the change
+      choice revert: Revert it
+      source: docs/review.md#evidence
+      Answer: Keep the change: sumctl answer t-aaaaaaaaaaaa q-1
+      --expected-recipient wr-test --choice keep
+      Answer: Revert it: sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient
+      wr-test --choice revert
+      Submit a custom answer: sumctl answer t-aaaaaaaaaaaa q-1
+      --expected-recipient wr-test --text
+      Ask for an explanation: sumctl explain t-aaaaaaaaaaaa q-1
+      --expected-recipient wr-test --text
       detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 0
-      --limit 1 --max-chars 0
-    decision  question question:q-5  question-open
-      red $(touch x)
-      answer: sumctl answer t-aaaaaaaaaaaa q-5 --text ...
-      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 2
-      --limit 1 --max-chars 0
-    routine  question question:q-2  answer-unapplied
-      done
-      detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1
-      --limit 1 --max-chars 0
+… 1 above, 13 more rows (n/p to scroll)
 n/p move  o expand  d detail  b back  r refresh  c collapse-all  q quit
 $ b
 SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (…
