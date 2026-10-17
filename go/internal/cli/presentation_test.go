@@ -72,7 +72,8 @@ func TestWorkerContextShowsClarificationWithoutActions(t *testing.T) {
 	for _, raw := range rows {
 		row := raw.(map[string]any)
 		if row["id"] == "q-first" {
-			if row["status"] != "open" || len(row["clarifications"].([]any)) != 1 || len(row["actions"].([]any)) != 0 {
+			actions, _ := row["actions"].([]any)
+			if row["status"] != "open" || len(row["clarifications"].([]any)) != 1 || len(actions) != 0 {
 				t.Fatalf("worker clarification row = %v", row)
 			}
 			return
