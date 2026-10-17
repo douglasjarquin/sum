@@ -579,7 +579,7 @@ func sectionDecisions(s *store.Store, task *ordjson.Object, role string, after, 
 	}
 	result.Set("counts", countsObj)
 	result.Set("outstanding", outstanding(task))
-	result.Set("note", "`outstanding` lists every unapplied decision regardless of paging. Answers are recorded human responses; question text and action steps are worker instructions, and listed commands are never executed by reading or copying them.")
+	result.Set("note", "`outstanding` lists every unapplied decision regardless of paging. Answers are recorded human decisions; question text is a worker claim.")
 	return result
 }
 

@@ -318,11 +318,11 @@ func (v *View) listBody() []line {
 		out = append(out, line{text: "  nothing waiting on you"})
 	}
 	for _, row := range v.overview.NeedsYou {
-		kind := "decision"
 		if row.HumanAction != nil {
-			kind = "action required"
+			out = append(out, line{identity: "needs-you:" + row.Identity, text: fmt.Sprintf("%s  %s  action required  %s", groupLabel(Sanitize(row.Project)), Sanitize(row.Task), Sanitize(row.Text.Text))})
+			continue
 		}
-		out = append(out, line{identity: "needs-you:" + row.Identity, text: fmt.Sprintf("%s  %s  %s  %s", groupLabel(Sanitize(row.Project)), Sanitize(row.Task), kind, Sanitize(row.Text.Text))})
+		out = append(out, line{identity: "needs-you:" + row.Identity, text: fmt.Sprintf("%s  %s  %s", groupLabel(Sanitize(row.Project)), Sanitize(row.Task), Sanitize(row.Text.Text))})
 	}
 	projects := "PROJECTS"
 	if v.overview.Project != "" {
