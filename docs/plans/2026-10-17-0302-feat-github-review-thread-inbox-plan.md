@@ -137,7 +137,7 @@ sequenceDiagram
 - **Goal:** Extend explicit PR reconciliation with an identity-bound review-thread and overall review-decision observation.
 - **Requirements:** R1, R2, R3, R8.
 - **Dependencies:** None.
-- **Files:** `go/internal/prcmd/pr.go`, `go/internal/prcmd/threads.go`, `go/internal/prcmd/threads_test.go`, `go/internal/prcmd/readonly_test.go`.
+- **Files:** `go/internal/prcmd/pr.go`, `go/internal/prcmd/threads.go`, `go/internal/prcmd/threads_test.go`, `go/internal/prcmd/readonly_test.go`, `tests/fixtures/gh_attach.py`, `go/internal/cli/quiet_coordination_replay_test.go`.
 - **Approach:** Keep `gh pr view` as the identity and PR-head source. Read review threads with bounded GraphQL cursor pagination and latest-comment data. Save only observations bound to the same repository, PR number, and head. On failure or page limits, preserve known threads and record incomplete/failed status and freshness.
 - **Patterns to follow:** `viewPR`, `recordObservationWith`, `readOnlyGH`, `GHBound`, and the fake-`gh` counting scripts in the PR command tests.
 - **Test scenarios:**

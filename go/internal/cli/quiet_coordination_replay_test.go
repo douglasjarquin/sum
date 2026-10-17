@@ -424,7 +424,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	verbs := lab.ghVerbs(t)
 	for verb := range verbs {
 		switch verb {
-		case "issue list", "issue edit", "issue comment", "repo view", "pr list", "pr create", "pr view", "pr checks", "pr ready", "auth status", "--version", "pr edit --help":
+		case "issue list", "issue edit", "issue comment", "repo view", "pr list", "pr create", "pr view", "api graphql", "pr checks", "pr ready", "auth status", "--version", "pr edit --help":
 		default:
 			t.Fatalf("fake gh saw an unexpected verb %q: %v", verb, verbs)
 		}

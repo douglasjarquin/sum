@@ -140,6 +140,21 @@ if args[:2] == ["repo", "view"] and "--json" in args:
     full = {"nameWithOwner": repo, "visibility": state.get("visibility", "PUBLIC"), "viewerPermission": state.get("viewer_permission", "WRITE")}
     print(json.dumps({k: full.get(k) for k in fields.split(",")}))
     sys.exit(0)
+if args[:2] == ["api", "graphql"]:
+    owner = args[args.index("-F") + 1].partition("=")[2] if "-F" in args else ""
+    name_arg = next((args[i + 1].partition("=")[2] for i, arg in enumerate(args[:-1]) if arg == "-F" and args[i + 1].startswith("name=")), "")
+    number_arg = next((args[i + 1].partition("=")[2] for i, arg in enumerate(args[:-1]) if arg == "-F" and args[i + 1].startswith("number=")), "0")
+    repo = f"{owner}/{name_arg}"
+    number = int(number_arg)
+    found = find_pr(number)
+    if found is None or repo != state.get("repository", "douglasjarquin/project"):
+        fail("GraphQL: Could not resolve to a PullRequest with the number of %d. (repository.pullRequest)" % number)
+    review_threads = state.get("review_threads", {"nodes": [], "pageInfo": {"hasNextPage": False, "endCursor": None}})
+    pull_request = {"id": found.get("id", "PR_fake"), "number": number,
+                    "url": f"https://github.com/{repo}/pull/{number}", "headRefOid": found.get("head_sha"),
+                    "reviewDecision": state.get("review_decision"), "reviewThreads": review_threads}
+    print(json.dumps({"data": {"repository": {"pullRequest": pull_request}}}))
+    sys.exit(0)
 if args[:2] == ["pr", "checks"]:
     if "--json" not in args or not state.get("checks_json", True):
         fail("unknown flag: --json\nUsage:  gh pr checks [<number> | <url> | <branch>] [flags]", 1)
