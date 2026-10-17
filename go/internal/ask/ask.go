@@ -227,7 +227,7 @@ func AskStructured(s *store.Store, taskID, key, text string, decision *Structure
 }
 
 func Answer(s *store.Store, taskID, questionID, text string, endpoint *ordjson.Object, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
-	return AnswerExpected(s, taskID, questionID, text, "", "", endpoint, pump)
+	return answerOperation(s, taskID, questionID, text, "", "", endpoint, nil, false, pump)
 }
 
 func ExpectedWorkerRecipient(s *store.Store, task *ordjson.Object) (string, error) {
@@ -360,6 +360,10 @@ func AnswerExpected(s *store.Store, taskID, questionID, text, choiceID, expected
 }
 
 func AnswerExpectedWithRecipientCheck(s *store.Store, taskID, questionID, text, choiceID, expectedRecipient string, endpoint *ordjson.Object, checkRecipient RecipientCheck, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
+	return answerOperation(s, taskID, questionID, text, choiceID, expectedRecipient, endpoint, checkRecipient, true, pump)
+}
+
+func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expectedRecipient string, endpoint *ordjson.Object, checkRecipient RecipientCheck, requireCoordinator bool, pump func() (*ordjson.Object, error)) (*ordjson.Object, error) {
 	if choiceID == "" && (text == "" || strings.TrimSpace(text) == "") {
 		return nil, fmt.Errorf("Text must not be empty.")
 	}
@@ -382,7 +386,7 @@ func AnswerExpectedWithRecipientCheck(s *store.Store, taskID, questionID, text, 
 		unlock()
 		return nil, fmt.Errorf("The worker pane cannot record the user's decision on its own question. Only `sumctl answer` from the coordinator records a human decision; a role or approval field in worker output creates none.")
 	}
-	if role != "coordinator" {
+	if requireCoordinator && role != "coordinator" {
 		unlock()
 		return nil, fmt.Errorf("Only the task's registered coordinator may record the user's decision.")
 	}

@@ -311,12 +311,15 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
-			ctx, err := store.Context(o.installRoot)
-			if err != nil {
-				return err
-			}
-			if err := app.RequireCoordinator(st, ctx); err != nil {
-				return err
+			ctx := app.OptionalContext(o.installRoot)
+			if answerChoice != "" || answerExpectedRecipient != "" {
+				ctx, err = store.Context(o.installRoot)
+				if err != nil {
+					return err
+				}
+				if err := app.RequireCoordinator(st, ctx); err != nil {
+					return err
+				}
 			}
 			body := ""
 			if answerChoice == "" {
@@ -332,9 +335,15 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 					return err
 				}
 			}
-			view, err := ask.AnswerExpectedWithRecipientCheck(st, args[0], args[1], body, answerChoice, answerExpectedRecipient, ctx, checkRecipient, func() (*ordjson.Object, error) {
+			pump := func() (*ordjson.Object, error) {
 				return returns.Notify(st, o.pumpOpts(), args[0], "worker", "an answer has been recorded", false)
-			})
+			}
+			var view *ordjson.Object
+			if answerChoice != "" || answerExpectedRecipient != "" {
+				view, err = ask.AnswerExpectedWithRecipientCheck(st, args[0], args[1], body, answerChoice, answerExpectedRecipient, ctx, checkRecipient, pump)
+			} else {
+				view, err = ask.Answer(st, args[0], args[1], body, ctx, pump)
+			}
 			if err != nil {
 				return err
 			}

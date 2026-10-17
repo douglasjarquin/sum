@@ -217,7 +217,9 @@ func outstanding(task *ordjson.Object) []any {
 		row.Set("key", getField(q, "key"))
 		row.Set("status", getField(q, "status"))
 		row.Set("created_at", getField(q, "created_at"))
-		row.Set("clarifications", getField(q, "clarifications"))
+		if value, ok := q.Get("clarifications"); ok {
+			row.Set("clarifications", value)
+		}
 		rows = append(rows, row)
 	}
 	return rows
@@ -505,7 +507,8 @@ func paged(items []any, after, limit int) *ordjson.Object {
 	return result
 }
 
-var questionRowKeys = []string{"id", "key", "status", "created_at", "answered_at", "applied_at", "answer_choice", "choices", "recommended", "rationale", "sources", "clarifications"}
+var questionRowKeys = []string{"id", "key", "status", "created_at", "answered_at", "applied_at"}
+var structuredQuestionRowKeys = []string{"answer_choice", "choices", "recommended", "rationale", "sources", "clarifications"}
 
 // sectionDecisions ports `section_decisions`. `role` is always "" until `--role` is supported.
 func sectionDecisions(s *store.Store, task *ordjson.Object, role string, after, limit, maxChars int) *ordjson.Object {
@@ -535,9 +538,13 @@ func sectionDecisions(s *store.Store, task *ordjson.Object, role string, after, 
 	for i, qv := range items {
 		q := asObject(qv)
 		row := pick(q, questionRowKeys)
+		for _, key := range structuredQuestionRowKeys {
+			if value, ok := q.Get(key); ok {
+				row.Set(key, value)
+			}
+		}
 		row.Set("text", environment.BoundedView(asString(getField(q, "text")), maxChars))
 		row.Set("answer", boundedViewOrNil(getField(q, "answer"), maxChars))
-		row.Set("actions", []any{})
 		if role != "worker" && asString(getField(q, "status")) == "open" {
 			if workerRecipient != "" {
 				choices := make([]presentation.Choice, 0)
