@@ -117,6 +117,10 @@ type Fact struct {
 	State       string       `json:"state,omitempty"`
 	At          string       `json:"at,omitempty"`
 	Text        string       `json:"text,omitempty"`
+	Answer      string       `json:"answer,omitempty"`
+	CloseReason string       `json:"close_reason,omitempty"`
+	OutcomeAt   string       `json:"outcome_at,omitempty"`
+	Feedback    string       `json:"feedback,omitempty"`
 	Delivery    string       `json:"delivery,omitempty"`
 	Details     []Detail     `json:"details"`
 	Choices     []Choice     `json:"choices,omitempty"`
@@ -138,6 +142,9 @@ type Item struct {
 
 // Classify never treats a delivery receipt or worker prose as domain resolution.
 func Classify(f Fact) Item {
+	if f.Source.Kind == Question {
+		f.Feedback = questionFeedback(f)
+	}
 	identity, _ := json.Marshal(f.Source)
 	item := Item{Fact: f, Identity: string(identity), Owner: Coordinator, Kind: Inspection, Reason: "unknown-source-kind"}
 	item.Uncertain = f.Delivery == "submitted" || f.Delivery == "uncertain" || f.Delivery == "in-flight" || f.Delivery == "unknown"
@@ -195,4 +202,34 @@ func Classify(f Fact) Item {
 		item.Uncertain = true
 	}
 	return item
+}
+
+func questionFeedback(f Fact) string {
+	switch f.State {
+	case "open":
+		return "Needs your decision"
+	case "answered":
+		switch f.Delivery {
+		case "pending", "deferred":
+			return "Answer saved; waiting to notify worker"
+		case "uncertain", "in-flight", "unknown":
+			return "Answer saved; delivery unconfirmed"
+		case "not-delivered", "stalled":
+			return "Answer saved; notification " + f.Delivery
+		case "submitted":
+			return "Waiting for worker to apply answer"
+		default:
+			return "Answer saved; waiting for worker"
+		}
+	case "applied":
+		return "Applied by worker"
+	case "settled":
+		return "Settled by cleanup"
+	case "closed-unapplied":
+		if f.CloseReason != "" {
+			return "Closed without application: " + f.CloseReason
+		}
+		return "Closed without application"
+	}
+	return ""
 }

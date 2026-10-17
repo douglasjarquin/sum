@@ -147,6 +147,10 @@ func Read(s *store.Store) Snapshot {
 				fact.Source.Revision = str(source, "brief_revision")
 			}
 			fact.Text = str(source, "text")
+			if kind == string(presentation.Report) {
+				fact.OutcomeAt = str(source, "submitted_at")
+				fact.Feedback = "Result received; verification pending"
+			}
 			fact.Delivery = deliveryState(clean, notices, obligation)
 			row.Items = append(row.Items, presentation.Classify(fact))
 		}
@@ -167,6 +171,9 @@ func Read(s *store.Store) Snapshot {
 				}
 				fact.HumanAction = humanAction
 			}
+			fact.Answer = str(question, "answer")
+			fact.CloseReason = str(question, "close_reason")
+			fact.OutcomeAt = questionOutcomeAt(question, state)
 			for _, choiceRaw := range list(question, "choices") {
 				choice := obj(choiceRaw)
 				fact.Choices = append(fact.Choices, presentation.Choice{ID: str(choice, "id"), Label: str(choice, "label")})
@@ -234,6 +241,14 @@ func Read(s *store.Store) Snapshot {
 		}
 	}
 	return out
+}
+
+func questionOutcomeAt(question *ordjson.Object, state string) string {
+	key := map[string]string{"answered": "answered_at", "applied": "applied_at", "settled": "settled_at", "closed-unapplied": "closed_at"}[state]
+	if key == "" {
+		return ""
+	}
+	return str(question, key)
 }
 
 func (s *Snapshot) gap(id, path string, err error) {

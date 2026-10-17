@@ -4,6 +4,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
 > a/repo  t-aaaaaaaaaaaa  Which path?
   a/repo  t-aaaaaaaaaaaa  red $(touch x)
   (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
   - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
     t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
@@ -24,6 +29,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
   a/repo  t-aaaaaaaaaaaa  Which path?
 > a/repo  t-aaaaaaaaaaaa  red $(touch x)
   (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
   - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
     t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
@@ -44,6 +54,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
   a/repo  t-aaaaaaaaaaaa  Which path?
   a/repo  t-aaaaaaaaaaaa  red $(touch x)
 > (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
   - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
     t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
@@ -64,6 +79,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
   a/repo  t-aaaaaaaaaaaa  Which path?
   a/repo  t-aaaaaaaaaaaa  red $(touch x)
   (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
 > - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
     t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
@@ -84,6 +104,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
   a/repo  t-aaaaaaaaaaaa  Which path?
   a/repo  t-aaaaaaaaaaaa  red $(touch x)
   (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
   - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
 >   t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
@@ -160,6 +185,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
   a/repo  t-aaaaaaaaaaaa  Which path?
   a/repo  t-aaaaaaaaaaaa  red $(touch x)
   (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
   - a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
 >   t-aaaaaaaaaaaa  needs-decision  intent-fail  feat/a  2 decisions  observed running
@@ -180,6 +210,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
   a/repo  t-aaaaaaaaaaaa  Which path?
   a/repo  t-aaaaaaaaaaaa  red $(touch x)
   (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
 > + a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
   - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
@@ -198,6 +233,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
   a/repo  t-aaaaaaaaaaaa  Which path?
   a/repo  t-aaaaaaaaaaaa  red $(touch x)
   (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
 > + a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
   - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
@@ -216,6 +256,11 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
   a/repo  t-aaaaaaaaaaaa  Which path?
   a/repo  t-aaaaaaaaaaaa  red $(touch x)
 > (standalone)  t-dddddddddddd  界面设计需要决定颜色方案和字体大小以及边距的处理方式请尽快回复否则无法继续
+  RECENTLY HANDLED
+  a/repo  t-aaaaaaaaaaaa  owner worker  state answered  Answer saved; waiting for worker  at time unavailable  done
+    detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 1 --limit 1 --max-chars 0
+  z/old  t-eeeeeeeeeeee  owner none  state applied  Applied by worker  at time unavailable  old
+    detail: sumctl show t-eeeeeeeeeeee
   PROJECTS
   + a/repo  2 decisions, 0 inspection, 0 working, 1 task, factory 1 lane
   - b/repo  0 decisions, 1 inspection, 0 working, 1 task, 1 unreadable
