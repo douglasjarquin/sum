@@ -196,6 +196,16 @@ func TestRecentlyHandledIsBoundedAndKeepsSavedDetail(t *testing.T) {
 	}
 }
 
+func TestRecentlyHandledIncludesReportsAwaitingVerification(t *testing.T) {
+	item := presentation.Classify(presentation.Fact{Source: presentation.Source{TaskID: "t-report", Kind: presentation.Report, ID: "e-report"}, ProjectID: "owner/repo", State: "submitted", At: "2026-10-17T04:00:00Z", OutcomeAt: "2026-10-17T04:01:00Z", Text: "Implementation finished", Feedback: "Result received; verification pending", Details: []presentation.Detail{{Section: "evidence", Ref: "e-report"}}})
+	snapshot := Snapshot{Complete: true, Tasks: []Task{{ID: "t-report", ProjectID: "owner/repo", Record: record(t, `{"id":"t-report","status":"reported"}`), Items: []presentation.Item{item}}}}
+	countSnapshot(&snapshot)
+	got := BuildOverview(snapshot).RecentlyHandled
+	if len(got) != 1 || got[0].Feedback != "Result received; verification pending" || got[0].Owner != presentation.Coordinator || got[0].OutcomeAt != "2026-10-17T04:01:00Z" || got[0].Text.Text != "Implementation finished" {
+		t.Fatalf("report outcome = %+v", got)
+	}
+}
+
 func TestFocusKeepsGlobalCountsGapsAndNeedsYou(t *testing.T) {
 	snapshot := groupedSnapshot(t)
 	overview := Focus(BuildOverview(snapshot), "b/repo")
