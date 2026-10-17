@@ -9,6 +9,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
+	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/statuscmd"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -37,6 +38,16 @@ func (o *rootOptions) projectAfter(cmd *cobra.Command, args []string) {
 	st, err := store.Open(o.home)
 	if err != nil {
 		return
+	}
+	if scope == "finding" {
+		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+			return
+		}
+		record, err := notes.Read(st, args[0])
+		if err != nil {
+			return
+		}
+		tasks = []string{record.TaskID}
 	}
 	metadata.After(st, o.runtimeRoot, tasks, cmd.CommandPath())
 }

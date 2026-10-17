@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -388,6 +389,28 @@ func Show(s *store.Store, taskID string) (*ordjson.Object, error) {
 
 	returns.SetNotice(s, task, result)
 	result.Set("evidence_view", View(task))
+	findingRecords, findingGaps := notes.ReadTask(s, taskID)
+	findingRows := make([]any, 0, len(findingRecords))
+	for _, record := range findingRecords {
+		row, err := ordjson.FromValue(record)
+		if err != nil {
+			return nil, err
+		}
+		findingRows = append(findingRows, row)
+	}
+	gapRows := make([]any, 0, len(findingGaps))
+	for _, gap := range findingGaps {
+		row, err := ordjson.FromValue(gap)
+		if err != nil {
+			return nil, err
+		}
+		gapRows = append(gapRows, row)
+	}
+	findingView := ordjson.NewObject()
+	findingView.Set("findings", findingRows)
+	findingView.Set("gaps", gapRows)
+	findingView.Set("complete", len(findingGaps) == 0)
+	result.Set("findings", findingView)
 
 	returnsView, returnsErr := returns.View(s, task)
 	if returnsErr != nil {

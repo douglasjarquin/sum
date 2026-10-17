@@ -33,7 +33,7 @@ import (
 )
 
 // ContextSections mirrors CONTEXT_SECTIONS: the section names `--section` accepts, and what `outline.read.sections` reports.
-var ContextSections = []string{"outline", "brief", "decisions", "handoff", "evidence", "execution", "environment", "update", "returns", "notes", "pipeline"}
+var ContextSections = []string{"outline", "brief", "decisions", "handoff", "evidence", "execution", "environment", "update", "returns", "notes", "findings", "pipeline"}
 
 var stateFields = []string{"status", "pane", "session", "machine", "parent", "reviewer", "worktree", "branch", "cleanup", "pr", "error"}
 var cursorFields = []string{"questions", "evidence", "answered", "applied", "notes", "refresh", "attention"}
@@ -133,9 +133,9 @@ func pick(o *ordjson.Object, keys []string) *ordjson.Object {
 
 // roleSectionsMap mirrors ROLE_SECTIONS: the default section list for `--role` when no `--section` is given.
 var roleSectionsMap = map[string][]string{
-	"worker":      {"outline", "decisions", "execution", "environment", "notes"},
-	"reviewer":    {"outline", "brief", "handoff", "evidence", "environment"},
-	"coordinator": {"outline", "decisions", "handoff", "returns", "update", "pipeline"},
+	"worker":      {"outline", "decisions", "execution", "environment", "notes", "findings"},
+	"reviewer":    {"outline", "brief", "handoff", "evidence", "environment", "findings"},
+	"coordinator": {"outline", "decisions", "handoff", "returns", "update", "pipeline", "findings"},
 }
 
 // roleContract mirrors ROLE_CONTRACT.
@@ -1457,6 +1457,29 @@ func View(s *store.Store, taskID, sumctlPath string, opts Options) (*ordjson.Obj
 				return nil, notesErr
 			}
 			result.Set("notes", notesState)
+		case "findings":
+			records, gaps := notes.ReadTask(s, taskID)
+			findingRows := make([]any, 0, len(records))
+			for _, record := range records {
+				row, err := ordjson.FromValue(record)
+				if err != nil {
+					return nil, err
+				}
+				findingRows = append(findingRows, row)
+			}
+			gapRows := make([]any, 0, len(gaps))
+			for _, gap := range gaps {
+				row, err := ordjson.FromValue(gap)
+				if err != nil {
+					return nil, err
+				}
+				gapRows = append(gapRows, row)
+			}
+			section := ordjson.NewObject()
+			section.Set("findings", findingRows)
+			section.Set("gaps", gapRows)
+			section.Set("complete", len(gaps) == 0)
+			result.Set("findings", section)
 		case "pipeline":
 			record, pipelineErr := pipeline.Load(s, taskID)
 			if pipelineErr != nil {

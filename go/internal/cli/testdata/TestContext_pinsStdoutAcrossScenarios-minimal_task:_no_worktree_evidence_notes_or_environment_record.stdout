@@ -55,5 +55,5 @@ outline:
     present: false
   graph: null
   read:
-    sections[11]: outline,brief,decisions,handoff,evidence,execution,environment,update,returns,notes,pipeline
+    sections[12]: outline,brief,decisions,handoff,evidence,execution,environment,update,returns,notes,findings,pipeline
     example: "$ROOT/bin/sumctl --home $HOME context t-aaaaaaaaaaaa --section decisions --section handoff"

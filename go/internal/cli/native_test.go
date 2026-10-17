@@ -71,7 +71,7 @@ func TestExecutionShow_pinsStdout(t *testing.T) {
 
 func TestSkillsAndExecutionAreOnTheCommandTree(t *testing.T) {
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
-	for _, name := range []string{"skills", "execution", "repair", "reviewer", "help", "quota", "notes", "herdr", "archive"} {
+	for _, name := range []string{"skills", "execution", "repair", "reviewer", "help", "quota", "notes", "finding", "herdr", "archive"} {
 		if root.Commands() == nil {
 			t.Fatal("no commands")
 		}
