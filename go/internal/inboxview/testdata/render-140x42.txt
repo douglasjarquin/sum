@@ -107,11 +107,20 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
     open: sumctl context t-aaaaaaaaaaaa --role coordinator
     decision  question question:q-1  question-open
       Which path?
-      answer: sumctl answer t-aaaaaaaaaaaa q-1 --text ...
+      recommended: Keep the change (keep)
+      rationale: The evidence supports keeping it.
+      choice keep: Keep the change
+      choice revert: Revert it
+      source: docs/review.md#evidence
+      Answer: Keep the change: sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --choice keep
+      Answer: Revert it: sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --choice revert
+      Submit a custom answer: sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --text
+      Ask for an explanation: sumctl explain t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --text
       detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 0 --limit 1 --max-chars 0
     decision  question question:q-5  question-open
       red $(touch x)
-      answer: sumctl answer t-aaaaaaaaaaaa q-5 --text ...
+      Submit a custom answer: sumctl answer t-aaaaaaaaaaaa q-5 --expected-recipient wr-test --text
+      Ask for an explanation: sumctl explain t-aaaaaaaaaaaa q-5 --expected-recipient wr-test --text
       detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 2 --limit 1 --max-chars 0
     routine  question question:q-2  answer-unapplied
       done
@@ -126,11 +135,20 @@ SUM  3 decisions | 3 inspection | 3 coordinator | 1 worker | coverage unknown (2
     open: sumctl context t-aaaaaaaaaaaa --role coordinator
     decision  question question:q-1  question-open
       Which path?
-      answer: sumctl answer t-aaaaaaaaaaaa q-1 --text ...
+      recommended: Keep the change (keep)
+      rationale: The evidence supports keeping it.
+      choice keep: Keep the change
+      choice revert: Revert it
+      source: docs/review.md#evidence
+      Answer: Keep the change: sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --choice keep
+      Answer: Revert it: sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --choice revert
+      Submit a custom answer: sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --text
+      Ask for an explanation: sumctl explain t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --text
       detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 0 --limit 1 --max-chars 0
     decision  question question:q-5  question-open
       red $(touch x)
-      answer: sumctl answer t-aaaaaaaaaaaa q-5 --text ...
+      Submit a custom answer: sumctl answer t-aaaaaaaaaaaa q-5 --expected-recipient wr-test --text
+      Ask for an explanation: sumctl explain t-aaaaaaaaaaaa q-5 --expected-recipient wr-test --text
       detail: sumctl context t-aaaaaaaaaaaa --section decisions --after 2 --limit 1 --max-chars 0
     routine  question question:q-2  answer-unapplied
       done

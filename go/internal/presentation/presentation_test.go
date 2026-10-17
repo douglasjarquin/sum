@@ -76,3 +76,24 @@ func TestIdentityAndUncertaintyAreIndependentOfPresentation(t *testing.T) {
 		}
 	}
 }
+
+func TestQuestionActionsCarryTargetAndRecipient(t *testing.T) {
+	source := Source{TaskID: "t-aaaaaaaaaaaa", Kind: Question, ID: "question:q-one", Revision: "route"}
+	actions := QuestionActions(source, []Choice{{ID: "keep", Label: "Keep it"}, {ID: "revert", Label: "Revert it"}}, "wr-current")
+	if len(actions) != 4 {
+		t.Fatalf("actions = %+v", actions)
+	}
+	selected := actions[0]
+	if selected.Kind != "answer-choice" || selected.ChoiceID != "keep" || selected.Target != source {
+		t.Fatalf("selected action = %+v", selected)
+	}
+	if !reflect.DeepEqual(selected.Arguments, []string{"answer", "t-aaaaaaaaaaaa", "q-one", "--expected-recipient", "wr-current", "--choice", "keep"}) {
+		t.Fatalf("selected arguments = %v", selected.Arguments)
+	}
+	if actions[3].Kind != "explain" || !reflect.DeepEqual(actions[3].Arguments, []string{"explain", "t-aaaaaaaaaaaa", "q-one", "--expected-recipient", "wr-current", "--text"}) {
+		t.Fatalf("Explain action = %+v", actions[3])
+	}
+	if got := QuestionActions(source, nil, ""); len(got) != 0 {
+		t.Fatalf("actions without captured recipient = %+v", got)
+	}
+}

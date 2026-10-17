@@ -22,6 +22,7 @@
       "archive": "Coordinator only: archive a task after every execution reservation was separately released",
       "ask": "Worker: save a question before waiting; the parent is notified only after it is saved",
       "answer": "Coordinator: record the user's actual decision for one question, or --close an answer no worker can apply any longer",
+      "explain": "Coordinator: request context and tradeoffs for an open question without recording an answer",
       "report": "Worker: submit the report (and --handoff) as a claim for the coordinator to verify",
       "resolve": "Worker: mark an answered question applied",
       "review": "Reviewer pane: append independent findings for one candidate, owed to the parent as a return until the coordinator acts on it; never replaces the worker report",
@@ -624,7 +625,7 @@
   },
   "ask": {
     "topic": "ask",
-    "help": "Worker: save a question before waiting; the parent is notified only after it is saved",
+    "help": "Worker: save a question before waiting; structured choices require one recommendation and rationale; the parent is notified only after it is saved",
     "arguments": [
       {
         "name": "task",
@@ -642,6 +643,22 @@
       {
         "name": "--file",
         "help": null
+      },
+      {
+        "name": "--choice",
+        "help": "Repeat ID=LABEL for each offered choice"
+      },
+      {
+        "name": "--recommended",
+        "help": "ID of one offered choice"
+      },
+      {
+        "name": "--rationale",
+        "help": "Short reason for the recommendation"
+      },
+      {
+        "name": "--source",
+        "help": "Repeat a bounded evidence/source reference"
       }
     ],
     "subcommands": null,
@@ -650,7 +667,7 @@
   },
   "answer": {
     "topic": "answer",
-    "help": "Coordinator: record the user's actual decision for one question, or --close an answer no worker can apply any longer",
+    "help": "Coordinator: record a listed or custom human decision, or --close an answer no worker can apply any longer",
     "arguments": [
       {
         "name": "task",
@@ -671,12 +688,51 @@
         "help": null
       },
       {
+        "name": "--choice",
+        "help": "ID of an offered choice; requires --expected-recipient"
+      },
+      {
+        "name": "--expected-recipient",
+        "help": "Captured worker recipient identity from a current action route"
+      },
+      {
         "name": "--close",
         "help": "Close an answered question as closed-unapplied, never applied; requires a released worker attempt and --reason"
       },
       {
         "name": "--reason",
         "help": "Why the answer is closed; recorded with the closing coordinator and time"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "explain": {
+    "topic": "explain",
+    "help": "Coordinator: record a distinct clarification request for an open question and notify its worker; does not answer or close the question",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "question",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--text",
+        "help": "Clarification prompt for context and tradeoffs"
+      },
+      {
+        "name": "--file",
+        "help": "Read the clarification prompt from a file"
+      },
+      {
+        "name": "--expected-recipient",
+        "help": "Captured worker recipient identity from a current action route"
       }
     ],
     "subcommands": null,

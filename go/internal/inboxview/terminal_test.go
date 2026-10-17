@@ -200,7 +200,7 @@ func TestViewFailedRefreshKeepsRowsMarksStaleAndDisablesActions(t *testing.T) {
 	}
 	view.Command("d")
 	fresh := view.Render(140, 42)
-	if !strings.Contains(fresh, "sumctl answer t-aaaaaaaaaaaa q-1 --text") || !strings.Contains(fresh, "sumctl context t-aaaaaaaaaaaa") {
+	if !strings.Contains(fresh, "sumctl answer t-aaaaaaaaaaaa q-1 --expected-recipient wr-test --text") || !strings.Contains(fresh, "sumctl context t-aaaaaaaaaaaa") {
 		t.Fatalf("detail must show routes:\n%s", fresh)
 	}
 	view.Refresh(Overview{}, errors.New("read failed: disk"))
@@ -273,6 +273,12 @@ func TestRenderGoldenAtTwoSizes(t *testing.T) {
 			t.Fatal("full CJK text must be reachable in detail mode")
 		}
 		path := filepath.Join("testdata", "render-"+size.name+".txt")
+		if os.Getenv("UPDATE_GOLDENS") == "1" {
+			if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
 		want, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("golden %s missing (%v); rendered:\n%s", path, err, text)

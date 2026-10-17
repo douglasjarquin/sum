@@ -49,6 +49,8 @@ func TestHelp_pinsStdout(t *testing.T) {
 	assertStdoutGolden(t, home, []string{"help"}, "help")
 	assertStdoutGolden(t, home, []string{"help", "reviewer-launch"}, "help-reviewer-launch")
 	assertStdoutGolden(t, home, []string{"help", "ask"}, "help-ask")
+	assertStdoutGolden(t, home, []string{"help", "answer"}, "help-answer")
+	assertStdoutGolden(t, home, []string{"help", "explain"}, "help-explain")
 	assertStdoutGolden(t, home, []string{"help", "skills-check"}, "help-skills-check")
 	assertErrorGolden(t, home, []string{"help", "not-a-command"}, "help-unknown")
 }
@@ -96,6 +98,22 @@ func TestAsk_pinsStdoutWhenTheParentHasNoPane(t *testing.T) {
 	assertStdoutGoldenNormalized(t, home, []string{"ask", "t-aaaaaaaaaaaa", "--text", "Keep going?"}, "ask-no-parent", func(s string) string {
 		return stamp.ReplaceAllString(id.ReplaceAllString(s, "q-ID"), "<at>")
 	})
+}
+
+func TestAskStructuredFlagsPersistTheRecommendedDecision(t *testing.T) {
+	home := t.TempDir()
+	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema":1,"id":"t-aaaaaaaaaaaa","status":"running","repository":"owner/repo","questions":[],"evidence":[],"report":null,"notice":null,"attention":[],"brief":"do the thing"}`)
+	out, err := runCLI(t, home, "ask", "t-aaaaaaaaaaaa", "--key", "route", "--text", "Choose a route.", "--choice", "keep=Keep the change", "--choice", "revert=Revert it", "--recommended", "keep", "--rationale", "The evidence supports keeping it.", "--source", "docs/review.md#evidence")
+	if err != nil {
+		t.Fatalf("structured ask: %v\n%s", err, out)
+	}
+	question := readJSON(t, filepath.Join(home, "tasks", "t-aaaaaaaaaaaa", "task.json"))["questions"].([]any)[0].(map[string]any)
+	if question["recommended"] != "keep" || question["rationale"] != "The evidence supports keeping it." || len(question["choices"].([]any)) != 2 || len(question["sources"].([]any)) != 1 {
+		t.Fatalf("question = %v", question)
+	}
+	if question["text"] != "Choose a route." {
+		t.Fatalf("full question text = %v", question["text"])
+	}
 }
 
 func TestSettingsSet_requiresCoordinator(t *testing.T) {

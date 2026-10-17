@@ -1,0 +1,24 @@
+topic: answer
+help: "Coordinator: record a listed or custom human decision, or --close an answer no worker can apply any longer"
+arguments[8]:
+  - name: task
+    help: null
+    required: true
+  - name: question
+    help: null
+    required: true
+  - name: "--text"
+    help: null
+  - name: "--file"
+    help: null
+  - name: "--choice"
+    help: ID of an offered choice; requires --expected-recipient
+  - name: "--expected-recipient"
+    help: Captured worker recipient identity from a current action route
+  - name: "--close"
+    help: "Close an answered question as closed-unapplied, never applied; requires a released worker attempt and --reason"
+  - name: "--reason"
+    help: Why the answer is closed; recorded with the closing coordinator and time
+subcommands: null
+read_only: false
+read_only_subcommands: []

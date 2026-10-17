@@ -1,0 +1,18 @@
+topic: explain
+help: "Coordinator: record a distinct clarification request for an open question and notify its worker; does not answer or close the question"
+arguments[5]:
+  - name: task
+    help: null
+    required: true
+  - name: question
+    help: null
+    required: true
+  - name: "--text"
+    help: Clarification prompt for context and tradeoffs
+  - name: "--file"
+    help: Read the clarification prompt from a file
+  - name: "--expected-recipient"
+    help: Captured worker recipient identity from a current action route
+subcommands: null
+read_only: false
+read_only_subcommands: []

@@ -20,6 +20,7 @@ commands:
   archive: "Coordinator only: archive a task after every execution reservation was separately released"
   ask: "Worker: save a question before waiting; the parent is notified only after it is saved"
   answer: "Coordinator: record the user's actual decision for one question, or --close an answer no worker can apply any longer"
+  explain: "Coordinator: request context and tradeoffs for an open question without recording an answer"
   report: "Worker: submit the report (and --handoff) as a claim for the coordinator to verify"
   resolve: "Worker: mark an answered question applied"
   review: "Reviewer pane: append independent findings for one candidate, owed to the parent as a return until the coordinator acts on it; never replaces the worker report"
