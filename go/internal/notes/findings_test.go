@@ -199,6 +199,13 @@ func TestDismissAndReopenPreserveDispositionHistory(t *testing.T) {
 	if err != nil || dismissed.Disposition != "dismissed" {
 		t.Fatalf("dismissed=%#v err=%v", dismissed, err)
 	}
+	if _, err := ChangeExpected(s, record.ID, "resolve", "Stale action", "", "1", "open:none", coordinator); err == nil {
+		t.Fatal("stale inbox action changed a dismissed finding")
+	}
+	currentRecord, err := Read(s, record.ID)
+	if err != nil || currentRecord.Disposition != "dismissed" || len(currentRecord.History) != 2 {
+		t.Fatalf("stale action mutated finding: %#v err=%v", currentRecord, err)
+	}
 	reopened, err := Change(s, record.ID, "reopen", "New evidence appeared", "", coordinator)
 	if err != nil || reopened.Disposition != "open" || len(reopened.History) != 3 || reopened.History[1].Action != "dismiss" || reopened.History[2].Action != "reopen" {
 		t.Fatalf("reopened=%#v err=%v", reopened, err)

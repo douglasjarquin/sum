@@ -113,7 +113,7 @@ func (o *rootOptions) addFindingCommands(root *cobra.Command) {
 	cmd.AddCommand(show)
 
 	addChange := func(action string) {
-		var reason, target string
+		var reason, target, expectedRevision, expectedState string
 		use := action + " ID"
 		args := cobra.ExactArgs(1)
 		if action == "promote" || action == "attach" {
@@ -132,7 +132,7 @@ func (o *rootOptions) addFindingCommands(root *cobra.Command) {
 				if action == "promote" || action == "attach" {
 					target = args[1]
 				}
-				value, err := findings.Change(st, args[0], action, reason, target, app.OptionalContext(o.installRoot))
+				value, err := findings.ChangeExpected(st, args[0], action, reason, target, expectedRevision, expectedState, app.OptionalContext(o.installRoot))
 				if err != nil {
 					return err
 				}
@@ -144,6 +144,8 @@ func (o *rootOptions) addFindingCommands(root *cobra.Command) {
 			},
 		}
 		actionCmd.Flags().StringVar(&reason, "reason", "", "")
+		actionCmd.Flags().StringVar(&expectedRevision, "expected-revision", "", "")
+		actionCmd.Flags().StringVar(&expectedState, "expected-state", "", "")
 		if action != "promote" && action != "attach" {
 			_ = actionCmd.MarkFlagRequired("reason")
 		}

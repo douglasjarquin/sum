@@ -190,6 +190,9 @@ func DetailRoute(item presentation.Item, task Task) []string {
 	if item.Source.Kind == presentation.Pipeline {
 		return []string{"pipeline", "show", id}
 	}
+	if item.Source.Kind == presentation.Finding {
+		return []string{"finding", "show", item.Source.ID}
+	}
 	if item.Source.Kind == presentation.Question && task.Record != nil {
 		for i, raw := range list(task.Record, "questions") {
 			if str(obj(raw), "id") == strings.TrimPrefix(item.Source.ID, "question:") {
@@ -299,7 +302,7 @@ func BuildOverview(snapshot Snapshot) Overview {
 			if item.Source.Kind == presentation.Gap || item.Source.Kind == presentation.Factory {
 				group(task.ProjectID).Counts.add(item)
 			}
-		case item.Source.Kind == presentation.Factory && item.ProjectID != "":
+		case (item.Source.Kind == presentation.Factory || item.Source.Kind == presentation.Finding) && item.ProjectID != "":
 			group(item.ProjectID).Counts.add(item)
 		}
 	}

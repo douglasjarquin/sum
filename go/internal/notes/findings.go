@@ -128,6 +128,10 @@ func Capture(s *store.Store, taskID string, in Input, endpoint *ordjson.Object) 
 }
 
 func Change(s *store.Store, id, action, reason, targetTask string, endpoint *ordjson.Object) (Record, error) {
+	return ChangeExpected(s, id, action, reason, targetTask, "", "", endpoint)
+}
+
+func ChangeExpected(s *store.Store, id, action, reason, targetTask, expectedRevision, expectedState string, endpoint *ordjson.Object) (Record, error) {
 	unlock, err := s.Lock()
 	if err != nil {
 		return Record{}, err
@@ -140,6 +144,11 @@ func Change(s *store.Store, id, action, reason, targetTask string, endpoint *ord
 	record, err := readRecord(path)
 	if err != nil {
 		return Record{}, err
+	}
+	if expectedRevision != "" || expectedState != "" {
+		if expectedRevision != Revision(record) || expectedState != ActionState(record) {
+			return Record{}, fmt.Errorf("The finding changed since this action was presented. Refresh the inbox and choose again.")
+		}
 	}
 	source, err := s.ReadTask(record.TaskID)
 	if err != nil {
@@ -215,6 +224,14 @@ func Change(s *store.Store, id, action, reason, targetTask string, endpoint *ord
 		return Record{}, err
 	}
 	return record, nil
+}
+
+func Revision(record Record) string {
+	return fmt.Sprint(len(record.History))
+}
+
+func ActionState(record Record) string {
+	return record.Disposition + ":" + record.LinkState
 }
 
 func linkedAs(record Record, action string) bool {

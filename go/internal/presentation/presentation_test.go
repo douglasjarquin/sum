@@ -34,6 +34,7 @@ func TestClassifySavedFacts(t *testing.T) {
 		{Factory, "running", Nobody, Routine, "factory-saved"},
 		{Factory, "gated", Coordinator, Inspection, "factory-gated"},
 		{Factory, "future", Coordinator, Inspection, "unknown-factory-state"},
+		{Finding, "open:none", Nobody, Routine, "incidental-finding"},
 		{SourceKind("future"), "", Coordinator, Inspection, "unknown-source-kind"},
 	} {
 		t.Run(string(tc.kind)+"/"+tc.state, func(t *testing.T) {
@@ -47,6 +48,22 @@ func TestClassifySavedFacts(t *testing.T) {
 				t.Fatal("classification changed facts or dropped detail routes")
 			}
 		})
+	}
+}
+
+func TestFindingActionsBindCanonicalRevisionAndDisposition(t *testing.T) {
+	source := Source{TaskID: "t-aaaaaaaaaaaa", Kind: Finding, ID: "abc", Revision: "3"}
+	actions := FindingActions(source, "open:none")
+	if len(actions) != 5 {
+		t.Fatalf("actions = %+v", actions)
+	}
+	for _, action := range actions {
+		if action.Target != source || action.State != "open:none" || action.Arguments[3] != "--expected-revision" || action.Arguments[4] != "3" || action.Arguments[5] != "--expected-state" || action.Arguments[6] != "open:none" {
+			t.Fatalf("action lost canonical state: %+v", action)
+		}
+	}
+	if got := FindingActions(source, "dismissed:settled"); len(got) != 1 || got[0].Kind != "finding-reopen" {
+		t.Fatalf("closed finding actions = %+v", got)
 	}
 }
 
