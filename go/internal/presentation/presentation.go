@@ -65,6 +65,28 @@ type Choice struct {
 	Label string `json:"label"`
 }
 
+type HumanActionStep struct {
+	Kind       string          `json:"kind"`
+	Content    HumanActionText `json:"content"`
+	Source     HumanActionText `json:"source,omitempty"`
+	Redactions int             `json:"redactions,omitempty"`
+}
+
+type HumanActionText struct {
+	Text      string `json:"text"`
+	Chars     int    `json:"chars"`
+	Truncated bool   `json:"truncated"`
+}
+
+type HumanAction struct {
+	Why        HumanActionText   `json:"why"`
+	Steps      []HumanActionStep `json:"steps"`
+	Expected   HumanActionText   `json:"expected"`
+	Report     HumanActionText   `json:"report"`
+	Check      HumanActionText   `json:"check"`
+	Redactions int               `json:"redactions,omitempty"`
+}
+
 type Action struct {
 	Target    Source   `json:"target"`
 	Kind      string   `json:"kind"`
@@ -90,18 +112,19 @@ func QuestionActions(source Source, choices []Choice, recipient string) []Action
 }
 
 type Fact struct {
-	Source      Source   `json:"source"`
-	ProjectID   string   `json:"project,omitempty"`
-	State       string   `json:"state,omitempty"`
-	At          string   `json:"at,omitempty"`
-	Text        string   `json:"text,omitempty"`
-	Delivery    string   `json:"delivery,omitempty"`
-	Details     []Detail `json:"details"`
-	Choices     []Choice `json:"choices,omitempty"`
-	Recommended string   `json:"recommended,omitempty"`
-	Rationale   string   `json:"rationale,omitempty"`
-	Sources     []string `json:"sources,omitempty"`
-	Actions     []Action `json:"actions,omitempty"`
+	Source      Source       `json:"source"`
+	ProjectID   string       `json:"project,omitempty"`
+	State       string       `json:"state,omitempty"`
+	At          string       `json:"at,omitempty"`
+	Text        string       `json:"text,omitempty"`
+	Delivery    string       `json:"delivery,omitempty"`
+	Details     []Detail     `json:"details"`
+	Choices     []Choice     `json:"choices,omitempty"`
+	Recommended string       `json:"recommended,omitempty"`
+	Rationale   string       `json:"rationale,omitempty"`
+	Sources     []string     `json:"sources,omitempty"`
+	HumanAction *HumanAction `json:"human_action,omitempty"`
+	Actions     []Action     `json:"actions,omitempty"`
 }
 
 type Item struct {

@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -241,7 +242,8 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	root.AddCommand(archiveCmd)
 
 	var askKey, askText, askFile, askRecommended, askRationale string
-	var askChoices, askSources []string
+	var askActionWhy, askActionExpected, askActionReport, askActionCheck string
+	var askChoices, askSources, askActionSteps, askActionSources []string
 	askCmd := &cobra.Command{
 		Use:         "ask TASK",
 		Annotations: map[string]string{projectsAnnotation: "task"},
@@ -256,7 +258,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				return err
 			}
 			var decision *ask.StructuredDecision
-			if len(askChoices)+len(askSources) > 0 || askRecommended != "" || askRationale != "" {
+			if len(askChoices)+len(askSources)+len(askActionSteps)+len(askActionSources) > 0 || askRecommended != "" || askRationale != "" || askActionWhy != "" || askActionExpected != "" || askActionReport != "" || askActionCheck != "" {
 				decision = &ask.StructuredDecision{Recommended: askRecommended, Rationale: askRationale, Sources: askSources}
 				for _, value := range askChoices {
 					id, label, ok := strings.Cut(value, "=")
@@ -264,6 +266,26 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 						return fmt.Errorf("--choice must use ID=LABEL form.")
 					}
 					decision.Choices = append(decision.Choices, ask.Choice{ID: id, Label: label})
+				}
+				if askActionWhy != "" || askActionExpected != "" || askActionReport != "" || askActionCheck != "" || len(askActionSteps)+len(askActionSources) > 0 {
+					action := &ask.HumanAction{Why: askActionWhy, Expected: askActionExpected, Report: askActionReport, Check: askActionCheck}
+					sources := map[int]string{}
+					for _, value := range askActionSources {
+						indexText, source, ok := strings.Cut(value, "=")
+						index, parseErr := strconv.Atoi(indexText)
+						if !ok || parseErr != nil || index < 1 || index > len(askActionSteps) || source == "" || sources[index] != "" {
+							return fmt.Errorf("--action-source must use STEP=REFERENCE once for a matching 1-based step.")
+						}
+						sources[index] = source
+					}
+					for i, value := range askActionSteps {
+						kind, content, ok := strings.Cut(value, "=")
+						if !ok {
+							return fmt.Errorf("--action-step must use TYPE=CONTENT form.")
+						}
+						action.Steps = append(action.Steps, ask.HumanActionStep{Kind: kind, Content: content, Source: sources[i+1]})
+					}
+					decision.HumanAction = action
 				}
 			}
 			view, err := ask.AskStructured(st, args[0], askKey, body, decision, func() (*ordjson.Object, error) {
@@ -282,6 +304,12 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	askCmd.Flags().StringVar(&askRecommended, "recommended", "", "")
 	askCmd.Flags().StringVar(&askRationale, "rationale", "", "")
 	askCmd.Flags().StringArrayVar(&askSources, "source", nil, "")
+	askCmd.Flags().StringVar(&askActionWhy, "action-why", "", "")
+	askCmd.Flags().StringArrayVar(&askActionSteps, "action-step", nil, "")
+	askCmd.Flags().StringArrayVar(&askActionSources, "action-source", nil, "")
+	askCmd.Flags().StringVar(&askActionExpected, "action-expected", "", "")
+	askCmd.Flags().StringVar(&askActionReport, "action-report", "", "")
+	askCmd.Flags().StringVar(&askActionCheck, "action-check", "", "")
 	askCmd.MarkFlagsOneRequired("text", "file")
 	askCmd.MarkFlagsMutuallyExclusive("text", "file")
 	root.AddCommand(askCmd)

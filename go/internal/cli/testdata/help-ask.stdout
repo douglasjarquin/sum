@@ -1,6 +1,6 @@
 topic: ask
-help: "Worker: save a question before waiting; structured choices require one recommendation and rationale; the parent is notified only after it is saved"
-arguments[8]:
+help: "Worker: save a question before waiting; structured choices require one recommendation and rationale; human actions can include ordered steps, references, expected result, user report, and worker check; the parent is notified only after it is saved"
+arguments[14]:
   - name: task
     help: null
     required: true
@@ -18,6 +18,18 @@ arguments[8]:
     help: Short reason for the recommendation
   - name: "--source"
     help: Repeat a bounded evidence/source reference
+  - name: "--action-why"
+    help: Why the user needs to perform this action
+  - name: "--action-step"
+    help: "Repeat TYPE=CONTENT in order; type is text, url, path, or exact command"
+  - name: "--action-source"
+    help: Repeat STEP=REFERENCE for a 1-based action step
+  - name: "--action-expected"
+    help: Expected result of the user action
+  - name: "--action-report"
+    help: What the user should report or confirm
+  - name: "--action-check"
+    help: How the worker will check the result and resume
 subcommands: null
 read_only: false
 read_only_subcommands: []

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/douglasjarquin/sum/go/internal/presentation"
 )
 
 // Scope names what a view shows. A different scope never shares rows, selection, or expansion with the old one.
@@ -316,7 +318,11 @@ func (v *View) listBody() []line {
 		out = append(out, line{text: "  nothing waiting on you"})
 	}
 	for _, row := range v.overview.NeedsYou {
-		out = append(out, line{identity: "needs-you:" + row.Identity, text: fmt.Sprintf("%s  %s  %s", groupLabel(Sanitize(row.Project)), Sanitize(row.Task), Sanitize(row.Text.Text))})
+		kind := "decision"
+		if row.HumanAction != nil {
+			kind = "action required"
+		}
+		out = append(out, line{identity: "needs-you:" + row.Identity, text: fmt.Sprintf("%s  %s  %s  %s", groupLabel(Sanitize(row.Project)), Sanitize(row.Task), kind, Sanitize(row.Text.Text))})
 	}
 	projects := "PROJECTS"
 	if v.overview.Project != "" {
@@ -400,7 +406,11 @@ func (v *View) detailBody() []line {
 		}
 	}
 	for _, item := range task.Items {
-		out = append(out, line{text: fmt.Sprintf("  %s  %s %s  %s", Sanitize(string(item.Kind)), Sanitize(string(item.Source.Kind)), Sanitize(item.Source.ID), Sanitize(item.Reason))})
+		kind := Sanitize(string(item.Kind))
+		if item.HumanAction != nil && item.State == "open" {
+			kind = "action required"
+		}
+		out = append(out, line{text: fmt.Sprintf("  %s  %s %s  %s", kind, Sanitize(string(item.Source.Kind)), Sanitize(item.Source.ID), Sanitize(item.Reason))})
 		if item.Text.Text != "" {
 			out = append(out, line{text: "    " + Sanitize(item.Text.Text)})
 			if item.Text.Truncated {
@@ -426,6 +436,22 @@ func (v *View) detailBody() []line {
 		for _, source := range item.Sources {
 			out = append(out, line{text: "    source: " + Sanitize(source)})
 		}
+		if action := item.HumanAction; action != nil {
+			if action.Redactions > 0 {
+				out = append(out, line{text: fmt.Sprintf("    %d credential-shaped value(s) were redacted before saving; placeholders are explicit", action.Redactions)})
+			}
+			out = append(out, line{text: actionTextLine("    why: ", action.Why)})
+			for i, step := range action.Steps {
+				out = append(out, line{text: actionTextLine(fmt.Sprintf("    step %d (%s): ", i+1, Sanitize(step.Kind)), step.Content)})
+				if step.Source.Text != "" {
+					out = append(out, line{text: actionTextLine("      source: ", step.Source)})
+				}
+			}
+			out = append(out, line{text: actionTextLine("    expected: ", action.Expected)})
+			out = append(out, line{text: actionTextLine("    report: ", action.Report)})
+			out = append(out, line{text: actionTextLine("    worker check: ", action.Check)})
+			out = append(out, line{text: "    command text is informational; it is not run from the inbox"})
+		}
 		if v.stale {
 			continue
 		}
@@ -437,6 +463,14 @@ func (v *View) detailBody() []line {
 		}
 	}
 	return out
+}
+
+func actionTextLine(prefix string, content presentation.HumanActionText) string {
+	text := prefix + Sanitize(content.Text)
+	if content.Truncated {
+		text += fmt.Sprintf(" (first %d of %d characters; open detail for full text)", len([]rune(content.Text)), content.Chars)
+	}
+	return text
 }
 
 // Render fits the view into height lines of at most width cells. The selected row is always in the window.
