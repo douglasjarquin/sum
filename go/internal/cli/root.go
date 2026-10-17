@@ -138,6 +138,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addStartCommand(root)
 	opts.addReviewCommand(root)
 	opts.addReviewerCommands(root)
+	opts.addUsageCommands(root)
 	opts.addPRCommands(root)
 	opts.addPipelineCommands(root)
 	opts.addLspCommand(root)

@@ -21,6 +21,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/usage"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
@@ -242,6 +243,10 @@ func Run(s *store.Store, destination string) (*ordjson.Object, error) {
 		graphPath := filepath.Join(taskPath, graphview.GraphFile)
 		if isFile(graphPath) && !isSymlink(graphPath) {
 			paths = append(paths, graphPath)
+		}
+		usagePath := filepath.Join(taskPath, usage.File)
+		if isFile(usagePath) && !isSymlink(usagePath) {
+			paths = append(paths, usagePath)
 		}
 		sidecar := filepath.Join(taskPath, versions.File)
 		if isFile(sidecar) || isSymlink(sidecar) {
