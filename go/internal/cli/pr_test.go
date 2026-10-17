@@ -47,6 +47,19 @@ func TestPRUnknownFlagsAreUsageErrorsBeforePR(t *testing.T) {
 	}
 }
 
+func TestPRReconcileHelpDescribesSavedReviewThreadObservation(t *testing.T) {
+	home := writeDesignatedHome(t)
+	stdout, stderr, err := runPRCLI(t, home, "help", "pr-reconcile")
+	if err != nil {
+		t.Fatalf("help: %v stderr=%s", err, stderr)
+	}
+	for _, text := range []string{"review-thread observations", "keep previous threads", "do not poll GitHub"} {
+		if !strings.Contains(stdout, text) {
+			t.Fatalf("help is missing %q:\n%s", text, stdout)
+		}
+	}
+}
+
 func TestPRCommands(t *testing.T) {
 	cases := []struct {
 		name      string
