@@ -6,7 +6,8 @@ sum is an agent distro, not a supervisor service. Herdr owns the live panes.
 
 ## Start
 
-- Run `./bin/sumctl init` from this directory before anything else, and follow only the contract for the `role` it returns.
+- If you were dispatched with a Sum worker prompt or explicitly assigned a worker brief for this task, you are a worker before initialization. Run only the absolute installed helper command named in the prompt or brief; never run the checkout's `./bin/sumctl`. Then read the complete brief and follow its contract.
+- Otherwise, run `./bin/sumctl init` from this directory before anything else, and follow only the contract for the `role` it returns. In the installation, this is for coordinator or developer sessions; in a development checkout, follow the developer procedure.
 - Nothing is inferred from the working directory, a checkout, or inherited environment variables.
 - Do not fake a successful check.
 - Pass `--reclaim` only when the user asked you to take over a coordinator pane that is verifiably gone.

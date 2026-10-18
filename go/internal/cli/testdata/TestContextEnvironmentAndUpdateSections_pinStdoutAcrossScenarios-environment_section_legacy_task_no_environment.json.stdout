@@ -23,7 +23,7 @@ environment:
     ok: true
   skills:
     files[4]{skill,path,bytes,sha256}:
-      sum-work,$ROOT/skills/sum-work/SKILL.md,15324,c1a135a4dd9d0768
+      sum-work,$ROOT/skills/sum-work/SKILL.md,15484,8c0bfac8501224cb
       sum-deliver,$ROOT/skills/sum-deliver/SKILL.md,36872,ce3e088954ee3aff
       sum-status,$ROOT/skills/sum-status/SKILL.md,27551,8ebfa74b8aa31d94
       sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,18763,5d3ffbf0f31c8b5d

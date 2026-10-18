@@ -25,6 +25,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/project"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -693,7 +694,9 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		}
 	}
 	observedKind := asString(func() any { v, _ := agent.Get("agent"); return v }())
-	prompt := fmt.Sprintf("You are the sum worker for %s, not the coordinator. Read the complete file %s and every required worker procedure file it names, then execute only that approved task. Questions and results must be saved using the commands in that brief.", taskID, quoteJSON(briefFile))
+	installRoot := sumruntime.ResolveInstallation(runtimeRoot, os.Getenv("SUM_INSTALL_ROOT"))
+	initCommand := shquote.CommandFor(filepath.Join(installRoot, "bin", "sumctl"), s.Home, "init")
+	prompt := fmt.Sprintf("You are the sum worker for %s, not the coordinator. First run `%s` with the installed helper, never `./bin/sumctl` from your checkout. Then read the complete file %s and every required worker procedure file it names, and execute only that approved task. Questions and results must be saved using the commands in that brief.", taskID, initCommand, quoteJSON(briefFile))
 	if extras := repair.PendingResumeTexts(task); len(extras) > 0 {
 		prompt += " Recorded repairs waiting on this resume:"
 		for _, extra := range extras {
