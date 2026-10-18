@@ -12,7 +12,7 @@ commands:
   execution: "Show, park, or explicitly resume task-local execution reservations"
   repair: Coordinator-controlled corrective worker instructions
   help: "Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments"
-  context: "Bounded selective read of one task: outline by default, --section for parts, --role for a role view, --since CURSOR for changes"
+  context: "Bounded selective read of one task: outline by default, --section for parts including saved GitHub review threads, --role for a role view, --since CURSOR for changes"
   notes: "Append one timestamped entry to the task's optional notes.md (a claim, backed up with the records; credentials refused)"
   finding: Record and follow optional findings with explicit coordinator dispositions and linked work
   env: "Task-local environment record: declared dev commands, observed URLs/ports, log paths, pane/container references; observes and records only"
