@@ -531,12 +531,83 @@ func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expecte
 	unlock()
 	notice, err := pump()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Answer saved, but worker notification failed: %w. Refresh the inbox to inspect delivery; do not submit the answer again.", err)
 	}
 	result := ordjson.NewObject()
 	result.Set("question", question)
 	result.Set("notice", notice)
+	result.Set("feedback", answerFeedback(notice))
 	return result, nil
+}
+
+func answerFeedback(value any) string {
+	notice, _ := value.(*ordjson.Object)
+	if notice == nil {
+		return "Answer saved; waiting for worker"
+	}
+	status, _ := notice.Get("status")
+	problem, _ := notice.Get("error")
+	if delivery, _ := notice.Get("returns"); delivery != nil {
+		if row, ok := delivery.(*ordjson.Object); ok {
+			foundOutcome := false
+			outcomes, _ := row.Get("recipients")
+			if recipients, ok := outcomes.([]any); ok {
+				for _, outcome := range recipients {
+					entry, _ := outcome.(*ordjson.Object)
+					if entry == nil {
+						continue
+					}
+					if state, _ := entry.Get("state"); state != nil {
+						status = state
+						if problem == nil || problem == "" {
+							problem, _ = entry.Get("reason")
+						}
+						foundOutcome = true
+						break
+					}
+				}
+			}
+			if !foundOutcome {
+				if state, _ := row.Get("state"); state != nil {
+					status = state
+					if problem == nil || problem == "" {
+						problem, _ = row.Get("reason")
+					}
+				}
+			}
+		}
+	}
+	switch status {
+	case "submitted", "submitted-not-acknowledged":
+		return "Waiting for worker to apply answer"
+	case "uncertain", "in-flight":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; delivery unconfirmed: %v", problem)
+		}
+		return "Answer saved; delivery unconfirmed"
+	case "not-delivered", "stalled":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; notification %s: %v", status, problem)
+		}
+		return fmt.Sprintf("Answer saved; notification %s", status)
+	case "pending":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; notification pending: %v", problem)
+		}
+		return "Answer saved; waiting to notify worker"
+	case "deferred":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; notification deferred: %v", problem)
+		}
+		return "Answer saved; waiting to notify worker"
+	case "quiet", "refused", "coalesced":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; notification not sent: %v", problem)
+		}
+		return "Answer saved; notification not sent"
+	default:
+		return "Answer saved; waiting for worker"
+	}
 }
 
 func Resolve(s *store.Store, taskID, questionID string) (*ordjson.Object, error) {

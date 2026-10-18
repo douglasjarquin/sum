@@ -324,6 +324,24 @@ func (v *View) listBody() []line {
 		}
 		out = append(out, line{identity: "needs-you:" + row.Identity, text: fmt.Sprintf("%s  %s  %s", groupLabel(Sanitize(row.Project)), Sanitize(row.Task), Sanitize(row.Text.Text))})
 	}
+	out = append(out, line{text: "RECENTLY HANDLED"})
+	if len(v.overview.RecentlyHandled) == 0 {
+		out = append(out, line{text: "  nothing handled recently"})
+	}
+	for _, row := range v.overview.RecentlyHandled {
+		answer := row.AnswerText.Text
+		if answer == "" {
+			answer = row.Text.Text
+		}
+		at := row.OutcomeAt
+		if at == "" {
+			at = "time unavailable"
+		}
+		out = append(out, line{text: fmt.Sprintf("%s  %s  owner %s  state %s  %s  at %s  %s", groupLabel(Sanitize(row.Project)), Sanitize(row.Task), Sanitize(string(row.Owner)), Sanitize(row.State), Sanitize(row.Feedback), Sanitize(at), Sanitize(answer))})
+		if !v.stale && len(row.Detail) > 0 {
+			out = append(out, line{text: "  detail: sumctl " + Sanitize(strings.Join(row.Detail, " "))})
+		}
+	}
 	projects := "PROJECTS"
 	if v.overview.Project != "" {
 		projects += "  focus: " + Sanitize(v.overview.Project)
