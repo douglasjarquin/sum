@@ -50,7 +50,7 @@ func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
 			}
 			wantArgv := append([]string(nil), tc.wantArgv...)
 			if tc.wantAgent == "claude" {
-				wantArgv = []string{"--add-dir", filepath.Join(d.home, "tasks", taskID)}
+				wantArgv = []string{"--add-dir", filepath.Join(d.home, "tasks", taskID), "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
 			}
 			if !reflect.DeepEqual(asSlice(bound["argv"]), stringsToAny(wantArgv)) {
 				t.Fatalf("recorded reviewer argv = %v, want %v", bound["argv"], wantArgv)
