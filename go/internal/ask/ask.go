@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/redact"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -25,6 +26,23 @@ type StructuredDecision struct {
 	Recommended string
 	Rationale   string
 	Sources     []string
+	HumanAction *HumanAction
+}
+
+type HumanAction struct {
+	Why        string
+	Steps      []HumanActionStep
+	Expected   string
+	Report     string
+	Check      string
+	Redactions int
+}
+
+type HumanActionStep struct {
+	Kind       string
+	Content    string
+	Source     string
+	Redactions int
 }
 
 var choiceIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -33,10 +51,10 @@ func decisionRecord(decision *StructuredDecision) (*ordjson.Object, error) {
 	if decision == nil {
 		return nil, nil
 	}
-	if len(decision.Choices) < 2 || len(decision.Choices) > 8 {
-		return nil, fmt.Errorf("Structured questions need between 2 and 8 choices.")
+	if (len(decision.Choices) == 0 && decision.HumanAction == nil) || (len(decision.Choices) > 0 && len(decision.Choices) < 2) || len(decision.Choices) > 8 {
+		return nil, fmt.Errorf("Structured questions need between 2 and 8 choices, or a complete human action.")
 	}
-	if strings.TrimSpace(decision.Rationale) == "" || len([]rune(decision.Rationale)) > 280 {
+	if len(decision.Choices) > 0 && (strings.TrimSpace(decision.Rationale) == "" || len([]rune(decision.Rationale)) > 280) {
 		return nil, fmt.Errorf("Structured questions need a rationale of 1 to 280 characters.")
 	}
 	if len(decision.Sources) > 8 {
@@ -59,7 +77,7 @@ func decisionRecord(decision *StructuredDecision) (*ordjson.Object, error) {
 		row.Set("label", choice.Label)
 		choices = append(choices, row)
 	}
-	if !recommended {
+	if len(decision.Choices) > 0 && !recommended {
 		return nil, fmt.Errorf("The recommended choice must name an offered choice ID.")
 	}
 	sources := make([]any, 0, len(decision.Sources))
@@ -74,6 +92,54 @@ func decisionRecord(decision *StructuredDecision) (*ordjson.Object, error) {
 	row.Set("recommended", decision.Recommended)
 	row.Set("rationale", decision.Rationale)
 	row.Set("sources", sources)
+	if decision.HumanAction != nil {
+		action, err := humanActionRecord(decision.HumanAction)
+		if err != nil {
+			return nil, err
+		}
+		row.Set("human_action", action)
+	}
+	return row, nil
+}
+
+func humanActionRecord(action *HumanAction) (*ordjson.Object, error) {
+	if strings.TrimSpace(action.Why) == "" || len([]rune(action.Why)) > 500 || len(action.Steps) == 0 || len(action.Steps) > 20 || strings.TrimSpace(action.Expected) == "" || len([]rune(action.Expected)) > 500 || strings.TrimSpace(action.Report) == "" || len([]rune(action.Report)) > 500 || strings.TrimSpace(action.Check) == "" || len([]rune(action.Check)) > 500 {
+		return nil, fmt.Errorf("Human actions need a reason, 1 to 20 steps, expected result, report instruction, and worker check, each at most 500 characters.")
+	}
+	steps := make([]any, 0, len(action.Steps))
+	redactions := 0
+	for _, step := range action.Steps {
+		if step.Kind != "text" && step.Kind != "url" && step.Kind != "path" && step.Kind != "command" {
+			return nil, fmt.Errorf("Human action step type must be text, url, path, or command.")
+		}
+		if strings.TrimSpace(step.Content) == "" || len([]rune(step.Content)) > 2000 || len([]rune(step.Source)) > 500 {
+			return nil, fmt.Errorf("Human action steps need 1 to 2000 characters of content and at most 500 characters of source reference.")
+		}
+		row := ordjson.NewObject()
+		content, contentRedactions := redact.Redact(step.Content)
+		source, sourceRedactions := redact.Redact(step.Source)
+		stepRedactions := contentRedactions + sourceRedactions
+		redactions += stepRedactions
+		row.Set("kind", step.Kind)
+		row.Set("content", content)
+		if source != "" {
+			row.Set("source", source)
+		}
+		row.Set("redactions", stepRedactions)
+		steps = append(steps, row)
+	}
+	why, whyRedactions := redact.Redact(action.Why)
+	expected, expectedRedactions := redact.Redact(action.Expected)
+	report, reportRedactions := redact.Redact(action.Report)
+	check, checkRedactions := redact.Redact(action.Check)
+	redactions += whyRedactions + expectedRedactions + reportRedactions + checkRedactions
+	row := ordjson.NewObject()
+	row.Set("why", why)
+	row.Set("steps", steps)
+	row.Set("expected", expected)
+	row.Set("report", report)
+	row.Set("check", check)
+	row.Set("redactions", redactions)
 	return row, nil
 }
 
@@ -155,12 +221,12 @@ func AskStructured(s *store.Store, taskID, key, text string, decision *Structure
 				if existingKey == key {
 					existingText, _ := question.Get("text")
 					oldDecision := ordjson.NewObject()
-					for _, field := range []string{"choices", "recommended", "rationale", "sources"} {
+					for _, field := range []string{"choices", "recommended", "rationale", "sources", "human_action"} {
 						value, _ := question.Get(field)
 						oldDecision.Set(field, value)
 					}
 					newDecision := ordjson.NewObject()
-					for _, field := range []string{"choices", "recommended", "rationale", "sources"} {
+					for _, field := range []string{"choices", "recommended", "rationale", "sources", "human_action"} {
 						value := any(nil)
 						if record != nil {
 							value, _ = record.Get(field)

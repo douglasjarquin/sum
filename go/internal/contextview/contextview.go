@@ -543,6 +543,9 @@ func sectionDecisions(s *store.Store, task *ordjson.Object, role string, after, 
 				row.Set(key, value)
 			}
 		}
+		if action := asObject(getField(q, "human_action")); action != nil {
+			row.Set("human_action", boundedHumanAction(action, maxChars))
+		}
 		row.Set("text", environment.BoundedView(asString(getField(q, "text")), maxChars))
 		row.Set("answer", boundedViewOrNil(getField(q, "answer"), maxChars))
 		if role != "worker" && asString(getField(q, "status")) == "open" {
@@ -577,6 +580,28 @@ func sectionDecisions(s *store.Store, task *ordjson.Object, role string, after, 
 	result.Set("counts", countsObj)
 	result.Set("outstanding", outstanding(task))
 	result.Set("note", "`outstanding` lists every unapplied decision regardless of paging. Answers are recorded human decisions; question text is a worker claim.")
+	return result
+}
+
+func boundedHumanAction(action *ordjson.Object, limit int) *ordjson.Object {
+	result := ordjson.NewObject()
+	for _, key := range []string{"why", "expected", "report", "check"} {
+		result.Set(key, environment.BoundedView(asString(getField(action, key)), limit))
+	}
+	result.Set("redactions", getField(action, "redactions"))
+	steps := make([]any, 0, len(listField(action, "steps")))
+	for _, raw := range listField(action, "steps") {
+		step := asObject(raw)
+		row := ordjson.NewObject()
+		row.Set("kind", getField(step, "kind"))
+		row.Set("content", environment.BoundedView(asString(getField(step, "content")), limit))
+		if source := getField(step, "source"); source != nil {
+			row.Set("source", source)
+		}
+		row.Set("redactions", getField(step, "redactions"))
+		steps = append(steps, row)
+	}
+	result.Set("steps", steps)
 	return result
 }
 

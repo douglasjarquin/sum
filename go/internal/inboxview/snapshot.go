@@ -159,6 +159,14 @@ func Read(s *store.Store) Snapshot {
 			revision := str(question, "key")
 			source := presentation.Source{TaskID: id, Kind: presentation.Question, ID: sourceID, Revision: revision}
 			fact := presentation.Fact{Source: source, ProjectID: row.ProjectID, State: state, At: str(question, "created_at"), Text: str(question, "text"), Details: []presentation.Detail{{Section: "decisions", Ref: qid, Path: path}}, Recommended: str(question, "recommended"), Rationale: str(question, "rationale"), Sources: stringList(list(question, "sources"))}
+			if action := objValue(question, "human_action"); action != nil {
+				humanAction := &presentation.HumanAction{Why: boundedActionText(str(action, "why")), Expected: boundedActionText(str(action, "expected")), Report: boundedActionText(str(action, "report")), Check: boundedActionText(str(action, "check")), Redactions: intValue(action, "redactions"), Steps: []presentation.HumanActionStep{}}
+				for _, raw := range list(action, "steps") {
+					step := obj(raw)
+					humanAction.Steps = append(humanAction.Steps, presentation.HumanActionStep{Kind: str(step, "kind"), Content: boundedActionText(str(step, "content")), Source: boundedActionText(str(step, "source")), Redactions: intValue(step, "redactions")})
+				}
+				fact.HumanAction = humanAction
+			}
 			for _, choiceRaw := range list(question, "choices") {
 				choice := obj(choiceRaw)
 				fact.Choices = append(fact.Choices, presentation.Choice{ID: str(choice, "id"), Label: str(choice, "label")})
@@ -597,6 +605,23 @@ func field(o *ordjson.Object, key string) any {
 }
 func str(o *ordjson.Object, key string) string { v, _ := field(o, key).(string); return v }
 func obj(v any) *ordjson.Object                { o, _ := v.(*ordjson.Object); return o }
+func objValue(o *ordjson.Object, key string) *ordjson.Object {
+	value, _ := o.Get(key)
+	return obj(value)
+}
+func intValue(o *ordjson.Object, key string) int {
+	var value int
+	_, _ = fmt.Sscan(fmt.Sprint(field(o, key)), &value)
+	return value
+}
+func boundedActionText(text string) presentation.HumanActionText {
+	runes := []rune(text)
+	truncated := len(runes) > OverviewChars
+	if truncated {
+		text = string(runes[:OverviewChars])
+	}
+	return presentation.HumanActionText{Text: text, Chars: len(runes), Truncated: truncated}
+}
 func list(o *ordjson.Object, key string) []any { v, _ := field(o, key).([]any); return v }
 
 func stringList(values []any) []string {

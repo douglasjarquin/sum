@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/redact"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -33,33 +33,13 @@ var (
 	EndpointStates = []string{"observed", "not-listening", "stale", "unverified"}
 )
 
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}`),
-	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`),
-	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`),
-	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}`),
-	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),
-	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{16,}`),
-	regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`),
-	regexp.MustCompile(`(?i)\b(?:api[_-]?key|access[_-]?token|secret|password|passwd)\s*[=:]\s*['"]?[^\s'"]{8,}`),
-}
-
 func jsonInt(n int) json.Number {
 	return json.Number(fmt.Sprint(n))
 }
 
 // Redact replaces credential-shaped substrings in prose; returns (text, count). Pattern-based, never a guarantee.
 func Redact(text string) (string, int) {
-	count := 0
-	for _, pattern := range secretPatterns {
-		matches := pattern.FindAllString(text, -1)
-		if len(matches) == 0 {
-			continue
-		}
-		count += len(matches)
-		text = pattern.ReplaceAllString(text, "[redacted]")
-	}
-	return text, count
+	return redact.Redact(text)
 }
 
 func slicePythonStyle(runes []rune, limit int) []rune {
