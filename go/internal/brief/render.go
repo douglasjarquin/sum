@@ -195,7 +195,7 @@ func procedureText(taskDir string, rows []any) string {
 
 func deliveredRuntimeText(sumctlPath string, task *ordjson.Object) string {
 	lines := []string{
-		"- Role: `worker` (registered at dispatch; `sumctl init` in your checkout reports it and never grants coordination).",
+		"- Role: `worker` (registered at dispatch; run `init` with the absolute installed helper below, never a checkout-local helper).",
 		fmt.Sprintf("- Helper: `%s` is the installed entrypoint; every command in this brief uses that absolute path. Do not look for `bin/sumctl` or `skills/` relative to your checkout.", sumctlPath),
 		"- Worker procedure: the pinned task resources under `## Worker procedure`, recorded with this revision; they do not depend on the runtime staying in place.",
 	}
