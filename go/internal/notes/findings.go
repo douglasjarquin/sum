@@ -232,9 +232,8 @@ func ChangeTargetExpected(s *store.Store, id, action, reason, targetKind, target
 			}
 		case "reopen":
 			record.Disposition = "open"
-			if record.LinkState == "settled" {
+			if record.LinkState == "settled" && record.LinkRepair == "" {
 				record.LinkTask = ""
-				record.LinkRepair = ""
 				record.LinkState = "none"
 			}
 		case "settle":
@@ -545,12 +544,18 @@ func readRecord(path string) (Record, error) {
 	}
 	switch record.LinkState {
 	case "none":
-		if record.LinkTask != "" {
-			return Record{}, fmt.Errorf("Finding record has a linked task without link state.")
+		if record.LinkTask != "" || record.LinkRepair != "" {
+			return Record{}, fmt.Errorf("Finding record has linked work without link state.")
 		}
 	case "attached", "handoff_outstanding", "settled":
-		if record.LinkTask == "" {
-			return Record{}, fmt.Errorf("Finding record has link state without a linked task.")
+		if (record.LinkTask == "") == (record.LinkRepair == "") {
+			return Record{}, fmt.Errorf("Finding record must have exactly one linked target for its link state.")
+		}
+		if record.LinkTask != "" && !validLinkedTarget("t-", record.LinkTask) {
+			return Record{}, fmt.Errorf("Finding record has an invalid linked task ID.")
+		}
+		if record.LinkRepair != "" && !validLinkedTarget("r-", record.LinkRepair) {
+			return Record{}, fmt.Errorf("Finding record has an invalid linked repair ID.")
 		}
 	default:
 		return Record{}, fmt.Errorf("Finding record has an unknown link state.")
@@ -559,6 +564,14 @@ func readRecord(path string) (Record, error) {
 		return Record{}, fmt.Errorf("Finding record filename does not match its stable ID.")
 	}
 	return record, nil
+}
+
+func validLinkedTarget(prefix, target string) bool {
+	if len(target) != 14 || !strings.HasPrefix(target, prefix) || strings.ToLower(target) != target {
+		return false
+	}
+	decoded, err := hex.DecodeString(target[2:])
+	return err == nil && len(decoded) == 6
 }
 
 func writeRecord(path string, record Record) error {
