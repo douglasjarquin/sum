@@ -50,7 +50,7 @@ func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
 			}
 			wantArgv := append([]string(nil), tc.wantArgv...)
 			if tc.wantAgent == "claude" {
-				wantArgv = []string{"--add-dir", filepath.Join(d.home, "tasks", taskID)}
+				wantArgv = []string{"--add-dir", filepath.Join(d.home, "tasks", taskID), "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
 			}
 			if !reflect.DeepEqual(asSlice(bound["argv"]), stringsToAny(wantArgv)) {
 				t.Fatalf("recorded reviewer argv = %v, want %v", bound["argv"], wantArgv)
@@ -81,7 +81,7 @@ func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
 				t.Fatalf("tab create = %v, want %v", tabCreate, want)
 			}
 			starts := agentStartCalls(t, d.base)
-			if len(starts) != 2 || starts[1][2] != "reviewer" || starts[1][4] != tc.wantAgent || starts[1][6] != pane {
+			if len(starts) != 2 || starts[1][2] != "reviewer-"+taskID || starts[1][4] != tc.wantAgent || starts[1][6] != pane {
 				t.Fatalf("agent starts = %v, want reviewer %s in pane %s", starts, tc.wantAgent, pane)
 			}
 			if tc.preset {
@@ -215,7 +215,7 @@ func assertReviewerRelaunched(t *testing.T, d *demoLab, taskID string, task, rel
 	}
 	starts := agentStartCalls(t, d.base)
 	last := starts[len(starts)-1]
-	if len(starts) != 3 || last[2] != "reviewer" || last[4] != wantHarness || last[6] != newPane {
+	if len(starts) != 3 || last[2] != "reviewer-"+taskID || last[4] != wantHarness || last[6] != newPane {
 		t.Fatalf("agent starts = %v, want one reviewer start for %s in %s", starts, wantHarness, newPane)
 	}
 	persisted := readTaskObject(t, d.home, taskID)

@@ -77,6 +77,34 @@ func TaskAccessArgs(s *store.Store, task *ordjson.Object, harness, briefPath, wo
 	return []string{"--add-dir", canonicalTask}, nil
 }
 
+func ClaudeReviewerMCPIsolationArgs(harness string) []string {
+	return claudeMCPIsolationArgs(harness == "claude")
+}
+
+func ClaudeWorkerMCPIsolationArgs(harness, worktree string) []string {
+	return claudeMCPIsolationArgs(harness == "claude" && isSumCheckout(worktree))
+}
+
+func claudeMCPIsolationArgs(isolated bool) []string {
+	if !isolated {
+		return nil
+	}
+	return []string{"--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
+}
+
+func isSumCheckout(worktree string) bool {
+	data, err := os.ReadFile(filepath.Join(worktree, "go", "go.mod"))
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == "module github.com/douglasjarquin/sum/go" {
+			return true
+		}
+	}
+	return false
+}
+
 func validateTaskInstructionFile(taskDir, path string) error {
 	canonical, err := filepath.EvalSymlinks(path)
 	if err != nil {
