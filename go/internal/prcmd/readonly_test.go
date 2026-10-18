@@ -308,7 +308,7 @@ func TestRetryBoundaryIsExactlyTheTwoReadOnlyObservations(t *testing.T) {
 		got = append(got, name)
 	}
 	sort.Strings(got)
-	want := []string{"observedVisibility", "viewPR"}
+	want := []string{"observeReviewThreads", "observedVisibility", "viewPR"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("readOnlyGH callers = %v, want %v", got, want)
 	}
