@@ -113,12 +113,22 @@ func (o *rootOptions) addFindingCommands(root *cobra.Command) {
 	cmd.AddCommand(show)
 
 	addChange := func(action string) {
-		var reason, target, expectedRevision, expectedState string
+		var reason, target, targetKind, expectedRevision, expectedState string
 		use := action + " ID"
 		args := cobra.ExactArgs(1)
-		if action == "promote" || action == "attach" {
+		if action == "attach" {
 			use += " TASK"
 			args = cobra.ExactArgs(2)
+			targetKind = "task"
+		} else if action == "promote" {
+			use += " TASK | repair REPAIR_ID"
+			targetKind = "task"
+			args = func(_ *cobra.Command, args []string) error {
+				if len(args) == 2 || len(args) == 3 && args[1] == "repair" {
+					return nil
+				}
+				return fmt.Errorf("promote requires ID TASK or ID repair REPAIR_ID")
+			}
 		}
 		actionCmd := &cobra.Command{
 			Use:         use,
@@ -129,10 +139,18 @@ func (o *rootOptions) addFindingCommands(root *cobra.Command) {
 				if err != nil {
 					return err
 				}
-				if action == "promote" || action == "attach" {
+				if action == "attach" {
 					target = args[1]
+				} else if action == "promote" {
+					if len(args) == 3 {
+						targetKind = "repair"
+						target = args[2]
+					} else {
+						targetKind = "task"
+						target = args[1]
+					}
 				}
-				value, err := findings.ChangeExpected(st, args[0], action, reason, target, expectedRevision, expectedState, app.OptionalContext(o.installRoot))
+				value, err := findings.ChangeTargetExpected(st, args[0], action, reason, targetKind, target, expectedRevision, expectedState, app.OptionalContext(o.installRoot))
 				if err != nil {
 					return err
 				}

@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/project"
+	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -31,11 +32,12 @@ type Input struct {
 }
 
 type Event struct {
-	Action string          `json:"action"`
-	At     string          `json:"at"`
-	Actor  *ordjson.Object `json:"actor"`
-	Reason string          `json:"reason,omitempty"`
-	Target string          `json:"target,omitempty"`
+	Action     string          `json:"action"`
+	At         string          `json:"at"`
+	Actor      *ordjson.Object `json:"actor"`
+	Reason     string          `json:"reason,omitempty"`
+	Target     string          `json:"target,omitempty"`
+	TargetKind string          `json:"target_kind,omitempty"`
 }
 
 type Record struct {
@@ -55,6 +57,7 @@ type Record struct {
 	Disposition string          `json:"disposition"`
 	LinkState   string          `json:"link_state"`
 	LinkTask    string          `json:"link_task,omitempty"`
+	LinkRepair  string          `json:"link_repair,omitempty"`
 	History     []Event         `json:"history"`
 }
 
@@ -132,6 +135,14 @@ func Change(s *store.Store, id, action, reason, targetTask string, endpoint *ord
 }
 
 func ChangeExpected(s *store.Store, id, action, reason, targetTask, expectedRevision, expectedState string, endpoint *ordjson.Object) (Record, error) {
+	targetKind := ""
+	if action == "promote" || action == "attach" {
+		targetKind = "task"
+	}
+	return ChangeTargetExpected(s, id, action, reason, targetKind, targetTask, expectedRevision, expectedState, endpoint)
+}
+
+func ChangeTargetExpected(s *store.Store, id, action, reason, targetKind, target, expectedRevision, expectedState string, endpoint *ordjson.Object) (Record, error) {
 	unlock, err := s.Lock()
 	if err != nil {
 		return Record{}, err
@@ -168,22 +179,38 @@ func ChangeExpected(s *store.Store, id, action, reason, targetTask, expectedRevi
 		return Record{}, fmt.Errorf("The disposition contains credential-shaped text; reference where the value lives instead.")
 	}
 	if action == "promote" || action == "attach" {
-		if record.LinkTask == targetTask && targetTask != "" && linkedAs(record, action) {
+		if action == "attach" && targetKind != "task" {
+			return Record{}, fmt.Errorf("Findings can only attach to an existing task.")
+		}
+		if linkedTarget(record, targetKind) == target && target != "" && linkedAs(record, action) {
 			return record, nil
 		}
 		if record.Disposition != "open" {
 			return Record{}, fmt.Errorf("Reopen the finding before changing its linked work.")
 		}
-		if targetTask == record.TaskID {
-			return Record{}, fmt.Errorf("A finding cannot link back to its source task.")
-		}
-		if err := validateTarget(s, targetTask); err != nil {
-			return Record{}, err
-		}
-		if record.LinkTask != "" {
+		if record.LinkTask != "" || record.LinkRepair != "" {
 			return Record{}, fmt.Errorf("Finding already has linked work; reopen and record its prior disposition before linking another target.")
 		}
-		record.LinkTask = targetTask
+		switch targetKind {
+		case "task":
+			if target == record.TaskID {
+				return Record{}, fmt.Errorf("A finding cannot link back to its source task.")
+			}
+			if err := validateTarget(s, target); err != nil {
+				return Record{}, err
+			}
+			record.LinkTask = target
+		case "repair":
+			if action != "promote" {
+				return Record{}, fmt.Errorf("A scoped repair can only be promoted.")
+			}
+			if err := validateRepairTarget(source, target); err != nil {
+				return Record{}, err
+			}
+			record.LinkRepair = target
+		default:
+			return Record{}, fmt.Errorf("Finding target must be a task or an authorized scoped repair.")
+		}
 		if action == "promote" {
 			record.LinkState = "handoff_outstanding"
 		} else {
@@ -195,22 +222,23 @@ func ChangeExpected(s *store.Store, id, action, reason, targetTask, expectedRevi
 			record.Disposition = "deferred"
 		case "dismiss":
 			record.Disposition = "dismissed"
-			if record.LinkTask != "" {
+			if record.LinkTask != "" || record.LinkRepair != "" {
 				record.LinkState = "settled"
 			}
 		case "resolve":
 			record.Disposition = "resolved"
-			if record.LinkTask != "" {
+			if record.LinkTask != "" || record.LinkRepair != "" {
 				record.LinkState = "settled"
 			}
 		case "reopen":
 			record.Disposition = "open"
 			if record.LinkState == "settled" {
 				record.LinkTask = ""
+				record.LinkRepair = ""
 				record.LinkState = "none"
 			}
 		case "settle":
-			if record.LinkTask == "" {
+			if record.LinkTask == "" && record.LinkRepair == "" {
 				return Record{}, fmt.Errorf("There is no linked work to settle.")
 			}
 			record.LinkState = "settled"
@@ -219,7 +247,7 @@ func ChangeExpected(s *store.Store, id, action, reason, targetTask, expectedRevi
 			return Record{}, fmt.Errorf("Unknown finding action %q.", action)
 		}
 	}
-	record.History = append(record.History, Event{Action: action, At: store.Now(), Actor: actorObject(endpoint, "coordinator"), Reason: reason, Target: targetTask})
+	record.History = append(record.History, Event{Action: action, At: store.Now(), Actor: actorObject(endpoint, "coordinator"), Reason: reason, Target: target, TargetKind: targetKind})
 	if err := writeRecord(path, record); err != nil {
 		return Record{}, err
 	}
@@ -247,6 +275,13 @@ func linkedAs(record Record, action string) bool {
 		}
 	}
 	return false
+}
+
+func linkedTarget(record Record, targetKind string) string {
+	if targetKind == "repair" {
+		return record.LinkRepair
+	}
+	return record.LinkTask
 }
 
 func Read(s *store.Store, id string) (Record, error) {
@@ -403,6 +438,34 @@ func validateTarget(s *store.Store, target string) error {
 		return fmt.Errorf("Linked task has no approved brief.")
 	}
 	return nil
+}
+
+func validateRepairTarget(task *ordjson.Object, target string) error {
+	if target == "" {
+		return fmt.Errorf("An authorized scoped repair ID is required.")
+	}
+	ledger, err := repair.Ledger(task)
+	if err != nil {
+		return err
+	}
+	operations, _ := ledger.Get("operations")
+	rows, _ := operations.([]any)
+	for _, raw := range rows {
+		operation, _ := raw.(*ordjson.Object)
+		if operation == nil {
+			continue
+		}
+		id, _ := operation.Get("id")
+		kind, _ := operation.Get("kind")
+		class, _ := operation.Get("class")
+		if id == target && kind == "send" {
+			if class != repair.ClassInScope {
+				return fmt.Errorf("Finding promotion requires an existing in-scope authorized repair.")
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("Scoped repair %q is not recorded for the source task.", target)
 }
 
 func findingRole(host machine.Identity, task, endpoint *ordjson.Object) string {

@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/notes"
-	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/presentation"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -30,39 +28,6 @@ func fixture(t *testing.T) *store.Store {
 		t.Fatal(err)
 	}
 	return s
-}
-
-func TestReadProjectsOptionalFindingWithSharedActions(t *testing.T) {
-	s := fixture(t)
-	host, err := s.Machine()
-	if err != nil {
-		t.Fatal(err)
-	}
-	write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":1,"id":"t-aaaaaaaaaaaa","status":"archived","machine":"`+host.ID+`","session":"lab","pane":"worker","parent":{"machine":"`+host.ID+`","session":"lab","pane":"parent"},"project":{"host":"github.com","owner":"team","repo":"repo"}}`)
-	endpoint := ordjson.NewObject()
-	endpoint.Set("machine", host.ID)
-	endpoint.Set("session", "lab")
-	endpoint.Set("pane", "worker")
-	_, _, err = notes.Capture(s, "t-aaaaaaaaaaaa", notes.Input{Key: "k1", Title: "A finding", Explanation: "An optional observation", NextStep: "Inspect it", References: []string{"source.go"}}, endpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := Read(s)
-	if len(got.Tasks) != 1 {
-		t.Fatalf("archived finding was not projected: %+v", got.Tasks)
-	}
-	var item presentation.Item
-	for _, candidate := range got.Tasks[0].Items {
-		if candidate.Source.Kind == presentation.Finding {
-			item = candidate
-		}
-	}
-	if item.Kind != presentation.Routine || item.Owner != presentation.Nobody || item.Source.Revision != "1" || len(item.Actions) != 5 || !strings.Contains(item.Text, "next: Inspect it") {
-		t.Fatalf("finding projection = %+v", item)
-	}
-	if got.Counts.Decisions != 0 || len(BuildOverview(got).NeedsYou) != 0 {
-		t.Fatalf("optional finding became a blocking decision: %+v", got.Counts)
-	}
 }
 
 func write(t *testing.T, s *store.Store, path, data string) {

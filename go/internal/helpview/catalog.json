@@ -569,7 +569,7 @@
       "reopen": "Coordinator only: reopen a finding while preserving disposition history",
       "resolve": "Coordinator only: resolve a finding with a reason",
       "attach": "Coordinator only: link a finding to existing work with a reason",
-      "promote": "Coordinator only: link a finding to an existing approved follow-up task with a reason",
+      "promote": "Coordinator only: link a finding to an existing approved follow-up task or an authorized in-scope repair with a reason",
       "settle": "Coordinator only: record the outcome of linked work and settle its handoff"
     },
     "read_only": false,
