@@ -90,7 +90,7 @@ func render(s *store.Store, sumctlPath string, d briefData) string {
 	line("")
 	line("## Delivered runtime")
 	line("")
-	line("%s", deliveredRuntimeText(sumctlPath, task))
+	line("%s", deliveredRuntimeText(sumctlPath, s.Home, task))
 	line("")
 	line("## Brief revision")
 	line("")
@@ -193,9 +193,10 @@ func procedureText(taskDir string, rows []any) string {
 	return strings.Join(lines, "\n")
 }
 
-func deliveredRuntimeText(sumctlPath string, task *ordjson.Object) string {
+func deliveredRuntimeText(sumctlPath, home string, task *ordjson.Object) string {
 	lines := []string{
 		"- Role: `worker` (registered at dispatch; run `init` with the absolute installed helper below, never a checkout-local helper).",
+		fmt.Sprintf("- Run this exact command for the first `init`: `%s`.", shquote.CommandFor(sumctlPath, home, "init")),
 		fmt.Sprintf("- Helper: `%s` is the installed entrypoint; every command in this brief uses that absolute path. Do not look for `bin/sumctl` or `skills/` relative to your checkout.", sumctlPath),
 		"- Worker procedure: the pinned task resources under `## Worker procedure`, recorded with this revision; they do not depend on the runtime staying in place.",
 	}
