@@ -536,7 +536,7 @@ func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expecte
 	result := ordjson.NewObject()
 	result.Set("question", question)
 	result.Set("notice", notice)
-	result.Set("feedback", answerFeedback(returns.NoticeOf(s, task)))
+	result.Set("feedback", answerFeedback(notice))
 	return result, nil
 }
 
@@ -546,16 +546,45 @@ func answerFeedback(value any) string {
 		return "Answer saved; waiting for worker"
 	}
 	status, _ := notice.Get("status")
+	problem, _ := notice.Get("error")
+	if delivery, _ := notice.Get("returns"); delivery != nil {
+		if row, ok := delivery.(*ordjson.Object); ok {
+			if state, _ := row.Get("state"); state != nil {
+				status = state
+				if problem == nil || problem == "" {
+					problem, _ = row.Get("reason")
+				}
+			}
+		}
+	}
 	switch status {
-	case "submitted-not-acknowledged":
+	case "submitted", "submitted-not-acknowledged":
 		return "Waiting for worker to apply answer"
-	case "uncertain":
+	case "uncertain", "in-flight":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; delivery unconfirmed: %v", problem)
+		}
 		return "Answer saved; delivery unconfirmed"
+	case "not-delivered", "stalled":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; notification %s: %v", status, problem)
+		}
+		return fmt.Sprintf("Answer saved; notification %s", status)
 	case "pending":
-		if problem, _ := notice.Get("error"); problem != nil && problem != "" {
+		if problem != nil && problem != "" {
 			return fmt.Sprintf("Answer saved; notification pending: %v", problem)
 		}
 		return "Answer saved; waiting to notify worker"
+	case "deferred":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; notification deferred: %v", problem)
+		}
+		return "Answer saved; waiting to notify worker"
+	case "quiet", "refused", "coalesced":
+		if problem != nil && problem != "" {
+			return fmt.Sprintf("Answer saved; notification not sent: %v", problem)
+		}
+		return "Answer saved; notification not sent"
 	default:
 		return "Answer saved; waiting for worker"
 	}

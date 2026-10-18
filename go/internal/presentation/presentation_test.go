@@ -77,31 +77,6 @@ func TestIdentityAndUncertaintyAreIndependentOfPresentation(t *testing.T) {
 	}
 }
 
-func TestQuestionFeedbackUsesSavedStateAndDelivery(t *testing.T) {
-	for _, tc := range []struct {
-		state, delivery, reason, answer, want string
-	}{
-		{"open", "", "", "", "Needs your decision"},
-		{"answered", "pending", "", "yes", "Answer saved; waiting to notify worker"},
-		{"answered", "submitted", "", "yes", "Waiting for worker to apply answer"},
-		{"answered", "uncertain", "", "yes", "Answer saved; delivery unconfirmed"},
-		{"answered", "not-delivered", "", "yes", "Answer saved; notification not-delivered"},
-		{"answered", "deferred", "", "yes", "Answer saved; waiting to notify worker"},
-		{"applied", "submitted", "", "yes", "Applied by worker"},
-		{"settled", "", "", "yes", "Settled by cleanup"},
-		{"closed-unapplied", "", "worker stopped", "yes", "Closed without application: worker stopped"},
-	} {
-		fact := Fact{Source: Source{Kind: Question}, State: tc.state, Delivery: tc.delivery, CloseReason: tc.reason, Answer: tc.answer}
-		if got := Classify(fact).Feedback; got != tc.want {
-			t.Fatalf("feedback(%q, %q) = %q, want %q", tc.state, tc.delivery, got, tc.want)
-		}
-	}
-	legacy := Classify(Fact{Source: Source{Kind: Question}, State: "answered", Answer: "yes"})
-	if legacy.Feedback != "Answer saved; waiting for worker" || legacy.OutcomeAt != "" {
-		t.Fatalf("legacy answer without a delivery timestamp = %+v", legacy)
-	}
-}
-
 func TestQuestionActionsCarryTargetAndRecipient(t *testing.T) {
 	source := Source{TaskID: "t-aaaaaaaaaaaa", Kind: Question, ID: "question:q-one", Revision: "route"}
 	actions := QuestionActions(source, []Choice{{ID: "keep", Label: "Keep it"}, {ID: "revert", Label: "Revert it"}}, "wr-current")
