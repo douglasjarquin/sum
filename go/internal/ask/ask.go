@@ -549,10 +549,30 @@ func answerFeedback(value any) string {
 	problem, _ := notice.Get("error")
 	if delivery, _ := notice.Get("returns"); delivery != nil {
 		if row, ok := delivery.(*ordjson.Object); ok {
-			if state, _ := row.Get("state"); state != nil {
-				status = state
-				if problem == nil || problem == "" {
-					problem, _ = row.Get("reason")
+			foundOutcome := false
+			outcomes, _ := row.Get("recipients")
+			if recipients, ok := outcomes.([]any); ok {
+				for _, outcome := range recipients {
+					entry, _ := outcome.(*ordjson.Object)
+					if entry == nil {
+						continue
+					}
+					if state, _ := entry.Get("state"); state != nil {
+						status = state
+						if problem == nil || problem == "" {
+							problem, _ = entry.Get("reason")
+						}
+						foundOutcome = true
+						break
+					}
+				}
+			}
+			if !foundOutcome {
+				if state, _ := row.Get("state"); state != nil {
+					status = state
+					if problem == nil || problem == "" {
+						problem, _ = row.Get("reason")
+					}
 				}
 			}
 		}
