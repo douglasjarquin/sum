@@ -63,6 +63,10 @@ evidence_view:
     missing[3]: current structured handoff,complete PR identity from `pr reconcile`,coordinator verification of the current candidate
     merged_for_task: false
     note: Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged.
+findings:
+  findings: []
+  gaps: []
+  complete: true
 returns:
   open[1]{id,kind,ref,recipient,since,obligation,route{role,session,pane},notification{state,attempts,reason}}:
     "report:legacy",report,legacy,parent,"2026-01-01T00:30:00+00:00",open,coordinator,null,null,pending,0,no delivery attempted to this recipient yet

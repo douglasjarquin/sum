@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/environment"
@@ -165,6 +166,23 @@ func Run(s *store.Store, destination string) (*ordjson.Object, error) {
 	manifest.Set("environment_records_included", true)
 	manifest.Set("environment_exclusions", "command references and URLs redacted at write; no process environments, credentials, log content, or checkout code")
 	manifest.Set("settings_included", isFile(filepath.Join(home, settings.File)))
+	findingDir := notes.FindingsPath(s)
+	findingRecords, findingGaps := notes.ReadAll(s)
+	manifest.Set("finding_records_included", jsonInt(len(findingRecords)))
+	gapRows := make([]any, 0, len(findingGaps))
+	for _, gap := range findingGaps {
+		row := ordjson.NewObject()
+		relative, err := filepath.Rel(findingDir, gap.Path)
+		if err != nil {
+			relative = filepath.Base(gap.Path)
+		}
+		row.Set("path", relative)
+		row.Set("error", strings.ReplaceAll(gap.Error, findingDir, "findings"))
+		gapRows = append(gapRows, row)
+	}
+	manifest.Set("finding_visibility_gaps", gapRows)
+	findingEntries, _ := filepath.Glob(filepath.Join(findingDir, "*.json"))
+	sort.Strings(findingEntries)
 	manifest.Set("graph", graphObj)
 	manifest.Set("managed_projects", projectsObj)
 	manifest.Set("restore", "Extract into a new directory. Start sumctl with --home <extracted>/state. Do not reuse pane bindings on another machine; inspect and bind explicitly.")
@@ -201,6 +219,11 @@ func Run(s *store.Store, destination string) (*ordjson.Object, error) {
 	var paths []string
 	for _, name := range []string{"state.json", settings.File, project.ProjectsFile, "preferences.md", "projects.md"} {
 		paths = append(paths, filepath.Join(home, name))
+	}
+	for _, path := range findingEntries {
+		if isFile(path) && !isSymlink(path) {
+			paths = append(paths, path)
+		}
 	}
 	sessionEntries, _ := filepath.Glob(filepath.Join(s.Sessions, "*.json"))
 	sort.Strings(sessionEntries)

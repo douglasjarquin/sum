@@ -65,6 +65,10 @@ evidence_view:
     missing[3]: current structured handoff,complete PR identity from `pr reconcile`,coordinator verification of the current candidate passed (latest root run r1 was fail); the task is parked with that evidence
     merged_for_task: false
     note: Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged.
+findings:
+  findings: []
+  gaps: []
+  complete: true
 returns:
   open: []
   deliveries: []

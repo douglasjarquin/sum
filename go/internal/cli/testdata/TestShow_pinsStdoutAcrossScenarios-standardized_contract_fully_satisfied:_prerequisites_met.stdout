@@ -199,6 +199,10 @@ evidence_view:
     missing: []
     merged_for_task: false
     note: Readiness only. Nothing here closes a pane or removes a checkout; an idle state or a report never counts as verified or merged.
+findings:
+  findings: []
+  gaps: []
+  complete: true
 returns:
   open: []
   deliveries: []

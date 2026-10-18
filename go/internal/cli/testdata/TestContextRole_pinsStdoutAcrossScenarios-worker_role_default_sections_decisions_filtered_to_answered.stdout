@@ -2,7 +2,7 @@ task: t-1b1b1b1b1b1b
 status: running
 cursor: "c2.0.1.0.0.0.0.$CURSOR.2026-01-01T00:02:00+00:00"
 read_at: "<at>"
-sections[5]: outline,decisions,execution,environment,notes
+sections[6]: outline,decisions,execution,environment,notes,findings
 role: worker
 versions_error: null
 contract[3]: "You own exactly this task; you are not the coordinator. Do not init a coordinator, dispatch, or run setup.",Work only in the recorded checkout on the recorded branch. Apply answered decisions with `resolve`; never invent an approval.,"Save questions with `ask` before waiting; submit results with `report --handoff`. A report is a claim, not verification."
@@ -59,7 +59,7 @@ outline:
     present: false
   graph: null
   read:
-    sections[11]: outline,brief,decisions,handoff,evidence,execution,environment,update,returns,notes,pipeline
+    sections[12]: outline,brief,decisions,handoff,evidence,execution,environment,update,returns,notes,findings,pipeline
     example: "$ROOT/bin/sumctl --home $HOME context t-1b1b1b1b1b1b --section decisions --section handoff"
 decisions:
   total: 1
@@ -148,3 +148,7 @@ notes:
   entries: []
   bytes: 0
   note: No notes artifact. `sumctl notes TASK_ID --text ...` creates it when an investigation needs one.
+findings:
+  findings: []
+  gaps: []
+  complete: true

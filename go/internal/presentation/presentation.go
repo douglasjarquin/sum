@@ -18,6 +18,7 @@ const (
 	Execution SourceKind = "execution"
 	Pipeline  SourceKind = "pipeline"
 	Factory   SourceKind = "factory"
+	Finding   SourceKind = "finding"
 	Gap       SourceKind = "gap"
 )
 
@@ -111,6 +112,29 @@ func QuestionActions(source Source, choices []Choice, recipient string) []Action
 	return actions
 }
 
+func FindingActions(source Source, state string) []Action {
+	if source.TaskID == "" || source.ID == "" || source.Revision == "" || state == "" {
+		return nil
+	}
+	identity := []string{"--expected-revision", source.Revision, "--expected-state", state}
+	makeAction := func(kind, label, command string, args ...string) Action {
+		return Action{Target: source, Kind: kind, Label: label, State: state, Arguments: append(append([]string{"finding", command, source.ID}, identity...), args...)}
+	}
+	actions := []Action{}
+	if strings.HasPrefix(state, "open:") {
+		actions = append(actions,
+			makeAction("finding-follow-up", "Investigate / create follow-up", "promote", "APPROVED_TASK", "--reason", "approved follow-up"),
+			makeAction("finding-attach", "Attach to existing work", "attach", "EXISTING_TASK", "--reason", "related work"),
+			makeAction("finding-defer", "Defer", "defer", "--reason", "deferred"),
+			makeAction("finding-dismiss", "Dismiss", "dismiss", "--reason", "dismissed"),
+			makeAction("finding-resolve", "Resolve", "resolve", "--reason", "resolved"),
+		)
+	} else if strings.HasPrefix(state, "deferred:") || strings.HasPrefix(state, "dismissed:") || strings.HasPrefix(state, "resolved:") {
+		actions = append(actions, makeAction("finding-reopen", "Reopen", "reopen", "--reason", "reopened"))
+	}
+	return actions
+}
+
 type Fact struct {
 	Source      Source       `json:"source"`
 	ProjectID   string       `json:"project,omitempty"`
@@ -189,6 +213,8 @@ func Classify(f Fact) Item {
 		default:
 			item.Kind, item.Reason, item.Uncertain = Inspection, "unknown-factory-state", true
 		}
+	case Finding:
+		item.Owner, item.Kind, item.Reason = Nobody, Routine, "incidental-finding"
 	case Gap:
 		item.Reason, item.Uncertain = "source-unreadable", true
 	default:

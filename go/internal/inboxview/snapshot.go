@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/factory"
+	"github.com/douglasjarquin/sum/go/internal/notes"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/presentation"
@@ -215,6 +216,20 @@ func Read(s *store.Store) Snapshot {
 		out.Items = append(out.Items, row.Items...)
 	}
 	out.factoryItems(s)
+	findingRecords, findingGaps := notes.ReadAll(s)
+	for _, gap := range findingGaps {
+		out.gap("", gap.Path, fmt.Errorf("%s", gap.Error))
+	}
+	for _, finding := range findingRecords {
+		state := notes.ActionState(finding)
+		source := presentation.Source{TaskID: finding.TaskID, Kind: presentation.Finding, ID: finding.ID, Revision: notes.Revision(finding)}
+		fact := presentation.Fact{Source: source, ProjectID: finding.ProjectID, State: state, At: finding.CreatedAt, Text: finding.Title + ": " + finding.Explanation + " | next: " + finding.NextStep, Sources: append([]string{}, finding.References...), Details: []presentation.Detail{{Section: "findings", Ref: finding.ID, Path: notes.FindingsPath(s)}}, Actions: presentation.FindingActions(source, state)}
+		item := presentation.Classify(fact)
+		if taskIndex, ok := taskIndexByID(out.Tasks, finding.TaskID); ok {
+			out.Tasks[taskIndex].Items = append(out.Tasks[taskIndex].Items, item)
+		}
+		out.Items = append(out.Items, item)
+	}
 	out.Counts.Tasks = len(out.Tasks)
 	out.Counts.UnknownSources = len(out.Gaps)
 	for _, item := range out.Items {
@@ -234,6 +249,15 @@ func Read(s *store.Store) Snapshot {
 		}
 	}
 	return out
+}
+
+func taskIndexByID(tasks []Task, id string) (int, bool) {
+	for i := range tasks {
+		if tasks[i].ID == id {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 func (s *Snapshot) gap(id, path string, err error) {
