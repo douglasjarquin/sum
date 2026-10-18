@@ -69,9 +69,9 @@ func observeReviewThreads(gh, dir, remote string, number int, pr map[string]any)
 						URL            string `json:"url"`
 						HeadRefOID     string `json:"headRefOid"`
 						ReviewDecision string `json:"reviewDecision"`
-						ReviewThreads  struct {
-							Nodes    []reviewThreadNode `json:"nodes"`
-							PageInfo struct {
+						ReviewThreads  *struct {
+							Nodes    *[]reviewThreadNode `json:"nodes"`
+							PageInfo *struct {
 								HasNextPage bool   `json:"hasNextPage"`
 								EndCursor   string `json:"endCursor"`
 							} `json:"pageInfo"`
@@ -106,8 +106,20 @@ func observeReviewThreads(gh, dir, remote string, number int, pr map[string]any)
 			record.Set("threads", []any{})
 			return record
 		}
+		if got.ReviewThreads == nil || got.ReviewThreads.Nodes == nil || got.ReviewThreads.PageInfo == nil {
+			record.Set("status", "incomplete")
+			record.Set("detail", "review thread response omitted its nodes or pagination metadata")
+			record.Set("threads", rows)
+			return record
+		}
 		decision = got.ReviewDecision
-		for _, node := range got.ReviewThreads.Nodes {
+		for _, node := range *got.ReviewThreads.Nodes {
+			if !validReviewThreadNode(node) {
+				record.Set("status", "incomplete")
+				record.Set("detail", "review thread response contained a thread without stable comment identity")
+				record.Set("threads", rows)
+				return record
+			}
 			thread := node.record()
 			thread.Set("observed_at", observedAt)
 			thread.Set("observed_head_sha", fmt.Sprint(pr["headRefOid"]))
@@ -135,16 +147,16 @@ func observeReviewThreads(gh, dir, remote string, number int, pr map[string]any)
 }
 
 type reviewThreadNode struct {
-	ID                string `json:"id"`
-	IsOutdated        bool   `json:"isOutdated"`
-	IsResolved        bool   `json:"isResolved"`
-	Path              string `json:"path"`
-	Line              *int   `json:"line"`
-	OriginalLine      *int   `json:"originalLine"`
-	StartLine         *int   `json:"startLine"`
-	OriginalStartLine *int   `json:"originalStartLine"`
+	ID                string  `json:"id"`
+	IsOutdated        *bool   `json:"isOutdated"`
+	IsResolved        *bool   `json:"isResolved"`
+	Path              *string `json:"path"`
+	Line              *int    `json:"line"`
+	OriginalLine      *int    `json:"originalLine"`
+	StartLine         *int    `json:"startLine"`
+	OriginalStartLine *int    `json:"originalStartLine"`
 	Comments          struct {
-		Nodes []struct {
+		Nodes *[]struct {
 			ID        string `json:"id"`
 			Database  int64  `json:"databaseId"`
 			URL       string `json:"url"`
@@ -161,19 +173,31 @@ type reviewThreadNode struct {
 	} `json:"comments"`
 }
 
+func validReviewThreadNode(node reviewThreadNode) bool {
+	if node.ID == "" || node.IsOutdated == nil || node.IsResolved == nil || node.Path == nil || node.Comments.Nodes == nil {
+		return false
+	}
+	for _, comment := range *node.Comments.Nodes {
+		if comment.ID == "" {
+			return false
+		}
+	}
+	return true
+}
+
 func (n reviewThreadNode) record() *ordjson.Object {
 	thread := ordjson.NewObject()
 	thread.Set("id", n.ID)
-	thread.Set("path", n.Path)
+	thread.Set("path", *n.Path)
 	thread.Set("line", n.Line)
 	thread.Set("original_line", n.OriginalLine)
 	thread.Set("start_line", n.StartLine)
 	thread.Set("original_start_line", n.OriginalStartLine)
-	thread.Set("resolved", n.IsResolved)
-	thread.Set("outdated", n.IsOutdated)
-	sort.Slice(n.Comments.Nodes, func(i, j int) bool { return n.Comments.Nodes[i].UpdatedAt > n.Comments.Nodes[j].UpdatedAt })
-	commentRows := make([]any, 0, len(n.Comments.Nodes))
-	for _, c := range n.Comments.Nodes {
+	thread.Set("resolved", *n.IsResolved)
+	thread.Set("outdated", *n.IsOutdated)
+	sort.Slice(*n.Comments.Nodes, func(i, j int) bool { return (*n.Comments.Nodes)[i].UpdatedAt > (*n.Comments.Nodes)[j].UpdatedAt })
+	commentRows := make([]any, 0, len(*n.Comments.Nodes))
+	for _, c := range *n.Comments.Nodes {
 		row := ordjson.NewObject()
 		row.Set("id", c.ID)
 		row.Set("database_id", c.Database)
@@ -196,8 +220,8 @@ func (n reviewThreadNode) record() *ordjson.Object {
 		commentRows = append(commentRows, row)
 	}
 	thread.Set("comments", commentRows)
-	if len(n.Comments.Nodes) > 0 {
-		latest := n.Comments.Nodes[0]
+	if len(*n.Comments.Nodes) > 0 {
+		latest := (*n.Comments.Nodes)[0]
 		thread.Set("latest_comment_id", latest.ID)
 		thread.Set("latest_updated_at", latest.UpdatedAt)
 		thread.Set("source_url", latest.URL)

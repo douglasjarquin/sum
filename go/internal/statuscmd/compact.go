@@ -64,6 +64,17 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 			row.Set("delivery", item.Delivery)
 		}
 		row.Set("uncertain", item.Uncertain)
+		if item.Source.Kind == presentation.GitHubReviewThread {
+			row.Set("source_url", item.SourceURL)
+			row.Set("author", item.Author)
+			row.Set("file", item.File)
+			row.Set("line", item.Line)
+			row.Set("resolved", item.Resolved)
+			row.Set("outdated", item.Outdated)
+			row.Set("observed_at", item.ObservedAt)
+			row.Set("request_id", item.RequestID)
+			row.Set("request_status", item.RequestStatus)
+		}
 		if item.Text != "" {
 			text := environment.BoundedView(item.Text, opts.MaxChars)
 			if truncated, _ := text.Get("truncated"); truncated == true {

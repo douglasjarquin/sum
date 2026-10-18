@@ -10,6 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
+	"github.com/douglasjarquin/sum/go/internal/presentation"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -141,6 +142,31 @@ func recordObservationWith(s *store.Store, ctx *ordjson.Object, taskID string, d
 			if _, ok := threads.Get("review_decision"); !ok && previousThreads != nil {
 				if decision, exists := previousThreads.Get("review_decision"); exists {
 					threads.Set("review_decision", decision)
+				}
+			}
+		}
+		rows := asList(func() any { v, _ := threads.Get("threads"); return v }())
+		for _, raw := range rows {
+			thread := asObject(raw)
+			resolved, _ := func() (any, bool) {
+				if thread == nil {
+					return nil, false
+				}
+				return thread.Get("resolved")
+			}()
+			if thread == nil || resolved == true {
+				continue
+			}
+			threadHead := asString(thread, "observed_head_sha")
+			if threadHead == "" {
+				threadHead = fmt.Sprint(data["headRefOid"])
+			}
+			source := presentation.Source{TaskID: asString(task, "id"), Kind: presentation.GitHubReviewThread, ID: asString(thread, "id"), Revision: asString(thread, "latest_comment_id"), Candidate: threadHead}
+			actions := presentation.GitHubThreadActions(source, threadHead, asString(identity, "url"), asString(thread, "source_url"))
+			encoded, marshalErr := json.Marshal(actions)
+			if marshalErr == nil {
+				if decoded, decodeErr := ordjson.Decode(encoded); decodeErr == nil {
+					thread.Set("actions", decoded)
 				}
 			}
 		}

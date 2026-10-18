@@ -190,6 +190,44 @@ func Read(s *store.Store) Snapshot {
 			}
 			row.Items = append(row.Items, item)
 		}
+		pr := obj(field(clean, "pr"))
+		prIdentity := obj(field(pr, "identity"))
+		threadObservation := obj(field(pr, "review_threads"))
+		observationStatus := str(threadObservation, "status")
+		for _, raw := range list(threadObservation, "threads") {
+			thread := obj(raw)
+			threadID := str(thread, "id")
+			revision := str(thread, "latest_comment_id")
+			threadHead := str(thread, "observed_head_sha")
+			if threadID == "" {
+				out.gap(id, path+"#pr/review_threads", fmt.Errorf("review thread has no stable ID"))
+				continue
+			}
+			comments := list(thread, "comments")
+			latest := obj(nil)
+			if len(comments) > 0 {
+				latest = obj(comments[0])
+			}
+			body := str(latest, "body")
+			resolved := field(thread, "resolved") == true
+			state := "open"
+			if resolved {
+				state = "resolved"
+			}
+			fact := presentation.Fact{Source: presentation.Source{TaskID: id, Kind: presentation.GitHubReviewThread, ID: threadID, Revision: revision, Candidate: threadHead}, ProjectID: row.ProjectID, State: state, At: str(thread, "latest_updated_at"), Text: body, SourceURL: str(thread, "source_url"), Author: str(thread, "latest_author"), File: str(thread, "path"), Line: intPointer(field(thread, "line")), Resolved: resolved, Outdated: field(thread, "outdated") == true, ObservedAt: str(thread, "observed_at"), RequestID: str(thread, "request_id"), Uncertain: observationStatus != "complete" || threadHead == "" || threadHead != str(prIdentity, "head_sha"), Details: []presentation.Detail{{Section: "pr", Ref: threadID, Path: path}}}
+			if !resolved && revision != "" {
+				fact.Actions = presentation.GitHubThreadActions(fact.Source, threadHead, str(prIdentity, "url"), fact.SourceURL)
+			}
+			fact.RequestID, fact.RequestStatus = latestThreadRequest(clean, threadID, revision, threadHead, str(prIdentity, "url"))
+			if fact.RequestStatus == "in-flight" || fact.RequestStatus == "submitted" || fact.RequestStatus == "uncertain" {
+				for i := range fact.Actions {
+					if fact.Actions[i].Kind == "address-selected" || fact.Actions[i].Kind == "address-all" {
+						fact.Actions[i].State = fact.RequestStatus
+					}
+				}
+			}
+			row.Items = append(row.Items, presentation.Classify(fact))
+		}
 		out.execution(&row, path)
 		pipelinePath := filepath.Join(s.Tasks, id, pipeline.File)
 		if info, statErr := os.Lstat(pipelinePath); statErr == nil || !os.IsNotExist(statErr) {
@@ -258,6 +296,34 @@ func taskIndexByID(tasks []Task, id string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+func intPointer(value any) *int {
+	var n int
+	if value == nil {
+		return nil
+	}
+	if _, err := fmt.Sscan(fmt.Sprint(value), &n); err != nil {
+		return nil
+	}
+	return &n
+}
+
+func latestThreadRequest(task *ordjson.Object, threadID, revision, head, prURL string) (string, string) {
+	requests := list(task, "github_review_actions")
+	for i := len(requests) - 1; i >= 0; i-- {
+		request := obj(requests[i])
+		if str(request, "head_sha") != head || str(request, "pr_url") != prURL {
+			continue
+		}
+		for _, raw := range list(request, "threads") {
+			thread := obj(raw)
+			if str(thread, "id") == threadID && str(thread, "revision") == revision {
+				return str(request, "id"), str(request, "status")
+			}
+		}
+	}
+	return "", ""
 }
 
 func (s *Snapshot) gap(id, path string, err error) {
