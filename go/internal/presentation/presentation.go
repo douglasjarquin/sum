@@ -9,17 +9,17 @@ import (
 type SourceKind string
 
 const (
-	Question  SourceKind = "question"
-	Answer    SourceKind = "answer"
-	Report    SourceKind = "report"
-	Review    SourceKind = "review"
-	Attention SourceKind = "attention"
-	Refresh   SourceKind = "refresh"
-	Execution SourceKind = "execution"
-	Pipeline  SourceKind = "pipeline"
-	Factory   SourceKind = "factory"
-	Finding   SourceKind = "finding"
-	Gap       SourceKind = "gap"
+	Question           SourceKind = "question"
+	Answer             SourceKind = "answer"
+	Report             SourceKind = "report"
+	Review             SourceKind = "review"
+	Attention          SourceKind = "attention"
+	Refresh            SourceKind = "refresh"
+	Execution          SourceKind = "execution"
+	Pipeline           SourceKind = "pipeline"
+	Factory            SourceKind = "factory"
+	Finding            SourceKind = "finding"
+	Gap                SourceKind = "gap"
 	GitHubReviewThread SourceKind = "github-review-thread"
 )
 
