@@ -189,10 +189,10 @@ func (n reviewThreadNode) record() *ordjson.Object {
 	thread := ordjson.NewObject()
 	thread.Set("id", n.ID)
 	thread.Set("path", *n.Path)
-	thread.Set("line", n.Line)
-	thread.Set("original_line", n.OriginalLine)
-	thread.Set("start_line", n.StartLine)
-	thread.Set("original_start_line", n.OriginalStartLine)
+	thread.Set("line", optionalLine(n.Line))
+	thread.Set("original_line", optionalLine(n.OriginalLine))
+	thread.Set("start_line", optionalLine(n.StartLine))
+	thread.Set("original_start_line", optionalLine(n.OriginalStartLine))
 	thread.Set("resolved", *n.IsResolved)
 	thread.Set("outdated", *n.IsOutdated)
 	sort.Slice(*n.Comments.Nodes, func(i, j int) bool { return (*n.Comments.Nodes)[i].UpdatedAt > (*n.Comments.Nodes)[j].UpdatedAt })
@@ -230,6 +230,13 @@ func (n reviewThreadNode) record() *ordjson.Object {
 		}
 	}
 	return thread
+}
+
+func optionalLine(line *int) any {
+	if line == nil {
+		return nil
+	}
+	return *line
 }
 
 func boundedThreadDetail(detail string) string {
