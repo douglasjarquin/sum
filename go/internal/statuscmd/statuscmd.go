@@ -60,7 +60,8 @@ func Status(s *store.Store, opts Options) (*ordjson.Object, error) {
 		attentionRecords, _ := row.Get("attention_records")
 		attentionList, _ := attentionRecords.([]any)
 
-		include := !opts.Inbox || len(questionList) > 0 || errorValue != nil || hasAttention || reportAvailable == true || cleanupValue != nil || len(attentionList) > 0
+		reviewThreads := hasOpenReviewThreads(task)
+		include := !opts.Inbox || len(questionList) > 0 || errorValue != nil || hasAttention || reportAvailable == true || cleanupValue != nil || len(attentionList) > 0 || reviewThreads
 		if !include {
 			continue
 		}
@@ -235,6 +236,9 @@ func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 	evidence.Set("pr", prNumber)
 	evidence.Set("merged_for_task", mergedForTask)
 	row.Set("evidence", evidence)
+	if saved := savedReviewThreads(task); saved != nil {
+		row.Set("review_threads", saved)
+	}
 
 	row.Set("notice", nil) // holds the key's place; Status sets the derived view for each row it keeps
 
@@ -277,4 +281,120 @@ func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 	}
 
 	return row
+}
+
+func hasOpenReviewThreads(task *ordjson.Object) bool {
+	pr, _ := task.Get("pr")
+	prRecord, _ := pr.(*ordjson.Object)
+	observationValue, _ := func() (any, bool) {
+		if prRecord == nil {
+			return nil, false
+		}
+		return prRecord.Get("review_threads")
+	}()
+	observation, _ := observationValue.(*ordjson.Object)
+	threadsValue, _ := func() (any, bool) {
+		if observation == nil {
+			return nil, false
+		}
+		return observation.Get("threads")
+	}()
+	threads, _ := threadsValue.([]any)
+	for _, raw := range threads {
+		thread, _ := raw.(*ordjson.Object)
+		if thread != nil {
+			resolved, _ := thread.Get("resolved")
+			if resolved != true {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func savedReviewThreads(task *ordjson.Object) *ordjson.Object {
+	prValue, _ := task.Get("pr")
+	pr, _ := prValue.(*ordjson.Object)
+	identity, _ := func() (any, bool) {
+		if pr == nil {
+			return nil, false
+		}
+		return pr.Get("identity")
+	}()
+	prIdentity, _ := identity.(*ordjson.Object)
+	observationValue, _ := func() (any, bool) {
+		if pr == nil {
+			return nil, false
+		}
+		return pr.Get("review_threads")
+	}()
+	observation, _ := observationValue.(*ordjson.Object)
+	if observation == nil {
+		return nil
+	}
+	result := ordjson.NewObject()
+	for _, key := range []string{"status", "repository", "pr_number", "observed_at", "observed_head_sha", "review_decision", "detail"} {
+		value, _ := observation.Get(key)
+		result.Set(key, value)
+	}
+	result.Set("pr_url", value(prIdentity, "url"))
+	rows := []any{}
+	threadsValue, _ := observation.Get("threads")
+	threads, _ := threadsValue.([]any)
+	for _, raw := range threads {
+		thread, _ := raw.(*ordjson.Object)
+		if thread == nil {
+			continue
+		}
+		row := ordjson.NewObject()
+		for _, key := range []string{"id", "path", "line", "resolved", "outdated", "latest_comment_id", "latest_updated_at", "latest_author", "source_url", "observed_at", "observed_head_sha", "actions", "request_id"} {
+			value, _ := thread.Get(key)
+			row.Set(key, value)
+		}
+		requestID, requestStatus := latestReviewThreadRequest(task, fmt.Sprint(value(thread, "id")), fmt.Sprint(value(thread, "latest_comment_id")), fmt.Sprint(value(thread, "observed_head_sha")), fmt.Sprint(value(prIdentity, "url")))
+		row.Set("request_id", requestID)
+		row.Set("request_status", requestStatus)
+		commentsValue, _ := thread.Get("comments")
+		comments, _ := commentsValue.([]any)
+		if len(comments) > 0 {
+			comment, _ := comments[0].(*ordjson.Object)
+			if comment != nil {
+				for _, key := range []string{"id", "body", "author", "url", "updated_at"} {
+					value, _ := comment.Get(key)
+					row.Set("latest_"+key, value)
+				}
+			}
+		}
+		rows = append(rows, row)
+	}
+	result.Set("threads", rows)
+	return result
+}
+
+func latestReviewThreadRequest(task *ordjson.Object, threadID, revision, head, prURL string) (string, string) {
+	requestsValue, _ := task.Get("github_review_actions")
+	requests, _ := requestsValue.([]any)
+	for i := len(requests) - 1; i >= 0; i-- {
+		request, _ := requests[i].(*ordjson.Object)
+		if request == nil || value(request, "head_sha") != head || value(request, "pr_url") != prURL {
+			continue
+		}
+		threadsValue, _ := request.Get("threads")
+		threads, _ := threadsValue.([]any)
+		for _, raw := range threads {
+			thread, _ := raw.(*ordjson.Object)
+			if thread != nil && value(thread, "id") == threadID && value(thread, "revision") == revision {
+				return fmt.Sprint(value(request, "id")), fmt.Sprint(value(request, "status"))
+			}
+		}
+	}
+	return "", ""
+}
+
+func value(record *ordjson.Object, key string) any {
+	if record == nil {
+		return nil
+	}
+	value, _ := record.Get(key)
+	return value
 }

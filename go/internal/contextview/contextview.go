@@ -33,7 +33,7 @@ import (
 )
 
 // ContextSections mirrors CONTEXT_SECTIONS: the section names `--section` accepts, and what `outline.read.sections` reports.
-var ContextSections = []string{"outline", "brief", "decisions", "handoff", "evidence", "execution", "environment", "update", "returns", "notes", "findings", "pipeline"}
+var ContextSections = []string{"outline", "brief", "decisions", "handoff", "evidence", "execution", "environment", "update", "returns", "notes", "findings", "pipeline", "review_threads"}
 
 var stateFields = []string{"status", "pane", "session", "machine", "parent", "reviewer", "worktree", "branch", "cleanup", "pr", "error"}
 var cursorFields = []string{"questions", "evidence", "answered", "applied", "notes", "refresh", "attention"}
@@ -617,6 +617,66 @@ func sectionReturns(s *store.Store, task *ordjson.Object) *ordjson.Object {
 	result.Set("deliveries", jsonInt(len(listField(returnsView, "deliveries"))))
 	result.Set("note", getField(returnsView, "note"))
 	return result
+}
+
+func sectionReviewThreads(task *ordjson.Object, maxChars int) *ordjson.Object {
+	pr := asObject(getField(task, "pr"))
+	identity := asObject(getField(pr, "identity"))
+	observation := asObject(getField(pr, "review_threads"))
+	result := ordjson.NewObject()
+	if observation == nil {
+		result.Set("status", "unavailable")
+		result.Set("threads", []any{})
+		result.Set("review_decision", nil)
+		result.Set("note", "No GitHub review-thread observation is saved. This view does not poll GitHub.")
+		return result
+	}
+	result.Set("status", getField(observation, "status"))
+	result.Set("repository", getField(observation, "repository"))
+	result.Set("pr_number", getField(observation, "pr_number"))
+	result.Set("pr_url", getField(identity, "url"))
+	result.Set("observed_at", getField(observation, "observed_at"))
+	result.Set("observed_head_sha", getField(observation, "observed_head_sha"))
+	result.Set("review_decision", getField(observation, "review_decision"))
+	result.Set("detail", boundedViewOrNil(getField(observation, "detail"), maxChars))
+	rows := make([]any, 0, len(listField(observation, "threads")))
+	for _, raw := range listField(observation, "threads") {
+		thread := asObject(raw)
+		row := pick(thread, []string{"id", "path", "line", "original_line", "start_line", "original_start_line", "resolved", "outdated", "latest_comment_id", "latest_updated_at", "latest_author", "source_url", "observed_at", "observed_head_sha", "actions"})
+		requestID, requestStatus := latestReviewThreadRequest(task, asString(getField(thread, "id")), asString(getField(thread, "latest_comment_id")), asString(getField(thread, "observed_head_sha")), asString(getField(identity, "url")))
+		row.Set("request_id", nilIfEmpty(requestID))
+		row.Set("request_status", nilIfEmpty(requestStatus))
+		comments := listField(thread, "comments")
+		if len(comments) > 0 {
+			latest := asObject(comments[0])
+			row.Set("latest_comment", boundedViewOrNil(getField(latest, "body"), maxChars))
+			row.Set("latest_comment_id", getField(latest, "id"))
+			row.Set("latest_author", getField(latest, "author"))
+			row.Set("latest_updated_at", getField(latest, "updated_at"))
+		}
+		rows = append(rows, row)
+	}
+	result.Set("threads", rows)
+	result.Set("actions", boundedViewOrNil(getField(task, "github_review_actions"), maxChars))
+	result.Set("note", "Saved GitHub thread state only. Address, Discuss, and Draft reply requests stay local to Sum; no action posts a reply or resolves a thread. This view does not poll GitHub.")
+	return result
+}
+
+func latestReviewThreadRequest(task *ordjson.Object, threadID, revision, head, prURL string) (string, string) {
+	requests := listField(task, "github_review_actions")
+	for i := len(requests) - 1; i >= 0; i-- {
+		request := asObject(requests[i])
+		if asString(getField(request, "head_sha")) != head || asString(getField(request, "pr_url")) != prURL {
+			continue
+		}
+		for _, raw := range listField(request, "threads") {
+			thread := asObject(raw)
+			if asString(getField(thread, "id")) == threadID && asString(getField(thread, "revision")) == revision {
+				return asString(getField(request, "id")), asString(getField(request, "status"))
+			}
+		}
+	}
+	return "", ""
 }
 
 func handoffStringList(items []any, limit int) *ordjson.Object {
@@ -1279,8 +1339,17 @@ func sectionOutline(s *store.Store, task *ordjson.Object, taskID, sumctlPath str
 	outlineObj.Set("graph", getField(asObject(getField(task, "graph")), "state"))
 
 	readObj := ordjson.NewObject()
-	sectionsListAny := make([]any, len(ContextSections))
-	for i, sec := range ContextSections {
+	availableSections := ContextSections
+	if asObject(getField(asObject(getField(task, "pr")), "review_threads")) == nil {
+		availableSections = make([]string, 0, len(ContextSections)-1)
+		for _, sec := range ContextSections {
+			if sec != "review_threads" {
+				availableSections = append(availableSections, sec)
+			}
+		}
+	}
+	sectionsListAny := make([]any, len(availableSections))
+	for i, sec := range availableSections {
 		sectionsListAny[i] = sec
 	}
 	readObj.Set("sections", sectionsListAny)
@@ -1352,6 +1421,9 @@ func View(s *store.Store, taskID, sumctlPath string, opts Options) (*ordjson.Obj
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
+	}
+	if role == "coordinator" && asObject(getField(asObject(getField(task, "pr")), "review_threads")) != nil && !containsSection(sections, "review_threads") {
+		sections = append(sections, "review_threads")
 	}
 
 	versionsObj, versionsErr := versions.View(s, task)
@@ -1486,7 +1558,18 @@ func View(s *store.Store, taskID, sumctlPath string, opts Options) (*ordjson.Obj
 				return nil, pipelineErr
 			}
 			result.Set("pipeline", pipeline.View(record))
+		case "review_threads":
+			result.Set("review_threads", sectionReviewThreads(task, opts.MaxChars))
 		}
 	}
 	return result, nil
+}
+
+func containsSection(sections []string, target string) bool {
+	for _, section := range sections {
+		if section == target {
+			return true
+		}
+	}
+	return false
 }

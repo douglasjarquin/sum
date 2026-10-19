@@ -106,29 +106,38 @@ type Text struct {
 
 // Row is one presentation item with its routes; identical shape in NeedsYou and TaskRow.Items.
 type Row struct {
-	Project     string                    `json:"project"`
-	Task        string                    `json:"task"`
-	Identity    string                    `json:"identity"`
-	Source      presentation.Source       `json:"source"`
-	Owner       presentation.Owner        `json:"owner"`
-	Kind        presentation.Kind         `json:"presentation"`
-	Reason      string                    `json:"reason"`
-	State       string                    `json:"state,omitempty"`
-	At          string                    `json:"at,omitempty"`
-	Delivery    string                    `json:"delivery,omitempty"`
-	Uncertain   bool                      `json:"uncertain"`
-	Text        Text                      `json:"text"`
-	Detail      []string                  `json:"detail"`
-	Answer      []string                  `json:"answer,omitempty"`
-	Choices     []presentation.Choice     `json:"choices,omitempty"`
-	Recommended string                    `json:"recommended,omitempty"`
-	Rationale   string                    `json:"rationale,omitempty"`
-	Sources     []string                  `json:"sources,omitempty"`
-	HumanAction *presentation.HumanAction `json:"human_action,omitempty"`
-	Actions     []presentation.Action     `json:"actions,omitempty"`
-	OutcomeAt   string                    `json:"outcome_at,omitempty"`
-	Feedback    string                    `json:"feedback,omitempty"`
-	AnswerText  Text                      `json:"answer_text"`
+	Project       string                    `json:"project"`
+	Task          string                    `json:"task"`
+	Identity      string                    `json:"identity"`
+	Source        presentation.Source       `json:"source"`
+	Owner         presentation.Owner        `json:"owner"`
+	Kind          presentation.Kind         `json:"presentation"`
+	Reason        string                    `json:"reason"`
+	State         string                    `json:"state,omitempty"`
+	At            string                    `json:"at,omitempty"`
+	OutcomeAt     string                    `json:"outcome_at,omitempty"`
+	Feedback      string                    `json:"feedback,omitempty"`
+	Delivery      string                    `json:"delivery,omitempty"`
+	Uncertain     bool                      `json:"uncertain"`
+	Text          Text                      `json:"text"`
+	AnswerText    Text                      `json:"answer_text"`
+	Detail        []string                  `json:"detail"`
+	Answer        []string                  `json:"answer,omitempty"`
+	Choices       []presentation.Choice     `json:"choices,omitempty"`
+	Recommended   string                    `json:"recommended,omitempty"`
+	Rationale     string                    `json:"rationale,omitempty"`
+	Sources       []string                  `json:"sources,omitempty"`
+	HumanAction   *presentation.HumanAction `json:"human_action,omitempty"`
+	Actions       []presentation.Action     `json:"actions,omitempty"`
+	SourceURL     string                    `json:"source_url,omitempty"`
+	Author        string                    `json:"author,omitempty"`
+	File          string                    `json:"file,omitempty"`
+	Line          *int                      `json:"line,omitempty"`
+	Resolved      bool                      `json:"resolved,omitempty"`
+	Outdated      bool                      `json:"outdated,omitempty"`
+	ObservedAt    string                    `json:"observed_at,omitempty"`
+	RequestID     string                    `json:"request_id,omitempty"`
+	RequestStatus string                    `json:"request_status,omitempty"`
 }
 
 // Rank orders presentation kinds: decisions before inspection before routine.
@@ -198,6 +207,9 @@ func DetailRoute(item presentation.Item, task Task) []string {
 	if item.Source.Kind == presentation.Finding {
 		return []string{"finding", "show", item.Source.ID}
 	}
+	if item.Source.Kind == presentation.GitHubReviewThread {
+		return []string{"context", id, "--section", "review_threads", "--max-chars", "0"}
+	}
 	if item.Source.Kind == presentation.Question && task.Record != nil {
 		for i, raw := range list(task.Record, "questions") {
 			if str(obj(raw), "id") == strings.TrimPrefix(item.Source.ID, "question:") {
@@ -233,7 +245,7 @@ func boundedText(text string) Text {
 }
 
 func rowOf(item presentation.Item, task Task) Row {
-	return Row{Project: item.ProjectID, Task: item.Source.TaskID, Identity: item.Identity, Source: item.Source, Owner: item.Owner, Kind: item.Kind, Reason: item.Reason, State: item.State, At: item.At, OutcomeAt: item.OutcomeAt, Feedback: item.Feedback, Delivery: item.Delivery, Uncertain: item.Uncertain, Text: boundedText(item.Text), AnswerText: boundedText(item.Answer), Detail: DetailRoute(item, task), Answer: AnswerRoute(item), Choices: item.Choices, Recommended: item.Recommended, Rationale: item.Rationale, Sources: item.Sources, HumanAction: item.HumanAction, Actions: item.Actions}
+	return Row{Project: item.ProjectID, Task: item.Source.TaskID, Identity: item.Identity, Source: item.Source, Owner: item.Owner, Kind: item.Kind, Reason: item.Reason, State: item.State, At: item.At, OutcomeAt: item.OutcomeAt, Feedback: item.Feedback, Delivery: item.Delivery, Uncertain: item.Uncertain, Text: boundedText(item.Text), AnswerText: boundedText(item.Answer), Detail: DetailRoute(item, task), Answer: AnswerRoute(item), Choices: item.Choices, Recommended: item.Recommended, Rationale: item.Rationale, Sources: item.Sources, HumanAction: item.HumanAction, Actions: item.Actions, SourceURL: item.SourceURL, Author: item.Author, File: item.File, Line: item.Line, Resolved: item.Resolved, Outdated: item.Outdated, ObservedAt: item.ObservedAt, RequestID: item.RequestID, RequestStatus: item.RequestStatus}
 }
 
 func sortItems(items []presentation.Item) {

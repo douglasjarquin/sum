@@ -25,6 +25,8 @@ A delivery Herdr refuses before it reaches the worker records nothing and charge
 An uncertain expansion delivery stays charged, including when the helper exits after saving its intent; a queued or mid-turn delivery counts as delivered.
 Use a new key only for an explicitly requested new iteration.
 
+GitHub review-thread Address actions use the same repair ledger and require the exact current worker attempt. Their stable request records the PR head and every included thread ID and comment revision. A repeated or uncertain request is not sent again under a new key. Local Discuss notes and Draft replies remain in the task record; neither posts a GitHub reply or resolves a thread.
+
 `execution resume` relaunches already-approved work and consumes nothing.
 Initial dispatch, observations, notifications, required worker and coordinator verification, and brief refresh do not consume extra iterations.
 Candidate, harness, and runtime changes do not reset the task record.

@@ -14,7 +14,7 @@
       "execution": "Show, park, or explicitly resume task-local execution reservations",
       "repair": "Coordinator-controlled corrective worker instructions",
       "help": "Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments",
-      "context": "Bounded selective read of one task: outline by default, --section for parts, --role for a role view, --since CURSOR for changes",
+      "context": "Bounded selective read of one task: outline by default, --section for parts including saved GitHub review threads, --role for a role view, --since CURSOR for changes",
       "notes": "Append one timestamped entry to the task's optional notes.md (a claim, backed up with the records; credentials refused)",
       "finding": "Record and follow optional findings with explicit coordinator dispositions and linked work",
       "env": "Task-local environment record: declared dev commands, observed URLs/ports, log paths, pane/container references; observes and records only",
@@ -471,7 +471,7 @@
   },
   "context": {
     "topic": "context",
-    "help": "Bounded selective read of one task: outline by default, --section for parts, --role for a role view, --since CURSOR for changes",
+    "help": "Bounded selective read of one task: outline by default, --section for parts including saved GitHub review threads, --role for a role view, --since CURSOR for changes",
     "arguments": [
       {
         "name": "task",
@@ -491,7 +491,9 @@
           "environment",
           "update",
           "returns",
-          "notes"
+          "notes",
+          "pipeline",
+          "review_threads"
         ]
       },
       {
@@ -998,7 +1000,7 @@
     "help": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names. The read is retried once, within the same bound, only for a positively transient gh failure (HTTP 5xx, 429, secondary rate limit, connection error); auth, 404, GraphQL, malformed output, and timeouts are never retried, and no write ever is",
     "arguments": [],
     "subcommands": {
-      "reconcile": "Coordinator only: inspect PR --number in the task repository with gh (one bounded retry of that read on a transient failure), record its exact identity, state, and mismatches, then publish the worker's before/after evidence",
+      "reconcile": "Coordinator only: inspect PR --number in the task repository with gh (one bounded retry of that read on a transient failure), record its exact identity, state, mismatches, and head-bound review threads, then publish the worker's before/after evidence",
       "evidence": "Coordinator only: publish each evidence run's before/after media into the reconciled PR's marked block; receipts and publish copies stay under the task record"
     },
     "read_only": false,
@@ -1730,7 +1732,7 @@
   },
   "pr-reconcile": {
     "topic": "pr-reconcile",
-    "help": "Coordinator only: inspect PR --number in the task repository with gh and record its exact identity, state, and mismatches",
+    "help": "Coordinator only: inspect PR --number in the task repository and record its exact identity, state, mismatches, and bounded review-thread observations against the observed head. Incomplete reads keep previous threads with their earlier observation times. Status, inbox, and context use saved state and do not poll GitHub.",
     "arguments": [
       {
         "name": "task",
@@ -1754,6 +1756,26 @@
         "name": "--accept-base-branch",
         "help": "Record the PR's base branch as the task's delivery branch (source accepted) when it differs from the recorded one, after inspecting both; without it the disagreement stays a finding that blocks publication and merge admission, and the PR is never edited"
       }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "pr-thread-action": {
+    "topic": "pr-thread-action",
+    "help": "Coordinator only: revalidate the saved PR binding, head, and exact GitHub thread revisions before recording Address, Discuss, Draft reply, or Open comment. Address stores one request naming every included thread and revision, then uses the existing repair delivery checks. Discuss and Draft reply stay local; no action posts a GitHub reply or resolves a thread.",
+    "arguments": [
+      {"name": "task", "help": null, "required": true},
+      {"name": "--action", "help": "address, discuss, draft-reply, or open-comment", "choices": ["address", "discuss", "draft-reply", "open-comment"], "required": true},
+      {"name": "--head", "help": "observed PR head SHA shown on the saved row", "required": true},
+      {"name": "--pr-url", "help": "recorded GitHub PR URL shown on the saved row", "required": true},
+      {"name": "--thread", "help": "exact GitHub thread ID; repeat with matching --revision to address selected threads"},
+      {"name": "--revision", "help": "exact latest GitHub comment ID paired with each --thread"},
+      {"name": "--all", "help": "address every currently actionable thread from a complete saved observation"},
+      {"name": "--text", "help": "corrective instruction, discussion note, or draft reply text"},
+      {"name": "--attempt", "help": "exact running worker attempt required for Address"},
+      {"name": "--class", "help": "repair scope: in-scope or expansion", "choices": ["in-scope", "expansion"]},
+      {"name": "--reason", "help": "required explanation for expansion work"}
     ],
     "subcommands": null,
     "read_only": false,

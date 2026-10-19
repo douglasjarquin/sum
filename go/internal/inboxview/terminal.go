@@ -435,6 +435,44 @@ func (v *View) detailBody() []line {
 				out = append(out, line{text: fmt.Sprintf("    (first %d of %d characters; the open route has the rest)", len([]rune(item.Text.Text)), item.Text.Chars)})
 			}
 		}
+		if item.Source.Kind == presentation.GitHubReviewThread {
+			if item.Author != "" {
+				out = append(out, line{text: "    author: " + Sanitize(item.Author)})
+			}
+			if item.File != "" {
+				location := item.File
+				if item.Line != nil {
+					location += fmt.Sprintf(":%d", *item.Line)
+				}
+				out = append(out, line{text: "    location: " + Sanitize(location)})
+			}
+			if item.SourceURL != "" {
+				out = append(out, line{text: "    GitHub: " + Sanitize(item.SourceURL)})
+			}
+			if item.ObservedAt != "" {
+				freshness := "complete"
+				if item.Uncertain {
+					freshness = "uncertain or incomplete"
+				}
+				out = append(out, line{text: "    observed: " + Sanitize(item.ObservedAt) + " (" + freshness + ")"})
+			}
+			if item.Resolved || item.Outdated {
+				state := ""
+				if item.Resolved {
+					state = "resolved"
+				}
+				if item.Outdated {
+					if state != "" {
+						state += ", "
+					}
+					state += "outdated"
+				}
+				out = append(out, line{text: "    GitHub state: " + state})
+			}
+			if item.RequestID != "" {
+				out = append(out, line{text: "    local request: " + Sanitize(item.RequestID) + " (" + Sanitize(item.RequestStatus) + ")"})
+			}
+		}
 		if item.Recommended != "" {
 			label := item.Recommended
 			for _, choice := range item.Choices {

@@ -9,17 +9,18 @@ import (
 type SourceKind string
 
 const (
-	Question  SourceKind = "question"
-	Answer    SourceKind = "answer"
-	Report    SourceKind = "report"
-	Review    SourceKind = "review"
-	Attention SourceKind = "attention"
-	Refresh   SourceKind = "refresh"
-	Execution SourceKind = "execution"
-	Pipeline  SourceKind = "pipeline"
-	Factory   SourceKind = "factory"
-	Finding   SourceKind = "finding"
-	Gap       SourceKind = "gap"
+	Question           SourceKind = "question"
+	Answer             SourceKind = "answer"
+	Report             SourceKind = "report"
+	Review             SourceKind = "review"
+	Attention          SourceKind = "attention"
+	Refresh            SourceKind = "refresh"
+	Execution          SourceKind = "execution"
+	Pipeline           SourceKind = "pipeline"
+	Factory            SourceKind = "factory"
+	Finding            SourceKind = "finding"
+	Gap                SourceKind = "gap"
+	GitHubReviewThread SourceKind = "github-review-thread"
 )
 
 type Owner string
@@ -135,24 +136,51 @@ func FindingActions(source Source, state string) []Action {
 	return actions
 }
 
+func GitHubThreadActions(source Source, head, prURL, sourceURL string) []Action {
+	if source.TaskID == "" || source.ID == "" || source.Revision == "" || head == "" || prURL == "" {
+		return nil
+	}
+	base := []string{"pr", "thread", "action", source.TaskID, "--thread", source.ID, "--revision", source.Revision, "--head", head, "--pr-url", prURL}
+	actions := []Action{
+		{Target: source, Kind: "address-selected", Label: "Address selected", State: "open", Arguments: append(append([]string{}, base...), "--action", "address", "--attempt", "<attempt>", "--text")},
+		{Target: source, Kind: "address-all", Label: "Address all", State: "open", Arguments: []string{"pr", "thread", "action", source.TaskID, "--action", "address", "--head", head, "--pr-url", prURL, "--all", "--attempt", "<attempt>", "--text"}},
+		{Target: source, Kind: "discuss", Label: "Discuss", State: "open", Arguments: append(append([]string{}, base...), "--action", "discuss", "--text")},
+		{Target: source, Kind: "draft-reply", Label: "Draft reply", State: "open", Arguments: append(append([]string{}, base...), "--action", "draft-reply", "--text")},
+	}
+	if sourceURL != "" {
+		actions = append(actions, Action{Target: source, Kind: "open-comment", Label: "Open comment", State: "open", Arguments: append(append([]string{}, base...), "--action", "open-comment")})
+	}
+	return actions
+}
+
 type Fact struct {
-	Source      Source       `json:"source"`
-	ProjectID   string       `json:"project,omitempty"`
-	State       string       `json:"state,omitempty"`
-	At          string       `json:"at,omitempty"`
-	Text        string       `json:"text,omitempty"`
-	Answer      string       `json:"answer,omitempty"`
-	CloseReason string       `json:"close_reason,omitempty"`
-	OutcomeAt   string       `json:"outcome_at,omitempty"`
-	Feedback    string       `json:"feedback,omitempty"`
-	Delivery    string       `json:"delivery,omitempty"`
-	Details     []Detail     `json:"details"`
-	Choices     []Choice     `json:"choices,omitempty"`
-	Recommended string       `json:"recommended,omitempty"`
-	Rationale   string       `json:"rationale,omitempty"`
-	Sources     []string     `json:"sources,omitempty"`
-	HumanAction *HumanAction `json:"human_action,omitempty"`
-	Actions     []Action     `json:"actions,omitempty"`
+	Source        Source       `json:"source"`
+	ProjectID     string       `json:"project,omitempty"`
+	State         string       `json:"state,omitempty"`
+	At            string       `json:"at,omitempty"`
+	Text          string       `json:"text,omitempty"`
+	Answer        string       `json:"answer,omitempty"`
+	CloseReason   string       `json:"close_reason,omitempty"`
+	OutcomeAt     string       `json:"outcome_at,omitempty"`
+	Feedback      string       `json:"feedback,omitempty"`
+	Delivery      string       `json:"delivery,omitempty"`
+	Details       []Detail     `json:"details"`
+	Choices       []Choice     `json:"choices,omitempty"`
+	Recommended   string       `json:"recommended,omitempty"`
+	Rationale     string       `json:"rationale,omitempty"`
+	Sources       []string     `json:"sources,omitempty"`
+	HumanAction   *HumanAction `json:"human_action,omitempty"`
+	Actions       []Action     `json:"actions,omitempty"`
+	SourceURL     string       `json:"source_url,omitempty"`
+	Author        string       `json:"author,omitempty"`
+	File          string       `json:"file,omitempty"`
+	Line          *int         `json:"line,omitempty"`
+	Resolved      bool         `json:"resolved,omitempty"`
+	Outdated      bool         `json:"outdated,omitempty"`
+	ObservedAt    string       `json:"observed_at,omitempty"`
+	RequestID     string       `json:"request_id,omitempty"`
+	RequestStatus string       `json:"request_status,omitempty"`
+	Uncertain     bool         `json:"uncertain,omitempty"`
 }
 
 type Item struct {
@@ -169,9 +197,13 @@ func Classify(f Fact) Item {
 	if f.Source.Kind == Question {
 		f.Feedback = questionFeedback(f)
 	}
-	identity, _ := json.Marshal(f.Source)
+	identitySource := f.Source
+	if identitySource.Kind == GitHubReviewThread {
+		identitySource.Candidate = ""
+	}
+	identity, _ := json.Marshal(identitySource)
 	item := Item{Fact: f, Identity: string(identity), Owner: Coordinator, Kind: Inspection, Reason: "unknown-source-kind"}
-	item.Uncertain = f.Delivery == "submitted" || f.Delivery == "uncertain" || f.Delivery == "in-flight" || f.Delivery == "unknown"
+	item.Uncertain = f.Uncertain || f.Delivery == "submitted" || f.Delivery == "uncertain" || f.Delivery == "in-flight" || f.Delivery == "unknown"
 	switch f.Source.Kind {
 	case Question:
 		switch f.State {
@@ -194,6 +226,12 @@ func Classify(f Fact) Item {
 		item.Kind, item.Reason = Routine, "report-awaiting-action"
 	case Review:
 		item.Kind, item.Reason = Routine, "review-awaiting-action"
+	case GitHubReviewThread:
+		if f.Resolved {
+			item.Owner, item.Kind, item.Reason = Nobody, Resolved, "github-thread-resolved"
+		} else {
+			item.Owner, item.Kind, item.Reason = Human, Decision, "github-thread-open"
+		}
 	case Refresh:
 		item.Owner, item.Kind, item.Reason = Worker, Routine, RefreshUnapplied
 	case Attention:
