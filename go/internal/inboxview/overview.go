@@ -14,19 +14,21 @@ import (
 
 // OverviewChars bounds prose in overview rows; the detail route reaches the full saved text.
 const OverviewChars = 240
+const RecentlyHandledLimit = 20
 
 // Overview is a grouped, read-only view of one snapshot. Counts, Gaps and NeedsYou are global
 // facts computed before any project focus, so a focused response never hides another project's work.
 type Overview struct {
-	Counts      Counts             `json:"counts"`
-	Complete    bool               `json:"complete"`
-	Project     string             `json:"project,omitempty"`
-	Gaps        []Gap              `json:"gaps"`
-	NeedsYou    []Row              `json:"needs_you"`
-	Groups      []Group            `json:"groups"`
-	Standalone  *Group             `json:"standalone"`
-	Coordinator CoordinatorSummary `json:"coordinator"`
-	Note        string             `json:"note"`
+	Counts          Counts             `json:"counts"`
+	Complete        bool               `json:"complete"`
+	Project         string             `json:"project,omitempty"`
+	Gaps            []Gap              `json:"gaps"`
+	NeedsYou        []Row              `json:"needs_you"`
+	RecentlyHandled []Row              `json:"recently_handled"`
+	Groups          []Group            `json:"groups"`
+	Standalone      *Group             `json:"standalone"`
+	Coordinator     CoordinatorSummary `json:"coordinator"`
+	Note            string             `json:"note"`
 	// Derived is each readable task's pipeline record, derived once here so digest readers reuse it; never encoded.
 	Derived map[string]pipeline.Record `json:"-"`
 }
@@ -113,9 +115,12 @@ type Row struct {
 	Reason        string                    `json:"reason"`
 	State         string                    `json:"state,omitempty"`
 	At            string                    `json:"at,omitempty"`
+	OutcomeAt     string                    `json:"outcome_at,omitempty"`
+	Feedback      string                    `json:"feedback,omitempty"`
 	Delivery      string                    `json:"delivery,omitempty"`
 	Uncertain     bool                      `json:"uncertain"`
 	Text          Text                      `json:"text"`
+	AnswerText    Text                      `json:"answer_text"`
 	Detail        []string                  `json:"detail"`
 	Answer        []string                  `json:"answer,omitempty"`
 	Choices       []presentation.Choice     `json:"choices,omitempty"`
@@ -240,7 +245,7 @@ func boundedText(text string) Text {
 }
 
 func rowOf(item presentation.Item, task Task) Row {
-	return Row{Project: item.ProjectID, Task: item.Source.TaskID, Identity: item.Identity, Source: item.Source, Owner: item.Owner, Kind: item.Kind, Reason: item.Reason, State: item.State, At: item.At, Delivery: item.Delivery, Uncertain: item.Uncertain, Text: boundedText(item.Text), Detail: DetailRoute(item, task), Answer: AnswerRoute(item), Choices: item.Choices, Recommended: item.Recommended, Rationale: item.Rationale, Sources: item.Sources, HumanAction: item.HumanAction, Actions: item.Actions, SourceURL: item.SourceURL, Author: item.Author, File: item.File, Line: item.Line, Resolved: item.Resolved, Outdated: item.Outdated, ObservedAt: item.ObservedAt, RequestID: item.RequestID, RequestStatus: item.RequestStatus}
+	return Row{Project: item.ProjectID, Task: item.Source.TaskID, Identity: item.Identity, Source: item.Source, Owner: item.Owner, Kind: item.Kind, Reason: item.Reason, State: item.State, At: item.At, OutcomeAt: item.OutcomeAt, Feedback: item.Feedback, Delivery: item.Delivery, Uncertain: item.Uncertain, Text: boundedText(item.Text), AnswerText: boundedText(item.Answer), Detail: DetailRoute(item, task), Answer: AnswerRoute(item), Choices: item.Choices, Recommended: item.Recommended, Rationale: item.Rationale, Sources: item.Sources, HumanAction: item.HumanAction, Actions: item.Actions, SourceURL: item.SourceURL, Author: item.Author, File: item.File, Line: item.Line, Resolved: item.Resolved, Outdated: item.Outdated, ObservedAt: item.ObservedAt, RequestID: item.RequestID, RequestStatus: item.RequestStatus}
 }
 
 func sortItems(items []presentation.Item) {
@@ -271,7 +276,7 @@ func (c *GroupCounts) add(item presentation.Item) {
 
 // BuildOverview groups a snapshot by canonical recorded project identity. It is pure: no I/O, no Herdr.
 func BuildOverview(snapshot Snapshot) Overview {
-	out := Overview{Counts: snapshot.Counts, Complete: snapshot.Complete, Gaps: []Gap{}, NeedsYou: []Row{}, Groups: []Group{}, Note: OverviewNote, Derived: map[string]pipeline.Record{}}
+	out := Overview{Counts: snapshot.Counts, Complete: snapshot.Complete, Gaps: []Gap{}, NeedsYou: []Row{}, RecentlyHandled: []Row{}, Groups: []Group{}, Note: OverviewNote, Derived: map[string]pipeline.Record{}}
 	tasks := map[string]Task{}
 	for _, task := range snapshot.Tasks {
 		tasks[task.ID] = task
@@ -327,12 +332,24 @@ func BuildOverview(snapshot Snapshot) Overview {
 		row := taskRow(task, len(gapped[task.ID]) > 0, out.Derived[task.ID])
 		for _, item := range task.Items {
 			g.Counts.add(item)
+			if recentOutcome(item) {
+				out.RecentlyHandled = append(out.RecentlyHandled, rowOf(item, task))
+			}
 		}
 		g.Counts.Tasks++
 		if row.State == "running" && !row.Archived {
 			g.Counts.Working++
 		}
 		g.Tasks = append(g.Tasks, row)
+	}
+	sort.SliceStable(out.RecentlyHandled, func(i, j int) bool {
+		if out.RecentlyHandled[i].OutcomeAt != out.RecentlyHandled[j].OutcomeAt {
+			return out.RecentlyHandled[i].OutcomeAt > out.RecentlyHandled[j].OutcomeAt
+		}
+		return out.RecentlyHandled[i].Identity < out.RecentlyHandled[j].Identity
+	})
+	if len(out.RecentlyHandled) > RecentlyHandledLimit {
+		out.RecentlyHandled = out.RecentlyHandled[:RecentlyHandledLimit]
 	}
 	for name, lanes := range factoryLanes(snapshot.Factory) {
 		group(name).Factory = &FactoryOccupancy{Lanes: lanes}
@@ -348,6 +365,13 @@ func BuildOverview(snapshot Snapshot) Overview {
 	}
 	sort.SliceStable(out.Groups, func(i, j int) bool { return groupLess(out.Groups[i], out.Groups[j]) })
 	return out
+}
+
+func recentOutcome(item presentation.Item) bool {
+	if item.Source.Kind == presentation.Question {
+		return item.State != "open" && item.State != ""
+	}
+	return item.Source.Kind == presentation.Report && item.Reason == "report-awaiting-action"
 }
 
 func taskRow(task Task, gapped bool, derived pipeline.Record) TaskRow {
