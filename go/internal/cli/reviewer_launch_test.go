@@ -48,16 +48,20 @@ func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
 			if pane == "" {
 				t.Fatal("launch result has no reviewer pane")
 			}
+			home := d.home
+			if resolved, err := filepath.EvalSymlinks(d.home); err == nil {
+				home = resolved
+			}
 			wantArgv := append([]string(nil), tc.wantArgv...)
 			if tc.wantAgent == "claude" {
-				wantArgv = []string{"--add-dir", filepath.Join(d.home, "tasks", taskID), "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
+				wantArgv = []string{"--add-dir", filepath.Join(home, "tasks", taskID), "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
 			}
 			if !reflect.DeepEqual(asSlice(bound["argv"]), stringsToAny(wantArgv)) {
 				t.Fatalf("recorded reviewer argv = %v, want %v", bound["argv"], wantArgv)
 			}
 			if tc.wantAgent == "claude" {
 				pinned := asString(bound["skill_path"])
-				if !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure")+string(filepath.Separator)) {
+				if !strings.HasPrefix(pinned, filepath.Join(home, "tasks", taskID, "procedure")+string(filepath.Separator)) {
 					t.Fatalf("reviewer delivery skill path = %q, want task-local procedure file", pinned)
 				}
 				context := d.ctl(true, "context", taskID, "--role", "reviewer")
