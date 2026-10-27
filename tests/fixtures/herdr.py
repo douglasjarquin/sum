@@ -77,7 +77,7 @@ if args[:2] == ["agent", "start"]:
         counter_path.write_text(str(n))
         if n <= int(busy): fail("agent_pane_busy", "agent target pane %s is not an available shell" % pane)
     # agent_pid is this invocation's real pid: dead on exit, so recorded occupants never collide with a live host process.
-    state["panes"][pane].update(agent=arg("--kind"), name=args[2], agent_status="idle", agent_pid=os.getpid())
+    state["panes"][pane].update(agent=arg("--kind"), name=args[2], agent_status=os.environ.get("FAKE_START_STATUS", "idle"), agent_pid=os.getpid())
     save()
     if os.environ.get("FAKE_START_UNCERTAIN"): fail("agent_not_ready: simulated trust prompt")
     emit({"agent": state["panes"][pane]})
@@ -108,15 +108,23 @@ if args[:2] == ["agent", "prompt"]:
                 pass
             os._exit(1)
     if os.environ.get("FAKE_FAIL_PROMPT") or args[2] in os.environ.get("FAKE_FAIL_PROMPT_PANES", "").split(","): fail("simulated uncertain prompt")
-    pane["last_prompt"] = args[3]
-    pane["agent_status"] = "working"
+    before = pane["agent_status"]
+    if os.environ.get("FAKE_PROMPT_EATEN") and not pane.get("prompt_eaten"):
+        pane["prompt_eaten"] = True  # A startup dialog swallows the first submission whole: nothing reaches the input, the status never changes.
+    else:
+        pane["last_prompt"] = args[3]
+        pane["agent_status"] = "working"
     if os.environ.get("FAKE_PROMPT_HANG"):  # The prompt reached the pane, then the CLI never answered: the caller sees only a timeout.
         save(); import time; time.sleep(float(os.environ["FAKE_PROMPT_HANG"]))
+    if "--wait" in args and before != "working" and pane["agent_status"] not in ("working", "blocked"):
+        save()  # Real 0.9.5 rejects a submission that produced no observed working or blocked activity within its fixed gate.
+        fail("agent_prompt_stalled", "agent prompt produced no observed working or blocked state within 5000 ms; current status is %s" % pane["agent_status"])
     emit({"agent": pane})
 if args[:2] == ["agent", "wait"]:
     if "--status" in args or "--until" not in args: fail("obsolete --status flag")
     pane = state["panes"].get(args[2])
-    if not pane or pane["agent_status"] != arg("--until"): fail("timeout")
+    untils = [args[i + 1] for i, a in enumerate(args) if a == "--until"]
+    if not pane or pane["agent_status"] not in untils: fail("timeout")
     emit({"agent": pane})
 if args[:2] == ["integration", "status"]: emit({"integrations": []})
 # --- issue #18 metadata surface, as the real 0.9.0 CLI behaves: token patches print nothing, tokens ride get/list responses -----

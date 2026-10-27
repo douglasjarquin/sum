@@ -218,7 +218,17 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if err != nil {
 		return nil, err
 	}
-	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, skillPath, worktree, &bound)
+	var gate error
+	ready, readyCode, readyErr := herdrclient.Observe(herdrPath, session, herdrclient.AgentReadyCallTimeout, herdrclient.AgentReadyArgs(pane)...)
+	switch {
+	case readyErr != nil:
+		gate = readyErr
+	case readyCode != "":
+		gate = fmt.Errorf("the reviewer agent never reached a state that accepts input (%s)", readyCode)
+	case herdrclient.AgentStatus(herdrclient.UnwrapAgent(ready)) == "blocked":
+		gate = fmt.Errorf("the reviewer agent is waiting at a startup or permission dialog (blocked)")
+	}
+	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, skillPath, worktree, &bound, gate)
 	if err != nil {
 		return nil, err
 	}
@@ -239,9 +249,9 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 		result.Set("rebind", rebind)
 		result.Set("note", "The recorded reviewer pane was proven gone, so a fresh labeled task tab replaced it and the rebind is recorded; findings must be saved with `review` from the new pane.")
 	}
-	if herdrErrorCode(fmt.Errorf("%s", asString(delivery, "detail"))) == "agent_not_ready" {
+	if code := herdrErrorCode(fmt.Errorf("%s", asString(delivery, "detail"))); gate != nil || code == "agent_not_ready" || code == "agent_blocked" || code == "agent_prompt_stalled" {
 		result.Set("action", "needs-attention")
-		result.Set("note", "Reviewer startup is blocked and needs attention (agent_not_ready): "+asString(delivery, "detail"))
+		result.Set("note", "Reviewer startup needs attention; the kickoff was not confirmed delivered: "+asString(delivery, "detail"))
 	}
 	result.Set("prompt", delivery)
 	return result, nil
@@ -292,7 +302,7 @@ func promptRecordedReviewer(s *store.Store, herdrPath, session, sumctlPath strin
 		fresh := incarnation.FromInfo(agent)
 		bound = &fresh
 	}
-	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, asString(recorded, "skill_path"), worktree, bound)
+	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, asString(recorded, "skill_path"), worktree, bound, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +329,7 @@ func observeReviewer(herdrPath, session, pane string, fallback any) incarnation.
 	return incarnation.FromInfo(fallback)
 }
 
-func deliverKickoff(s *store.Store, herdrPath, session, sumctlPath string, task *ordjson.Object, pane, skillPath, worktree string, bound *incarnation.Evidence) (*ordjson.Object, error) {
+func deliverKickoff(s *store.Store, herdrPath, session, sumctlPath string, task *ordjson.Object, pane, skillPath, worktree string, bound *incarnation.Evidence, gate error) (*ordjson.Object, error) {
 	taskID := asString(task, "id")
 	candidate := evidenceview.CurrentCandidate(task)
 	text := kickoffPrompt(sumctlPath, taskID, candidate, skillPath, policyCandidate(task, candidate))
@@ -327,7 +337,10 @@ func deliverKickoff(s *store.Store, herdrPath, session, sumctlPath string, task 
 	delivery.Set("pane", pane)
 	delivery.Set("candidate", orNil(candidate))
 	delivery.Set("at", store.Now())
-	if _, err := herdrclient.Call(herdrPath, session, 10*time.Second, "agent", "prompt", pane, text); err != nil {
+	if gate != nil {
+		delivery.Set("state", "not-delivered")
+		delivery.Set("detail", gate.Error())
+	} else if _, err := herdrclient.Call(herdrPath, session, herdrclient.PromptConfirmCallTimeout, herdrclient.PromptConfirmArgs(pane, text)...); err != nil {
 		delivery.Set("state", "not-delivered")
 		delivery.Set("detail", err.Error())
 	} else {

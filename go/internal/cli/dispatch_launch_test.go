@@ -249,6 +249,74 @@ func TestDispatchAgentStartTimeoutAllowsGrokColdStart(t *testing.T) {
 	}
 }
 
+func TestDispatchSwallowedBriefRecordsLaunchUncertain(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "dialog-worker", map[string]string{"README.md": "x\n"})
+	d.setEnv("FAKE_PROMPT_EATEN", "1")
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
+	if msg := asString(refused["error"]); !strings.Contains(msg, "Launch/prompt uncertain") || !strings.Contains(msg, "agent_prompt_stalled") {
+		t.Fatalf("dispatch error = %q, want a launch-uncertain refusal naming the stalled prompt", msg)
+	}
+	entries, err := os.ReadDir(filepath.Join(d.home, "tasks"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("tasks dir = %v, %v; want the one refused task record", entries, err)
+	}
+	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", entries[0].Name(), "task.json"))
+	if status := asString(recorded["status"]); status != "needs-attention" {
+		t.Fatalf("task status = %q, want needs-attention, never running", status)
+	}
+	if asString(recorded["error"]) == "" {
+		t.Fatal("task error is empty; a swallowed brief must record its reason")
+	}
+	attempt, _ := launchedWorker(recorded)
+	if state := asString(attempt["state"]); state != "uncertain" {
+		t.Fatalf("worker attempt state = %q, want uncertain", state)
+	}
+	found := false
+	for _, raw := range asSlice(attempt["observations"]) {
+		if asString(asMap(raw)["outcome"]) == "launch-uncertain" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("worker observations = %v, want a launch-uncertain outcome", attempt["observations"])
+	}
+	var prompts [][]string
+	for _, call := range herdrCalls(t, d.base) {
+		if len(call) >= 2 && call[0] == "agent" && call[1] == "prompt" {
+			prompts = append(prompts, call)
+		}
+	}
+	if len(prompts) != 1 {
+		t.Fatalf("agent prompt calls = %d, want exactly one confirmed submission", len(prompts))
+	}
+	joined := strings.Join(prompts[0], " ")
+	if !strings.Contains(joined, "--wait") || !strings.Contains(joined, "--until working") {
+		t.Fatalf("brief prompt = %v, want --wait delivery confirmation", prompts[0])
+	}
+}
+
+func TestDispatchBlockedStartupNeverSubmitsTheBrief(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "blocked-worker", map[string]string{"README.md": "x\n"})
+	d.setEnv("FAKE_START_STATUS", "blocked")
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
+	if msg := asString(refused["error"]); !strings.Contains(msg, "startup or permission dialog") {
+		t.Fatalf("dispatch error = %q, want the blocked-startup refusal", msg)
+	}
+	if n := countCalls(herdrCalls(t, d.base), "agent", "prompt"); n != 0 {
+		t.Fatalf("agent prompt calls = %d, want none typed into an open dialog", n)
+	}
+	entries, err := os.ReadDir(filepath.Join(d.home, "tasks"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("tasks dir = %v, %v; want the one refused task record", entries, err)
+	}
+	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", entries[0].Name(), "task.json"))
+	if status := asString(recorded["status"]); status != "needs-attention" {
+		t.Fatalf("task status = %q, want needs-attention", status)
+	}
+}
+
 func TestDispatchRetriesAgentPaneBusy(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "busy-pane", map[string]string{"README.md": "x\n"})

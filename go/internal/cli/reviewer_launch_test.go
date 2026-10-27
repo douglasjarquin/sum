@@ -433,6 +433,31 @@ func TestReviewerLaunchPromptNamesPolicyReviewAndRecordsDeliveryFailure(t *testi
 	}
 }
 
+func TestReviewerLaunchSwallowedKickoffIsNotDelivered(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "reviewer-dialog", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	taskID := asString(task["id"])
+	d.setEnv("FAKE_PROMPT_EATEN", "1")
+	launched := d.ctl(true, "reviewer", "launch", taskID)
+	if launched["action"] != "needs-attention" {
+		t.Fatalf("reviewer launch action = %v, want needs-attention", launched["action"])
+	}
+	delivery := asMap(launched["prompt"])
+	if delivery["state"] != "not-delivered" || !strings.Contains(asString(delivery["detail"]), "agent_prompt_stalled") {
+		t.Fatalf("prompt outcome = %#v, want not-delivered naming the stalled submission", delivery)
+	}
+	persisted := asMap(d.ctl(true, "show", taskID)["reviewer"])
+	if asMap(persisted["prompt"])["state"] != "not-delivered" {
+		t.Fatalf("saved reviewer prompt = %#v, want not-delivered", persisted["prompt"])
+	}
+	d.setEnv("FAKE_PROMPT_EATEN", "")
+	again := d.ctl(true, "reviewer", "launch", taskID)
+	if again["action"] != "prompted" || asMap(again["prompt"])["state"] != "delivered" {
+		t.Fatalf("re-prompt of the recorded reviewer = %#v, want delivered once the dialog is gone", again)
+	}
+}
+
 func countCalls(calls [][]string, first, second string) int {
 	n := 0
 	for _, call := range calls {
