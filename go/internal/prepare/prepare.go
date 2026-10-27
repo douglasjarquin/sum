@@ -715,8 +715,10 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	}
 	if _, promptCode, err := herdrclient.Observe(herdrPath, session, herdrclient.PromptConfirmCallTimeout, herdrclient.PromptConfirmArgs(pane, prompt)...); err != nil {
 		return failStart(s, taskID, err)
+	} else if promptCode == "agent_prompt_stalled" {
+		return failStart(s, taskID, fmt.Errorf("the worker brief was submitted but no working or blocked activity followed (agent_prompt_stalled); a startup dialog may have consumed it"))
 	} else if promptCode != "" {
-		return failStart(s, taskID, fmt.Errorf("the worker brief was submitted but no working or blocked activity followed (%s); a startup dialog may have consumed it", promptCode))
+		return failStart(s, taskID, fmt.Errorf("the worker brief's delivery could not be confirmed (%s)", promptCode))
 	}
 	// The worker registration records the occupant it binds: the terminal and native session Herdr reports now
 	// (falling back to the agent start response) and the pane shell. Observed before the state lock.
