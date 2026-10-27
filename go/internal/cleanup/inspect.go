@@ -14,6 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
@@ -165,30 +166,52 @@ func worktreeArtifacts(worktree string) (*ordjson.Object, error) {
 	return result, nil
 }
 
-func commitsNotCovered(worktree, mergedHead string) (string, []any, error) {
+func commitsNotCovered(worktree, mergedHead, baseRef string) (string, string, error) {
 	headOut, err := proc.Run([]string{"git", "-C", worktree, "rev-parse", "HEAD"}, "", 20*time.Second, true, nil)
 	if err != nil {
-		return "", nil, err
+		return "", "", err
 	}
 	head := strings.TrimSpace(headOut.Stdout)
 	if head == mergedHead {
-		return head, nil, nil
+		return head, "", nil
 	}
-	known, _ := proc.Run([]string{"git", "-C", worktree, "cat-file", "-e", mergedHead + "^{commit}"}, "", 20*time.Second, false, nil)
-	if known.Code != 0 {
-		return head, []any{fmt.Sprintf("checkout HEAD %s differs from the merged PR head %s, which is not a local object", head, mergedHead)}, nil
+	var delivered []string
+	for _, ref := range []string{mergedHead, baseRef} {
+		if ref == "" {
+			continue
+		}
+		known, _ := proc.Run([]string{"git", "-C", worktree, "cat-file", "-e", ref + "^{commit}"}, "", 20*time.Second, false, nil)
+		if known.Code == 0 {
+			delivered = append(delivered, ref)
+		}
 	}
-	listOut, err := proc.Run([]string{"git", "-C", worktree, "rev-list", mergedHead + "..HEAD"}, "", 20*time.Second, true, nil)
+	if len(delivered) == 0 {
+		return head, fmt.Sprintf("checkout HEAD %s differs from the merged PR head %s, which is not a local object", head, mergedHead), nil
+	}
+	args := []string{"git", "-C", worktree, "rev-list", "HEAD", "--not"}
+	args = append(args, delivered...)
+	listOut, err := proc.Run(args, "", 20*time.Second, true, nil)
 	if err != nil {
-		return head, nil, err
+		return head, "", err
 	}
-	var extra []any
+	var extra []string
 	for _, line := range strings.Split(strings.TrimSpace(listOut.Stdout), "\n") {
 		if line != "" {
 			extra = append(extra, line)
 		}
 	}
-	return head, extra, nil
+	if len(extra) == 0 {
+		return head, "", nil
+	}
+	shown := extra
+	if len(shown) > 5 {
+		shown = shown[:5]
+	}
+	cover := "the merged PR head " + mergedHead
+	if baseRef != "" {
+		cover += " or the recorded base branch on the remote (" + baseRef + ")"
+	}
+	return head, fmt.Sprintf("%d commit(s) in the checkout are not covered by %s: %v", len(extra), cover, shown), nil
 }
 
 func processesBoundTo(worktree string, exclude map[int]bool) ([]any, string) {
@@ -831,17 +854,17 @@ func (ins *inspection) checkout(mergedHead string) error {
 	}
 	worktree := stringField(ins.task, "worktree")
 	if mergedHead != "" {
-		head, extra, err := commitsNotCovered(worktree, mergedHead)
+		baseRef := ""
+		if base, _ := pipeline.ResolveBase(stringField(ins.task, "repository"), ins.task); base != "" {
+			baseRef = "origin/" + base
+		}
+		head, detail, err := commitsNotCovered(worktree, mergedHead, baseRef)
 		if err != nil {
 			return err
 		}
 		ins.view.Set("head", head)
-		if len(extra) > 0 {
-			shown := extra
-			if len(shown) > 5 {
-				shown = shown[:5]
-			}
-			ins.block("commits", fmt.Sprintf("%d commit(s) in the checkout are not in the merged PR head %s: %v", len(extra), mergedHead, shown))
+		if detail != "" {
+			ins.block("commits", detail)
 		}
 	}
 	artifacts, err := worktreeArtifacts(worktree)
