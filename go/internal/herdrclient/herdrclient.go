@@ -21,11 +21,27 @@ const AgentStartTimeout = 90 * time.Second
 // AgentStartCallTimeout wraps AgentStartTimeout so the herdr flag expires first.
 const AgentStartCallTimeout = AgentStartTimeout + 10*time.Second
 
+const AgentReadyTimeout = 30 * time.Second
+
+const AgentReadyCallTimeout = AgentReadyTimeout + 10*time.Second
+
+const PromptConfirmTimeout = 30 * time.Second
+
+const PromptConfirmCallTimeout = PromptConfirmTimeout + 10*time.Second
+
 var sessionNamePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // AgentStartArgs is the herdr argv for launching an agent in an existing pane.
 func AgentStartArgs(name, kind, pane string) []string {
 	return []string{"agent", "start", name, "--kind", kind, "--pane", pane, "--timeout", fmt.Sprint(AgentStartTimeout.Milliseconds())}
+}
+
+func AgentReadyArgs(target string) []string {
+	return []string{"agent", "wait", target, "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", fmt.Sprint(AgentReadyTimeout.Milliseconds())}
+}
+
+func PromptConfirmArgs(target, text string) []string {
+	return []string{"agent", "prompt", target, text, "--wait", "--until", "working", "--until", "blocked", "--timeout", fmt.Sprint(PromptConfirmTimeout.Milliseconds())}
 }
 
 // runRaw runs herdr once on the bounded helper runner. A nonzero exit returns its code with a nil error; a helper

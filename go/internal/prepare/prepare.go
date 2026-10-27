@@ -703,8 +703,22 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 			prompt += " " + extra
 		}
 	}
-	if _, err := herdrclient.Call(herdrPath, session, 10*time.Second, "agent", "prompt", pane, prompt); err != nil {
+	ready, readyCode, readyErr := herdrclient.Observe(herdrPath, session, herdrclient.AgentReadyCallTimeout, herdrclient.AgentReadyArgs(pane)...)
+	if readyErr != nil {
+		return failStart(s, taskID, readyErr)
+	}
+	if readyCode != "" {
+		return failStart(s, taskID, fmt.Errorf("the agent never reached a state that accepts input (%s)", readyCode))
+	}
+	if herdrclient.AgentStatus(herdrclient.UnwrapAgent(ready)) == "blocked" {
+		return failStart(s, taskID, fmt.Errorf("the agent is waiting at a startup or permission dialog (blocked)"))
+	}
+	if _, promptCode, err := herdrclient.Observe(herdrPath, session, herdrclient.PromptConfirmCallTimeout, herdrclient.PromptConfirmArgs(pane, prompt)...); err != nil {
 		return failStart(s, taskID, err)
+	} else if promptCode == "agent_prompt_stalled" {
+		return failStart(s, taskID, fmt.Errorf("the worker brief was submitted but no working or blocked activity followed (agent_prompt_stalled); a startup dialog may have consumed it"))
+	} else if promptCode != "" {
+		return failStart(s, taskID, fmt.Errorf("the worker brief's delivery could not be confirmed (%s)", promptCode))
 	}
 	// The worker registration records the occupant it binds: the terminal and native session Herdr reports now
 	// (falling back to the agent start response) and the pane shell. Observed before the state lock.
