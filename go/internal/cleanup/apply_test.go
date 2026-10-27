@@ -271,6 +271,83 @@ func TestCleanup_dirtyNonIgnoredFilesAndCommitsStillBlock(t *testing.T) {
 	}
 }
 
+func (l *lab) makeSquashMergedCheckout() (prHead, squash string) {
+	l.t.Helper()
+	l.makeWorktreeCheckout()
+	git := func(dir string, args ...string) string {
+		l.t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			l.t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(l.checkout, "commit", "--allow-empty", "-q", "-m", "worker change")
+	prHead = git(l.checkout, "rev-parse", "HEAD")
+	git(l.repo, "commit", "--allow-empty", "-q", "-m", "squash merge of the task PR")
+	squash = git(l.repo, "rev-parse", "HEAD")
+	git(l.repo, "update-ref", "refs/remotes/origin/main", squash)
+	git(l.checkout, "reset", "--hard", "-q", squash)
+	return prHead, squash
+}
+
+func (l *lab) saveSquashMergedTask(prHead, squash string) {
+	l.t.Helper()
+	l.saveTask(l.mergedTaskExtra(prHead, `[]`, "released", `, "base_branch": "main", "base_branch_source": "explicit"`))
+	task, err := l.store.ReadTask(taskID)
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	pr := asObject(func() any { v, _ := task.Get("pr"); return v }())
+	pr.Set("merge_commit", squash)
+	if err := l.store.SaveTask(task); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+func TestCleanup_squashMergeOnBaseCountsAsDelivered(t *testing.T) {
+	l := newLab(t)
+	prHead, squash := l.makeSquashMergedCheckout()
+	l.saveSquashMergedTask(prHead, squash)
+
+	plan := l.inspect()
+	if hasCode(blockerCodes(plan), "commits") {
+		t.Fatalf("base-branch commits blocked cleanup: %v", blockerDetails(plan))
+	}
+	result, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true})
+	if err != nil {
+		t.Fatalf("cleanup --apply: %v", err)
+	}
+	if state, _ := result.Get("state"); state != "complete" {
+		t.Fatalf("cleanup state = %v, want complete", state)
+	}
+	if _, err := os.Stat(l.checkout); !os.IsNotExist(err) {
+		t.Fatalf("checkout still exists: %v", err)
+	}
+}
+
+func TestCleanup_unmergedCommitAfterSquashResetStillBlocks(t *testing.T) {
+	l := newLab(t)
+	prHead, squash := l.makeSquashMergedCheckout()
+	l.saveSquashMergedTask(prHead, squash)
+	cmd := exec.Command("git", "-C", l.checkout, "commit", "--allow-empty", "-q", "-m", "unmerged local work")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+
+	plan := l.inspect()
+	if !hasCode(blockerCodes(plan), "commits") {
+		t.Fatalf("unmerged commit did not block: %v", blockerDetails(plan))
+	}
+	if _, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true}); err == nil {
+		t.Fatal("cleanup --apply succeeded with an unmerged commit")
+	}
+	if _, err := os.Stat(l.checkout); err != nil {
+		t.Fatalf("checkout removed despite the unmerged commit: %v", err)
+	}
+}
+
 // An orphaned process left in the checkout (a daemon outliving its pane) is a
 // named blocker at inspection, and apply interrupts it once, verifies exit,
 // re-inspects, and completes.
