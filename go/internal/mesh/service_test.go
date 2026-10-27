@@ -241,6 +241,43 @@ func TestService_start_usesExistingPaneAndKind(t *testing.T) {
 	}
 }
 
+func TestService_integrationStatusParsesHerdrText(t *testing.T) {
+	runner := &fakeRunner{results: []commandResult{{stdout: "pi: current (v9) (/tmp/pi/herdr-agent-state.ts)\nletta (experimental): outdated (legacy < v2) (/tmp/letta/herdr-agent-session.sh)\ndroid: not installed (/tmp/droid/herdr-agent-state.sh)\n"}}}
+	service := newTestService(t, "coordinator", runner)
+
+	result, err := service.Call(context.Background(), "herdr_integration_status", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload struct {
+		Integrations []struct {
+			Name            string  `json:"name"`
+			Status          string  `json:"status"`
+			Version         *string `json:"version"`
+			ExpectedVersion *string `json:"expected_version"`
+			Path            string  `json:"path"`
+		} `json:"integrations"`
+	}
+	if err := json.Unmarshal([]byte(result), &payload); err != nil {
+		t.Fatalf("result is not JSON: %v", err)
+	}
+	if len(payload.Integrations) != 3 {
+		t.Fatalf("integrations=%d, want 3", len(payload.Integrations))
+	}
+	if got := payload.Integrations[0]; got.Name != "pi" || got.Status != "current" || got.Version == nil || *got.Version != "v9" || got.ExpectedVersion != nil || got.Path != "/tmp/pi/herdr-agent-state.ts" {
+		t.Fatalf("current integration = %+v", got)
+	}
+	if got := payload.Integrations[1]; got.Name != "letta (experimental)" || got.Status != "outdated" || got.Version == nil || *got.Version != "legacy" || got.ExpectedVersion == nil || *got.ExpectedVersion != "v2" || got.Path != "/tmp/letta/herdr-agent-session.sh" {
+		t.Fatalf("outdated integration = %+v", got)
+	}
+	if got := payload.Integrations[2]; got.Name != "droid" || got.Status != "not_installed" || got.Version != nil || got.ExpectedVersion != nil || got.Path != "/tmp/droid/herdr-agent-state.sh" {
+		t.Fatalf("not-installed integration = %+v", got)
+	}
+	if !slices.Equal(runner.calls[0], []string{"integration", "status"}) {
+		t.Fatalf("status argv = %v", runner.calls[0])
+	}
+}
+
 func TestService_read_isBoundedAndPassive(t *testing.T) {
 	runner := &fakeRunner{results: []commandResult{{stdout: "visible output\n"}}}
 	service := newTestService(t, "coordinator", runner)

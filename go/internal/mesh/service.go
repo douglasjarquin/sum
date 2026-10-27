@@ -95,7 +95,7 @@ func (s Service) Call(ctx context.Context, name string, arguments json.RawMessag
 		if err := parse(arguments, &input); err != nil {
 			return "", err
 		}
-		return s.json(ctx, []string{"integration", "status"}, 10*time.Second)
+		return s.integrationStatus(ctx)
 	case "herdr_pane_read":
 		var input paneReadInput
 		if err := parse(arguments, &input); err != nil {
