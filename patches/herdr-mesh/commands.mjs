@@ -15,6 +15,19 @@ export function handlers(runHerdr) {
     return agent;
   };
   const text = (value) => `sum message:\n${value}`; // Never let message text become a CLI option.
+  const integrationStatus = (stdout) => ({
+    integrations: stdout.split("\n").map(line => line.trim()).filter(Boolean).map(line => {
+      const match = /^(.+): (not installed|current \((v\d+|legacy)\)|outdated \((v\d+|legacy) < (v\d+)\)) \((.*)\)$/.exec(line);
+      if (!match) throw new Error(`Herdr returned unrecognized integration status line: ${line.slice(0, 300)}`);
+      return {
+        name: match[1],
+        status: match[2] === "not installed" ? "not_installed" : match[3] ? "current" : "outdated",
+        version: match[3] ?? match[4] ?? null,
+        expected_version: match[5] ?? null,
+        path: match[6],
+      };
+    }),
+  });
   return {
     herdr_agent_list: async () => jsonResult(payload(await run(["agent", "list"]))),
     herdr_agent_get: async ({ target }) => jsonResult(payload(await run(["agent", "get", target]))),
@@ -46,7 +59,7 @@ export function handlers(runHerdr) {
       "agent", "start", name, "--kind", kind, "--pane", pane_id, "--timeout", "90000",
       ...(args.length ? ["--", ...args] : [])], 100000))),
     herdr_agent_focus: async ({ target }) => jsonResult(payload(await run(["agent", "focus", target]))),
-    herdr_integration_status: async () => jsonResult(payload(await run(["integration", "status"]))),
+    herdr_integration_status: async () => jsonResult(integrationStatus((await run(["integration", "status"])).stdout)),
     herdr_pane_read: async ({ pane_id, lines = 80 }) => result((await run(["pane", "read", pane_id,
       "--source", "visible", "--lines", String(lines), "--format", "text"])).stdout),
   };
