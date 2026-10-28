@@ -348,6 +348,77 @@ func TestCleanup_unmergedCommitAfterSquashResetStillBlocks(t *testing.T) {
 	}
 }
 
+func TestCleanup_mergedHeadNotLocalObjectCoveredByRemoteBase(t *testing.T) {
+	l := newLab(t)
+	_, squash := l.makeSquashMergedCheckout()
+	l.saveSquashMergedTask("ffffffffffffffffffffffffffffffffffffffff", squash)
+
+	plan := l.inspect()
+	if hasCode(blockerCodes(plan), "commits") {
+		t.Fatalf("coverage from the remote base alone blocked cleanup: %v", blockerDetails(plan))
+	}
+	result, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true})
+	if err != nil {
+		t.Fatalf("cleanup --apply: %v", err)
+	}
+	if state, _ := result.Get("state"); state != "complete" {
+		t.Fatalf("cleanup state = %v, want complete", state)
+	}
+	if _, err := os.Stat(l.checkout); !os.IsNotExist(err) {
+		t.Fatalf("checkout still exists: %v", err)
+	}
+}
+
+func TestCleanup_mergedHeadNotLocalObjectExtraCommitBlocks(t *testing.T) {
+	l := newLab(t)
+	_, squash := l.makeSquashMergedCheckout()
+	l.saveSquashMergedTask("ffffffffffffffffffffffffffffffffffffffff", squash)
+	cmd := exec.Command("git", "-C", l.checkout, "commit", "--allow-empty", "-q", "-m", "unmerged local work")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+
+	plan := l.inspect()
+	if !hasCode(blockerCodes(plan), "commits") {
+		t.Fatalf("a commit past the remote base did not block: %v", blockerDetails(plan))
+	}
+	if _, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true}); err == nil {
+		t.Fatal("cleanup --apply succeeded with a commit past the remote base")
+	}
+	if _, err := os.Stat(l.checkout); err != nil {
+		t.Fatalf("checkout removed despite the uncovered commit: %v", err)
+	}
+}
+
+func TestCleanup_localBranchNamedLikeRemoteBaseDoesNotCover(t *testing.T) {
+	l := newLab(t)
+	prHead, squash := l.makeSquashMergedCheckout()
+	l.saveSquashMergedTask(prHead, squash)
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(l.checkout, "commit", "--allow-empty", "-q", "-m", "unmerged local work")
+	extra := git(l.checkout, "rev-parse", "HEAD")
+	git(l.repo, "update-ref", "refs/heads/origin/main", extra)
+
+	plan := l.inspect()
+	if !hasCode(blockerCodes(plan), "commits") {
+		t.Fatalf("a local refs/heads/origin/main covered the extra commit: %v", blockerDetails(plan))
+	}
+	if _, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true}); err == nil {
+		t.Fatal("cleanup --apply succeeded on coverage from a local branch named like the remote base")
+	}
+	if _, err := os.Stat(l.checkout); err != nil {
+		t.Fatalf("checkout removed on local-branch coverage: %v", err)
+	}
+}
+
 // An orphaned process left in the checkout (a daemon outliving its pane) is a
 // named blocker at inspection, and apply interrupts it once, verifies exit,
 // re-inspects, and completes.

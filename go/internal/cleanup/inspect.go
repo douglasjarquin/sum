@@ -856,7 +856,7 @@ func (ins *inspection) checkout(mergedHead string) error {
 	if mergedHead != "" {
 		baseRef := ""
 		if base, _ := pipeline.ResolveBase(stringField(ins.task, "repository"), ins.task); base != "" {
-			baseRef = "origin/" + base
+			baseRef = "refs/remotes/origin/" + base
 		}
 		head, detail, err := commitsNotCovered(worktree, mergedHead, baseRef)
 		if err != nil {
