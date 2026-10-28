@@ -1111,7 +1111,7 @@ func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string
 const LaunchUncertainPrefix = "Launch/prompt uncertain"
 
 func FailStart(s *store.Store, taskID string, cause error) (*ordjson.Object, error) {
-	errorText := fmt.Sprintf("%s: %s. Inspect the saved pane; do not relaunch. Trust/auth prompts need your action.", LaunchUncertainPrefix, cause)
+	errorText := fmt.Sprintf("%s: %s. Inspect the saved pane; do not relaunch. Trust/auth prompts are for the user, never the coordinator. `execution redeliver %s --attempt X` resends the recorded brief; `execution confirm %s --attempt X` records a running attempt from the worker's own receipt.", LaunchUncertainPrefix, cause, taskID, taskID)
 	unlock, err := s.Lock()
 	if err == nil {
 		defer unlock()

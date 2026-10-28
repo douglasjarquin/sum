@@ -114,9 +114,9 @@ The brief written at dispatch is revision `r1`; the task's `versions.json` recor
 Use returned IDs and paths. Do not infer IDs from labels. Do not copy the coordinator's instructions into the target repository.
 Skills reach the worker explicitly: its brief names the installed helper (`<installation>/bin/sumctl`) in a `## Delivered runtime` section and, under `## Worker procedure`, the worker procedure pinned as write-once, content-addressed files in the task record: the required core `<state>/tasks/TASK_ID/procedure/sum-work-<sha>.md` and on-demand files (evidence, environment, graph, refresh) each listed with its size, hash, and the condition for reading it; `context --role worker` reports the same files with their integrity. Dispatch refuses before any Herdr call when the runtime's procedure is missing or does not match its release manifest, and `start` refuses a brief whose pinned procedure is missing or altered. Directory nesting under `projects/` delivers nothing to a harness; a Herdr worktree lives elsewhere and some harnesses stop instruction discovery at a Git root.
 A trust/auth prompt can make startup uncertain while leaving a real agent alive.
-Inspect the saved pane and answer any trust/auth dialog yourself.
-Then recover the recorded attempt: `./bin/sumctl execution redeliver TASK --attempt X` resends the recorded brief to the exact pane with the same delivery confirmation when the worker never received it, and `./bin/sumctl execution confirm TASK --attempt X` records the worker running once it has a receipt — it ran `init` from its brief or filed a report.
-Never type the brief into the pane yourself and never call dispatch/start again for that task; once the attempt is `running`, `repair send` accepts it.
+Inspect the saved pane, and have the user answer any trust/auth dialog in it; the coordinator never answers one itself or types into the pane.
+Then recover the recorded attempt: `./bin/sumctl execution redeliver TASK --attempt X` resends the recorded brief to the exact pane with the same delivery confirmation when the worker never received it, and `./bin/sumctl execution confirm TASK --attempt X` records the worker running once it has a receipt (it ran `init` from its brief or filed a report).
+Never type the brief into the pane and never call dispatch/start again for that task; once the attempt is `running`, `repair send` accepts it.
 
 ## Return control
 
