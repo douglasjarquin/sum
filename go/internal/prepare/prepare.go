@@ -438,7 +438,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	task.Set("status", "prepared")
 	// The pane Herdr created for this task is bound to it now, so its occupant is recorded now: a pane that inits
 	// before launch is judged against this record, and Start re-records it after the agent starts.
-	bound := observeBound(herdrPath, session, paneID, rootPane)
+	bound := ObserveBound(herdrPath, session, paneID, rootPane)
 	unlock, err = s.Lock()
 	if err != nil {
 		return failPrepare(s, tid, err)
@@ -640,16 +640,16 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 
 	pane, err = EnsureWorkerPane(runtimeRoot, session, task)
 	if err != nil {
-		return failStart(s, taskID, err)
+		return FailStart(s, taskID, err)
 	}
 	unlock, err = s.Lock()
 	if err != nil {
-		return failStart(s, taskID, err)
+		return FailStart(s, taskID, err)
 	}
 	currentPane, err := s.ReadTask(taskID)
 	if err != nil {
 		unlock()
-		return failStart(s, taskID, err)
+		return FailStart(s, taskID, err)
 	}
 	if asString(func() any { v, _ := currentPane.Get("pane"); return v }()) != pane {
 		currentPane.Set("pane", pane)
@@ -660,7 +660,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		}
 		if err := s.SaveTask(currentPane); err != nil {
 			unlock()
-			return failStart(s, taskID, err)
+			return FailStart(s, taskID, err)
 		}
 	}
 	unlock()
@@ -684,7 +684,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		time.Sleep(agentPaneBusyPoll)
 	}
 	if startErr != nil {
-		return failStart(s, taskID, startErr)
+		return FailStart(s, taskID, startErr)
 	}
 	startedObj := asObject(started)
 	agent := startedObj
@@ -693,7 +693,30 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 			agent = inner
 		}
 	}
-	observedKind := asString(func() any { v, _ := agent.Get("agent"); return v }())
+	prompt := WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)
+	if err := DeliverBrief(herdrPath, session, pane, prompt); err != nil {
+		return FailStart(s, taskID, err)
+	}
+	// The worker registration records the occupant it binds: the terminal and native session Herdr reports now
+	// (falling back to the agent start response) and the pane shell. Observed before the state lock.
+	bound := ObserveBound(herdrPath, session, pane, started)
+	unlock, err = s.Lock()
+	if err != nil {
+		return FailStart(s, taskID, err)
+	}
+	defer unlock()
+	current, err := s.ReadTask(taskID)
+	if err != nil {
+		return FailStart(s, taskID, err)
+	}
+	result, err := RecordRunning(s, current, runtimeRoot, session, pane, harness, agent, bound)
+	if err != nil {
+		return FailStart(s, taskID, err)
+	}
+	return result, nil
+}
+
+func WorkerPrompt(s *store.Store, runtimeRoot, taskID, briefFile string, task *ordjson.Object) string {
 	installRoot := sumruntime.ResolveInstallation(runtimeRoot, os.Getenv("SUM_INSTALL_ROOT"))
 	initCommand := shquote.CommandFor(filepath.Join(installRoot, "bin", "sumctl"), s.Home, "init")
 	prompt := fmt.Sprintf("You are the sum worker for %s, not the coordinator. First run `%s` with the installed helper, never `./bin/sumctl` from your checkout. Then read the complete file %s and every required worker procedure file it names, and execute only that approved task. Questions and results must be saved using the commands in that brief.", taskID, initCommand, quoteJSON(briefFile))
@@ -703,35 +726,33 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 			prompt += " " + extra
 		}
 	}
+	return prompt
+}
+
+func DeliverBrief(herdrPath, session, pane, prompt string) error {
 	ready, readyCode, readyErr := herdrclient.Observe(herdrPath, session, herdrclient.AgentReadyCallTimeout, herdrclient.AgentReadyArgs(pane)...)
 	if readyErr != nil {
-		return failStart(s, taskID, readyErr)
+		return readyErr
 	}
 	if readyCode != "" {
-		return failStart(s, taskID, fmt.Errorf("the agent never reached a state that accepts input (%s)", readyCode))
+		return fmt.Errorf("the agent never reached a state that accepts input (%s)", readyCode)
 	}
 	if herdrclient.AgentStatus(herdrclient.UnwrapAgent(ready)) == "blocked" {
-		return failStart(s, taskID, fmt.Errorf("the agent is waiting at a startup or permission dialog (blocked)"))
+		return fmt.Errorf("the agent is waiting at a startup or permission dialog (blocked)")
 	}
 	if _, promptCode, err := herdrclient.Observe(herdrPath, session, herdrclient.PromptConfirmCallTimeout, herdrclient.PromptConfirmArgs(pane, prompt)...); err != nil {
-		return failStart(s, taskID, err)
+		return err
 	} else if promptCode == "agent_prompt_stalled" {
-		return failStart(s, taskID, fmt.Errorf("the worker brief was submitted but no working or blocked activity followed (agent_prompt_stalled); a startup dialog may have consumed it"))
+		return fmt.Errorf("the worker brief was submitted but no working or blocked activity followed (agent_prompt_stalled); a startup dialog may have consumed it")
 	} else if promptCode != "" {
-		return failStart(s, taskID, fmt.Errorf("the worker brief's delivery could not be confirmed (%s)", promptCode))
+		return fmt.Errorf("the worker brief's delivery could not be confirmed (%s)", promptCode)
 	}
-	// The worker registration records the occupant it binds: the terminal and native session Herdr reports now
-	// (falling back to the agent start response) and the pane shell. Observed before the state lock.
-	bound := observeBound(herdrPath, session, pane, started)
-	unlock, err = s.Lock()
-	if err != nil {
-		return failStart(s, taskID, err)
-	}
-	defer unlock()
-	current, err := s.ReadTask(taskID)
-	if err != nil {
-		return failStart(s, taskID, err)
-	}
+	return nil
+}
+
+func RecordRunning(s *store.Store, current *ordjson.Object, runtimeRoot, session, pane, harness string, agent *ordjson.Object, bound incarnation.Evidence) (*ordjson.Object, error) {
+	taskID := asString(func() any { v, _ := current.Get("id"); return v }())
+	observedKind := asString(func() any { v, _ := agent.Get("agent"); return v }())
 	if st, _ := current.Get("status"); st == "starting" {
 		current.Set("status", "running")
 	}
@@ -749,7 +770,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	current.Set("launch", currentLaunch)
 	currentWorker, err := reservations.Worker(current)
 	if err != nil {
-		return failStart(s, taskID, err)
+		return nil, err
 	}
 	occupant := ordjson.NewObject()
 	machine, _ := current.Get("machine")
@@ -778,7 +799,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	occupant.Set("pid", occPID)
 	occupant.Set("argv", occArgv)
 	currentWorker.Set("occupant", occupant)
-	wid, _ = currentWorker.Get("id")
+	wid, _ := currentWorker.Get("id")
 	next := "uncertain"
 	obs := ordjson.NewObject()
 	obs.Set("at", store.Now())
@@ -791,10 +812,18 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		obs.Set("reason", "no foreground process group leader besides the shell")
 	}
 	if _, err := reservations.Transition(current, fmt.Sprint(wid), next, store.Now(), obs, nil); err != nil {
-		return failStart(s, taskID, err)
+		return nil, err
+	}
+	if next == "running" {
+		if errorText, isString := func() (string, bool) { v, _ := current.Get("error"); text, ok := v.(string); return text, ok }(); isString && strings.HasPrefix(errorText, LaunchUncertainPrefix) {
+			current.Set("error", nil)
+			if st, _ := current.Get("status"); st == "needs-attention" {
+				current.Set("status", "running")
+			}
+		}
 	}
 	if err := s.SaveTask(current); err != nil {
-		return failStart(s, taskID, err)
+		return nil, err
 	}
 	endpoint := store.Endpoint{
 		Machine: asString(machine),
@@ -803,7 +832,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		Cwd:     asString(worktree),
 	}
 	if _, err := s.Register(endpoint, "worker", taskID, bound.Record(store.Now())); err != nil {
-		return failStart(s, taskID, err)
+		return nil, err
 	}
 	result := ordjson.NewObject()
 	for _, key := range current.Keys() {
@@ -1079,8 +1108,10 @@ func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string
 	return newPane, nil
 }
 
-func failStart(s *store.Store, taskID string, cause error) (*ordjson.Object, error) {
-	errorText := fmt.Sprintf("Launch/prompt uncertain: %s. Inspect the saved pane; do not relaunch. Trust/auth prompts need your action.", cause)
+const LaunchUncertainPrefix = "Launch/prompt uncertain"
+
+func FailStart(s *store.Store, taskID string, cause error) (*ordjson.Object, error) {
+	errorText := fmt.Sprintf("%s: %s. Inspect the saved pane; do not relaunch. Trust/auth prompts need your action.", LaunchUncertainPrefix, cause)
 	unlock, err := s.Lock()
 	if err == nil {
 		defer unlock()
@@ -1135,7 +1166,7 @@ func Dispatch(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, 
 // observeBound is the occupant of a pane sum just bound to a task: what Herdr reports for it now (terminal, native
 // session, shell), falling back to the terminal in fallback (the creating or starting response) when the pane cannot
 // be observed. It runs outside the state lock.
-func observeBound(herdrPath, session, pane string, fallback any) incarnation.Evidence {
+func ObserveBound(herdrPath, session, pane string, fallback any) incarnation.Evidence {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
 	defer cancel()
 	if fresh, code, err := incarnation.Observe(incarnation.SessionCall(ctx, herdrPath, session), pane); err == nil && code == "" && fresh.Terminal != "" {

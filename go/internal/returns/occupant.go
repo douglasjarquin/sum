@@ -159,6 +159,7 @@ func (p *pass) checkInline(route *ordjson.Object, items [][2]*ordjson.Object) (m
 type Occupant struct {
 	occ   *occupant
 	items [][2]*ordjson.Object
+	agent *ordjson.Object
 }
 
 // ObserveWorker is ObserveRecipient for task's worker route plus the occupant judgment's inputs: the agent get's
@@ -182,7 +183,11 @@ func ObserveWorker(s *store.Store, runtimeRoot string, task, route *ordjson.Obje
 	occ := observeOccupant(s, route, items, agent, func() (*incarnation.Shell, error) {
 		return incarnation.ProbeShell(incarnation.SessionCall(ctx, herdrPath, session), pane)
 	})
-	return &Occupant{occ: occ, items: items}, nil
+	return &Occupant{occ: occ, items: items, agent: agent}, nil
+}
+
+func (o *Occupant) Agent() *ordjson.Object {
+	return o.agent
 }
 
 // Check judges the observed occupant against route's record as it is now; the caller holds the state lock. A non-empty

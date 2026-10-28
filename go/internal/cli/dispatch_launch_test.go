@@ -572,3 +572,202 @@ func TestDispatchRecordsTheWorkerPanesIncarnation(t *testing.T) {
 		t.Fatalf("worker init = %v, want worker judged same", worker)
 	}
 }
+
+func uncertainTask(t *testing.T, d *demoLab) (taskID string, attempt map[string]any) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(d.home, "tasks"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("tasks dir = %v, %v; want the one refused task record", entries, err)
+	}
+	taskID = entries[0].Name()
+	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
+	attempt, _ = launchedWorker(recorded)
+	if state := asString(attempt["state"]); state != "uncertain" {
+		t.Fatalf("worker attempt state = %q, want uncertain", state)
+	}
+	return taskID, attempt
+}
+
+func TestRedeliverRecordsSwallowedBriefRunning(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "redeliver-worker", map[string]string{"README.md": "x\n"})
+	d.setEnv("FAKE_PROMPT_EATEN", "1")
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
+	if msg := asString(refused["error"]); !strings.Contains(msg, "Launch/prompt uncertain") {
+		t.Fatalf("dispatch error = %q, want a launch-uncertain refusal", msg)
+	}
+	taskID, attempt := uncertainTask(t, d)
+	attemptID := asString(attempt["id"])
+	pane := asString(readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))["pane"])
+
+	settleFakeWorker(t, d.base, pane)
+	sent := d.ctl(false, "repair", "send", taskID, "--attempt", attemptID, "--key", "rebase", "--text", "Rebase onto main.")
+	if msg := asString(sent["error"]); !strings.Contains(msg, "exact running worker attempt") {
+		t.Fatalf("repair send to an uncertain attempt = %v, want refusal", sent)
+	}
+
+	view := d.ctl(true, "execution", "redeliver", taskID, "--attempt", attemptID)
+	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
+	if status := asString(recorded["status"]); status != "running" {
+		t.Fatalf("task status = %q, want running after redeliver; view %v", status, view)
+	}
+	if recorded["error"] != nil {
+		t.Fatalf("task error = %v, want null after a confirmed redelivery", recorded["error"])
+	}
+	attempt, _ = launchedWorker(recorded)
+	if state := asString(attempt["state"]); state != "running" {
+		t.Fatalf("worker attempt state = %q, want running", state)
+	}
+	var prompts [][]string
+	for _, call := range herdrCalls(t, d.base) {
+		if len(call) >= 2 && call[0] == "agent" && call[1] == "prompt" {
+			prompts = append(prompts, call)
+		}
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("agent prompt calls = %d, want the swallowed dispatch and one redelivery", len(prompts))
+	}
+	if joined := strings.Join(prompts[1], " "); !strings.Contains(joined, "--wait") || !strings.Contains(joined, "--until working") {
+		t.Fatalf("redelivery prompt = %v, want --wait delivery confirmation", prompts[1])
+	}
+
+	settleFakeWorker(t, d.base, pane)
+	sent = d.ctl(false, "repair", "send", taskID, "--attempt", attemptID, "--key", "rebase", "--text", "Rebase onto main.")
+	if msg := asString(sent["error"]); msg != "" {
+		t.Fatalf("repair send to the redelivered worker failed: %s", msg)
+	}
+}
+
+func TestConfirmRequiresWorkerReceipt(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "confirm-worker", map[string]string{"README.md": "x\n"})
+	d.setEnv("FAKE_PROMPT_EATEN", "1")
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
+	if msg := asString(refused["error"]); !strings.Contains(msg, "Launch/prompt uncertain") {
+		t.Fatalf("dispatch error = %q, want a launch-uncertain refusal", msg)
+	}
+	taskID, attempt := uncertainTask(t, d)
+	attemptID := asString(attempt["id"])
+	generation := attempt["generation"]
+	pane := asString(readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))["pane"])
+	d.setEnv("SUM_NOW", "2027-06-01T00:00:00Z")
+
+	stillUncertain := func() map[string]any {
+		t.Helper()
+		recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
+		attempt, _ := launchedWorker(recorded)
+		if state := asString(attempt["state"]); state != "uncertain" {
+			t.Fatalf("worker attempt state = %q, want still uncertain", state)
+		}
+		if attempt["generation"] != generation {
+			t.Fatalf("worker attempt generation = %v, want unchanged %v", attempt["generation"], generation)
+		}
+		return attempt
+	}
+
+	view := d.ctl(false, "execution", "confirm", taskID, "--attempt", attemptID)
+	if msg := asString(view["error"]); !strings.Contains(msg, "no receipt") {
+		t.Fatalf("confirm without a receipt = %v, want a refusal naming the missing receipt", view)
+	}
+	stillUncertain()
+
+	d.ctl(true, "report", taskID, "--text", "A report filed outside the worker pane.")
+	view = d.ctl(false, "execution", "confirm", taskID, "--attempt", attemptID)
+	if msg := asString(view["error"]); !strings.Contains(msg, "no receipt") {
+		t.Fatalf("confirm with an off-pane report = %v, want a refusal naming the missing receipt", view)
+	}
+	stillUncertain()
+
+	worker := d.ctlPane(pane, true, "init")
+	if asString(worker["role"]) != "worker" {
+		t.Fatalf("worker init = %v, want the worker role", worker)
+	}
+	receipt := false
+	for _, raw := range asSlice(readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))["evidence"]) {
+		record := asMap(raw)
+		if asString(record["kind"]) == "worker-init" && asString(record["source"]) == "worker" && asString(record["attempt"]) == attemptID {
+			receipt = true
+		}
+	}
+	if !receipt {
+		t.Fatal("worker init did not record a worker-init receipt for the uncertain attempt")
+	}
+
+	before := countCalls(herdrCalls(t, d.base), "agent", "prompt")
+	view = d.ctl(false, "execution", "redeliver", taskID, "--attempt", attemptID)
+	if msg := asString(view["error"]); !strings.Contains(msg, "execution confirm") {
+		t.Fatalf("redeliver with a receipt = %v, want a refusal pointing at execution confirm", view)
+	}
+	if after := countCalls(herdrCalls(t, d.base), "agent", "prompt"); after != before {
+		t.Fatalf("a refused redeliver sent %d more agent prompts", after-before)
+	}
+
+	confirmed := d.ctl(true, "execution", "confirm", taskID, "--attempt", attemptID)
+	if confirmed["confirmed"] != true {
+		t.Fatalf("confirm result = %v, want confirmed", confirmed)
+	}
+	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
+	attempt, _ = launchedWorker(recorded)
+	if state := asString(attempt["state"]); state != "running" {
+		t.Fatalf("worker attempt state = %q, want running", state)
+	}
+	if recorded["error"] != nil {
+		t.Fatalf("task error = %v, want null after a confirmed launch", recorded["error"])
+	}
+
+	settleFakeWorker(t, d.base, pane)
+	sent := d.ctl(false, "repair", "send", taskID, "--attempt", attemptID, "--key", "rebase", "--text", "Rebase onto main.")
+	if msg := asString(sent["error"]); msg != "" {
+		t.Fatalf("repair send to the confirmed worker failed: %s", msg)
+	}
+}
+
+func TestConfirmRefusesReplacedOccupant(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "replaced-worker", map[string]string{"README.md": "x\n"})
+	d.setEnv("FAKE_PROMPT_EATEN", "1")
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
+	if msg := asString(refused["error"]); !strings.Contains(msg, "Launch/prompt uncertain") {
+		t.Fatalf("dispatch error = %q, want a launch-uncertain refusal", msg)
+	}
+	taskID, attempt := uncertainTask(t, d)
+	attemptID := asString(attempt["id"])
+	pane := asString(readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))["pane"])
+	d.setEnv("SUM_NOW", "2027-06-01T00:00:00Z")
+
+	worker := d.ctlPane(pane, true, "init")
+	if asString(worker["role"]) != "worker" {
+		t.Fatalf("worker init = %v, want the worker role", worker)
+	}
+
+	statePath := filepath.Join(d.base, "fake", "state.json")
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	row := asMap(asMap(state["panes"])[pane])
+	row["terminal_id"] = "term-replaced-occupant"
+	row["shell_pid"] = 9911
+	out, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d.setEnv("FAKE_PS_STARTS", `{"9911": "2030-01-01T00:00:00Z"}`)
+
+	view := d.ctl(false, "execution", "confirm", taskID, "--attempt", attemptID)
+	if msg := asString(view["error"]); !strings.Contains(msg, "occupant") {
+		t.Fatalf("confirm against a replaced occupant = %v, want an incarnation refusal", view)
+	}
+	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
+	attempt, _ = launchedWorker(recorded)
+	if state := asString(attempt["state"]); state != "uncertain" {
+		t.Fatalf("worker attempt state = %q, want still uncertain", state)
+	}
+}

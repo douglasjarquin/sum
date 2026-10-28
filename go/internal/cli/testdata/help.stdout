@@ -9,7 +9,7 @@ commands:
   prepare: "Coordinator only: record an approved task and create its isolated worktree (no launch)"
   dispatch: "Coordinator only: record an approved task and create its isolated worktree; then launch the worker"
   start: "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch"
-  execution: "Show, park, or explicitly resume task-local execution reservations"
+  execution: "Show, park, resume, or recover task-local execution reservations"
   repair: Coordinator-controlled corrective worker instructions
   help: "Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments"
   context: "Bounded selective read of one task: outline by default, --section for parts including saved GitHub review threads, --role for a role view, --since CURSOR for changes"
