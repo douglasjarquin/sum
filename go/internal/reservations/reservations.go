@@ -482,6 +482,87 @@ func newID(prefix string) (string, error) {
 	return prefix + hex.EncodeToString(buf), nil
 }
 
+func UncertainLaunch(attempt *ordjson.Object) (outcome, at string, ok bool) {
+	if attempt == nil {
+		return "", "", false
+	}
+	state, _ := attempt.Get("state")
+	if state != "uncertain" {
+		return "", "", false
+	}
+	observationsValue, _ := attempt.Get("observations")
+	observations, _ := observationsValue.([]any)
+	if len(observations) == 0 {
+		return "", "", false
+	}
+	last, _ := observations[len(observations)-1].(*ordjson.Object)
+	if last == nil {
+		return "", "", false
+	}
+	outcomeValue, _ := last.Get("outcome")
+	outcome, _ = outcomeValue.(string)
+	if outcome != "launch-uncertain" && outcome != "occupant-uncertain" {
+		return "", "", false
+	}
+	atValue, _ := last.Get("at")
+	at, _ = atValue.(string)
+	return outcome, at, true
+}
+
+func LaunchReceipt(task, attempt *ordjson.Object, sameEndpoint func(a, b *ordjson.Object) bool) *ordjson.Object {
+	_, at, ok := UncertainLaunch(attempt)
+	if !ok || task == nil || sameEndpoint == nil {
+		return nil
+	}
+	uncertainAt, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		return nil
+	}
+	attemptID, _ := attempt.Get("id")
+	workerEndpoint := ordjson.NewObject()
+	for _, key := range []string{"machine", "session", "pane"} {
+		value, _ := task.Get(key)
+		workerEndpoint.Set(key, value)
+	}
+	evidenceValue, _ := task.Get("evidence")
+	records, _ := evidenceValue.([]any)
+	var receipt *ordjson.Object
+	for _, raw := range records {
+		record, _ := raw.(*ordjson.Object)
+		if record == nil {
+			continue
+		}
+		source, _ := record.Get("source")
+		if source != "worker" {
+			continue
+		}
+		kindValue, _ := record.Get("kind")
+		kind, _ := kindValue.(string)
+		if kind != "worker-init" && kind != "report" && kind != "handoff" {
+			continue
+		}
+		endpointValue, _ := record.Get("endpoint")
+		endpoint, _ := endpointValue.(*ordjson.Object)
+		if !sameEndpoint(endpoint, workerEndpoint) {
+			continue
+		}
+		atValue, _ := record.Get("at")
+		atText, _ := atValue.(string)
+		recordedAt, err := time.Parse(time.RFC3339, atText)
+		if err != nil || !recordedAt.After(uncertainAt) {
+			continue
+		}
+		if kind == "worker-init" {
+			value, _ := record.Get("attempt")
+			if fmt.Sprint(value) != fmt.Sprint(attemptID) {
+				continue
+			}
+		}
+		receipt = record
+	}
+	return receipt
+}
+
 func cloneObject(obj *ordjson.Object) *ordjson.Object {
 	if obj == nil {
 		return nil

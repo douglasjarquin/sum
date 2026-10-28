@@ -11,7 +11,7 @@
       "prepare": "Coordinator only: record an approved task and create its isolated worktree (no launch)",
       "dispatch": "Coordinator only: record an approved task and create its isolated worktree; then launch the worker",
       "start": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch",
-      "execution": "Show, park, or explicitly resume task-local execution reservations",
+      "execution": "Show, park, resume, or recover task-local execution reservations",
       "repair": "Coordinator-controlled corrective worker instructions",
       "help": "Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments",
       "context": "Bounded selective read of one task: outline by default, --section for parts including saved GitHub review threads, --role for a role view, --since CURSOR for changes",
@@ -433,12 +433,14 @@
   },
   "execution": {
     "topic": "execution",
-    "help": "Show, park, or explicitly resume task-local execution reservations",
+    "help": "Show, park, resume, or recover task-local execution reservations",
     "arguments": [],
     "subcommands": {
       "show": "Show worker and independent verifier attempts without observing or launching anything",
       "park": "Release one exact worker or verifier attempt only after verified stop evidence; missing identity stays reserved",
-      "resume": "Reserve capacity for a successor to one exact released worker attempt, then launch it; a recorded launch carrying an unauthorized permission/trust override is refused before the successor is recorded"
+      "resume": "Reserve capacity for a successor to one exact released worker attempt, then launch it; a recorded launch carrying an unauthorized permission/trust override is refused before the successor is recorded",
+      "confirm": "Record an uncertain launch's worker as running only from a worker-side receipt plus a fresh Herdr observation of the exact pane; sends nothing",
+      "redeliver": "Resend the recorded worker brief to the exact pane of an uncertain launch with the same delivery confirmation as start; records running only when Herdr confirms delivery"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1479,6 +1481,44 @@
   "execution-resume": {
     "topic": "execution-resume",
     "help": "Reserve capacity for a successor to one exact released worker attempt, then launch it; a recorded launch carrying an unauthorized permission/trust override is refused before the successor is recorded",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "execution-confirm": {
+    "topic": "execution-confirm",
+    "help": "Record an uncertain launch's worker as running only from a worker-side receipt plus a fresh Herdr observation of the exact pane; sends nothing",
+    "arguments": [
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": null,
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": null
+  },
+  "execution-redeliver": {
+    "topic": "execution-redeliver",
+    "help": "Resend the recorded worker brief to the exact pane of an uncertain launch with the same delivery confirmation as start; records running only when Herdr confirms delivery",
     "arguments": [
       {
         "name": "task",

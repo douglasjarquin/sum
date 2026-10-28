@@ -104,4 +104,4 @@ cp templates/task.md /tmp/my-task.md
   --brief /tmp/my-task.md --harness codex --approved
 ```
 
-`--approved` records the caller's assertion of approval; it is not a security boundary. `prepare` creates the record/worktree without launching; `start TASK_ID` starts that prepared task once. An uncertain launch is retained for inspection and cannot simply be started again.
+`--approved` records the caller's assertion of approval; it is not a security boundary. `prepare` creates the record/worktree without launching; `start TASK_ID` starts that prepared task once. An uncertain launch is retained for inspection and cannot simply be started again. `execution redeliver TASK --attempt X` and `execution confirm TASK --attempt X` are its evidence-based recovery: the first resends the recorded brief to the exact pane with the same delivery confirmation, the second records the worker running from a worker-side receipt plus a fresh Herdr observation of that pane.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -18,6 +19,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/project"
+	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -423,6 +425,11 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
+	if role == "worker" && task != nil && judged != nil && judged.Verified {
+		if err := recordWorkerReceipt(s, task, ctx); err != nil {
+			return nil, err
+		}
+	}
 	if err := unlock(); err != nil {
 		return nil, err
 	}
@@ -509,6 +516,30 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	}
 	result.Set("note", note)
 	return result, nil
+}
+
+func recordWorkerReceipt(s *store.Store, task, ctx *ordjson.Object) error {
+	worker, err := reservations.Worker(task)
+	if err != nil || worker == nil {
+		return nil
+	}
+	if _, _, ok := reservations.UncertainLaunch(worker); !ok {
+		return nil
+	}
+	host, err := s.Machine()
+	if err != nil {
+		return err
+	}
+	if reservations.LaunchReceipt(task, worker, host.SameEndpoint) != nil {
+		return nil
+	}
+	id, _ := worker.Get("id")
+	body := ordjson.NewObject()
+	body.Set("attempt", id)
+	if _, err := evidence.Append(task, "worker-init", "worker", body, nil, ctx); err != nil {
+		return err
+	}
+	return s.SaveTask(task)
 }
 
 // incarnationView is the init output's account of which recorded incarnation this pane was judged against.
