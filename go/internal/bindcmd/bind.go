@@ -2,497 +2,260 @@ package bindcmd
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
-	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
+	"github.com/douglasjarquin/sum/go/internal/taskcheckout"
 )
 
-func resolve(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return path
+func field(o *ordjson.Object, k string) any {
+	if o == nil {
+		return nil
 	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return resolved
+	v, _ := o.Get(k)
+	return v
+}
+func object(o *ordjson.Object, k string) *ordjson.Object {
+	v, _ := field(o, k).(*ordjson.Object)
+	return v
+}
+func text(o *ordjson.Object, k string) string { v, _ := field(o, k).(string); return v }
+func decode(v any, to any) error {
+	b, e := ordjson.MarshalCompact(v)
+	if e != nil {
+		return e
 	}
-	return abs
+	return json.Unmarshal(b, to)
+}
+func SameEndpoint(a, b *ordjson.Object) bool {
+	return store.EndpointFromContext(a).Native().SameAuthority(store.EndpointFromContext(b).Native())
+}
+func EndpointRecord(endpoint *ordjson.Object) *ordjson.Object {
+	return store.EndpointFromContext(endpoint).Object()
+}
+func absent(err error) bool {
+	var rpc *hcclient.RPCError
+	if !errors.As(err, &rpc) {
+		return false
+	}
+	var data struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(rpc.Data, &data) == nil && data.Kind == "not_found"
 }
 
-func observeWorkspaceRebind(herdrPath, session, paneID string, task, agent *ordjson.Object, cwd string) (*ordjson.Object, error) {
-	oldWorkspace := stringField(task, "workspace")
-	if oldWorkspace == "" {
-		parts := strings.SplitN(stringField(task, "pane"), ":", 2)
-		if len(parts) == 2 {
-			oldWorkspace = parts[0]
+// ReviewerNativeStopped proves the exact old native terminal and process ended.
+// Surviving writers block replacement; only the current receipt-bound worker
+// process and its observed descendants can be excluded.
+func ReviewerNativeStopped(ctx context.Context, s *store.Store, task, old *ordjson.Object, successors ...store.Endpoint) (*ordjson.Object, error) {
+	endpoint := store.EndpointFromContext(old)
+	if err := endpoint.Validate(); err != nil {
+		return nil, err
+	}
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	terminal, err := client.Get(ctx, endpoint.Address)
+	if err != nil && !absent(err) {
+		return nil, err
+	}
+	if err == nil && (terminal.State == "live" || terminal.CreatedMS != endpoint.CreatedMS) {
+		return nil, fmt.Errorf("recorded reviewer is live or replaced")
+	}
+	registration, err := s.Registration(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	var bound incarnation.NativeEvidence
+	if err = decode(field(registration, "incarnation"), &bound); err != nil || !bound.Endpoint.SameAuthority(endpoint.Native()) || bound.PID == 0 || bound.Foreground == nil {
+		return nil, fmt.Errorf("reviewer process identity missing")
+	}
+	for _, pid := range []int{int(bound.PID), int(bound.Foreground.PID)} {
+		alive, e := proc.PIDRunning(pid)
+		if e != nil || alive {
+			return nil, fmt.Errorf("recorded reviewer process remains live or unobservable")
+		}
+		kids, e := proc.Descendants(pid)
+		if e != nil || len(kids) > 0 {
+			return nil, fmt.Errorf("reviewer descendants remain live or unobservable")
 		}
 	}
-	newWorkspace := stringField(agent, "workspace_id")
-	if oldWorkspace == "" || newWorkspace == "" {
-		return nil, fmt.Errorf("Worker workspace identity is missing; rebind is refused.")
+	exclude := map[int]bool{}
+	worker := store.EndpointFromContext(object(task, "worker_endpoint"))
+	for _, worker := range append([]store.Endpoint{worker}, successors...) {
+		if worker.Validate() == nil {
+			reg, e := s.Registration(worker)
+			if e != nil {
+				return nil, e
+			}
+			var rec incarnation.NativeEvidence
+			var receipt incarnation.NativeReceipt
+			c := hcclient.Client{Socket: worker.Socket, CoreID: worker.CoreID}
+			live, e := c.Get(ctx, worker.Address)
+			if e == nil && decode(field(reg, "incarnation"), &rec) == nil && decode(field(reg, "native_receipt"), &receipt) == nil && incarnation.JudgeNative(field(reg, "incarnation"), worker.Native(), live, &receipt).Verified {
+				for _, pid := range []int{int(rec.PID), int(rec.Foreground.PID)} {
+					exclude[pid] = true
+					kids, e := proc.Descendants(pid)
+					if e != nil {
+						return nil, e
+					}
+					for _, p := range kids {
+						exclude[p] = true
+					}
+				}
+			}
+		}
 	}
-	if oldWorkspace == newWorkspace {
-		return nil, nil
-	}
-	if stringField(agent, "pane_id") != paneID {
-		return nil, fmt.Errorf("Worker pane identity does not match the requested pane; rebind is refused.")
-	}
-	old, oldCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "workspace", "get", oldWorkspace)
+	inside, err := proc.ProcessesBoundTo(text(task, "worktree"), exclude)
 	if err != nil {
-		return nil, fmt.Errorf("Cannot prove recorded worker workspace %s is gone: %w", oldWorkspace, err)
+		return nil, err
 	}
-	if old != nil || oldCode != "workspace_not_found" {
-		return nil, fmt.Errorf("Recorded worker workspace %s is not proven gone (%s); inspect it before rebinding.", oldWorkspace, oldCode)
+	if len(inside) > 0 {
+		return nil, fmt.Errorf("reviewer checkout still has writers; replacement refused")
 	}
-	newValue, newCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "workspace", "get", newWorkspace)
-	if err != nil {
-		return nil, fmt.Errorf("Cannot verify replacement worker workspace %s: %w", newWorkspace, err)
-	}
-	if newCode != "" || newValue == nil {
-		return nil, fmt.Errorf("Replacement worker workspace %s cannot be verified (%s).", newWorkspace, newCode)
-	}
-	workspace := asObject(newValue)
-	if nested := asObject(func() any { v, _ := workspace.Get("workspace"); return v }()); nested != nil {
-		workspace = nested
-	}
-	if stringField(workspace, "workspace_id") != newWorkspace {
-		return nil, fmt.Errorf("Replacement worker workspace identity does not match the pane.")
-	}
-	worktree := asObject(func() any { v, _ := workspace.Get("worktree"); return v }())
-	checkout := stringField(worktree, "checkout_path")
-	repoRoot := stringField(worktree, "repo_root")
-	repository := stringField(task, "repository")
-	worktreePath := stringField(task, "worktree")
-	branch := stringField(task, "branch")
-	if checkout == "" || resolve(checkout) != resolve(worktreePath) || resolve(cwd) != resolve(worktreePath) || repository == "" || (repoRoot != "" && resolve(repoRoot) != resolve(repository)) || branch == "" {
-		return nil, fmt.Errorf("Replacement worker workspace does not match the recorded checkout identity.")
-	}
-	top, err := gitValue(worktreePath, "rev-parse", "--show-toplevel")
-	if err != nil || resolve(top) != resolve(worktreePath) {
-		return nil, fmt.Errorf("Replacement worker checkout is not the recorded Git worktree.")
-	}
-	common, err := gitValue(worktreePath, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return nil, fmt.Errorf("Replacement worker checkout Git identity cannot be verified.")
-	}
-	repositoryCommon, err := gitValue(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil || resolve(common) != resolve(repositoryCommon) {
-		return nil, fmt.Errorf("Replacement worker checkout belongs to a different Git repository.")
-	}
-	actualBranch, err := gitValue(worktreePath, "branch", "--show-current")
-	if err != nil || actualBranch != branch {
-		return nil, fmt.Errorf("Replacement worker checkout branch does not match the recorded task branch.")
-	}
-	rebind := ordjson.NewObject()
-	rebind.Set("from_workspace", oldWorkspace)
-	rebind.Set("to_workspace", newWorkspace)
-	rebind.Set("old_workspace_code", oldCode)
-	rebind.Set("checkout", resolve(worktreePath))
-	rebind.Set("repository", resolve(repository))
-	rebind.Set("git_root", resolve(top))
-	rebind.Set("git_common_dir", resolve(common))
-	rebind.Set("branch", branch)
-	rebind.Set("pane", stringField(agent, "pane_id"))
-	return rebind, nil
+	result := ordjson.NewObject()
+	result.Set("at", store.Now())
+	result.Set("outcome", "stopped")
+	result.Set("endpoint", endpoint.Object())
+	return result, nil
 }
 
-func gitValue(worktree string, args ...string) (string, error) {
-	argv := append([]string{"git", "-C", worktree}, args...)
-	out, err := proc.Run(argv, "", 20*time.Second, true, nil)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out.Stdout), nil
-}
-
-func stringField(obj *ordjson.Object, key string) string {
-	if obj == nil {
-		return ""
-	}
-	value, _ := obj.Get(key)
-	text, _ := value.(string)
-	return text
-}
-
-func Run(s *store.Store, ctx *ordjson.Object, taskID, workerPane, reviewerPane string, parentOnly bool, pump returns.PumpOpts) (*ordjson.Object, error) {
+func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTerminal string, parentOnly bool, pump returns.PumpOpts) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
-	if !parentOnly && workerPane == "" && reviewerPane == "" {
-		return nil, fmt.Errorf("Specify --parent-only, --worker-pane, or --reviewer-pane. Binding never creates a replacement.")
+	if (parentOnly && workerTerminal != "") || (parentOnly && reviewerTerminal != "") || (workerTerminal != "" && reviewerTerminal != "") || (!parentOnly && workerTerminal == "" && reviewerTerminal == "") {
+		return nil, fmt.Errorf("choose exactly one of --parent-only, --worker-terminal, or --reviewer-terminal")
 	}
-	if (parentOnly && (workerPane != "" || reviewerPane != "")) || (workerPane != "" && reviewerPane != "") {
-		return nil, fmt.Errorf("Choose exactly one of --parent-only, --worker-pane, or --reviewer-pane.")
-	}
-	host, err := s.Machine()
+	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
 	}
-	// A worker pane is observed before the state lock (no Herdr call runs under it): its cwd must be the task
-	// checkout, and its occupant is what the worker registration records.
-	var bound incarnation.Evidence
-	var observedCwd string
-	var reviewerAgent *ordjson.Object
-	var reviewerShell int
-	var preTask *ordjson.Object
-	session, _ := ctx.Get("session")
-	sessionStr, _ := session.(string)
-	if workerPane != "" {
-		preTask, err = s.ReadTask(taskID)
-		if err != nil {
-			return nil, err
-		}
+	if err = s.CheckMachine(task); err != nil {
+		return nil, err
 	}
-	var workspaceRebind *ordjson.Object
-	if workerPane != "" || reviewerPane != "" {
-		herdrPath, err := toolpath.Find(pump.RuntimeRoot, "herdr")
-		if err != nil {
-			return nil, err
-		}
-		paneID := workerPane
-		if reviewerPane != "" {
-			paneID = reviewerPane
-		}
-		agent, err := herdrclient.Call(herdrPath, sessionStr, 5*time.Second, "agent", "get", paneID)
-		if err != nil {
-			return nil, err
-		}
-		agentObj := herdrclient.UnwrapAgent(agent)
-		observedCwd = herdrclient.AgentCwd(agentObj)
-		bound = incarnation.FromInfo(agentObj)
-		if workerPane != "" {
-			workspaceRebind, err = observeWorkspaceRebind(herdrPath, sessionStr, workerPane, preTask, agentObj, observedCwd)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if reviewerPane != "" {
-			reviewerAgent = agentObj
-		}
-		observeCtx, cancel := context.WithTimeout(context.Background(), 2*incarnation.ObserveTimeout)
-		if shell, err := incarnation.ProbeShell(incarnation.SessionCall(observeCtx, herdrPath, sessionStr), paneID); err == nil {
-			bound.Shell = shell
-			if reviewerPane != "" {
-				reviewerShell = shell.PID
-			}
-		}
-		cancel()
+	if err = repair.RefuseDuringCleanup(task, "Native rebind"); err != nil {
+		return nil, err
 	}
-	var reviewerBefore *ordjson.Object
-	var reviewerStopObservation *ordjson.Object
-	if reviewerPane != "" {
-		preTask, err := s.ReadTask(taskID)
+	var intent taskcheckout.Intent
+	if err = decode(field(task, "checkout_intent"), &intent); err != nil {
+		return nil, err
+	}
+	if _, err = taskcheckout.Verify(context.Background(), intent, false); err != nil {
+		return nil, err
+	}
+	var replacement, old *ordjson.Object
+	key, role, address := "worker_endpoint", "worker", workerTerminal
+	if reviewerTerminal != "" {
+		key, role, address = "reviewer", "reviewer", reviewerTerminal
+	}
+	if !parentOnly {
+		old = object(task, key)
+		previous := store.EndpointFromContext(old)
+		if previous.Validate() != nil {
+			return nil, fmt.Errorf("recorded native endpoint missing")
+		}
+		if previous.Address == address {
+			return nil, fmt.Errorf("replacement terminal must differ")
+		}
+		current := store.EndpointFromContext(ctx)
+		candidate := previous
+		candidate.CoreID = current.CoreID
+		candidate.Socket = current.Socket
+		candidate.Session = current.Session
+		candidate.Address = address
+		candidate.BindingGeneration++
+		lookupClient := hcclient.Client{Socket: candidate.Socket, CoreID: candidate.CoreID}
+		lookup, cancelLookup := context.WithTimeout(context.Background(), 5*time.Second)
+		observed, lookupErr := lookupClient.Get(lookup, candidate.Address)
+		cancelLookup()
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		candidate.CreatedMS = observed.CreatedMS
+		registration, err := s.Registration(candidate)
+		if err != nil {
+			return nil, fmt.Errorf("replacement needs a matching bootstrap registration: %w", err)
+		}
+		if registration == nil {
+			return nil, fmt.Errorf("replacement needs a matching bootstrap registration")
+		}
+		candidate = store.EndpointFromContext(registration)
+		if candidate.Task != taskID || candidate.Role != role || candidate.Attempt != previous.Attempt || candidate.BindingGeneration <= previous.BindingGeneration {
+			return nil, fmt.Errorf("replacement receipt has no matching task/role/attempt and successor binding generation")
+		}
+		observe, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		client := hcclient.Client{Socket: candidate.Socket, CoreID: candidate.CoreID}
+		terminal, err := client.Get(observe, candidate.Address)
 		if err != nil {
 			return nil, err
 		}
-		reviewerBefore, _ = store.RecordedReviewer(preTask)
-		if reviewerBefore != nil {
-			oldPaneStr := stringField(reviewerBefore, "pane")
-			oldSessionStr := stringField(reviewerBefore, "session")
-			oldMachine := stringField(reviewerBefore, "machine")
-			if host.Is(oldMachine) && oldSessionStr == sessionStr && oldPaneStr != reviewerPane {
-				worktree, _ := preTask.Get("worktree")
-				workerPane := stringField(preTask, "pane")
-				reviewerStopObservation, err = ReviewerStopped(pump.RuntimeRoot, sessionStr, oldPaneStr, fmt.Sprint(worktree), workerPane, reviewerPane, reviewerShell, reviewerAgent)
-				if err != nil {
-					return nil, err
-				}
-			}
+		var receipt incarnation.NativeReceipt
+		if err = decode(field(registration, "native_receipt"), &receipt); err != nil {
+			return nil, err
+		}
+		verdict := incarnation.JudgeNative(field(registration, "incarnation"), candidate.Native(), terminal, &receipt)
+		if !verdict.Verified {
+			return nil, fmt.Errorf("replacement has no current process/receipt authority: %s", verdict.Reason)
+		}
+		if filepath.Clean(terminal.Cwd) != filepath.Clean(intent.Path) {
+			return nil, fmt.Errorf("replacement cwd differs from task checkout")
+		}
+		if _, err = ReviewerNativeStopped(observe, s, task, old, candidate); err != nil {
+			return nil, err
+		}
+		replacement = candidate.Object()
+		for _, k := range []string{"native_template", "native_receipt", "incarnation"} {
+			replacement.Set(k, field(registration, k))
 		}
 	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
 	}
-	released := false
 	defer func() {
-		if !released {
-			_ = unlock()
+		if unlock != nil {
+			unlock()
 		}
 	}()
-	task, err := s.ReadTask(taskID)
+	current, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
 	}
-	if parentOnly {
-		if recorded, _ := task.Get("machine"); !host.Is(recorded) {
-			return nil, fmt.Errorf("Cross-machine restore needs explicit worktree recovery, not a parent-only rebind.")
+	if !parentOnly {
+		if !SameEndpoint(object(current, key), old) {
+			return nil, fmt.Errorf("endpoint changed during rebind")
 		}
+		current.Set(key, replacement)
 	}
-	if workerPane != "" {
-		worktree, _ := task.Get("worktree")
-		worktreeStr, _ := worktree.(string)
-		if observedCwd == "" || resolve(observedCwd) != resolve(worktreeStr) {
-			return nil, fmt.Errorf("Worker cwd does not match the recorded worktree.")
-		}
-		if workspaceRebind != nil {
-			for _, key := range []string{"workspace", "worktree", "repository", "branch"} {
-				before, _ := preTask.Get(key)
-				after, _ := task.Get(key)
-				if before != after {
-					return nil, fmt.Errorf("Task checkout identity changed while the replacement workspace was being verified; inspect it again before rebinding.")
-				}
-			}
-			workspace, _ := workspaceRebind.Get("to_workspace")
-			task.Set("workspace", workspace)
-			if _, err := evidence.Append(task, "worker-workspace-rebind", "coordinator", workspaceRebind, nil, ctx); err != nil {
-				return nil, err
-			}
-		}
-		task.Set("pane", workerPane)
-		task.Set("session", session)
-		task.Set("machine", host.ID)
-	}
-	if reviewerPane != "" {
-		worktree, _ := task.Get("worktree")
-		worktreeStr, _ := worktree.(string)
-		if observedCwd == "" || resolve(observedCwd) != resolve(worktreeStr) {
-			return nil, fmt.Errorf("Reviewer cwd does not match the recorded worktree.")
-		}
-		if reviewerPane == stringField(task, "pane") {
-			return nil, fmt.Errorf("The worker pane cannot be adopted as the reviewer.")
-		}
-		old, hasReviewer := store.RecordedReviewer(task)
-		if !hasReviewer {
-			return nil, fmt.Errorf("No recorded reviewer endpoint exists to rebind; the first reviewer is recorded by `sumctl review`.")
-		}
-		if !SameEndpoint(old, reviewerBefore) {
-			return nil, fmt.Errorf("The recorded reviewer endpoint changed concurrently; inspect it again before rebinding.")
-		}
-		oldPane, _ := old.Get("pane")
-		oldSession, _ := old.Get("session")
-		oldPaneStr, _ := oldPane.(string)
-		oldSessionStr, _ := oldSession.(string)
-		if reviewerPane == oldPaneStr {
-			return nil, fmt.Errorf("The replacement reviewer pane must differ from the recorded reviewer pane.")
-		}
-		if !host.Is(func() any { v, _ := old.Get("machine"); return v }()) || oldSessionStr != sessionStr {
-			return nil, fmt.Errorf("The recorded reviewer pane is in another machine or session; its stop cannot be proved here.")
-		}
-		if reviewerStopObservation == nil {
-			return nil, fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone.")
-		}
-		newEndpoint := ordjson.NewObject()
-		newEndpoint.Set("machine", host.ID)
-		newEndpoint.Set("session", session)
-		newEndpoint.Set("pane", reviewerPane)
-		newEndpoint.Set("cwd", observedCwd)
-		boundAt := store.Now()
-		newEndpoint.Set("bound_at", boundAt)
-		newEndpoint.Set("incarnation", bound.Record(boundAt))
-		rebind := ordjson.NewObject()
-		rebind.Set("from", EndpointRecord(old))
-		rebind.Set("to", EndpointRecord(newEndpoint))
-		rebind.Set("stop_evidence", reviewerStopObservation)
-		record, err := evidence.Append(task, "reviewer-rebind", "coordinator", rebind, nil, ctx)
-		if err != nil {
-			return nil, err
-		}
-		record.Set("brief_revision", evidence.ActiveRevision(s, task))
-		task.Set("reviewer", newEndpoint)
-	}
-	task.Set("parent", ctx)
-	if err := s.SaveTask(task); err != nil {
+	current.Set("parent", ctx)
+	body := ordjson.NewObject()
+	body.Set("from", old)
+	body.Set("to", replacement)
+	body.Set("parent_only", parentOnly)
+	if _, err = evidence.Append(current, "native-rebind", "coordinator", body, nil, ctx); err != nil {
 		return nil, err
 	}
-	if workerPane != "" {
-		// The explicit rebind records the worker registration for the bound pane, so the pane's own init and every
-		// delivery to it are judged against the occupant the coordinator inspected.
-		if _, err := s.Register(store.Endpoint{Machine: host.ID, Session: sessionStr, Pane: workerPane, Cwd: observedCwd}, "worker", taskID, bound.Record(store.Now())); err != nil {
-			return nil, err
-		}
-	}
-	if err := unlock(); err != nil {
+	if err = s.SaveTask(current); err != nil {
 		return nil, err
 	}
-	released = true
-	opts := pump
-	opts.Ctx = ctx
-	opts.Tasks = []string{taskID}
-	opts.Inline = true
-	opts.CallerVerifiedRole = "coordinator" // RequireCoordinator judged this pane's occupant above.
-	pumped, err := returns.Pump(s, opts)
-	if err != nil {
+	if err = unlock(); err != nil {
 		return nil, err
 	}
-	result := ordjson.NewObject()
-	for _, key := range task.Keys() {
-		v, _ := task.Get(key)
-		result.Set(key, v)
+	unlock = nil
+	if err = returns.MarkDirty(s); err != nil {
+		return nil, fmt.Errorf("binding saved; reconciliation signal failed: %w", err)
 	}
-	returns.SetNotice(s, task, result)
-	result.Set("returns", pumped)
-	return result, nil
-}
-
-func ReviewerStopped(runtimeRoot, session, oldPane, worktree, workerPane, newPane string, newShell int, newAgent *ordjson.Object) (*ordjson.Object, error) {
-	observation := ordjson.NewObject()
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return observation, err
-	}
-	oldAgent, agentCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", oldPane)
-	observation.Set("agent_code", agentCode)
-	if err != nil {
-		return observation, fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone: %w", err)
-	}
-	if oldAgent != nil {
-		return observation, fmt.Errorf("Recorded reviewer pane %s still holds a live reviewer agent; it cannot be replaced.", oldPane)
-	}
-	if agentCode != "agent_not_found" && agentCode != "pane_not_found" {
-		return observation, fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone (%s).", agentCode)
-	}
-	oldPaneInfo, paneCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", oldPane)
-	observation.Set("pane_code", paneCode)
-	observation.Set("pane_present", oldPaneInfo != nil)
-	if err != nil {
-		return observation, fmt.Errorf("Cannot prove the recorded reviewer endpoint is gone: %w", err)
-	}
-	if oldPaneInfo == nil && paneCode != "pane_not_found" {
-		return observation, fmt.Errorf("Cannot prove the recorded reviewer pane is gone (%s).", paneCode)
-	}
-	exclude := map[int]bool{}
-	if newShell > 0 {
-		exclude[newShell] = true
-	}
-	for _, key := range []string{"pid", "agent_pid"} {
-		if pid := numericPID(newAgent, key); pid > 0 {
-			exclude[pid] = true
-		}
-	}
-	for _, paneID := range []string{workerPane, newPane} {
-		if paneID == "" {
-			continue
-		}
-		info, code, err := environment.PaneProcesses(runtimeRoot, session, paneID)
-		if err != nil {
-			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s: %w", paneID, err)
-		}
-		if info == nil && code != "pane_not_found" && code != "agent_not_found" {
-			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s (%s).", paneID, code)
-		}
-		if info != nil {
-			if pid := numericPID(info, "shell_pid"); pid > 0 {
-				exclude[pid] = true
-			}
-			processes, _ := info.Get("processes")
-			for _, raw := range asList(processes) {
-				if pid := numericPID(asObject(raw), "pid"); pid > 0 {
-					exclude[pid] = true
-				}
-			}
-		}
-	}
-	if oldPaneInfo != nil {
-		paneObj, _ := oldPaneInfo.(*ordjson.Object)
-		if nested, ok := paneObj.Get("pane"); ok {
-			paneObj, _ = nested.(*ordjson.Object)
-		}
-		oldCwd, _ := paneObj.Get("cwd")
-		observation.Set("old_cwd", oldCwd)
-		if resolve(fmt.Sprint(oldCwd)) != resolve(worktree) {
-			return observation, fmt.Errorf("Recorded reviewer pane cwd changed; its stop cannot be proved.")
-		}
-		info, code, err := environment.PaneProcesses(runtimeRoot, session, oldPane)
-		if err != nil {
-			return observation, fmt.Errorf("Cannot inspect the recorded reviewer pane: %w", err)
-		}
-		if info == nil {
-			return observation, fmt.Errorf("Cannot prove the recorded reviewer pane is unoccupied (%s).", code)
-		}
-		if pid := numericPID(info, "shell_pid"); pid > 0 {
-			observation.Set("old_shell_pid", pid)
-			exclude[pid] = true
-		}
-		processes, _ := info.Get("processes")
-		if rows, _ := processes.([]any); len(rows) > 0 {
-			return observation, fmt.Errorf("Recorded reviewer pane %s still has foreground processes; its stop cannot be proved.", oldPane)
-		}
-	}
-	for _, paneID := range []string{workerPane, newPane} {
-		if paneID == "" {
-			continue
-		}
-		agent, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", paneID)
-		if err != nil {
-			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s: %w", paneID, err)
-		}
-		if agent != nil {
-			agentObj := herdrclient.UnwrapAgent(agent)
-			for _, key := range []string{"pid", "agent_pid"} {
-				if pid := numericPID(agentObj, key); pid > 0 {
-					exclude[pid] = true
-				}
-			}
-		} else if code != "agent_not_found" && code != "pane_not_found" {
-			return observation, fmt.Errorf("Cannot inspect checkout endpoint %s (%s).", paneID, code)
-		}
-	}
-	inside, err := proc.ProcessesBoundTo(worktree, exclude)
-	excluded := make([]any, 0, len(exclude))
-	for pid := range exclude {
-		excluded = append(excluded, pid)
-	}
-	sort.Slice(excluded, func(i, j int) bool { return excluded[i].(int) < excluded[j].(int) })
-	observation.Set("excluded_pids", excluded)
-	if err != nil {
-		return observation, fmt.Errorf("Cannot prove there are no other processes in the task checkout: %w", err)
-	}
-	if len(inside) > 0 {
-		return observation, fmt.Errorf("Cannot rebind reviewer while process %d remains bound to the task checkout.", inside[0].PID)
-	}
-	return observation, nil
-}
-
-func numericPID(obj *ordjson.Object, key string) int {
-	if obj == nil {
-		return 0
-	}
-	value, _ := obj.Get(key)
-	pid, _ := strconv.Atoi(fmt.Sprint(value))
-	return pid
-}
-
-func asObject(value any) *ordjson.Object {
-	obj, _ := value.(*ordjson.Object)
-	return obj
-}
-
-func asList(value any) []any {
-	rows, _ := value.([]any)
-	return rows
-}
-
-func EndpointRecord(endpoint *ordjson.Object) *ordjson.Object {
-	row := ordjson.NewObject()
-	for _, key := range []string{"machine", "session", "pane", "incarnation"} {
-		value, _ := endpoint.Get(key)
-		row.Set(key, value)
-	}
-	return row
-}
-
-func SameEndpoint(a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	for _, key := range []string{"machine", "session", "pane"} {
-		if stringField(a, key) != stringField(b, key) {
-			return false
-		}
-	}
-	return true
+	return current, nil
 }

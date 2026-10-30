@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/machine"
@@ -25,6 +27,8 @@ const (
 )
 
 type lab struct {
+	fixture  *hctest.Fixture
+	deadPID  int
 	t        *testing.T
 	store    *store.Store
 	ctx      *ordjson.Object
@@ -49,12 +53,8 @@ func newLab(t *testing.T) *lab {
 	t.Helper()
 	t.Setenv("SUM_HOME", "")
 	t.Setenv("SUM_SESSION", "sum-test")
-	t.Setenv("HERDR_SESSION", "sum-test")
-	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
 	home := t.TempDir()
 	root := repoRoot(t)
-	fakeHerdr := filepath.Join(root, "tests", "fixtures", "herdr.py")
 	fakeLsof := filepath.Join(root, "tests", "fixtures", "lsof.py")
 	herdrRoot := filepath.Join(home, "fake-herdr")
 	lsofRoot := filepath.Join(home, "fake-lsof")
@@ -64,14 +64,8 @@ func newLab(t *testing.T) *lab {
 	if err := os.MkdirAll(lsofRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SUM_HERDR_BIN", fakeHerdr)
 	t.Setenv("SUM_PS_BIN", filepath.Join(root, "tests", "fixtures", "ps.py"))
 	t.Setenv("SUM_LSOF_BIN", fakeLsof)
-	t.Setenv("FAKE_HERDR_ROOT", herdrRoot)
-	t.Setenv("FAKE_SESSION", "sum-test")
-	t.Setenv("FAKE_PARENT_CWD", home)
-	t.Setenv("FAKE_PARENT_STATUS", "idle")
-	t.Setenv("FAKE_PARENT_KIND", "claude")
 	t.Setenv("FAKE_LSOF_ROOT", lsofRoot)
 	host, err := machine.ID()
 	if err != nil {
@@ -84,29 +78,29 @@ func newLab(t *testing.T) *lab {
 	if err := st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := ordjson.NewObject()
-	ctx.Set("session", "sum-test")
-	ctx.Set("pane", "w-parent:p1")
-	ctx.Set("machine", host)
-	ctx.Set("cwd", home)
-	owner := ordjson.NewObject()
-	owner.Set("session", "sum-test")
-	owner.Set("pane", "w-parent:p1")
-	owner.Set("machine", host)
-	owner.Set("role", "coordinator")
-	// The occupant the fake Herdr reports for the coordinator pane, as init would have recorded it.
-	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
-	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
+	fixture := hctest.New(t)
+	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: host, CoreID: fixture.CoreID, Session: "sum-test", Socket: fixture.Socket, Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: home}
+	ctx := endpoint.Object()
+	pid := uint32(424242)
+	fg := &hcclient.Foreground{PID: 424243, Name: "codex", Argv: []string{"codex"}, Cwd: home}
+	fixture.SetTerminal(hcclient.Terminal{Address: "t1", State: "live", Cwd: home, CreatedMS: 1, PID: &pid, Foreground: fg})
+	bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: fg}
+	owner := endpoint.Object()
+	owner.Set("incarnation", bound.Record(store.Now()))
+	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: endpoint.Native(), Kind: "coordinator-init", Attempt: "bootstrap"})
+	owner.Set("native_receipt", receipt)
+	if err := ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil, nil); err != nil {
+	if _, err := st.Register(endpoint, "coordinator", nil, bound.Record(store.Now())); err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
 	if err := os.WriteFile(filepath.Join(lsofRoot, "cwds.json"), []byte(`{"processes":[]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return &lab{t: t, store: st, ctx: ctx, home: home, host: host, checkout: checkout, runtime: root, herdr: herdrRoot, lsofRoot: lsofRoot}
+	deadPID, _ := startThenStop(t, checkout)
+	return &lab{fixture: fixture, deadPID: deadPID, t: t, store: st, ctx: ctx, home: home, host: host, checkout: checkout, runtime: root, herdr: herdrRoot, lsofRoot: lsofRoot}
 }
 
 func (l *lab) plantLsof(processes []map[string]any) {
@@ -136,40 +130,19 @@ func (l *lab) failingLsof() {
 func (l *lab) writeSettings(global, perRepo int) {
 	l.t.Helper()
 	body := fmt.Sprintf(`{"schema": 1, "capacity": {"global": %d, "per_repository": %d}}`+"\n", global, perRepo)
-	if err := os.WriteFile(filepath.Join(l.home, "settings.json"), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(l.store.Home, "settings.json"), []byte(body), 0o600); err != nil {
 		l.t.Fatal(err)
 	}
 }
 
 func (l *lab) writeWorkerPane(agent any, processes []map[string]any) {
-	l.t.Helper()
-	state := map[string]any{
-		"panes": map[string]any{
-			"w-parent:p1": map[string]any{
-				"pane_id": "w-parent:p1", "cwd": l.home, "workspace_id": "w-parent",
-				"agent_status": "idle", "agent": "claude",
-			},
-			"w-worker:p1": map[string]any{
-				"pane_id": "w-worker:p1", "cwd": l.checkout, "workspace_id": "w-worker",
-				"agent_status": "unknown", "agent": agent, "created": true, "shell_pid": 4242,
-				"processes": processes,
-			},
-		},
-		"workspaces": map[string]any{
-			"w-parent": map[string]any{"workspace_id": "w-parent", "label": "coordinator", "worktree": nil},
-			"w-worker": map[string]any{
-				"workspace_id": "w-worker", "label": "task",
-				"worktree": map[string]any{"checkout_path": l.checkout},
-			},
-		},
+	pid := uint32(l.deadPID)
+	terminal := hcclient.Terminal{Address: "t2", CreatedMS: 2, Cwd: l.checkout, State: "finished", PID: &pid, Foreground: &hcclient.Foreground{PID: int32(pid), Name: "codex", Argv: []string{"codex"}, Cwd: l.checkout}}
+	if agent != nil {
+		terminal.State = "live"
+		terminal.Status = &hcclient.Status{State: "done"}
 	}
-	raw, err := json.Marshal(state)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), raw, 0o600); err != nil {
-		l.t.Fatal(err)
-	}
+	l.fixture.SetTerminal(terminal)
 }
 
 func startCheckoutWriter(t *testing.T, checkout string) int {
@@ -219,6 +192,23 @@ func (l *lab) saveTask(raw string) {
 	obj, err := decodeObject(raw)
 	if err != nil {
 		l.t.Fatal(err)
+	}
+	if execution, _ := reservations.GetExecution(obj); execution != nil {
+		obj.Set("schema", json.Number("2"))
+		obj.Delete("pane")
+		obj.Delete("workspace")
+		endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: l.host, CoreID: l.fixture.CoreID, Session: "sum-test", Socket: l.fixture.Socket, Address: "t2", CreatedMS: 2, Task: taskID, Role: "worker", Attempt: workerID, BindingGeneration: 1, Cwd: l.checkout}
+		obj.Set("worker_endpoint", endpoint.Object())
+		execution.Worker.Set("owner", l.ctx)
+		execution.Worker.Delete("occupant")
+		pid := uint32(l.deadPID)
+		bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: &hcclient.Foreground{PID: int32(pid), Name: "sleep", Argv: []string{"sleep", "120"}, Cwd: l.checkout}}
+		native := ordjson.NewObject()
+		native.Set("incarnation", bound.Record(store.Now()))
+		execution.Worker.Set("native_launch", native)
+		if _, err := l.store.Register(endpoint, "worker", taskID, bound.Record(store.Now())); err != nil {
+			l.t.Fatal(err)
+		}
 	}
 	if err := l.store.SaveTask(obj); err != nil {
 		l.t.Fatal(err)
@@ -433,81 +423,14 @@ func (l *lab) workerRunningJSON(occupant string) string {
 }`, taskID, l.host, l.checkout, workerID, l.host, l.checkout, occupant)
 }
 
-func (l *lab) writeIdleWorker() {
-	l.t.Helper()
-	l.writeWorkerPane("claude", []map[string]any{
-		{"pid": 4242, "name": "bash", "argv0": "bash", "argv": []any{"-bash"}, "cwd": l.checkout},
-	})
-	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		l.t.Fatal(err)
-	}
-	panes := state["panes"].(map[string]any)
-	worker := panes["w-worker:p1"].(map[string]any)
-	worker["agent_status"] = "idle"
-	panes["w-worker:p1"] = worker
-	state["panes"] = panes
-	out, err := json.Marshal(state)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), out, 0o600); err != nil {
-		l.t.Fatal(err)
-	}
-}
+func (l *lab) writeIdleWorker() { l.writeWorkerPane("codex", nil) }
 
-func TestPark_absentWorkerPaneReleasesLegacyAndSchemaAttempts(t *testing.T) {
-	t.Run("schema-1", func(t *testing.T) {
-		l := newLab(t)
-		l.writeSettings(1, 1)
-		l.plantLsof(nil)
-		occupant := fmt.Sprintf(`"occupant": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "checkout": %q, "harness": "codex", "name": "done", "shell_pid": 4242, "pid": null, "argv": null}`, l.host, l.checkout)
-		l.saveTask(l.workerRunningJSON(occupant))
-		result, err := l.park(workerID)
-		if err != nil {
-			t.Fatalf("park closed pane: %v", err)
-		}
-		released, _ := result.Get("released")
-		if released != true {
-			t.Fatalf("released = %v", released)
-		}
-		if l.attemptState(workerID) != "released" {
-			t.Fatalf("state = %s", l.attemptState(workerID))
-		}
-		l.questionsRemain()
-		if err := l.admit(); err != nil {
-			t.Fatalf("admission after closed pane: %v", err)
-		}
-	})
-	t.Run("legacy", func(t *testing.T) {
-		l := newLab(t)
-		l.writeSettings(1, 1)
-		l.plantLsof(nil)
-		raw := fmt.Sprintf(`{
-"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
-"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "workspace": "w-worker",
-"worktree": %q, "branch": "sum/t-aaaaaaaaaaaa",
-"questions": [{"id": "q-aaaaaaaaaa", "status": "open", "text": "keep the report?"}],
-"evidence": [], "report": {"text": "done"}, "notice": null, "attention": [],
-"brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship"
-}`, taskID, l.host, l.checkout)
-		l.saveTask(raw)
-		result, err := l.park("legacy:" + taskID)
-		if err != nil {
-			t.Fatalf("park legacy closed pane: %v", err)
-		}
-		released, _ := result.Get("released")
-		if released != true {
-			t.Fatalf("released = %v", released)
-		}
-		if err := l.admit(); err != nil {
-			t.Fatalf("admission after legacy closed pane: %v", err)
-		}
-	})
+func TestParkHistoricalTaskRequiresExplicitMigration(t *testing.T) {
+	l := newLab(t)
+	l.saveTask(fmt.Sprintf(`{"schema":1,"id":%q,"machine":%q,"status":"running","questions":[]}`, taskID, l.host))
+	if _, err := l.park("legacy:" + taskID); err == nil {
+		t.Fatal("historical task silently acquired native execution authority")
+	}
 }
 
 func TestPark_idleWorkerDoesNotRelease(t *testing.T) {
@@ -692,33 +615,17 @@ func (l *lab) identity() machine.Identity {
 	return host
 }
 
-// A worker pane ID that Herdr restored under a new server, now occupied by a different live agent (a new terminal and
-// shell), is not proof that the recorded attempt stopped: the attempt keeps its reservation and nothing is released.
-func TestPark_aRestoredPaneWithADifferentLiveAgentKeepsTheAttemptsCapacity(t *testing.T) {
+// A replaced creation never proves the recorded program exited.
+func TestParkNativeReusedAddressKeepsCapacity(t *testing.T) {
 	l := newLab(t)
 	l.writeSettings(1, 1)
 	l.plantLsof(nil)
-	l.writeIdleWorker()
-	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	worker := state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)
-	worker["terminal_id"], worker["shell_pid"], worker["agent"] = "term-after-restart", 5151, "codex"
-	out, _ := json.Marshal(state)
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), out, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	occupant := fmt.Sprintf(`"occupant": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "checkout": %q, "harness": "claude", "name": "idle", "shell_pid": 4242, "pid": null, "argv": null}`, l.host, l.checkout)
-	l.saveTask(l.workerRunningJSON(occupant))
+	l.saveTask(l.workerRunningJSON(""))
+	l.fixture.SetTerminal(hcclient.Terminal{Address: "t2", CreatedMS: 3, Cwd: l.checkout, State: "finished"})
 	if _, err := l.park(workerID); err == nil {
-		t.Fatal("a different occupant of the recorded pane released the attempt's capacity")
+		t.Fatal("reused address released a different creation")
 	}
 	if l.attemptState(workerID) == "released" || l.heldCount() == 0 {
-		t.Fatalf("attempt state = %s, held = %d; want the reservation kept", l.attemptState(workerID), l.heldCount())
+		t.Fatal("replacement erased capacity")
 	}
 }

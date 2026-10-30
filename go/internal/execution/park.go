@@ -48,25 +48,8 @@ func Park(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID st
 	}
 	var attempt *ordjson.Object
 	if value == nil {
-		if attemptID != "legacy:"+taskID {
-			unlock()
-			return nil, fmt.Errorf("Legacy task requires attempt legacy:%s; no reservation changed.", taskID)
-		}
-		owner := ordjson.NewObject()
-		machine, _ := task.Get("machine")
-		session, _ := task.Get("session")
-		pane, _ := task.Get("pane")
-		owner.Set("machine", machine)
-		owner.Set("session", session)
-		owner.Set("pane", pane)
-		worktree, _ := task.Get("worktree")
-		created, err := reservations.NewAttempt("worker", owner, worktree, store.Now(), "", nil)
-		if err != nil {
-			unlock()
-			return nil, err
-		}
-		task.Set("execution", reservations.NewExecution(created))
-		attempt = created
+		unlock()
+		return nil, fmt.Errorf("historical task has no native execution reservation; explicit migration is required")
 	} else {
 		rows := append([]*ordjson.Object{value.Worker}, value.Verifiers...)
 		var matches []*ordjson.Object
@@ -314,11 +297,7 @@ func Resume(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID 
 		unlock()
 		return nil, err
 	}
-	owner := ordjson.NewObject()
-	for _, key := range []string{"machine", "session", "pane"} {
-		v, _ := task.Get(key)
-		owner.Set(key, v)
-	}
+	owner := store.EndpointFromContext(ctx).Object()
 	worktree, _ := task.Get("worktree")
 	successor, err := reservations.NewAttempt("worker", owner, worktree, store.Now(), "", nil)
 	if err != nil {

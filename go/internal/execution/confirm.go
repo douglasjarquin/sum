@@ -1,12 +1,16 @@
 package execution
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
@@ -14,94 +18,79 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
+func field(o *ordjson.Object, key string) any {
+	if o == nil {
+		return nil
+	}
+	v, _ := o.Get(key)
+	return v
+}
+func decodeNative(value any, target any) error {
+	b, e := ordjson.MarshalCompact(value)
+	if e != nil {
+		return e
+	}
+	return json.Unmarshal(b, target)
+}
+func workerEndpoint(task *ordjson.Object) store.Endpoint {
+	return store.EndpointFromContext(asObject(field(task, "worker_endpoint")))
+}
 func sameRoute(a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	for _, key := range []string{"machine", "session", "pane", "cwd", "recipient", "role"} {
-		av, _ := a.Get(key)
-		bv, _ := b.Get(key)
-		if fmt.Sprint(av) != fmt.Sprint(bv) {
-			return false
-		}
-	}
-	return true
+	return store.EndpointFromContext(a).Native().SameAuthority(store.EndpointFromContext(b).Native())
 }
 
 func Confirm(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := herdrclient.EnsureVersion(herdrPath, contract.HerdrCLI); err != nil {
-		return nil, err
-	}
-	unlock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
 	task, err := s.ReadTask(taskID)
 	if err != nil {
-		unlock()
 		return nil, err
 	}
-	if err := s.CheckMachine(task); err != nil {
-		unlock()
+	if err = s.CheckMachine(task); err != nil {
 		return nil, err
 	}
-	if err := repair.RefuseDuringCleanup(task, "Execution confirm"); err != nil {
-		unlock()
+	if err = repair.RefuseDuringCleanup(task, "Execution confirm"); err != nil {
 		return nil, err
 	}
 	worker, err := reservations.Worker(task)
 	if err != nil {
-		unlock()
 		return nil, err
 	}
-	wid, _ := worker.Get("id")
-	_, uncertainAt, uncertain := reservations.UncertainLaunch(worker)
-	if fmt.Sprint(wid) != attemptID || !uncertain {
-		unlock()
-		return nil, fmt.Errorf("Worker attempt %s is not an uncertain launch; nothing was recorded.", attemptID)
+	if field(worker, "id") != attemptID {
+		return nil, fmt.Errorf("worker attempt is stale")
 	}
-	host, err := s.Machine()
-	if err != nil {
-		unlock()
+	state := asString(field(worker, "state"))
+	if state != "uncertain" && state != "starting" {
+		return nil, fmt.Errorf("attempt %s is not awaiting a launch receipt", attemptID)
+	}
+	endpoint := workerEndpoint(task)
+	if err = endpoint.Validate(); err != nil {
 		return nil, err
 	}
-	receipt := reservations.LaunchReceipt(task, worker, host.SameEndpoint)
-	pane := asString(func() any { v, _ := task.Get("pane"); return v }())
-	if receipt == nil {
-		unlock()
-		return nil, fmt.Errorf("Worker pane %s records no receipt after the uncertain launch at %s; the worker records one by running the init command from its brief in that pane (or by filing a report). Nothing was recorded.", pane, uncertainAt)
-	}
-	generation := int64From(worker, "generation")
-	route := returns.ReturnRoute(task, "worker")
-	worktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
-	session := asString(func() any { v, _ := task.Get("session"); return v }())
-	launchSpec := launch.TaskLaunch(task)
-	harness := asString(func() any { v, _ := launchSpec.Get("harness"); return v }())
-	unlock()
-
-	occupant, err := returns.ObserveWorker(s, runtimeRoot, task, route, worktree)
+	registration, err := s.Registration(endpoint)
 	if err != nil {
 		return nil, err
 	}
-	agent := occupant.Agent()
-	observedKind := asString(func() any { v, _ := agent.Get("agent"); return v }())
-	if observedKind != harness {
-		return nil, fmt.Errorf("Worker pane %s holds agent %s, not the recorded harness %s; nothing was recorded.", pane, observedKind, harness)
+	var receipt incarnation.NativeReceipt
+	if err = decodeNative(field(registration, "native_receipt"), &receipt); err != nil {
+		return nil, fmt.Errorf("no matching worker-init receipt: %w", err)
 	}
-	bound := prepare.ObserveBound(herdrPath, session, pane, agent)
-
-	unlock, err = s.Lock()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	observe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	terminal, err := client.Get(observe, endpoint.Address)
+	if err != nil {
+		return nil, err
+	}
+	verdict := incarnation.JudgeNative(field(registration, "incarnation"), endpoint.Native(), terminal, &receipt)
+	if !verdict.Verified {
+		return nil, fmt.Errorf("worker receipt/process is not current: %s", verdict.Reason)
+	}
+	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
 	}
@@ -110,121 +99,100 @@ func Confirm(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID
 	if err != nil {
 		return nil, err
 	}
-	currentWorker, err := reservations.Worker(current)
+	w, err := reservations.Worker(current)
 	if err != nil {
 		return nil, err
 	}
-	currentID, _ := currentWorker.Get("id")
-	_, _, stillUncertain := reservations.UncertainLaunch(currentWorker)
-	if fmt.Sprint(currentID) != attemptID || int64From(currentWorker, "generation") != generation || !stillUncertain || !sameRoute(returns.ReturnRoute(current, "worker"), route) {
-		return nil, fmt.Errorf("Worker identity changed during observation; nothing was recorded.")
+	if field(w, "id") != attemptID || int64From(w, "generation") != int64From(worker, "generation") || !workerEndpoint(current).Native().SameAuthority(endpoint.Native()) {
+		return nil, fmt.Errorf("worker identity changed during confirmation")
 	}
-	if message := occupant.Check(s, route); message != "" {
-		return nil, fmt.Errorf("%s", message)
+	obs := ordjson.NewObject()
+	obs.Set("at", store.Now())
+	obs.Set("outcome", "worker-init-receipt")
+	if _, err = reservations.Transition(current, attemptID, "running", store.Now(), obs, nil); err != nil {
+		return nil, err
 	}
-	receiptView := ordjson.NewObject()
-	for _, key := range []string{"id", "kind", "at"} {
-		v, _ := receipt.Get(key)
-		receiptView.Set(key, v)
-	}
+	current.Set("status", "running")
+	current.Set("error", nil)
 	body := ordjson.NewObject()
 	body.Set("action", "confirm")
 	body.Set("attempt", attemptID)
-	body.Set("receipt", receiptView)
-	body.Set("agent_status", herdrclient.AgentStatus(agent))
-	if _, err := evidence.Append(current, "execution", "coordinator", body, nil, ctx); err != nil {
+	body.Set("receipt", field(registration, "native_receipt"))
+	if _, err = evidence.Append(current, "execution", "coordinator", body, nil, ctx); err != nil {
 		return nil, err
 	}
-	result, err := prepare.RecordRunning(s, current, runtimeRoot, session, pane, harness, agent, bound)
-	if err != nil {
+	if err = s.SaveTask(current); err != nil {
 		return nil, err
 	}
-	result.Set("confirmed", true)
-	result.Set("receipt", receiptView)
-	return result, nil
+	current.Set("confirmed", true)
+	return current, nil
 }
 
 func Redeliver(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := herdrclient.EnsureVersion(herdrPath, contract.HerdrCLI); err != nil {
-		return nil, err
-	}
-	unlock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
 	task, err := s.ReadTask(taskID)
 	if err != nil {
-		unlock()
 		return nil, err
 	}
-	if err := s.CheckMachine(task); err != nil {
-		unlock()
+	if err = s.CheckMachine(task); err != nil {
 		return nil, err
 	}
-	if err := repair.RefuseDuringCleanup(task, "Execution redeliver"); err != nil {
-		unlock()
+	if err = repair.RefuseDuringCleanup(task, "Execution redeliver"); err != nil {
 		return nil, err
 	}
 	worker, err := reservations.Worker(task)
 	if err != nil {
-		unlock()
 		return nil, err
 	}
-	wid, _ := worker.Get("id")
-	outcome, _, uncertain := reservations.UncertainLaunch(worker)
-	pane := asString(func() any { v, _ := task.Get("pane"); return v }())
-	if fmt.Sprint(wid) != attemptID || !uncertain {
-		unlock()
-		return nil, fmt.Errorf("Worker attempt %s is not an uncertain launch; nothing was sent.", attemptID)
+	if field(worker, "id") != attemptID {
+		return nil, fmt.Errorf("worker attempt is stale")
 	}
-	if outcome != "launch-uncertain" {
-		unlock()
-		return nil, fmt.Errorf("Worker attempt %s already had its brief confirmed delivered (%s); use `execution confirm %s --attempt %s` once the worker records a receipt. Nothing was sent.", attemptID, outcome, taskID, attemptID)
+	state := asString(field(worker, "state"))
+	if state != "uncertain" && state != "starting" {
+		return nil, fmt.Errorf("attempt is not awaiting its initial receipt")
 	}
-	host, err := s.Machine()
-	if err != nil {
-		unlock()
+	if err = launch.CheckRecorded(launch.TaskLaunch(task)); err != nil {
 		return nil, err
 	}
-	if reservations.LaunchReceipt(task, worker, host.SameEndpoint) != nil {
-		unlock()
-		return nil, fmt.Errorf("Worker pane %s already received a brief: the worker recorded a receipt after the uncertain launch. Use `execution confirm %s --attempt %s`; nothing was sent.", pane, taskID, attemptID)
-	}
-	launchSpec := launch.TaskLaunch(task)
-	if err := launch.CheckRecorded(launchSpec); err != nil {
-		unlock()
-		return nil, err
-	}
-	briefFile, err := versions.ActiveBrief(s, task)
-	if err != nil {
-		unlock()
-		return nil, err
-	}
-	generation := int64From(worker, "generation")
-	route := returns.ReturnRoute(task, "worker")
-	worktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
-	session := asString(func() any { v, _ := task.Get("session"); return v }())
-	harness := asString(func() any { v, _ := launchSpec.Get("harness"); return v }())
-	unlock()
-
-	occupant, err := returns.ObserveWorker(s, runtimeRoot, task, route, worktree)
+	brief, err := versions.ActiveBrief(s, task)
 	if err != nil {
 		return nil, err
 	}
-	agent := occupant.Agent()
-	observedKind := asString(func() any { v, _ := agent.Get("agent"); return v }())
-	if observedKind != harness {
-		return nil, fmt.Errorf("Worker pane %s holds agent %s, not the recorded harness %s; nothing was sent.", pane, observedKind, harness)
+	endpoint := workerEndpoint(task)
+	if err = endpoint.Validate(); err != nil {
+		return nil, fmt.Errorf("launch has no returned terminal identity; inspect its saved intent without relaunching: %w", err)
 	}
-
-	unlock, err = s.Lock()
+	deliveryCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	release, err := s.RecipientLock(deliveryCtx, [3]string{endpoint.Machine, endpoint.CoreID, endpoint.Address})
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	recipient, err := returns.ObserveNative(deliveryCtx, endpoint, asString(field(task, "worktree")))
+	if err != nil {
+		return nil, err
+	}
+	registration, err := s.Registration(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if field(registration, "native_receipt") != nil {
+		return nil, fmt.Errorf("worker already recorded an init receipt; use execution confirm")
+	}
+	var recorded incarnation.NativeEvidence
+	if err = decodeNative(field(registration, "incarnation"), &recorded); err != nil {
+		return nil, err
+	}
+	if !recorded.Endpoint.SameAuthority(endpoint.Native()) || recipient.Terminal.PID == nil || *recipient.Terminal.PID != recorded.PID || !reflect.DeepEqual(recipient.Terminal.Foreground, recorded.Foreground) {
+		return nil, fmt.Errorf("recorded launch process changed; redelivery refused")
+	}
+	if err = recipient.Qualify(registration); err != nil {
+		return nil, err
+	}
+	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
 	}
@@ -233,40 +201,35 @@ func Redeliver(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 		unlock()
 		return nil, err
 	}
-	currentWorker, err := reservations.Worker(current)
+	w, err := reservations.Worker(current)
 	if err != nil {
 		unlock()
 		return nil, err
 	}
-	currentID, _ := currentWorker.Get("id")
-	_, _, stillUncertain := reservations.UncertainLaunch(currentWorker)
-	if fmt.Sprint(currentID) != attemptID || int64From(currentWorker, "generation") != generation || !stillUncertain || !sameRoute(returns.ReturnRoute(current, "worker"), route) {
+	if field(w, "id") != attemptID || int64From(w, "generation") != int64From(worker, "generation") || !workerEndpoint(current).Native().SameAuthority(endpoint.Native()) {
 		unlock()
-		return nil, fmt.Errorf("Worker identity changed during observation; nothing was sent.")
+		return nil, fmt.Errorf("worker identity changed during redelivery")
 	}
-	if message := occupant.Check(s, route); message != "" {
+	native := asObject(field(w, "native_launch"))
+	if native == nil {
 		unlock()
-		return nil, fmt.Errorf("%s", message)
+		return nil, fmt.Errorf("no saved native launch intent")
 	}
-	if _, err := reservations.Transition(current, attemptID, "starting", store.Now(), nil, &generation); err != nil {
+	if field(native, "redelivery") != nil {
 		unlock()
-		return nil, err
+		return nil, fmt.Errorf("redelivery already claimed; inspect its outcome and record a receipt before further recovery")
 	}
-	if st, _ := current.Get("status"); st == "needs-attention" {
-		current.Set("status", "starting")
-	}
-	if err := s.SaveTask(current); err != nil {
+	claim := ordjson.NewObject()
+	claim.Set("effect", "claimed")
+	claim.Set("at", store.Now())
+	native.Set("redelivery", claim)
+	if err = s.SaveTask(current); err != nil {
 		unlock()
 		return nil, err
 	}
 	unlock()
-
-	prompt := prepare.WorkerPrompt(s, runtimeRoot, taskID, briefFile, current)
-	if err := prepare.DeliverBrief(herdrPath, session, pane, prompt); err != nil {
-		return prepare.FailStart(s, taskID, err)
-	}
-	bound := prepare.ObserveBound(herdrPath, session, pane, agent)
-
+	result, sendErr := recipient.Send(deliveryCtx, prepare.WorkerPrompt(s, runtimeRoot, taskID, brief, current))
+	effect, detail := returns.DeliveryFailure(sendErr)
 	unlock, err = s.Lock()
 	if err != nil {
 		return nil, err
@@ -276,20 +239,24 @@ func Redeliver(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if err != nil {
 		return nil, err
 	}
-	finalWorker, err := reservations.Worker(current)
+	w, err = reservations.Worker(current)
 	if err != nil {
 		return nil, err
 	}
-	finalID, _ := finalWorker.Get("id")
-	finalState, _ := finalWorker.Get("state")
-	if fmt.Sprint(finalID) != attemptID || finalState != "starting" || int64From(finalWorker, "generation") != generation+1 {
-		return nil, fmt.Errorf("Worker identity changed after delivery; the recorded launch was not confirmed.")
+	if field(w, "id") != attemptID || !workerEndpoint(current).Native().SameAuthority(endpoint.Native()) {
+		return nil, fmt.Errorf("worker changed after delivery; inspect original endpoint")
 	}
-	body := ordjson.NewObject()
-	body.Set("action", "redeliver")
-	body.Set("attempt", attemptID)
-	if _, err := evidence.Append(current, "execution", "coordinator", body, nil, ctx); err != nil {
+	native = asObject(field(w, "native_launch"))
+	claim = asObject(field(native, "redelivery"))
+	claim.Set("effect", effect)
+	claim.Set("detail", detail)
+	resultObject, _ := ordjson.FromValue(result)
+	claim.Set("result", resultObject)
+	if err = s.SaveTask(current); err != nil {
 		return nil, err
 	}
-	return prepare.RecordRunning(s, current, runtimeRoot, session, pane, harness, agent, bound)
+	if sendErr != nil {
+		return nil, sendErr
+	}
+	return current, nil
 }

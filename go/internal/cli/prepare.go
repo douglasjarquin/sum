@@ -13,6 +13,7 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 	add := func(name string, run func(*store.Store, *ordjson.Object, prepare.Args) (*ordjson.Object, error)) {
 		var (
 			repo, project, brief, harness, model, reasoning, preset, base, targetBranch, kind string
+			reconcile                                                                         string
 			sameAsYou, approved, permissionOverride                                           bool
 			extra                                                                             []string
 		)
@@ -21,7 +22,7 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 			Annotations: map[string]string{projectsAnnotation: "all"},
 			Args:        cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				if brief == "" || (kind != "ship" && kind != "scout") {
+				if reconcile == "" && (brief == "" || (kind != "ship" && kind != "scout")) {
 					return fmt.Errorf("invalid %s arguments", name)
 				}
 				st, err := o.openStore(name)
@@ -31,6 +32,21 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 				ctx, err := store.Context(o.installRoot)
 				if err != nil {
 					return err
+				}
+				if reconcile != "" {
+					if name != "prepare" {
+						return fmt.Errorf("only prepare supports --reconcile")
+					}
+					for _, flag := range []string{"repo", "project", "brief", "harness", "model", "reasoning", "same-as-you", "preset", "base", "target-branch", "kind", "approved", "arg", "permission-override"} {
+						if cmd.Flags().Changed(flag) {
+							return fmt.Errorf("--reconcile uses only the saved approved task; it conflicts with --%s", flag)
+						}
+					}
+					view, err := prepare.Reconcile(st, ctx, o.runtimeRoot, o.sumctlPath(), reconcile)
+					if err != nil {
+						return err
+					}
+					return emitOrdjson(cmd.OutOrStdout(), view)
 				}
 				view, err := run(st, ctx, prepare.Args{
 					Repo:         repo,
@@ -57,6 +73,9 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			},
+		}
+		if name == "prepare" {
+			cmd.Flags().StringVar(&reconcile, "reconcile", "", "")
 		}
 		cmd.Flags().StringVar(&repo, "repo", "", "")
 		cmd.Flags().StringVar(&project, "project", "", "")

@@ -4,14 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 const Schema = 1
@@ -270,35 +268,28 @@ func CheckRecorded(spec *ordjson.Object) error {
 	return fmt.Errorf("Permission/trust override %s for %s is not authorized by this task's record: a record prepared before sum required %s carries no authorization, and `start --arg` cannot add one. Nothing was started; dispatch the task again with %s after the user authorizes it.", strings.Join(missing, ", "), harness, PermissionOverrideFlag, PermissionOverrideFlag)
 }
 
-func RootLaunch(runtimeRoot string, ctx *ordjson.Object) *ordjson.Object {
+func RootLaunch(s *store.Store, ctx *ordjson.Object) *ordjson.Object {
 	result := ordjson.NewObject()
 	result.Set("harness", nil)
 	result.Set("model", nil)
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		result.Set("error", err.Error())
+		return result
+	}
+	owner, err := s.Owner()
 	if err != nil {
 		result.Set("error", err.Error())
 		return result
 	}
-	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
-	pane := asString(func() any { v, _ := ctx.Get("pane"); return v }())
-	agent, err := herdrclient.Call(herdrPath, session, 5*time.Second, "agent", "get", pane)
-	if err != nil {
-		result.Set("error", err.Error())
+	recorded := asObject(func() any { v, _ := owner.Get("launch"); return v }())
+	if recorded == nil || !harnessKindOK(asString(func() any { v, _ := recorded.Get("harness"); return v }())) {
+		result.Set("error", "coordinator has no receipt-bound recorded harness launch")
 		return result
 	}
-	agentObj := asObject(agent)
-	if nested, ok := agentObj.Get("agent"); ok {
-		if inner := asObject(nested); inner != nil && asString(func() any { v, _ := inner.Get("agent"); return v }()) != "" {
-			agentObj = inner
-		}
+	for _, key := range []string{"harness", "model", "reasoning"} {
+		v, _ := recorded.Get(key)
+		result.Set(key, v)
 	}
-	kind := asString(func() any { v, _ := agentObj.Get("agent"); return v }())
-	if kind == "" || !harnessKindOK(kind) {
-		result.Set("error", fmt.Sprintf("Herdr reports no agent kind for pane %s", pane))
-		return result
-	}
-	result.Set("harness", kind)
-	result.Set("reasoning", nil)
 	result.Set("observed_at", store.Now())
 	result.Set("error", nil)
 	return result
@@ -324,7 +315,7 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		return nil, fmt.Errorf("--same-as-you conflicts with --harness/--model/--reasoning/--preset: same-as-you means the coordinator's own harness and native model.")
 	}
 	if args.Harness != "" && !harnessKindOK(args.Harness) {
-		return nil, fmt.Errorf("Harness must be a Herdr integration kind, such as codex, claude, grok, or cursor.")
+		return nil, fmt.Errorf("Harness must be a supported terminal integration, such as codex, claude, grok, or cursor.")
 	}
 	for _, a := range args.Extra {
 		if strings.ContainsRune(a, 0) {
@@ -389,7 +380,7 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		harness = asString(func() any { v, _ := chosen.Get("harness"); return v }())
 		source.Set("harness", chosenSource)
 	case args.SameAsRoot || plainSaved.Len() == 0:
-		root = RootLaunch(args.RuntimeRoot, ctx)
+		root = RootLaunch(s, ctx)
 		h := asString(func() any { v, _ := root.Get("harness"); return v }())
 		if h == "" {
 			errText := asString(func() any { v, _ := root.Get("error"); return v }())
@@ -430,6 +421,9 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		case chosen != nil && asString(func() any { v, _ := chosen.Get(field); return v }()) != "":
 			values[field] = asString(func() any { v, _ := chosen.Get(field); return v }())
 			source.Set(field, chosenSource)
+		case args.SameAsRoot && root != nil && asString(func() any { v, _ := root.Get(field); return v }()) != "":
+			values[field], _ = root.Get(field)
+			source.Set(field, "same-as-you")
 		case inheritsSaved && asString(func() any { v, _ := plainSaved.Get(field); return v }()) != "":
 			values[field] = asString(func() any { v, _ := plainSaved.Get(field); return v }())
 			source.Set(field, "saved-default")
@@ -534,7 +528,7 @@ func Confirmation(launch *ordjson.Object) string {
 	verification := map[string]string{
 		"not-started":      "not started yet",
 		"harness-observed": "Herdr confirmed the harness kind; a CLI-requested model is not runtime-verified because no harness exposes it",
-		"harness-mismatch": "Herdr reports a different agent kind than requested; inspect the pane",
+		"harness-mismatch": "The native launch receipt differs from the requested harness; inspect the terminal",
 	}[status]
 	if verification == "" {
 		verification = status

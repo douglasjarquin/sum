@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pyrepr"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 const Schema = 1
@@ -207,8 +208,14 @@ func attempt(value any, expectedKind string) (*ordjson.Object, error) {
 	}
 	ownerValue, _ := obj.Get("owner")
 	owner, ownerOK := ownerValue.(*ordjson.Object)
-	validOwner := ownerOK && sameKeySet(owner, []string{"machine", "session", "pane"})
-	if validOwner {
+	validOwner := false
+	nativeOwner := false
+	if ownerOK {
+		endpoint := store.EndpointFromContext(owner)
+		nativeOwner = endpoint.Validate() == nil
+		validOwner = nativeOwner || sameKeySet(owner, []string{"machine", "session", "pane"})
+	}
+	if validOwner && !nativeOwner {
 		machine, _ := owner.Get("machine")
 		session, _ := owner.Get("session")
 		pane, _ := owner.Get("pane")
@@ -510,57 +517,37 @@ func UncertainLaunch(attempt *ordjson.Object) (outcome, at string, ok bool) {
 }
 
 func LaunchReceipt(task, attempt *ordjson.Object, sameEndpoint func(a, b *ordjson.Object) bool) *ordjson.Object {
-	_, at, ok := UncertainLaunch(attempt)
-	if !ok || task == nil || sameEndpoint == nil {
+	if task == nil || attempt == nil {
 		return nil
 	}
-	uncertainAt, err := time.Parse(time.RFC3339, at)
-	if err != nil {
+	expected := store.EndpointFromContext(asObjectField(task, "worker_endpoint"))
+	if expected.Validate() != nil || expected.Attempt != fmt.Sprint(fieldValue(attempt, "id")) {
 		return nil
 	}
-	attemptID, _ := attempt.Get("id")
-	workerEndpoint := ordjson.NewObject()
-	for _, key := range []string{"machine", "session", "pane"} {
-		value, _ := task.Get(key)
-		workerEndpoint.Set(key, value)
-	}
-	evidenceValue, _ := task.Get("evidence")
-	records, _ := evidenceValue.([]any)
+	records, _ := fieldValue(task, "evidence").([]any)
 	var receipt *ordjson.Object
 	for _, raw := range records {
-		record, _ := raw.(*ordjson.Object)
-		if record == nil {
+		row, _ := raw.(*ordjson.Object)
+		if row == nil || fieldValue(row, "kind") != "worker-init" || fieldValue(row, "source") != "worker" || fieldValue(row, "attempt") != expected.Attempt {
 			continue
 		}
-		source, _ := record.Get("source")
-		if source != "worker" {
-			continue
+		endpoint := store.EndpointFromContext(asObjectField(row, "endpoint"))
+		if endpoint.Native().SameAuthority(expected.Native()) && endpoint.CreatedMS == expected.CreatedMS {
+			receipt = row
 		}
-		kindValue, _ := record.Get("kind")
-		kind, _ := kindValue.(string)
-		if kind != "worker-init" && kind != "report" && kind != "handoff" {
-			continue
-		}
-		endpointValue, _ := record.Get("endpoint")
-		endpoint, _ := endpointValue.(*ordjson.Object)
-		if !sameEndpoint(endpoint, workerEndpoint) {
-			continue
-		}
-		atValue, _ := record.Get("at")
-		atText, _ := atValue.(string)
-		recordedAt, err := time.Parse(time.RFC3339, atText)
-		if err != nil || !recordedAt.After(uncertainAt) {
-			continue
-		}
-		if kind == "worker-init" {
-			value, _ := record.Get("attempt")
-			if fmt.Sprint(value) != fmt.Sprint(attemptID) {
-				continue
-			}
-		}
-		receipt = record
 	}
 	return receipt
+}
+func fieldValue(o *ordjson.Object, key string) any {
+	if o == nil {
+		return nil
+	}
+	v, _ := o.Get(key)
+	return v
+}
+func asObjectField(o *ordjson.Object, key string) *ordjson.Object {
+	v, _ := fieldValue(o, key).(*ordjson.Object)
+	return v
 }
 
 func cloneObject(obj *ordjson.Object) *ordjson.Object {
