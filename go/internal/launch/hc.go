@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -41,6 +42,28 @@ func (t HCTemplate) RunArgv(taskPointer string) []string { return []string{t.Nam
 func digest(data []byte) string                          { v := sha256.Sum256(data); return hex.EncodeToString(v[:]) }
 func shellArgument(text string) string                   { return "'" + strings.ReplaceAll(text, "'", "'\"'\"'") + "'" }
 
+// TemplateCommand renders the exact command text published in HC templates.
+func TemplateCommand(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, arg := range argv {
+		quoted[i] = shellArgument(arg)
+	}
+	return strings.Join(quoted, " ")
+}
+
+func binaryDigest(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err = io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 // PrepareHCTemplate qualifies the effective command and publishes a content-bound
 // namespaced template into the explicitly selected core configuration home.
 // Existing nonmatching files are an ownership conflict, never overwritten.
@@ -67,7 +90,7 @@ func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []strin
 	if strings.TrimSpace(version.Stdout) != "codex-cli 0.166.0" {
 		return result, fmt.Errorf("Codex status/Tab input is qualified only for 0.166.0; found %q", strings.TrimSpace(version.Stdout))
 	}
-	binaryData, err := os.ReadFile(binary)
+	binaryHash, err := binaryDigest(binary)
 	if err != nil {
 		return result, err
 	}
@@ -85,17 +108,13 @@ func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []strin
 			return result, fmt.Errorf("HC template argv must contain no NUL or line endings")
 		}
 	}
-	var quoted []string
-	for _, arg := range command {
-		quoted = append(quoted, shellArgument(arg))
-	}
-	commandText := strings.Join(quoted, " ")
+	commandText := TemplateCommand(command)
 	provenance, _ := json.Marshal(struct {
 		Command      []string
 		BinarySHA256 string
 		KeymapSHA256 string
 		ConfigSHA256 map[string]string
-	}{command, digest(binaryData), keymapHash, configs})
+	}{command, binaryHash, keymapHash, configs})
 	commandHash := digest(provenance)
 	name := "sum-codex-" + commandHash[:20]
 	text := "---\ndescription: Sum qualified Codex 0.166.0\ncommand: " + commandText + "\nsubmit: tab\n---\nRead the assigned Sum task pointer and follow its installed helper and procedure.\n"
@@ -254,7 +273,7 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 	if spec.Harness != "codex" || spec.Version != "0.166.0" || spec.Submit != "tab" || len(spec.CommandSHA256) != 64 || len(spec.Argv) == 0 || spec.Argv[0] != spec.Binary {
 		return fmt.Errorf("unqualified HC template record")
 	}
-	binary, err := os.ReadFile(spec.Binary)
+	binaryHash, err := binaryDigest(spec.Binary)
 	if err != nil {
 		return err
 	}
@@ -267,7 +286,7 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 		BinarySHA256 string
 		KeymapSHA256 string
 		ConfigSHA256 map[string]string
-	}{spec.Argv, digest(binary), keymapHash, configs})
+	}{spec.Argv, binaryHash, keymapHash, configs})
 	if digest(provenance) != spec.CommandSHA256 || keymapHash != spec.KeymapSHA256 || spec.Name != "sum-codex-"+spec.CommandSHA256[:20] {
 		return fmt.Errorf("HC command or effective keymap configuration changed after qualification")
 	}

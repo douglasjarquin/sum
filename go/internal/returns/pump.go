@@ -625,7 +625,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		// The caller is the recipient; only the recorded occupant of this pane may take its returns.
 		if callerVerifiedFor(opts, route, items) {
 			// Judged verified earlier in this operation for exactly this role.
-		} else if msg, deferReason := p.checkInline(route, items); deferReason != "" {
+		} else if msg, deferReason := p.checkInline(route); deferReason != "" {
 			return p.deferRow(row, deferReason), nil
 		} else if msg != "" {
 			row.Set("state", "refused")
@@ -679,7 +679,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		if msg := p.checkIdentity(route, survivors); msg != "" {
 			return claimResult{refused: msg}, nil
 		}
-		if msg := p.checkOccupant(route, survivors, occ); msg != "" {
+		if msg := p.checkOccupant(route, occ); msg != "" {
 			return claimResult{stale: msg}, nil
 		}
 		if episode || priority {

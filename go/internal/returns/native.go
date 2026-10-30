@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/launch"
@@ -42,6 +41,33 @@ func ObserveNative(ctx context.Context, endpoint store.Endpoint, expectedCwd str
 }
 
 func checkNativeTerminal(endpoint store.Endpoint, terminal hcclient.Terminal, expectedCwd string) (*NativeRecipient, error) {
+	if _, err := checkNativeIdentity(endpoint, terminal, expectedCwd); err != nil {
+		return nil, err
+	}
+	status := "unknown"
+	if terminal.Status != nil {
+		status = terminal.Status.State
+	}
+	if status != "idle" && status != "done" {
+		return nil, &unreachableError{state: "pending-busy", msg: fmt.Sprintf("Recipient is %s; notice remains pending.", status)}
+	}
+	return &NativeRecipient{Endpoint: endpoint, Terminal: terminal}, nil
+}
+
+// observeNativeIdentity permits passive reads regardless of input readiness.
+// The binding and process receipt are still judged before presentation.
+func observeNativeIdentity(ctx context.Context, endpoint store.Endpoint, expectedCwd string) (*NativeRecipient, error) {
+	if err := endpoint.Validate(); err != nil {
+		return nil, err
+	}
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID, Timeout: ObserveTimeout}
+	terminal, err := client.Get(ctx, endpoint.Address)
+	if err != nil {
+		return nil, err
+	}
+	return checkNativeIdentity(endpoint, terminal, expectedCwd)
+}
+func checkNativeIdentity(endpoint store.Endpoint, terminal hcclient.Terminal, expectedCwd string) (*NativeRecipient, error) {
 	if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep {
 		return nil, &unreachableError{state: "recipient-replaced", msg: "Recipient native terminal creation or non-kept identity was replaced; explicit rebind is required."}
 	}
@@ -50,13 +76,6 @@ func checkNativeTerminal(endpoint store.Endpoint, terminal hcclient.Terminal, ex
 	}
 	if expectedCwd != "" && (terminal.Cwd == "" || resolve(terminal.Cwd) != resolve(expectedCwd)) {
 		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient cwd cannot be verified."}
-	}
-	status := "unknown"
-	if terminal.Status != nil {
-		status = terminal.Status.State
-	}
-	if status != "idle" && status != "done" {
-		return nil, &unreachableError{state: "pending-busy", msg: fmt.Sprintf("Recipient is %s; notice remains pending.", status)}
 	}
 	return &NativeRecipient{Endpoint: endpoint, Terminal: terminal}, nil
 }
@@ -92,11 +111,7 @@ func (r *NativeRecipient) QualifyContext(ctx context.Context, record *ordjson.Ob
 	if err != nil {
 		return err
 	}
-	quoted := make([]string, len(template.Spec.Argv))
-	for i, arg := range template.Spec.Argv {
-		quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-	}
-	expected := strings.Join(quoted, " ")
+	expected := launch.TemplateCommand(template.Spec.Argv)
 	matched := false
 	for _, native := range templates.Templates {
 		if native.Name == template.Spec.Name && native.Error == nil && native.Command == expected {

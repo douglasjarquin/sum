@@ -82,7 +82,7 @@ func (o *rootOptions) addEnvCommands(root *cobra.Command) {
 				Task:        args[0],
 				URL:         url,
 				Log:         log,
-				Pane:        pane,
+				Terminal:    pane,
 				Container:   container,
 				Label:       label,
 				Ownership:   ownership,
@@ -96,7 +96,7 @@ func (o *rootOptions) addEnvCommands(root *cobra.Command) {
 	}
 	recordCmd.Flags().StringVar(&url, "url", "", "")
 	recordCmd.Flags().StringVar(&log, "log", "", "")
-	recordCmd.Flags().StringVar(&pane, "pane", "", "")
+	recordCmd.Flags().StringVar(&pane, "terminal", "", "")
 	recordCmd.Flags().StringVar(&container, "container", "", "")
 	recordCmd.Flags().StringVar(&label, "label", "", "")
 	recordCmd.Flags().StringVar(&ownership, "ownership", "", "")

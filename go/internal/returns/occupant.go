@@ -18,15 +18,7 @@ func nativeRecord(s *store.Store, route *ordjson.Object) (*ordjson.Object, error
 	}
 	return s.Registration(store.EndpointFromContext(route))
 }
-func recordFor(s *store.Store, route *ordjson.Object, items [][2]*ordjson.Object) (any, string, bool, error) {
-	record, err := nativeRecord(s, route)
-	if err != nil || record == nil {
-		return nil, "", false, err
-	}
-	value, _ := record.Get("incarnation")
-	return value, "", value != nil, nil
-}
-func checkOccupant(s *store.Store, route *ordjson.Object, items [][2]*ordjson.Object, occ *occupant) string {
+func checkOccupant(s *store.Store, route *ordjson.Object, occ *occupant) string {
 	if occ == nil || occ.native == nil {
 		return "No fresh HC process observation; nothing was sent."
 	}
@@ -71,25 +63,21 @@ func checkOccupant(s *store.Store, route *ordjson.Object, items [][2]*ordjson.Ob
 	}
 	return ""
 }
-func (p *pass) checkOccupant(route *ordjson.Object, items [][2]*ordjson.Object, occ *occupant) string {
-	return checkOccupant(p.s, route, items, occ)
+func (p *pass) checkOccupant(route *ordjson.Object, occ *occupant) string {
+	return checkOccupant(p.s, route, occ)
 }
-func (p *pass) checkInline(route *ordjson.Object, items [][2]*ordjson.Object) (string, string) {
+func (p *pass) checkInline(route *ordjson.Object) (string, string) {
 	if !p.fits(ObserveTimeout) {
 		return "", "the pass budget ran out before native recipient observation"
 	}
-	recipient, err := ObserveNative(p.ctx, store.EndpointFromContext(route), fmt.Sprint(routeValue(route, "cwd")))
+	recipient, err := observeNativeIdentity(p.ctx, store.EndpointFromContext(route), fmt.Sprint(routeValue(route, "cwd")))
 	if err != nil {
 		return err.Error(), ""
 	}
-	return checkOccupant(p.s, route, items, &occupant{native: recipient}), ""
+	return checkOccupant(p.s, route, &occupant{native: recipient}), ""
 }
 
-type Occupant struct {
-	occ   *occupant
-	items [][2]*ordjson.Object
-	agent *ordjson.Object
-}
+type Occupant struct{ occ *occupant }
 
 func ObserveWorker(s *store.Store, runtimeRoot string, task, route *ordjson.Object, expectedCwd string) (*Occupant, error) {
 	host, err := s.Machine()
@@ -110,12 +98,10 @@ func ObserveWorker(s *store.Store, runtimeRoot string, task, route *ordjson.Obje
 	if err = recipient.Qualify(record); err != nil {
 		return nil, err
 	}
-	agent, _ := ordjson.FromValue(recipient.Terminal)
-	return &Occupant{occ: &occupant{native: recipient}, items: [][2]*ordjson.Object{{task, nil}}, agent: agent}, nil
+	return &Occupant{occ: &occupant{native: recipient}}, nil
 }
-func (o *Occupant) Agent() *ordjson.Object { return o.agent }
 func (o *Occupant) Check(s *store.Store, route *ordjson.Object) string {
-	return checkOccupant(s, route, o.items, o.occ)
+	return checkOccupant(s, route, o.occ)
 }
 func (o *Occupant) Send(ctx context.Context, text string) (string, error) {
 	_, err := o.occ.native.Send(ctx, text)
@@ -126,7 +112,7 @@ func (o *Occupant) Send(ctx context.Context, text string) (string, error) {
 // Check revalidates the observed native recipient against the current ledger.
 // The caller holds the state lock; this method performs no runtime I/O.
 func (r *NativeRecipient) Check(s *store.Store) error {
-	if msg := checkOccupant(s, r.Endpoint.Object(), nil, &occupant{native: r}); msg != "" {
+	if msg := checkOccupant(s, r.Endpoint.Object(), &occupant{native: r}); msg != "" {
 		return fmt.Errorf("%s", msg)
 	}
 	return nil

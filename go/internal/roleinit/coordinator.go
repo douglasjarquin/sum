@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
@@ -155,11 +154,7 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 }
 func mustObject(value any) any { o, _ := ordjson.FromValue(value); return o }
 func templateCommand(spec launch.HCTemplate) string {
-	parts := make([]string, len(spec.Argv))
-	for i, arg := range spec.Argv {
-		parts[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-	}
-	return strings.Join(parts, " ")
+	return launch.TemplateCommand(spec.Argv)
 }
 func verifyLoadedTemplate(ctx context.Context, client hcclient.Client, spec launch.HCTemplate) error {
 	templates, err := client.Templates(ctx)

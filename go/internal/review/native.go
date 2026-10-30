@@ -164,11 +164,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	return result, err
 }
 func templateCommand(argv []string) string {
-	parts := make([]string, len(argv))
-	for i, a := range argv {
-		parts[i] = "'" + strings.ReplaceAll(a, "'", "'\"'\"'") + "'"
-	}
-	return strings.Join(parts, " ")
+	return launch.TemplateCommand(argv)
 }
 func decodeObject(obj *ordjson.Object, out any) error {
 	raw, err := ordjson.MarshalCompact(obj)

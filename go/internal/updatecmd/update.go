@@ -182,6 +182,7 @@ func offeredContracts(manifest *ordjson.Object) (sumVersion string, stateSchema,
 // immutable release activation. Neither source markers nor a staged manifest
 // supplies executable capabilities.
 func nativeTargetContract(candidatePath string) (*ordjson.Object, error) {
+ if err:=release.VerifyHCRuntime(context.Background(),candidatePath);err!=nil{return nil,err}
 	offered, err := release.ReadTargetContract(context.Background(), candidatePath)
 	if err != nil {
 		return nil, err

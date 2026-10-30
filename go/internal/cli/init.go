@@ -6,6 +6,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/hookstatus"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -73,6 +76,24 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 			})
 			if initErr != nil {
 				return initErr
+			}
+			actualRole, _ := view.Get("role")
+			endpointValue, _ := view.Get("endpoint")
+			caller, _ := endpointValue.(*ordjson.Object)
+			if actualRole == "coordinator" {
+				activationCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+				view.Set("hook_activation", hookstatus.AutoEnableAfterInit(activationCtx, st, caller, o.runtimeRoot, o.sumctlPath()))
+				cancel()
+			}
+			if actualRole == "coordinator" || actualRole == "worker" {
+				endpoint := store.EndpointFromContext(caller)
+				roleName, _ := actualRole.(string)
+				pending, pumpErr := returns.Pump(st, returns.PumpOpts{Ctx: caller, RuntimeRoot: o.runtimeRoot, SumctlPath: o.sumctlPath(), CoreID: endpoint.CoreID, Session: endpoint.Session, Inline: true, CallerVerifiedRole: roleName, CallerVerifiedTask: endpoint.Task, Parent: cmd.Context()})
+				if pumpErr != nil {
+					view.Set("returns_error", pumpErr.Error())
+				} else {
+					view.Set("returns", pending)
+				}
 			}
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},

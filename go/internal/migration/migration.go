@@ -216,7 +216,6 @@ func Migrate(ctx context.Context, opts Options) (result Journal, err error) {
 		return result, err
 	}
 	result.Exclusion = append(result.Exclusion, proof)
-	// Check the source header immediately before publication as well as its digest.
 	current, err := readObject(filepath.Join(root, "state.json"))
 	if err != nil {
 		return result, err

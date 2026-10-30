@@ -13,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/environment"
+	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -804,10 +805,11 @@ func (ins *inspection) reviewer() error {
 		return nil
 	}
 	found := false
+	candidate := evidenceview.CurrentCandidate(ins.task)
 	for _, raw := range asList(func() any { v, _ := ins.task.Get("evidence"); return v }()) {
 		e := asObject(raw)
 		ep := store.EndpointFromContext(asObject(func() any { v, _ := e.Get("endpoint"); return v }()))
-		if stringField(e, "kind") == "review" && ep.Native().SameAuthority(endpoint.Native()) {
+		if stringField(e, "kind") == "review" && stringField(e, "verdict") != "" && candidate != "" && stringField(e, "candidate") == candidate && ep.Native().SameAuthority(endpoint.Native()) {
 			found = true
 		}
 	}

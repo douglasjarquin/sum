@@ -217,7 +217,7 @@ func updateService(s *store.Store, taskID, serviceID, event string, changes *ord
 
 func requireServiceCaller(s *store.Store, task, caller *ordjson.Object) error {
 	role := endpointRole(s, task, caller)
-	if role == "coordinator" {
+	if store.EndpointFromContext(caller).Role == "coordinator" {
 		return app.RequireCoordinator(s, caller)
 	}
 	if role != "worker" && role != "reviewer" {
@@ -377,7 +377,7 @@ func observeService(task, service *ordjson.Object, runtimeRoot string) (*ordjson
 		if terminal.PID == nil || int(*terminal.PID) != intField(process, "pid") || !reflect.DeepEqual(listField(process, "argv"), toAny(terminal.Argv)) {
 			return refuse("native program process differs from saved launch")
 		}
-		if terminal.Foreground == nil || int(terminal.Foreground.PID) != intField(process, "foreground_pid") || !reflect.DeepEqual(listField(process, "foreground_argv"), toAny(terminal.Foreground.Argv)) {
+		if terminal.Foreground == nil || terminal.Foreground.Cwd != stringField(process, "foreground_cwd") || int(terminal.Foreground.PID) != intField(process, "foreground_pid") || !reflect.DeepEqual(listField(process, "foreground_argv"), toAny(terminal.Foreground.Argv)) {
 			return refuse("native foreground differs from saved launch")
 		}
 	} else {
@@ -457,6 +457,11 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	if timeout < 1 || timeout > ReadyTimeoutMax {
 		return nil, fmt.Errorf("--timeout must be between 1 and %d seconds", ReadyTimeoutMax)
 	}
+	args.Match = strings.TrimSpace(args.Match)
+	args.Label = strings.TrimSpace(args.Label)
+	if len([]rune(args.Label)) > 80 {
+		args.Label = string([]rune(args.Label)[:80])
+	}
 	if len(args.Match) > 200 {
 		return nil, fmt.Errorf("--match must be short readiness text")
 	}
@@ -500,7 +505,7 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 		return nil, err
 	}
 	argv := serviceArgv(row, launch, command)
-	params := hcclient.RunParams{Argv: argv, Cwd: worktree, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "service", "SUM_ATTEMPT": id}, Labels: map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "service", "sum.attempt": id}, Parent: parent.Address, Caller: parent.Address, OutliveParent: true, Keep: false, RM: false, NoNotify: true}
+	params := hcclient.RunParams{Argv: argv, Cwd: worktree, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "service", "SUM_ATTEMPT": id}, Labels: map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "service", "sum.attempt": id}, Name: args.Task + "-" + id, Parent: parent.Address, Caller: parent.Address, OutliveParent: true, Keep: false, RM: false, NoNotify: true}
 	launch.Set("intent", nativeObject(params))
 	service := ordjson.NewObject()
 	for _, key := range []string{"name", "source", "kind"} {
@@ -678,8 +683,13 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	if ready == true {
 		changes.Set("state", "ready")
 	} else if ready == false {
-		changes.Set("state", "failed")
+		if changed, _ := readiness.Get("changed"); changed == true {
+			changes.Set("state", "unknown")
+		} else {
+			changes.Set("state", "failed")
+		}
 	}
+
 	service, err = updateService(s, args.Task, id, "readiness", changes)
 	if err != nil {
 		return nil, err
@@ -791,8 +801,14 @@ func waitNativeReady(s *store.Store, task, service, parsed *ordjson.Object, matc
 	out := ordjson.NewObject()
 	out.Set("ready", nil)
 	out.Set("checked", "process-only")
-	if parsed == nil && match == "" {
-		return out, nil
+	if match == "" {
+		if parsed == nil {
+			return out, nil
+		}
+		local, _ := parsed.Get("local")
+		if local != true {
+			return out, nil
+		}
 	}
 	endpoint := serviceEndpoint(service)
 	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
@@ -806,6 +822,9 @@ func waitNativeReady(s *store.Store, task, service, parsed *ordjson.Object, matc
 		if stringField(view, "ownership") != "owned" || running != true {
 			out.Set("ready", false)
 			out.Set("reason", "native process identity changed or exited during readiness")
+			if stringField(view, "ownership") != "owned" {
+				out.Set("changed", true)
+			}
 			return out, nil
 		}
 		if parsed != nil {
@@ -1016,6 +1035,10 @@ func stopService(s *store.Store, task, service *ordjson.Object, timeout int, run
 }
 
 func claimServiceInterrupt(s *store.Store, task, service *ordjson.Object) (bool, *ordjson.Object, error) {
+	children, err := proc.Descendants(intField(objectField(service, "process"), "pid"))
+	if err != nil {
+		return false, nil, err
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return false, nil, err
@@ -1035,10 +1058,12 @@ func claimServiceInterrupt(s *store.Store, task, service *ordjson.Object) (bool,
 	if stringField(objectField(current, "stop"), "action") == "interrupt" {
 		return false, current, nil
 	}
+	if ownership := stringField(current, "ownership"); ownership == "shared" || ownership == "foreign" {
+		return false, nil, fmt.Errorf("service ownership changed before interrupt")
+	}
 	process := objectField(current, "process")
-	children, err := proc.Descendants(intField(process, "pid"))
-	if err != nil {
-		return false, nil, err
+	if intField(process, "pid") != intField(objectField(service, "process"), "pid") {
+		return false, nil, fmt.Errorf("service program changed before interrupt")
 	}
 	seen := map[int]bool{}
 	for _, raw := range listField(process, "descendants") {

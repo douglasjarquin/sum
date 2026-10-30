@@ -769,45 +769,70 @@ func saveCleanupIntent(s *store.Store, taskID string, intent *ordjson.Object, ex
 }
 
 func releaseCleanupReservations(s *store.Store, taskID, runtimeRoot string, detail *ordjson.Object) error {
-	unlock, err := s.Lock()
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return err
 	}
 	execVal, err := reservations.GetExecution(task)
 	if err != nil {
-		return fmt.Errorf("Malformed execution reservation for %s: %s. Cleanup cannot archive it.", taskID, err)
+		return err
 	}
 	if execVal == nil {
 		return nil
 	}
+	type release struct {
+		id          string
+		generation  int64
+		observation *ordjson.Object
+	}
+	var releases []release
 	stamp := store.Now()
-	rows := append([]*ordjson.Object{execVal.Worker}, execVal.Verifiers...)
-	for _, row := range rows {
-		state := asString(func() any { v, _ := row.Get("state"); return v }())
-		if state == "held" || state == "observing" || state == "starting" || state == "running" || state == "uncertain" {
-			proof := execution.ObserveStop(s, runtimeRoot, task, row)
-			if proof.Outcome != execution.OutcomeStopped {
-				return fmt.Errorf("Cleanup cannot archive %s: %s", taskID, proof.Reason)
-			}
-			id := asString(func() any { v, _ := row.Get("id"); return v }())
-			obs := proof.Observation
-			if obs == nil {
-				obs = ordjson.NewObject()
-				obs.Set("at", stamp)
-				obs.Set("outcome", execution.OutcomeStopped)
-			}
-			obs.Set("resources", detail)
-			if _, tErr := reservations.Transition(task, id, "released", stamp, obs, nil); tErr != nil {
-				return tErr
-			}
+	// Native/process observations run outside the ledger transaction.
+	for _, row := range append([]*ordjson.Object{execVal.Worker}, execVal.Verifiers...) {
+		state := stringField(row, "state")
+		if state == "released" {
+			continue
+		}
+		proof := execution.ObserveStop(s, runtimeRoot, task, row)
+		if proof.Outcome != execution.OutcomeStopped {
+			return fmt.Errorf("cleanup cannot archive %s: %s", taskID, proof.Reason)
+		}
+		generationNumber, ok := func() any { v, _ := row.Get("generation"); return v }().(json.Number)
+		if !ok {
+			return fmt.Errorf("reservation generation missing")
+		}
+		generation, err := generationNumber.Int64()
+		if err != nil {
+			return err
+		}
+		obs := proof.Observation
+		if obs == nil {
+			obs = ordjson.NewObject()
+			obs.Set("at", stamp)
+			obs.Set("outcome", execution.OutcomeStopped)
+		}
+		obs.Set("resources", detail)
+		releases = append(releases, release{stringField(row, "id"), generation, obs})
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := s.ReadTask(taskID)
+	if err != nil {
+		return err
+	}
+	if !sameTaskSnapshot(task, current) {
+		return fmt.Errorf("task changed during cleanup reservation proof; archive remains pending")
+	}
+	for _, release := range releases {
+		generation := release.generation
+		if _, err = reservations.Transition(current, release.id, "released", stamp, release.observation, &generation); err != nil {
+			return err
 		}
 	}
-	return s.SaveTask(task)
+	return s.SaveTask(current)
 }
 
 // MaintenanceLock serializes explicit task terminal maintenance and cleanup.

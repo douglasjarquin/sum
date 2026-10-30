@@ -11,6 +11,8 @@ import (
 	"net"
 	"slices"
 	"time"
+
+	"github.com/douglasjarquin/sum/go/internal/contract"
 )
 
 type Effect string
@@ -157,11 +159,11 @@ func (c *Client) open(ctx context.Context, method string) (*connection, HelloRes
 	if err != nil {
 		return nil, h, err
 	}
-	if _, err = n.exchange("hello", map[string]int{"generation": 1}, 1, &h); err != nil {
+	if _, err = n.exchange("hello", map[string]int{"generation": contract.HCGeneration}, 1, &h); err != nil {
 		n.close()
 		return nil, h, err
 	}
-	if h.Generation != 1 || h.Core.ID != c.CoreID || h.Version != "0.1.14" || (method != "hello" && !slices.Contains(h.Methods, method)) {
+	if h.Generation != contract.HCGeneration || h.Core.ID != c.CoreID || h.Version != contract.HCVersion || (method != "hello" && !slices.Contains(h.Methods, method)) {
 		n.close()
 		return nil, h, fmt.Errorf("core identity, pinned version or method mismatch")
 	}
@@ -320,10 +322,10 @@ func Inspect(ctx context.Context, socket string) (HelloResult, error) {
 		return h, err
 	}
 	defer n.close()
-	if _, err = n.exchange("hello", map[string]int{"generation": 1}, 1, &h); err != nil {
+	if _, err = n.exchange("hello", map[string]int{"generation": contract.HCGeneration}, 1, &h); err != nil {
 		return h, err
 	}
-	if h.Generation != 1 || h.Version != "0.1.14" || h.Core.ID == "" {
+	if h.Generation != contract.HCGeneration || h.Version != contract.HCVersion || h.Core.ID == "" {
 		return h, fmt.Errorf("unsupported or unidentified HC core")
 	}
 	return h, nil

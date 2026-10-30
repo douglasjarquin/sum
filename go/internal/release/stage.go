@@ -1,6 +1,7 @@
 package release
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,7 +13,6 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
-	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
@@ -20,7 +20,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-var installTools = []string{"python3", "node", "herdr", "gh", "quota-axi", "codegraph", "skills"}
+var installTools = []string{"python3", "node", "gh", "quota-axi", "codegraph", "skills"}
 
 func Stage(s *store.Store, ref string) (*ordjson.Object, error) {
 	root, err := InstallationRoot(s)
@@ -134,7 +134,10 @@ func installRuntime(target string) error {
 	if err := buildNative(target); err != nil {
 		return err
 	}
-	return writeHerdrSkill(target)
+	if err := installHC(target); err != nil {
+		return err
+	}
+	return writeHCSkill(target)
 }
 
 func lookPathOr(name, fallback string) string {
@@ -153,22 +156,22 @@ func installOffline(target string) error {
 	if err != nil {
 		return fmt.Errorf("offline stage needs python3 on PATH")
 	}
-	herdr := os.Getenv("SUM_HERDR_BIN")
-	if herdr == "" {
-		herdr = python
+	hc := os.Getenv("SUM_HC_BIN")
+	if hc == "" {
+		return fmt.Errorf("offline stage requires explicit SUM_HC_BIN; no runtime is inferred")
 	}
 	gh := os.Getenv("SUM_GH_BIN")
 	if gh == "" {
-		gh = lookPathOr("gh", herdr)
+		gh = lookPathOr("gh", hc)
 	}
 	codegraph := os.Getenv("SUM_CODEGRAPH_BIN")
 	if codegraph == "" {
-		codegraph = herdr
+		codegraph = hc
 	}
 	links := map[string]string{
 		"python3":   python,
 		"node":      lookPathOr("node", python),
-		"herdr":     herdr,
+		"hc":        hc,
 		"gh":        gh,
 		"quota-axi": python,
 		"codegraph": codegraph,
@@ -186,7 +189,7 @@ func installOffline(target string) error {
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("offline herdr skill\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("Offline HC test fixture; not artifact qualification.\n"), 0o644); err != nil {
 		return err
 	}
 	for _, parent := range []string{filepath.Join(target, ".agents", "skills"), filepath.Join(target, ".claude", "skills")} {
@@ -290,7 +293,7 @@ func buildNative(target string) error {
 	platform := nativePlatform()
 	parts := strings.SplitN(platform, "-", 2)
 	env := append(os.Environ(), "CGO_ENABLED=0", "GOENV=off", "GOOS="+parts[0], "GOARCH="+parts[1])
-	outputs := []struct{ name, pkg string }{{"sumctl", "./cmd/sumctl"}, {"herdr-mesh", "./cmd/herdr-mesh"}}
+	outputs := []struct{ name, pkg string }{{"sumctl", "./cmd/sumctl"}}
 	for _, item := range outputs {
 		dest := filepath.Join(outDir, item.name)
 		if info, err := os.Stat(dest); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
@@ -303,25 +306,28 @@ func buildNative(target string) error {
 	return nil
 }
 
-func writeHerdrSkill(target string) error {
-	herdr := filepath.Join(target, ".local", "bin", "herdr")
-	out, err := proc.Run([]string{herdr, "--skill"}, "", 30*time.Second, true, nil)
+func installHC(target string) error {
+	python := filepath.Join(target, ".local", "bin", "python3")
+	_, err := proc.Run([]string{python, filepath.Join(target, "scripts", "install_runtime.py"), "--hc-only", "--target", target}, target, 180*time.Second, true, nil)
+	return err
+}
+
+func writeHCSkill(target string) error {
+	text, err := os.ReadFile(filepath.Join(target, ".local", "share", "hc", "manual.md"))
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(target, ".local", "skills", "herdr", "SKILL.md")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err = os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	text := out.Stdout
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+	if err = os.WriteFile(path, text, 0644); err != nil {
 		return err
 	}
 	for _, parent := range []string{filepath.Join(target, ".agents", "skills"), filepath.Join(target, ".claude", "skills")} {
-		_ = linkTool(filepath.Join(parent, "herdr"), "../../.local/skills/herdr")
+		if err = linkTool(filepath.Join(parent, "herdr"), "../../.local/skills/herdr"); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -427,6 +433,12 @@ func BuildManifest(s *store.Store, root, sha, target string) (*ordjson.Object, e
 		}
 		tools.Set(name, dest)
 	}
+	hcLink := filepath.Join(target, ".local", "bin", "hc")
+	hcDest, hcErr := os.Readlink(hcLink)
+	if hcErr != nil {
+		return nil, fmt.Errorf("release missing exact HC tool link: %w", hcErr)
+	}
+	tools.Set("hc", hcDest)
 	if remainder := filepath.Join(target, ".local", "bin", "remainder"); isSymlink(remainder) {
 		if dest, readErr := os.Readlink(remainder); readErr == nil {
 			tools.Set("remainder", dest)
@@ -441,7 +453,7 @@ func BuildManifest(s *store.Store, root, sha, target string) (*ordjson.Object, e
 		return nil, err
 	}
 	native := ordjson.NewObject()
-	for _, name := range []string{"sumctl", "herdr-mesh"} {
+	for _, name := range []string{"sumctl"} {
 		record, recErr := nativeArtifactRecord(inventory, target, name)
 		if recErr != nil {
 			return nil, recErr
@@ -452,25 +464,18 @@ func BuildManifest(s *store.Store, root, sha, target string) (*ordjson.Object, e
 	if err != nil {
 		return nil, err
 	}
-	offered := contract.BuildRelease()
-	contracts := ordjson.NewObject()
-	contracts.Set("herdr_cli", offered.Contracts.HerdrCLI)
-	mcp := ordjson.NewObject()
-	mcp.Set("server", offered.Contracts.MCP.Server)
-	mcp.Set("version", offered.Contracts.MCP.Version)
-	mcp.Set("tools", jsonNumber(offered.Contracts.MCP.Tools))
-	contracts.Set("mcp", mcp)
-	supports := ordjson.NewObject()
-	var state []any
-	for _, n := range offered.Supports.StateSchema {
-		state = append(state, jsonNumber(n))
+	offered, err := ReadTargetContract(context.Background(), target)
+	if err != nil {
+		return nil, err
 	}
-	var brief []any
-	for _, n := range offered.Supports.BriefSchema {
-		brief = append(brief, jsonNumber(n))
+	contracts, err := ordjson.FromValue(offered.Contracts)
+	if err != nil {
+		return nil, err
 	}
-	supports.Set("state_schema", state)
-	supports.Set("brief_schema", brief)
+	supports, err := ordjson.FromValue(offered.Supports)
+	if err != nil {
+		return nil, err
+	}
 	treeOut, err := proc.Run([]string{"git", "-C", root, "rev-parse", sha + "^{tree}"}, "", 30*time.Second, true, nil)
 	if err != nil {
 		return nil, err
@@ -509,6 +514,18 @@ func BuildManifest(s *store.Store, root, sha, target string) (*ordjson.Object, e
 	dependencies.Set("codegraph", codegraph)
 	dependencies.Set("inventory", inventory)
 	dependencies.Set("native", native)
+	if os.Getenv("SUM_STAGE_OFFLINE") != "" {
+		hc := ordjson.NewObject()
+		hc.Set("qualified", false)
+		hc.Set("reason", "offline test fixture")
+		dependencies.Set("hc", hc)
+	} else {
+		raw, err := ordjson.ReadFile(filepath.Join(target, ".local", "share", "hc", "provenance.json"))
+		if err != nil {
+			return nil, err
+		}
+		dependencies.Set("hc", raw)
+	}
 	manifest := ordjson.NewObject()
 	manifest.Set("schema", jsonNumber(Schema))
 	manifest.Set("kind", "sum-release")

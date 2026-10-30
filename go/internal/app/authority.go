@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"github.com/douglasjarquin/sum/go/internal/proc"
+	"slices"
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
@@ -103,13 +104,7 @@ func CheckTaskRole(s *store.Store, task *ordjson.Object, actor *TaskActor, roles
 		return fmt.Errorf("current native task actor required")
 	}
 	endpoint := actor.endpoint
-	allowed := false
-	for _, role := range roles {
-		if endpoint.Role == role {
-			allowed = true
-		}
-	}
-	if !allowed {
+	if !slices.Contains(roles, endpoint.Role) {
 		return fmt.Errorf("native actor does not have the required task role")
 	}
 	registration, err := s.Registration(endpoint)

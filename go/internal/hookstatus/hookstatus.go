@@ -116,7 +116,9 @@ func pendingSummary(s *store.Store, tasks []*ordjson.Object) (*ordjson.Object, e
 	row.Set("count", jsonInt(count))
 	row.Set("oldest_at", oldest)
 	if stamp, err := time.Parse(time.RFC3339, oldest); err == nil {
-		row.Set("oldest_age_s", jsonInt(int(time.Since(stamp).Seconds())))
+		if now, err := time.Parse(time.RFC3339, store.Now()); err == nil {
+			row.Set("oldest_age_s", jsonInt(max(0, int(now.Sub(stamp).Seconds()))))
+		}
 	}
 	return row, nil
 }
@@ -154,18 +156,4 @@ func Status(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string)
 		}
 	}
 	return row, nil
-}
-func PluginID(s *store.Store) (string, error) {
-	return "", fmt.Errorf("legacy plugins are retired; use the scoped HC observer")
-}
-func ManifestCurrent(s *store.Store, sumctlPath string) (bool, error) {
-	h, err := readHealth(s)
-	if err != nil {
-		return false, err
-	}
-	v, _ := h.Get("enabled")
-	return v == true, nil
-}
-func InboxOpenable(s *store.Store, sumctlPath string) (string, string) {
-	return "", "HC has no graphical plugin panes; use inbox --grouped or a read-only native terminal"
 }

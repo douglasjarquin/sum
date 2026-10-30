@@ -31,11 +31,11 @@ func stagingInstallation(t *testing.T) (string, *store.Store) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	s, err := store.Open(home)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Init(); err != nil {
 		t.Fatal(err)
 	}
 	goBin, err := exec.LookPath("go")
@@ -44,7 +44,12 @@ func stagingInstallation(t *testing.T) (string, *store.Store) {
 	}
 	t.Setenv("SUM_STAGE_OFFLINE", "1")
 	t.Setenv("SUM_GO_BIN", goBin)
-	for _, name := range []string{"SUM_HERDR_BIN", "SUM_GH_BIN", "SUM_CODEGRAPH_BIN"} {
+	hcFixture, err := exec.LookPath("python3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUM_HC_BIN", hcFixture)
+	for _, name := range []string{"SUM_GH_BIN", "SUM_CODEGRAPH_BIN"} {
 		t.Setenv(name, "")
 	}
 	return root, s

@@ -249,6 +249,23 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			return nil, err
 		}
 	}
+	if role == "coordinator" {
+		if !fresh {
+			receipt, receiptErr := app.NativeReceipt(owner)
+			if receiptErr != nil {
+				return nil, receiptErr
+			}
+			recorded, _ := owner.Get("incarnation")
+			verdict := incarnation.JudgeNative(recorded, endpoint.Native(), terminal, receipt)
+			if !verdict.Verified {
+				return nil, fmt.Errorf("coordinator authority refused (%s: %s)", verdict.Outcome, verdict.Reason)
+			}
+		}
+		observed, terminal, err = labelCoordinator(ctx, s, client, endpoint, observed, terminal)
+		if err != nil {
+			return nil, err
+		}
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err

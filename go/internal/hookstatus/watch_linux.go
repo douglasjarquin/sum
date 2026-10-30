@@ -13,7 +13,7 @@ func watchDirty(ctx context.Context, path string, dirty chan<- struct{}, ready c
 		return err
 	}
 	defer unix.Close(fd)
-	if _, err = unix.InotifyAddWatch(fd, path, unix.IN_MODIFY|unix.IN_DELETE_SELF|unix.IN_MOVE_SELF); err != nil {
+	if _, err = unix.InotifyAddWatch(fd, path, unix.IN_MODIFY|unix.IN_CLOSE_WRITE|unix.IN_CREATE|unix.IN_MOVED_TO|unix.IN_DELETE_SELF|unix.IN_MOVE_SELF); err != nil {
 		return err
 	}
 	wake := make([]int, 2)
@@ -29,6 +29,7 @@ func watchDirty(ctx context.Context, path string, dirty chan<- struct{}, ready c
 			<-finished
 		}
 	}()
+	close(ready)
 	poll := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}, {Fd: int32(wake[0]), Events: unix.POLLIN}}
 	buffer := make([]byte, 4096)
 	for {

@@ -315,15 +315,6 @@ func Status(s *store.Store) *ordjson.Object {
 	return result
 }
 
-// Capability is one saved probe result; false when never probed.
-func Capability(s *store.Store, name string) bool {
-	meta, err := ReadMetadata(s)
-	if err != nil {
-		return false
-	}
-	return truthy(get(asObject(get(meta, "capabilities")), name))
-}
-
 // Source is this instance's reporter identity, derived from the instance id like the hook plugin id, so two homes
 // with the same basename never share a source.
 func Source(s *store.Store) (string, error) {

@@ -3,7 +3,10 @@ package release
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,9 +22,8 @@ func buildSkillRelease(t *testing.T, workerSkills []string) string {
 	dir := t.TempDir()
 	entries := []struct{ rel, content string }{
 		{"bin/sumctl", "#!/bin/sh\necho sumctl\n"},
-		{"bin/herdr-mesh", "#!/bin/sh\necho herdr-mesh\n"},
-		{"bin/herdr-scoped", "#!/bin/sh\necho herdr-scoped\n"},
 		{"go/cmd/sumctl/main.go", "package main\n"},
+		{"config/hc-release.json", `{"version":"0.1.14","generation":1}`},
 	}
 	for _, rel := range workerSkills {
 		entries = append(entries, struct{ rel, content string }{rel, "# worker\n"})
@@ -53,20 +55,45 @@ func buildSkillRelease(t *testing.T, workerSkills []string) string {
 		}
 		toolPaths = append(toolPaths, fmt.Sprintf("%q: %q", name, target))
 	}
-	manifest := fmt.Sprintf(`{
-  "schema": 1, "kind": "sum-release", "sum_version": "0.1.0",
-  "source": {"sha": %q, "tree": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "repository": "/tmp/installation"},
-  "files": {%s},
-  "dependencies": {
-    "tools": {"pins": {}, "paths": {%s}},
-    "codegraph": {"package": "@colbymchenry/codegraph", "version": "1.5.0", "license": "MIT"},
-    "inventory": null,
-    "native": {}
-  },
-  "contracts": {}, "supports": {},
-  "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": {"machine": "m1", "installation": "/tmp/installation", "instance": null}
-}`, releaseFixtureSHA, strings.Join(files, ", "), strings.Join(toolPaths, ", "))
-	writeReleaseFile(t, dir, Manifest, []byte(manifest))
+	offered := contract.BuildRelease()
+	report, err := json.Marshal(offered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(dir, ".local/bin/sumctl")
+	body := []byte("#!/bin/sh\ncat <<'SUM_CONTRACT'\n" + string(report) + "\nSUM_CONTRACT\n")
+	writeReleaseFile(t, dir, ".local/bin/sumctl", body)
+	if err = os.Chmod(helper, 0755); err != nil {
+		t.Fatal(err)
+	}
+	helperHash := sha256.Sum256(body)
+	manifest := map[string]any{
+		"schema": 1, "kind": "sum-release", "sum_version": offered.SumVersion,
+		"source":    map[string]any{"sha": releaseFixtureSHA, "tree": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "repository": "/tmp/installation"},
+		"contracts": offered.Contracts, "supports": offered.Supports,
+		"staged_at": "2026-01-01T00:00:00+00:00", "staged_by": map[string]any{"machine": "m1", "installation": "/tmp/installation", "instance": nil},
+	}
+	var fileMap map[string]string
+	if err = json.Unmarshal([]byte("{"+strings.Join(files, ",")+"}"), &fileMap); err != nil {
+		t.Fatal(err)
+	}
+	manifest["files"] = fileMap
+	var toolMap map[string]string
+	if err = json.Unmarshal([]byte("{"+strings.Join(toolPaths, ",")+"}"), &toolMap); err != nil {
+		t.Fatal(err)
+	}
+	inventory := map[string]any{"schema": 1, "dependencies": []any{map[string]any{"id": "sumctl", "source": "go/cmd/sumctl", "version": "0.1.0", "checksum": "built artifact", "license": "MIT", "platforms": []string{nativePlatform()}, "requirements": []string{}, "role": "runtime", "owner": "sum", "contracts": map[string]any{}}}}
+	manifest["dependencies"] = map[string]any{
+		"tools":     map[string]any{"pins": map[string]any{}, "paths": toolMap},
+		"inventory": inventory,
+		"native":    map[string]any{"sumctl": map[string]any{"path": ".local/bin/sumctl", "platform": nativePlatform(), "sha256": hex.EncodeToString(helperHash[:])}},
+		"hc":        map[string]any{"qualified": false, "reason": "offline test fixture"},
+	}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReleaseFile(t, dir, Manifest, encoded)
 	return dir
 }
 
@@ -110,4 +137,40 @@ func TestVerifyRelease_acceptsEitherWorkerSkillName(t *testing.T) {
 			t.Fatalf("error type %T, want *VerifyError", err)
 		}
 	})
+}
+
+func TestVerifyReleaseRequiresActualContractAndRuntimeReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*ordjson.Object)
+	}{
+		{"manifest claims different capabilities", func(m *ordjson.Object) { c := asObject(getPath(m, "contracts")); c.Set("hc_core", "0.1.13") }},
+		{"legacy MCP contract", func(m *ordjson.Object) { c := asObject(getPath(m, "contracts")); c.Set("mcp", ordjson.NewObject()) }},
+		{"missing native helper", func(m *ordjson.Object) {
+			d := asObject(getPath(m, "dependencies"))
+			d.Set("native", ordjson.NewObject())
+		}},
+		{"unmatched real runtime receipt", func(m *ordjson.Object) {
+			d := asObject(getPath(m, "dependencies"))
+			r := ordjson.NewObject()
+			r.Set("version", "0.1.14")
+			d.Set("hc", r)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := buildSkillRelease(t, []string{"skills/sum-work/SKILL.md"})
+			v, err := ordjson.ReadFile(filepath.Join(root, Manifest))
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := asObject(v)
+			tc.change(m)
+			if err = ordjson.WriteFile(filepath.Join(root, Manifest), m); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = VerifyRelease(root, releaseFixtureSHA); err == nil {
+				t.Fatal("unverified release accepted")
+			}
+		})
+	}
 }

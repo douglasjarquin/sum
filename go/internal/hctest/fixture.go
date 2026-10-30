@@ -205,7 +205,9 @@ func (f *Fixture) exitLocked(address string, code int32, reason string) {
 	t.ExitCode = &code
 	t.Reason = &reason
 	f.eventLocked(address, "status", map[string]any{"status": nil, "records": map[string]hcclient.Status{}, "reported": false})
-	f.eventLocked(address, "finished", map[string]any{"reason": reason, "exit_code": code, "signal": nil, "finished_ms": f.seq})
+	finished := f.seq
+	t.FinishedMS = &finished
+	f.eventLocked(address, "finished", map[string]any{"reason": reason, "exit_code": code, "signal": nil, "finished_ms": finished})
 	for a, child := range f.terminals {
 		if child.Parent != nil && *child.Parent == address && !child.outlive {
 			f.exitLocked(a, code, "parent_exit")

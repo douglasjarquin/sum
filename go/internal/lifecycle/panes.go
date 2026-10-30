@@ -50,8 +50,20 @@ func terminalState(task *ordjson.Object) string {
 	return ""
 }
 
+// currentSHA is records-only so Pending and state-locked claims never run Git.
 func currentSHA(task *ordjson.Object) string {
-	return evidenceview.CurrentCandidate(task)
+	var candidate string
+	for _, raw := range asList(field(task, "evidence")) {
+		row := asObject(raw)
+		kind := asString(row, "kind")
+		if (kind == "handoff" || kind == "report" || kind == "review") && asString(row, "candidate") != "" {
+			candidate = asString(row, "candidate")
+		}
+	}
+	if candidate == "" {
+		candidate = asString(asObject(field(task, "report")), "candidate")
+	}
+	return candidate
 }
 
 func currentCandidateMatch(candidate, head string) bool {
@@ -145,44 +157,23 @@ func currentReviewAddress(task *ordjson.Object) string {
 
 func workerCloseReason(task *ordjson.Object) (string, string) {
 	current := roleEndpoint(task, "worker").Address
-	if current == "" {
+	if current == "" || !reportMatchesCurrent(task) || currentReportAddress(task) != current {
 		return "", ""
 	}
-	if term := terminalState(task); term != "" {
-		return term, current
+	if reason := terminalState(task); reason != "" {
+		return reason, current
 	}
-	if !reportMatchesCurrent(task) {
-		return "", ""
-	}
-	if settled := currentReportAddress(task); settled != "" {
-		if settled != current {
-			return "", ""
-		}
-		return "report-submitted", current
-	}
-
-	return "", ""
+	return "report-submitted", current
 }
-
 func reviewerCloseReason(task *ordjson.Object) (string, string) {
-	reviewer := asObject(field(task, "reviewer"))
-	current := store.EndpointFromContext(reviewer).Address
-	if current == "" {
+	current := roleEndpoint(task, "reviewer").Address
+	if current == "" || !reviewMatchesCurrent(task) || currentReviewAddress(task) != current {
 		return "", ""
 	}
-	if term := terminalState(task); term != "" {
-		return term, current
+	if reason := terminalState(task); reason != "" {
+		return reason, current
 	}
-	if !reviewMatchesCurrent(task) {
-		return "", ""
-	}
-	if settled := currentReviewAddress(task); settled != "" {
-		if settled != current {
-			return "", ""
-		}
-		return "review-recorded", current
-	}
-	return "", ""
+	return "review-recorded", current
 }
 
 func roleEndpoint(task *ordjson.Object, role string) store.Endpoint {
@@ -290,6 +281,13 @@ func removeOneTerminal(s *store.Store, caller *ordjson.Object, runtimeRoot, task
 	}
 	if !absent && (terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep || terminal.State != "finished" || terminal.FinishedMS == nil || (terminal.ExitCode == nil && terminal.Signal == nil) || resolvePath(terminal.Cwd) != resolvePath(expectedCwd)) {
 		return fail(fmt.Errorf("native terminal is live, replaced, kept, or lacks finished exit evidence"))
+	}
+	// Git observation stays outside the ledger lock; Pending and claim checks use saved candidates only.
+	if terminalState(task) != "archived" {
+		head := evidenceview.CurrentCandidate(task)
+		if head == "" || head != currentSHA(task) {
+			return fail(fmt.Errorf("saved candidate differs from current checkout HEAD"))
+		}
 	}
 	var stoppedProof *ordjson.Object
 	if role == "worker" {
