@@ -7,12 +7,12 @@ import (
 )
 
 func TestFind_honorsEnvOverrideFirst(t *testing.T) {
-	t.Setenv("SUM_HERDR_BIN", "/somewhere/herdr")
-	got, err := Find(t.TempDir(), "herdr")
+	t.Setenv("SUM_HC_BIN", "/somewhere/hc")
+	got, err := Find(t.TempDir(), "hc")
 	if err != nil {
 		t.Fatalf("find: %v", err)
 	}
-	if got != "/somewhere/herdr" {
+	if got != "/somewhere/hc" {
 		t.Fatalf("got %q, want the env override", got)
 	}
 }
@@ -54,5 +54,19 @@ func TestFind_errorsWhenNowhereToBeFound(t *testing.T) {
 	want := "Missing definitely-not-a-real-tool-xyz. Run mise run setup."
 	if err.Error() != want {
 		t.Fatalf("err = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestFind_HCRequiresPinnedArtifact(t *testing.T) {
+	t.Setenv("SUM_HC_BIN", "")
+	root := t.TempDir()
+	bin := t.TempDir()
+	candidate := filepath.Join(bin, "hc")
+	if err := os.WriteFile(candidate, []byte("#!/bin/sh\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if _, err := Find(root, "hc"); err == nil {
+		t.Fatal("ambient hc executable substituted for exact staged runtime")
 	}
 }

@@ -17,6 +17,9 @@ func Find(runtimeRoot, name string) (string, error) {
 	if info, err := os.Stat(local); err == nil && !info.IsDir() {
 		return local, nil
 	}
+	if name == "hc" {
+		return "", fmt.Errorf("Missing pinned hc artifact. Run mise run setup; an ambient executable cannot replace the selected runtime.")
+	}
 	if found, err := exec.LookPath(name); err == nil {
 		return found, nil
 	}
