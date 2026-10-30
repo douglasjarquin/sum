@@ -161,16 +161,11 @@ func selectionDescriptor(runtimeObj *ordjson.Object) *ordjson.Object {
 	return row
 }
 
-func offeredContracts(manifest *ordjson.Object) (sumVersion, herdrCLI string, mcp *ordjson.Object, stateSchema, briefSchema []any) {
+func offeredContracts(manifest *ordjson.Object) (sumVersion string, stateSchema, briefSchema []any) {
 	if manifest == nil {
 		return
 	}
 	sumVersion = asString(func() any { v, _ := manifest.Get("sum_version"); return v }())
-	contracts := asObject(func() any { v, _ := manifest.Get("contracts"); return v }())
-	if contracts != nil {
-		herdrCLI = asString(func() any { v, _ := contracts.Get("herdr_cli"); return v }())
-		mcp = asObject(func() any { v, _ := contracts.Get("mcp"); return v }())
-	}
 	supports := asObject(func() any { v, _ := manifest.Get("supports"); return v }())
 	if supports != nil {
 		if v, ok := supports.Get("state_schema"); ok {
@@ -183,60 +178,23 @@ func offeredContracts(manifest *ordjson.Object) (sumVersion, herdrCLI string, mc
 	return
 }
 
-func checkoutContract(candidatePath string) (*ordjson.Object, error) {
-	helpers := []string{
-		filepath.Join(candidatePath, ".local", "bin", "sumctl"),
-		filepath.Join(candidatePath, ".local", "bin", "sumctl-go"),
+// nativeTargetContract asks the exact artifact selected for both checkout and
+// immutable release activation. Neither source markers nor a staged manifest
+// supplies executable capabilities.
+func nativeTargetContract(candidatePath string) (*ordjson.Object, error) {
+	offered, err := release.ReadTargetContract(context.Background(), candidatePath)
+	if err != nil {
+		return nil, err
 	}
-	var last string
-	for _, helper := range helpers {
-		info, err := os.Stat(helper)
-		if err != nil || info.Mode()&0o111 == 0 {
-			continue
-		}
-		out, runErr := proc.Run([]string{helper, "release-contract"}, candidatePath, 60*time.Second, false, append(os.Environ(), "SUM_INSTALL_ROOT="+candidatePath))
-		if runErr != nil || out.Code != 0 {
-			detail := strings.TrimSpace(out.Stderr)
-			if detail == "" {
-				detail = strings.TrimSpace(out.Stdout)
-			}
-			if runErr != nil && detail == "" {
-				detail = runErr.Error()
-			}
-			last = detail
-			continue
-		}
-		value, decErr := ordjson.Decode([]byte(strings.TrimSpace(out.Stdout)))
-		if decErr != nil {
-			return nil, fmt.Errorf("Candidate release contract is not JSON: %s", trimForError(out.Stdout))
-		}
-		obj := asObject(value)
-		if obj == nil {
-			return nil, fmt.Errorf("Candidate release contract is incomplete")
-		}
-		if _, hasSum := obj.Get("sum_version"); !hasSum {
-			return nil, fmt.Errorf("Candidate release contract is incomplete")
-		}
-		if asObject(func() any { v, _ := obj.Get("contracts"); return v }()) == nil {
-			return nil, fmt.Errorf("Candidate release contract is incomplete")
-		}
-		if asObject(func() any { v, _ := obj.Get("supports"); return v }()) == nil {
-			return nil, fmt.Errorf("Candidate release contract is incomplete")
-		}
-		return obj, nil
+	raw, err := json.Marshal(offered)
+	if err != nil {
+		return nil, err
 	}
-	if last != "" {
-		return nil, fmt.Errorf("%s", last)
+	value, err := ordjson.Decode(raw)
+	if err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("checkout has no release manifest or contract evidence")
-}
-
-func trimForError(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) > 300 {
-		return s[:300]
-	}
-	return s
+	return asObject(value), nil
 }
 
 func containsNumber(list []any, n int) bool {
@@ -256,13 +214,12 @@ func containsNumber(list []any, n int) bool {
 	return false
 }
 
-func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.Object, allow PreIdentity) (*ordjson.Object, error) {
+func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.Object) (*ordjson.Object, error) {
 	resolvedRoot, _ := filepath.Abs(root)
 	resolvedCandidate, _ := filepath.Abs(candidatePath)
 	checkout := resolvedRoot == resolvedCandidate
 	var blocking []any
 	var deferred []any
-	var manifest *ordjson.Object
 	var candidateSHA string
 	if checkout {
 		headOut, err := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, true, nil)
@@ -270,17 +227,7 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 			return nil, err
 		}
 		candidateSHA = strings.TrimSpace(headOut.Stdout)
-		m, contractErr := checkoutContract(candidatePath)
-		if contractErr != nil {
-			result := ordjson.NewObject()
-			result.Set("ok", false)
-			result.Set("blocking", []any{"checkout contract: " + contractErr.Error()})
-			result.Set("deferred", []any{})
-			result.Set("probes", []any{})
-			result.Set("tasks", []any{})
-			return result, nil
-		}
-		manifest = m
+
 	} else {
 		m, err := release.VerifyRelease(candidatePath, filepath.Base(candidatePath))
 		if err != nil {
@@ -292,7 +239,6 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 			result.Set("tasks", []any{})
 			return result, nil
 		}
-		manifest = m
 		candidateSHA = asString(func() any {
 			src := asObject(func() any { v, _ := m.Get("source"); return v }())
 			if src == nil {
@@ -302,7 +248,21 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 			return v
 		}())
 	}
-	sumVersion, _, mcp, stateSchema, briefSchema := offeredContracts(manifest)
+	executableContract, contractErr := nativeTargetContract(candidatePath)
+	if contractErr != nil {
+		result := ordjson.NewObject()
+		result.Set("ok", false)
+		result.Set("blocking", []any{"target executable contract: " + contractErr.Error()})
+		result.Set("deferred", []any{})
+		result.Set("probes", []any{})
+		result.Set("tasks", []any{})
+		return result, nil
+	}
+	sumVersion, stateSchema, briefSchema := offeredContracts(executableContract)
+	if err := s.CheckWritable(); err != nil {
+		blocking = append(blocking, "HC state authority: "+err.Error())
+	}
+
 	stateObj, _ := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
 	stateSchemaVal := 1
 	if so := asObject(stateObj); so != nil {
@@ -322,6 +282,11 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 	if err != nil {
 		return nil, err
 	}
+	observer, observerErr := hookstatus.Compatibility(context.Background(), s)
+	if observerErr != nil {
+		blocking = append(blocking, "active observer: "+observerErr.Error())
+	}
+	blocking = append(blocking, unresolvedEffects(s, all)...)
 	for _, task := range all {
 		status, _ := task.Get("status")
 		if status == "archived" {
@@ -354,53 +319,13 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 		}
 		tasks = append(tasks, row)
 	}
-	target := releaseIdentity(manifest)
-	if checkout {
-		target = checkoutIdentity(manifest)
-	}
-	identity, identityBlocking, err := machineIdentityCompatibility(s, all, target, allow)
-	if err != nil {
-		return nil, err
-	}
-	if identityBlocking != "" {
-		blocking = append(blocking, identityBlocking)
-	}
-	wakeTarget := releaseWake(manifest)
-	if checkout {
-		wakeTarget = checkoutWake(manifest)
-	}
-	// The runtime serving now is validated as known-good through this same path; it already serves over any
-	// episode, so only a switch to another runtime is gated.
-	servesNow := asString(func() any { v, _ := current.Get("sha"); return v }()) == candidateSHA &&
-		(asString(func() any { v, _ := current.Get("kind"); return v }()) == "checkout") == checkout
-	wake, wakeBlocking, err := wakeCompatibility(s, wakeTarget, servesNow)
+	wakeTarget := checkoutWake(executableContract)
+	wake, wakeBlocking, err := wakeCompatibility(s, wakeTarget, false)
 	if err != nil {
 		return nil, err
 	}
 	if wakeBlocking != "" {
 		blocking = append(blocking, wakeBlocking)
-	}
-	currentMCP := asObject(func() any {
-		if current == nil {
-			return nil
-		}
-		m := asObject(func() any { v, _ := current.Get("manifest"); return v }())
-		_, _, mcpObj, _, _ := offeredContracts(m)
-		return mcpObj
-	}())
-	if currentMCP != nil && mcp != nil {
-		curEnc, _ := ordjson.MarshalCompact(currentMCP)
-		newEnc, _ := ordjson.MarshalCompact(mcp)
-		note := ordjson.NewObject()
-		note.Set("what", "mcp")
-		if string(curEnc) != string(newEnc) {
-			note.Set("from", currentMCP)
-			note.Set("to", mcp)
-			note.Set("note", "Already-connected MCP clients keep the server and tool set they started; they see the new tools only after the client itself restarts. Nothing is reloaded for them.")
-		} else {
-			note.Set("note", "Already-running MCP servers keep their start tree until their client restarts; the tool contract is unchanged, so nothing is lost meanwhile.")
-		}
-		deferred = append(deferred, note)
 	}
 	headOut, _ := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, true, nil)
 	head := strings.TrimSpace(headOut.Stdout)
@@ -414,12 +339,10 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 		deferred = append(deferred, row)
 	}
 	helper := filepath.Join(candidatePath, ".local", "bin", "sumctl")
-	if info, err := os.Stat(helper); err != nil || info.Mode()&0o111 == 0 {
-		helper = filepath.Join(candidatePath, "bin", "sumctl")
-	}
+
 	var probes []any
 	if len(blocking) == 0 {
-		argvs := [][]string{{"--version"}, {"--home", s.Home, "status"}}
+		argvs := [][]string{{"--version"}}
 		for _, argv := range argvs {
 			cmd := append([]string{helper}, argv...)
 			out, runErr := proc.Run(cmd, "", 60*time.Second, false, append(os.Environ(), "SUM_INSTALL_ROOT="+root))
@@ -454,21 +377,20 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 			probes = append(probes, probe)
 		}
 	}
-	currentSum, currentHerdr, currentMCPObj, _, _ := offeredContracts(asObject(func() any { v, _ := current.Get("manifest"); return v }()))
+	currentManifest := asObject(func() any { v, _ := current.Get("manifest"); return v }())
+	currentSum, _, _ := offeredContracts(currentManifest)
 	candidateObj := ordjson.NewObject()
 	candidateObj.Set("sha", candidateSHA)
 	candidateObj.Set("sum_version", sumVersion)
-	candidateObj.Set("herdr_cli", currentHerdr)
-	if mcp != nil {
-		candidateObj.Set("mcp", mcp)
-	}
+	candidateObj.Set("supports", func() any { v, _ := executableContract.Get("supports"); return v }())
+	candidateObj.Set("contracts", func() any { v, _ := executableContract.Get("contracts"); return v }())
 	currentObj := ordjson.NewObject()
 	currentObj.Set("kind", kind)
 	currentObj.Set("sha", curSHA)
 	currentObj.Set("sum_version", currentSum)
-	currentObj.Set("herdr_cli", currentHerdr)
-	if currentMCPObj != nil {
-		currentObj.Set("mcp", currentMCPObj)
+	if currentManifest != nil {
+		v, _ := currentManifest.Get("contracts")
+		currentObj.Set("contracts", v)
 	}
 	result := ordjson.NewObject()
 	result.Set("ok", len(blocking) == 0)
@@ -476,8 +398,8 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 	result.Set("deferred", deferred)
 	result.Set("probes", probes)
 	result.Set("tasks", tasks)
-	result.Set("machine_identity", identity)
 	result.Set("wake_protocol", wake)
+	result.Set("observer", observer)
 	result.Set("candidate", candidateObj)
 	result.Set("current", currentObj)
 	return result, nil
@@ -727,13 +649,13 @@ func descriptorsEqual(a, b *ordjson.Object) bool {
 		asString(func() any { v, _ := a.Get("path"); return v }()) == asString(func() any { v, _ := b.Get("path"); return v }())
 }
 
-func activate(s *store.Store, root, target, action string, source *ordjson.Object, allow PreIdentity) (*ordjson.Object, error) {
+func activate(s *store.Store, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
 	unlock, err := activationLock(root)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return activateLocked(s, root, target, action, source, allow)
+	return activateLocked(s, root, target, action, source)
 }
 
 // deliveryLockWait bounds how long final validation waits for delivery passes to finish before refusing.
@@ -755,7 +677,7 @@ func holdDeliveryLock(s *store.Store, action string) (func(), error) {
 	return func() { _ = unlock() }, nil
 }
 
-func activateLocked(s *store.Store, root, target, action string, source *ordjson.Object, allow PreIdentity) (*ordjson.Object, error) {
+func activateLocked(s *store.Store, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
 	if err := requireNoPending(s, root); err != nil {
 		return nil, err
 	}
@@ -769,7 +691,7 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 		return nil, err
 	}
 	defer releaseDelivery()
-	compat, intended, err := ValidateTarget(s, root, target, current, allow)
+	compat, intended, err := ValidateTarget(s, root, target, current)
 	newSHA := asString(func() any {
 		if intended != nil {
 			v, _ := intended.Get("sha")
@@ -838,10 +760,6 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	pending.Set("source", source)
 	pending.Set("recovery", recovery)
 	pending.Set("status", "prepared")
-	override := identityOverride(compat)
-	if override != nil {
-		pending.Set("machine_identity_override", override)
-	}
 	state.Set("pending", pending)
 	if err := writeActivationState(s, root, state); err != nil {
 		return nil, err
@@ -853,9 +771,6 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	log.Set("from", before)
 	log.Set("to", intended)
 	log.Set("source", source)
-	if override != nil {
-		log.Set("machine_identity_override", override)
-	}
 	updateLog(root, log)
 	if afterPendingWrite != nil {
 		if hookErr := afterPendingWrite(); hookErr != nil {
@@ -920,9 +835,6 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	okLog.Set("deferred", deferredWhats(compat))
 	okLog.Set("checkout", checkout)
 	okLog.Set("post_check", check)
-	if override != nil {
-		okLog.Set("machine_identity_override", override)
-	}
 	updateLog(root, okLog)
 	result := ordjson.NewObject()
 	result.Set("action", action)
@@ -935,10 +847,7 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	result.Set("source", source)
 	result.Set("generation", generation)
 	result.Set("recovery", recovery)
-	if override != nil {
-		result.Set("machine_identity_override", override)
-	}
-	result.Set("note", "New entrypoint invocations and new dispatches use this default. Commands already running finish on the runtime they resolved; connected MCP servers keep their start tree; task records, worktrees, and .sum were not touched.")
+	result.Set("note", "New entrypoint invocations use this default. Commands already running finish on the runtime they resolved; the owned HC observer is handed off after selection. Task records, worktrees, and state generation are preserved.")
 	return result, nil
 }
 
@@ -989,7 +898,7 @@ func Status(s *store.Store) (*ordjson.Object, error) {
 		return nil, actErr
 	}
 	result.Set("activation", activation)
-	result.Set("note", "Selection is the .local/current symlink; the history is a local log, not the source of truth. Running MCP servers and helpers are not enumerated: they keep the tree they started from.")
+	result.Set("note", "Selection is the .local/current symlink; history is a local log, not the source of truth. Running commands retain their starting runtime; observer health records its separately verified HC ownership.")
 	return result, nil
 }
 
@@ -1026,7 +935,7 @@ func Check(s *store.Store, runtimeRoot, ref string, noFetch bool) (*ordjson.Obje
 	result.Set("staged", staged)
 	result.Set("up_to_date", curSHA == sha && curKind == "release")
 	if staged {
-		compat, cErr := Compatibility(s, root, stagedPath, current, RefusePreIdentity)
+		compat, cErr := Compatibility(s, root, stagedPath, current)
 		if cErr != nil {
 			return nil, cErr
 		}
@@ -1065,7 +974,7 @@ func Stage(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	if err := unlock(); err != nil {
 		return nil, err
 	}
-	compat, err := Compatibility(s, root, relPath, current, RefusePreIdentity)
+	compat, err := Compatibility(s, root, relPath, current)
 	if err != nil {
 		return nil, err
 	}
@@ -1080,7 +989,7 @@ func Stage(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	return result, nil
 }
 
-func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool, allow PreIdentity) (*ordjson.Object, error) {
+func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -1107,17 +1016,40 @@ func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool, allow 
 			src.Set(k, v)
 		}
 	}
-	result, err := activate(s, root, relPath, "apply", src, allow)
+	result, err := activate(s, root, relPath, "apply", src)
 	if err != nil {
 		return nil, err
 	}
+	return completeObserverHandoff(s, ctx, root, result)
+}
+
+// completeObserverHandoff runs after selection locks have been released. The
+// observer owns a different scope lock and may reconcile pending work; nesting
+// it under the delivery lock would deadlock that bounded reconciliation.
+func completeObserverHandoff(s *store.Store, ctx *ordjson.Object, root string, result *ordjson.Object) (*ordjson.Object, error) {
 	active := DefaultRuntime(root)
 	activeRoot := asString(func() any { v, _ := active.Get("path"); return v }())
-	result.Set("hook_activation", hookstatus.EnableByDefault(s, ctx, activeRoot, filepath.Join(root, "bin", "sumctl"), true))
+	handoff, err := hookstatus.Handoff(context.Background(), s, ctx, activeRoot, filepath.Join(root, "bin", "sumctl"))
+	if err != nil {
+		return result, fmt.Errorf("runtime selection completed, but its HC observer handoff failed: %w; inspect observer health before admitting new work", err)
+	}
+	result.Set("observer_activation", handoff)
 	return result, nil
 }
 
-func Rollback(s *store.Store, ctx *ordjson.Object, to string, allow PreIdentity) (*ordjson.Object, error) {
+func Rollback(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, error) {
+	result, err := rollbackSelection(s, ctx, to)
+	if err != nil {
+		return result, err
+	}
+	root, err := release.InstallationRoot(s)
+	if err != nil {
+		return result, err
+	}
+	return completeObserverHandoff(s, ctx, root, result)
+}
+
+func rollbackSelection(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -1142,7 +1074,7 @@ func Rollback(s *store.Store, ctx *ordjson.Object, to string, allow PreIdentity)
 	if err != nil {
 		return nil, err
 	}
-	return activateLocked(s, root, target, "rollback", src, allow)
+	return activateLocked(s, root, target, "rollback", src)
 }
 
 func resolveRollbackTarget(root, to string, state, current *ordjson.Object) (string, *ordjson.Object, error) {
@@ -1184,7 +1116,19 @@ func resolveRollbackTarget(root, to string, state, current *ordjson.Object) (str
 	return matches[0], src, nil
 }
 
-func Recover(s *store.Store, ctx *ordjson.Object, generation string, allow PreIdentity) (*ordjson.Object, error) {
+func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.Object, error) {
+	result, err := recoverSelection(s, ctx, generation)
+	if err != nil {
+		return result, err
+	}
+	root, err := release.InstallationRoot(s)
+	if err != nil {
+		return result, err
+	}
+	return completeObserverHandoff(s, ctx, root, result)
+}
+
+func recoverSelection(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -1202,15 +1146,12 @@ func Recover(s *store.Store, ctx *ordjson.Object, generation string, allow PreId
 		return nil, err
 	}
 	defer releaseDelivery()
-	return recoverPendingLocked(s, root, generation, allow)
+	return recoverPendingLocked(s, root, generation)
 }
 
-// compensate restores the known-good runtime a failed activation replaced. That
-// runtime served these same records until moments ago, so the machine-identity
-// override the user gives for choosing a pre-identity release is not asked for
-// again to put it back.
+// compensate restores the previous runtime only after the same native compatibility checks.
 func compensate(s *store.Store, root, generation string) (*ordjson.Object, error) {
-	return recoverPendingLocked(s, root, generation, AllowPreIdentity)
+	return recoverPendingLocked(s, root, generation)
 }
 
 // Test seams for crash injection. Production leaves these nil.

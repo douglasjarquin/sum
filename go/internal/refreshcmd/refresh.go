@@ -15,16 +15,15 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/brief"
 	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
@@ -51,37 +50,7 @@ func runtimeSHA(runtimeRoot string) string {
 	return sumruntime.SourceSHA(runtimeRoot)
 }
 
-func mcpObject() *ordjson.Object {
-	mcp := ordjson.NewObject()
-	mcp.Set("server", contract.MCP.Server)
-	mcp.Set("version", contract.MCP.Version)
-	mcp.Set("tools", jsonNumber(contract.MCP.Tools))
-	return mcp
-}
-
-func deferredCapabilities(recorded *ordjson.Object) []any {
-	started := any(nil)
-	if recorded != nil {
-		started, _ = recorded.Get("mcp")
-	}
-	if started == nil {
-		row := ordjson.NewObject()
-		row.Set("what", "mcp")
-		row.Set("reason", "the MCP contract this session started with was not recorded; it keeps whatever tool set it has until the client restarts")
-		return []any{row}
-	}
-	want, _ := ordjson.MarshalCompact(mcpObject())
-	got, _ := ordjson.MarshalCompact(started)
-	if string(want) != string(got) {
-		row := ordjson.NewObject()
-		row.Set("what", "mcp")
-		row.Set("from", started)
-		row.Set("to", mcpObject())
-		row.Set("reason", "a connected MCP client cannot hot-reload its tool surface; it keeps the compatible old surface until the client itself restarts")
-		return []any{row}
-	}
-	return []any{}
-}
+func deferredCapabilities(recorded *ordjson.Object) []any { return []any{} }
 
 func refreshSummary(rows []any, excluded []any) *ordjson.Object {
 	counts := ordjson.NewObject()
@@ -126,18 +95,10 @@ func refreshSummary(rows []any, excluded []any) *ordjson.Object {
 // snapshotTimeout bounds each refresh observation and prompt.
 const snapshotTimeout = 10 * time.Second
 
-type snapshots = herdrclient.Snapshot
+type snapshots struct{}
 
-func newSnapshots(runtimeRoot string) *snapshots {
-	return herdrclient.NewSnapshot(context.Background(), func() (string, error) { return toolpath.Find(runtimeRoot, "herdr") }, snapshotTimeout)
-}
-
-func fanout(sn *snapshots) *ordjson.Object {
-	row := sn.Fanout()
-	row.Set("per_recipient_timeout_s", jsonNumber(10))
-	row.Set("snapshot_timeout_s", jsonNumber(10))
-	return row
-}
+func newSnapshots(runtimeRoot string) *snapshots { return &snapshots{} }
+func fanout(sn *snapshots) *ordjson.Object       { return ordjson.NewObject() }
 
 func samePath(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
@@ -153,6 +114,7 @@ func samePath(a, b string) bool {
 
 // occupantRecord is the incarnation a refresh target's pane was bound to, judged before the instruction is sent.
 type occupantRecord struct {
+	revision   string
 	role       string
 	value      any
 	occupiedAt string
@@ -183,99 +145,125 @@ func (r occupantRecord) unchanged(s *store.Store) bool {
 
 // judgeOccupant refuses a target whose pane is no longer the recorded occupant: the agent row the pass observed must be
 // the recorded incarnation (a shell probe only when the terminal changed or the record is legacy).
-func judgeOccupant(sn *snapshots, endpoint *ordjson.Object, agent *ordjson.Object, record occupantRecord) string {
-	if !record.ok {
-		return fmt.Sprintf("Recipient pane records no %s incarnation to judge its occupant against; nothing was sent. %s", record.role, incarnation.Recovery(record.role, incarnation.Unrecorded))
-	}
-	session := asString(func() any { v, _ := endpoint.Get("session"); return v }())
-	pane := asString(func() any { v, _ := endpoint.Get("pane"); return v }())
-	verdict := incarnation.Judge(record.value, record.occupiedAt, incarnation.FromInfo(agent), func() (*incarnation.Shell, error) {
-		return incarnation.ProbeShell(func(_ time.Duration, args ...string) (any, string, error) {
-			value, err := sn.Call(session, snapshotTimeout, args...)
-			return value, "", err
-		}, pane)
-	})
-	if verdict.Verified {
-		return ""
-	}
-	return fmt.Sprintf("Recipient pane %s is not the recorded %s's occupant (%s: %s); nothing was sent and the old contract keeps serving. %s", pane, record.role, verdict.Outcome, verdict.Reason, incarnation.Recovery(record.role, verdict.Outcome))
-}
-
-func observeRecipient(sn *snapshots, endpoint *ordjson.Object, expectedCwd string, host machine.Identity, task *ordjson.Object) (string, string, *ordjson.Object, error) {
-	if !host.Is(asString(func() any { v, _ := endpoint.Get("machine"); return v }())) {
-		return "pending-unreachable", "Recipient is on another machine.", nil, nil
-	}
-	session := asString(func() any { v, _ := endpoint.Get("session"); return v }())
-	pane := asString(func() any { v, _ := endpoint.Get("pane"); return v }())
-	if panes.Closed(task, pane) {
-		return "pane-closed", "Recipient pane is closed; resume via execution resume. Delivery is pane-closed, not unreachable.", nil, nil
-	}
-	agent, err := sn.Agent(session, pane)
-	if err != nil {
-		if herdrclient.ErrorIsAbsent(err) {
-			return versions.RefreshUnreachable, "Recipient pane is gone (" + err.Error() + "); delivery for this revision is terminal. The old contract keeps serving; the coordinator still sees the task.", nil, nil
-		}
-		return "pending-unreachable", "Recipient cannot be observed: " + err.Error(), nil, nil
-	}
-	cwd := asString(func() any { v, _ := agent.Get("cwd"); return v }())
-	if cwd == "" {
-		cwd = asString(func() any { v, _ := agent.Get("working_directory"); return v }())
-	}
-	if cwd == "" || !samePath(cwd, expectedCwd) {
-		return "pending-unreachable", "Recipient cwd cannot be verified; refusing possible stale/reused pane.", nil, nil
-	}
-	status := asString(func() any { v, _ := agent.Get("agent_status"); return v }())
-	if status == "" {
-		status = asString(func() any { v, _ := agent.Get("status"); return v }())
-	}
-	if status == "" {
-		status = "unknown"
-	}
-	if status != "idle" && status != "done" {
-		return "pending-busy", fmt.Sprintf("Recipient is %s; notice remains pending. No mid-turn injection or retry loop.", status), nil, nil
-	}
-	return "submitted-unconfirmed", status, agent, nil
-}
-
 func attemptDelivery(s *store.Store, sn *snapshots, endpoint *ordjson.Object, expectedCwd, message string, host machine.Identity, record occupantRecord, task *ordjson.Object) *ordjson.Object {
-	state, reason, agent, err := observeRecipient(sn, endpoint, expectedCwd, host, task)
 	row := ordjson.NewObject()
-	if err != nil {
-		row.Set("state", "pending-unreachable")
+	fail := func(state string, err error) *ordjson.Object {
+		row.Set("state", state)
 		row.Set("reason", err.Error())
 		return row
 	}
-	if state != "submitted-unconfirmed" {
-		row.Set("state", state)
-		row.Set("reason", reason)
-		return row
+	if !host.Is(func() any { v, _ := endpoint.Get("machine"); return v }()) {
+		return fail("pending-unreachable", fmt.Errorf("recipient is on another machine"))
 	}
-	if msg := judgeOccupant(sn, endpoint, agent, record); msg != "" {
-		row.Set("state", "pending-unreachable")
-		row.Set("reason", msg)
-		return row
+	ctx, cancel := context.WithTimeout(context.Background(), returns.DefaultPassBudget)
+	defer cancel()
+	release, err := returns.LockRecipient(s, ctx, endpoint)
+	if err != nil {
+		return fail("pending-busy", err)
+	}
+	defer release()
+	recipient, err := returns.ObserveNative(ctx, store.EndpointFromContext(endpoint), expectedCwd)
+	if err != nil {
+		return fail("pending-busy", err)
+	}
+	var current *ordjson.Object
+	if record.role == "coordinator" {
+		current, err = s.Owner()
+	} else {
+		current, err = s.Registration(store.EndpointFromContext(endpoint))
+	}
+	if err != nil {
+		return fail("pending-unreachable", err)
+	}
+	if err = recipient.QualifyContext(ctx, current); err != nil {
+		return fail("pending-unreachable", err)
 	}
 	if !record.unchanged(s) {
-		row.Set("state", "pending-unreachable")
-		row.Set("reason", "the recipient's recorded incarnation changed while it was observed (a rebind or a new registration); nothing was sent, and the next request judges the current record")
-		return row
+		return fail("pending-unreachable", fmt.Errorf("recipient binding changed; nothing was sent"))
 	}
-	path, herr := sn.Herdr()
-	if herr != nil {
-		row.Set("state", "pending-unreachable")
-		row.Set("reason", "prompt was not accepted: "+herr.Error())
-		return row
+	// This sidecar records only the effect claim, never another payload queue.
+	key := sha256Text(fmt.Sprintf("%s:%s:%s", store.RegistrationKey(recipient.Endpoint), recipient.Endpoint.Attempt, record.revision))
+	path := filepath.Join(s.Home, "deliver", "refresh-"+key+".json")
+	unlock, err := s.Lock()
+	if err != nil {
+		return fail("pending-unreachable", err)
 	}
-	session := asString(func() any { v, _ := endpoint.Get("session"); return v }())
-	pane := asString(func() any { v, _ := endpoint.Get("pane"); return v }())
-	if _, callErr := herdrclient.Call(path, session, snapshotTimeout, "agent", "prompt", pane, message); callErr != nil {
-		row.Set("state", "pending-unreachable")
-		row.Set("reason", "prompt was not accepted: "+callErr.Error())
-		return row
+	var currentVersions *ordjson.Object
+	if record.role == "coordinator" {
+		currentVersions, err = versions.ReadContractVersions(s)
+	} else {
+		currentTask, readErr := s.ReadTask(recipient.Endpoint.Task)
+		err = readErr
+		if err == nil {
+			err = maintenance.Refuse(currentTask, "Procedure refresh")
+		}
+		if err == nil && !store.EndpointFromContext(returns.ReturnRoute(currentTask, "worker")).Native().SameAuthority(recipient.Endpoint.Native()) {
+			err = fmt.Errorf("worker route changed before refresh claim")
+		}
+		if err == nil {
+			currentVersions, err = versions.ReadVersions(s, currentTask)
+		}
+	}
+	if err != nil {
+		unlock()
+		return fail("pending-unreachable", err)
+	}
+	requested, _ := currentVersions.Get("requested")
+	if requested != record.revision {
+		unlock()
+		return fail("pending-unreachable", fmt.Errorf("requested revision changed before refresh claim"))
+	}
+	if err = recipient.Check(s); err != nil {
+		unlock()
+		return fail("pending-unreachable", err)
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		prior, e := ordjson.ReadFile(path)
+		if e != nil {
+			unlock()
+			return fail("pending-unreachable", e)
+		}
+		if obj, ok := prior.(*ordjson.Object); ok {
+			state, _ := obj.Get("state")
+			if state != "not-delivered" {
+				unlock()
+				row.Set("state", "submitted-unconfirmed")
+				row.Set("reason", "an earlier native refresh is submitted or uncertain; matching adoption is required, no automatic replay")
+				return row
+			}
+		}
+	} else if !os.IsNotExist(statErr) {
+		unlock()
+		return fail("pending-unreachable", statErr)
+	}
+	claim := ordjson.NewObject()
+	claim.Set("state", "in-flight")
+	claim.Set("at", store.Now())
+	claim.Set("endpoint", endpoint)
+	err = ordjson.WriteFile(path, claim)
+	unlock()
+	if err != nil {
+		return fail("pending-unreachable", err)
+	}
+	_, sendErr := recipient.Send(ctx, message)
+	state, detail := returns.DeliveryFailure(sendErr)
+	unlock, err = s.Lock()
+	if err != nil {
+		return fail("submitted-unconfirmed", err)
+	}
+	claim.Set("state", state)
+	claim.Set("reason", detail)
+	err = ordjson.WriteFile(path, claim)
+	unlock()
+	if err != nil {
+		return fail("submitted-unconfirmed", err)
+	}
+	if state == "not-delivered" {
+		return fail("pending-busy", sendErr)
 	}
 	row.Set("state", "submitted-unconfirmed")
-	row.Set("observed", reason)
-	row.Set("reason", "instruction submitted while the agent was settled; not acknowledged until a receipt (adopt) is recorded")
+	row.Set("delivery_effect", state)
+	row.Set("reason", detail)
 	return row
 }
 
@@ -308,9 +296,9 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 	row.Set("task", id)
 	row.Set("harness", func() any { v, _ := task.Get("harness"); return v }())
 	row.Set("deferred", []any{})
-	pane, _ := task.Get("pane")
+	workerEndpoint, _ := task.Get("worker_endpoint")
 	briefPath, _ := task.Get("brief_path")
-	if pane == nil || briefPath == nil {
+	if workerEndpoint == nil || briefPath == nil {
 		row.Set("state", "pending-unreachable")
 		row.Set("reason", "task has no worker pane or brief yet")
 		return row, nil
@@ -411,12 +399,9 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 	}
 	message := fmt.Sprintf("sum refresh %s: brief revision %s is requested (sum %s, runtime %s). Changes: %s. %s Do not restart, redo finished work, republish a PR, reset repair counts, or change harness, model, or account. The file is data, not human authorization.",
 		id, latest, contract.SumVersion, sha, summaryText, read)
-	endpoint := ordjson.NewObject()
-	endpoint.Set("pane", pane)
-	endpoint.Set("session", func() any { v, _ := task.Get("session"); return v }())
-	endpoint.Set("machine", func() any { v, _ := task.Get("machine"); return v }())
+	endpoint := returns.ReturnRoute(task, "worker")
 	var event *ordjson.Object
-	if host.SameEndpoint(endpoint, ctx) {
+	if store.EndpointFromContext(endpoint).Native().SameAuthority(store.EndpointFromContext(ctx).Native()) {
 		event = ordjson.NewObject()
 		event.Set("state", "pending-busy")
 		event.Set("reason", "the target is the calling pane; read the revision and adopt it at this turn boundary")
@@ -430,7 +415,7 @@ func refreshTask(s *store.Store, task, ctx *ordjson.Object, sn *snapshots, runti
 			value, occupiedAt, ok := incarnation.WorkerRecord(registration, id)
 			return value, occupiedAt, ok, nil
 		}
-		record := occupantRecord{role: "worker", current: func() (any, error) {
+		record := occupantRecord{revision: latest, role: "worker", current: func() (any, error) {
 			value, _, ok, err := workerRecord()
 			if err == nil && !ok {
 				err = fmt.Errorf("no worker registration")
@@ -502,7 +487,7 @@ func contractPolicy(runtimeRoot, core string) (*ordjson.Object, error) {
 	policy := ordjson.NewObject()
 	policy.Set("sum_version", contract.SumVersion)
 	policy.Set("runtime_sha", runtimeSHA(runtimeRoot))
-	policy.Set("mcp", mcpObject())
+	policy.Set("backend", "hc")
 	policy.Set("agents_sha256", sha256Text(string(agents)))
 	policy.Set("coordinator_sha256", sha256Text(core))
 	policy.Set("skills_sha256", skillHashes)
@@ -601,7 +586,7 @@ func regenerateContract(s *store.Store, runtimeRoot, sumctlPath string) (*ordjso
 		summaryLines = append(summaryLines, "- "+fmt.Sprint(item))
 	}
 	agents, _ := os.ReadFile(filepath.Join(runtimeRoot, "AGENTS.md"))
-	text := fmt.Sprintf("# sum coordinator contract — %s\n\nThis is the coordinator's operating contract as shipped by sum %s (runtime %s).\nYou remain the coordinator of this installation. This revision does not change your role, your registered pane, the recorded tasks, or their parent routes.\n\n## Refresh procedure\n\n- Read the contract below and the change summary. Then run `%s` to record the receipt.\n- Continue coordination from saved state: `%s` and the task records are the source of truth.\n- Do not restart yourself, re-dispatch running tasks, re-run setup, or re-answer recorded decisions.\n- Already-connected MCP clients keep the tool set they started with; the capability list below says what is deferred until the client itself restarts.\n\n## Change summary\n\n%s\n\n## Operating contract (AGENTS.md at this revision)\n\n%s\n\n## Coordinator core (%s at this revision)\n\n%s\n",
+	text := fmt.Sprintf("# sum coordinator contract — %s\n\nThis is the coordinator's operating contract as shipped by sum %s (runtime %s).\nYou remain the coordinator of this installation. This revision does not change your role, your registered pane, the recorded tasks, or their parent routes.\n\n## Refresh procedure\n\n- Read the contract below and the change summary. Then run `%s` to record the receipt.\n- Continue coordination from saved state: `%s` and the task records are the source of truth.\n- Do not restart yourself, re-dispatch running tasks, re-run setup, or re-answer recorded decisions.\n- Native HC status and submission remain observations; a matching adoption receipt is required.\n\n## Change summary\n\n%s\n\n## Operating contract (AGENTS.md at this revision)\n\n%s\n\n## Coordinator core (%s at this revision)\n\n%s\n",
 		rid, contract.SumVersion, runtimeSHA(runtimeRoot),
 		shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", rid),
 		shquote.CommandFor(sumctlPath, s.Home, "inbox", "--live"),
@@ -680,17 +665,7 @@ func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runt
 			target = item
 		}
 	}
-	var registration *ordjson.Object
-	if owner != nil {
-		registration, _ = s.Registration(store.EndpointFromContext(owner))
-	}
-	var mcp any
-	if registration != nil {
-		mcp, _ = registration.Get("mcp")
-	}
-	recorded := ordjson.NewObject()
-	recorded.Set("mcp", mcp)
-	row.Set("deferred", deferredCapabilities(recorded))
+	row.Set("deferred", []any{})
 	active, _ := versionsObj.Get("active")
 	if active == latest {
 		state := versions.RefreshState(versionsObj)
@@ -712,7 +687,7 @@ func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runt
 	unlock()
 	state := versions.RevisionView(filepath.Join(s.Home, versions.ContractDir), target)
 	var event *ordjson.Object
-	if owner == nil || host.SameEndpoint(owner, ctx) {
+	if owner == nil || store.EndpointFromContext(owner).Native().SameAuthority(store.EndpointFromContext(ctx).Native()) {
 		event = ordjson.NewObject()
 		event.Set("state", "pending-busy")
 		event.Set("reason", "the coordinator is the calling pane; read the contract revision and run `refresh adopt --coordinator` at this turn boundary")
@@ -733,7 +708,7 @@ func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runt
 		session := asString(func() any { v, _ := owner.Get("session"); return v }())
 		message := fmt.Sprintf("sum refresh coordinator: operating contract revision %s is requested (sum %s, runtime %s). Changes: %s. At your next safe point read %s, then run %s and continue coordination from saved state. Do not restart or re-dispatch.",
 			latest, contract.SumVersion, sha, strings.Join(parts, "; "), path, shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", latest))
-		record := occupantRecord{role: "coordinator", ok: true, current: func() (any, error) {
+		record := occupantRecord{revision: latest, role: "coordinator", ok: true, current: func() (any, error) {
 			current, err := s.Owner()
 			if err != nil || current == nil {
 				return nil, fmt.Errorf("no coordinator record")
@@ -947,4 +922,75 @@ func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator 
 	result.Set("runtime", rt)
 	result.Set("fanout", fanout(sn))
 	return result, nil
+}
+
+// ReconcileCoordinator delivers only an already-requested operating revision.
+// It neither regenerates policy nor adopts it on the coordinator's behalf.
+func ReconcileCoordinator(s *store.Store, scope store.Endpoint, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
+	owner, err := s.Owner()
+	if err != nil || owner == nil {
+		return nil, err
+	}
+	endpoint := store.EndpointFromContext(owner)
+	if endpoint.CoreID != scope.CoreID || endpoint.Session != scope.Session {
+		return nil, nil
+	}
+	ledger, err := versions.ReadContractVersions(s)
+	if err != nil {
+		return nil, err
+	}
+	requested, _ := ledger.Get("requested")
+	active, _ := ledger.Get("active")
+	revision, _ := requested.(string)
+	if revision == "" || requested == active {
+		return nil, nil
+	}
+	var target *ordjson.Object
+	revisions, _ := ledger.Get("revisions")
+	for _, raw := range asList(revisions) {
+		candidate := asObject(raw)
+		if candidate != nil {
+			if id, _ := candidate.Get("id"); id == revision {
+				target = candidate
+				break
+			}
+		}
+	}
+	if target == nil {
+		return nil, fmt.Errorf("requested coordinator contract revision is missing")
+	}
+	view := versions.RevisionView(filepath.Join(s.Home, versions.ContractDir), target)
+	if ok, _ := view.Get("ok"); ok != true {
+		return nil, fmt.Errorf("requested coordinator contract revision is not readable")
+	}
+	path, _ := view.Get("path")
+	message := fmt.Sprintf("sum refresh coordinator: operating contract revision %s is requested. Read %v completely, then run %s. Continue coordination from saved state; this notice is not adoption or approval.", revision, path, shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", revision))
+	recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
+	record := occupantRecord{role: "coordinator", revision: revision, value: recorded, occupiedAt: occupiedAt, ok: true, current: func() (any, error) {
+		current, err := s.Owner()
+		if err != nil {
+			return nil, err
+		}
+		value, _ := incarnation.CoordinatorRecord(current)
+		return value, nil
+	}}
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
+	event := attemptDelivery(s, newSnapshots(runtimeRoot), owner, endpoint.Cwd, message, host, record, nil)
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	ledger, err = versions.ReadContractVersions(s)
+	if err != nil {
+		return nil, err
+	}
+	if current, _ := ledger.Get("requested"); current == revision {
+		recordDelivery(ledger, revision, event, runtimeRoot)
+		err = versions.WriteContractVersions(s, ledger)
+	}
+	return event, err
 }

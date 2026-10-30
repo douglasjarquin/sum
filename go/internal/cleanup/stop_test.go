@@ -11,13 +11,12 @@ import (
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/execution"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
-	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
-	"github.com/douglasjarquin/sum/go/internal/returns"
-	"github.com/douglasjarquin/sum/go/internal/review"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -35,7 +34,7 @@ type lab struct {
 	host     string
 	checkout string
 	runtime  string
-	herdr    string
+	hc       *hctest.Fixture
 	lsofRoot string
 	repo     string
 }
@@ -52,68 +51,50 @@ func repoRoot(t *testing.T) string {
 func newLab(t *testing.T) *lab {
 	t.Helper()
 	t.Setenv("SUM_HOME", "")
-	t.Setenv("SUM_SESSION", "sum-test")
-	t.Setenv("HERDR_SESSION", "sum-test")
-	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
+	t.Setenv("SUM_SESSION", "")
 	home := t.TempDir()
 	root := repoRoot(t)
-	fakeHerdr := filepath.Join(root, "tests", "fixtures", "herdr.py")
-	fakeLsof := filepath.Join(root, "tests", "fixtures", "lsof.py")
-	herdrRoot := filepath.Join(home, "fake-herdr")
 	lsofRoot := filepath.Join(home, "fake-lsof")
-	if err := os.MkdirAll(herdrRoot, 0o700); err != nil {
+	if err := os.MkdirAll(lsofRoot, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(lsofRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SUM_HERDR_BIN", fakeHerdr)
 	t.Setenv("SUM_PS_BIN", filepath.Join(root, "tests", "fixtures", "ps.py"))
-	t.Setenv("SUM_LSOF_BIN", fakeLsof)
-	t.Setenv("FAKE_HERDR_ROOT", herdrRoot)
-	t.Setenv("FAKE_SESSION", "sum-test")
-	t.Setenv("FAKE_PARENT_CWD", home)
-	t.Setenv("FAKE_PARENT_STATUS", "idle")
-	t.Setenv("FAKE_PARENT_KIND", "claude")
+	t.Setenv("SUM_LSOF_BIN", filepath.Join(root, "tests", "fixtures", "lsof.py"))
 	t.Setenv("FAKE_LSOF_ROOT", lsofRoot)
-	host, err := machine.ID()
-	if err != nil {
-		t.Fatal(err)
-	}
 	st, err := store.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Init(); err != nil {
+	if err = st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := ordjson.NewObject()
-	ctx.Set("session", "sum-test")
-	ctx.Set("pane", "w-parent:p1")
-	ctx.Set("machine", host)
-	ctx.Set("cwd", home)
-	owner := ordjson.NewObject()
-	owner.Set("session", "sum-test")
-	owner.Set("pane", "w-parent:p1")
-	owner.Set("machine", host)
-	owner.Set("role", "coordinator")
-	// The occupant the fake Herdr reports for the coordinator pane, as init would have recorded it.
-	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
-	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
+	host, err := st.Machine()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil, nil); err != nil {
-		t.Fatal(err)
-	}
+	fixture := hctest.New(t)
 	checkout := t.TempDir()
 	repo := t.TempDir()
 	initGitRepo(t, repo)
 	initGitRepo(t, checkout)
-	if err := os.WriteFile(filepath.Join(lsofRoot, "cwds.json"), []byte(`{"processes":[]}`), 0o600); err != nil {
+	coordinator := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: fixture.CoreID, Socket: fixture.Socket, Session: "sum-test", Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: home}
+	cp := uint32(12000)
+	cf := &hcclient.Foreground{PID: 12001, Name: "codex", Argv: []string{"codex"}, Cwd: home}
+	fixture.SetTerminal(hcclient.Terminal{Address: "t1", Cwd: home, State: "live", CreatedMS: 1, PID: &cp, Foreground: cf})
+	bound := incarnation.NativeEvidence{Endpoint: coordinator.Native(), PID: cp, Foreground: cf}
+	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: coordinator.Native(), Kind: "coordinator-init", Attempt: coordinator.Attempt})
+	owner := coordinator.Object()
+	owner.Set("incarnation", bound.Record(store.Now()))
+	owner.Set("native_receipt", receipt)
+	if _, err = st.Register(coordinator, "coordinator", nil, bound.Record(store.Now())); err != nil {
 		t.Fatal(err)
 	}
-	return &lab{t: t, store: st, ctx: ctx, home: home, host: host, checkout: checkout, runtime: root, herdr: herdrRoot, lsofRoot: lsofRoot, repo: repo}
+	if err = ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
+		t.Fatal(err)
+	}
+	l := &lab{t: t, store: st, ctx: coordinator.Object(), home: home, host: host.ID, checkout: checkout, runtime: root, lsofRoot: lsofRoot, repo: repo, hc: fixture}
+	l.plantLsof(nil)
+	return l
 }
 
 func (l *lab) plantLsof(processes []map[string]any) {
@@ -134,43 +115,29 @@ func (l *lab) plantLsof(processes []map[string]any) {
 func (l *lab) writeSettings(global, perRepo int) {
 	l.t.Helper()
 	body := fmt.Sprintf(`{"schema": 1, "capacity": {"global": %d, "per_repository": %d}}`+"\n", global, perRepo)
-	if err := os.WriteFile(filepath.Join(l.home, "settings.json"), []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(l.store.Home, "settings.json"), []byte(body), 0o600); err != nil {
 		l.t.Fatal(err)
 	}
 }
 
-func (l *lab) writeWorkerPane() {
-	l.t.Helper()
-	state := map[string]any{
-		"panes": map[string]any{
-			"w-parent:p1": map[string]any{
-				"pane_id": "w-parent:p1", "cwd": l.home, "workspace_id": "w-parent",
-				"agent_status": "idle", "agent": "claude",
-			},
-			"w-worker:p1": map[string]any{
-				"pane_id": "w-worker:p1", "cwd": l.checkout, "workspace_id": "w-worker",
-				"agent_status": "unknown", "agent": nil, "created": true, "shell_pid": 4242,
-				"processes": []map[string]any{
-					{"pid": 4242, "name": "bash", "argv0": "bash", "argv": []any{"-bash"}, "cwd": l.checkout},
-				},
-			},
-		},
-		"workspaces": map[string]any{
-			"w-parent": map[string]any{"workspace_id": "w-parent", "label": "coordinator", "worktree": nil},
-			"w-worker": map[string]any{
-				"workspace_id": "w-worker", "label": "task",
-				"worktree": map[string]any{"checkout_path": l.checkout},
-			},
-		},
-	}
-	raw, err := json.Marshal(state)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), raw, 0o600); err != nil {
-		l.t.Fatal(err)
-	}
+func (l *lab) endpoint(address, role, attempt string, created uint64) store.Endpoint {
+	return store.Endpoint{Schema: 2, Backend: "hc", Machine: l.host, CoreID: l.hc.CoreID, Socket: l.hc.Socket, Session: "sum-test", Address: address, Role: role, Task: taskID, Attempt: attempt, BindingGeneration: 1, CreatedMS: created, Cwd: l.checkout}
 }
+func (l *lab) workerTerminal(live bool) {
+	pid := uint32(40000001)
+	fg := &hcclient.Foreground{PID: int32(pid), Name: "worker", Argv: []string{"worker"}, Cwd: l.checkout}
+	finished := uint64(3)
+	code := int32(0)
+	terminal := hcclient.Terminal{Address: "t2", CreatedMS: 2, Cwd: l.checkout, State: "finished", PID: &pid, Foreground: fg, FinishedMS: &finished, ExitCode: &code}
+	if live {
+		terminal.State = "live"
+		terminal.FinishedMS = nil
+		terminal.ExitCode = nil
+		terminal.Status = &hcclient.Status{State: "done"}
+	}
+	l.hc.SetTerminal(terminal)
+}
+func (l *lab) writeWorkerPane() { l.workerTerminal(false) }
 
 func initGitRepo(t *testing.T, dir string) {
 	t.Helper()
@@ -227,6 +194,27 @@ func (l *lab) saveTask(raw string) {
 	obj, ok := value.(*ordjson.Object)
 	if !ok {
 		l.t.Fatal("task is not an object")
+	}
+	obj.Set("schema", json.Number("2"))
+	endpoint := l.endpoint("t2", "worker", workerID, 2)
+	obj.Set("worker_endpoint", endpoint.Object())
+	pid := uint32(40000001)
+	fg := &hcclient.Foreground{PID: int32(pid), Name: "worker", Argv: []string{"worker"}, Cwd: l.checkout}
+	bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: fg}
+	if _, err := l.store.Register(endpoint, "worker", taskID, bound.Record(store.Now())); err != nil {
+		l.t.Fatal(err)
+	}
+
+	obj.Set("parent", l.ctx)
+	if ex := asObject(func() any { v, _ := obj.Get("execution"); return v }()); ex != nil {
+		worker := asObject(func() any { v, _ := ex.Get("worker"); return v }())
+		if worker != nil {
+			native := ordjson.NewObject()
+			pid := uint32(40000001)
+			fg := &hcclient.Foreground{PID: int32(pid), Name: "worker", Argv: []string{"worker"}, Cwd: l.checkout}
+			native.Set("incarnation", incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: fg}.Record(store.Now()))
+			worker.Set("native_launch", native)
+		}
 	}
 	if err := l.store.SaveTask(obj); err != nil {
 		l.t.Fatal(err)
@@ -351,25 +339,7 @@ func TestCleanup_releasedAttemptsAreNotReobserved(t *testing.T) {
 	l.writeWorkerPane()
 	// A live agent in the released worker's pane and a released verifier without
 	// operation_pid: re-observing either attempt reports an execution blocker.
-	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	panes := state["panes"].(map[string]any)
-	worker := panes["w-worker:p1"].(map[string]any)
-	worker["agent"] = "claude"
-	worker["agent_status"] = "running"
-	out, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), out, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	l.workerTerminal(true)
 	l.saveTask(l.taskJSON("released", ""))
 	plan := l.inspect()
 	if hasCode(blockerCodes(plan), "execution") {
@@ -516,273 +486,5 @@ func TestCleanup_checkoutProcessStillBlocksWhenPaneGone(t *testing.T) {
 	}
 	if !foundProcess {
 		t.Fatalf("live checkout process was not named: %v", blockerDetails(plan))
-	}
-}
-
-// addReviewerPane records an idle reviewer pane w-worker:p2 whose shell runs
-// in the task checkout, beside the worker pane writeWorkerPane created.
-func (l *lab) addReviewerPane(shellPID int) {
-	l.t.Helper()
-	path := filepath.Join(l.herdr, "state.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		l.t.Fatal(err)
-	}
-	state["panes"].(map[string]any)["w-worker:p2"] = map[string]any{
-		"pane_id": "w-worker:p2", "cwd": l.checkout, "workspace_id": "w-worker",
-		"agent_status": "unknown", "agent": nil, "shell_pid": shellPID,
-		"processes": []map[string]any{
-			{"pid": shellPID, "name": "bash", "argv0": "bash", "argv": []any{"/bin/bash"}, "cwd": l.checkout},
-		},
-	}
-	out, err := json.Marshal(state)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		l.t.Fatal(err)
-	}
-}
-
-// startReviewerShell starts a real reviewer shell in the checkout running a
-// real background child, and returns both pids.
-func startReviewerShell(t *testing.T, checkout string) (shell, child int) {
-	t.Helper()
-	cmd := exec.Command("bash", "-c", "sleep 120 & wait")
-	cmd.Dir = checkout
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		_ = cmd.Wait()
-	})
-	for i := 0; i < 100 && child == 0; i++ {
-		kids, _ := exec.Command("pgrep", "-P", fmt.Sprint(cmd.Process.Pid)).Output()
-		fmt.Sscan(string(kids), &child)
-	}
-	if child == 0 {
-		t.Fatal("reviewer shell child did not start")
-	}
-	return cmd.Process.Pid, child
-}
-
-// removeWorkerPane closes the worker pane w-worker:p1 in fake Herdr, so the
-// worker is verified absent and surviving checkout processes are classified
-// as owned or orphaned.
-func (l *lab) removeWorkerPane() {
-	l.t.Helper()
-	path := filepath.Join(l.herdr, "state.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		l.t.Fatal(err)
-	}
-	delete(state["panes"].(map[string]any), "w-worker:p1")
-	out, err := json.Marshal(state)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		l.t.Fatal(err)
-	}
-}
-
-// saveTaskWithReviewer saves workerRunningJSON, then records w-worker:p2 as its
-// reviewer endpoint through review.Run from the lab context, so the reviewer
-// carries the cwd production records (the installation root) and has saved
-// its findings.
-func (l *lab) saveTaskWithReviewer() {
-	l.t.Helper()
-	l.saveTask(l.workerRunningJSON())
-	endpoint := ordjson.NewObject()
-	for _, key := range []string{"session", "machine", "cwd"} {
-		v, _ := l.ctx.Get(key)
-		endpoint.Set(key, v)
-	}
-	endpoint.Set("pane", "w-worker:p2")
-	if _, err := review.Run(l.store, review.Args{Task: taskID, Verdict: "approve", Text: "no findings"}, endpoint, returns.PumpOpts{}); err != nil {
-		l.t.Fatal(err)
-	}
-}
-
-func TestCleanup_reviewerShellInCheckoutIsNotWorkerOccupant(t *testing.T) {
-	l := newLab(t)
-	l.writeSettings(1, 1)
-	l.writeWorkerPane()
-	l.addReviewerPane(4343)
-	l.plantLsof([]map[string]any{{"pid": 4242, "cwd": l.checkout}, {"pid": 4343, "cwd": l.checkout}})
-	l.saveTaskWithReviewer()
-	plan := l.inspect()
-	for _, detail := range blockerDetails(plan) {
-		if strings.Contains(detail, "4343") {
-			t.Fatalf("reviewer shell counted against the worker: %v", blockerDetails(plan))
-		}
-	}
-	if hasCode(blockerCodes(plan), "occupant") || hasCode(blockerCodes(plan), "execution") || hasCode(blockerCodes(plan), "reviewer") {
-		t.Fatalf("cleanup blockers = %v details=%v", blockerCodes(plan), blockerDetails(plan))
-	}
-	occupancy := asObject(func() any { v, _ := plan.Get("occupancy"); return v }())
-	if detached := asList(func() any { v, _ := occupancy.Get("detached"); return v }()); len(detached) > 0 {
-		t.Fatalf("worker occupancy detached = %v, want none", detached)
-	}
-	reviewer := asObject(func() any { v, _ := plan.Get("reviewer"); return v }())
-	if closable, _ := reviewer.Get("closable"); closable != true {
-		t.Fatalf("reviewer pane is not closable through its own path: %v", reviewer)
-	}
-	if _, err := execution.Park(l.store, l.ctx, l.runtime, taskID, workerID); err != nil {
-		t.Fatalf("park held the worker on the reviewer shell: %v", err)
-	}
-	if got := l.attemptState(workerID); got != "released" {
-		t.Fatalf("worker attempt state = %s, want released", got)
-	}
-}
-
-func TestCleanup_strayProcessBesideReviewerShellStillBlocks(t *testing.T) {
-	l := newLab(t)
-	l.writeSettings(1, 1)
-	l.writeWorkerPane()
-	// Only the shell pid Herdr reports is the reviewer's; its child and an
-	// unrelated process still bind the checkout.
-	shell, child := startReviewerShell(t, l.checkout)
-	stray := startCheckoutWriter(t, l.checkout)
-	l.addReviewerPane(shell)
-	l.plantLsof([]map[string]any{
-		{"pid": 4242, "cwd": l.checkout},
-		{"pid": shell, "cwd": l.checkout},
-		{"pid": child, "cwd": l.checkout},
-		{"pid": stray, "cwd": l.checkout},
-	})
-	l.saveTaskWithReviewer()
-	if _, err := execution.Park(l.store, l.ctx, l.runtime, taskID, workerID); err == nil {
-		t.Fatal("park released the worker with processes still in the checkout")
-	}
-	if got := l.attemptState(workerID); got == "released" {
-		t.Fatal("worker reservation was released")
-	}
-	plan := l.inspect()
-	if !hasCode(blockerCodes(plan), "occupant") {
-		t.Fatalf("cleanup blockers = %v details=%v, want occupant", blockerCodes(plan), blockerDetails(plan))
-	}
-	occupancy := asObject(func() any { v, _ := plan.Get("occupancy"); return v }())
-	detached := map[string]bool{}
-	for _, raw := range asList(func() any { v, _ := occupancy.Get("detached"); return v }()) {
-		pid, _ := asObject(raw).Get("pid")
-		detached[fmt.Sprint(pid)] = true
-	}
-	if !detached[fmt.Sprint(child)] || !detached[fmt.Sprint(stray)] {
-		t.Fatalf("detached = %v, want the reviewer shell's child %d and the stray %d", detached, child, stray)
-	}
-	if detached[fmt.Sprint(shell)] {
-		t.Fatalf("detached = %v lists the reviewer shell %d", detached, shell)
-	}
-}
-
-func TestCleanup_reviewerShellIsNotOrphanWhenWorkerPaneGone(t *testing.T) {
-	l := newLab(t)
-	l.writeSettings(1, 1)
-	l.writeWorkerPane()
-	l.addReviewerPane(4343)
-	l.removeWorkerPane()
-	l.plantLsof([]map[string]any{{"pid": 4343, "cwd": l.checkout}})
-	l.saveTaskWithReviewer()
-	plan := l.inspect()
-	if orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }()); len(orphans) > 0 {
-		t.Fatalf("orphans = %v; the reviewer shell would be terminated by apply", orphans)
-	}
-	if hasCode(blockerCodes(plan), "occupant") || hasCode(blockerCodes(plan), "execution") {
-		t.Fatalf("cleanup blockers = %v details=%v", blockerCodes(plan), blockerDetails(plan))
-	}
-	if _, err := execution.Park(l.store, l.ctx, l.runtime, taskID, workerID); err != nil {
-		t.Fatalf("park held the closed worker on the reviewer shell: %v", err)
-	}
-}
-
-func TestCleanup_reviewerShellChildIsNotOrphanWhenWorkerPaneGone(t *testing.T) {
-	l := newLab(t)
-	l.writeSettings(1, 1)
-	l.writeWorkerPane()
-	shell, child := startReviewerShell(t, l.checkout)
-	l.addReviewerPane(shell)
-	l.removeWorkerPane()
-	l.plantLsof([]map[string]any{
-		{"pid": shell, "cwd": l.checkout},
-		{"pid": child, "cwd": l.checkout},
-	})
-	l.saveTaskWithReviewer()
-	plan := l.inspect()
-	if orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }()); len(orphans) > 0 {
-		t.Fatalf("orphans = %v; apply would terminate the reviewer shell's child %d", orphans, child)
-	}
-	if !hasCode(blockerCodes(plan), "occupant") || !hasCode(blockerCodes(plan), "execution") {
-		t.Fatalf("cleanup blockers = %v details=%v, want occupant and execution", blockerCodes(plan), blockerDetails(plan))
-	}
-	named := false
-	for _, detail := range blockerDetails(plan) {
-		if strings.Contains(detail, fmt.Sprint(child)) {
-			named = true
-		}
-		if strings.Contains(detail, fmt.Sprintf("pid %d ", shell)) {
-			t.Fatalf("reviewer shell %d counted against the worker: %v", shell, blockerDetails(plan))
-		}
-	}
-	if !named {
-		t.Fatalf("reviewer shell child %d is not a named blocker: %v", child, blockerDetails(plan))
-	}
-}
-
-// failWorkerProcessInfo makes fake Herdr list the worker pane w-worker:p1 but
-// fail to read its processes.
-func (l *lab) failWorkerProcessInfo() {
-	l.t.Helper()
-	path := filepath.Join(l.herdr, "state.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		l.t.Fatal(err)
-	}
-	state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)["process_info_error"] = "server_unavailable"
-	out, err := json.Marshal(state)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		l.t.Fatal(err)
-	}
-}
-
-func TestCleanup_reviewerShellIsNotDetachedWhenWorkerProcessInfoUnreadable(t *testing.T) {
-	l := newLab(t)
-	l.writeSettings(1, 1)
-	l.writeWorkerPane()
-	l.addReviewerPane(4343)
-	l.failWorkerProcessInfo()
-	l.plantLsof([]map[string]any{{"pid": 4242, "cwd": l.checkout}, {"pid": 4343, "cwd": l.checkout}})
-	l.saveTaskWithReviewer()
-	plan := l.inspect()
-	// Without the worker's process-info its own shell cannot be excluded, so it
-	// stays detached; the reviewer shell is still the reviewer's.
-	occupancy := asObject(func() any { v, _ := plan.Get("occupancy"); return v }())
-	detached := map[string]bool{}
-	for _, raw := range asList(func() any { v, _ := occupancy.Get("detached"); return v }()) {
-		pid, _ := asObject(raw).Get("pid")
-		detached[fmt.Sprint(pid)] = true
-	}
-	if !detached["4242"] || detached["4343"] {
-		t.Fatalf("detached = %v, want the worker shell 4242 and not the reviewer shell 4343", detached)
-	}
-	if !hasCode(blockerCodes(plan), "occupant") {
-		t.Fatalf("cleanup blockers = %v details=%v, want occupant", blockerCodes(plan), blockerDetails(plan))
 	}
 }

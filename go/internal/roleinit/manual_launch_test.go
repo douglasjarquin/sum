@@ -2,12 +2,14 @@ package roleinit
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/launch"
@@ -112,6 +114,23 @@ func TestManualCoordinatorAdoptionResolvesDispatchWithoutLaunch(t *testing.T) {
 			owner, err := s.Owner()
 			if err != nil {
 				t.Fatal(err)
+			}
+			if value, _ := owner.Get("wake_protocol"); fmt.Sprint(value) != fmt.Sprint(contract.WakeProtocol) {
+				t.Fatalf("verified coordinator did not adopt native wake protocol: %v", value)
+			}
+			owner.Delete("wake_protocol")
+			if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = InitDesignated(DesignatedOpts{RuntimeRoot: root, Store: s, Ctx: bound}); err != nil {
+				t.Fatal(err)
+			}
+			owner, err = s.Owner()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value, _ := owner.Get("wake_protocol"); fmt.Sprint(value) != fmt.Sprint(contract.WakeProtocol) {
+				t.Fatalf("existing verified coordinator did not adopt native wake protocol: %v", value)
 			}
 			launchValue, _ := owner.Get("launch")
 			recorded := launchValue.(*ordjson.Object)

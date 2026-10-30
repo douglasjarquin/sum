@@ -64,7 +64,7 @@ func Confirm(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID
 		return nil, fmt.Errorf("worker attempt is stale")
 	}
 	state := asString(field(worker, "state"))
-	if state != "uncertain" && state != "starting" {
+	if state != "uncertain" && state != "starting" && state != "running" {
 		return nil, fmt.Errorf("attempt %s is not awaiting a launch receipt", attemptID)
 	}
 	endpoint := workerEndpoint(task)

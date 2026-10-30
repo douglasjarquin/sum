@@ -314,77 +314,39 @@ func reviewObligations(task *ordjson.Object) []*ordjson.Object {
 }
 
 func ReturnRoute(task *ordjson.Object, recipient string) *ordjson.Object {
-	route := ordjson.NewObject()
+	var endpoint *ordjson.Object
 	if recipient == "parent" {
-		parentValue, _ := task.Get("parent")
-		parent, _ := parentValue.(*ordjson.Object)
-		route.Set("recipient", "parent")
-		route.Set("role", "coordinator")
-		if parent != nil {
-			machine, _ := parent.Get("machine")
-			session, _ := parent.Get("session")
-			pane, _ := parent.Get("pane")
-			cwd, _ := parent.Get("cwd")
-			route.Set("machine", machine)
-			route.Set("session", session)
-			route.Set("pane", pane)
-			route.Set("cwd", cwd)
-		} else {
-			route.Set("machine", nil)
-			route.Set("session", nil)
-			route.Set("pane", nil)
-			route.Set("cwd", nil)
-		}
-		return route
+		value, _ := task.Get("parent")
+		endpoint, _ = value.(*ordjson.Object)
+	} else {
+		value, _ := task.Get("worker_endpoint")
+		endpoint, _ = value.(*ordjson.Object)
 	}
-	machine, _ := task.Get("machine")
-	session, _ := task.Get("session")
-	pane, _ := task.Get("pane")
-	worktree, _ := task.Get("worktree")
-	route.Set("recipient", "worker")
-	route.Set("role", "worker")
-	route.Set("machine", machine)
-	route.Set("session", session)
-	route.Set("pane", pane)
-	route.Set("cwd", worktree)
+	route := ordjson.NewObject()
+	if endpoint != nil {
+		for _, key := range endpoint.Keys() {
+			value, _ := endpoint.Get(key)
+			route.Set(key, value)
+		}
+	}
+	route.Set("recipient", recipient)
+	if recipient == "parent" {
+		route.Set("role", "coordinator")
+	} else {
+		route.Set("role", "worker")
+		cwd, _ := task.Get("worktree")
+		route.Set("cwd", cwd)
+	}
 	return route
 }
-
 func RouteKey(route *ordjson.Object) any {
-	machine, _ := route.Get("machine")
-	session, _ := route.Get("session")
-	pane, _ := route.Get("pane")
-	machineStr, _ := machine.(string)
-	sessionStr, _ := session.(string)
-	paneStr, _ := pane.(string)
-	if machineStr == "" || sessionStr == "" || paneStr == "" {
+	endpoint := store.EndpointFromContext(route)
+	if endpoint.Validate() != nil {
 		return nil
 	}
-	return store.RegistrationKey(store.Endpoint{Machine: machineStr, Session: sessionStr, Pane: paneStr})
+	return store.RegistrationKey(endpoint)
 }
-
-// routeKeys lists the delivery keys that name route's recipient: the key of
-// its endpoint under the stable machine identity first, then, for this host,
-// the keys a legacy hostname identity produced, so deliveries recorded before
-// the stable identity still count toward the same recipient.
-func routeKeys(host machine.Identity, route *ordjson.Object) []any {
-	if RouteKey(route) == nil {
-		return []any{nil}
-	}
-	session, _ := route.Get("session")
-	pane, _ := route.Get("pane")
-	endpoint := store.Endpoint{Machine: host.Canonical(routeValue(route, "machine")), Session: session.(string), Pane: pane.(string)}
-	keys := []any{store.RegistrationKey(endpoint)}
-	if endpoint.Machine != host.ID {
-		return keys
-	}
-	for _, legacy := range host.Legacy() {
-		alias := endpoint
-		alias.Machine = legacy
-		keys = append(keys, store.RegistrationKey(alias))
-	}
-	return keys
-}
+func routeKeys(host machine.Identity, route *ordjson.Object) []any { return []any{RouteKey(route)} }
 
 func ReadReturns(s *store.Store, taskID string) (*ordjson.Object, error) {
 	taskPath, err := s.TaskPath(taskID)

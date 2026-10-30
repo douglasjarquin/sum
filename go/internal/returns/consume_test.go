@@ -69,7 +69,10 @@ func (l *passLab) showEntry() *ordjson.Object {
 	for _, r := range rows.([]any) {
 		obj := r.(*ordjson.Object)
 		rec, _ := obj.Get("recipient")
-		if pane, _ := rec.(*ordjson.Object).Get("pane"); pane == "w-root:p1" {
+		core, _ := rec.(*ordjson.Object).Get("core_id")
+		address, _ := rec.(*ordjson.Object).Get("address")
+		alias, _ := testAliases.Load(fmt.Sprint(core) + "/" + fmt.Sprint(address))
+		if alias == "w-root:p1" {
 			return obj
 		}
 	}
@@ -273,7 +276,7 @@ func TestConsumeRefusals(t *testing.T) {
 	t.Run("foreign recipient", func(t *testing.T) {
 		l, _, token := setup(t)
 		b, _ := ParseBoundary(token)
-		b.Recipient.Pane = "w-other:p1"
+		b.Recipient.Address = "t999"
 		foreign, _ := b.Token()
 		if _, err := l.consume(foreign); err == nil || !strings.Contains(err.Error(), "another recipient") {
 			t.Fatalf("foreign consume = %v", err)
@@ -281,8 +284,8 @@ func TestConsumeRefusals(t *testing.T) {
 	})
 	t.Run("replaced occupant", func(t *testing.T) {
 		l, _, token := setup(t)
-		l.setOwner(func(owner *ordjson.Object) { owner.Set("incarnation", boundTo("w-root:p1-reborn")) })
-		l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude", "terminal_id": "term-w-root:p1-reborn"}}})
+		l.replaceOwner()
+		l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude"}}})
 		before := l.wakeBytes()
 		_, err := l.consume(token)
 		if err == nil || !strings.Contains(err.Error(), "new occupant does not inherit") {
@@ -511,8 +514,8 @@ func TestReconcileMatrix(t *testing.T) {
 		l.adopt()
 		a := l.reporting()
 		l.submittedFor(a)
-		l.setOwner(func(owner *ordjson.Object) { owner.Set("incarnation", boundTo("w-root:p1-reborn")) })
-		l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude", "terminal_id": "term-w-root:p1-reborn"}}})
+		l.replaceOwner()
+		l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude"}}})
 		b := l.reporting()
 		blocked, _ := l.pumpFor([]string{a, b}, "parent", 8*time.Second)
 		if got := rowField(t, blocked, "w-root:p1", "state"); got != "deferred" {

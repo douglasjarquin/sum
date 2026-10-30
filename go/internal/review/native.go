@@ -30,6 +30,13 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if err := coordinator.Validate(); err != nil || coordinator.Role != "coordinator" {
 		return nil, fmt.Errorf("a registered native coordinator is required to launch a reviewer")
 	}
+	instance, err := s.Instance()
+	if err != nil {
+		return nil, err
+	}
+	if instance == "" {
+		return nil, fmt.Errorf("permanent installation identity is missing; reviewer launch is refused")
+	}
 	task, err := s.ReadTask(args.Task)
 	if err != nil {
 		return nil, err
@@ -148,7 +155,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 		reviewer.Set("rebind", rebind)
 	}
 	prompt := kickoffPrompt(sumctlPath, args.Task, evidenceview.CurrentCandidate(task), skill, policyCandidate(task, evidenceview.CurrentCandidate(task)))
-	labels := map[string]string{"sum.installation": s.Root, "sum.task": args.Task, "sum.role": "reviewer", "sum.attempt": attempt}
+	labels := map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "reviewer", "sum.attempt": attempt}
 	params := hcclient.RunParams{Argv: spec.RunArgv(prompt), Cwd: worktree, Name: "sum-r-" + strings.TrimPrefix(args.Task, "t-") + "-" + attempt[:12], Parent: coordinator.Address, Caller: coordinator.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: labels, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "reviewer", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(ep.BindingGeneration, 10), "SUM_CORE_ID": ep.CoreID, "SUM_SESSION": ep.Session, "HC_SOCKET": ep.Socket}}
 	result, err := launchPreparedNative(context.Background(), s, task, ep, reviewer, params)
 	if result != nil {
@@ -458,6 +465,13 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	if attempt == "" {
 		return nil, fmt.Errorf("explicit reviewer launch attempt required")
 	}
+	instance, err := s.Instance()
+	if err != nil {
+		return nil, err
+	}
+	if instance == "" {
+		return nil, fmt.Errorf("permanent installation identity is missing; reviewer recovery is refused")
+	}
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
@@ -508,7 +522,7 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	if len(params.Argv) != 2 || params.Argv[0] != template.Spec.Name || observed.PID == nil || *observed.PID == 0 || observed.Foreground == nil || !reflect.DeepEqual(observed.Foreground.Argv, template.Spec.Argv) || resolvePath(observed.Foreground.Cwd) != resolvePath(ep.Cwd) {
 		return nil, fmt.Errorf("reviewer opening process and qualified command cannot be proven")
 	}
-	for key, want := range map[string]string{"sum.installation": s.Root, "sum.task": taskID, "sum.role": "reviewer", "sum.attempt": attempt} {
+	for key, want := range map[string]string{"sum.installation": instance, "sum.task": taskID, "sum.role": "reviewer", "sum.attempt": attempt} {
 		if observed.Labels[key] != want || params.Labels[key] != want {
 			return nil, fmt.Errorf("reviewer launch ownership label differs: %s", key)
 		}

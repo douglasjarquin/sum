@@ -2,6 +2,8 @@ package cleanup
 
 import (
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/store"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
@@ -50,6 +52,23 @@ func Pending(task *ordjson.Object) *ordjson.Object {
 			result.Set("blockers", []any{})
 			result.Set("note", fmt.Sprintf("PR merged on record; run cleanup %v", idValue))
 			return result
+		}
+	}
+	return nil
+}
+
+// RefusePendingEffects keeps uncertain native submissions reviewable instead of
+// silently ending their obligation by archiving the task.
+func RefusePendingEffects(s *store.Store, taskID string) error {
+	record, err := returns.ReadReturns(s, taskID)
+	if err != nil {
+		return err
+	}
+	for _, raw := range asList(func() any { v, _ := record.Get("deliveries"); return v }()) {
+		delivery := asObject(raw)
+		switch stringField(delivery, "state") {
+		case "in-flight", "uncertain", "unknown":
+			return fmt.Errorf("native delivery %s still has an unresolved effect", stringField(delivery, "id"))
 		}
 	}
 	return nil

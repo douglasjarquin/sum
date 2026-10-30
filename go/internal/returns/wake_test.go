@@ -154,7 +154,7 @@ func TestReadWakeBlocksOnEveryInvalidFile(t *testing.T) {
 		}, "another installation"},
 		{"wrong recipient", func(t *testing.T, s *store.Store, endpoint [3]string) {
 			w := preparedWake(t, s, endpoint)
-			w.Recipient.Pane = "w-other:p1"
+			w.Recipient.Address = "t999"
 			if err := writeWakeAt(s.WakePath(endpoint), w); err != nil {
 				t.Fatal(err)
 			}

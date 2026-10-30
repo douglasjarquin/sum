@@ -10,16 +10,17 @@ import (
 	"strings"
 	"time"
 
+	"context"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/graph"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
-var toolNames = []string{"python3", "node", "git", "gh", "herdr", "quota-axi", "remainder", "lsof"}
+var toolNames = []string{"python3", "node", "git", "gh", "hc", "quota-axi", "remainder", "lsof"}
 
 var harnessExecutables = []struct {
 	Kind string
@@ -52,22 +53,24 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 		rows = append(rows, row)
 	}
 
-	herdrVersionRow := ordjson.NewObject()
-	herdrVersionRow.Set("tool", "herdr-version")
-	herdrPath, herdrPathErr := toolpath.Find(runtimeRoot, "herdr")
-	if herdrPathErr == nil {
-		if found, err := herdrclient.EnsureVersion(herdrPath, contract.HerdrCLI); err == nil {
-			herdrVersionRow.Set("ok", true)
-			herdrVersionRow.Set("detail", found)
+	nativeVersion := ordjson.NewObject()
+	nativeVersion.Set("tool", "hc-core")
+	owner, _ := s.Owner()
+	endpoint := store.EndpointFromContext(owner)
+	if endpoint.CoreID != "" {
+		client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+		hello, err := client.Hello(context.Background())
+		nativeVersion.Set("ok", err == nil)
+		if err != nil {
+			nativeVersion.Set("detail", err.Error())
 		} else {
-			herdrVersionRow.Set("ok", false)
-			herdrVersionRow.Set("detail", err.Error())
+			nativeVersion.Set("detail", func() any { o, _ := ordjson.FromValue(hello); return o }())
 		}
 	} else {
-		herdrVersionRow.Set("ok", false)
-		herdrVersionRow.Set("detail", herdrPathErr.Error())
+		nativeVersion.Set("ok", false)
+		nativeVersion.Set("detail", "no recorded local HC endpoint; doctor never starts or binds a core")
 	}
-	rows = append(rows, herdrVersionRow)
+	rows = append(rows, nativeVersion)
 
 	rows = append(rows, ghAttachCheck(runtimeRoot))
 
@@ -91,45 +94,23 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 		role.Set("coordinator", nil)
 	}
 
-	herdrContextRow := ordjson.NewObject()
-	herdrContextRow.Set("tool", "herdr-context")
+	nativeContext := ordjson.NewObject()
+	nativeContext.Set("tool", "hc-context")
 	ctx, ctxErr := store.Context(runtimeRoot)
-	if ctxErr == nil {
-		if herdrPathErr == nil {
-			pane, _ := ctx.Get("pane")
-			session, _ := ctx.Get("session")
-			paneStr, _ := pane.(string)
-			sessionStr, _ := session.(string)
-			_, callErr := herdrclient.Call(herdrPath, sessionStr, 10*time.Second, "pane", "get", paneStr)
-			if callErr == nil {
-				herdrContextRow.Set("ok", true)
-				herdrContextRow.Set("detail", ctx)
-				var registration *ordjson.Object
-				if designated {
-					registration, _ = s.Registration(store.EndpointFromContext(ctx))
-				}
-				if registration != nil {
-					roleValue, _ := registration.Get("role")
-					roleStr, _ := roleValue.(string)
-					role.Set("registered", roleStr)
-					role.Set("detail", "Registered as "+roleStr+".")
-				} else {
-					role.Set("registered", nil)
-					role.Set("detail", "This pane is not registered. Run ./bin/sumctl init to register explicitly; doctor never binds.")
-				}
-			} else {
-				herdrContextRow.Set("ok", false)
-				herdrContextRow.Set("detail", callErr.Error())
-			}
-		} else {
-			herdrContextRow.Set("ok", false)
-			herdrContextRow.Set("detail", herdrPathErr.Error())
-		}
+	nativeContext.Set("ok", ctxErr == nil)
+	if ctxErr != nil {
+		nativeContext.Set("detail", ctxErr.Error())
 	} else {
-		herdrContextRow.Set("ok", false)
-		herdrContextRow.Set("detail", ctxErr.Error())
+		nativeContext.Set("detail", ctx)
+		registration, _ := s.Registration(store.EndpointFromContext(ctx))
+		if registration != nil {
+			roleValue, _ := registration.Get("role")
+			role.Set("registered", roleValue)
+		} else {
+			role.Set("registered", nil)
+		}
 	}
-	rows = append(rows, herdrContextRow)
+	rows = append(rows, nativeContext)
 	rows = append(rows, role)
 
 	installed := ordjson.NewObject()

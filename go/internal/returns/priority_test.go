@@ -384,8 +384,8 @@ func TestPriorityReplacedOccupantIsPromptedOnce(t *testing.T) {
 	l.coordinatorIdle()
 	result, _ := l.pumpFor([]string{a, q}, "parent", 8*time.Second)
 	priorityRow(t, result, "submitted", q+"/question:q1")
-	l.setOwner(func(owner *ordjson.Object) { owner.Set("incarnation", boundTo("w-root:p1-reborn")) })
-	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude", "terminal_id": "term-w-root:p1-reborn"}}})
+	l.replaceOwner()
+	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude"}}})
 	q2 := l.asking(l.host)
 	blocked, _ := l.pumpFor([]string{a, q, q2}, "parent", 8*time.Second)
 	if state, _ := row(t, blocked, "w-root:p1").Get("state"); state != "deferred" || len(prompts(l.calls(), "w-root:p1")) != 2 {

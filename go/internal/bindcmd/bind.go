@@ -11,6 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
@@ -216,9 +217,26 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 			return nil, err
 		}
 		replacement = candidate.Object()
+		if role == "reviewer" {
+			for _, key := range []string{"harness", "argv", "permissions", "skill_path", "skill_sha256", "candidate"} {
+				if value, ok := old.Get(key); ok {
+					replacement.Set(key, value)
+				}
+			}
+		}
 		for _, k := range []string{"native_template", "native_receipt", "incarnation"} {
 			replacement.Set(k, field(registration, k))
 		}
+	}
+	scopeTarget := store.EndpointFromContext(ctx)
+	if replacement != nil {
+		scopeTarget = store.EndpointFromContext(replacement)
+	}
+	coverageCtx, cancelCoverage := context.WithTimeout(context.Background(), 10*time.Second)
+	_, err = hookstatus.EnsureScope(coverageCtx, s, ctx, scopeTarget, pump.RuntimeRoot, pump.SumctlPath)
+	cancelCoverage()
+	if err != nil {
+		return nil, fmt.Errorf("binding unchanged; native observer coverage: %w", err)
 	}
 	unlock, err := s.Lock()
 	if err != nil {

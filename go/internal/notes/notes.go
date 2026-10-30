@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -100,6 +101,10 @@ func Add(s *store.Store, taskID, text string, endpoint *ordjson.Object) (*ordjso
 	if err != nil {
 		return nil, err
 	}
+	if err := maintenance.Refuse(task, "Task note"); err != nil {
+		return nil, err
+	}
+
 	id, _ := task.Get("id")
 	idString, _ := id.(string)
 	host, err := s.Machine()
@@ -125,10 +130,14 @@ func Add(s *store.Store, taskID, text string, endpoint *ordjson.Object) (*ordjso
 		}
 		existing = string(data)
 	}
-	who := role + " (no pane)"
+	who := role + " (no terminal)"
 	if endpoint != nil {
-		pane, _ := endpoint.Get("pane")
-		who = fmt.Sprintf("%s %v", role, pane)
+		native := store.EndpointFromContext(endpoint)
+		if native.Validate() == nil {
+			who = fmt.Sprintf("%s %s/%s", role, native.CoreID, native.Address)
+		} else {
+			who = role + " (historical endpoint)"
+		}
 	}
 	entry := fmt.Sprintf("\n## %s %s\n\n%s\n", store.Now(), who, strings.TrimRightFunc(text, unicode.IsSpace))
 	combined := existing + entry
@@ -160,7 +169,7 @@ func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string 
 	if endpoint == nil {
 		return ""
 	}
-	if pane, ok := task.Get("pane"); ok && pane != nil && pane != "" && host.SameEndpoint(task, endpoint) {
+	if value, ok := task.Get("worker_endpoint"); ok && host.SameEndpoint(asNativeObject(value), endpoint) {
 		return "worker"
 	}
 	if parentValue, ok := task.Get("parent"); ok {
@@ -208,3 +217,5 @@ func writeAtomic(path, content string) error {
 	defer handle.Close()
 	return handle.Sync()
 }
+
+func asNativeObject(value any) *ordjson.Object { object, _ := value.(*ordjson.Object); return object }

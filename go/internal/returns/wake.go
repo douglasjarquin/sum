@@ -53,7 +53,7 @@ import (
 // and appends a receipt. It answers, applies, verifies, approves, and closes nothing else; `omitted` identities and
 // anything outside `included` were never covered and stay eligible for the next pass.
 const (
-	WakeSchema        = 1
+	WakeSchema        = 2
 	WakeReceiptsBound = 20
 
 	WakePrepared     = "prepared"
@@ -81,9 +81,11 @@ const (
 )
 
 type WakeRecipient struct {
+	CoreID  string `json:"core_id"`
+	Address string `json:"address"`
 	Machine string `json:"machine"`
-	Session string `json:"session"`
-	Pane    string `json:"pane"`
+	Session string `json:"session,omitempty"`
+	Pane    string `json:"pane,omitempty"`
 	Role    string `json:"role"`
 }
 
@@ -179,7 +181,7 @@ var wakeSyncDir = func(dir string) error {
 }
 
 func (w *Wake) Endpoint() [3]string {
-	return [3]string{w.Recipient.Machine, w.Recipient.Session, w.Recipient.Pane}
+	return [3]string{w.Recipient.Machine, w.Recipient.CoreID, w.Recipient.Address}
 }
 
 // IsOutstanding reports an episode that may have a prompt in the recipient's pane: claimed, intent, submitted, or
@@ -227,7 +229,7 @@ func NewWake(s *store.Store, endpoint [3]string, incarnation json.RawMessage) (*
 	return &Wake{
 		Schema:       WakeSchema,
 		Installation: installation,
-		Recipient:    WakeRecipient{Machine: endpoint[0], Session: endpoint[1], Pane: endpoint[2], Role: "coordinator"},
+		Recipient:    WakeRecipient{Machine: endpoint[0], CoreID: endpoint[1], Address: endpoint[2], Role: "coordinator"},
 		Incarnation:  incarnation,
 		Covered:      []WakeCovered{},
 		Decisions:    []WakeDecision{},
@@ -321,7 +323,7 @@ func readWake(s *store.Store, inst installation, endpoint [3]string) (*Wake, Wak
 		return nil, status
 	}
 	if w.Recipient.Role != "coordinator" || w.Endpoint() != endpoint {
-		return nil, WakeStatus{State: WakeBlocked, Path: path, Diagnostic: fmt.Sprintf("%s records another recipient (%s %s on %s); inspect it with %s. Nothing is submitted to this recipient until it is resolved.", path, w.Recipient.Session, w.Recipient.Pane, w.Recipient.Machine, wakeShow)}
+		return nil, WakeStatus{State: WakeBlocked, Path: path, Diagnostic: fmt.Sprintf("%s records another recipient (%s %s on %s); inspect it with %s. Nothing is submitted to this recipient until it is resolved.", path, w.Recipient.CoreID, w.Recipient.Address, w.Recipient.Machine, wakeShow)}
 	}
 	return w, status
 }
@@ -998,9 +1000,9 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		return nil, err
 	}
 	host, _ := s.Machine()
-	target := [3]string{host.Canonical(b.Recipient.Machine), b.Recipient.Session, b.Recipient.Pane}
+	target := [3]string{host.Canonical(b.Recipient.Machine), b.Recipient.CoreID, b.Recipient.Address}
 	if target != caller {
-		return nil, fmt.Errorf("The boundary names another recipient (%s %s on %s); only that coordinator pane may consume it. Nothing was consumed.", b.Recipient.Session, b.Recipient.Pane, b.Recipient.Machine)
+		return nil, fmt.Errorf("The boundary names another recipient (%s %s on %s); only that coordinator pane may consume it. Nothing was consumed.", b.Recipient.CoreID, b.Recipient.Address, b.Recipient.Machine)
 	}
 	unlock, err := lockWakeRecipient(s, caller)
 	if err != nil {
@@ -1289,10 +1291,10 @@ func deliveryStamped(s *store.Store, episode *WakeEpisode) (bool, error) {
 func recipientView(w *Wake) *ordjson.Object {
 	row := ordjson.NewObject()
 	row.Set("machine", w.Recipient.Machine)
-	row.Set("session", w.Recipient.Session)
-	row.Set("pane", w.Recipient.Pane)
+	row.Set("core_id", w.Recipient.CoreID)
+	row.Set("address", w.Recipient.Address)
 	row.Set("role", w.Recipient.Role)
-	row.Set("key", store.RegistrationKey(store.Endpoint{Machine: w.Recipient.Machine, Session: w.Recipient.Session, Pane: w.Recipient.Pane}))
+	row.Set("key", store.RegistrationKey(store.Endpoint{Machine: w.Recipient.Machine, Schema: 2, Backend: "hc", CoreID: w.Recipient.CoreID, Address: w.Recipient.Address}))
 	return row
 }
 
@@ -1525,14 +1527,7 @@ func omittedList(gaps []coverageGap) []any {
 // legacyPrompts lists prompt attempts to endpoint recorded in returns.json that no episode or receipt accounts for,
 // still submitted or uncertain: what an older or non-adopted helper sent outside the wake protocol.
 func legacyPrompts(host machine.Identity, endpoint [3]string, tasks []showTask, accounted map[string]bool) []any {
-	route := ordjson.NewObject()
-	route.Set("machine", endpoint[0])
-	route.Set("session", endpoint[1])
-	route.Set("pane", endpoint[2])
-	keys := map[any]bool{}
-	for _, k := range routeKeys(host, route) {
-		keys[k] = true
-	}
+	keys := map[any]bool{store.RegistrationKey(store.Endpoint{Schema: 2, Backend: "hc", Machine: endpoint[0], CoreID: endpoint[1], Address: endpoint[2]}): true}
 	out := []any{}
 	for _, t := range tasks {
 		for _, d := range t.deliveries {

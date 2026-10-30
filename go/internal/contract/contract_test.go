@@ -17,13 +17,7 @@ func TestBuildRelease_reportsNativeBinaryCapabilities(t *testing.T) {
     "hc_core": "0.1.14",
     "hc_generation": 1,
     "endpoint_schema": 2,
-    "notification_protocol": 2,
-    "herdr_cli": "0.9.5",
-    "mcp": {
-      "server": "herdr-mesh-sum",
-      "version": "0.1.0",
-      "tools": 10
-    }
+    "notification_protocol": 2
   },
   "supports": {
     "endpoint_schema": [

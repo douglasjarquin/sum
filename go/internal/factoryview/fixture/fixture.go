@@ -1,10 +1,11 @@
 // Package fixture writes deterministic factory/task homes for digest tests and the integrated replay.
-// It writes saved records only: task.json files and the factory registry, never a checkout or a Herdr pane.
+// It writes saved records only: task.json files and the factory registry, never a checkout or a live terminal.
 package fixture
 
 import (
 	"encoding/json"
-	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
 	"path/filepath"
 )
@@ -97,7 +98,7 @@ func (t Task) Record() map[string]any {
 		questions = append(questions, map[string]any{"id": q.ID, "status": q.Status, "text": q.Text, "created_at": q.CreatedAt})
 	}
 	record := map[string]any{
-		"schema": 1, "id": t.ID, "status": t.Status, "repository": "/w/" + t.ID, "kind": "ship", "brief": "do the thing", "brief_path": "brief.md",
+		"schema": store.Schema, "id": t.ID, "status": t.Status, "repository": "/w/" + t.ID, "kind": "ship", "brief": "do the thing", "brief_path": "brief.md",
 		"project":   map[string]any{"host": t.Project.Host, "owner": t.Project.Owner, "repo": t.Project.Repo},
 		"questions": questions, "attention": []any{}, "evidence": evidence, "report": nil,
 	}
@@ -149,7 +150,7 @@ func WriteFactory(home string, factories []Factory) error {
 	for _, f := range factories {
 		held := []any{}
 		for _, l := range f.Held {
-			lane := map[string]any{"issue": l.Issue, "state": l.State, "claimed_at": l.ClaimedAt, "claim": map[string]any{"host": "fixture", "pane": "w-c:p1", "label": "sum-claimed"}}
+			lane := map[string]any{"issue": l.Issue, "state": l.State, "claimed_at": l.ClaimedAt, "claim": map[string]any{"host": "fixture", "endpoint": map[string]any{"schema": 2, "backend": "hc", "machine": "fixture", "core_id": "fixture-core", "address": "t1", "created_ms": 1, "session": "fixture", "socket": "/tmp/fixture-hc.sock", "role": "coordinator", "task": "", "attempt": "fixture-claim", "binding_generation": 1}, "label": "sum-claimed"}}
 			if l.Task != "" {
 				lane["task"] = l.Task
 			}
@@ -182,11 +183,25 @@ func WriteFactory(home string, factories []Factory) error {
 
 // WriteState writes state.json with the installation instance the digest cursor binds to.
 func WriteState(home, instance string) error {
-	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
+	st, err := store.Open(home)
+	if err != nil {
 		return err
 	}
-	raw := fmt.Sprintf("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-01-01T00:00:00+00:00\", \"instance\": %q}\n", instance)
-	return os.WriteFile(filepath.Join(home, "state.json"), []byte(raw), 0o600)
+	if err = st.Init(); err != nil {
+		return err
+	}
+	for _, path := range []string{filepath.Join(st.Home, "state.json"), filepath.Join(st.Root, "state.json")} {
+		raw, err := ordjson.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		object := raw.(*ordjson.Object)
+		object.Set("instance", instance)
+		if err = ordjson.WriteFile(path, object); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var (
@@ -250,6 +265,12 @@ func WriteStandard(home string) (Standard, error) {
 	if err := WriteState(home, out.Instance); err != nil {
 		return out, err
 	}
+	st, err := store.Open(home)
+	if err != nil {
+		return out, err
+	}
+	home = st.Home
+	out.Home = home
 	for _, t := range out.Tasks {
 		if err := WriteTask(home, t); err != nil {
 			return out, err

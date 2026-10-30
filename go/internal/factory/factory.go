@@ -354,10 +354,7 @@ func Enable(s *store.Store, ctx *ordjson.Object, args EnableArgs) (*ordjson.Obje
 	rec.Set("skip", skip)
 	rec.Set("enabled_at", store.Now())
 	if ctx != nil {
-		by := ordjson.NewObject()
-		by.Set("machine", get(ctx, "machine"))
-		by.Set("session", get(ctx, "session"))
-		by.Set("pane", get(ctx, "pane"))
+		by := store.EndpointFromContext(ctx).Object()
 		rec.Set("enabled_by", by)
 	}
 	projects := projectsOf(reg)
@@ -881,11 +878,14 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 		return nil, fmt.Errorf("lane limit %d reached for %s", asInt(get(rec, "lanes")), name)
 	}
 	host := asString(get(ctx, "machine"))
-	pane := asString(get(ctx, "pane"))
+	endpoint := store.EndpointFromContext(ctx)
+	if err := endpoint.Validate(); err != nil {
+		return nil, err
+	}
 	if host == "" {
 		host, _ = os.Hostname()
 	}
-	body := claimBody(host, pane, args.Task, sumruntime.Marker(runtimeRoot))
+	body := claimBody(host, endpoint.CoreID+"/"+endpoint.Address, args.Task, sumruntime.Marker(runtimeRoot))
 	undoLabel := func() error {
 		_, err := runGh(runtimeRoot, "issue", "edit", fmt.Sprint(args.Issue), "--repo", name, "--remove-label", ClaimLabel)
 		return err
@@ -936,7 +936,7 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	}
 	claim := ordjson.NewObject()
 	claim.Set("host", host)
-	claim.Set("pane", pane)
+	claim.Set("endpoint", endpoint.Object())
 	claim.Set("label", ClaimLabel)
 	lane.Set("claim", claim)
 	if err := write(s, reg); err != nil {
@@ -951,11 +951,11 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	return result, nil
 }
 
-func claimBody(host, pane, task, marker string) string {
+func claimBody(host, terminal, task, marker string) string {
 	if task == "" {
 		task = "none"
 	}
-	return fmt.Sprintf("<!-- %s -->\n%s\nhost: %s\npane: %s\ntask: %s\nat: %s\n", ClaimMark, marker, host, pane, task, store.Now())
+	return fmt.Sprintf("<!-- %s -->\n%s\nhost: %s\nterminal: %s\ntask: %s\nat: %s\n", ClaimMark, marker, host, terminal, task, store.Now())
 }
 
 func laneFor(rec *ordjson.Object, issue int) *ordjson.Object {

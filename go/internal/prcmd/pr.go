@@ -8,6 +8,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/presentation"
@@ -116,6 +117,10 @@ func recordObservationWith(s *store.Store, ctx *ordjson.Object, taskID string, d
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := maintenance.Refuse(task, "PR observation"); err != nil {
+		return nil, nil, err
+	}
+
 	identity := ordjson.NewObject()
 	identity.Set("number", json.Number(fmt.Sprint(intOf(data["number"]))))
 	identity.Set("url", fmt.Sprint(data["url"]))
@@ -173,7 +178,7 @@ func recordObservationWith(s *store.Store, ctx *ordjson.Object, taskID string, d
 		pr.Set("review_threads", threads)
 	}
 	by := ordjson.NewObject()
-	for _, k := range []string{"machine", "session", "pane"} {
+	for _, k := range []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"} {
 		v, _ := ctx.Get(k)
 		by.Set(k, v)
 	}

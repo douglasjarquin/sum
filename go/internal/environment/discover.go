@@ -46,7 +46,6 @@ var (
 	urlScheme         = regexp.MustCompile(`(?i)^([a-z][a-z0-9+.-]*)://([^/?#]*)(.*)$`)
 	hostPort          = regexp.MustCompile(`^(\[[0-9a-fA-F:.]+\]|[^:]+)(?::(\d{1,5}))?$`)
 	containerID       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$`)
-	paneIDPattern     = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}:[A-Za-z0-9_-]{1,32}$`)
 )
 
 func emptyEnvironment(taskID string) *ordjson.Object {
@@ -65,6 +64,9 @@ func emptyEnvironment(taskID string) *ordjson.Object {
 }
 
 func Write(s *store.Store, record *ordjson.Object, event *ordjson.Object) error {
+	if err := s.CheckWritable(); err != nil {
+		return err
+	}
 	stamp := store.Now()
 	record.Set("updated_at", stamp)
 	event.Set("at", stamp)
@@ -107,18 +109,11 @@ func requireWorktree(task *ordjson.Object) (string, error) {
 }
 
 func endpointRole(s *store.Store, task, endpoint *ordjson.Object) string {
-	if endpoint == nil {
-		return ""
-	}
-	host, _ := s.Machine()
-	if stringField(task, "pane") != "" && host.SameEndpoint(task, endpoint) {
-		return "worker"
-	}
-	if host.SameEndpoint(objectField(task, "parent"), endpoint) {
-		return "coordinator"
-	}
-	if host.SameEndpoint(objectField(task, "reviewer"), endpoint) {
-		return "reviewer"
+	actual := store.EndpointFromContext(endpoint)
+	for _, entry := range []struct{ key, role string }{{"worker_endpoint", "worker"}, {"parent", "coordinator"}, {"reviewer", "reviewer"}} {
+		if actual.Native().SameAuthority(store.EndpointFromContext(objectField(task, entry.key)).Native()) {
+			return entry.role
+		}
 	}
 	return "other"
 }

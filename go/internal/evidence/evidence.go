@@ -22,16 +22,13 @@ func newID() (string, error) {
 	return "e-" + hex.EncodeToString(buf), nil
 }
 
-func endpointIdentity(endpoint *ordjson.Object) *ordjson.Object {
+// Endpoint retains the complete native binding on newly appended evidence.
+// Historical records are never rewritten by this projection.
+func Endpoint(endpoint *ordjson.Object) *ordjson.Object {
 	if endpoint == nil {
 		return nil
 	}
-	row := ordjson.NewObject()
-	for _, key := range []string{"machine", "session", "pane"} {
-		value, _ := endpoint.Get(key)
-		row.Set(key, value)
-	}
-	return row
+	return store.EndpointFromContext(endpoint).Object()
 }
 
 func Append(task *ordjson.Object, kind, source string, body *ordjson.Object, candidate any, endpoint *ordjson.Object) (*ordjson.Object, error) {
@@ -48,7 +45,7 @@ func Append(task *ordjson.Object, kind, source string, body *ordjson.Object, can
 	record.Set("candidate", candidate)
 	record.Set("brief_revision", nil)
 	record.Set("sum_version", contract.SumVersion)
-	record.Set("endpoint", endpointIdentity(endpoint))
+	record.Set("endpoint", Endpoint(endpoint))
 	if body != nil {
 		for _, key := range body.Keys() {
 			value, _ := body.Get(key)

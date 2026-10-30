@@ -4,12 +4,14 @@ import (
 	"fmt"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 func Seen(s *store.Store, ctx *ordjson.Object, taskID, attentionID string) (*ordjson.Object, error) {
-	if err := app.RequireCoordinator(s, ctx); err != nil {
+	actor, err := app.ObserveTaskActor(s, ctx)
+	if err != nil {
 		return nil, err
 	}
 	unlock, err := s.Lock()
@@ -19,6 +21,13 @@ func Seen(s *store.Store, ctx *ordjson.Object, taskID, attentionID string) (*ord
 	defer unlock()
 	task, err := s.ReadTask(taskID)
 	if err != nil {
+		return nil, err
+	}
+	if err := maintenance.Refuse(task, "Attention acknowledgement"); err != nil {
+		return nil, err
+	}
+
+	if err := app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
 		return nil, err
 	}
 	list, _ := task.Get("attention")
@@ -42,7 +51,7 @@ func Seen(s *store.Store, ctx *ordjson.Object, taskID, attentionID string) (*ord
 	if status == "open" {
 		record.Set("status", "seen")
 		record.Set("closed_at", store.Now())
-		record.Set("closed_by", "coordinator")
+		record.Set("closed_by", store.EndpointFromContext(ctx).Object())
 		if err := s.SaveTask(task); err != nil {
 			return nil, err
 		}

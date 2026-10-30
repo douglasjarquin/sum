@@ -95,6 +95,9 @@ func TestNativeParkRequiresTerminalAndProcessDeath(t *testing.T) {
 		t.Fatal("Done terminal released capacity")
 	}
 	terminal.State = "finished"
+	finished, exit := uint64(3), int32(0)
+	terminal.FinishedMS = &finished
+	terminal.ExitCode = &exit
 	fixture.SetTerminal(terminal)
 	task, err = s.ReadTask(endpoint.Task)
 	if err != nil {

@@ -57,12 +57,12 @@ func Closed(task *ordjson.Object, paneID string) bool {
 
 // WorkerIsClosed reports whether the task's current worker pane id is recorded closed.
 func WorkerIsClosed(task *ordjson.Object) bool {
-	return Closed(task, asString(field(task, "pane")))
+	return ClosedEndpoint(task, store.EndpointFromContext(asObject(field(task, "worker_endpoint"))))
 }
 
 // ReviewerIsClosed reports whether the task's recorded reviewer pane id is recorded closed.
 func ReviewerIsClosed(task *ordjson.Object) bool {
-	return Closed(task, asString(field(asObject(field(task, "reviewer")), "pane")))
+	return ClosedEndpoint(task, store.EndpointFromContext(asObject(field(task, "reviewer"))))
 }
 
 // Append records one closure. Duplicate pane ids are ignored so a second sweep is a no-op.
@@ -91,4 +91,35 @@ func ResumeNote(taskID string) string {
 		return "pane closed, resume via execution resume"
 	}
 	return "pane closed, resume via execution resume " + taskID
+}
+
+// ClosedEndpoint judges only a complete native application binding. Historical
+// pane strings are readable history and never authority for an HC terminal.
+func ClosedEndpoint(task *ordjson.Object, endpoint store.Endpoint) bool {
+	if endpoint.Validate() != nil {
+		return false
+	}
+	for _, raw := range asList(field(task, "closed_terminals")) {
+		row := asObject(raw)
+		if row == nil {
+			continue
+		}
+		recorded := store.EndpointFromContext(asObject(field(row, "endpoint")))
+		if recorded.Native().SameAuthority(endpoint.Native()) && recorded.CreatedMS == endpoint.CreatedMS {
+			return true
+		}
+	}
+	return false
+}
+func AppendEndpoint(task *ordjson.Object, endpoint store.Endpoint, reason string) *ordjson.Object {
+	if endpoint.Validate() != nil || ClosedEndpoint(task, endpoint) {
+		return nil
+	}
+	row := ordjson.NewObject()
+	row.Set("endpoint", endpoint.Object())
+	row.Set("role", endpoint.Role)
+	row.Set("reason", reason)
+	row.Set("at", store.Now())
+	task.Set("closed_terminals", append(asList(field(task, "closed_terminals")), row))
+	return row
 }

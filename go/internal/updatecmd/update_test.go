@@ -3,7 +3,6 @@ package updatecmd
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
-	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/settings"
@@ -23,7 +22,7 @@ import (
 
 func TestApply_fastForwardsCleanInstallationCheckout(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -51,11 +50,11 @@ func TestApply_preservesExplicitNativeEventOptOut(t *testing.T) {
 	if err := settings.SetNativeEventsEnabled(lab.store, false); err != nil {
 		t.Fatalf("disable native events: %v", err)
 	}
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
 	if err != nil {
 		t.Fatalf("apply after explicit disable: %v", err)
 	}
-	activation := asObject(func() any { v, _ := view.Get("hook_activation"); return v }())
+	activation := asObject(func() any { v, _ := view.Get("observer_activation"); return v }())
 	if skipped, _ := activation.Get("skipped"); skipped != true {
 		t.Fatalf("hook activation = %v, want skipped", activation)
 	}
@@ -65,96 +64,62 @@ func TestApply_preservesExplicitNativeEventOptOut(t *testing.T) {
 	}
 }
 
-func TestApply_enablesNativeEventsByDefault(t *testing.T) {
+func TestApply_launchesNativeObserverAfterSelection(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
-	seedApplyLabInstance(t, lab)
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	startNativeObserverProgram(t, lab)
+	if err := settings.SetNativeEventsEnabled(lab.store, true); err != nil {
+		t.Fatal(err)
+	}
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
 	if err != nil {
-		t.Fatalf("apply: %v", err)
+		t.Fatal(err)
 	}
-	activation := asObject(func() any { v, _ := view.Get("hook_activation"); return v }())
-	if automatic, _ := activation.Get("automatic"); automatic != true {
-		t.Fatalf("hook activation = %v, want automatic enable", activation)
+	activation := asObject(func() any { v, _ := view.Get("observer_activation"); return v }())
+	if strField(activation, "readiness") != "ready" {
+		t.Fatalf("observer bootstrap unconfirmed: %s", dump(activation))
 	}
-	status, err := hookstatus.Status(lab.store, lab.ctx, lab.root, filepath.Join(lab.root, "bin", "sumctl"))
-	if err != nil {
-		t.Fatalf("hook status: %v", err)
+	if strField(activation, "launch_effect") != "submitted" {
+		t.Fatalf("observer launch: %s", dump(activation))
 	}
-	if enabled, _ := status.Get("enabled"); enabled != true {
-		t.Fatalf("hook status = %v, want enabled", status)
+	count := 0
+	for _, call := range lab.fixture.Calls() {
+		if call.Method == "terminal.run" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("observer launches=%d", count)
 	}
 }
 
-func TestApply_nativeEventEnableFailureIsFailOpen(t *testing.T) {
+func TestApply_uncertainObserverLaunchReportsSelectedRuntimeWithoutRetry(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
-	seedApplyLabInstance(t, lab)
-	wrapper := filepath.Join(t.TempDir(), "herdr-failing-plugin-link")
-	original := os.Getenv("SUM_HERDR_BIN")
-	script := "#!/bin/sh\nif [ \"$3\" = plugin ] && [ \"$4\" = link ]; then echo deliberate registry failure >&2; exit 1; fi\nexec python3 \"" + original + "\" \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
+	if err := settings.SetNativeEventsEnabled(lab.store, true); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("SUM_HERDR_BIN", wrapper)
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
-	if err != nil {
-		t.Fatalf("apply failed when automatic hook enable failed: %v", err)
+	lab.fixture.QueueFault("terminal.run", hctest.Fault{LoseResponse: true})
+	_, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
+	if err == nil || !strings.Contains(err.Error(), "runtime selection completed") {
+		t.Fatalf("uncertain observer launch: %v", err)
 	}
-	activation := asObject(func() any { v, _ := view.Get("hook_activation"); return v }())
-	if degraded, _ := activation.Get("degraded"); degraded != true {
-		t.Fatalf("hook activation = %v, want degraded", activation)
+	if currentSHA(t, lab.root) != lab.newSHA {
+		t.Fatal("lost observer response silently changed runtime selection")
 	}
-	reason := strField(activation, "reason")
-	if !strings.Contains(reason, "deliberate registry failure") {
-		t.Fatalf("hook failure reason = %v", activation)
-	}
-	status, statusErr := hookstatus.Status(lab.store, lab.ctx, lab.root, filepath.Join(lab.root, "bin", "sumctl"))
-	if statusErr != nil {
-		t.Fatalf("hook status: %v", statusErr)
-	}
-	if degraded, _ := status.Get("degraded"); degraded != true {
-		t.Fatalf("hook status = %v, want degraded", status)
-	}
-	if statusReason, _ := status.Get("reason"); statusReason != reason {
-		t.Fatalf("hook status reason = %v, want %q", statusReason, reason)
-	}
-}
-
-func seedApplyLabInstance(t *testing.T, lab *applyLab) {
-	t.Helper()
-	path := filepath.Join(lab.home, "state.json")
-	data, err := os.ReadFile(path)
+	health, err := hookstatus.Health(lab.store)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var state map[string]any
-	if err := json.Unmarshal(data, &state); err != nil {
-		t.Fatal(err)
+	if strField(health, "launch_effect") != "uncertain" {
+		t.Fatalf("observer health: %s", dump(health))
 	}
-	state["instance"] = "0123456789abcdef0123456789abcdef"
-	data, err = json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
+	count := 0
+	for _, call := range lab.fixture.Calls() {
+		if call.Method == "terminal.run" {
+			count++
+		}
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	releasePath := filepath.Join(lab.root, ".local", "releases", lab.newSHA, "release.json")
-	data, err = os.ReadFile(releasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest map[string]any
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	staged, _ := manifest["staged_by"].(map[string]any)
-	staged["instance"] = state["instance"]
-	data, err = json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(releasePath, data, 0o600); err != nil {
-		t.Fatal(err)
+	if count != 1 {
+		t.Fatalf("observer launch replayed %d times", count)
 	}
 }
 
@@ -164,7 +129,7 @@ func TestApply_refusesDirtyCheckoutAndKeepsRuntime(t *testing.T) {
 	if err := os.WriteFile(dirty, []byte("DIRTY MARKER\nold instructions\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
 	if err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -198,7 +163,7 @@ func TestApply_doesNotMutateNonInstallationPath(t *testing.T) {
 	if otherHead != lab.oldSHA {
 		t.Fatalf("other clone HEAD = %s, want %s", otherHead, lab.oldSHA)
 	}
-	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
 	if got := git(t, lab.other, "rev-parse", "HEAD"); got != lab.oldSHA {
@@ -211,9 +176,6 @@ func TestApply_doesNotMutateNonInstallationPath(t *testing.T) {
 
 type applyLabOpts struct {
 	otherClone bool
-	// preIdentityOld leaves the stable-identity marker out of the old commit, so
-	// only the new commit offers the identity.
-	preIdentityOld bool
 }
 
 type applyLab struct {
@@ -221,94 +183,17 @@ type applyLab struct {
 	oldSHA, newSHA    string
 	store             *store.Store
 	ctx               *ordjson.Object
+	fixture           *hctest.Fixture
 }
 
 func newApplyLab(t *testing.T, opts applyLabOpts) *applyLab {
 	t.Helper()
-	base := t.TempDir()
-	root := filepath.Join(base, "install")
-	origin := filepath.Join(base, "origin.git")
-	if err := os.Mkdir(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	git(t, root, "init", "-b", "main")
-	git(t, root, "config", "user.name", "sum test")
-	git(t, root, "config", "user.email", "sum@example.invalid")
-	git(t, root, "config", "commit.gpgsign", "false")
-	writeFile(t, filepath.Join(root, ".gitignore"), ".sum/\n.local/\n")
-	writeFile(t, filepath.Join(root, "AGENTS.md"), "old instructions\n")
-	writeFile(t, filepath.Join(root, "bin", "sumctl"), "#!/bin/sh\nexit 0\n")
-	if err := os.Chmod(filepath.Join(root, "bin", "sumctl"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if !opts.preIdentityOld {
-		writeFile(t, filepath.Join(root, identityMarker), identityMarkerContent)
-	}
-	git(t, root, "add", ".")
-	git(t, root, "commit", "-m", "old")
-	oldSHA := git(t, root, "rev-parse", "HEAD")
-	writeFile(t, filepath.Join(root, "AGENTS.md"), "new instructions\n")
-	writeFile(t, filepath.Join(root, identityMarker), identityMarkerContent)
-	git(t, root, "add", "AGENTS.md", identityMarker)
-	git(t, root, "commit", "-m", "new")
-	newSHA := git(t, root, "rev-parse", "HEAD")
-
-	git(t, base, "clone", "--bare", "--quiet", root, origin)
-	git(t, root, "remote", "add", "origin", origin)
-	git(t, root, "fetch", "--quiet", "origin")
-	git(t, root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-	git(t, root, "reset", "--hard", oldSHA)
-
-	home := filepath.Join(root, ".sum")
-	if err := os.MkdirAll(filepath.Join(home, "sessions"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(home, "state.json"), `{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n")
-	plantNativeHelper(t, root, workingHelper(""))
-	host, err := machine.ID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := ordjson.NewObject()
-	ctx.Set("session", "sum-test")
-	ctx.Set("pane", "w-parent:p1")
-	ctx.Set("machine", host)
-	ctx.Set("cwd", root)
-	// Coordinator commands verify the calling pane's occupant; answer through the repository's fake Herdr.
-	fixtures := filepath.Join(repoRootForFixtures(t), "tests", "fixtures")
-	t.Setenv("SUM_HERDR_BIN", filepath.Join(fixtures, "herdr.py"))
-	t.Setenv("SUM_PS_BIN", filepath.Join(fixtures, "ps.py"))
-	t.Setenv("FAKE_HERDR_ROOT", filepath.Join(base, "fake-herdr"))
-	t.Setenv("FAKE_SESSION", "sum-test")
-	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
-	owner := ordjson.NewObject()
-	owner.Set("session", "sum-test")
-	owner.Set("pane", "w-parent:p1")
-	owner.Set("machine", host)
-	owner.Set("role", "coordinator")
-	// The occupant the fake Herdr reports for the coordinator pane, as init would have recorded it.
-	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
-	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.Open(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	buildCompatibleRelease(t, filepath.Join(root, ".local", "releases"), newSHA)
-
-	lab := &applyLab{root: root, home: home, oldSHA: oldSHA, newSHA: newSHA, store: st, ctx: ctx}
+	lab := nativeApplyLab(t)
 	if opts.otherClone {
-		other := filepath.Join(base, "other")
-		git(t, base, "clone", "--quiet", origin, other)
-		git(t, other, "reset", "--hard", oldSHA)
-		lab.other = other
+		lab.other = filepath.Join(t.TempDir(), "other")
+		origin := git(t, lab.root, "remote", "get-url", "origin")
+		git(t, t.TempDir(), "clone", "--quiet", origin, lab.other)
+		git(t, lab.other, "reset", "--hard", lab.oldSHA)
 	}
 	return lab
 }
@@ -333,16 +218,12 @@ func buildCompatibleReleaseSkills(t *testing.T, releasesRoot, sha string, worker
 	dir := filepath.Join(releasesRoot, sha)
 	required := []struct{ rel, content string }{
 		{"bin/sumctl", "#!/bin/sh\nexit 0\n"},
-		{"bin/herdr-mesh", "#!/bin/sh\necho herdr-mesh\n"},
-		{"bin/herdr-scoped", "#!/bin/sh\necho herdr-scoped\n"},
 		{"go/cmd/sumctl/main.go", "package main\n"},
 	}
 	for _, rel := range workerSkills {
 		required = append(required, struct{ rel, content string }{rel, "# worker\n"})
 	}
-	if exec.Command("git", "-C", root, "cat-file", "-e", sha+":"+identityMarker).Run() == nil {
-		required = append(required, struct{ rel, content string }{identityMarker, identityMarkerContent})
-	}
+
 	var filesEntries []string
 	for _, entry := range required {
 		writeFile(t, filepath.Join(dir, entry.rel), entry.content)
@@ -363,7 +244,8 @@ func buildCompatibleReleaseSkills(t *testing.T, releasesRoot, sha string, worker
 		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(target, link); err != nil {
+		if existing, err := os.Readlink(link); err == nil && existing == target {
+		} else if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
 		}
 		toolPaths = append(toolPaths, fmt.Sprintf("%q: %q", name, target))
@@ -383,9 +265,33 @@ func buildCompatibleReleaseSkills(t *testing.T, releasesRoot, sha string, worker
   "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": {"machine": "m1", "installation": %q, "instance": null}
 }`, sha, tree, root, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "), root)
 	writeFile(t, filepath.Join(dir, "release.json"), manifest)
-}
+	plantNativeHelper(t, dir, workingHelper(""))
+	stateStore, err := store.Open(filepath.Join(root, ".sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := ordjson.ReadFile(filepath.Join(stateStore.Home, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := ordjson.ReadFile(filepath.Join(dir, "release.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	object := asObject(value)
+	staged, _ := object.Get("staged_by")
+	instance, _ := asObject(state).Get("instance")
+	asObject(staged).Set("instance", instance)
+	offered, _ := ordjson.FromValue(contract.BuildRelease())
+	contracts, _ := offered.Get("contracts")
+	supports, _ := offered.Get("supports")
+	object.Set("contracts", contracts)
+	object.Set("supports", supports)
+	if err = ordjson.WriteFile(filepath.Join(dir, "release.json"), object); err != nil {
+		t.Fatal(err)
+	}
 
-const identityMarkerContent = "package machine\n"
+}
 
 func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()

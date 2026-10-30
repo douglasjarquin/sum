@@ -1,8 +1,10 @@
 package cleanup
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/panes"
@@ -72,6 +75,7 @@ func saveCleanup(s *store.Store, taskID string, changes *ordjson.Object) (*ordjs
 	task.Set("cleanup", record)
 	if asString(func() any { v, _ := changes.Get("state"); return v }()) == "complete" {
 		task.Set("status", "archived")
+		task.Set("terminal_maintenance", nil)
 	}
 	if err := s.SaveTask(task); err != nil {
 		return nil, err
@@ -80,6 +84,9 @@ func saveCleanup(s *store.Store, taskID string, changes *ordjson.Object) (*ordjs
 }
 
 func cleanupLock(s *store.Store, taskID string) (func() error, error) {
+	if err := s.CheckWritable(); err != nil {
+		return nil, err
+	}
 	path, err := s.TaskPath(taskID)
 	if err != nil {
 		return nil, err
@@ -100,17 +107,16 @@ func cleanupLock(s *store.Store, taskID string) (func() error, error) {
 }
 
 func resourcesAbsent(task *ordjson.Object, runtimeRoot, session string) (bool, *ordjson.Object, error) {
-	workspace, code, err := observe(runtimeRoot, session, 5*time.Second, "workspace", "get", stringField(task, "workspace"))
-	if err != nil {
-		return false, nil, err
-	}
 	detail := ordjson.NewObject()
-	if workspace == nil && code == "workspace_not_found" {
-		detail.Set("workspace", "absent")
-	} else if workspace != nil {
-		detail.Set("workspace", "present")
+	endpoint := taskWorker(task)
+	_, err := nativeTerminal(endpoint)
+	terminalAbsent := nativeAbsent(err)
+	if terminalAbsent {
+		detail.Set("terminal", "absent")
+	} else if err != nil {
+		return false, nil, err
 	} else {
-		detail.Set("workspace", fmt.Sprintf("uncertain (%s)", code))
+		detail.Set("terminal", "present")
 	}
 	worktree := stringField(task, "worktree")
 	if _, statErr := os.Stat(worktree); statErr == nil {
@@ -135,7 +141,7 @@ func resourcesAbsent(task *ordjson.Object, runtimeRoot, session string) (bool, *
 	} else {
 		detail.Set("branch", "absent")
 	}
-	gone := asString(func() any { v, _ := detail.Get("workspace"); return v }()) == "absent" &&
+	gone := terminalAbsent &&
 		asString(func() any { v, _ := detail.Get("worktree"); return v }()) == "absent" && !registered
 	return gone, detail, nil
 }
@@ -195,13 +201,13 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 			return nil, err
 		}
 		plan.Set("apply", false)
-		plan.Set("note", "Inspection only; nothing was removed. `cleanup TASK --apply` removes the verified workspace with native Herdr operations and archives the record only when no blocker remains.")
+		plan.Set("note", "Inspection only; cleanup --apply removes exact finished HC terminals and the verified Git worktree when no blocker remains.")
 		return plan, nil
 	}
 	var orphansStopped []any
 	if len(asList(func() any { v, _ := plan.Get("blockers"); return v }())) > 0 && orphansAreOnlyBlockers(plan) {
 		// The only thing holding this cleanup is a set of processes whose owner
-		// pane and workspace are both verified dead. Stop each one explicitly,
+		// native owner and original program are verified dead. Stop each one explicitly,
 		// verify exit, and take one fresh inspection; a survivor leaves the named
 		// blockers exactly where they were.
 		stopped, stopErr := stopOrphans(task, plan)
@@ -248,13 +254,13 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 		}
 	}
 	if settle := asList(func() any { v, _ := plan.Get("settled_questions"); return v }()); len(settle) > 0 {
-		if err := settleAnsweredQuestions(s, args.Task, settle, ctx); err != nil {
+		task, err = settleAnsweredQuestions(s, args.Task, settle, ctx, task)
+		if err != nil {
 			return nil, err
 		}
 	}
 	intent := ordjson.NewObject()
-	intent.Set("workspace", func() any { v, _ := task.Get("workspace"); return v }())
-	intent.Set("pane", func() any { v, _ := task.Get("pane"); return v }())
+	intent.Set("worker_endpoint", taskWorker(task).Object())
 	intent.Set("worktree", func() any { v, _ := task.Get("worktree"); return v }())
 	intent.Set("branch", func() any { v, _ := task.Get("branch"); return v }())
 	intent.Set("repository", func() any { v, _ := task.Get("repository"); return v }())
@@ -263,7 +269,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	intent.Set("merge_commit", func() any { v, _ := pr.Get("merge_commit"); return v }())
 	intent.Set("pr", func() any { v, _ := pr.Get("number"); return v }())
 	intent.Set("at", store.Now())
-	if err := saveCleanupIntent(s, args.Task, intent, attempts, asObject(func() any { v, _ := plan.Get("resources"); return v }())); err != nil {
+	if err := saveCleanupIntent(s, args.Task, intent, attempts, asObject(func() any { v, _ := plan.Get("resources"); return v }()), task); err != nil {
 		return nil, err
 	}
 	task, err = s.ReadTask(args.Task)
@@ -284,51 +290,35 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 		removed.Set("orphans_stopped", orphansStopped)
 	}
 	resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
-	if asString(func() any { v, _ := resources.Get("workspace"); return v }()) == "present" {
-		changes := ordjson.NewObject()
-		changes.Set("step", "removing")
-		changes.Set("state", "removing")
-		if _, err := saveCleanup(s, args.Task, changes); err != nil {
+	// Observe outside the ledger lock. The saved exact intent excludes admission
+	// of new task effects while the task maintenance lock excludes another cleanup.
+	fresh, err := s.ReadTask(args.Task)
+	if err != nil {
+		return nil, err
+	}
+	freshPlan, err := inspectTask(s, fresh, ctx, runtimeRoot, args.Number, scope)
+	if err != nil {
+		return nil, err
+	}
+	if len(asList(func() any { v, _ := freshPlan.Get("blockers"); return v }())) > 0 {
+		return nil, fmt.Errorf("cleanup preconditions changed after intent; inspect again")
+	}
+	if err = claimCleanupEffects(s, fresh, freshPlan, intent, mergedHead); err != nil {
+		return nil, err
+	}
+	// The ledger lock is released before either runtime or Git I/O.
+	if err = removeTaskTerminals(s, fresh); err != nil {
+		return nil, err
+	}
+	if stringField(resources, "worktree") == "present" {
+		if err = s.CheckWritable(); err != nil {
 			return nil, err
 		}
-		result, code, obsErr := observe(runtimeRoot, stringField(ctx, "session"), 60*time.Second, "worktree", "remove", "--workspace", stringField(task, "workspace"))
-		if obsErr != nil {
-			return nil, obsErr
-		}
-		if result == nil {
-			if code == "workspace_not_found" {
-				// already absent
-			} else if code == "dirty_worktree_requires_force" || code == "worktree_requires_force" {
-				return nil, fmt.Errorf("Herdr refused the non-forced removal (%s); nothing was removed and the task stays cleanup-pending.", code)
-			} else {
-				return nil, fmt.Errorf("worktree remove for workspace %s returned %s; the outcome is uncertain, run cleanup again to reconcile from observation.", stringField(task, "workspace"), code)
-			}
-		} else {
-			resObj := asObject(result)
-			removed.Set("performed", true)
-			removed.Set("path", func() any { v, _ := resObj.Get("path"); return v }())
-			forced, _ := resObj.Get("forced")
-			removed.Set("forced", forced == true)
-			if forced == true {
-				return nil, fmt.Errorf("Herdr reports a forced removal; sum never requested force. Inspect the Herdr build before trusting this cleanup.")
-			}
-		}
-	} else if asString(func() any { v, _ := resources.Get("worktree"); return v }()) == "present" {
-		// Pane-closed-then-cleanup is the normal end state: a checkout whose
-		// recorded path still verifies as this task's worktree (clean, registered,
-		// branch-matched, no live processes — all blocker-checked above) is
-		// adopted and removed through git without force once the workspace and
-		// pane are both proven absent.
-		if asString(func() any { v, _ := resources.Get("workspace"); return v }()) != "absent" ||
-			asString(func() any { v, _ := resources.Get("pane"); return v }()) != "absent" {
-			return nil, fmt.Errorf("Cleanup of %s refused: no Herdr workspace owns the remaining checkout %s.", args.Task, stringField(task, "worktree"))
-		}
-		if err := adoptCheckout(task); err != nil {
+		if err = adoptCheckout(fresh); err != nil {
 			return nil, err
 		}
 		removed.Set("performed", true)
-		removed.Set("path", stringField(task, "worktree"))
-		removed.Set("adopted", true)
+		removed.Set("path", stringField(fresh, "worktree"))
 	}
 	gone, detail, err := resourcesAbsent(task, runtimeRoot, stringField(ctx, "session"))
 	if err != nil {
@@ -379,7 +369,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	kept.Set("records", path)
 	result.Set("kept", kept)
 	result.Set("usage", usageResult)
-	result.Set("note", "Only the verified task workspace and its clean checkout were removed, through native Herdr without force. The branch, brief revisions, decisions, reports, and PR evidence stay.")
+	result.Set("note", "Exact finished HC terminals and the verified Git worktree were removed without force. The branch and durable task evidence remain.")
 	return result, nil
 }
 
@@ -394,48 +384,109 @@ func recordReviewerClosed(s *store.Store, taskID string) error {
 		return err
 	}
 	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
-	pane := stringField(reviewer, "pane")
-	if pane == "" || panes.ReviewerIsClosed(task) {
-		return nil
+	panes.AppendEndpoint(task, taskWorker(task), "cleanup")
+	if reviewer == nil {
+		return s.SaveTask(task)
 	}
-	panes.Append(task, pane, "reviewer", "", "cleanup")
+	endpoint := store.EndpointFromContext(reviewer)
+	panes.AppendEndpoint(task, endpoint, "cleanup")
 	return s.SaveTask(task)
 }
-
+func removeNative(s *store.Store, endpoint store.Endpoint) error {
+	if err := s.CheckWritable(); err != nil {
+		return err
+	}
+	t, err := nativeTerminal(endpoint)
+	if nativeAbsent(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if t.State != "finished" || t.FinishedMS == nil || (t.ExitCode == nil && t.Signal == nil) {
+		return fmt.Errorf("terminal %s is not proven finished", endpoint.Address)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	_, err = client.Remove(ctx, endpoint.Address)
+	return err
+}
+func removeTaskTerminals(s *store.Store, task *ordjson.Object) error {
+	endpoints := []store.Endpoint{taskWorker(task)}
+	if reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }()); reviewer != nil {
+		endpoints = append(endpoints, store.EndpointFromContext(reviewer))
+	}
+	record, err := environment.Read(s, stringField(task, "id"))
+	if err != nil {
+		return err
+	}
+	for _, raw := range asList(func() any {
+		if record == nil {
+			return nil
+		}
+		v, _ := record.Get("services")
+		return v
+	}()) {
+		service := asObject(raw)
+		e := store.EndpointFromContext(asObject(func() any { v, _ := service.Get("endpoint"); return v }()))
+		if e.Validate() != nil {
+			return fmt.Errorf("service %s has unresolved launch identity", stringField(service, "id"))
+		}
+		view, err := environment.ObserveService(task, service, "")
+		if err != nil {
+			return err
+		}
+		running, _ := view.Get("running")
+		if stringField(view, "ownership") != "owned" || running != false {
+			return fmt.Errorf("service %s exit or ownership unresolved", stringField(service, "id"))
+		}
+		endpoints = append(endpoints, e)
+	}
+	for _, e := range endpoints {
+		if err := removeNative(s, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func closeReviewerOnly(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string, plan *ordjson.Object) (*ordjson.Object, error) {
 	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
-	pane := stringField(reviewer, "pane")
-	if pane == "" {
-		return nil, fmt.Errorf("No reviewer endpoint is recorded; the task checkout was left untouched.")
+	if reviewer == nil {
+		return nil, fmt.Errorf("no reviewer endpoint")
 	}
-	closedAlready := panes.ReviewerIsClosed(task)
-	if !closedAlready {
-		resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
-		if stringField(resources, "reviewer_pane") != "absent" {
-			_, code, err := observe(runtimeRoot, stringField(ctx, "session"), 10*time.Second, "pane", "close", pane)
-			if err != nil {
-				return nil, err
-			}
-			if code != "" && code != "pane_not_found" {
-				return nil, fmt.Errorf("Could not close reviewer pane %s (%s); the task checkout was left untouched.", pane, code)
-			}
+	endpoint := store.EndpointFromContext(reviewer)
+	already := panes.ReviewerIsClosed(task)
+	if !already {
+		if err := claimReviewerRemoval(s, task, endpoint); err != nil {
+			return nil, err
 		}
+		if err := removeNative(s, endpoint); err != nil {
+			_ = uncertainReviewerRemoval(s, stringField(task, "id"), endpoint)
+			return nil, err
+		}
+
 		unlock, err := s.Lock()
 		if err != nil {
 			return nil, err
 		}
 		current, err := s.ReadTask(stringField(task, "id"))
 		if err == nil {
-			currentReviewer := asObject(func() any { v, _ := current.Get("reviewer"); return v }())
-			for _, key := range []string{"machine", "session", "pane"} {
-				if stringField(currentReviewer, key) != stringField(reviewer, key) {
-					err = fmt.Errorf("Reviewer endpoint changed during close; inspect task %s before retrying.", stringField(task, "id"))
-					break
+			now := store.EndpointFromContext(asObject(func() any { v, _ := current.Get("reviewer"); return v }()))
+			if !endpoint.Native().SameAuthority(now.Native()) {
+				err = fmt.Errorf("reviewer binding changed during cleanup")
+			} else {
+				claim := asObject(func() any { v, _ := current.Get("terminal_maintenance"); return v }())
+				claimEndpoint := store.EndpointFromContext(asObject(func() any { v, _ := claim.Get("endpoint"); return v }()))
+				if !claimEndpoint.Native().SameAuthority(endpoint.Native()) {
+					err = fmt.Errorf("reviewer removal claim changed")
+				} else {
+					panes.AppendEndpoint(current, endpoint, "reviewer-only cleanup")
+					current.Set("terminal_maintenance", nil)
 				}
-			}
-			if err == nil {
-				panes.Append(current, pane, "reviewer", "", "reviewer-only cleanup")
-				err = s.SaveTask(current)
+				if err == nil {
+					err = s.SaveTask(current)
+				}
 			}
 		}
 		unlock()
@@ -443,25 +494,26 @@ func closeReviewerOnly(s *store.Store, task, ctx *ordjson.Object, runtimeRoot st
 			return nil, err
 		}
 	}
-	result := ordjson.NewObject()
-	result.Set("task", stringField(task, "id"))
-	result.Set("state", "reviewer-closed")
-	result.Set("pane", pane)
-	result.Set("already", closedAlready)
-	result.Set("checkout", stringField(task, "worktree"))
-	result.Set("usage", usage.BestEffort(s, stringField(task, "id")))
-	result.Set("note", "Only the settled reviewer pane was closed; the task workspace and checkout were left untouched.")
-	return result, nil
+	out := ordjson.NewObject()
+	out.Set("task", stringField(task, "id"))
+	out.Set("state", "reviewer-closed")
+	out.Set("endpoint", endpoint.Object())
+	out.Set("already", already)
+	out.Set("checkout", stringField(task, "worktree"))
+	return out, nil
 }
 
-// intentMatches reports whether a saved cleanup intent still describes the same
-// workspace, pane, worktree, branch, merge evidence, and recorded execution
+// intentMatches compares the exact native endpoint, Git checkout, merge evidence,
+// and recorded execution
 // attempts that fresh inspection just produced. When it does, a previously
 // interrupted apply may continue; when it does not, the fresh plan replaces the
 // saved intent so a stale snapshot can never wedge the task or authorize removal
 // of resources it no longer describes.
 func intentMatches(saved *ordjson.Object, task, plan *ordjson.Object, mergedHead string, attempts any) bool {
-	for _, key := range []string{"workspace", "pane", "worktree", "branch"} {
+	if !taskWorker(task).Native().SameAuthority(store.EndpointFromContext(asObject(func() any { v, _ := saved.Get("worker_endpoint"); return v }())).Native()) {
+		return false
+	}
+	for _, key := range []string{"worktree", "branch"} {
 		want, _ := task.Get(key)
 		got, _ := saved.Get(key)
 		if fmt.Sprint(want) != fmt.Sprint(got) {
@@ -502,7 +554,7 @@ func intentMatches(saved *ordjson.Object, task, plan *ordjson.Object, mergedHead
 // that could apply them has verified stop evidence. It uses one conditional
 // write inside the existing task lock so a concurrent `resolve` can never lose
 // its applied status to a settle that raced it.
-func settleAnsweredQuestions(s *store.Store, taskID string, ids []any, ctx *ordjson.Object) error {
+func settleAnsweredQuestions(s *store.Store, taskID string, ids []any, ctx *ordjson.Object, expectedTask *ordjson.Object) (*ordjson.Object, error) {
 	settle := map[string]bool{}
 	for _, raw := range ids {
 		if id, ok := raw.(string); ok && id != "" {
@@ -510,17 +562,20 @@ func settleAnsweredQuestions(s *store.Store, taskID string, ids []any, ctx *ordj
 		}
 	}
 	if len(settle) == 0 {
-		return nil
+		return expectedTask, nil
 	}
 	actor := "sum:" + stringField(ctx, "session") + ":cleanup"
 	unlock, err := s.Lock()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer unlock()
 	t, err := s.ReadTask(taskID)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if !sameTaskSnapshot(t, expectedTask) {
+		return nil, fmt.Errorf("task changed before settling answered questions; no cleanup intent created")
 	}
 	raw, _ := t.Get("questions")
 	rows, _ := raw.([]any)
@@ -540,29 +595,26 @@ func settleAnsweredQuestions(s *store.Store, taskID string, ids []any, ctx *ordj
 		}
 	}
 	if !changed {
-		return nil
+		return expectedTask, nil
 	}
 	t.Set("updated_at", store.Now())
-	return s.SaveTask(t)
+	if err = s.SaveTask(t); err != nil {
+		return nil, err
+	}
+	return t, nil
 }
 
 // orphansAreOnlyBlockers reports whether every remaining blocker is a live
-// process bound to the checkout whose owner pane is verified absent. That is
-// the one case where apply may act on a blocker itself: each named orphan is
-// terminated and the task is re-inspected once. A present workspace is fine —
-// it persists until this apply removes it, and any live pane inside it is
-// already a blocker of another code. An unproven pane or workspace, or any
-// other blocker code, keeps the refuse path.
+// writer bound to the checkout whose exact native owner is verified absent.
+// Every other blocker keeps the refuse path; live recorded owners and their
+// descendants never become termination candidates.
 func orphansAreOnlyBlockers(plan *ordjson.Object) bool {
 	orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }())
 	if len(orphans) == 0 {
 		return false
 	}
 	resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
-	if asString(func() any { v, _ := resources.Get("pane"); return v }()) != "absent" {
-		return false
-	}
-	if ws := asString(func() any { v, _ := resources.Get("workspace"); return v }()); ws != "present" && ws != "absent" {
+	if asString(func() any { v, _ := resources.Get("worker_terminal"); return v }()) != "absent" {
 		return false
 	}
 	for _, raw := range asList(func() any { v, _ := plan.Get("blockers"); return v }()) {
@@ -575,7 +627,7 @@ func orphansAreOnlyBlockers(plan *ordjson.Object) bool {
 }
 
 // stopOrphans terminates processes the inspection plan proved are orphans:
-// bound to the checkout while every recorded pane that could own them is dead.
+// bound to the checkout while every recorded terminal owner is dead.
 // One SIGTERM per process, then a re-scan; anything still alive (sum never
 // force-kills) keeps its reservation and leaves a fresh intent for the next
 // bounded pass.
@@ -622,8 +674,7 @@ func stopOrphans(task, plan *ordjson.Object) ([]any, error) {
 	return nil, fmt.Errorf("Cleanup terminated orphan processes in %s but pid %v is still alive; the reservation stays held and the intent is refreshed for the next pass", worktree, pid)
 }
 
-// adoptCheckout removes a checkout that inspection proved safe when no Herdr
-// workspace remains to perform the removal. It re-verifies registration and
+// adoptCheckout asks Git to remove the registered checkout after safe proof. It re-verifies registration and
 // cleanliness at removal time, then asks git to remove the worktree without
 // force; the branch is kept like every other cleanup, and every failure leaves
 // the checkout untouched and the intent saved for the next bounded pass.
@@ -675,7 +726,7 @@ func stringsJoin(parts []string, sep string) string {
 	return out
 }
 
-func saveCleanupIntent(s *store.Store, taskID string, intent *ordjson.Object, expectedAttempts any, resources *ordjson.Object) error {
+func saveCleanupIntent(s *store.Store, taskID string, intent *ordjson.Object, expectedAttempts any, resources *ordjson.Object, expectedTask *ordjson.Object) error {
 	unlock, err := s.Lock()
 	if err != nil {
 		return err
@@ -684,6 +735,9 @@ func saveCleanupIntent(s *store.Store, taskID string, intent *ordjson.Object, ex
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return err
+	}
+	if !sameTaskSnapshot(task, expectedTask) {
+		return fmt.Errorf("task changed before cleanup intent; inspect again")
 	}
 	if err := repair.RefuseActive(task, false); err != nil {
 		return err
@@ -753,5 +807,104 @@ func releaseCleanupReservations(s *store.Store, taskID, runtimeRoot string, deta
 			}
 		}
 	}
+	return s.SaveTask(task)
+}
+
+// MaintenanceLock serializes explicit task terminal maintenance and cleanup.
+// It is independent of the ledger lock and remains held across bounded effects.
+func MaintenanceLock(s *store.Store, taskID string) (func() error, error) {
+	return cleanupLock(s, taskID)
+}
+func sameTaskSnapshot(a, b *ordjson.Object) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	aa, e1 := ordjson.MarshalSortedCompact(a)
+	bb, e2 := ordjson.MarshalSortedCompact(b)
+	return e1 == nil && e2 == nil && string(aa) == string(bb)
+}
+func claimCleanupEffects(s *store.Store, observed, plan, intent *ordjson.Object, mergedHead string) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := s.ReadTask(stringField(observed, "id"))
+	if err != nil {
+		return err
+	}
+	if !sameTaskSnapshot(current, observed) {
+		return fmt.Errorf("task changed after cleanup observation; no removal submitted")
+	}
+	if err = RefusePendingEffects(s, stringField(current, "id")); err != nil {
+		return err
+	}
+	execution := asObject(func() any { v, _ := plan.Get("execution"); return v }())
+	attempts, _ := execution.Get("attempts")
+	if !intentMatches(intent, current, plan, mergedHead, attempts) {
+		return fmt.Errorf("cleanup candidate or current attempts changed")
+	}
+	record := cleanupRecord(current)
+	record.Set("state", "removing")
+	record.Set("step", "effects-claimed")
+	record.Set("effect_claimed_at", store.Now())
+	current.Set("cleanup", record)
+	return s.SaveTask(current)
+}
+
+func claimReviewerRemoval(s *store.Store, observed *ordjson.Object, endpoint store.Endpoint) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	task, err := s.ReadTask(stringField(observed, "id"))
+	if err != nil {
+		return err
+	}
+	if !sameTaskSnapshot(task, observed) {
+		return fmt.Errorf("task changed before reviewer removal claim")
+	}
+	if err = RefusePendingEffects(s, stringField(task, "id")); err != nil {
+		return err
+	}
+	for _, raw := range asList(func() any { v, _ := task.Get("questions"); return v }()) {
+		q := asObject(raw)
+		state := stringField(q, "status")
+		if state == "open" || state == "answered" {
+			return fmt.Errorf("pending question retains reviewer history")
+		}
+	}
+	if prior := asObject(func() any { v, _ := task.Get("terminal_maintenance"); return v }()); prior != nil {
+		old := store.EndpointFromContext(asObject(func() any { v, _ := prior.Get("endpoint"); return v }()))
+		if !old.Native().SameAuthority(endpoint.Native()) || stringField(prior, "reason") != "reviewer-only cleanup" {
+			return fmt.Errorf("another terminal maintenance claim is unresolved")
+		}
+	}
+	claim := ordjson.NewObject()
+	claim.Set("state", "claimed")
+	claim.Set("endpoint", endpoint.Object())
+	claim.Set("role", "reviewer")
+	claim.Set("reason", "reviewer-only cleanup")
+	claim.Set("at", store.Now())
+	task.Set("terminal_maintenance", claim)
+	return s.SaveTask(task)
+}
+func uncertainReviewerRemoval(s *store.Store, taskID string, endpoint store.Endpoint) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return err
+	}
+	claim := asObject(func() any { v, _ := task.Get("terminal_maintenance"); return v }())
+	if !store.EndpointFromContext(asObject(func() any { v, _ := claim.Get("endpoint"); return v }())).Native().SameAuthority(endpoint.Native()) {
+		return fmt.Errorf("reviewer removal claim changed")
+	}
+	claim.Set("state", "uncertain")
+	task.Set("terminal_maintenance", claim)
 	return s.SaveTask(task)
 }

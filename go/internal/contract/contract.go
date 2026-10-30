@@ -15,7 +15,6 @@ const (
 	// adopted coordinator, persisted before any prompt. Reported the same way
 	// as MachineIdentity, by release-contract only.
 	WakeProtocol         = 1
-	HerdrCLI             = "0.9.5"
 	HCVersion            = "0.1.14"
 	HCGeneration         = 1
 	EndpointSchema       = 2
@@ -23,21 +22,11 @@ const (
 	ObserverProtocol     = 1
 )
 
-var MCP = MCPContract{Server: "herdr-mesh-sum", Version: SumVersion, Tools: 10}
-
-type MCPContract struct {
-	Server  string `json:"server"`
-	Version string `json:"version"`
-	Tools   int    `json:"tools"`
-}
-
 type Contracts struct {
-	HCCore               string      `json:"hc_core"`
-	HCGeneration         int         `json:"hc_generation"`
-	EndpointSchema       int         `json:"endpoint_schema"`
-	NotificationProtocol int         `json:"notification_protocol"`
-	HerdrCLI             string      `json:"herdr_cli"`
-	MCP                  MCPContract `json:"mcp"`
+	HCCore               string `json:"hc_core"`
+	HCGeneration         int    `json:"hc_generation"`
+	EndpointSchema       int    `json:"endpoint_schema"`
+	NotificationProtocol int    `json:"notification_protocol"`
 }
 
 type Supports struct {
@@ -59,7 +48,7 @@ type Release struct {
 func BuildRelease() Release {
 	return Release{
 		SumVersion: SumVersion,
-		Contracts:  Contracts{HCCore: HCVersion, HCGeneration: HCGeneration, EndpointSchema: EndpointSchema, NotificationProtocol: NotificationProtocol, HerdrCLI: HerdrCLI, MCP: MCP},
+		Contracts:  Contracts{HCCore: HCVersion, HCGeneration: HCGeneration, EndpointSchema: EndpointSchema, NotificationProtocol: NotificationProtocol},
 		Supports:   Supports{EndpointSchema: []int{EndpointSchema}, NotificationProtocol: []int{NotificationProtocol}, ObserverProtocol: []int{ObserverProtocol}, StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}},
 	}
 }

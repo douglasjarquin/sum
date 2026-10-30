@@ -10,6 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/repair"
@@ -168,6 +169,7 @@ func Park(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID st
 	}
 	row.Delete("observer_pid")
 	if kind == "worker" {
+		panes.AppendEndpoint(current, workerEndpoint(current), "execution-park")
 		if report, ok := current.Get("report"); ok && report != nil {
 			current.Set("status", "reported")
 		} else {

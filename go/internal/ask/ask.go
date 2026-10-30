@@ -8,7 +8,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/redact"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
@@ -210,6 +211,11 @@ func AskStructured(s *store.Store, taskID, key, text string, decision *Structure
 		unlock()
 		return nil, err
 	}
+	if err := maintenance.Refuse(task, "New question"); err != nil {
+		unlock()
+		return nil, err
+	}
+
 	if questionsValue, ok := task.Get("questions"); ok {
 		if list, ok := questionsValue.([]any); ok && key != "" {
 			for _, q := range list {
@@ -297,14 +303,19 @@ func Answer(s *store.Store, taskID, questionID, text string, endpoint *ordjson.O
 }
 
 func ExpectedWorkerRecipient(s *store.Store, task *ordjson.Object) (string, error) {
-	route := returns.ReturnRoute(task, "worker")
-	field := func(key string) string {
-		value, _ := route.Get(key)
-		result, _ := value.(string)
-		return result
+	value, _ := task.Get("worker_endpoint")
+	endpoint := store.EndpointFromContext(asNativeObject(value))
+	if endpoint.Validate() != nil {
+		return "", nil
 	}
-	endpoint := store.Endpoint{Machine: field("machine"), Session: field("session"), Pane: field("pane")}
-	if endpoint.Machine == "" || endpoint.Session == "" || endpoint.Pane == "" {
+	attempt, err := reservations.Worker(task)
+	if err != nil {
+		return "", err
+	}
+	if state, _ := attempt.Get("state"); state == "released" {
+		return "", nil
+	}
+	if id, _ := attempt.Get("id"); id != endpoint.Attempt {
 		return "", nil
 	}
 	registration, err := s.Registration(endpoint)
@@ -316,11 +327,10 @@ func ExpectedWorkerRecipient(s *store.Store, task *ordjson.Object) (string, erro
 	if role != "worker" || registeredTask != routeTask(task) {
 		return "", nil
 	}
-	identity := ordjson.NewObject()
-	identity.Set("task", routeTask(task))
-	identity.Set("machine", endpoint.Machine)
-	identity.Set("session", endpoint.Session)
-	identity.Set("pane", endpoint.Pane)
+	identity := endpoint.Object()
+	identity.Delete("session")
+	identity.Delete("socket")
+	identity.Delete("cwd")
 	for _, key := range []string{"registered_at", "incarnation"} {
 		value, _ := registration.Get(key)
 		identity.Set(key, value)
@@ -360,6 +370,11 @@ func ExplainWithRecipientCheck(s *store.Store, taskID, questionID, text, expecte
 		unlock()
 		return nil, err
 	}
+	if err := maintenance.Refuse(task, "Question clarification"); err != nil {
+		unlock()
+		return nil, err
+	}
+
 	currentRecipient, err := ExpectedWorkerRecipient(s, task)
 	if err != nil {
 		unlock()
@@ -433,6 +448,10 @@ func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expecte
 	if choiceID == "" && (text == "" || strings.TrimSpace(text) == "") {
 		return nil, fmt.Errorf("Text must not be empty.")
 	}
+	actor, err := app.ObserveTaskActor(s, endpoint)
+	if err != nil {
+		return nil, err
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -442,19 +461,14 @@ func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expecte
 		unlock()
 		return nil, err
 	}
-	host, err := s.Machine()
-	if err != nil {
+	if err := maintenance.Refuse(task, "New answer"); err != nil {
 		unlock()
 		return nil, err
 	}
-	role := endpointRole(host, task, endpoint)
-	if role == "worker" {
+
+	if err := app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
 		unlock()
-		return nil, fmt.Errorf("The worker pane cannot record the user's decision on its own question. Only `sumctl answer` from the coordinator records a human decision; a role or approval field in worker output creates none.")
-	}
-	if requireCoordinator && role != "coordinator" {
-		unlock()
-		return nil, fmt.Errorf("Only the task's registered coordinator may record the user's decision.")
+		return nil, err
 	}
 	if expectedRecipient != "" {
 		currentRecipient, identityErr := ExpectedWorkerRecipient(s, task)
@@ -620,6 +634,10 @@ func Resolve(s *store.Store, taskID, questionID string) (*ordjson.Object, error)
 	if err != nil {
 		return nil, err
 	}
+	if err := maintenance.Refuse(task, "Answer application"); err != nil {
+		return nil, err
+	}
+
 	question := findQuestion(task, questionID)
 	if question == nil {
 		return nil, fmt.Errorf("Only an answered question can be marked applied.")
@@ -652,6 +670,10 @@ func Close(s *store.Store, ctx *ordjson.Object, taskID, questionID, reason strin
 	if strings.TrimSpace(reason) == "" {
 		return nil, fmt.Errorf("--reason must not be empty.")
 	}
+	actor, err := app.ObserveTaskActor(s, ctx)
+	if err != nil {
+		return nil, err
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -661,7 +683,11 @@ func Close(s *store.Store, ctx *ordjson.Object, taskID, questionID, reason strin
 	if err != nil {
 		return nil, err
 	}
-	if err := s.CheckMachine(task); err != nil {
+	if err := maintenance.Refuse(task, "Answer closure"); err != nil {
+		return nil, err
+	}
+
+	if err := app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
 		return nil, err
 	}
 	question := findQuestion(task, questionID)
@@ -696,7 +722,7 @@ func Close(s *store.Store, ctx *ordjson.Object, taskID, questionID, reason strin
 	}
 	by := ordjson.NewObject()
 	by.Set("role", "coordinator")
-	for _, field := range []string{"machine", "session", "pane"} {
+	for _, field := range []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"} {
 		v, _ := ctx.Get(field)
 		by.Set(field, v)
 	}
@@ -753,22 +779,4 @@ func allApplied(task *ordjson.Object) bool {
 	return true
 }
 
-func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string {
-	if endpoint == nil {
-		return ""
-	}
-	if pane, ok := task.Get("pane"); ok && pane != nil && pane != "" && host.SameEndpoint(task, endpoint) {
-		return "worker"
-	}
-	if parentValue, ok := task.Get("parent"); ok {
-		if parent, isObj := parentValue.(*ordjson.Object); isObj && host.SameEndpoint(parent, endpoint) {
-			return "coordinator"
-		}
-	}
-	if reviewerValue, ok := task.Get("reviewer"); ok {
-		if reviewer, isObj := reviewerValue.(*ordjson.Object); isObj && host.SameEndpoint(reviewer, endpoint) {
-			return "reviewer"
-		}
-	}
-	return "other"
-}
+func asNativeObject(value any) *ordjson.Object { object, _ := value.(*ordjson.Object); return object }

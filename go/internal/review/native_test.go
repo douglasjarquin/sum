@@ -10,6 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/taskcheckout"
 	"os"
@@ -26,6 +27,14 @@ func reviewerLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 		t.Fatal(err)
 	}
 	if err = s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	state, err := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.(*ordjson.Object).Set("instance", "installation-review-native-test")
+	if err = ordjson.WriteFile(filepath.Join(s.Home, "state.json"), state); err != nil {
 		t.Fatal(err)
 	}
 	f := hctest.New(t)
@@ -163,7 +172,11 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 	reviewer.Set("candidate", candidate)
 	nt, _ := ordjson.FromValue(returns.NativeTemplate{Spec: spec, ConfigHome: config, Options: options})
 	reviewer.Set("native_template", nt)
-	labels := map[string]string{"sum.installation": s.Root, "sum.task": ep.Task, "sum.role": "reviewer", "sum.attempt": ep.Attempt}
+	instance, err := s.Instance()
+	if err != nil || instance == "" || instance == s.Root {
+		t.Fatalf("invalid test installation identity: %q %v", instance, err)
+	}
+	labels := map[string]string{"sum.installation": instance, "sum.task": ep.Task, "sum.role": "reviewer", "sum.attempt": ep.Attempt}
 	params := hcclient.RunParams{Argv: []string{spec.Name, "sealed opening pointer"}, Labels: labels, Env: map[string]string{"SUM_ATTEMPT": ep.Attempt, "SUM_TASK": ep.Task, "SUM_ROLE": "reviewer", "SUM_CORE_ID": ep.CoreID, "HC_SOCKET": ep.Socket}}
 	intent := ordjson.NewObject()
 	intent.Set("state", "created")
@@ -329,9 +342,19 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 	oldTerminal.PID = &pid
 	oldTerminal.Foreground = &hcclient.Foreground{PID: 800012, Argv: template.Spec.Argv, Cwd: intent.Path}
 	f.SetTerminal(oldTerminal)
-	binding := (incarnation.NativeEvidence{Endpoint: oldEndpoint.Native(), PID: pid, Foreground: oldTerminal.Foreground}).Record(store.Now())
-	if _, err = s.Register(oldEndpoint, "reviewer", oldEndpoint.Task, binding); err != nil {
+	initialized, err := roleinit.InitDesignated(roleinit.DesignatedOpts{RuntimeRoot: runtime, SumctlPath: "/tmp/sumctl", Store: s, Ctx: oldEndpoint.Object(), Role: "reviewer", Task: oldEndpoint.Task})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if asString(initialized, "role") != "reviewer" {
+		t.Fatal("launched reviewer did not initialize as reviewer")
+	}
+	registration, err := s.Registration(oldEndpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asString(objectField(registration, "native_receipt"), "kind") != "reviewer-init" {
+		t.Fatal("launched reviewer has no matching application init receipt")
 	}
 	f.Exit(oldEndpoint.Address, 0)
 	replacement, err := Launch(s, ctx, runtime, "/tmp/sumctl", LaunchArgs{Task: oldEndpoint.Task})
@@ -354,6 +377,14 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 	}
 	for _, call := range f.Calls() {
 		if call.Method == "terminal.run" {
+			instance, err := s.Instance()
+			if err != nil {
+				t.Fatal(err)
+			}
+			labels := call.Params["labels"].(map[string]any)
+			if labels["sum.installation"] != instance || labels["sum.installation"] == s.Root {
+				t.Fatalf("reviewer used a route instead of installation identity: %v", labels)
+			}
 			if call.Params["outlive_parent"] != true || call.Params["no_notify"] != true || call.Params["keep"] != false || call.Params["rm"] != false {
 				t.Fatalf("managed flags %v", call.Params)
 			}
@@ -430,5 +461,49 @@ func TestReviewerRecoveryRequiresSelectedCoreTemplateCommand(t *testing.T) {
 	}
 	if asString(objectField(objectField(saved, "reviewer"), "prompt"), "state") != "not-delivered" {
 		t.Fatal("qualification failure claimed or submitted opening input")
+	}
+}
+
+func TestReviewerLaunchAndRecoveryRequirePermanentInstallationIdentity(t *testing.T) {
+	s, ctx, ep, f := recoveryLab(t)
+	value, err := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	value.(*ordjson.Object).Delete("instance")
+	if err = ordjson.WriteFile(filepath.Join(s.Home, "state.json"), value); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.Calls())
+	if _, err = Launch(s, ctx, "/tmp/not-used", "/tmp/sumctl", LaunchArgs{Task: ep.Task}); err == nil || !strings.Contains(err.Error(), "installation identity is missing") {
+		t.Fatalf("launch without permanent identity: %v", err)
+	}
+	if _, err = Redeliver(s, ctx, ep.Task, ep.Attempt); err == nil || !strings.Contains(err.Error(), "installation identity is missing") {
+		t.Fatalf("recovery without permanent identity: %v", err)
+	}
+	if len(f.Calls()) != before || len(f.Inputs(ep.Address)) != 0 {
+		t.Fatal("missing installation identity caused native I/O")
+	}
+}
+
+func TestReviewerRecoveryRejectsFilesystemPathAsInstallationIdentity(t *testing.T) {
+	s, ctx, ep, f := recoveryLab(t)
+	task, err := s.ReadTask(ep.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := objectField(objectField(objectField(task, "reviewer"), "native_launch"), "params")
+	objectField(params, "labels").Set("sum.installation", s.Root)
+	if err = s.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	terminal := f.Terminals()[0]
+	terminal.Labels["sum.installation"] = s.Root
+	f.SetTerminal(terminal)
+	if _, err = Redeliver(s, ctx, ep.Task, ep.Attempt); err == nil || !strings.Contains(err.Error(), "ownership label differs: sum.installation") {
+		t.Fatalf("filesystem path accepted as installation identity: %v", err)
+	}
+	if len(f.Inputs(ep.Address)) != 0 {
+		t.Fatal("wrong installation identity received opening input")
 	}
 }

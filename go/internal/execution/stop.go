@@ -131,36 +131,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 	if err := s.CheckMachine(task); err != nil {
 		return unknown(err.Error())
 	}
-	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
-	observe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	terminal, err := client.Get(observe, endpoint.Address)
-	if err != nil && !nativeAbsent(err) {
-		return unknown("Worker terminal cannot prove exit: " + err.Error())
-	}
-	if err == nil {
-		if terminal.CreatedMS != endpoint.CreatedMS || terminal.Cwd == "" || resolve(terminal.Cwd) != resolve(worktree) {
-			return unknown("Worker terminal identity changed; reservation remains held.")
-		}
-		if terminal.State == "live" {
-			return unknown("Worker terminal remains live; status is not exit proof.")
-		}
-	}
-	registration, regErr := s.Registration(endpoint)
-	if regErr != nil {
-		return unknown(regErr.Error())
-	}
-	var recorded incarnation.NativeEvidence
-	if e := decodeNative(field(registration, "incarnation"), &recorded); e != nil || !recorded.Endpoint.SameAuthority(endpoint.Native()) || recorded.PID == 0 || recorded.Foreground == nil {
-		return unknown("Worker launch process identity is missing; reservation remains held.")
-	}
-	occupant := ordjson.NewObject()
-	args := make([]any, len(recorded.Foreground.Argv))
-	for i, v := range recorded.Foreground.Argv {
-		args[i] = v
-	}
-	occupant.Set("argv", args)
-	if proof := inspectRecordedPIDs([]int{int(recorded.PID), int(recorded.Foreground.PID)}, occupant, int(recorded.Foreground.PID)); proof.Outcome != OutcomeStopped {
+	if proof := NativeProgramStopped(s, endpoint); proof.Outcome != OutcomeStopped {
 		return proof
 	}
 	host, err := s.Machine()
@@ -329,4 +300,61 @@ func normalizeRecordedArgv(argv any) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// NativeProgramStopped proves the saved program ended independently of capacity
+// state. Cleanup must call it even after an attempt was released: a released
+// ledger reservation cannot prove native process death or authorize history rm.
+// Checkout writers and resource reservations remain the caller's responsibility.
+func NativeProgramStopped(s *store.Store, endpoint store.Endpoint) StopProof {
+	if err := endpoint.Validate(); err != nil {
+		return unknown(err.Error())
+	}
+	host, err := s.Machine()
+	if err != nil {
+		return unknown(err.Error())
+	}
+	if !host.Is(endpoint.Machine) {
+		return unknown("Native program belongs to another machine; death cannot be proved locally.")
+	}
+	registration, err := s.Registration(endpoint)
+	if err != nil {
+		return unknown(err.Error())
+	}
+	var recorded incarnation.NativeEvidence
+	if err = decodeNative(field(registration, "incarnation"), &recorded); err != nil || !recorded.Endpoint.SameAuthority(endpoint.Native()) || recorded.PID == 0 || recorded.Foreground == nil || recorded.Foreground.PID <= 0 || len(recorded.Foreground.Argv) == 0 {
+		return unknown("Saved native program identity is missing or differs from this binding.")
+	}
+	observe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	terminal, err := client.Get(observe, endpoint.Address)
+	if err != nil && !nativeAbsent(err) {
+		return unknown("Native terminal cannot prove exit: " + err.Error())
+	}
+	if err == nil {
+		if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep {
+			return unknown("Native terminal creation changed or is kept; program death is not proved.")
+		}
+		if terminal.State != "finished" || terminal.FinishedMS == nil || *terminal.FinishedMS == 0 || (terminal.ExitCode == nil && terminal.Signal == nil) {
+			return unknown("Native terminal has no conclusive finished program exit metadata.")
+		}
+		if endpoint.Cwd != "" && (terminal.Cwd == "" || resolve(endpoint.Cwd) != resolve(terminal.Cwd)) {
+			return unknown("Native terminal checkout identity differs from the saved binding.")
+		}
+	}
+	occupant := ordjson.NewObject()
+	argv := make([]any, len(recorded.Foreground.Argv))
+	for i, arg := range recorded.Foreground.Argv {
+		argv[i] = arg
+	}
+	occupant.Set("argv", argv)
+	if proof := inspectRecordedPIDs([]int{int(recorded.PID), int(recorded.Foreground.PID)}, occupant, int(recorded.Foreground.PID)); proof.Outcome != OutcomeStopped {
+		return proof
+	}
+	return stopped(func(observation *ordjson.Object) {
+		observation.Set("endpoint", endpoint.Object())
+		observation.Set("pid", jsonNumber(int(recorded.PID)))
+		observation.Set("reason", "exact saved native terminal and program have exited")
+	})
 }

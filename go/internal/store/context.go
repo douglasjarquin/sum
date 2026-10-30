@@ -46,7 +46,7 @@ func Context(root string) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, fmt.Errorf("verify HC caller terminal: %w", err)
 	}
-	if terminal.Address != address || terminal.State != "live" {
+	if terminal.Address != address || terminal.State != "live" || !filepath.IsAbs(terminal.Cwd) {
 		return nil, fmt.Errorf("HC caller terminal is not live at its recorded address")
 	}
 	id, err := machine.ID()
@@ -54,7 +54,7 @@ func Context(root string) (*ordjson.Object, error) {
 		return nil, fmt.Errorf("identify machine: %w", err)
 	}
 	generation, _ := strconv.ParseUint(os.Getenv("SUM_BINDING_GENERATION"), 10, 64)
-	endpoint := Endpoint{Schema: 2, Backend: "hc", Machine: id, CoreID: core, Session: session, Socket: socket, Address: address, Task: os.Getenv("SUM_TASK"), Role: os.Getenv("SUM_ROLE"), Attempt: os.Getenv("SUM_ATTEMPT"), BindingGeneration: generation, CreatedMS: terminal.CreatedMS, Cwd: root}
+	endpoint := Endpoint{Schema: 2, Backend: "hc", Machine: id, CoreID: core, Session: session, Socket: socket, Address: address, Task: os.Getenv("SUM_TASK"), Role: os.Getenv("SUM_ROLE"), Attempt: os.Getenv("SUM_ATTEMPT"), BindingGeneration: generation, CreatedMS: terminal.CreatedMS, Cwd: terminal.Cwd}
 	out, err := ordjson.FromValue(endpoint)
 	if err != nil {
 		return nil, err

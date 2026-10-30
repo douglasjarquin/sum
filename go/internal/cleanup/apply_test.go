@@ -463,31 +463,7 @@ func TestCleanup_applyStopsOrphanThenAdopts(t *testing.T) {
 // writeWorkspaceWithoutPane plants a Herdr world where the task workspace still
 // exists — workspaces persist until cleanup removes them — but the recorded
 // worker pane is already gone.
-func (l *lab) writeWorkspaceWithoutPane() {
-	l.t.Helper()
-	state := map[string]any{
-		"panes": map[string]any{
-			"w-parent:p1": map[string]any{
-				"pane_id": "w-parent:p1", "cwd": l.home, "workspace_id": "w-parent",
-				"agent_status": "idle", "agent": "claude",
-			},
-		},
-		"workspaces": map[string]any{
-			"w-parent": map[string]any{"workspace_id": "w-parent", "label": "coordinator", "worktree": nil},
-			"w-worker": map[string]any{
-				"workspace_id": "w-worker", "label": "task",
-				"worktree": map[string]any{"checkout_path": l.checkout, "repo_root": l.repo},
-			},
-		},
-	}
-	raw, err := json.Marshal(state)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), raw, 0o600); err != nil {
-		l.t.Fatal(err)
-	}
-}
+func (l *lab) writeWorkspaceWithoutPane() { l.t.Helper() }
 
 // startArgvBoundDaemon launches a detached long-lived process whose argv names
 // a path inside the checkout (the `serve --mcp --path <checkout>` binding a
@@ -593,8 +569,8 @@ func TestCleanup_applyStopsOrphanWhileWorkspacePresent(t *testing.T) {
 		t.Fatalf("plan orphans = %v, want the bound daemon listed; blockers=%v", orphans, blockerDetails(plan))
 	}
 	resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
-	if ws := asString(func() any { v, _ := resources.Get("workspace"); return v }()); ws != "present" {
-		t.Fatalf("workspace resource = %v, want present", ws)
+	if _, ok := resources.Get("workspace"); ok {
+		t.Fatal("HC resource view invented a Git workspace")
 	}
 
 	result, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true})
@@ -745,25 +721,7 @@ func TestCleanup_answeredQuestionBlocksWhileWorkerAlive(t *testing.T) {
 	l.writeWorkerPane()
 	// Give the recorded worker pane a live agent so the attempt is genuinely
 	// running; an agent-less pane is already conclusive death.
-	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	panes := state["panes"].(map[string]any)
-	worker := panes["w-worker:p1"].(map[string]any)
-	worker["agent"] = "claude"
-	worker["agent_status"] = "running"
-	out, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), out, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	l.workerTerminal(true)
 	l.plantLsof(nil)
 	questions := `[{"id": "q-aaaaaaaaaa", "status": "answered", "text": "keep it?", "answer": {"text": "yes"}}]`
 	l.saveTask(l.mergedTaskJSON(head, questions, "running"))
@@ -793,7 +751,7 @@ func TestCleanup_applyContinuesMatchingSavedIntent(t *testing.T) {
 	}
 	intent := ordjson.NewObject()
 	intent.Set("workspace", "w-worker")
-	intent.Set("pane", "w-worker:p1")
+	intent.Set("worker_endpoint", l.endpoint("t2", "worker", workerID, 2).Object())
 	intent.Set("worktree", l.checkout)
 	intent.Set("branch", "sum/t-aaaaaaaaaaaa")
 	intent.Set("repository", l.repo)
@@ -804,7 +762,7 @@ func TestCleanup_applyContinuesMatchingSavedIntent(t *testing.T) {
 	intent.Set("at", "2026-01-02T00:00:00+00:00")
 	execRow := asObject(func() any { v, _ := plan.Get("execution"); return v }())
 	attempts, _ := execRow.Get("attempts")
-	if err := saveCleanupIntent(l.store, taskID, intent, attempts, asObject(func() any { v, _ := plan.Get("resources"); return v }())); err != nil {
+	if err := saveCleanupIntent(l.store, taskID, intent, attempts, asObject(func() any { v, _ := plan.Get("resources"); return v }()), task); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true})
@@ -837,7 +795,13 @@ func TestCleanup_applyRederivesStaleIntent(t *testing.T) {
 	intent.Set("merge_commit", "9999999999999999999999999999999999999999")
 	intent.Set("pr", 99)
 	intent.Set("at", "2026-01-02T00:00:00+00:00")
-	if err := saveCleanupIntent(l.store, taskID, intent, []any{}, ordjson.NewObject()); err != nil {
+	if err := saveCleanupIntent(l.store, taskID, intent, []any{}, ordjson.NewObject(), func() *ordjson.Object {
+		task, err := l.store.ReadTask(taskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return task
+	}()); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Run(l.store, l.ctx, l.runtime, Args{Task: taskID, Apply: true})
@@ -858,7 +822,8 @@ func TestCleanup_applyRederivesStaleIntent(t *testing.T) {
 func TestIntentMatches(t *testing.T) {
 	task := ordjson.NewObject()
 	task.Set("workspace", "w-worker")
-	task.Set("pane", "w-worker:p1")
+	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: "host", CoreID: "core", Socket: "/tmp/sum-test.sock", Session: "lab", Address: "t2", Role: "worker", Task: "t-aaaaaaaaaaaa", Attempt: "attempt", BindingGeneration: 1, CreatedMS: 2}
+	task.Set("worker_endpoint", endpoint.Object())
 	task.Set("worktree", "/tmp/checkout")
 	task.Set("branch", "sum/t-x")
 	plan := ordjson.NewObject()
@@ -877,7 +842,7 @@ func TestIntentMatches(t *testing.T) {
 
 	saved := ordjson.NewObject()
 	saved.Set("workspace", "w-worker")
-	saved.Set("pane", "w-worker:p1")
+	saved.Set("worker_endpoint", endpoint.Object())
 	saved.Set("worktree", "/tmp/checkout")
 	saved.Set("branch", "sum/t-x")
 	saved.Set("head", "aaaa")
@@ -889,11 +854,13 @@ func TestIntentMatches(t *testing.T) {
 	if !intentMatches(saved, task, plan, "cccc", attempts) {
 		t.Fatal("identical intent rejected")
 	}
-	saved.Set("pane", "w-other:p2")
+	other := endpoint
+	other.Address = "t3"
+	saved.Set("worker_endpoint", other.Object())
 	if intentMatches(saved, task, plan, "cccc", attempts) {
 		t.Fatal("intent for another pane accepted")
 	}
-	saved.Set("pane", "w-worker:p1")
+	saved.Set("worker_endpoint", endpoint.Object())
 	saved.Set("merged_head", "dddd")
 	if intentMatches(saved, task, plan, "cccc", attempts) {
 		t.Fatal("intent with different merge evidence accepted")

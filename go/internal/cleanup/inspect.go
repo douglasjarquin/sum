@@ -2,32 +2,31 @@ package cleanup
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"context"
 	"github.com/douglasjarquin/sum/go/internal/ask"
+	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/environment"
 	"github.com/douglasjarquin/sum/go/internal/execution"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 const ignoredPathLimit = 50
-
-var shells = map[string]bool{
-	"bash": true, "zsh": true, "sh": true, "fish": true, "dash": true, "ksh": true, "tcsh": true, "csh": true, "nu": true, "pwsh": true,
-	"-bash": true, "-zsh": true, "-sh": true, "-fish": true,
-}
 
 func asString(v any) string {
 	s, _ := v.(string)
@@ -53,29 +52,6 @@ func stringField(o *ordjson.Object, key string) string {
 	return s
 }
 
-func workspaceOf(paneID string) string {
-	if paneID == "" {
-		return ""
-	}
-	if i := strings.IndexByte(paneID, ':'); i >= 0 {
-		return paneID[:i]
-	}
-	return paneID
-}
-
-func unwrap(value any, key string) *ordjson.Object {
-	obj := asObject(value)
-	if obj == nil {
-		return nil
-	}
-	if inner, ok := obj.Get(key); ok {
-		if innerObj := asObject(inner); innerObj != nil {
-			return innerObj
-		}
-	}
-	return obj
-}
-
 func samePath(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	if errA != nil {
@@ -86,18 +62,6 @@ func samePath(a, b string) bool {
 		rb, _ = filepath.Abs(b)
 	}
 	return ra == rb
-}
-
-func herdrPath(runtimeRoot string) (string, error) {
-	return toolpath.Find(runtimeRoot, "herdr")
-}
-
-func observe(runtimeRoot, session string, timeout time.Duration, args ...string) (any, string, error) {
-	path, err := herdrPath(runtimeRoot)
-	if err != nil {
-		return nil, "", err
-	}
-	return herdrclient.Observe(path, session, timeout, args...)
 }
 
 func worktreePaths(repo string) ([]string, error) {
@@ -243,126 +207,6 @@ func boundDetail(raw any) string {
 	return fmt.Sprintf("pid %v at %v", pid, cwd)
 }
 
-// paneOccupancy observes one pane. When worktree is set it also lists the
-// processes bound to that checkout besides the pane's own shell and the
-// endpointShells of the task's other recorded panes, which close through
-// their own path.
-func paneOccupancy(runtimeRoot, session, paneID, worktree string, endpointShells map[int]bool) (*ordjson.Object, error) {
-	view := ordjson.NewObject()
-	view.Set("pane", paneID)
-	view.Set("agent", nil)
-	view.Set("foreground", []any{})
-	view.Set("detached", []any{})
-	var blockers []any
-	agentAbsent := false
-	agent, code, err := observe(runtimeRoot, session, 5*time.Second, "agent", "get", paneID)
-	if err != nil {
-		return nil, err
-	}
-	if agent != nil {
-		agentObj := unwrap(agent, "agent")
-		row := ordjson.NewObject()
-		for _, k := range []string{"name", "agent", "agent_status"} {
-			v, _ := agentObj.Get(k)
-			row.Set(k, v)
-		}
-		view.Set("agent", row)
-		blockers = append(blockers, fmt.Sprintf("pane %s still hosts agent %q (%v); Herdr idle/done is not exit, wait for the agent process to end", paneID, stringField(agentObj, "agent"), func() any { v, _ := agentObj.Get("agent_status"); return v }()))
-	} else if herdrclient.IsAbsent(code) {
-		agentAbsent = true
-	} else {
-		blockers = append(blockers, fmt.Sprintf("agent observation for pane %s is uncertain (%s)", paneID, code))
-	}
-	info, code, err := observe(runtimeRoot, session, 5*time.Second, "pane", "process-info", "--pane", paneID)
-	if err != nil {
-		return nil, err
-	}
-	if info == nil {
-		if !(agentAbsent && herdrclient.IsAbsent(code)) {
-			blockers = append(blockers, fmt.Sprintf("process observation for pane %s is uncertain (%s)", paneID, code))
-		}
-		if worktree != "" {
-			inside, errorText := processesBoundTo(worktree, endpointShells)
-			if errorText != "" {
-				blockers = append(blockers, "processes bound to the checkout cannot be established: "+errorText)
-			} else if len(inside) > 0 {
-				view.Set("detached", inside)
-				var parts []string
-				for i, raw := range inside {
-					if i >= 10 {
-						break
-					}
-					parts = append(parts, boundDetail(raw))
-				}
-				blockers = append(blockers, "processes still bound to the checkout (detached from the pane or another pane): "+strings.Join(parts, ", "))
-			}
-		}
-		view.Set("blockers", blockers)
-		return view, nil
-	}
-	infoObj := unwrap(info, "process_info")
-	shell, _ := infoObj.Get("shell_pid")
-	view.Set("shell_pid", shell)
-	var foreground []any
-	fg, _ := infoObj.Get("foreground_processes")
-	for _, raw := range asList(fg) {
-		procObj := asObject(raw)
-		pid, _ := procObj.Get("pid")
-		name := stringField(procObj, "argv0")
-		if name == "" {
-			name = stringField(procObj, "name")
-		}
-		if fmt.Sprint(pid) == fmt.Sprint(shell) && shells[name] {
-			continue
-		}
-		row := ordjson.NewObject()
-		for _, k := range []string{"pid", "name", "cmdline", "cwd"} {
-			v, _ := procObj.Get(k)
-			row.Set(k, v)
-		}
-		foreground = append(foreground, row)
-	}
-	view.Set("foreground", foreground)
-	if len(foreground) > 0 {
-		var names []string
-		for _, raw := range foreground {
-			p := asObject(raw)
-			names = append(names, fmt.Sprintf("%v (pid %v)", func() any { v, _ := p.Get("name"); return v }(), func() any { v, _ := p.Get("pid"); return v }()))
-		}
-		blockers = append(blockers, fmt.Sprintf("pane %s has foreground processes besides its shell: %s", paneID, strings.Join(names, ", ")))
-	}
-	if shell == nil && !agentAbsent {
-		blockers = append(blockers, fmt.Sprintf("pane %s reported no shell pid; occupancy cannot be established", paneID))
-	}
-	if worktree != "" {
-		exclude := map[int]bool{}
-		for pid := range endpointShells {
-			exclude[pid] = true
-		}
-		if num, ok := shell.(json.Number); ok {
-			if n, convErr := num.Int64(); convErr == nil {
-				exclude[int(n)] = true
-			}
-		}
-		inside, errorText := processesBoundTo(worktree, exclude)
-		if errorText != "" {
-			blockers = append(blockers, "processes bound to the checkout cannot be established: "+errorText)
-		} else if len(inside) > 0 {
-			view.Set("detached", inside)
-			var parts []string
-			for i, raw := range inside {
-				if i >= 10 {
-					break
-				}
-				parts = append(parts, boundDetail(raw))
-			}
-			blockers = append(blockers, "processes still bound to the checkout (detached from the pane or another pane): "+strings.Join(parts, ", "))
-		}
-	}
-	view.Set("blockers", blockers)
-	return view, nil
-}
-
 type inspection struct {
 	store             *store.Store
 	task              *ordjson.Object
@@ -379,7 +223,6 @@ type inspection struct {
 	descendantsFailed bool
 	workerStopped     bool
 	settleable        []any
-	shells            map[int]bool
 }
 
 func newInspection(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string) *inspection {
@@ -413,22 +256,9 @@ func (ins *inspection) block(code, detail string) {
 	ins.blockers = append(ins.blockers, row)
 }
 
-// endpointShells is the observed shell pid of each other pane the task
-// records (the reviewer), read once per inspection.
-func (ins *inspection) endpointShells() map[int]bool {
-	if ins.shells == nil {
-		ins.shells = execution.EndpointShells(ins.host(), ins.runtimeRoot, ins.task)
-	}
-	return ins.shells
-}
-
-// paneDead reports whether the recorded task pane is verified absent, which is
-// the point where a surviving checkout-bound process has no recorded owner left
-// and can be named an orphan. The workspace may still be present — it persists
-// until cleanup removes it — so it does not gate orphan classification; any
-// live pane inside it is already a named blocker.
-func (ins *inspection) paneDead() bool {
-	return asString(func() any { v, _ := ins.resources.Get("pane"); return v }()) == "absent"
+// workerTerminalGone distinguishes native absence from a status update.
+func (ins *inspection) workerTerminalGone() bool {
+	return stringField(ins.resources, "worker_terminal") == "absent"
 }
 
 // intField reads a pid-sized json.Number field.
@@ -464,12 +294,8 @@ func attemptRecordedPIDs(attempt *ordjson.Object) []int {
 	return pids
 }
 
-// ownedDescendants returns the pids that are still descendants of a recorded
-// pane, shell, or attempt pid, or of another recorded endpoint's shell. A
-// bound process in that set has a live recorded owner and stays a named
-// blocker rather than an orphan. The second result is false when the process
-// tree cannot be inspected; callers must then leave every candidate
-// unclassified.
+// ownedDescendants protects live recorded native programs and descendants.
+// Unobservable ownership never authorizes orphan termination.
 func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
 	if ins.descendants != nil {
 		return ins.descendants, true
@@ -484,7 +310,29 @@ func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
 		return nil, false
 	}
 	var roots []int
-	for pid := range ins.endpointShells() {
+	for _, key := range []string{"worker_endpoint", "reviewer"} {
+		endpoint := store.EndpointFromContext(asObject(func() any { v, _ := ins.task.Get(key); return v }()))
+		if endpoint.Validate() != nil {
+			continue
+		}
+		reg, e := ins.store.Registration(endpoint)
+		if e != nil {
+			ins.descendantsFailed = true
+			return nil, false
+		}
+		raw, _ := ordjson.MarshalCompact(func() any { v, _ := reg.Get("incarnation"); return v }())
+		var rec incarnation.NativeEvidence
+		if json.Unmarshal(raw, &rec) != nil || !rec.Endpoint.SameAuthority(endpoint.Native()) {
+			ins.descendantsFailed = true
+			return nil, false
+		}
+		roots = append(roots, int(rec.PID))
+		if rec.Foreground != nil {
+			roots = append(roots, int(rec.Foreground.PID))
+		}
+	}
+
+	for pid := range map[int]bool{} {
 		roots = append(roots, pid)
 	}
 	if execVal != nil {
@@ -493,6 +341,14 @@ func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
 		}
 	}
 	for _, pid := range roots {
+		alive, e := proc.PIDRunning(pid)
+		if e != nil {
+			ins.descendantsFailed = true
+			return nil, false
+		}
+		if alive {
+			owned[pid] = true
+		}
 		kids, err := proc.Descendants(pid)
 		if err != nil {
 			ins.descendantsFailed = true
@@ -506,11 +362,9 @@ func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
 	return owned, true
 }
 
-// addOrphans records a bound checkout process whose owner pane is verified dead
-// and which is not a descendant of a still-live recorded pane or shell pid.
-// Orphans stay named blockers in the plan and are additionally listed here so
-// apply can terminate each one explicitly and re-inspect instead of assuming a
-// closed pane emptied the checkout.
+// addOrphans records surviving writers only after their native owner is gone
+// and every other recorded owner and descendant is excluded from orphan status.
+// They remain named blockers until explicit cleanup stops and reobserves them.
 func (ins *inspection) addOrphans(inside []any) {
 	if ins.orphanPIDs == nil {
 		ins.orphanPIDs = map[int]bool{}
@@ -539,142 +393,112 @@ func (ins *inspection) host() machine.Identity {
 	return h
 }
 
+func taskWorker(task *ordjson.Object) store.Endpoint {
+	return store.EndpointFromContext(asObject(func() any { v, _ := task.Get("worker_endpoint"); return v }()))
+}
 func (ins *inspection) identity() {
 	task := ins.task
-	for _, key := range []string{"pane", "workspace", "worktree", "branch", "repository", "session"} {
+	for _, key := range []string{"worktree", "branch", "repository"} {
 		if stringField(task, key) == "" {
-			ins.block("identity", fmt.Sprintf("task record has no %s; nothing can be matched to a Herdr resource", key))
+			ins.block("identity", "task record has no "+key)
 		}
 	}
-	if host := ins.host(); !host.Is(stringField(task, "machine")) {
-		ins.block("identity", fmt.Sprintf("task belongs to machine %s, this is %s (%s)", stringField(task, "machine"), host.ID, host.Hostname))
+	endpoint := taskWorker(task)
+	if err := endpoint.Validate(); err != nil {
+		ins.block("identity", err.Error())
 	}
-	if stringField(task, "session") != stringField(ins.ctx, "session") {
-		ins.block("identity", fmt.Sprintf("task lives in Herdr session %s, the coordinator runs in %s", stringField(task, "session"), stringField(ins.ctx, "session")))
+	host := ins.host()
+	if !host.Is(endpoint.Machine) {
+		ins.block("identity", "task belongs to another machine")
 	}
-	if len(ins.blockers) > 0 {
-		return
+	caller := store.EndpointFromContext(ins.ctx)
+	if endpoint.Native().SameTerminal(caller.Native()) {
+		ins.block("identity", "task endpoint is the calling coordinator")
 	}
-	own := workspaceOf(stringField(ins.ctx, "pane"))
-	pane, _, _ := observe(ins.runtimeRoot, stringField(ins.ctx, "session"), 5*time.Second, "pane", "get", stringField(ins.ctx, "pane"))
-	if pane != nil {
-		paneObj := unwrap(pane, "pane")
-		if ws := stringField(paneObj, "workspace_id"); ws != "" {
-			own = ws
-		}
+	if endpoint.CoreID != caller.CoreID || endpoint.Socket != caller.Socket {
+		ins.block("identity", "task uses a different native core route")
 	}
-	parent := asObject(func() any { v, _ := task.Get("parent"); return v }())
-	parentWS := workspaceOf(stringField(parent, "pane"))
-	if stringField(task, "workspace") == own || stringField(task, "workspace") == parentWS {
-		ins.block("identity", fmt.Sprintf("task workspace %s is the coordinator's own workspace; refusing", stringField(task, "workspace")))
-	}
-	if stringField(task, "pane") == stringField(ins.ctx, "pane") {
-		ins.block("identity", "task pane is the calling coordinator pane; refusing")
-	}
-	worktree := stringField(task, "worktree")
-	repo := stringField(task, "repository")
+	worktree, repo := stringField(task, "worktree"), stringField(task, "repository")
 	if samePath(worktree, repo) || strings.HasPrefix(worktree, repo+string(os.PathSeparator)) || strings.HasPrefix(repo, worktree+string(os.PathSeparator)) {
-		ins.block("identity", fmt.Sprintf("task worktree %s overlaps the source repository %s; refusing", worktree, repo))
+		ins.block("identity", "task worktree overlaps repository")
 	}
 }
-
-func (ins *inspection) herdr() error {
-	task := ins.task
-	session := stringField(ins.ctx, "session")
-	workspace, code, err := observe(ins.runtimeRoot, session, 5*time.Second, "workspace", "get", stringField(task, "workspace"))
-	if err != nil {
-		return err
+func nativeTerminal(endpoint store.Endpoint) (hcclient.Terminal, error) {
+	if err := endpoint.Validate(); err != nil {
+		return hcclient.Terminal{}, err
 	}
-	if workspace == nil {
-		if code == "workspace_not_found" {
-			ins.resources.Set("workspace", "absent")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	t, err := client.Get(ctx, endpoint.Address)
+	if err == nil && (t.Address != endpoint.Address || t.CreatedMS != endpoint.CreatedMS || t.Keep) {
+		return t, fmt.Errorf("native terminal creation or lifetime changed")
+	}
+	return t, err
+}
+func nativeAbsent(err error) bool {
+	var e *hcclient.RPCError
+	if !errors.As(err, &e) {
+		return false
+	}
+	var d struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(e.Data, &d) == nil && d.Kind == "not_found"
+}
+func (ins *inspection) native() error {
+
+	t, err := nativeTerminal(taskWorker(ins.task))
+	if err != nil {
+		if nativeAbsent(err) {
+			ins.resources.Set("worker_terminal", "absent")
 		} else {
-			ins.block("workspace", fmt.Sprintf("workspace %s cannot be observed (%s)", stringField(task, "workspace"), code))
-			ins.resources.Set("workspace", "uncertain")
+			ins.resources.Set("worker_terminal", "uncertain")
+			ins.block("terminal", err.Error())
+			return nil
 		}
 	} else {
-		ws := unwrap(workspace, "workspace")
-		ins.resources.Set("workspace", "present")
-		checkout := ""
-		if wt := asObject(func() any { v, _ := ws.Get("worktree"); return v }()); wt != nil {
-			checkout = stringField(wt, "checkout_path")
-		}
-		if checkout == "" || !samePath(checkout, stringField(task, "worktree")) {
-			ins.block("workspace", fmt.Sprintf("workspace %s is not the task checkout (checkout_path %q, expected %s)", stringField(task, "workspace"), checkout, stringField(task, "worktree")))
-		}
-		panes, code, err := observe(ins.runtimeRoot, session, 5*time.Second, "pane", "list", "--workspace", stringField(task, "workspace"))
-		if err != nil {
-			return err
-		}
-		if panes == nil {
-			ins.block("panes", fmt.Sprintf("panes of workspace %s cannot be listed (%s)", stringField(task, "workspace"), code))
-		} else {
-			var listed []any
-			if obj := asObject(panes); obj != nil {
-				if v, ok := obj.Get("panes"); ok {
-					listed = asList(v)
-				}
-			} else {
-				listed = asList(panes)
-			}
-			var view []any
-			reviewerPane := stringField(asObject(func() any { v, _ := task.Get("reviewer"); return v }()), "pane")
-			servicePanes := map[string]bool{}
-			for _, raw := range asList(func() any { v, _ := ins.environment.Get("services"); return v }()) {
-				svc := asObject(raw)
-				if p := stringField(svc, "pane"); p != "" {
-					servicePanes[p] = true
-				}
-			}
-			for _, raw := range listed {
-				p := asObject(raw)
-				row := ordjson.NewObject()
-				for _, k := range []string{"pane_id", "cwd", "agent", "agent_status"} {
-					v, _ := p.Get(k)
-					row.Set(k, v)
-				}
-				view = append(view, row)
-				paneID := stringField(p, "pane_id")
-				if paneID == stringField(task, "pane") {
-					continue
-				}
-				if paneID == reviewerPane {
-					ins.resources.Set("reviewer_in_task_workspace", true)
-					continue
-				}
-				if servicePanes[paneID] {
-					continue
-				}
-				ins.block("panes", fmt.Sprintf("unknown pane %s (cwd %q, agent %q) in the task workspace; a service or helper pane sum did not create blocks removal", paneID, stringField(p, "cwd"), stringField(p, "agent")))
-			}
-			ins.view.Set("panes", view)
+		ins.resources.Set("worker_terminal", "present")
+	}
+
+	ins.resources.Set("terminal_state", t.State)
+	if err == nil && t.Cwd != stringField(ins.task, "worktree") {
+		ins.block("terminal", "native terminal cwd differs from task checkout")
+	}
+	if t.State == "live" {
+		ins.block("occupant", "native worker is live; idle or Done status is not exit")
+	} else {
+		proof := execution.NativeProgramStopped(ins.store, taskWorker(ins.task))
+		if proof.Outcome != execution.OutcomeStopped {
+			ins.block("terminal", proof.Reason)
 		}
 	}
-	pane, code, err := observe(ins.runtimeRoot, session, 5*time.Second, "pane", "get", stringField(task, "pane"))
+	// List catches unrecorded native launches from an interrupted intent, without adopting by label.
+	endpoint := taskWorker(ins.task)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	listed, err := client.List(ctx, hcclient.ListParams{All: true})
 	if err != nil {
-		return err
-	}
-	if pane == nil {
-		if code == "pane_not_found" {
-			ins.resources.Set("pane", "absent")
-		} else {
-			ins.block("pane", fmt.Sprintf("pane %s cannot be observed (%s)", stringField(task, "pane"), code))
-			ins.resources.Set("pane", "uncertain")
-		}
+		ins.block("terminals", err.Error())
 		return nil
 	}
-	paneObj := unwrap(pane, "pane")
-	ins.resources.Set("pane", "present")
-	wsID, _ := paneObj.Get("workspace_id")
-	if wsID != nil && fmt.Sprint(wsID) != stringField(task, "workspace") {
-		ins.block("pane", fmt.Sprintf("pane %s now sits in workspace %v, not %s; possible moved or reused pane", stringField(task, "pane"), wsID, stringField(task, "workspace")))
+	known := map[string]bool{endpoint.Address: true}
+	reviewer := store.EndpointFromContext(asObject(func() any { v, _ := ins.task.Get("reviewer"); return v }()))
+	if reviewer.CoreID == endpoint.CoreID {
+		known[reviewer.Address] = true
 	}
-	cwd := stringField(paneObj, "cwd")
-	if cwd == "" {
-		cwd = stringField(paneObj, "foreground_cwd")
+	for _, raw := range asList(func() any { v, _ := ins.environment.Get("services"); return v }()) {
+		service := asObject(raw)
+		e := store.EndpointFromContext(asObject(func() any { v, _ := service.Get("endpoint"); return v }()))
+		if e.CoreID == endpoint.CoreID {
+			known[e.Address] = true
+		}
 	}
-	if cwd == "" || !samePath(cwd, stringField(task, "worktree")) {
-		ins.block("pane", fmt.Sprintf("pane %s runs in %q, not the task checkout; refusing a possibly reused pane", stringField(task, "pane"), cwd))
+	for _, t := range listed.Terminals {
+		if !known[t.Address] && (t.Cwd == stringField(ins.task, "worktree") || t.Labels["sum.task"] == stringField(ins.task, "id")) {
+			ins.block("terminals", fmt.Sprintf("unrecorded native terminal %s requires inspection", t.Address))
+		}
 	}
 	return nil
 }
@@ -699,7 +523,10 @@ func (ins *inspection) git() error {
 	if statErr != nil || !info.IsDir() {
 		ins.resources.Set("worktree", "absent")
 		if registered != nil {
-			resolved, _ := filepath.EvalSymlinks(worktree)
+			resolved := worktree
+			if target, e := filepath.EvalSymlinks(worktree); e == nil {
+				resolved = target
+			}
 			for _, p := range registered {
 				if p == resolved {
 					ins.block("git", fmt.Sprintf("%s is gone but still registered as a worktree; inspect `git worktree list` before continuing", worktree))
@@ -737,7 +564,10 @@ func (ins *inspection) git() error {
 		ins.block("git", fmt.Sprintf("checkout is on %q, not the task branch %q", strings.TrimSpace(branchShow.Stdout), stringField(task, "branch")))
 	}
 	if registered != nil {
-		resolved, _ := filepath.EvalSymlinks(worktree)
+		resolved := worktree
+		if target, e := filepath.EvalSymlinks(worktree); e == nil {
+			resolved = target
+		}
 		found := false
 		for _, p := range registered {
 			if p == resolved {
@@ -753,6 +583,18 @@ func (ins *inspection) git() error {
 }
 
 func (ins *inspection) obligations() string {
+	if err := RefusePendingEffects(ins.store, stringField(ins.task, "id")); err != nil {
+		ins.block("pending-effect", err.Error())
+	}
+	obligations, err := returns.OpenObligations(ins.store, ins.task)
+	if err != nil {
+		ins.block("obligations", err.Error())
+	}
+	for _, o := range obligations {
+		if stringField(o, "kind") == "refresh" {
+			ins.block("obligations", "procedure refresh remains pending")
+		}
+	}
 	var openIDs []string
 	for _, raw := range asList(func() any { v, _ := ins.task.Get("questions"); return v }()) {
 		q := asObject(raw)
@@ -897,7 +739,7 @@ func (ins *inspection) services() error {
 	for _, raw := range asList(func() any { v, _ := ins.environment.Get("services"); return v }()) {
 		service := asObject(raw)
 		state := stringField(service, "state")
-		if state != "failed" && state != "ready" && state != "starting" && state != "running" && state != "active" {
+		if state != "failed" && state != "ready" && state != "starting" && state != "running" && state != "active" && state != "unknown" && state != "stopping" && state != "intended" {
 			continue
 		}
 		view, err := environment.ObserveService(ins.task, service, ins.runtimeRoot)
@@ -910,19 +752,17 @@ func (ins *inspection) services() error {
 		row.Set("state", state)
 		row.Set("observed", view)
 		rows = append(rows, row)
-		paneState := asString(func() any { v, _ := view.Get("pane_state"); return v }())
-		if paneState == "none" || paneState == "absent" {
+		terminalState := asString(func() any { v, _ := view.Get("terminal_state"); return v }())
+		if terminalState == "none" || terminalState == "absent" {
 			continue
 		}
 		if asString(func() any { v, _ := view.Get("ownership"); return v }()) == "owned" {
 			ins.stoppable = append(ins.stoppable, stringField(service, "id"))
 			if running, _ := view.Get("running"); running == true {
-				ins.block("service", fmt.Sprintf("service %s (%s) still runs in pane %s; cleanup --apply stops it gracefully first", stringField(service, "id"), stringField(service, "name"), stringField(service, "pane")))
-			} else {
-				ins.block("service", fmt.Sprintf("service %s (%s) has exited but its pane %s is still open; cleanup --apply closes it", stringField(service, "id"), stringField(service, "name"), stringField(service, "pane")))
+				ins.block("service", fmt.Sprintf("service %s (%s) still runs in terminal %s; run env stop before cleanup", stringField(service, "id"), stringField(service, "name"), store.EndpointFromContext(asObject(func() any { v, _ := service.Get("endpoint"); return v }())).Address))
 			}
 		} else {
-			ins.block("service-unknown", fmt.Sprintf("service %s (%s) in pane %s is not the recorded instance; sum stops nothing it cannot prove, inspect the pane", stringField(service, "id"), stringField(service, "name"), stringField(service, "pane")))
+			ins.block("service-unknown", fmt.Sprintf("service %s (%s) terminal %s has uncertain ownership; inspect it before cleanup", stringField(service, "id"), stringField(service, "name"), store.EndpointFromContext(asObject(func() any { v, _ := service.Get("endpoint"); return v }())).Address))
 		}
 	}
 	ins.view.Set("services", rows)
@@ -930,108 +770,69 @@ func (ins *inspection) services() error {
 }
 
 func (ins *inspection) occupancy() error {
-	if asString(func() any { v, _ := ins.resources.Get("pane"); return v }()) == "present" {
-		worktree := ""
-		if asString(func() any { v, _ := ins.resources.Get("worktree"); return v }()) == "present" {
-			worktree = stringField(ins.task, "worktree")
+	if stringField(ins.resources, "worktree") != "present" {
+		return nil
+	}
+	inside, errorText := processesBoundTo(stringField(ins.task, "worktree"), nil)
+	if errorText != "" {
+		ins.block("occupant", "process inspection failed: "+errorText)
+	} else if len(inside) > 0 {
+		if ins.workerTerminalGone() {
+			ins.addOrphans(inside)
 		}
-		view, err := paneOccupancy(ins.runtimeRoot, stringField(ins.ctx, "session"), stringField(ins.task, "pane"), worktree, ins.endpointShells())
-		if err != nil {
-			return err
+		var parts []string
+		for _, raw := range inside {
+			parts = append(parts, boundDetail(raw))
 		}
-		ins.view.Set("occupancy", view)
-		for _, detail := range asList(func() any { v, _ := view.Get("blockers"); return v }()) {
-			ins.block("occupant", fmt.Sprint(detail))
-		}
-	} else if asString(func() any { v, _ := ins.resources.Get("worktree"); return v }()) == "present" {
-		inside, errorText := processesBoundTo(stringField(ins.task, "worktree"), ins.endpointShells())
-		if errorText != "" {
-			ins.block("occupant", "processes bound to the checkout cannot be established: "+errorText)
-		} else if len(inside) > 0 {
-			// A live process bound to the checkout is always a named blocker.
-			// Once the pane is proven absent the same processes are also listed
-			// as orphans — except descendants of a still-live recorded pane or
-			// shell pid, which keep a live recorded owner — which is what lets
-			// apply stop them explicitly rather than assuming pane closure
-			// emptied the checkout.
-			if ins.paneDead() {
-				ins.addOrphans(inside)
-			}
-			var parts []string
-			for i, raw := range inside {
-				if i >= 10 {
-					break
-				}
-				parts = append(parts, boundDetail(raw))
-			}
-			ins.block("occupant", "processes still bound to the checkout: "+strings.Join(parts, ", "))
-		}
+		ins.block("occupant", "surviving checkout writers: "+strings.Join(parts, ", "))
 	}
 	return nil
 }
-
 func (ins *inspection) reviewer() error {
 	reviewer := asObject(func() any { v, _ := ins.task.Get("reviewer"); return v }())
 	if reviewer == nil {
-		ins.resources.Set("reviewer_pane", nil)
+		ins.resources.Set("reviewer_terminal", nil)
 		return nil
 	}
+	endpoint := store.EndpointFromContext(reviewer)
 	row := ordjson.NewObject()
-	row.Set("pane", stringField(reviewer, "pane"))
+	row.Set("endpoint", reviewer)
 	row.Set("closable", false)
-	row.Set("reason", nil)
 	ins.view.Set("reviewer", row)
-	var findings []any
+	if endpoint.Native().SameTerminal(taskWorker(ins.task).Native()) || endpoint.Native().SameTerminal(store.EndpointFromContext(ins.ctx).Native()) {
+		ins.block("reviewer", "reviewer equals worker or coordinator")
+		return nil
+	}
+	found := false
 	for _, raw := range asList(func() any { v, _ := ins.task.Get("evidence"); return v }()) {
 		e := asObject(raw)
-		endpoint := asObject(func() any { v, _ := e.Get("endpoint"); return v }())
-		if stringField(e, "kind") == "review" && stringField(endpoint, "pane") == stringField(reviewer, "pane") {
-			findings = append(findings, e)
+		ep := store.EndpointFromContext(asObject(func() any { v, _ := e.Get("endpoint"); return v }()))
+		if stringField(e, "kind") == "review" && ep.Native().SameAuthority(endpoint.Native()) {
+			found = true
 		}
 	}
-	if len(findings) == 0 {
-		row.Set("reason", "no saved reviewer findings")
-		ins.block("reviewer", fmt.Sprintf("reviewer pane %s has no saved findings; it stays open", stringField(reviewer, "pane")))
+	if !found {
+		ins.block("reviewer", "no findings for current reviewer endpoint")
 		return nil
 	}
-	parent := asObject(func() any { v, _ := ins.task.Get("parent"); return v }())
-	host := ins.host()
-	if host.SameEndpoint(reviewer, ins.task) || host.SameEndpoint(reviewer, parent) || host.SameEndpoint(reviewer, ins.ctx) {
-		row.Set("reason", "reviewer endpoint is the worker or coordinator pane")
-		ins.block("reviewer", "reviewer endpoint equals the worker or coordinator pane; refusing")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := bindcmd.ReviewerNativeStopped(ctx, ins.store, ins.task, reviewer); err != nil {
+		ins.block("reviewer", err.Error())
 		return nil
 	}
-	if !host.Is(stringField(reviewer, "machine")) || stringField(reviewer, "session") != stringField(ins.ctx, "session") {
-		row.Set("reason", "reviewer pane is in another session or machine")
-		ins.block("reviewer", fmt.Sprintf("reviewer pane %s is in session %s on %s; not observable from here", stringField(reviewer, "pane"), stringField(reviewer, "session"), stringField(reviewer, "machine")))
+	t, err := nativeTerminal(endpoint)
+	if nativeAbsent(err) {
+		ins.resources.Set("reviewer_terminal", "absent")
+	} else if err != nil {
+		ins.block("reviewer", err.Error())
 		return nil
-	}
-	pane, code, err := observe(ins.runtimeRoot, stringField(ins.ctx, "session"), 5*time.Second, "pane", "get", stringField(reviewer, "pane"))
-	if err != nil {
-		return err
-	}
-	if pane == nil {
-		if code == "pane_not_found" {
-			ins.resources.Set("reviewer_pane", "absent")
-			row.Set("closable", false)
-			row.Set("reason", "already absent")
-		} else {
-			ins.block("reviewer", fmt.Sprintf("reviewer pane %s cannot be observed (%s)", stringField(reviewer, "pane"), code))
+	} else {
+		ins.resources.Set("reviewer_terminal", "present")
+		if t.State != "finished" {
+			ins.block("reviewer", "reviewer is not finished")
+			return nil
 		}
-		return nil
-	}
-	ins.resources.Set("reviewer_pane", "present")
-	view, err := paneOccupancy(ins.runtimeRoot, stringField(ins.ctx, "session"), stringField(reviewer, "pane"), "", nil)
-	if err != nil {
-		return err
-	}
-	row.Set("occupancy", view)
-	if list := asList(func() any { v, _ := view.Get("blockers"); return v }()); len(list) > 0 {
-		row.Set("reason", "reviewer occupant has not exited")
-		for _, detail := range list {
-			ins.block("reviewer", fmt.Sprint(detail))
-		}
-		return nil
 	}
 	row.Set("closable", true)
 	return nil
@@ -1076,7 +877,7 @@ func inspectTask(s *store.Store, task, ctx *ordjson.Object, runtimeRoot string, 
 		}
 		return ins.plan(), nil
 	}
-	if err := ins.herdr(); err != nil {
+	if err := ins.native(); err != nil {
 		return nil, err
 	}
 	if err := ins.git(); err != nil {
@@ -1139,12 +940,12 @@ func executionStopProof(ins *inspection, execVal *reservations.Execution) []any 
 		rows = append(rows, item)
 		isWorker := stringField(row, "kind") == "worker"
 		if isWorker && (proof.Outcome == execution.OutcomeStopped || len(proof.Orphans) > 0) {
-			// The worker pane is verified absent; surviving checkout processes are
+			// The worker terminal is verified absent; surviving checkout processes are
 			// orphans, not a consuming worker. No live attempt can apply an answer.
 			ins.workerStopped = true
 		}
 		if proof.Outcome != execution.OutcomeStopped {
-			if isWorker && len(proof.Orphans) > 0 && ins.paneDead() {
+			if isWorker && len(proof.Orphans) > 0 && ins.workerTerminalGone() {
 				var inside []any
 				for _, p := range proof.Orphans {
 					item := ordjson.NewObject()

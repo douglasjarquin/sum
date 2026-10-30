@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -91,7 +92,7 @@ func BootstrapContext(ctx context.Context, socket, session, address string, s *s
 	if err != nil {
 		return nil, err
 	}
-	return (store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: hello.Core.ID, Socket: socket, Session: session, Address: address, CreatedMS: terminal.CreatedMS, Cwd: cwd}).Object(), nil
+	return (store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: hello.Core.ID, Socket: socket, Session: session, Address: address, CreatedMS: terminal.CreatedMS, Cwd: terminal.Cwd}).Object(), nil
 }
 
 func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
@@ -113,6 +114,10 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	if terminal.State != "live" || terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS {
 		return nil, fmt.Errorf("current HC terminal is not live at the recorded identity")
 	}
+	if !filepath.IsAbs(terminal.Cwd) {
+		return nil, fmt.Errorf("current HC terminal has no absolute observed working directory")
+	}
+	endpoint.Cwd = terminal.Cwd
 	owner, err := s.Owner()
 	if err != nil {
 		return nil, err
@@ -345,6 +350,12 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			return nil, err
 		}
 	}
+	if role == "coordinator" && fmt.Sprint(func() any { value, _ := owner.Get("wake_protocol"); return value }()) != fmt.Sprint(contract.WakeProtocol) {
+		owner.Set("wake_protocol", json.Number(fmt.Sprint(contract.WakeProtocol)))
+		if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+			return nil, err
+		}
+	}
 	if task != nil {
 		_, hadReceipt := attempt.Get("native_receipt")
 		attempt.Set("native_receipt", receiptObj)
@@ -395,7 +406,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	view.Set("coordinator", owner)
 	view.Set("registered", true)
 	view.Set("procedure", roleProcedure(opts.RuntimeRoot, s, role, task, core))
-	view.Set("note", "Read the validated procedure named under procedure before continuing.")
+	view.Set("note", "Read the validated procedure named under `procedure` before continuing.")
 	return view, nil
 }
 func taskValue(value string) any {

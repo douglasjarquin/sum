@@ -31,7 +31,7 @@ func TestNativeInitDoesNotImplicitlyClaimCoordinator(t *testing.T) {
 	}
 	f := hctest.New(t)
 	pid := uint32(101)
-	terminal := hcclient.Terminal{Address: "t1", CreatedMS: 1, State: "live", PID: &pid, Foreground: &hcclient.Foreground{PID: 102, Name: "codex", Argv: []string{"codex"}, Cwd: root}}
+	terminal := hcclient.Terminal{Address: "t1", CreatedMS: 1, State: "live", Cwd: root, PID: &pid, Foreground: &hcclient.Foreground{PID: 102, Name: "codex", Argv: []string{"codex"}, Cwd: root}}
 	f.SetTerminal(terminal)
 	host, err := s.Machine()
 	if err != nil {
@@ -296,7 +296,9 @@ func TestNativeReviewerPendingLaunchReceipt(t *testing.T) {
 	if _, err = app.NativeReceipt(registration); err == nil {
 		t.Fatal("pre-init launch registration has application authority")
 	}
-	view, err := InitDesignated(DesignatedOpts{RuntimeRoot: root, Store: s, Ctx: endpoint.Object(), Role: "reviewer", Task: endpoint.Task})
+	caller := endpoint
+	caller.Cwd = t.TempDir()
+	view, err := InitDesignated(DesignatedOpts{RuntimeRoot: root, Store: s, Ctx: caller.Object(), Role: "reviewer", Task: endpoint.Task})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,6 +312,9 @@ func TestNativeReviewerPendingLaunchReceipt(t *testing.T) {
 	}
 	reviewerValue, _ := task.Get("reviewer")
 	reviewer = reviewerValue.(*ordjson.Object)
+	if asString(reviewer, "cwd") != terminal.Cwd {
+		t.Fatalf("reviewer cwd %q differs from observed terminal cwd %q", asString(reviewer, "cwd"), terminal.Cwd)
+	}
 	if asString(reviewer, "address") != endpoint.Address {
 		t.Fatal("pending reviewer endpoint was not adopted")
 	}

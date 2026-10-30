@@ -5,30 +5,29 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"os"
 	"path/filepath"
-	"sort"
+	"reflect"
 	"strings"
 	"syscall"
 	"time"
 	"unicode"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/inboxview"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
 const (
 	Dir    = "metadata"
 	File   = "state.json"
-	Schema = 1
+	Schema = 2
 
 	// MaxErrors bounds the recorded projection error log.
 	MaxErrors = 20
@@ -65,26 +64,10 @@ var SumStates = []string{
 	"attention-closed", "attention-idle", "instruction-refresh-pending", "answer-pending", "pr-open", "verified", "preparing", "running",
 }
 
-const note = "Display-only projection. Herdr's agent lifecycle is unchanged; tokens are written only to endpoints this installation recorded and verified, and only when a value changed."
+const note = "Display-only projection. HC's native lifecycle is unchanged; namespaced labels are written only to endpoints this installation recorded and verified, and only when a value changed."
 
 func snippetTOML() string {
-	return strings.Join([]string{
-		"# sum: optional sidebar rows that render sum's task tokens. Merge into ~/.config/herdr/config.toml, then run",
-		"# `herdr server reload-config`. `rows` replaces the whole layout, so keep the built-in tokens you already use.",
-		"# Tokens: sum_state, sum_pipeline, sum_task, sum_repo, sum_rev (active>requested brief revision), sum_pr (recorded PR URL)",
-		"# on task panes and workspaces; sum_inbox and sum_tasks on the coordinator pane. Rows show one endpoint's tokens;",
-		"# the project grouping lives in `inbox --grouped`, and `metadata inbox --open` opens that view natively through the linked default-on hook plugin.",
-		"[ui.sidebar.agents]",
-		`rows = [["state_icon", "workspace", "tab"], ["agent", "$sum_state", "$sum_pipeline"], ["$sum_task", "$sum_inbox"]]`,
-		"",
-		"[ui.sidebar.spaces]",
-		`rows = [["state_icon", "workspace"], ["branch", "git_status"], ["$sum_state", "$sum_task"]]`,
-		"",
-		"# Reserved: `metadata enable --notify` records a preference; transition notification delivery is not implemented.",
-		"# [ui.toast]",
-		`# delivery = "herdr"`,
-		"",
-	}, "\n")
+	return "# Sum projects saved task state as namespaced sum.* HC terminal labels.\n# Read the task ledger with sumctl inbox --grouped.\n"
 }
 
 func Snippet(sumctlPath, home string) *ordjson.Object {
@@ -310,18 +293,8 @@ func Status(s *store.Store) *ordjson.Object {
 		for _, taskID := range resources.Keys() {
 			rec := asObject(get(resources, taskID))
 			row := ordjson.NewObject()
-			row.Set("state", get(rec, "state"))
-			for _, kind := range []string{"pane", "workspace"} {
-				if endpoint := asObject(get(rec, kind)); endpoint != nil {
-					view := ordjson.NewObject()
-					view.Set("id", get(endpoint, "id"))
-					view.Set("tokens", get(endpoint, "tokens"))
-					row.Set(kind, view)
-				}
-			}
-			if pending := asList(get(rec, "pending_clears")); len(pending) > 0 {
-				row.Set("pending_clears", pending)
-			}
+			row.Set("endpoint", get(rec, "endpoint"))
+			row.Set("labels", get(rec, "tokens"))
 			detail.Set(taskID, row)
 		}
 	}
@@ -383,494 +356,6 @@ func tokenValue(text string) string {
 	return value
 }
 
-func probeCapabilities(herdrPath, session string) *ordjson.Object {
-	caps := ordjson.NewObject()
-	schema, err := herdrclient.Call(herdrPath, session, probeTimeout, "api", "schema", "--json")
-	has := func(name, field string) bool {
-		defs := asObject(get(asObject(get(asObject(get(asObject(schema), "schemas")), "request")), "$defs"))
-		props := asObject(get(asObject(get(defs, name)), "properties"))
-		if props == nil {
-			return false
-		}
-		_, ok := props.Get(field)
-		return ok
-	}
-	caps.Set("pane_tokens", err == nil && has("PaneReportMetadataParams", "tokens"))
-	caps.Set("workspace_tokens", err == nil && has("WorkspaceReportMetadataParams", "tokens"))
-	caps.Set("notification", err == nil && has("NotificationShowParams", "title"))
-	caps.Set("plugin_pane_open", err == nil && has("PluginPaneOpenParams", "entrypoint"))
-	caps.Set("protocol", get(asObject(schema), "protocol"))
-	caps.Set("probed_at", store.Now())
-	if err != nil {
-		msg := err.Error()
-		if len(msg) > 200 {
-			msg = msg[:200]
-		}
-		caps.Set("error", "api schema unavailable: "+msg)
-	}
-	return caps
-}
-
-func supportsTokens(caps *ordjson.Object) bool {
-	return truthy(get(caps, "pane_tokens")) || truthy(get(caps, "workspace_tokens"))
-}
-
-// pass is one bounded projection over the records, counting every Herdr call it makes.
-type pass struct {
-	s         *store.Store
-	meta      *ordjson.Object
-	herdrPath string
-	source    string
-	force     bool
-	calls     int
-	written   int
-	skipped   int
-	ambiguous []any
-	// ctx carries the pass budget; every Herdr call runs under it.
-	ctx context.Context
-}
-
-func (p *pass) context() context.Context {
-	if p.ctx == nil {
-		return context.Background()
-	}
-	return p.ctx
-}
-
-// exhausted reports the pass budget spent: the remaining work is skipped, not attempted.
-func (p *pass) exhausted() bool {
-	return p.context().Err() != nil
-}
-
-func (p *pass) observe(session string, args ...string) (any, string, error) {
-	p.calls++
-	return herdrclient.ObserveContext(p.context(), p.herdrPath, session, callTimeout, args...)
-}
-
-func (p *pass) sessionCall(session string) incarnation.Call {
-	return func(timeout time.Duration, args ...string) (any, string, error) {
-		p.calls++
-		ctx, cancel := context.WithTimeout(p.context(), timeout)
-		defer cancel()
-		return herdrclient.ObserveContext(ctx, p.herdrPath, session, timeout, args...)
-	}
-}
-
-// report is one report-metadata call: ok on success, Herdr's code when refused, err when the helper failed.
-func (p *pass) report(kind, session, id string, sets map[string]string, clears []string) (bool, string, error) {
-	args := []string{kind, "report-metadata", id, "--source", p.source}
-	for _, key := range sortedKeys(sets) {
-		args = append(args, "--token", key+"="+sets[key])
-	}
-	sort.Strings(clears)
-	for _, key := range clears {
-		args = append(args, "--clear-token", key)
-	}
-	p.calls++
-	code, err := herdrclient.CallCodeContext(p.context(), p.herdrPath, session, callTimeout, args...)
-	if err != nil {
-		return false, "", err
-	}
-	return code == "", code, nil
-}
-
-func (p *pass) recordError(stage string, detail string, kind, id string) {
-	if len(detail) > 500 {
-		detail = detail[:500]
-	}
-	row := ordjson.NewObject()
-	row.Set("at", store.Now())
-	row.Set("stage", stage)
-	row.Set("error", detail)
-	if kind != "" {
-		row.Set("kind", kind)
-		row.Set("id", id)
-	}
-	errs := append(asList(get(p.meta, "errors")), row)
-	p.meta.Set("errors", errs)
-	p.meta.Set("last_error", row)
-}
-
-func (p *pass) degrade(reason string) {
-	if len(reason) > 200 {
-		reason = reason[:200]
-	}
-	p.meta.Set("degraded", reason)
-}
-
-func (p *pass) bump(key string, n int) {
-	stats := asObject(get(p.meta, "stats"))
-	if stats == nil {
-		stats = ordjson.NewObject()
-		p.meta.Set("stats", stats)
-	}
-	current := 0
-	if num, ok := get(stats, key).(json.Number); ok {
-		if i, err := num.Int64(); err == nil {
-			current = int(i)
-		}
-	}
-	stats.Set(key, jsonInt(current+n))
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func isAbsentCode(code string) bool {
-	return code == "pane_not_found" || code == "workspace_not_found"
-}
-
-// record helpers: {id, session, tokens} objects as stored under resources and root.
-
-func recordTokens(rec *ordjson.Object) map[string]string {
-	out := map[string]string{}
-	if tokens := asObject(get(rec, "tokens")); tokens != nil {
-		for _, k := range tokens.Keys() {
-			out[k] = asString(get(tokens, k))
-		}
-	}
-	return out
-}
-
-func newRecord(id, session string, tokens map[string]string) *ordjson.Object {
-	rec := ordjson.NewObject()
-	rec.Set("id", id)
-	rec.Set("session", session)
-	obj := ordjson.NewObject()
-	for _, k := range sortedKeys(tokens) {
-		obj.Set(k, tokens[k])
-	}
-	rec.Set("tokens", obj)
-	return rec
-}
-
-func tokensToAny(list []string) []any {
-	sort.Strings(list)
-	return toAny(list)
-}
-
-// clear clears exactly the recorded keys on one endpoint. An absent endpoint counts as cleared; a refused or failed
-// clear is recorded and reported, and the record stays for a later attempt. ok is whether the keys are gone.
-func (p *pass) clear(kind, session, id string, tokens map[string]string) (row *ordjson.Object, ok bool) {
-	row = ordjson.NewObject()
-	keys := sortedKeys(tokens)
-	if len(keys) == 0 {
-		row.Set("cleared", []any{})
-		return row, true
-	}
-	succeeded, code, err := p.report(kind, session, id, nil, append([]string{}, keys...))
-	switch {
-	case err != nil:
-		p.recordError("clear", err.Error(), kind, id)
-		row.Set("cleared", []any{})
-		row.Set("failed", truncate(err.Error(), 200))
-		return row, false
-	case succeeded:
-		p.bump("cleared", len(keys))
-		row.Set("cleared", tokensToAny(keys))
-		return row, true
-	case isAbsentCode(code):
-		row.Set("cleared", tokensToAny(keys))
-		row.Set("absent", code)
-		return row, true
-	default:
-		p.recordError("clear", code, kind, id)
-		row.Set("cleared", []any{})
-		row.Set("refused", code)
-		return row, false
-	}
-}
-
-func truncate(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
-	}
-	return s
-}
-
-// observation is what one `pane get` said about an endpoint, for identity and legacy-source checks.
-type observation struct {
-	identity string
-	sources  map[string]string
-	value    any
-}
-
-// verify is an endpoint identity check run before the first differing write in a pass.
-type verify func() observation
-
-// endpoint brings one pane or workspace to desired, writing only the differing keys. It returns the outcome row,
-// the record of what is now known to be applied there (nil when nothing owned remains), and, when the task moved
-// endpoints and the old one's keys could not be cleared, that old record as a pending clear for a later pass.
-func (p *pass) endpoint(kind, session, id string, desired map[string]string, rec *ordjson.Object, check verify) (row, record, pending *ordjson.Object) {
-	row = ordjson.NewObject()
-	row.Set("kind", kind)
-	row.Set("id", id)
-	previous := map[string]string{}
-	if rec != nil && asString(get(rec, "id")) == id {
-		previous = recordTokens(rec)
-	} else if rec != nil && asString(get(rec, "id")) != "" && len(recordTokens(rec)) > 0 {
-		// The task moved to another endpoint (rebind): clear only sum's keys on the old one, without observing it.
-		cleared, ok := p.clear(kind, asString(get(rec, "session")), asString(get(rec, "id")), recordTokens(rec))
-		cleared.Set("id", get(rec, "id"))
-		row.Set("cleared_previous", cleared)
-		if !ok {
-			pending = pendingClear(kind, rec)
-		}
-	}
-	keep := func() *ordjson.Object {
-		if len(previous) == 0 {
-			return nil
-		}
-		return newRecord(id, session, previous)
-	}
-	sets := map[string]string{}
-	for k, v := range desired {
-		if p.force || previous[k] != v {
-			sets[k] = v
-		}
-	}
-	var clears []string
-	for k := range previous {
-		if _, wanted := desired[k]; !wanted {
-			clears = append(clears, k)
-		}
-	}
-	if len(sets) == 0 && len(clears) == 0 {
-		row.Set("outcome", "unchanged")
-		return row, keep(), pending
-	}
-	capability := kind + "_tokens"
-	if !truthy(get(asObject(get(p.meta, "capabilities")), capability)) {
-		row.Set("outcome", "unsupported")
-		row.Set("reason", capability+" not available in the probed Herdr build")
-		return row, keep(), pending
-	}
-	if check != nil && len(sets) > 0 {
-		obs := check()
-		row.Set("identity", obs.identity)
-		switch obs.identity {
-		case "absent":
-			row.Set("outcome", "absent")
-			return row, nil, pending
-		case "unobservable":
-			row.Set("outcome", "unobservable")
-			row.Set("reason", "the endpoint cannot be observed; nothing was written or cleared")
-			return row, keep(), pending
-		case "ok":
-			// Keys another sum source holds (a legacy `sum:<basename>` reporter, another installation) are neither
-			// overwritten nor cleared; they are reported instead.
-			for key, source := range obs.sources {
-				if !strings.HasPrefix(source, "sum:") || source == p.source {
-					continue
-				}
-				if _, wanted := sets[key]; !wanted && !containsString(clears, key) {
-					continue
-				}
-				delete(sets, key)
-				clears = removeString(clears, key)
-				delete(previous, key)
-				entry := ordjson.NewObject()
-				entry.Set("kind", kind)
-				entry.Set("id", id)
-				entry.Set("key", key)
-				entry.Set("source", source)
-				p.ambiguous = append(p.ambiguous, entry)
-			}
-			if len(sets) == 0 && len(clears) == 0 {
-				row.Set("outcome", "unchanged")
-				return row, keep(), pending
-			}
-		default:
-			// stale: our own keys sit on a pane that no longer runs the task. Clear them, write nothing new.
-			if len(previous) > 0 {
-				cleared, ok := p.clear(kind, session, id, previous)
-				for _, k := range cleared.Keys() {
-					row.Set(k, get(cleared, k))
-				}
-				if !ok {
-					row.Set("outcome", "stale")
-					row.Set("reason", "pane identity stale and its recorded keys could not be cleared")
-					return row, keep(), pending
-				}
-			}
-			row.Set("outcome", "stale")
-			row.Set("reason", "pane identity stale; tokens are written only to a verified endpoint")
-			return row, nil, pending
-		}
-	}
-	ok, code, err := p.report(kind, session, id, sets, append([]string{}, clears...))
-	switch {
-	case err != nil:
-		p.degrade(kind + " report-metadata failed: " + err.Error())
-		p.recordError("report", err.Error(), kind, id)
-		row.Set("outcome", "failed")
-		row.Set("reason", truncate(err.Error(), 200))
-		return row, keep(), pending
-	case !ok && isAbsentCode(code):
-		row.Set("outcome", "absent")
-		row.Set("code", code)
-		return row, nil, pending
-	case !ok:
-		p.degrade(kind + " report-metadata refused: " + code)
-		p.recordError("report", code, kind, id)
-		row.Set("outcome", "refused")
-		row.Set("code", code)
-		return row, keep(), pending
-	}
-	p.written++
-	p.bump("writes", 1)
-	p.bump("cleared", len(clears))
-	applied := map[string]string{}
-	for k, v := range previous {
-		if !containsString(clears, k) {
-			applied[k] = v
-		}
-	}
-	for k, v := range sets {
-		applied[k] = v
-	}
-	row.Set("outcome", "written")
-	row.Set("set", tokensToAny(sortedKeys(sets)))
-	row.Set("cleared", tokensToAny(clears))
-	if len(applied) == 0 {
-		return row, nil, pending
-	}
-	return row, newRecord(id, session, applied), pending
-}
-
-// pendingClear is an endpoint record sum still owes a clear on, kept under the task's pending_clears until a pass
-// clears it (or finds it absent), so the tokens are never orphaned by one refused or failed call.
-func pendingClear(kind string, rec *ordjson.Object) *ordjson.Object {
-	out := newRecord(asString(get(rec, "id")), asString(get(rec, "session")), recordTokens(rec))
-	out.Set("kind", kind)
-	out.Set("pending_clear", true)
-	return out
-}
-
-// retryPending attempts every pending clear on a task record; it returns the outcome rows and what still fails.
-func (p *pass) retryPending(rec *ordjson.Object) (rows []any, remaining []any) {
-	for _, item := range asList(get(rec, "pending_clears")) {
-		old := asObject(item)
-		if old == nil {
-			continue
-		}
-		kind := asString(get(old, "kind"))
-		row, ok := p.release(kind, old)
-		row.Set("retried", true)
-		rows = append(rows, row)
-		if !ok {
-			remaining = append(remaining, old)
-		}
-	}
-	return rows, remaining
-}
-
-func containsString(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-func removeString(list []string, s string) []string {
-	out := list[:0]
-	for _, v := range list {
-		if v != s {
-			out = append(out, v)
-		}
-	}
-	return out
-}
-
-func samePath(a, b string) bool {
-	if a == "" || b == "" {
-		return false
-	}
-	ra, errA := filepath.EvalSymlinks(a)
-	rb, errB := filepath.EvalSymlinks(b)
-	if errA != nil || errB != nil {
-		return filepath.Clean(a) == filepath.Clean(b)
-	}
-	return ra == rb
-}
-
-func paneObject(value any) *ordjson.Object {
-	obj := asObject(value)
-	if inner := asObject(get(obj, "pane")); inner != nil {
-		return inner
-	}
-	return obj
-}
-
-func paneSources(obj *ordjson.Object) map[string]string {
-	out := map[string]string{}
-	if sources := asObject(get(obj, "token_sources")); sources != nil {
-		for _, k := range sources.Keys() {
-			out[k] = asString(get(sources, k))
-		}
-	}
-	return out
-}
-
-// verifyPane observes one pane: ok when it still runs in the expected checkout, absent, stale (another cwd: a reused
-// or rebound pane), or unobservable.
-func (p *pass) verifyPane(session, pane, expectedCwd string) observation {
-	value, code, err := p.observe(session, "pane", "get", pane)
-	if err != nil {
-		return observation{identity: "unobservable"}
-	}
-	if code == "pane_not_found" {
-		return observation{identity: "absent"}
-	}
-	if code != "" {
-		return observation{identity: "unobservable"}
-	}
-	obj := paneObject(value)
-	cwd := asString(get(obj, "cwd"))
-	if cwd == "" {
-		cwd = asString(get(obj, "working_directory"))
-	}
-	obs := observation{identity: "unobservable", sources: paneSources(obj), value: value}
-	if cwd == "" || expectedCwd == "" {
-		return obs
-	}
-	if samePath(cwd, expectedCwd) {
-		obs.identity = "ok"
-	} else {
-		obs.identity = "stale"
-	}
-	return obs
-}
-
-// verifyOwner is verifyPane for the coordinator pane plus the occupant check the coordinator role itself uses.
-func (p *pass) verifyOwner(owner *ordjson.Object) observation {
-	session, pane := asString(get(owner, "session")), asString(get(owner, "pane"))
-	obs := p.verifyPane(session, pane, asString(get(owner, "cwd")))
-	if obs.identity != "ok" {
-		return obs
-	}
-	recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
-	call := p.sessionCall(session)
-	probe := func() (*incarnation.Shell, error) { return incarnation.ProbeShell(call, pane) }
-	verdict := incarnation.Judge(recorded, occupiedAt, incarnation.FromInfo(obs.value), probe)
-	if !verdict.Verified {
-		if verdict.Outcome == incarnation.Unobservable {
-			obs.identity = "unobservable"
-		} else {
-			obs.identity = "stale"
-		}
-	}
-	return obs
-}
-
 func (p *pass) taskTokens(task *ordjson.Object, state string) map[string]string {
 	if state == "" {
 		return map[string]string{}
@@ -891,111 +376,6 @@ func (p *pass) taskTokens(task *ordjson.Object, state string) map[string]string 
 		tokens["sum_pr"] = tokenValue(url)
 	}
 	return tokens
-}
-
-func (p *pass) projectTask(row inboxview.Task, gapped, archived bool, resources *ordjson.Object) *ordjson.Object {
-	task := row.Record
-	state := ""
-	if !archived {
-		state = inboxview.TaskState(row, gapped)
-	}
-	desired := p.taskTokens(task, state)
-	rec := asObject(get(resources, row.ID))
-	out := ordjson.NewObject()
-	out.Set("task", row.ID)
-	if state == "" {
-		out.Set("state", nil)
-	} else {
-		out.Set("state", state)
-	}
-	out.Set("previous", get(rec, "state"))
-	endpoints := []any{}
-	updated := ordjson.NewObject()
-	if state == "" {
-		updated.Set("state", nil)
-	} else {
-		updated.Set("state", state)
-	}
-	session := asString(get(task, "session"))
-	if session == "" {
-		session = asString(get(asObject(get(p.meta, "root")), "session"))
-	}
-
-	// Clears owed from earlier passes come first; whatever still fails stays owed.
-	retried, pending := p.retryPending(rec)
-	endpoints = append(endpoints, retried...)
-
-	workspace := asString(get(task, "workspace"))
-	if workspace != "" && session != "" {
-		endpointRow, record, owed := p.endpoint("workspace", session, workspace, desired, asObject(get(rec, "workspace")), nil)
-		endpoints = append(endpoints, endpointRow)
-		if record != nil {
-			updated.Set("workspace", record)
-		}
-		if owed != nil {
-			pending = append(pending, owed)
-		}
-	} else if old := asObject(get(rec, "workspace")); old != nil {
-		released, ok := p.release("workspace", old)
-		endpoints = append(endpoints, released)
-		if !ok {
-			pending = append(pending, pendingClear("workspace", old))
-		}
-	}
-
-	pane := asString(get(task, "pane"))
-	if pane != "" && session != "" {
-		worktree := asString(get(task, "worktree"))
-		check := func() observation { return p.verifyPane(session, pane, worktree) }
-		endpointRow, record, owed := p.endpoint("pane", session, pane, desired, asObject(get(rec, "pane")), check)
-		endpoints = append(endpoints, endpointRow)
-		if record != nil {
-			updated.Set("pane", record)
-		}
-		if owed != nil {
-			pending = append(pending, owed)
-		}
-	} else if old := asObject(get(rec, "pane")); old != nil {
-		released, ok := p.release("pane", old)
-		endpoints = append(endpoints, released)
-		if !ok {
-			pending = append(pending, pendingClear("pane", old))
-		}
-	}
-	out.Set("endpoints", endpoints)
-	if len(pending) > 0 {
-		updated.Set("pending_clears", pending)
-	}
-	_, hasPane := updated.Get("pane")
-	_, hasWorkspace := updated.Get("workspace")
-	if state == "" && !hasPane && !hasWorkspace && len(pending) == 0 {
-		resources.Delete(row.ID)
-		out.Set("released", true)
-	} else {
-		resources.Set(row.ID, updated)
-	}
-	return out
-}
-
-// release clears what sum wrote on an endpoint a task no longer names. ok is whether the keys are gone; a refused
-// or failed clear reports false so the caller keeps the record for a retry.
-func (p *pass) release(kind string, old *ordjson.Object) (*ordjson.Object, bool) {
-	cleared, ok := p.clear(kind, asString(get(old, "session")), asString(get(old, "id")), recordTokens(old))
-	cleared.Set("kind", kind)
-	cleared.Set("id", get(old, "id"))
-	cleared.Set("outcome", "released")
-	return cleared, ok
-}
-
-// skippedTask is the row for a task the pass budget left unprojected; its record is untouched.
-func skippedTask(taskID string, previous any) *ordjson.Object {
-	out := ordjson.NewObject()
-	out.Set("task", taskID)
-	out.Set("previous", previous)
-	out.Set("endpoints", []any{})
-	out.Set("outcome", "skipped")
-	out.Set("reason", "pass budget exhausted")
-	return out
 }
 
 func inboxToken(snapshot inboxview.Snapshot) string {
@@ -1042,427 +422,356 @@ func rootTokens(snapshot inboxview.Snapshot, active int) map[string]string {
 	return map[string]string{"sum_inbox": inboxToken(snapshot), "sum_tasks": tasks}
 }
 
-func (p *pass) projectRoot(snapshot inboxview.Snapshot, active int) *ordjson.Object {
-	previous := asObject(get(p.meta, "root"))
-	owner, err := p.s.Owner()
-	host, hostErr := p.s.Machine()
-	if err != nil || owner == nil || hostErr != nil || !host.Is(get(owner, "machine")) {
-		row := ordjson.NewObject()
-		row.Set("kind", "pane")
-		row.Set("role", "coordinator")
-		if previous != nil && len(recordTokens(previous)) > 0 {
-			cleared, ok := p.clear("pane", asString(get(previous, "session")), asString(get(previous, "id")), recordTokens(previous))
-			for _, k := range cleared.Keys() {
-				row.Set(k, get(cleared, k))
-			}
-			row.Set("outcome", "cleared")
-			if ok {
-				p.meta.Set("root", nil)
-			}
-			return row
-		}
-		row.Set("outcome", "no-owner")
-		return row
-	}
-	check := func() observation { return p.verifyOwner(owner) }
-	row, record, _ := p.endpoint("pane", asString(get(owner, "session")), asString(get(owner, "pane")), rootTokens(snapshot, active), previous, check)
-	row.Set("role", "coordinator")
-	if record == nil {
-		p.meta.Set("root", nil)
-	} else {
-		p.meta.Set("root", record)
-	}
-	return row
+// Native labels project saved facts. They grant no task authority and supply no
+// receipt. Each mutation revalidates the current binding and public process.
+type pass struct {
+	s     *store.Store
+	meta  *ordjson.Object
+	force bool
 }
 
-// run is one pass: every task in scope is compared with its record and only differences are written; the coordinator
-// summary is always recomputed from the full snapshot.
+func newPass(s *store.Store, meta *ordjson.Object, runtimeRoot string, force bool) *pass {
+	return &pass{s: s, meta: meta, force: force}
+}
+func recordTokens(record *ordjson.Object) map[string]string {
+	out := map[string]string{}
+	if tokens := asObject(get(record, "tokens")); tokens != nil {
+		for _, key := range tokens.Keys() {
+			out[key] = asString(get(tokens, key))
+		}
+	}
+	return out
+}
+func (p *pass) project(ctx context.Context, endpoint store.Endpoint, tokens map[string]string, prior *ordjson.Object) *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("endpoint", endpoint.Object())
+	fail := func(err error) *ordjson.Object {
+		row.Set("outcome", "failed")
+		row.Set("reason", err.Error())
+		return row
+	}
+	if endpoint.Validate() != nil {
+		return fail(fmt.Errorf("no current native endpoint"))
+	}
+	host, err := p.s.Machine()
+	if err != nil {
+		return fail(err)
+	}
+	if !host.Is(endpoint.Machine) {
+		return fail(fmt.Errorf("remote labels are unsupported"))
+	}
+	labels := map[string]string{}
+	for key, value := range tokens {
+		labels["sum."+strings.TrimPrefix(key, "sum_")] = value
+	}
+	if prior != nil && !store.EndpointFromContext(asObject(get(prior, "endpoint"))).Native().SameAuthority(endpoint.Native()) {
+		if err := p.clearNative(ctx, prior); err != nil {
+			return fail(err)
+		}
+	}
+	// A saved identical projection performs no runtime calls.
+	if !p.force && prior != nil && store.EndpointFromContext(asObject(get(prior, "endpoint"))).Native().SameAuthority(endpoint.Native()) && reflect.DeepEqual(recordTokens(prior), labels) {
+		row.Set("outcome", "unchanged")
+		return row
+	}
+	release, err := returns.LockRecipient(p.s, ctx, endpoint.Object())
+	if err != nil {
+		return fail(err)
+	}
+	defer release()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID, Timeout: callTimeout}
+	terminal, err := client.Get(ctx, endpoint.Address)
+	if err != nil {
+		return fail(err)
+	}
+	// Native observation for projection may be busy; input eligibility is irrelevant.
+	recipient := &returns.NativeRecipient{Endpoint: endpoint, Terminal: terminal}
+	unlock, err := p.s.Lock()
+	if err != nil {
+		return fail(err)
+	}
+	err = recipient.Check(p.s)
+	unlock()
+	if err != nil {
+		return fail(err)
+	}
+	sets := map[string]string{}
+	for key, value := range labels {
+		if terminal.Labels[key] != value {
+			sets[key] = value
+		}
+	}
+	if prior != nil {
+		for key := range recordTokens(prior) {
+			if _, ok := labels[key]; !ok {
+				sets[key] = ""
+			}
+		}
+	}
+	if len(sets) > 0 {
+		if _, err = client.Label(ctx, endpoint.Address, sets); err != nil {
+			return fail(err)
+		}
+	}
+	record := ordjson.NewObject()
+	record.Set("endpoint", endpoint.Object())
+	binding, readErr := p.s.Registration(endpoint)
+	if endpoint.Role == "coordinator" {
+		binding, readErr = p.s.Owner()
+	}
+	if readErr != nil {
+		return fail(readErr)
+	}
+	record.Set("incarnation", get(binding, "incarnation"))
+	record.Set("native_receipt", get(binding, "native_receipt"))
+
+	record.Set("tokens", func() any { o, _ := ordjson.FromValue(labels); return o }())
+	row.Set("record", record)
+	row.Set("outcome", "written")
+	return row
+}
 func (p *pass) run(scope []string, reason string) *ordjson.Object {
-	// degraded reflects the latest pass only; last_error and the bounded errors log keep the history.
-	p.meta.Set("degraded", nil)
 	ctx, cancel := context.WithTimeout(context.Background(), passBudget)
 	defer cancel()
-	p.ctx = ctx
 	snapshot := inboxview.Read(p.s)
-	gapped := map[string]bool{}
-	for _, gap := range snapshot.Gaps {
-		gapped[gap.TaskID] = true
-	}
-	var inScope map[string]bool
-	if scope != nil {
-		inScope = map[string]bool{}
-		for _, id := range scope {
-			inScope[id] = true
-		}
+	tasks := make([]*ordjson.Object, 0, len(snapshot.Tasks))
+	for _, row := range snapshot.Tasks {
+		tasks = append(tasks, row.Record)
 	}
 	resources := asObject(get(p.meta, "resources"))
 	if resources == nil {
 		resources = ordjson.NewObject()
 		p.meta.Set("resources", resources)
 	}
-	host, hostErr := p.s.Machine()
+	selected := map[string]bool{}
+	for _, id := range scope {
+		selected[id] = true
+	}
 	rows := []any{}
-	seen := map[string]bool{}
 	active := 0
-	for _, row := range snapshot.Tasks {
-		seen[row.ID] = true
-		archived := asString(get(row.Record, "status")) == "archived"
-		if !archived {
+	for _, task := range tasks {
+		id := asString(get(task, "id"))
+		if get(task, "status") != "archived" {
 			active++
 		}
-		if inScope != nil && !inScope[row.ID] {
+		if scope != nil && !selected[id] {
 			continue
 		}
-		if recorded := get(row.Record, "machine"); recorded != nil && (hostErr != nil || !host.Is(recorded)) {
+		if ctx.Err() != nil {
+			row := ordjson.NewObject()
+			row.Set("task", id)
+			row.Set("outcome", "skipped-budget")
+			rows = append(rows, row)
 			continue
 		}
-		if p.exhausted() {
-			p.skipped++
-			rows = append(rows, skippedTask(row.ID, get(asObject(get(resources, row.ID)), "state")))
-			continue
-		}
-		rows = append(rows, p.projectTask(row, gapped[row.ID], archived, resources))
-	}
-	for _, taskID := range resources.Keys() {
-		if seen[taskID] || gapped[taskID] {
-			continue
-		}
-		// A task directory removed by hand: release what sum wrote, never anything else.
-		gone := asObject(get(resources, taskID))
-		if p.exhausted() {
-			p.skipped++
-			rows = append(rows, skippedTask(taskID, get(gone, "state")))
-			continue
-		}
-		out := ordjson.NewObject()
-		out.Set("task", taskID)
-		out.Set("state", nil)
-		out.Set("previous", get(gone, "state"))
-		retried, pending := p.retryPending(gone)
-		endpoints := append([]any{}, retried...)
-		for _, kind := range []string{"pane", "workspace"} {
-			if old := asObject(get(gone, kind)); old != nil {
-				released, ok := p.release(kind, old)
-				endpoints = append(endpoints, released)
-				if !ok {
-					pending = append(pending, pendingClear(kind, old))
-				}
+		taskRow := inboxview.Task{ID: id, Record: task}
+		for _, candidate := range snapshot.Tasks {
+			if candidate.ID == id {
+				taskRow = candidate
+				break
 			}
 		}
-		out.Set("endpoints", endpoints)
-		if len(pending) == 0 {
-			out.Set("released", true)
-			resources.Delete(taskID)
-		} else {
-			// The record shrinks to what is still owed, so the next pass retries exactly those clears.
-			owed := ordjson.NewObject()
-			owed.Set("state", nil)
-			owed.Set("pending_clears", pending)
-			resources.Set(taskID, owed)
-			out.Set("released", false)
+		gapped := false
+		for _, gap := range snapshot.Gaps {
+			if gap.TaskID == id {
+				gapped = true
+			}
 		}
-		rows = append(rows, out)
+		state := inboxview.TaskState(taskRow, gapped)
+		tokens := p.taskTokens(task, state)
+		endpoint := store.EndpointFromContext(returns.ReturnRoute(task, "worker"))
+		row := p.project(ctx, endpoint, tokens, asObject(get(resources, id)))
+		row.Set("task", id)
+		rows = append(rows, row)
+		if record := asObject(get(row, "record")); record != nil {
+			resources.Set(id, record)
+		}
 	}
+	owner, err := p.s.Owner()
 	var root *ordjson.Object
-	if p.exhausted() {
-		root = ordjson.NewObject()
-		root.Set("kind", "pane")
-		root.Set("role", "coordinator")
-		root.Set("outcome", "skipped")
-		root.Set("reason", "pass budget exhausted")
-	} else {
-		root = p.projectRoot(snapshot, active)
+	if err == nil && owner != nil {
+		root = p.project(ctx, store.EndpointFromContext(owner), rootTokens(snapshot, active), asObject(get(p.meta, "root")))
+		if rec := asObject(get(root, "record")); rec != nil {
+			p.meta.Set("root", rec)
+		}
 	}
-	p.bump("passes", 1)
-	last := ordjson.NewObject()
-	last.Set("at", store.Now())
-	last.Set("reason", reason)
-	last.Set("tasks", jsonInt(len(rows)))
-	last.Set("written", jsonInt(p.written))
-	last.Set("skipped", jsonInt(p.skipped))
-	last.Set("herdr_calls", jsonInt(p.calls))
-	p.meta.Set("last_pass", last)
-	ambiguous := p.ambiguous
-	if ambiguous == nil {
-		ambiguous = []any{}
-	}
-	p.meta.Set("ambiguous", ambiguous)
-
 	result := ordjson.NewObject()
-	result.Set("enabled", true)
 	result.Set("tasks", rows)
 	result.Set("root", root)
-	result.Set("forgotten", []any{})
-	result.Set("ambiguous", ambiguous)
-	result.Set("herdr_calls", jsonInt(p.calls))
-	result.Set("degraded", get(p.meta, "degraded"))
-	result.Set("note", note+" Herdr keeps tokens in memory: after a Herdr restart the sidebar is empty while records say written; `metadata sync --force` rewrites every recorded endpoint.")
+	result.Set("note", note)
+	p.meta.Set("last_pass", store.Now())
 	return result
 }
-
-func newPass(s *store.Store, meta *ordjson.Object, herdrPath string, force bool) *pass {
-	return &pass{s: s, meta: meta, herdrPath: herdrPath, source: asString(get(meta, "source")), force: force}
-}
-
 func degradedResult(enabled bool, reason string) *ordjson.Object {
-	result := ordjson.NewObject()
-	result.Set("enabled", enabled)
-	result.Set("degraded", true)
-	result.Set("reason", truncate(reason, 300))
-	return result
+	row := ordjson.NewObject()
+	row.Set("enabled", enabled)
+	row.Set("degraded", true)
+	row.Set("reason", reason)
+	return row
 }
-
-// After is the post-commit projection: after a successful domain write or native event, project the tasks it touched
-// (nil: every task) and the coordinator summary. It never fails the caller and needs no coordinator authority: it
-// writes display tokens only to endpoints this installation already recorded, in the recorded coordinator's session.
-// A disabled projection returns without reading Herdr or writing anything.
-func After(s *store.Store, runtimeRoot string, tasks []string, reason string) (result *ordjson.Object) {
-	defer func() {
-		if r := recover(); r != nil {
-			result = degradedResult(true, fmt.Sprintf("projection panicked: %v", r))
-		}
-	}()
+func After(s *store.Store, runtimeRoot string, tasks []string, reason string) *ordjson.Object {
+	_ = returns.MarkDirty(s)
 	meta, err := ReadMetadata(s)
 	if err != nil {
-		return degradedResult(false, "metadata state unreadable: "+err.Error())
+		return degradedResult(false, err.Error())
 	}
 	if !truthy(get(meta, "enabled")) {
-		result := ordjson.NewObject()
-		result.Set("enabled", false)
-		result.Set("skipped", true)
-		return result
+		row := ordjson.NewObject()
+		row.Set("enabled", false)
+		return row
 	}
-	unlock, err := lock(s)
+	release, err := lock(s)
 	if err != nil {
 		return degradedResult(true, err.Error())
 	}
-	defer unlock()
+	defer release()
 	meta, err = ReadMetadata(s)
 	if err != nil {
-		return degradedResult(false, "metadata state unreadable: "+err.Error())
-	}
-	if !truthy(get(meta, "enabled")) {
-		result := ordjson.NewObject()
-		result.Set("enabled", false)
-		result.Set("skipped", true)
-		return result
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	p := newPass(s, meta, herdrPath, false)
-	if err != nil {
-		p.degrade("projection pass failed: " + err.Error())
-		p.recordError("sync", err.Error(), "", "")
-		_ = writeMetadata(s, meta)
 		return degradedResult(true, err.Error())
 	}
-	result = p.run(tasks, reason)
-	if writeErr := writeMetadata(s, meta); writeErr != nil {
-		return degradedResult(true, "metadata state not saved: "+writeErr.Error())
+	result := newPass(s, meta, runtimeRoot, false).run(tasks, reason)
+	if err = writeMetadata(s, meta); err != nil {
+		return degradedResult(true, err.Error())
 	}
 	return result
 }
-
 func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot string, notify bool) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
-	source, err := Source(s)
+	release, err := lock(s)
 	if err != nil {
 		return nil, err
 	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return nil, err
-	}
-	session := asString(get(ctx, "session"))
-	caps := probeCapabilities(herdrPath, session)
-	if !supportsTokens(caps) {
-		reason := asString(get(caps, "error"))
-		if reason == "" {
-			reason = "the schema lacks PaneReportMetadataParams.tokens and WorkspaceReportMetadataParams.tokens"
-		}
-		return nil, fmt.Errorf("The installed Herdr does not expose report-metadata tokens (%s); nothing was enabled or written.", reason)
-	}
-	unlock, err := lock(s)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
+	defer release()
 	meta, err := ReadMetadata(s)
 	if err != nil {
 		return nil, err
 	}
-	from := ordjson.NewObject()
-	from.Set("session", session)
-	from.Set("pane", get(ctx, "pane"))
 	meta.Set("enabled", true)
 	meta.Set("notify", notify)
+	source, err := Source(s)
+	if err != nil {
+		return nil, err
+	}
 	meta.Set("source", source)
+	caps := ordjson.NewObject()
+	caps.Set("native_labels", true)
 	meta.Set("capabilities", caps)
-	meta.Set("degraded", nil)
-	meta.Set("enabled_at", store.Now())
-	meta.Set("enabled_from", from)
-	if err := writeMetadata(s, meta); err != nil {
-		return nil, err
-	}
-	p := newPass(s, meta, herdrPath, false)
-	p.calls++ // the probe above
-	sync := p.run(nil, "metadata enabled; projecting saved task state")
-	if err := writeMetadata(s, meta); err != nil {
-		return nil, err
-	}
-	tokens := ordjson.NewObject()
-	tokens.Set("task", toAny(TaskTokens))
-	tokens.Set("coordinator", toAny(RootTokens))
-	result := ordjson.NewObject()
-	result.Set("enabled", true)
-	result.Set("notify", notify)
-	result.Set("source", source)
-	result.Set("capabilities", caps)
-	result.Set("tokens", tokens)
-	result.Set("sync", sync)
-	result.Set("note", note+" `--notify` records a preference only; transition notification delivery is not implemented.")
-	return result, nil
+	result := newPass(s, meta, runtimeRoot, false).run(nil, "enabled")
+	return result, writeMetadata(s, meta)
 }
-
-// Sync is an explicit full pass from the coordinator pane: re-probe capabilities, then compare every task. force
-// treats every recorded token as unknown, so each recorded endpoint is written again (after a Herdr restart).
 func Sync(s *store.Store, ctx *ordjson.Object, runtimeRoot string, force bool) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
+	release, err := lock(s)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	meta, err := ReadMetadata(s)
 	if err != nil {
 		return nil, err
 	}
 	if !truthy(get(meta, "enabled")) {
-		result := ordjson.NewObject()
-		result.Set("enabled", false)
-		result.Set("skipped", true)
-		result.Set("reason", "native metadata projection is not enabled; `metadata enable` starts it")
-		return result, nil
+		return nil, fmt.Errorf("metadata projection is disabled")
 	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return nil, err
-	}
-	unlock, err := lock(s)
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	if meta, err = ReadMetadata(s); err != nil {
-		return nil, err
-	}
-	caps := probeCapabilities(herdrPath, asString(get(ctx, "session")))
-	meta.Set("capabilities", caps)
-	p := newPass(s, meta, herdrPath, force)
-	p.calls++ // the probe above
-	result := p.run(nil, "metadata sync")
-	result.Set("capabilities", caps)
-	result.Set("forced", force)
-	if err := writeMetadata(s, meta); err != nil {
-		return nil, err
-	}
-	return result, nil
+	result := newPass(s, meta, runtimeRoot, force).run(nil, "sync")
+	return result, writeMetadata(s, meta)
 }
-
-// Disable clears exactly the keys sum recorded on each endpoint, then stops projecting. A refused or failed clear
-// stays in the record and in the result, so a later disable or sync can try again.
-func Disable(s *store.Store, ctx *ordjson.Object, runtimeRoot string) (*ordjson.Object, error) {
-	if err := app.RequireCoordinator(s, ctx); err != nil {
+func Disable(s *store.Store, caller *ordjson.Object, runtimeRoot string) (*ordjson.Object, error) {
+	if err := app.RequireCoordinator(s, caller); err != nil {
 		return nil, err
 	}
-	unlock, err := lock(s)
+	release, err := lock(s)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
+	defer release()
 	meta, err := ReadMetadata(s)
 	if err != nil {
 		return nil, err
 	}
-	herdrPath, findErr := toolpath.Find(runtimeRoot, "herdr")
-	p := newPass(s, meta, herdrPath, false)
-	cleared := []any{}
-	clearOne := func(kind string, rec *ordjson.Object) (*ordjson.Object, bool) {
-		if findErr != nil {
-			row := ordjson.NewObject()
-			row.Set("cleared", []any{})
-			row.Set("failed", findErr.Error())
-			p.recordError("clear", findErr.Error(), kind, asString(get(rec, "id")))
-			return row, false
-		}
-		return p.clear(kind, asString(get(rec, "session")), asString(get(rec, "id")), recordTokens(rec))
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), passBudget)
+	defer cancel()
+	p := newPass(s, meta, runtimeRoot, false)
 	resources := asObject(get(meta, "resources"))
-	if resources == nil {
-		resources = ordjson.NewObject()
+	failures := []any{}
+	if resources != nil {
+		for _, id := range resources.Keys() {
+			prior := asObject(get(resources, id))
+			if err = p.clearNative(ctx, prior); err != nil {
+				row := ordjson.NewObject()
+				row.Set("task", id)
+				row.Set("reason", err.Error())
+				failures = append(failures, row)
+			} else {
+				resources.Delete(id)
+			}
+		}
 	}
-	for _, taskID := range resources.Keys() {
-		rec := asObject(get(resources, taskID))
-		for _, kind := range []string{"pane", "workspace"} {
-			endpoint := asObject(get(rec, kind))
-			if endpoint == nil {
-				continue
-			}
-			row, ok := clearOne(kind, endpoint)
-			row.Set("task", taskID)
-			row.Set("kind", kind)
-			row.Set("id", get(endpoint, "id"))
-			cleared = append(cleared, row)
-			if ok {
-				rec.Delete(kind)
-			}
-		}
-		var stillPending []any
-		for _, item := range asList(get(rec, "pending_clears")) {
-			old := asObject(item)
-			if old == nil {
-				continue
-			}
-			kind := asString(get(old, "kind"))
-			row, ok := clearOne(kind, old)
-			row.Set("task", taskID)
-			row.Set("kind", kind)
-			row.Set("id", get(old, "id"))
-			row.Set("retried", true)
-			cleared = append(cleared, row)
-			if !ok {
-				stillPending = append(stillPending, old)
-			}
-		}
-		if len(stillPending) > 0 {
-			rec.Set("pending_clears", stillPending)
+	if prior := asObject(get(meta, "root")); prior != nil {
+		if err = p.clearNative(ctx, prior); err != nil {
+			row := ordjson.NewObject()
+			row.Set("role", "coordinator")
+			row.Set("reason", err.Error())
+			failures = append(failures, row)
 		} else {
-			rec.Delete("pending_clears")
-		}
-		if _, hasPane := rec.Get("pane"); !hasPane {
-			if _, hasWorkspace := rec.Get("workspace"); !hasWorkspace && len(stillPending) == 0 {
-				resources.Delete(taskID)
-			}
-		}
-	}
-	meta.Set("resources", resources)
-	if root := asObject(get(meta, "root")); root != nil {
-		row, ok := clearOne("pane", root)
-		row.Set("role", "coordinator")
-		row.Set("kind", "pane")
-		row.Set("id", get(root, "id"))
-		cleared = append(cleared, row)
-		if ok {
 			meta.Set("root", nil)
 		}
 	}
 	meta.Set("enabled", false)
 	meta.Set("disabled_at", store.Now())
-	if err := writeMetadata(s, meta); err != nil {
-		return nil, err
+	meta.Set("pending_clears", failures)
+	return meta, writeMetadata(s, meta)
+}
+
+func (p *pass) clearNative(ctx context.Context, prior *ordjson.Object) error {
+	if prior == nil {
+		return nil
 	}
-	result := ordjson.NewObject()
-	result.Set("enabled", false)
-	result.Set("cleared", cleared)
-	result.Set("herdr_calls", jsonInt(p.calls))
-	result.Set("note", "Native metadata projection is off and sum's recorded keys were cleared where the endpoint still exists; a `refused` or `failed` row keeps its record for a later attempt. The user's labels, rows, theme, and every other reporter's tokens were never touched.")
-	return result, nil
+	endpoint := store.EndpointFromContext(asObject(get(prior, "endpoint")))
+	if err := endpoint.Validate(); err != nil {
+		return err
+	}
+	release, err := returns.LockRecipient(p.s, ctx, endpoint.Object())
+	if err != nil {
+		return err
+	}
+	defer release()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID, Timeout: callTimeout}
+	terminal, err := client.Get(ctx, endpoint.Address)
+	if err != nil {
+		return err
+	}
+	if terminal.State != "live" {
+		return nil
+	}
+	var receipt incarnation.NativeReceipt
+	raw, err := ordjson.MarshalCompact(get(prior, "native_receipt"))
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal(raw, &receipt); err != nil {
+		return err
+	}
+	verdict := incarnation.JudgeNative(get(prior, "incarnation"), endpoint.Native(), terminal, &receipt)
+	if !verdict.Verified {
+		return fmt.Errorf("old display endpoint is no longer the recorded process: %s", verdict.Reason)
+	}
+	clears := map[string]string{}
+	for key, value := range recordTokens(prior) {
+		if terminal.Labels[key] == value {
+			clears[key] = ""
+		}
+	}
+	if len(clears) == 0 {
+		return nil
+	}
+	if err = p.s.CheckWritable(); err != nil {
+		return err
+	}
+	_, err = client.Label(ctx, endpoint.Address, clears)
+	return err
 }

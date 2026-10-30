@@ -423,6 +423,9 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 			templates, submits := f.nativeTemplatesLocked()
 			for _, template := range templates {
 				if template.Name == args.Argv[0] {
+					if template.Error != nil {
+						return nil, "config", nil
+					}
 					name := template.Name
 					value.Template = &name
 					value.Argv = []string{"sh", "-c", template.Command}

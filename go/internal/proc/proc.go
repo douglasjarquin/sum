@@ -352,13 +352,13 @@ func PIDRunning(pid int) (bool, error) {
 	return false, err
 }
 
-// ScrubbedEnv is the environment for a command that runs candidate-controlled code: this pane's Herdr identity
-// and sum state home are removed so the candidate's own tooling cannot reach the installation through them.
+// ScrubbedEnv removes inherited runtime and Sum authority from unrelated commands.
+// Managed launches supply their explicit role environment separately.
 func ScrubbedEnv() []string {
 	var env []string
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(key, "HERDR_") || key == "SUM_HOME" || key == "SUM_SESSION" || key == "SUM_INSTALL_ROOT" {
+		if strings.HasPrefix(key, "HERDR_") || strings.HasPrefix(key, "HC_") || strings.HasPrefix(key, "SUM_") {
 			continue
 		}
 		env = append(env, entry)

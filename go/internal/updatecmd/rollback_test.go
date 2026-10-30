@@ -3,6 +3,7 @@ package updatecmd
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/contract"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,7 @@ func TestRollback_plainSelectsRecordedPreviousNotCheckout(t *testing.T) {
 	lab := newRollbackLab(t)
 	selectWorkingRelease(t, lab, lab.oldSHA)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
-	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true); err != nil {
 		t.Fatalf("apply B: %v", err)
 	}
 	if git(t, lab.root, "rev-parse", "HEAD") != lab.newSHA {
@@ -24,7 +25,7 @@ func TestRollback_plainSelectsRecordedPreviousNotCheckout(t *testing.T) {
 	}
 	taskBefore := readTaskBrief(t, lab)
 
-	view, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity)
+	view, err := Rollback(lab.store, lab.ctx, "")
 	if err != nil {
 		t.Fatalf("rollback: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestRollback_plainSelectsRecordedPreviousNotCheckout(t *testing.T) {
 
 func TestRollback_missingHistoryRefusesWithoutCheckoutFallback(t *testing.T) {
 	lab := newRollbackLab(t)
-	_, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity)
+	_, err := Rollback(lab.store, lab.ctx, "")
 	if err == nil {
 		t.Fatal("plain rollback with no previous known-good succeeded")
 	}
@@ -67,7 +68,7 @@ func TestRollback_stagedUnapprovedReleaseRefused(t *testing.T) {
 	buildCompatibleRelease(t, filepath.Join(lab.root, ".local", "releases"), unmerged)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", unmerged), workingHelper(""))
 
-	_, err := Rollback(lab.store, lab.ctx, unmerged, RefusePreIdentity)
+	_, err := Rollback(lab.store, lab.ctx, unmerged)
 	if err == nil {
 		t.Fatal("staged-but-unapproved rollback succeeded")
 	}
@@ -83,11 +84,11 @@ func TestRollback_approvedExplicitReleaseSucceeds(t *testing.T) {
 	lab := newRollbackLab(t)
 	selectWorkingRelease(t, lab, lab.oldSHA)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
-	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true); err != nil {
 		t.Fatalf("apply B: %v", err)
 	}
 
-	view, err := Rollback(lab.store, lab.ctx, lab.oldSHA, RefusePreIdentity)
+	view, err := Rollback(lab.store, lab.ctx, lab.oldSHA)
 	if err != nil {
 		t.Fatalf("rollback --to A: %v", err)
 	}
@@ -102,7 +103,7 @@ func TestRollback_ambiguousMissingIncompleteIncompatibleRefused(t *testing.T) {
 	previous := currentSHA(t, lab.root)
 
 	t.Run("missing", func(t *testing.T) {
-		_, err := Rollback(lab.store, lab.ctx, "abcdef0", RefusePreIdentity)
+		_, err := Rollback(lab.store, lab.ctx, "abcdef0")
 		if err == nil {
 			t.Fatal("missing SHA succeeded")
 		}
@@ -121,7 +122,7 @@ func TestRollback_ambiguousMissingIncompleteIncompatibleRefused(t *testing.T) {
 		if err := os.MkdirAll(b, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		_, err := Rollback(lab.store, lab.ctx, "deadbeef", RefusePreIdentity)
+		_, err := Rollback(lab.store, lab.ctx, "deadbeef")
 		if err == nil {
 			t.Fatal("ambiguous SHA succeeded")
 		}
@@ -139,7 +140,7 @@ func TestRollback_ambiguousMissingIncompleteIncompatibleRefused(t *testing.T) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		_, err := Rollback(lab.store, lab.ctx, sha, RefusePreIdentity)
+		_, err := Rollback(lab.store, lab.ctx, sha)
 		if err == nil {
 			t.Fatal("incomplete release succeeded")
 		}
@@ -152,7 +153,7 @@ func TestRollback_ambiguousMissingIncompleteIncompatibleRefused(t *testing.T) {
 		next := stageNextRelease(t, lab)
 		plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 		rewriteReleaseSupports(t, filepath.Join(lab.root, ".local", "releases", next), []int{99}, []int{99})
-		_, err := Rollback(lab.store, lab.ctx, next, RefusePreIdentity)
+		_, err := Rollback(lab.store, lab.ctx, next)
 		if err == nil {
 			t.Fatal("incompatible release succeeded")
 		}
@@ -175,7 +176,7 @@ func TestRollback_dirtyCheckoutRefused(t *testing.T) {
 			}
 			dirtyBefore := git(t, lab.root, "status", "--porcelain")
 
-			_, err := Rollback(lab.store, lab.ctx, "checkout", RefusePreIdentity)
+			_, err := Rollback(lab.store, lab.ctx, "checkout")
 			if err == nil {
 				t.Fatal("dirty checkout rollback succeeded")
 			}
@@ -201,7 +202,7 @@ func TestRollback_cleanUnapprovedCheckoutRefused(t *testing.T) {
 	git(t, lab.root, "commit", "-m", "clean unapproved checkout")
 	unapproved := git(t, lab.root, "rev-parse", "HEAD")
 
-	_, err := Rollback(lab.store, lab.ctx, "checkout", RefusePreIdentity)
+	_, err := Rollback(lab.store, lab.ctx, "checkout")
 	if err == nil {
 		t.Fatal("clean unapproved checkout rollback succeeded")
 	}
@@ -220,7 +221,7 @@ func TestRollback_cleanApprovedCheckoutUsesTargetEvidence(t *testing.T) {
 		t.Fatalf("HEAD = %s, want approved %s", git(t, lab.root, "rev-parse", "HEAD"), lab.oldSHA)
 	}
 
-	view, err := Rollback(lab.store, lab.ctx, "checkout", RefusePreIdentity)
+	view, err := Rollback(lab.store, lab.ctx, "checkout")
 	if err != nil {
 		t.Fatalf("approved checkout rollback: %v", err)
 	}
@@ -247,7 +248,7 @@ func TestCompatibility_absentManifestIsNotSavedByCompiledContract(t *testing.T) 
 		t.Fatal(err)
 	}
 	current := DefaultRuntime(lab.root)
-	compat, err := Compatibility(lab.store, lab.root, lab.root, current, RefusePreIdentity)
+	compat, err := Compatibility(lab.store, lab.root, lab.root, current)
 	if err != nil {
 		t.Fatalf("compatibility: %v", err)
 	}
@@ -265,7 +266,7 @@ func TestRollback_failedActivationRestoresWithoutFalseSuccess(t *testing.T) {
 	lab := newRollbackLab(t)
 	selectWorkingRelease(t, lab, lab.oldSHA)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
-	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true); err != nil {
 		t.Fatalf("apply B: %v", err)
 	}
 	previous := currentSHA(t, lab.root)
@@ -276,7 +277,7 @@ func TestRollback_failedActivationRestoresWithoutFalseSuccess(t *testing.T) {
 	}
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.oldSHA), "#!/bin/sh\necho broken-rollback-target >&2\nexit 1\n")
 
-	_, err := Rollback(lab.store, lab.ctx, "", RefusePreIdentity)
+	_, err := Rollback(lab.store, lab.ctx, "")
 	if err == nil {
 		t.Fatal("rollback of a failing target succeeded")
 	}
@@ -317,6 +318,12 @@ func rewriteReleaseSupports(t *testing.T, dir string, stateSchema, briefSchema [
 		brief = append(brief, n)
 	}
 	doc["supports"] = map[string]any{"state_schema": state, "brief_schema": brief}
+	offered := contract.BuildRelease()
+	offered.Supports.StateSchema = stateSchema
+	offered.Supports.BriefSchema = briefSchema
+	capability, _ := json.Marshal(offered)
+	plantNativeHelper(t, dir, "#!/bin/sh\nprintf '%s\\n' '"+string(capability)+"'\n")
+
 	encoded, err := json.Marshal(doc)
 	if err != nil {
 		t.Fatal(err)

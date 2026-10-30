@@ -1,5 +1,5 @@
-// Package machine names the host sum runs on. Herdr pane IDs are unique only
-// within one Herdr server, so every recorded endpoint carries a machine
+// Package machine names the host sum runs on. Terminal addresses are unique only
+// within one HC core, so every recorded endpoint carries a machine
 // component, and that component must stay the same when the host is renamed
 // and differ between hosts.
 //
@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
@@ -300,20 +301,24 @@ func (m Identity) Same(a, b any) bool {
 	return m.Canonical(a) == m.Canonical(b)
 }
 
-// SameEndpoint reports whether two recorded endpoints name the same pane: the
-// same machine, Herdr session, and pane ID.
+// SameEndpoint compares native binding authority. Routing names and socket paths
+// can change without adopting another terminal, role, or attempt.
 func (m Identity) SameEndpoint(a, b *ordjson.Object) bool {
-	if a == nil || b == nil {
-		return false
+	decode := func(o *ordjson.Object) (hcclient.Endpoint, bool) {
+		var e hcclient.Endpoint
+		if o == nil {
+			return e, false
+		}
+		raw, err := ordjson.MarshalCompact(o)
+		if err != nil || json.Unmarshal(raw, &e) != nil || e.Validate() != nil || e.Machine == "" {
+			return e, false
+		}
+		e.Machine = m.Canonical(e.Machine)
+		return e, true
 	}
-	field := func(o *ordjson.Object, key string) string {
-		v, _ := o.Get(key)
-		s, _ := v.(string)
-		return s
-	}
-	return m.Same(field(a, "machine"), field(b, "machine")) &&
-		field(a, "session") == field(b, "session") &&
-		field(a, "pane") == field(b, "pane")
+	left, lok := decode(a)
+	right, rok := decode(b)
+	return lok && rok && left.SameAuthority(right)
 }
 
 // Legacy lists the hostname values that name this host in records written
