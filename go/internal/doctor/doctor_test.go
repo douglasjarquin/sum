@@ -1,6 +1,11 @@
 package doctor
 
 import (
+	"context"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -173,5 +178,116 @@ func TestClockPin_warnsThatAnUnparseablePinIsIgnored(t *testing.T) {
 	}
 	if at, _ := row.Get("pinned_at"); at != nil {
 		t.Fatalf("pinned_at = %v, want nil because an unparseable value never takes effect", at)
+	}
+}
+
+func clearDoctorRuntimeEnv(t *testing.T) {
+	t.Helper()
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "HC_") || strings.HasPrefix(key, "HERDR_") || strings.HasPrefix(key, "SUM_") {
+			t.Setenv(key, "")
+		}
+	}
+	t.Setenv("PATH", t.TempDir())
+}
+func doctorRow(t *testing.T, report *ordjson.Object, name string) *ordjson.Object {
+	t.Helper()
+	raw, _ := report.Get("checks")
+	for _, v := range raw.([]any) {
+		row := v.(*ordjson.Object)
+		if tool, _ := row.Get("tool"); tool == name {
+			return row
+		}
+	}
+	t.Fatalf("missing check %s", name)
+	return nil
+}
+func doctorStore(t *testing.T) *store.Store {
+	t.Helper()
+	s, err := store.Open(filepath.Join(t.TempDir(), ".sum"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+func TestDoctorSeparatesExecutableFromRuntimeAndHarnessQualification(t *testing.T) {
+	clearDoctorRuntimeEnv(t)
+	runtime := t.TempDir()
+	s := doctorStore(t)
+	for _, name := range []string{"hc", "codex"} {
+		path := filepath.Join(runtime, ".local/bin", name)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 91\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := Doctor(runtime, runtime, s)
+	raw, _ := report.Get("checks")
+	for _, v := range raw.([]any) {
+		row := v.(*ordjson.Object)
+		if tool, _ := row.Get("tool"); tool == "mesh" {
+			t.Fatal("obsolete Mesh runtime requirement")
+		}
+	}
+	if ok, _ := doctorRow(t, report, "hc").Get("ok"); ok != true {
+		t.Fatal("staged executable discovery failed")
+	}
+	artifact := doctorRow(t, report, "hc-runtime")
+	if qualified, _ := artifact.Get("qualified"); qualified != false {
+		t.Fatal("unmatched executable qualified")
+	}
+	if available, _ := doctorRow(t, report, "hc-core").Get("available"); available != false {
+		t.Fatal("missing core guessed available")
+	}
+	if qualification, _ := doctorRow(t, report, "harness").Get("qualification"); qualification != "unknown" {
+		t.Fatal("installed executable guessed ready")
+	}
+}
+func TestDoctorObservesExistingCoreWithoutInputOrStart(t *testing.T) {
+	clearDoctorRuntimeEnv(t)
+	runtime := t.TempDir()
+	s := doctorStore(t)
+	f := hctest.New(t)
+	client := f.Client()
+	terminal, err := client.Run(context.Background(), hcclient.RunParams{Argv: []string{"fixture"}, Cwd: runtime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HC_SOCKET", f.Socket)
+	t.Setenv("SUM_CORE_ID", f.CoreID)
+	t.Setenv("HC_TERMINAL_ID", terminal.Address)
+	t.Setenv("SUM_SESSION", "sum-test-doctor")
+	before := len(f.Calls())
+	report := Doctor(runtime, runtime, s)
+	if available, _ := doctorRow(t, report, "hc-core").Get("available"); available != true {
+		t.Fatal("existing attested core unavailable")
+	}
+	for _, call := range f.Calls()[before:] {
+		switch call.Method {
+		case "hello", "terminal.get":
+		default:
+			t.Fatalf("doctor performed %s", call.Method)
+		}
+	}
+}
+
+func TestDoctorMatchedRuntimeDoesNotImplyRunningCore(t *testing.T) {
+	clearDoctorRuntimeEnv(t)
+	t.Setenv("PATH", "/usr/bin:/bin")
+	runtime := t.TempDir()
+	s := doctorStore(t)
+	hctest.InstallRuntime(t, runtime)
+	report := Doctor(runtime, runtime, s)
+	if qualified, _ := doctorRow(t, report, "hc-runtime").Get("qualified"); qualified != true {
+		t.Fatal("matched runtime contract not verified")
+	}
+	if available, _ := doctorRow(t, report, "hc-core").Get("available"); available != false {
+		t.Fatal("staged binary guessed to have started a core")
 	}
 }

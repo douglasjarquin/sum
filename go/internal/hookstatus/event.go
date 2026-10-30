@@ -18,6 +18,9 @@ func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath st
 // Reconcile drains budget-deferred recipients fairly, without waiting for
 // another native event. Submitted and uncertain attempts are never replayed.
 func Reconcile(ctx context.Context, s *store.Store, endpoint store.Endpoint, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
+	if err := reconcileAttention(ctx, s, endpoint); err != nil {
+		return nil, err
+	}
 	if _, err := refreshcmd.ReconcileCoordinator(s, endpoint, runtimeRoot, sumctlPath); err != nil {
 		return nil, err
 	}

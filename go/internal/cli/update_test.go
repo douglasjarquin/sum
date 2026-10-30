@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +37,7 @@ func TestUpdateUnknownFlagsAreUsageErrorsBeforeApply(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeUpdateEnv(t)
 			home, before := updateUsageLab(t)
 			stdout, stderr, err := runUpdateCLI(t, home, tc.args...)
 			if err == nil {
@@ -56,7 +59,7 @@ func TestUpdateCommands(t *testing.T) {
 	cases := []struct {
 		name      string
 		args      []string
-		herdr     bool
+		hc        bool
 		usage     bool
 		unknown   bool
 		domainErr string
@@ -66,14 +69,14 @@ func TestUpdateCommands(t *testing.T) {
 		{name: "valid check --ref --no-fetch", args: []string{"update", "check", "--ref", "HEAD", "--no-fetch"}, domainErr: "is not a sum installation's state home"},
 		{name: "valid check --ref= --no-fetch=", args: []string{"update", "check", "--ref=HEAD", "--no-fetch=true"}, domainErr: "is not a sum installation's state home"},
 		{name: "valid stage --no-fetch", args: []string{"update", "stage", "--no-fetch"}, domainErr: "is not a sum installation's state home"},
-		{name: "valid apply --ref --no-fetch with herdr", args: []string{"update", "apply", "--ref", "HEAD", "--no-fetch"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid apply --ref= --no-fetch= with herdr", args: []string{"update", "apply", "--ref=-main", "--no-fetch=true"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid rollback", args: []string{"update", "rollback"}, domainErr: "Herdr pane"},
-		{name: "valid rollback --to checkout", args: []string{"update", "rollback", "--to", "checkout"}, domainErr: "Herdr pane"},
-		{name: "valid rollback --to=", args: []string{"update", "rollback", "--to=checkout"}, domainErr: "Herdr pane"},
-		{name: "valid recover --generation", args: []string{"update", "recover", "--generation", "g1"}, domainErr: "Herdr pane"},
-		{name: "valid recover --generation=", args: []string{"update", "recover", "--generation=g1"}, domainErr: "Herdr pane"},
-		{name: "valid recover with herdr", args: []string{"update", "recover", "--generation", "g1"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid apply --ref --no-fetch with HC", args: []string{"update", "apply", "--ref", "HEAD", "--no-fetch"}, hc: true, domainErr: "registered coordinator"},
+		{name: "valid apply --ref= --no-fetch= with HC", args: []string{"update", "apply", "--ref=-main", "--no-fetch=true"}, hc: true, domainErr: "registered coordinator"},
+		{name: "valid rollback", args: []string{"update", "rollback"}, domainErr: "explicit HC session"},
+		{name: "valid rollback --to checkout", args: []string{"update", "rollback", "--to", "checkout"}, domainErr: "explicit HC session"},
+		{name: "valid rollback --to=", args: []string{"update", "rollback", "--to=checkout"}, domainErr: "explicit HC session"},
+		{name: "valid recover --generation", args: []string{"update", "recover", "--generation", "g1"}, domainErr: "explicit HC session"},
+		{name: "valid recover --generation=", args: []string{"update", "recover", "--generation=g1"}, domainErr: "explicit HC session"},
+		{name: "valid recover with HC", args: []string{"update", "recover", "--generation", "g1"}, hc: true, domainErr: "registered coordinator"},
 		{name: "update missing subcommand", args: []string{"update"}, usage: true},
 		{name: "status extra positional", args: []string{"update", "status", "extra"}, usage: true},
 		{name: "status unknown flag", args: []string{"update", "status", "--unexpected"}, usage: true, unknown: true},
@@ -89,10 +92,9 @@ func TestUpdateCommands(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := updateUsageLab(t)
-			if tc.herdr {
-				herdrEnv(t, home)
-			} else {
-				clearHerdrEnv(t)
+			clearNativeUpdateEnv(t)
+			if tc.hc {
+				nativeUpdateEnv(t)
 			}
 			stdout, stderr, err := runUpdateCLI(t, home, tc.args...)
 			switch {
@@ -120,7 +122,17 @@ func TestUpdateCommands(t *testing.T) {
 
 func updateUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
-	home = writeDesignatedHome(t)
+	home = filepath.Join(t.TempDir(), "state")
+	s, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Machine(); err != nil {
+		t.Fatal(err)
+	}
 	before = readUpdateState(t, home)
 	return home, before
 }
@@ -140,7 +152,7 @@ func assertUpdateUsageError(t *testing.T, err error) {
 		t.Fatal("expected usage failure")
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "registered coordinator") || strings.Contains(msg, "Herdr pane") || strings.Contains(msg, "is not a sum installation's state home") {
+	if strings.Contains(msg, "registered coordinator") || strings.Contains(msg, "explicit HC session") || strings.Contains(msg, "is not a sum installation's state home") {
 		t.Fatalf("err = %v, want a usage failure", err)
 	}
 	usage := strings.Contains(msg, "unknown flag") ||
@@ -180,5 +192,39 @@ func assertUpdateStateUnchanged(t *testing.T, home, before string) {
 	t.Helper()
 	if got := readUpdateState(t, home); got != before {
 		t.Fatalf("state changed:\nbefore:\n%s\nafter:\n%s", before, got)
+	}
+}
+
+func TestNativeUpdateHasNoLegacyCapabilityOverride(t *testing.T) {
+	for _, command := range []string{"apply", "rollback", "recover"} {
+		t.Run(command, func(t *testing.T) {
+			root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
+			root.SetArgs([]string{"update", command, "--allow-pre-machine-identity"})
+			err := root.Execute()
+			if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+				t.Fatalf("legacy capability override remains exposed: %v", err)
+			}
+		})
+	}
+}
+
+func clearNativeUpdateEnv(t *testing.T) {
+	t.Helper()
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "HERDR_") {
+			t.Setenv(key, "")
+		}
+	}
+	for _, key := range []string{"SUM_HOME", "SUM_SESSION", "SUM_CORE_ID", "SUM_ROLE", "SUM_TASK", "SUM_ATTEMPT", "SUM_BINDING_GENERATION", "HC_SESSION", "HC_SOCKET", "HC_TERMINAL_ID"} {
+		t.Setenv(key, "")
+	}
+}
+func nativeUpdateEnv(t *testing.T) {
+	t.Helper()
+	fixture := hctest.New(t)
+	fixture.SetTerminal(hcclient.Terminal{Address: "t1", CreatedMS: 1, State: "live", Cwd: t.TempDir()})
+	for key, value := range map[string]string{"SUM_SESSION": "update-lab", "SUM_CORE_ID": fixture.CoreID, "SUM_ROLE": "coordinator", "SUM_ATTEMPT": "coordinator-one", "SUM_BINDING_GENERATION": "1", "HC_SOCKET": fixture.Socket, "HC_TERMINAL_ID": "t1"} {
+		t.Setenv(key, value)
 	}
 }

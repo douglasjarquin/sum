@@ -1,11 +1,12 @@
 # Configuration
 
-Worker launch defaults, presets, and the capacity schema. Moved out of the README.
+Worker launch defaults, presets, and the capacity schema.
+Moved out of the README.
 
 ### Worker harness and model
 
 `--harness` is optional.
-Without it, the worker runs the saved worker default when one exists, otherwise the coordinator's own harness, as observed from Herdr; the model is then that harness's native default because no harness exposes its running model through Herdr, and sum says so instead of claiming exact inheritance.
+Without it, the worker runs the saved worker default when one exists, otherwise the coordinator's recorded launch harness; its model is known only from the launch record or explicitly unknown, and sum says so instead of claiming exact inheritance.
 The precedence is fixed: an explicit instruction (`--harness`, `--model`, `--reasoning`, or `--same-as-you`), then the saved worker default in `.sum/settings.json`, then the reliably known root harness, then the disclosed native default.
 
 ```sh
@@ -19,9 +20,9 @@ The precedence is fixed: an explicit instruction (`--harness`, `--model`, `--rea
 
 A model or reasoning value is translated only through a flag verified from the installed CLI's own help: `codex -m MODEL -c model_reasoning_effort=LEVEL`, `claude --model MODEL --effort LEVEL`, `grok -m MODEL --reasoning-effort LEVEL`, `copilot --model MODEL --effort LEVEL`, `cursor --model MODEL`, `pi --model MODEL`, `omp --model=MODEL`.
 A harness without a verified flag refuses `--model`/`--reasoning` instead of guessing; pass the native argument yourself with `--arg`, which still works exactly as before.
-Conflicts (`--same-as-you` with a harness or model, `--model` plus an `--arg` that sets the same flag, a flag-shaped value) are refused before any record, slot, or Herdr call, and arguments are passed as exact argv tokens, never through a shell.
+Conflicts (`--same-as-you` with a harness or model, `--model` plus an `--arg` that sets the same flag, a flag-shaped value) are refused before any record, slot, or HC call, and arguments are passed as exact argv tokens, never through a shell.
 The resolved specification (harness, model, reasoning, exact argv, the source of each field, the observed root harness, and the observed-versus-requested status) is saved with the task at `prepare`, so a prepared task starts with the same specification even if the defaults change in between; `start --arg` may append but not contradict it.
-`settings show` and every `prepare`/`dispatch`/`start` result carry the saved default and a one-line `confirmation`; Herdr confirms the harness kind after start, while a CLI-requested model stays "requested, not runtime-verified".
+`settings show` and every `prepare`/`dispatch`/`start` result carry the saved default and a one-line `confirmation`; HC and the matching initialization receipt establish the launched endpoint, while a CLI-requested model stays "requested, not runtime-verified".
 Saving a default affects future dispatches only: no running worker, the coordinator's own harness or model, account, or billing route changes, and the existing advisory quota checks still apply.
 
 ### Named launch presets
@@ -41,21 +42,22 @@ It is not an agent, a role, a credential store, or a default until you save it a
 ./bin/sumctl preset delete deep                                                                     # refused while a default still references it
 ```
 
-Precedence stays fixed: an explicit `--harness`/`--model`/`--reasoning` refines the chosen preset when compatible; `--preset X --harness Y` with a different harness, an `--arg` that repeats the preset's model or reasoning flag, an unknown preset name, or `--same-as-you` together with `--preset` are refused before any record, slot, or Herdr call, naming the fix.
+Precedence stays fixed: an explicit `--harness`/`--model`/`--reasoning` refines the chosen preset when compatible; `--preset X --harness Y` with a different harness, an `--arg` that repeats the preset's model or reasoning flag, an unknown preset name, or `--same-as-you` together with `--preset` are refused before any record, slot, or HC call, naming the fix.
 `--same-as-you` also bypasses a saved default preset, and a harness-only override never carries another harness's preset along.
 The preset is expanded at `prepare` and the resolved specification is persisted with the task together with the preset's name and revision (`launch.preset`); `preset set` bumps the revision and, like `preset delete`, changes future dispatches only, so a prepared or running task keeps exactly what it was prepared with.
 A model in a preset is CLI-requested, never runtime-verified, and presets change nothing about authorization, accounts, or the advisory quota checks.
 
 ### Permission and trust overrides
 
-sum adds no permission or trust flag to any worker or reviewer launch. Claude receives a task-access grant (`--add-dir TASK_DIR`) when needed, which scopes file reach and changes no approval behavior.
+sum adds no permission or trust flag to any worker or reviewer launch.
+Claude receives a task-access grant (`--add-dir TASK_DIR`) when needed, which scopes file reach and changes no approval behavior.
 Selecting a harness, including `devin`, therefore never changes that harness's permission behavior: a Devin worker that stops at its trust gate is answered by a person or launched with an explicitly authorized override, never past the gate silently.
 
 A permission or trust flag reaches a launch only through `--arg` or a preset's `args`, and only when the same `prepare`, `dispatch`, or `reviewer launch` carries `--permission-override`, which records the user's explicit authorization for that one launch.
-Without the flag such an argument is refused before any record, slot, worktree, or Herdr call; with the flag the launch record carries a `permissions` object naming each override argument, its source (`explicit` or `preset`), the authorization, and `status: requested`, and the one-line `confirmation` repeats it.
+Without the flag such an argument is refused before any record, slot, worktree, or HC call; with the flag the launch record carries a `permissions` object naming each override argument, its source (`explicit` or `preset`), the authorization, and `status: requested`, and the one-line `confirmation` repeats it.
 `requested` is the only status an override ever gets: no harness exposes its running permission mode, so sum never claims one was applied, and a per-task Git worktree is not a process or credential sandbox.
 
-`harness-default` means sum passed no override argument on argv; it does not describe on-disk harness settings or profiles (`codex -p/--profile`, `claude --settings`, whether given as a file or as inline JSON, user config files), other `codex -c` keys such as `sandbox_workspace_write.*`, environment variables such as copilot's `COPILOT_ALLOW_ALL`, or an agent started through the mesh `herdr_agent_start` tool, all of which are outside this gate.
+`harness-default` means sum passed no override argument on argv; it does not describe on-disk harness settings or profiles (`codex -p/--profile`, `claude --settings`, whether given as a file or as inline JSON, user config files), other `codex -c` keys such as `sandbox_workspace_write.*`, environment variables such as copilot's `COPILOT_ALLOW_ALL`, or a process started outside the approved Sum launch path, all of which are outside this gate.
 
 The flags sum recognizes per harness are verified from the installed CLI's help, the way model and reasoning flags are: `claude --permission-mode --permission-prompts --permission-prompt-tool --allowedTools --allowed-tools --disallowedTools --disallowed-tools --tools --dangerously-skip-permissions --allow-dangerously-skip-permissions --restricted`; `codex -a --ask-for-approval -s --sandbox --dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust --approve-for-me` plus the `-c`/`--config` keys `approval_policy`, `sandbox_mode`, and `sandbox_permissions`, in the spaced, `=`-joined, and attached short forms (`-a never`, `-a=never`, `-anever`, `-capproval_policy=never`); `copilot --allow-tool --allow-url --deny-tool --deny-url --mode --allow-all --allow-all-tools --allow-all-paths --allow-all-urls --yolo --autopilot --disallow-temp-dir`; `devin --permission-mode --respect-workspace-trust` (carried forward from the help recorded when Devin support landed; not re-verified on a machine without the CLI).
 
@@ -72,15 +74,20 @@ A harness without a verified list (grok, cursor, pi, omp) fails closed: `--permi
 ./bin/sumctl dispatch --repo R --brief B --approved --harness grok --permission-override                              # refused: no verified list for grok
 ```
 
-A recorded launch is checked again at `start` and `execution resume`, after any `start --arg` is appended and before a pane is allocated (and, for a resume, before the successor attempt is recorded): every override in the argv must appear in the record's authorized `permissions.arguments`, otherwise the start is refused and the task stays as it was.
+A recorded launch is checked again at `start` and `execution resume`, after any `start --arg` is appended and before a terminal is allocated (and, for a resume, before the successor attempt is recorded): every override in the argv must appear in the record's authorized `permissions.arguments`, otherwise the start is refused and the task stays as it was.
 That covers a record prepared before this rule existed, whose Devin argv still carries the old implicit flags, and a `start --arg` that tries to add an override; the recovery is to dispatch the task again with `--permission-override` after the user authorizes it.
 A running worker is never reconfigured or interrupted; the rule applies to new launches only.
 
 ### MCP startup behavior
 
-Claude reviewers, and Claude workers on Sum checkouts, start with `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`. This prevents a project `.mcp.json` approval prompt from blocking the initial prompt by excluding project and user MCP servers for that session; it does not approve or save trust for any server. Other Claude launches keep their normal MCP configuration. If Herdr still reports `agent_not_ready`, reviewer launch records the undelivered prompt and returns `action: needs-attention` with the exact reason; it never accepts a startup prompt.
+Claude reviewers, and Claude workers on Sum checkouts, start with `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`.
+This prevents a project `.mcp.json` approval prompt from blocking the initial prompt by excluding project and user MCP servers for that session; it does not approve or save trust for any server.
+Other Claude launches keep their normal MCP configuration.
+If HC reports a blocked or unready launch, reviewer launch records the undelivered prompt and returns `action: needs-attention` with the exact reason; it never accepts a startup prompt.
 
-Each reviewer uses the stable Herdr agent name `reviewer-TASK_ID`, including relaunches. A refused Herdr start names its error code and leaves the task's reviewer endpoint unchanged. The endpoint is recorded only after Herdr confirms the started agent is live.
+Each reviewer uses a unique bounded HC terminal name incorporating its task and attempt; names never establish authority.
+A refused HC creation names its error code and leaves the task's reviewer endpoint unchanged.
+The endpoint is recorded only after native creation is confirmed; opening delivery and matching initialization receipt remain separate.
 Reading such a legacy record discloses its overrides with source `legacy-record` and no authorization rather than calling them the harness default.
 
 Admission is unlimited until a capacity block is configured; see [capacity](#capacity) for the optional settings file.
@@ -100,14 +107,14 @@ Held reservations for a project count every task recorded under that name, at th
 A `--repo` path that is not an enrolled clone or one of its linked worktrees, including a second independent clone of the same remote, keeps today's behavior: its scope is its resolved git toplevel and its limit is `per_repository`.
 
 Use `execution show TASK_ID` to read the current attempt IDs.
-A launched worker attempt becomes `running` only when Herdr's `pane process-info` shows its occupant: the leader of the pane's foreground process group (the process whose pid is that group id), not the shell, observed exactly once with a pid and argv.
-Children the agent forks into that group, such as a harness's MCP servers, do not make the identity ambiguous.
-A foreground without such a leader (the shell holding it, or a leader that already exited) leaves the attempt `uncertain` with its reservation held; nothing binds a guessed pid, and an attempt recorded `uncertain` before this rule stays so.
-After a worker exits, `execution park TASK_ID --attempt ATTEMPT_ID` checks its recorded attempt, instance, occupant, pane, checkout, processes, and owned services before releasing the slot.
+A worker attempt becomes `running` only with the matching Sum initialization receipt and fresh exact native/process evidence.
+Permanent core ID/address/creation time, task/role/attempt/generation and process identity remain distinct from display labels or cwd.
+Native `started`, status, turn counters and completed waits never establish application receipt or stop.
+After a worker exits, `execution park TASK_ID --attempt ATTEMPT_ID` checks its recorded attempt, instance, occupant, terminal, checkout, processes, and owned services before releasing the slot.
 Missing, stale, or unobservable identity is unknown, not stopped.
 The command stops nothing and preserves questions, reports, evidence, and the checkout.
-A report, an idle or `done` pane, a dead parent with a surviving owned child, or an uncertain observation cannot release capacity.
-A user-closed worker pane (`pane_not_found` or `agent_not_found`) with no occupant in the recorded checkout is conclusive stop for that attempt.
+A report, an idle or `done` terminal, a dead parent with a surviving owned child, or an uncertain observation cannot release capacity.
+A missing terminal alone is insufficient; exact native/process stop and absence of owned survivors are required.
 Owned services keep the worker reservation held until their shutdown is proven.
 
 To continue approved work, use `execution resume TASK_ID --attempt ATTEMPT_ID` with the released worker attempt ID.
@@ -144,8 +151,10 @@ Legacy non-archived tasks without reservation metadata count as held until expli
 Malformed reservation metadata refuses admission and release rather than counting as free capacity.
 Older helpers may preserve these records, but an old coordinator does not enforce the new reservation policy.
 
-Rundown, delivery, and refresh over a fleet are one bounded pass: one `herdr agent list` snapshot per session replaces a per-worker observation call, each Herdr call gets its own timeout, no transcript is read, and one unobservable worker costs at most one bounded call: a Herdr call that fails or times out marks only its own session unavailable for the rest of that pass (its later recipients are `not-delivered`, which counts toward `stalled`), and other sessions are still served.
-`inbox --live` and `status --live` report `fanout` with the sessions, Herdr calls, and elapsed and budget milliseconds of their read-only observation; `pump` and coordinator `init` (under `returns`) report the same for their delivery pass, plus the count of `deferred` recipients, whenever the pass visited a recipient; `refresh request` reports its Herdr calls and elapsed time.
+Rundown, delivery and refresh use bounded native HC snapshots and exact recipient revalidation.
+One unavailable scope cannot justify speculative sends, restart a missing core or replay an uncertain mutation.
+A second same-host scope and remote Sum execution are currently unsupported and refused before binding.
+`inbox --live` and `status --live` report `fanout` with the sessions, HC calls, and elapsed and budget milliseconds of their read-only observation; `pump` and coordinator `init` (under `returns`) report the same for their delivery pass, plus the count of `deferred` recipients, whenever the pass visited a recipient; `refresh request` reports its HC calls and elapsed time.
 A delivery pass has a 20-second budget (`pump --budget SECONDS` overrides it for one pass) and `sweep` a 60-second admission budget (`sweep --budget SECONDS`); neither is a setting in this file.
 
 ### Usage accounting
@@ -155,8 +164,8 @@ The block accepts exactly one boolean key, `enabled`; any other key or value ref
 `settings set --usage-accounting true|false` writes it and `--clear-usage` removes it (coordinator only, atomic, every other settings writer preserves the block); `usage show TASK_ID` reports the effective value with its source.
 An older `sumctl` refuses a settings file that carries `usage` as an unknown key, so remove the block before rolling back below the release that introduced it.
 
-The one supported source is a Claude Code session transcript, verified against Claude Code 2.1.302: `<projects>/<slug>/<session-id>.jsonl` plus `<projects>/<slug>/<session-id>/subagents/*.jsonl`, where `<projects>` is `$CLAUDE_CONFIG_DIR/projects` from sum's own environment (else `$HOME/.claude/projects`) and `<slug>` is the pane's working directory, symlinks resolved, with every character outside `[A-Za-z0-9]` replaced by `-`.
-A session belongs to a task only when sum recorded its id: the worker registration's `incarnation.agent_session` (agent `claude`, kind `id`, the conversation id Herdr reports at `start`), and the `incarnation` that `reviewer launch` records on the reviewer endpoint.
+The one supported source is a Claude Code session transcript, verified against Claude Code 2.1.302: `<projects>/<slug>/<session-id>.jsonl` plus `<projects>/<slug>/<session-id>/subagents/*.jsonl`, where `<projects>` is `$CLAUDE_CONFIG_DIR/projects` from sum's own environment (else `$HOME/.claude/projects`) and `<slug>` is the terminal's working directory, symlinks resolved, with every character outside `[A-Za-z0-9]` replaced by `-`.
+A session belongs to a task only when sum recorded its id: the worker registration's `incarnation.agent_session` (agent `claude`, kind `id`, the conversation id HC reports at `start`), and the `incarnation` that `reviewer launch` records on the reviewer endpoint.
 Sum opens no other path; a slug without a transcript is reported `unavailable` with the path it tried, and a task on another harness, or dispatched before the block was enabled, reports `unavailable` for the missing sessions rather than zero.
 
 Each session is attributed to the worker attempt whose checkout matches the registration and that was current when the session was first seen, or to the reviewer endpoint; the category is `implementation` for a worker attempt, `repair` when that attempt's repair operation has `kind: send`, `review` for the reviewer, and `unknown` when the attempt cannot be established; a plain `execution resume` stays `implementation`.
@@ -167,7 +176,7 @@ Per-session timing is the first and last line timestamp and the derived `wall_ms
 Collection runs at exactly three points: `usage collect TASK_ID` (coordinator only), `report` after the task record is saved, and `cleanup` (including `--reviewer-only`) after reservations are released; read-only views never collect.
 The ledger `.sum/tasks/TASK_ID/usage.json` keeps, per source file, the byte offset consumed and the last `message.id` folded; a later collection resumes from the offset, skips a leading repeat of that id, stops before a trailing partial line without advancing, and stops at the first unparsable line with status `partial` and the offset kept before it; a file shorter than its offset is re-read from zero; a file that disappears keeps its counters and marks the session `partial`.
 One collection holds the state lock from load to write and writes through the same temp-and-rename as every record, so an interrupted write never publishes a partial ledger and two collections never fold the same delta; collection runs only on the task's recorded machine and skips elsewhere with a warning.
-A session is `partial` with reason `session-live` while its attempt is held or its registration still occupies the pane, and `complete` only after release when the file was read to its end; task coverage is `complete` when every known worker attempt and reviewer endpoint has a recorded session and every session is complete, `partial` otherwise with the reasons, and `unavailable` when nothing could be read, the harness is unsupported, or no ledger exists.
+A session is `partial` with reason `session-live` while its attempt is held or its registration still occupies the terminal, and `complete` only after release when the file was read to its end; task coverage is `complete` when every known worker attempt and reviewer endpoint has a recorded session and every session is complete, `partial` otherwise with the reasons, and `unavailable` when nothing could be read, the harness is unsupported, or no ledger exists.
 A Claude restart inside one attempt between two collections replaces the registration's conversation id before sum sees the old one; that gap is not detectable and is the one known undercount.
 Any source or ledger failure is a warning under `usage.warnings` in the command result and never changes report acceptance, delivery gates, reservation release, cleanup, or the exit status.
 The ledger survives `archive` and `cleanup` and travels with `sumctl backup`; it holds counts and ids only, never transcript text, and nothing publishes it to GitHub.
@@ -179,3 +188,15 @@ Totals are counts, not a bill: no dollar estimate, quota, enforcement, daemon, a
 ./bin/sumctl usage collect TASK_ID                     # coordinator only; folds new transcript lines from each recorded cursor
 ./bin/sumctl settings set --clear-usage                # back to the default, which is off
 ```
+
+## Qualified input and coordinator startup
+
+Prefer `coordinator start --socket PATH --session NAME --hc-config-home PATH --harness codex` for a bound launch and matching receipt.
+Use explicit `--model`, `--reasoning`, repeatable `--arg` or `--preset` only for the user's selection.
+A manually initialized qualified existing terminal records a known launch or explicitly unknown model; `--same-as-you` cannot guess an exact model.
+`init` defaults to developer without qualified HC context and never starts a core through observation.
+Automatic input is qualified for Codex 0.166.0 with the default keymap and namespaced HC `submit: tab` template.
+Defer observed working/blocked/unknown, guard idle with `if:idle`, and submit observed Done without `if` or `force`.
+A raced busy transition queues submission for the next turn; this deliberately relaxed Done guard is not atomic.
+No permission/account/model/global-keymap changes are authorized to make qualification pass.
+Other harnesses remain unqualified for automatic input; see [acceptance](ACCEPTANCE.md).

@@ -81,4 +81,21 @@ esac
         with self.assertRaisesRegex(runtime.InstallError,'disabled'):
             runtime.install_hc(self.root/'runtime',manifest=self.manifest,platform_name='darwin-arm64')
 
+    def test_cached_release_metadata_must_identify_same_artifact(self):
+        for field,bad in [('version','0.1.13'),('generation',2),('platform','linux-amd64'),('source_commit','0'*40),('binary','../../outside')]:
+            with self.subTest(field=field):
+                target=self.root/('runtime-'+field)
+                runtime.install_hc(target,fetch=self.fetch,manifest=self.manifest,platform_name='darwin-arm64')
+                receipt=target/'.deps/hc/0.1.14-darwin-arm64/contract/provenance.json'
+                value=json.loads(receipt.read_text());value[field]=bad;receipt.write_text(json.dumps(value))
+                with self.assertRaises(runtime.InstallError):
+                    runtime.install_hc(target,fetch=self.fetch,manifest=self.manifest,platform_name='darwin-arm64')
+    def test_cached_manifest_must_match_locked_manifest(self):
+        target=self.root/'cached'
+        runtime.install_hc(target,fetch=self.fetch,manifest=self.manifest,platform_name='darwin-arm64')
+        saved=target/'.deps/hc/0.1.14-darwin-arm64/contract/manifest.json'
+        saved.write_text('{}')
+        with self.assertRaises(runtime.InstallError):
+            runtime.install_hc(target,fetch=self.fetch,manifest=self.manifest,platform_name='darwin-arm64')
+
 if __name__=='__main__':unittest.main()

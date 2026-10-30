@@ -9,7 +9,7 @@ import { sitePath } from "../lib/site-path.mjs";
       <div class="main">
         <h1 class="display">Many agents.<br /><em>One finished task.</em></h1>
         <p class="lede">
-          Dispatch approved work to isolated agents. A small Herdr-native
+          Dispatch approved work to isolated agents. A small HC-native
           distro: coordinator, workers, verification. It is for someone who
           already has mise, Git, and an authenticated coding harness. The
           default path is one finished task.
@@ -27,7 +27,7 @@ import { sitePath } from "../lib/site-path.mjs";
         </div>
         <div>
           <div class="lbl">Process owner</div>
-          Herdr owns processes and worktrees. No sum daemon, scheduler, or
+          HC owns terminal processes; Git owns worktrees. No sum daemon, scheduler, or
           database server.
         </div>
         <div>
@@ -42,7 +42,7 @@ import { sitePath } from "../lib/site-path.mjs";
         <div class="n">01</div>
         <div class="t">A separate worktree per worker</div>
         <p>
-          The coordinator prepares a Herdr worktree, launches the selected
+          The coordinator prepares a Git worktree, launches the selected
           worker, and returns control to you. A worker is explicitly given its
           own role; it does not become another coordinator.
         </p>
@@ -85,10 +85,9 @@ import { sitePath } from "../lib/site-path.mjs";
       </div>
       <div class="feature">
         <div class="n">05</div>
-        <div class="t">Default-on Herdr delivery</div>
+        <div class="t">Native HC delivery</div>
         <p>
-          Native event delivery starts with coordinator init; sidebar metadata
-          remains opt-in. <a href={sitePath("herdr")}>Herdr backend →</a>
+          Coordinator init ensures a proven owned observer unless explicitly disabled; failure is visible as degraded. Metadata remains opt-in. <a href={sitePath("herdr")}>HC terminal runtime →</a>
         </p>
       </div>
       <div class="feature">
@@ -96,7 +95,7 @@ import { sitePath } from "../lib/site-path.mjs";
         <div class="t">Portable verification</div>
         <p>
           A project-root <code>VERIFY.md</code> and <code>mise run verify</code>
-          work in any clone without sum or Herdr.
+          work in any clone without Sum or HC.
         </p>
       </div>
     </div>
@@ -105,17 +104,14 @@ import { sitePath } from "../lib/site-path.mjs";
         <div class="eyebrow">Quick start</div>
         <div class="codeblock">
           <div>git clone https://github.com/douglasjarquin/sum.git</div>
-          <div>herdr</div>
-          <div class="c"># In a Herdr pane:</div>
+          <div class="c"># Explicitly start the selected HC core using its matched manual.</div>
+          <div class="c"># In a HC terminal:</div>
           <div>cd /path/to/sum</div>
           <div>mise trust</div>
           <div>mise run setup</div>
-          <div>codex   <span class="c"># or claude, grok, cursor-agent, pi, opencode, devin</span></div>
+          <div>./bin/sumctl coordinator start --socket /path/to/hc.sock --session sum --hc-config-home /path/to/hc-config --harness codex</div>
         </div>
-        <p style="margin:18px 0 0;font-size:12px">
-          A harness that does not auto-load AGENTS.md needs this first prompt:
-          <em class="serif">"Read AGENTS.md in this directory, initialize sum, and act as my coordinator."</em>
-        </p>
+        <p style="margin:18px 0 0;font-size:12px">Read the exact procedure path returned by init. Without qualified HC context, initialization defaults to developer and does not claim coordination.</p>
       </div>
       <div class="split">
         <div class="eyebrow">How it works</div>
@@ -123,15 +119,11 @@ import { sitePath } from "../lib/site-path.mjs";
           <div class="k">you</div>
           <div class="v">approved requests and decisions ↓</div>
           <div class="k" style="color:var(--accent)">coordinator</div>
-          <div class="v">brief, Herdr worktree, launch ↓</div>
+          <div class="v">brief, Git worktree, launch ↓</div>
           <div class="k">worker</div>
           <div class="v">questions, report, PR ↑</div>
         </div>
-        <p style="margin:18px 0 0;font-size:12px">
-          A question is saved before notification. A successful send is
-          submitted, not acknowledged. Native idle or done is not task
-          completion, and a worker's report is not verified success.
-        </p>
+        <p style="margin:18px 0 0;font-size:12px">Read the exact procedure path returned by init. Without qualified HC context, initialization defaults to developer and does not claim coordination.</p>
       </div>
     </div>
   </main>

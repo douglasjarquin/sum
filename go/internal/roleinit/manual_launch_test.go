@@ -63,7 +63,7 @@ func TestManualCoordinatorAdoptionResolvesDispatchWithoutLaunch(t *testing.T) {
 			f.SetTemplates([]hcclient.TemplateInfo{{Name: spec.Name, Command: templateCommand(spec)}})
 			pid := uint32(101)
 			template, submit := spec.Name, "tab"
-			terminal := hcclient.Terminal{Address: "t1", CreatedMS: 1, State: "live", Argv: []string{"sh", "-c", templateCommand(spec)}, Cwd: root, Template: &template, Submit: &submit, PID: &pid, Foreground: &hcclient.Foreground{PID: 102, Name: "codex", Argv: spec.Argv, Cwd: root}}
+			terminal := hcclient.Terminal{Address: "t1", CreatedMS: 1, State: "live", Labels: map[string]string{"human-label": "preserved"}, Argv: []string{"sh", "-c", templateCommand(spec)}, Cwd: root, Template: &template, Submit: &submit, PID: &pid, Foreground: &hcclient.Foreground{PID: 102, Name: "codex", Argv: spec.Argv, Cwd: root}}
 			f.SetTerminal(terminal)
 			host, err := s.Machine()
 			if err != nil {
@@ -154,6 +154,13 @@ func TestManualCoordinatorAdoptionResolvesDispatchWithoutLaunch(t *testing.T) {
 			current, err := client.Get(context.Background(), "t1")
 			if err != nil {
 				t.Fatal(err)
+			}
+			boundEndpoint := store.EndpointFromContext(bound)
+			instance, _ := s.Instance()
+			for key, want := range map[string]string{"human-label": "preserved", "sum.installation": instance, "sum.role": "coordinator", "sum.attempt": boundEndpoint.Attempt} {
+				if current.Labels[key] != want {
+					t.Fatalf("coordinator observer label %s=%q want %q", key, current.Labels[key], want)
+				}
 			}
 			if !reflect.DeepEqual(current.Argv, terminal.Argv) {
 				t.Fatal("manual adoption changed the running command")

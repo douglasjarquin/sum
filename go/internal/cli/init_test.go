@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,7 +44,7 @@ func TestInitUnknownFlagsAreUsageErrorsBeforeInit(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			before := readContextFile(t, home)
 			stdout, stderr, err := runInit(t, home, tc.args...)
@@ -68,33 +69,33 @@ func TestInitCommands(t *testing.T) {
 	cases := []struct {
 		name      string
 		args      []string
-		herdr     bool
+		native    bool
 		success   bool
 		usage     bool
 		unknown   bool
 		invalid   bool
 		domainErr string
 	}{
-		{name: "valid init", args: []string{"init"}, herdr: true, success: true},
-		{name: "valid init after dashdash", args: []string{"init", "--"}, herdr: true, success: true},
-		{name: "valid init --role coordinator", args: []string{"init", "--role", "coordinator"}, herdr: true, success: true},
-		{name: "valid init --role=", args: []string{"init", "--role=coordinator"}, herdr: true, success: true},
-		{name: "valid init --reclaim", args: []string{"init", "--reclaim"}, herdr: true, success: true},
-		{name: "valid init --reclaim=", args: []string{"init", "--reclaim=true"}, herdr: true, success: true},
+		{name: "valid init", args: []string{"init"}, native: true, success: true},
+		{name: "valid init after dashdash", args: []string{"init", "--"}, native: true, success: true},
+		{name: "valid init --role coordinator", args: []string{"init", "--role", "coordinator"}, native: true, success: true},
+		{name: "valid init --role=", args: []string{"init", "--role=coordinator"}, native: true, success: true},
+		{name: "live coordinator cannot be reclaimed", args: []string{"init", "--reclaim"}, native: true, domainErr: "only a native finished terminal"},
+		{name: "live coordinator cannot be reclaimed with explicit flag value", args: []string{"init", "--reclaim=true"}, native: true, domainErr: "only a native finished terminal"},
 		{name: "unknown flag", args: []string{"init", "--unexpected"}, usage: true, unknown: true},
 		{name: "extra positional", args: []string{"init", "extra"}, usage: true},
 		{name: "extra after --reclaim", args: []string{"init", "--reclaim", "extra"}, usage: true},
 		{name: "unrecognized role", args: []string{"init", "--role", "bogus"}, invalid: true},
 		{name: "missing --role value", args: []string{"init", "--role"}, usage: true},
-		{name: "requires pane without herdr", args: []string{"init"}, domainErr: "Herdr pane"},
+		{name: "requires explicit HC terminal", args: []string{"init"}, domainErr: "explicit HC session required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := writeDesignatedHome(t)
-			if tc.herdr {
-				herdrEnv(t, home)
+			if tc.native {
+				nativeEnv(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			before := readContextFile(t, home)
 			stdout, stderr, err := runInit(t, home, tc.args...)
@@ -157,7 +158,7 @@ func assertInitUsageError(t *testing.T, err error) {
 		t.Fatal("expected usage failure")
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "registered coordinator") || strings.Contains(msg, "Herdr pane") {
+	if strings.Contains(msg, "registered coordinator") || strings.Contains(msg, "HC terminal") {
 		t.Fatalf("err = %v, want a usage failure", err)
 	}
 	usage := strings.Contains(msg, "unknown flag") ||
@@ -185,11 +186,14 @@ func readContextFile(t *testing.T, home string) string {
 // A verified coordinator adopts the wake protocol (#240a) at init: a fresh claim records it, and an owner record an
 // older helper wrote gains it on the next verified init. Until then delivery to that coordinator is legacy.
 func TestInit_coordinatorAdoptsTheWakeProtocol(t *testing.T) {
-	home := legacyHome(t, "dev")
-	herdrEnv(t, home)
+	home := writeDesignatedHome(t)
 	onHost(t, thisHostRaw, "dev")
+	nativeEnv(t, home)
+	owner := readJSON(t, filepath.Join(home, "context.json"))
+	delete(owner, "wake_protocol")
+	writeJSONFile(t, filepath.Join(home, "context.json"), owner)
 	if owner := readJSON(t, filepath.Join(home, "context.json")); owner["wake_protocol"] != nil {
-		t.Fatalf("legacy owner already carries wake_protocol: %v", owner)
+		t.Fatalf("unadopted native owner already carries wake_protocol: %v", owner)
 	}
 	mustRole(t, home, "coordinator")
 	if owner := readJSON(t, filepath.Join(home, "context.json")); fmt.Sprint(owner["wake_protocol"]) != "1" {
@@ -200,7 +204,7 @@ func TestInit_coordinatorAdoptsTheWakeProtocol(t *testing.T) {
 func TestInit_enablesNativeEventsByDefaultAndPreservesDisableChoice(t *testing.T) {
 	home := writeDesignatedHome(t)
 	configureNativeEventsForTest(t, home, true)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("first init: %v", err)
 	}
@@ -236,7 +240,7 @@ func TestInit_migratesOnlyLegacyHealthThatShowsTheHookOff(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			home := writeDesignatedHome(t)
 			configureNativeEventsForTest(t, home, true)
-			herdrEnv(t, home)
+			nativeEnv(t, home)
 			if _, err := runCLI(t, home, "init"); err != nil {
 				t.Fatalf("initial init: %v", err)
 			}
@@ -255,7 +259,7 @@ func TestInit_migratesOnlyLegacyHealthThatShowsTheHookOff(t *testing.T) {
 			if err != nil {
 				t.Fatalf("init: %v\n%s", err, out)
 			}
-			activation := decodeObject(t, out)["hook_activation"].(map[string]any)
+			activation := asMap(decodeObject(t, out)["hook_activation"])
 			if tt.wantEnable && activation["skipped"] != true {
 				t.Fatalf("activation = %v, want current enabled hook skipped", activation)
 			}
@@ -270,25 +274,20 @@ func TestInit_migratesOnlyLegacyHealthThatShowsTheHookOff(t *testing.T) {
 func TestInit_nativeEventEnableFailureIsDegradedAndFailOpen(t *testing.T) {
 	home := writeDesignatedHome(t)
 	configureNativeEventsForTest(t, home, true)
-	herdrEnv(t, home)
-	wrapper := filepath.Join(t.TempDir(), "herdr-failing-plugin-link")
-	script := "#!/bin/sh\nif [ \"$3\" = plugin ] && [ \"$4\" = link ]; then echo registry unavailable >&2; exit 1; fi\nexec python3 \"" + os.Getenv("SUM_HERDR_BIN") + "\" \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SUM_HERDR_BIN", wrapper)
+	nativeEnv(t, home)
+	nativeLabFor(t, home).native.QueueFault("terminal.run", hctest.Fault{RefuseKind: "config"})
 	out, err := runCLI(t, home, "init")
 	if err != nil {
 		t.Fatalf("init failed when automatic hook enable failed: %v\n%s", err, out)
 	}
 	view := decodeObject(t, out)
-	activation := view["hook_activation"].(map[string]any)
-	if activation["degraded"] != true || !strings.Contains(fmt.Sprint(activation["reason"]), "registry unavailable") {
+	activation := asMap(view["hook_activation"])
+	if activation["degraded"] != true || !strings.Contains(fmt.Sprint(activation["reason"]), "config") {
 		t.Fatalf("hook activation = %v, want degraded reason", activation)
 	}
 	status, statusErr := runCLI(t, home, "hook", "status")
 	statusView := decodeObject(t, status)
-	if statusErr != nil || statusView["degraded"] != true || !strings.Contains(fmt.Sprint(statusView["reason"]), "registry unavailable") {
+	if statusErr != nil || statusView["degraded"] != true || !strings.Contains(fmt.Sprint(statusView["reason"]), "unresolved") {
 		t.Fatalf("hook status = %s, err = %v; want degraded with registry unavailable", status, statusErr)
 	}
 }

@@ -1,7 +1,7 @@
 # Verification contract
 
 This file is the single repository-local verification convention for sum.
-It works in an ordinary clone with Git, mise, and Python 3.11 or newer; no sum installation, Herdr session, or absolute path outside this checkout is required.
+It works in an ordinary clone with Git, mise, and Python 3.11 or newer; no sum installation, HC session, or absolute path outside this checkout is required.
 The portable procedure and the runner that records evidence live in `.agents/skills/verify/` (alias `.claude/skills/verify`); its shared engineering rubric is `.agents/skills/verify/references/engineering-principles.md`.
 `.agents/skills/evidence/` captures before/after proof of one scenario from the base and candidate builds; `.agents/skills/create-verification/` scaffolds this convention in another repository and `.agents/skills/maintain-verification/` audits it after a change.
 A harness without skill discovery follows this file directly.
@@ -39,29 +39,30 @@ For local verification, prefix the runner command with `MISE_ENABLE_TOOLS=go,pyt
 
 `mise run verify` is the canonical aggregate entrypoint.
 Each verification role runs that aggregate once for its final candidate; targeted iteration does not require repeating every subcommand before the aggregate.
-It runs, in order, the existing commands and stops at the first failure:
+It runs the Go, top-level Python unittest discovery and web checks, stopping at the first failure without dropping an existing check:
 
 | Check | Command | Proves |
 | --- | --- | --- |
-| Go CLI, Mesh, and skill tests | `cd go && go test ./...` | sumctl command contracts, Herdr Mesh, portable verify/evidence skills, and the offline demo |
+| Go CLI, HC, and skill tests | `cd go && go test ./...` | sumctl command contracts, typed HC protocol, endpoint/receipt authority and observer, portable verify/evidence skills, and the offline demo |
+| Python HC, setup and packaging tests | `python3 -m unittest discover -s tests -p 'test_*.py'` | native socket fixture characterization, exact-artifact installer/cache/refusal contracts, mocked lab ownership/teardown failures and existing setup/packaging checks; these are offline tests, not actual-model qualification |
 | Web site | `aube -C web install --frozen-lockfile`, `aube -C web run check`, `aube -C web run test:unit`, `aube -C web run build`, then a `web/dist` route-emission check | the Astro site installs from the lockfile, typechecks, passes unit tests, and builds all routes into `web/dist` under the `/sum/` base |
 
 Scoped tasks stay available for iteration: `mise run test` (suites only), `mise run lint` (`gofmt -l` and `go vet` over `go/`), `mise run demo`, and the `web:`-prefixed mise tasks.
 `mise run web:test` also runs the Playwright end-to-end suite; it needs the browser once from `mise run web:deps`, so it is manual in the feature maps.
 `mise run lint` is the project's declared lint task (`mise-tasks/lint`); the delivery pipeline Lint gate runs it.
-`mise run test-live` is the explicit real-Herdr smoke test and is not part of the aggregate because it needs an installed Herdr; `mise run doctor` observes the installation and is not a check.
+`mise run test-live` is the explicit isolated pinned-HC smoke test and is not part of the aggregate because it needs the pinned HC binary; `mise run doctor` observes the installation and is not a check.
 
 ## Scenarios
 
 The feature maps under `docs/features/` describe the real user journeys and which of them the automated checks exercise.
-Rows marked `automated` are covered by `mise run verify`; rows marked `manual` need a real Herdr session or an authenticated harness and are recorded `not-run` unless the operator reports them with `--scenario`.
+Rows marked `automated` are covered by `mise run verify`; rows marked `manual` need a real HC session or an authenticated harness and are recorded `not-run` unless the operator reports them with `--scenario`.
 A green `mise run verify` is evidence for the automated rows only, never for a scenario that was not exercised.
 
 ## Isolation
 
-Every test and the demo create temporary state homes (`--home` under a temporary directory) and named lab Herdr sessions or the fake Herdr.
-Never point a check at the live `.sum/` directory or the user's `default` Herdr session.
-No credentials, model calls, or GitHub writes are involved; `SUM_*` and `HERDR_*` variables inherited from an installation are stripped by the lab code.
+Every test and the demo create temporary state homes (`--home` under a temporary directory) and named lab HC sessions or the fake HC protocol server.
+Never point a check at the live `.sum/` directory or the user's `default` HC session.
+No credentials, model calls, or GitHub writes are involved; `SUM_*`, `HC_*` and `HERDR_*` variables inherited from an installation are stripped by the lab code.
 
 ## Artifacts
 
@@ -74,7 +75,8 @@ Both directories are Git-ignored; reference records by path in reports.
 
 ## Teardown
 
-The checks leave nothing running.
+The offline checks leave nothing running.
+Native canaries must remove only their exact proven-owned lab terminals/history and scratch state, never the user's core or live installation.
 Remove `.artifacts/verification/` and `.artifacts/evidence/` when you no longer need the records; promote an evidence run first when it must outlive the checkout.
 
 ## Policy
@@ -86,3 +88,19 @@ Without `--base` a run never certifies a SHA, and the contract's optional `polic
 The coordinator's separate verification and review (`skills/sum-deliver/SKILL.md`) remain in place and are not replaced by this contract.
 GitHub Actions runs this same runner once for pull requests targeting `main` and pushes to `main`, comparing the checked-out candidate to the event base revision and retaining `.artifacts/verification/` on success or failure.
 CI is an additional gate, not a replacement for worker verification, a fresh root pass, independent review, or human merge.
+
+## HC acceptance limits
+
+The aggregate is offline evidence, not actual harness qualification or production migration proof.
+The native lab uses a unique `HC_SESSION` and scratch XDG state/config/runtime paths with inherited terminal identity removed.
+Qualified automatic input currently requires unmodified published HC 0.1.14, Codex 0.166.0 and the default keymap with Sum's namespaced Tab template.
+Idle uses `if:idle`; observed Done sends without `if` or `force`, so a raced working turn queues the submission for the next turn rather than providing an atomic Done guard.
+Native `started`, status, turn counts and completed waits are never application receipts or proof of exit.
+Other harnesses and every unrun manual scenario remain gaps in [acceptance](docs/ACCEPTANCE.md).
+Existing-installation migration must refuse without enforceable legacy writer/sender exclusion; current legacy APIs cannot establish that prerequisite.
+No production cutover or working production exclusion lease is certified by local checks.
+Generated dependency inventory freshness is checked with `python3 scripts/generate_dependency_inventory.py --check`; never edit the generated JSON by hand.
+
+The Python discovery step includes the top-level HC fixture, installer and lab modules; feature-map automated claims for those modules rely on this aggregate step.
+Native smoke, identity and full scripted application canaries remain explicit manual checks with their own artifacts.
+A full model-free Sum composition over published HC with scripted terminals and local strict fake GitHub proves the exercised application wiring, not real Codex reasoning, external publication or production cutover.

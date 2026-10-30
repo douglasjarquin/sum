@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 func closeLab(t *testing.T, workerState string) string {
 	t.Helper()
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -33,7 +34,7 @@ func closeLab(t *testing.T, workerState string) string {
              "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []},
   "verifiers": []}`, workerState, host)
 	}
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{
 "schema": 1, "id": "t-aaaaaaaaaaaa", "status": "waiting", "repository": "owner/repo",
 "machine": %q, "session": "sum-test", "pane": "w-worker:p1",
 "parent": {"machine": %q, "session": "sum-test", "pane": "w-parent:p1"},
@@ -119,7 +120,7 @@ func TestAnswerClose_recordDistinguishesCoordinatorClosureFromWorkerApplication(
 		t.Fatalf("closed_at = %v", closed["closed_at"])
 	}
 	by, _ := closed["closed_by"].(map[string]any)
-	if by["role"] != "coordinator" || by["pane"] != "w-parent:p1" || by["session"] != "sum-test" {
+	if by["role"] != "coordinator" || by["address"] != "t1" || by["core_id"] != os.Getenv("SUM_CORE_ID") || by["attempt"] != "bootstrap" || by["created_ms"] == nil || by["binding_generation"] == nil || by["session"] != "sum-test" {
 		t.Fatalf("closed_by = %v", closed["closed_by"])
 	}
 	applied := questionRecord(t, home, "q-cccccccccc")
@@ -186,9 +187,11 @@ func TestAnswerClose_refusesUnansweredQuestion(t *testing.T) {
 func TestAnswerClose_refusesNonCoordinatorPane(t *testing.T) {
 	home := closeLab(t, "released")
 	before := readNamedTask(t, home, "t-aaaaaaaaaaaa")
-	t.Setenv("HERDR_PANE_ID", "w-worker:p1")
+	t.Setenv("SUM_ROLE", "worker")
+	t.Setenv("SUM_TASK", "t-aaaaaaaaaaaa")
+	t.Setenv("SUM_ATTEMPT", "not-the-coordinator")
 	_, err := closeQuestion(t, home, "q-aaaaaaaaaa", "worker pane is gone")
-	if err == nil || !strings.Contains(err.Error(), "not the registered coordinator") {
+	if err == nil || !strings.Contains(err.Error(), "session registration identity mismatch") {
 		t.Fatalf("err = %v", err)
 	}
 	if got := readNamedTask(t, home, "t-aaaaaaaaaaaa"); got != before {

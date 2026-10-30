@@ -15,13 +15,16 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
+	"github.com/douglasjarquin/sum/go/internal/launchtest"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 func TestNativeTargetContractUsesExecutableEvidence(t *testing.T) {
 	root := t.TempDir()
+	hctest.InstallRuntime(t, root)
 	writeFile(t, filepath.Join(root, "go/internal/returns/wake.go"), "package returns\n")
 	writeFile(t, filepath.Join(root, "go/internal/machine/machine.go"), "package machine\n")
 	plantNativeHelper(t, root, "#!/bin/sh\nprintf '%s\\n' '{\"supports\":{\"state_schema\":[1]}}'\n")
@@ -64,6 +67,7 @@ func TestNativeTargetContractUsesExecutableEvidence(t *testing.T) {
 
 func TestCompatibilityRefusesLegacyServingBinaryWithoutMutation(t *testing.T) {
 	root := t.TempDir()
+	hctest.InstallRuntime(t, root)
 	git(t, root, "init", "-b", "main")
 	git(t, root, "-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
 	s, err := store.Open(filepath.Join(root, ".sum"))
@@ -182,6 +186,7 @@ func nativeApplyLab(t *testing.T) *applyLab {
 	git(t, root, "config", "user.email", "test@example.invalid")
 	git(t, root, "config", "commit.gpgsign", "false")
 	writeFile(t, filepath.Join(root, ".gitignore"), ".sum/\n.local/\n")
+	hctest.InstallRuntime(t, root)
 	writeFile(t, filepath.Join(root, "AGENTS.md"), "old instructions\n")
 	writeFile(t, filepath.Join(root, "bin/sumctl"), "#!/bin/sh\nexit 0\n")
 	if err := os.Chmod(filepath.Join(root, "bin/sumctl"), 0755); err != nil {
@@ -207,8 +212,9 @@ func nativeApplyLab(t *testing.T) *applyLab {
 		t.Fatal(err)
 	}
 	fixture := hctest.New(t)
+	spec, configHome, options := launchtest.QualifyCodex(t, fixture, root)
 	pid := uint32(101)
-	terminal := hcclient.Terminal{Address: "t1", CreatedMS: 1, State: "live", PID: &pid, Foreground: &hcclient.Foreground{PID: 102, Name: "codex", Argv: []string{"codex"}, Cwd: root}}
+	terminal := hcclient.Terminal{Address: "t1", CreatedMS: 1, Cwd: root, Template: &spec.Name, Submit: &spec.Submit, State: "live", PID: &pid, Foreground: &hcclient.Foreground{PID: 102, Name: "codex", Argv: []string{"codex"}, Cwd: root}}
 	fixture.SetTerminal(terminal)
 	host, err := s.Machine()
 	if err != nil {
@@ -222,6 +228,8 @@ func nativeApplyLab(t *testing.T) *applyLab {
 	}
 	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: endpoint.Native(), Kind: "coordinator-init", Attempt: endpoint.Attempt})
 	owner.Set("native_receipt", receipt)
+	template, _ := ordjson.FromValue(returns.NativeTemplate{Spec: spec, ConfigHome: configHome, Options: options})
+	owner.Set("native_template", template)
 	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
@@ -231,6 +239,7 @@ func nativeApplyLab(t *testing.T) *applyLab {
 	raw, _ := json.Marshal(contract.BuildRelease())
 	helper := "#!/bin/sh\nif [ \"$1\" = --format ]; then printf '%s\\n' '" + string(raw) + "'; fi\nexit 0\n"
 	plantNativeHelper(t, root, helper)
+	hctest.InstallRuntime(t, root)
 	for _, sha := range []string{old, next} {
 		buildCompatibleRelease(t, filepath.Join(root, ".local/releases"), sha)
 
@@ -439,4 +448,175 @@ func startNativeObserverProgram(t *testing.T, lab *applyLab) {
 			t.Error("native observer did not stop")
 		}
 	})
+}
+
+func TestNativeTargetCapabilitiesCannotReplaceMatchedHCRuntime(t *testing.T) {
+	root := t.TempDir()
+	raw, _ := json.Marshal(contract.BuildRelease())
+	plantNativeHelper(t, root, "#!/bin/sh\nprintf '%s\\n' '"+string(raw)+"'\n")
+	if _, err := nativeTargetContract(root); err == nil {
+		t.Fatal("binary capabilities substituted for missing HC artifact provenance")
+	}
+	hctest.InstallRuntime(t, root)
+	if _, err := nativeTargetContract(root); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".local/share/hc/manual.md"), []byte("changed fixture manual\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nativeTargetContract(root); err == nil {
+		t.Fatal("artifact contract drift permitted selection")
+	}
+	if _, err := os.Stat(filepath.Join(root, ".sum")); !os.IsNotExist(err) {
+		t.Fatal("read-only artifact inspection initialized state")
+	}
+}
+
+func TestActivationRevalidatesAutomaticDeliveryQualification(t *testing.T) {
+	lab := nativeApplyLab(t)
+	owner, err := lab.store.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := owner.Get("native_template")
+	data, _ := ordjson.MarshalCompact(raw)
+	var template returns.NativeTemplate
+	if err = json.Unmarshal(data, &template); err != nil {
+		t.Fatal(err)
+	}
+	for _, status := range []string{"working", "blocked"} {
+		lab.fixture.SetStatus("t1", status)
+		view, err := Compatibility(lab.store, lab.root, lab.root, DefaultRuntime(lab.root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok, _ := view.Get("ok"); ok != true {
+			t.Fatalf("qualification depended on %s readiness: %s", status, dump(view))
+		}
+	}
+	path := filepath.Join(template.Options.CodexHome, "config.toml")
+	writeFile(t, path, "[tui]\nkeymap = 'changed'\n")
+	before, _ := os.ReadFile(filepath.Join(lab.store.Home, "context.json"))
+	if _, err = Apply(lab.store, lab.ctx, lab.newSHA, true); err == nil || !strings.Contains(err.Error(), "qualification") {
+		t.Fatalf("changed effective config did not block activation: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(lab.root, ".local/current")); !os.IsNotExist(err) {
+		t.Fatal("unqualified configuration selected candidate", err)
+	}
+	after, _ := os.ReadFile(filepath.Join(lab.store.Home, "context.json"))
+	if string(before) != string(after) {
+		t.Fatal("qualification check rewrote registration")
+	}
+	for _, call := range lab.fixture.Calls() {
+		if call.Method == "terminal.send" || call.Method == "terminal.run" || call.Method == "terminal.kill" {
+			t.Fatalf("qualification performed mutation: %s", call.Method)
+		}
+	}
+}
+
+func TestActivationQualifiesLiveWorkerAndReviewerIndependentlyOfReadiness(t *testing.T) {
+	lab := nativeApplyLab(t)
+	owner, _ := lab.store.Owner()
+	template, _ := owner.Get("native_template")
+	task := ordjson.NewObject()
+	task.Set("id", "t-aaaaaaaaaaaa")
+	task.Set("status", "working")
+	for _, role := range []string{"worker", "reviewer"} {
+		endpoint := store.EndpointFromContext(lab.ctx)
+		endpoint.Role = role
+		endpoint.Task = "t-aaaaaaaaaaaa"
+		endpoint.Attempt = role + "-one"
+		endpoint.Address = map[string]string{"worker": "t2", "reviewer": "t3"}[role]
+		pid := uint32(201)
+		terminal := hcclient.Terminal{Address: endpoint.Address, CreatedMS: endpoint.CreatedMS, State: "live", Cwd: lab.root, PID: &pid, Foreground: &hcclient.Foreground{PID: 202, Name: "codex", Argv: []string{"codex"}, Cwd: lab.root}}
+		raw, _ := ordjson.MarshalCompact(template)
+		var qualified returns.NativeTemplate
+		_ = json.Unmarshal(raw, &qualified)
+		terminal.Template = &qualified.Spec.Name
+		terminal.Submit = &qualified.Spec.Submit
+		lab.fixture.SetTerminal(terminal)
+		lab.fixture.SetStatus(endpoint.Address, "blocked")
+		record := endpoint.Object()
+		record.Set("native_template", template)
+		if role == "worker" {
+			task.Set("worker_endpoint", endpoint.Object())
+			if err := ordjson.WriteFile(filepath.Join(lab.store.Sessions, store.RegistrationKey(endpoint)+".json"), record); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			task.Set("reviewer", record)
+		}
+	}
+	if blocked := deliveryQualification(lab.store, []*ordjson.Object{task}); len(blocked) != 0 {
+		t.Fatalf("qualified blocked recipients refused: %v", blocked)
+	}
+	lab.fixture.SetTemplateSubmit("unused", "enter")
+	for _, role := range []string{"worker", "reviewer"} {
+		lab.fixture.SetTerminal(hcclient.Terminal{Address: map[string]string{"worker": "t2", "reviewer": "t3"}[role], CreatedMS: 1, State: "live"})
+	}
+	blocked := fmt.Sprint(deliveryQualification(lab.store, []*ordjson.Object{task}))
+	for _, role := range []string{"worker", "reviewer"} {
+		if !strings.Contains(blocked, role+" automatic delivery qualification") {
+			t.Fatalf("missing %s gate: %s", role, blocked)
+		}
+	}
+	for _, role := range []string{"worker", "reviewer"} {
+		lab.fixture.SetTerminal(hcclient.Terminal{Address: map[string]string{"worker": "t2", "reviewer": "t3"}[role], CreatedMS: 1, State: "finished"})
+	}
+	if blocked := deliveryQualification(lab.store, []*ordjson.Object{task}); len(blocked) != 0 {
+		t.Fatalf("finished recipients treated as participating: %v", blocked)
+	}
+}
+
+func TestActivationQualifiesSelectedDefaultsButNotUnusedPresets(t *testing.T) {
+	lab := nativeApplyLab(t)
+	path := filepath.Join(lab.store.Home, "settings.json")
+	unused := `{"schema":1,"hook":{"enabled":false},"presets":{"manual":{"harness":"claude"}}}`
+	writeFile(t, path, unused)
+	if blocked := deliveryQualification(lab.store, nil); len(blocked) != 0 {
+		t.Fatalf("unused preset blocked activation: %v", blocked)
+	}
+	for _, role := range []string{"worker", "reviewer"} {
+		writeFile(t, path, strings.TrimSuffix(unused, "}")+`,"`+role+`":{"preset":"manual"}}`)
+		before, _ := os.ReadFile(path)
+		blocked := fmt.Sprint(deliveryQualification(lab.store, nil))
+		if !strings.Contains(blocked, "selected "+role+" default automatic delivery qualification") {
+			t.Fatalf("unqualified selected default accepted: %s", blocked)
+		}
+		after, _ := os.ReadFile(path)
+		if string(before) != string(after) {
+			t.Fatal("default changed by qualification")
+		}
+	}
+}
+
+func TestActivationQualifiesDirectWorkerDefault(t *testing.T) {
+	lab := nativeApplyLab(t)
+	for _, harness := range []string{"codex", "claude"} {
+		writeFile(t, filepath.Join(lab.store.Home, "settings.json"), `{"schema":1,"worker":{"harness":"`+harness+`"}}`)
+		blocked := deliveryQualification(lab.store, nil)
+		if (len(blocked) > 0) != (harness != "codex") {
+			t.Fatalf("direct %s default: %v", harness, blocked)
+		}
+	}
+}
+
+func TestActivationSelectedCodexDefaultRevalidatesKnownOverrides(t *testing.T) {
+	lab := nativeApplyLab(t)
+	path := filepath.Join(lab.store.Home, "settings.json")
+	for _, role := range []string{"worker", "reviewer"} {
+		for _, args := range []struct {
+			json    string
+			blocked bool
+		}{
+			{`["-c","model_reasoning_effort=\"high\""]`, false},
+			{`["-c","tui.keymap=\"custom\""]`, true},
+		} {
+			writeFile(t, path, `{"schema":1,"hook":{"enabled":false},"presets":{"selected":{"harness":"codex","args":`+args.json+`}},"`+role+`":{"preset":"selected"}}`)
+			blocked := deliveryQualification(lab.store, nil)
+			if (len(blocked) > 0) != args.blocked {
+				t.Fatalf("%s selected override blocked=%v: %v", role, args.blocked, blocked)
+			}
+		}
+	}
 }

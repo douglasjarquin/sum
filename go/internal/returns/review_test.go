@@ -38,10 +38,7 @@ func reviewTask(parentPane string, evidence []*ordjson.Object, repairSendsAt ...
 	task.Set("id", "t-000000000001")
 	task.Set("status", "reported")
 	if parentPane != "" {
-		parent := ordjson.NewObject()
-		parent.Set("machine", "m-lab")
-		parent.Set("session", "lab")
-		parent.Set("pane", parentPane)
+		parent := (store.Endpoint{Schema: 2, Backend: "hc", Machine: "m-lab", Session: "lab", CoreID: "core-lab", Socket: "/tmp/review-lab.sock", Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1}).Object()
 		task.Set("parent", parent)
 	}
 	list := make([]any, 0, len(evidence))

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,20 +62,20 @@ func TestEnvShow_pinsStdoutAcrossScenarios(t *testing.T) {
     {"id": "l1", "path": "/tmp/dev.log", "scope": "checkout", "label": "dev log", "ownership": "owned", "state": "present", "bytes": 512, "modified_at": "2026-01-01T00:04:00+00:00", "observed_at": "2026-01-01T00:05:00+00:00"}
   ],
   "resources": [
-    {"kind": "pane", "id": "p1", "session": "s1", "label": "dev pane", "ownership": "owned", "state": "present", "cwd": "/tmp/checkout", "note": null, "service": "dev", "observed_at": "2026-01-01T00:05:00+00:00"}
+    {"kind": "terminal", "id": "t3", "session": "s1", "label": "dev terminal", "ownership": "owned", "state": "present", "cwd": "/tmp/checkout", "note": null, "service": "dev", "observed_at": "2026-01-01T00:05:00+00:00"}
   ],
   "services": [
     {"id": "svc1", "name": "dev", "source": "mise.toml", "kind": "service", "state": "running", "url": "http://127.0.0.1:3000", "port": 3000,
-     "pane": "p1", "workspace": "w1", "label": "dev server", "intent_at": "2026-01-01T00:04:00+00:00", "launched_at": "2026-01-01T00:04:30+00:00",
+     "endpoint": {"schema":2,"backend":"hc","machine":"host","core_id":"core","session":"s1","socket":"/tmp/lab.sock","address":"t3","task":"t-aaaaaaaaaaaa","role":"service","attempt":"svc1","binding_generation":1,"created_ms":3}, "label": "dev server", "intent_at": "2026-01-01T00:04:00+00:00", "launched_at": "2026-01-01T00:04:30+00:00",
      "stopped_at": null, "exit_verified": false, "by": "worker",
-     "launch": {"via": "runner", "runner": "mise", "project": "owner/repoA", "pane_created": true},
-     "process": {"pid": 1234, "name": "node", "shell_pid": 1200, "observed_at": "2026-01-01T00:04:30+00:00"},
+     "launch": {"via": "runner", "runner": "mise", "project": "owner/repoA"},
+     "process": {"pid": 1234, "name": "node", "foreground_pid": 1234, "observed_at": "2026-01-01T00:04:30+00:00"},
      "readiness": {"ready": true, "checked": true, "waited_s": 2.5, "reason": null},
      "stop": null},
     {"id": "svc2", "name": "worker2", "source": "mise.toml", "kind": "service", "state": "unknown", "url": null, "port": null,
-     "pane": "p2", "workspace": "w1", "label": null, "intent_at": "2026-01-01T00:00:00+00:00", "launched_at": null,
+     "endpoint": null, "label": null, "intent_at": "2026-01-01T00:00:00+00:00", "launched_at": null,
      "stopped_at": null, "exit_verified": false, "by": "worker",
-     "launch": {"via": "runner", "runner": "mise", "project": "owner/repoA", "pane_created": false},
+     "launch": {"via": "runner", "runner": "mise", "project": "owner/repoA"},
      "process": {}, "readiness": {}, "stop": {}}
   ],
   "history": [
@@ -146,13 +147,17 @@ func TestEnvDiscover_requiresRecordedTask(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
+	st, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.Init(); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
 	root := NewRoot("", &stdout, &stderr)
 	root.SetArgs([]string{"--home", home, "env", "discover", "t-aaaaaaaaaaaa"})
-	err := root.ExecuteContext(context.Background())
+	err = root.ExecuteContext(context.Background())
 	if err == nil {
 		t.Fatal("expected missing task to fail")
 	}
@@ -188,7 +193,7 @@ func TestEnvUnknownFlagsAreUsageErrorsBeforeDomain(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearServiceTestEnv(t)
 			home, taskID, before := envUsageLab(t)
 			stdout, stderr, err := runEnv(t, home, tc.args...)
 			if err == nil {
@@ -248,7 +253,7 @@ func TestEnvCommands(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearServiceTestEnv(t)
 			home, taskID, before := envUsageLab(t)
 			stdout, stderr, err := runEnv(t, home, tc.args...)
 			switch {
@@ -316,17 +321,28 @@ func assertEnvUsageError(t *testing.T, err error) {
 
 func envUsageLab(t *testing.T) (home, taskID, before string) {
 	t.Helper()
-	home = writeDesignatedHome(t)
+	home = t.TempDir()
+	st, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.Init(); err != nil {
+		t.Fatal(err)
+	}
 	taskID = "t-aaaaaaaaaaaa"
-	writeTaskFixture(t, home, taskID, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "task", "brief_path": "brief.md"}`)
-	writeEnvironmentFixture(t, home, taskID, `{"schema": 1, "task": "t-aaaaaaaaaaaa", "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "discovery": {"observed_at": "2026-01-01T00:00:00+00:00", "head": "abc123", "config_revision": "r1", "current_revision": "r1", "stale": false, "stale_reason": null, "checked_at": "2026-01-01T00:00:00+00:00", "summary": [], "problems": [], "task_origins": [], "verification_contract": null, "sources": [], "commands": []}, "endpoints": [], "logs": [], "resources": [], "services": [], "history": []}`)
+	writeTaskFixture(t, st.Home, taskID, `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "task", "brief_path": "brief.md"}`)
+	writeEnvironmentFixture(t, st.Home, taskID, `{"schema": 1, "task": "t-aaaaaaaaaaaa", "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "discovery": {"observed_at": "2026-01-01T00:00:00+00:00", "head": "abc123", "config_revision": "r1", "current_revision": "r1", "stale": false, "stale_reason": null, "checked_at": "2026-01-01T00:00:00+00:00", "summary": [], "problems": [], "task_origins": [], "verification_contract": null, "sources": [], "commands": []}, "endpoints": [], "logs": [], "resources": [], "services": [], "history": []}`)
 	before = readEnvSidecar(t, home, taskID)
 	return home, taskID, before
 }
 
 func readEnvSidecar(t *testing.T, home, taskID string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(home, "tasks", taskID, "environment.json"))
+	st, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(st.Home, "tasks", taskID, "environment.json"))
 	if os.IsNotExist(err) {
 		return ""
 	}
@@ -340,5 +356,12 @@ func assertEnvSidecarUnchanged(t *testing.T, home, taskID, before string) {
 	t.Helper()
 	if got := readEnvSidecar(t, home, taskID); got != before {
 		t.Fatalf("environment.json changed:\nbefore:\n%s\nafter:\n%s", before, got)
+	}
+}
+
+func clearServiceTestEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"SUM_HOME", "SUM_SESSION", "SUM_NOW", "HC_SESSION", "HC_SOCKET", "HC_TERMINAL_ID", "SUM_CORE_ID", "SUM_ROLE", "SUM_TASK", "SUM_ATTEMPT", "SUM_BINDING_GENERATION"} {
+		t.Setenv(name, "")
 	}
 }

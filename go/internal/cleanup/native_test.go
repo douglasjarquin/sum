@@ -111,7 +111,8 @@ func (l *lab) reviewer(t *testing.T, pid int) store.Endpoint {
 	task.Set("reviewer", endpoint.Object())
 	e := ordjson.NewObject()
 	e.Set("kind", "review")
-	e.Set("candidate", "candidate")
+	e.Set("candidate", stringField(asObject(func() any { v, _ := task.Get("report"); return v }()), "candidate"))
+	e.Set("verdict", "approve")
 	e.Set("endpoint", endpoint.Object())
 	task.Set("evidence", append(asList(func() any { v, _ := task.Get("evidence"); return v }()), e))
 	if err = l.store.SaveTask(task); err != nil {

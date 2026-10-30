@@ -1,6 +1,7 @@
 # Repairs
 
-Controlled repair sends and the expansion allowance. Moved out of the README.
+Controlled repair sends and the expansion allowance.
+Moved out of the README.
 
 ### Controlled repairs
 
@@ -21,11 +22,14 @@ A send for work outside the approved brief is an `expansion` and needs a recorde
 
 The command records the instruction before delivery and refuses a busy worker, a changed attempt, or an attempt that is not `running` (an `uncertain` launch included).
 Repeating the same key and instruction reads the saved outcome without sending or charging again.
-A delivery Herdr refuses before it reaches the worker records nothing and charges nothing.
+A delivery HC refuses before it reaches the worker records nothing and charges nothing.
 An uncertain expansion delivery stays charged, including when the helper exits after saving its intent; a queued or mid-turn delivery counts as delivered.
 Use a new key only for an explicitly requested new iteration.
 
-GitHub review-thread Address actions use the same repair ledger and require the exact current worker attempt. Their stable request records the PR head and every included thread ID and comment revision. A repeated or uncertain request is not sent again under a new key. Local Discuss notes and Draft replies remain in the task record; neither posts a GitHub reply or resolves a thread.
+GitHub review-thread Address actions use the same repair ledger and require the exact current worker attempt.
+Their stable request records the PR head and every included thread ID and comment revision.
+A repeated or uncertain request is not sent again under a new key.
+Local Discuss notes and Draft replies remain in the task record; neither posts a GitHub reply or resolves a thread.
 
 `execution resume` relaunches already-approved work and consumes nothing.
 Initial dispatch, observations, notifications, required worker and coordinator verification, and brief refresh do not consume extra iterations.
@@ -34,7 +38,7 @@ Read the `repairs` field in `sumctl show TASK_ID` for classified operations, the
 
 Expansion exhaustion refuses another expansion send - in-scope sends are never blocked - and saves one budget decision in the task's questions.
 It stops no worker, frees no slot, and preserves other obligations.
-Only after the user approves an additional allowance, record that decision from the coordinator pane:
+Only after the user approves an additional allowance, record that decision from the coordinator terminal:
 
 ```sh
 ./bin/sumctl repair extend TASK_ID --question QUESTION_ID --additional 1 --approved --file /absolute/path/to/user-decision.md

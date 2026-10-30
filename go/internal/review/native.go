@@ -66,7 +66,8 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if _, err = taskcheckout.Verify(context.Background(), checkout, false); err != nil {
 		return nil, fmt.Errorf("reviewer checkout identity: %w", err)
 	}
-	if resolvePath(checkout.Path) != resolvePath(worktree) || evidenceview.CurrentCandidate(task) == "" {
+	candidate := evidenceview.CurrentCandidate(task)
+	if resolvePath(checkout.Path) != resolvePath(worktree) || candidate == "" {
 		return nil, fmt.Errorf("reviewer requires the recorded Git checkout and current candidate")
 	}
 	var rebind *ordjson.Object
@@ -148,13 +149,13 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	reviewer.Set("permissions", permissions)
 	reviewer.Set("skill_path", skill)
 	reviewer.Set("skill_sha256", skillSHA)
-	reviewer.Set("candidate", orNil(evidenceview.CurrentCandidate(task)))
+	reviewer.Set("candidate", orNil(candidate))
 	nativeTemplate, _ := ordjson.FromValue(returns.NativeTemplate{Spec: spec, ConfigHome: templateHome, Options: options})
 	reviewer.Set("native_template", nativeTemplate)
 	if rebind != nil {
 		reviewer.Set("rebind", rebind)
 	}
-	prompt := kickoffPrompt(sumctlPath, args.Task, evidenceview.CurrentCandidate(task), skill, policyCandidate(task, evidenceview.CurrentCandidate(task)))
+	prompt := kickoffPrompt(sumctlPath, args.Task, candidate, skill, policyCandidate(task, candidate))
 	labels := map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "reviewer", "sum.attempt": attempt}
 	params := hcclient.RunParams{Argv: spec.RunArgv(prompt), Cwd: worktree, Name: "sum-r-" + strings.TrimPrefix(args.Task, "t-") + "-" + attempt[:12], Parent: coordinator.Address, Caller: coordinator.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: labels, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "reviewer", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(ep.BindingGeneration, 10), "SUM_CORE_ID": ep.CoreID, "SUM_SESSION": ep.Session, "HC_SOCKET": ep.Socket}}
 	result, err := launchPreparedNative(context.Background(), s, task, ep, reviewer, params)
@@ -163,9 +164,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	}
 	return result, err
 }
-func templateCommand(argv []string) string {
-	return launch.TemplateCommand(argv)
-}
+func templateCommand(argv []string) string { return launch.TemplateCommand(argv) }
 func decodeObject(obj *ordjson.Object, out any) error {
 	raw, err := ordjson.MarshalCompact(obj)
 	if err != nil {
@@ -177,6 +176,11 @@ func decodeObject(obj *ordjson.Object, out any) error {
 // The intent is durable before HC I/O. A prior attempt, including an uncertain
 // attempt without an address, must be reconciled explicitly rather than replayed.
 func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Object, endpoint store.Endpoint, reviewer *ordjson.Object, params hcclient.RunParams) (*ordjson.Object, error) {
+	candidate := evidenceview.CurrentCandidate(task)
+	snapshot := reviewerCandidateState(task)
+	if assigned := asString(reviewer, "candidate"); assigned != "" && assigned != candidate {
+		return nil, fmt.Errorf("candidate changed before reviewer launch")
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -190,7 +194,7 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 		unlock()
 		return nil, fmt.Errorf("reviewer launch intent already exists; no second native terminal was created")
 	}
-	if evidenceview.CurrentCandidate(current) != evidenceview.CurrentCandidate(task) {
+	if reviewerCandidateState(current) != snapshot {
 		unlock()
 		return nil, fmt.Errorf("candidate changed before reviewer launch")
 	}
@@ -246,7 +250,7 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 			promptState = "not-delivered"
 		}
 		prompt.Set("state", promptState)
-		prompt.Set("candidate", orNil(evidenceview.CurrentCandidate(task)))
+		prompt.Set("candidate", orNil(candidate))
 		saved.Set("prompt", prompt)
 		if err = s.SaveTask(current); err != nil {
 			return nil, err
@@ -286,7 +290,7 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 			prompt.Set("state", "not-delivered")
 		}
 	}
-	prompt.Set("candidate", orNil(evidenceview.CurrentCandidate(task)))
+	prompt.Set("candidate", orNil(candidate))
 	saved.Set("prompt", prompt)
 	if run.PID != nil && run.Foreground != nil {
 		saved.Set("incarnation", (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *run.PID, Foreground: run.Foreground}).Record(store.Now()))
@@ -316,13 +320,23 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 }
 
 func promptNativeReviewer(ctx context.Context, s *store.Store, task, recorded *ordjson.Object, sumctlPath string) (*ordjson.Object, error) {
-	intent := objectField(recorded, "native_launch")
-	if state := asString(intent, "state"); state != "created" || asString(intent, "qualification_error") != "" {
-		return nil, fmt.Errorf("recorded reviewer launch outcome is unresolved or unqualified; explicit reconciliation is required")
-	}
 	endpoint := store.EndpointFromContext(objectField(task, "reviewer"))
 	if err := endpoint.Validate(); err != nil {
 		return nil, fmt.Errorf("recorded reviewer launch is incomplete or uncertain; explicit reconciliation is required")
+	}
+	boundKickoff := objectField(recorded, "kickoff")
+	if boundKickoff != nil && (asString(boundKickoff, "state") == "in-flight" || asString(boundKickoff, "state") == "uncertain") {
+		return nil, fmt.Errorf("reviewer successor kickoff input is unresolved; explicit reconciliation is required")
+	}
+	if boundKickoff != nil {
+		if !validBoundKickoff(boundKickoff, endpoint) {
+			return nil, fmt.Errorf("reviewer kickoff does not match the recorded successor authority")
+		}
+	} else {
+		intent := objectField(recorded, "native_launch")
+		if state := asString(intent, "state"); state != "created" || asString(intent, "qualification_error") != "" {
+			return nil, fmt.Errorf("recorded reviewer launch outcome is unresolved or unqualified; explicit reconciliation is required")
+		}
 	}
 	unlockRecipient, err := returns.LockRecipient(s, ctx, endpoint.Object())
 	if err != nil {
@@ -349,6 +363,7 @@ func promptNativeReviewer(ctx context.Context, s *store.Store, task, recorded *o
 		return nil, fmt.Errorf("reviewer authority refused: %s", verdict.Reason)
 	}
 	candidate := evidenceview.CurrentCandidate(task)
+	snapshot := reviewerCandidateState(task)
 	existing := objectField(recorded, "prompt")
 	state := asString(existing, "state")
 	if asString(existing, "candidate") == candidate && (state == "submitted" || state == "uncertain" || state == "in-flight" || state == "applied") {
@@ -359,8 +374,15 @@ func promptNativeReviewer(ctx context.Context, s *store.Store, task, recorded *o
 		return nil, err
 	}
 	current, err := s.ReadTask(endpoint.Task)
-	if err == nil && (!endpoint.Native().SameAuthority(store.EndpointFromContext(objectField(current, "reviewer")).Native()) || evidenceview.CurrentCandidate(current) != candidate) {
+	if err == nil && (!endpoint.Native().SameAuthority(store.EndpointFromContext(objectField(current, "reviewer")).Native()) || reviewerCandidateState(current) != snapshot) {
 		err = fmt.Errorf("reviewer endpoint or candidate changed before input")
+	}
+	if err == nil {
+		parent := store.EndpointFromContext(objectField(task, "parent"))
+		owner, ownerErr := s.Owner()
+		if ownerErr != nil || !parent.Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) || !parent.Native().SameAuthority(store.EndpointFromContext(owner).Native()) {
+			err = fmt.Errorf("coordinator authority changed before reviewer input")
+		}
 	}
 	if err == nil {
 		prior := objectField(objectField(current, "reviewer"), "prompt")
@@ -369,11 +391,34 @@ func promptNativeReviewer(ctx context.Context, s *store.Store, task, recorded *o
 			err = fmt.Errorf("reviewer input already claimed for this candidate")
 		}
 	}
+	if err == nil && boundKickoff != nil {
+		savedKickoff := objectField(objectField(current, "reviewer"), "kickoff")
+		if !validBoundKickoff(savedKickoff, endpoint) {
+			err = fmt.Errorf("reviewer kickoff authority changed before input")
+		} else {
+			state := asString(savedKickoff, "state")
+			if state == "in-flight" || state == "uncertain" {
+				err = fmt.Errorf("reviewer successor kickoff input is unresolved")
+			}
+			if asString(savedKickoff, "candidate") == candidate && state != "pending" && state != "not-delivered" {
+				err = fmt.Errorf("reviewer kickoff already claimed for this candidate")
+			}
+		}
+	}
 	if err == nil {
 		prompt := ordjson.NewObject()
 		prompt.Set("state", "in-flight")
 		prompt.Set("candidate", orNil(candidate))
 		prompt.Set("at", store.Now())
+		if kickoff := objectField(objectField(current, "reviewer"), "kickoff"); kickoff != nil {
+			if old := asString(kickoff, "candidate"); old != candidate {
+				kickoff.Set("supersedes_candidate", old)
+			}
+			objectField(current, "reviewer").Set("candidate", candidate)
+			kickoff.Set("candidate", candidate)
+			kickoff.Set("state", "in-flight")
+			kickoff.Set("claimed_at", store.Now())
+		}
 		objectField(current, "reviewer").Set("prompt", prompt)
 		err = s.SaveTask(current)
 	}
@@ -400,6 +445,11 @@ func promptNativeReviewer(ctx context.Context, s *store.Store, task, recorded *o
 	prompt.Set("detail", detail)
 	value, _ := ordjson.FromValue(result)
 	prompt.Set("result", value)
+	if kickoff := objectField(objectField(current, "reviewer"), "kickoff"); kickoff != nil {
+		kickoff.Set("state", state)
+		kickoff.Set("detail", detail)
+		kickoff.Set("result", value)
+	}
 	if err = s.SaveTask(current); err != nil {
 		return nil, err
 	}
@@ -530,6 +580,7 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	if candidate == "" || candidate != evidenceview.CurrentCandidate(task) {
 		return nil, fmt.Errorf("reviewer candidate changed before opening message recovery")
 	}
+	snapshot := reviewerCandidateState(task)
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -537,7 +588,7 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	current, err := s.ReadTask(taskID)
 	if err == nil {
 		saved := objectField(current, "reviewer")
-		if !ep.Native().SameAuthority(store.EndpointFromContext(saved).Native()) || !caller.Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) || asString(objectField(saved, "prompt"), "state") != "not-delivered" || candidate != evidenceview.CurrentCandidate(current) {
+		if !ep.Native().SameAuthority(store.EndpointFromContext(saved).Native()) || !caller.Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) || asString(objectField(saved, "prompt"), "state") != "not-delivered" || reviewerCandidateState(current) != snapshot {
 			err = fmt.Errorf("reviewer recovery claim changed concurrently")
 		} else {
 			prompt := objectField(saved, "prompt")
@@ -580,4 +631,21 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	out.Set("prompt", prompt)
 	out.Set("note", "Opening message recovery never adopts a role; a matching reviewer-init receipt is required.")
 	return out, nil
+}
+
+func validBoundKickoff(kickoff *ordjson.Object, endpoint store.Endpoint) bool {
+	saved := store.EndpointFromContext(objectField(kickoff, "endpoint"))
+	return kickoff != nil && asString(kickoff, "kind") == "reviewer-kickoff" && asString(kickoff, "source") == "native-rebind" && asString(kickoff, "candidate") != "" && endpoint.Native().SameAuthority(saved.Native()) && endpoint.Socket == saved.Socket && endpoint.Session == saved.Session
+}
+
+// reviewerCandidateState compares saved candidate/checkout facts without Git I/O
+// while the ledger lock is held. Live Git observations happen before the lock.
+func reviewerCandidateState(task *ordjson.Object) string {
+	snapshot := ordjson.NewObject()
+	for _, key := range []string{"worktree", "checkout_intent", "repository", "branch", "base_sha", "report", "evidence"} {
+		value, _ := task.Get(key)
+		snapshot.Set(key, value)
+	}
+	data, _ := ordjson.MarshalCompact(snapshot)
+	return string(data)
 }

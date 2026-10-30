@@ -69,6 +69,8 @@ func newServiceLab(t *testing.T) *serviceLab {
 	we.Attempt = id
 	we.Address = "t2"
 	we.CreatedMS = 2
+	workerPID := uint32(40000003)
+	hc.SetTerminal(hcclient.Terminal{Address: we.Address, CreatedMS: we.CreatedMS, Cwd: cwd, State: "live", PID: &workerPID, Foreground: &hcclient.Foreground{PID: int32(workerPID), Name: "worker", Argv: []string{"worker"}, Cwd: cwd}})
 	task := ordjson.NewObject()
 	task.Set("schema", json.Number("2"))
 	task.Set("id", we.Task)

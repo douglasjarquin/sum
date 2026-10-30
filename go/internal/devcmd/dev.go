@@ -8,16 +8,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/graph"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
-	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 var namePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,39}$`)
@@ -27,10 +23,25 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 	if err != nil {
 		return nil, err
 	}
+	if err = s.CheckWritable(); err != nil {
+		return nil, err
+	}
 	if !namePattern.MatchString(name) {
 		return nil, fmt.Errorf("Development name: lowercase letters, digits, dot, underscore, or dash; at most 40 characters.")
 	}
 	path := filepath.Join(root, ".sum", "dev", name)
+	for component := path; component != root; component = filepath.Dir(component) {
+		info, statErr := os.Lstat(component)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			return nil, statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return nil, fmt.Errorf("development checkout path contains a symlink or non-directory: %s", component)
+		}
+	}
 	branch := "sum-dev/" + name
 	existing, _ := developmentMarker(path)
 	if _, statErr := os.Stat(path); statErr == nil && existing == nil {
@@ -62,11 +73,11 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 		existing.Set("kind", "development")
 		existing.Set("name", name)
 		existing.Set("installation", root)
-		existing.Set("installation_home", s.Home)
+		existing.Set("installation_home", s.Root)
 		existing.Set("branch", branch)
 		existing.Set("base_sha", baseSHA)
 		existing.Set("created_at", store.Now())
-		existing.Set("panes", []any{})
+		existing.Set("terminal_launch", nil)
 		if err := os.MkdirAll(filepath.Join(path, ".sum"), 0o700); err != nil {
 			return nil, err
 		}
@@ -74,37 +85,14 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 			return nil, err
 		}
 	}
-	var paneView any
+	var terminalView any
 	if pane {
-		if ctx == nil {
-			return nil, fmt.Errorf("Herdr pane context is required for --pane.")
-		}
-		herdrPath, findErr := toolpath.Find(runtimeRoot, "herdr")
-		if findErr != nil {
-			return nil, findErr
-		}
-		session := asString(ctx, "session")
-		created, callErr := herdrclient.Call(herdrPath, session, 30*time.Second, "workspace", "create", "--cwd", path, "--label", "sum-dev-"+name, "--no-focus")
-		if callErr != nil {
-			return nil, callErr
-		}
-		createdObj, _ := created.(*ordjson.Object)
-		rootPane := objectField(createdObj, "root_pane")
-		workspace := objectField(createdObj, "workspace")
-		paneObj := ordjson.NewObject()
-		paneObj.Set("pane", asString(rootPane, "pane_id"))
-		paneObj.Set("workspace", asString(workspace, "workspace_id"))
-		paneObj.Set("session", session)
-		host, _ := machine.ID()
-		paneObj.Set("machine", host)
-		paneObj.Set("at", store.Now())
-		panes := listField(existing, "panes")
-		existing.Set("panes", append(panes, paneObj))
-		if err := ordjson.WriteFile(filepath.Join(path, ".sum", "dev.json"), existing); err != nil {
+		terminalView, err = developerTerminal(s, ctx, path, name)
+		if err != nil {
 			return nil, err
 		}
-		paneView = paneObj
 	}
+
 	result := ordjson.NewObject()
 	result.Set("name", name)
 	result.Set("path", path)
@@ -113,7 +101,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 	result.Set("installation", root)
 	result.Set("reopened", reopened)
 	result.Set("role", "developer")
-	result.Set("pane", paneView)
+	result.Set("terminal", terminalView)
 	result.Set("note", fmt.Sprintf("Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates. sum built no code graph here; read the source, or index this checkout yourself on demand with `CODEGRAPH_NO_DAEMON=1 CODEGRAPH_NO_DOWNLOAD=1 %s`.", shquote.Join([]string{graph.BinPath(runtimeRoot), "init", path})))
 	return result, nil
 }
@@ -141,7 +129,11 @@ func List(s *store.Store) (*ordjson.Object, error) {
 		row.Set("name", asString(value, "name"))
 		row.Set("path", path)
 		row.Set("branch", asString(value, "branch"))
-		row.Set("panes", listField(value, "panes"))
+		if historical := listField(value, "panes"); len(historical) > 0 {
+			row.Set("historical_panes", historical)
+		}
+		launch, _ := value.Get("terminal_launch")
+		row.Set("terminal_launch", launch)
 		rows = append(rows, row)
 	}
 	result := ordjson.NewObject()

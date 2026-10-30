@@ -15,6 +15,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/taskcheckout"
 )
@@ -139,6 +140,11 @@ func TestNativeBindRequiresSuccessorReceiptAndPreservesGit(t *testing.T) {
 		t.Fatal("refusal changed worker binding")
 	}
 	register(next, uint32(live.Process.Pid), "worker-init", true)
+	// This test exercises explicit manual delivery. Automatic binding coverage
+	// separately requires the observer's actual startup receipt.
+	if err = settings.SetNativeEventsEnabled(st, false); err != nil {
+		t.Fatal(err)
+	}
 	lsof := filepath.Join(root, "lsof")
 	if err = os.WriteFile(lsof, []byte(fmt.Sprintf("#!/bin/sh\nprintf 'p%d\\nn%s\\n'\n", live.Process.Pid, intent.Path)), 0700); err != nil {
 		t.Fatal(err)

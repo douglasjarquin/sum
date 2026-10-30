@@ -61,9 +61,11 @@ type PumpOpts struct {
 type unreachableError struct {
 	state string
 	msg   string
+	cause error
 }
 
 func (e *unreachableError) Error() string { return e.msg }
+func (e *unreachableError) Unwrap() error { return e.cause }
 
 func Notify(s *store.Store, opts PumpOpts, taskID, recipient, reason string, force bool) (*ordjson.Object, error) {
 	opts.Tasks = []string{taskID}

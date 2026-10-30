@@ -1,168 +1,107 @@
-# Real-host acceptance
+# HC runtime acceptance
 
-Do these in a throwaway repository and an isolated Herdr session before trusting a large task.
-The offline demo is not a substitute for this check.
+This is a manual acceptance checklist, not a receipt that these scenarios passed.
+Run only in an authorized isolated lab with a unique named HC session and scratch state/config/runtime paths.
+Never use the user's default session, live installation, credentials from another scope, model/account changes or permission bypasses to obtain a result.
+Retain the exact candidate SHA, published HC artifact identity, harness version/argv/keymap, commands, records and limitations.
 
-## 1. Bootstrap
+## 1. Setup and startup
 
-Run setup twice. Both runs should succeed without replacing unrelated MCP entries or touching global harness/account settings. The setup MCP handshake should discover ten tools.
-Run `sumctl init` inside the intended Herdr pane and confirm it reports `coordinator`; `sumctl doctor` is observation only. Confirm the expected session, pinned version, and selected harness executable. Authenticate that harness and GitHub yourself.
+Stage unmodified HC 0.1.14 and its matched manual/template with custom Sum MCP and legacy Herdr unavailable.
+Confirm fresh setup generates no custom Sum MCP and unrelated MCP integrations remain intact on a repeat run.
+Explicitly start the lab core through native HC; read-only observation of an absent/stopped core must not auto-start it.
+Launch with `coordinator start --socket PATH --session NAME --hc-config-home PATH --harness codex`.
+Verify bound environment, permanent core ID/address/creation time, process and matching initialization receipt.
+Without that qualified context, `init` must default to developer rather than silently claim coordinator.
+Manual existing-terminal initialization must preserve known launch fields or an unknown model.
 
-## 2. First task
+## 2. End-to-end task
 
-Create a small Git repository with a trivial function and a failing unit test. Launch a harness from the sum directory and say:
+Dispatch one approved task into a verified Git worktree, save a worker question, record the user's answer, obtain the worker's matching application receipt and report, arrange independent candidate-bound review, run coordinator verification, and perform only authorized publication.
+Only the user merges except an explicitly authorized factory high-confidence merge contract.
+After a real merge, inspect and apply guarded cleanup.
+Retain each ledger record and endpoint/attempt identity, not only terminal scrollback.
+A native send or Done transition proves no application, review, verification or merge.
 
-> Delegate this fix to [the chosen harness]. Work in a separate checkout, run the test, and report the candidate SHA. Do not create a PR or merge anything. Before implementing, ask me whether to preserve the existing public function name.
+## 3. Harness compatibility
 
-Confirm a distinct worktree/branch, a saved question, and the actual primary checkout remaining unchanged.
-Answer the question, confirm it remains visible until applied, and inspect the final report and diff.
-Record whether MCP or CLI was used, harness version, Herdr version, and any trust prompts encountered.
+| Harness/runtime | Required evidence | Current boundary |
+| --- | --- | --- |
+| Published unmodified HC 0.1.14 plus Codex 0.166.0 with `--no-daemon`, default keymap, namespaced Tab template | Done follow-up, queued busy race, ordered application responses and matching Sum receipts | Isolated actual Codex Done and busy-queue probes passed; full candidate-specific Sum canary must be recorded separately |
+| Other terminal harnesses | Exact argv/model/permission disclosure, prompt receipt, blocked dialogs, native status, submit and resume behavior | Unqualified for automatic input; actual harness gaps remain explicit |
+| Model-free native HC lab | Typed API, identity, lifecycle and observer boundaries; separately, full Sum application composition with scripted worker/reviewer terminals and local strict fake GitHub | The full application canary passed in `/tmp/sum330-full-canary-final.json`; `authenticated_harness:false`, `model_execution:false` and confirmed core stop remain explicit; no actual-model or production qualification follows |
+| Existing production installation | Enforceable legacy writer/sender exclusion and explicit generation cutover | Current legacy APIs cannot prove exclusion; activation must refuse without the external prerequisite; production migration unrun |
 
-## 3. Busy or closed coordinator
+For qualified Codex, defer observed working, blocked and unknown; idle uses `if:idle` and observed Done uses ordinary send without `if` or `force`.
+The raced Done-to-working transition queues Tab for the next turn, deliberately relaxing an atomic Done guard.
+`started`, status and native turn counts remain diagnostics; they do not replace application receipts.
+Trust/auth/permission prompts require the user's action and are never accepted by Sum.
 
-Repeat while the coordinator is occupied, then while it is closed. The question must remain in `sumctl inbox`; prompt delivery may remain pending.
-Reopen the coordinator, run `sumctl init --role coordinator --reclaim` once the old pane is verifiably gone, bind the task's parent to the new pane, and check status. There must be no duplicate worker and no invented answer.
+## 4. Preparation, launch and uncertainty
 
-## 4. Non-cooperative worker
+Interrupt Git worktree preparation before and after registration and reconcile with `prepare --reconcile TASK_ID`.
+Assert one verified checkout, saved branch/base and no reset or duplicate.
+Create a terminal with its opening message proven unsent, then recover once through `execution redeliver` or `reviewer redeliver` with the exact attempt.
+Lose the response after a creation/send or kill a sender during input; uncertainty must persist without automatic replay.
+A failed non-kept launch may leave no recoverable address.
+`started:false` or null must never become processed/completed or trigger an extra Enter.
 
-Ask a worker deliberately to print a question without calling `sumctl ask`. Check status. The coordinator should inspect the idle/blocked worker and save the question.
-This measures the attended fallback. Instant unattended capture is NOT a passing criterion claimed by this MVP.
-With default native event delivery active, also record whether the worker's idle edge produced an `attention` record with a useful excerpt and how long after the pane settled it appeared; label by hand whether the excerpt contained the question. Report unsupported harness cases (no Herdr status, alternate-screen output) explicitly.
+## 5. Identity and replacement
 
-## 5. Uncertain startup
+Reuse a name, socket path, address on a different core, reset state and alias; old authority must not transfer.
+Replace the harness process at the same native terminal; require current process/role/receipt proof and explicit rebind.
+A non-kept agent replaced by a shell must receive no automatic worker role or prompt.
+Exit or replace the coordinator while workers/services continue; bind future returns to the verified replacement without duplicating work.
+A second same-host scope and remote task execution must refuse before binding rather than create a silent delivery gap.
 
-Use a fresh harness trust/authentication prompt. A failed startup must preserve the task and pane, report uncertainty, and refuse an automatic second start. Inspect and resolve the actual prompt rather than creating another agent.
+## 6. Returns, observers and fairness
 
-## 6. Cross-harness contract
+Save an answer/refresh while the worker is busy and prove one eligible delivery plus a matching application/adoption receipt.
+Generate twelve routine returns and an urgent question; routine wakes coalesce while the question retains priority without busy interruption.
+Close a question or rebind a route during observation; revalidation must prevent a stale send without blocking unrelated recipients.
+Restart a lab core, drop events and fail/restart an observer; fresh snapshots and reconciliation must catch up without sequence-as-ack or uncertain replay.
+Use more idle recipients than one bounded pass and no later HC event; fair continuation must eventually reach eligible pending work.
+Bind, consume a wake and adopt a revision without a native status change; post-commit reconciliation must expose eligible work.
+Verify one proven owned non-agent outliving observer, real startup/readiness receipt and no payload queue.
+Default coordinator initialization must ensure it outside the ledger lock.
+A startup failure must leave explicit degraded health and working bounded `pump`, not a false active state.
+An explicit disabled preference must survive update and initialization without silently launching an observer.
 
-Repeat the same small task with a different worker harness and, separately, a different coordinator. Compare question capture, result reporting, trust behavior, and startup instructions. Do not label every harness supported merely because two executables launch.
+## 7. Services, capacity and cleanup
 
-## 7. Backup
+Start only a declared task-local service and retain exact native/process/readiness ownership.
+Repeat start, conflict on a port, replace the process outside Sum and let a service ignore its interrupt.
+Stop must send one interrupt only to a proven owned instance, require actual exit and absence of survivors, and never escalate to kill.
+An ended wait or idle terminal is not exit.
+Reports and uncertain processes retain capacity until exact stopped-attempt evidence permits park.
+Cleanup must block dirty/untracked/unmerged work, shared/unproven processes, pending questions/answers/evidence and active attempts.
+A maintenance barrier and reinspection must prevent cleanup racing new work.
+Remove only exact owned native terminal/history and the verified Git worktree through their respective APIs.
+No HC I/O may occur while holding the state lock.
+Repeat completed cleanup as a no-op; preserve unrelated work and records.
 
-Create a records backup. Inspect its manifest: worktree code is explicitly excluded. Extract into a new directory, inspect records via `sumctl --home`, and verify that another machine's bindings are not automatically used. Rename the host (`hostnamectl set-hostname`, then back) and confirm the coordinator pane's next `sumctl init` still returns `coordinator` without `--reclaim`.
+## 8. Migration and rollback
 
-## 8. Fleet capacity and rolling update
+Inspect schema-one records without migration through normal Open/init/status.
+Preserve sealed old policy/procedure/evidence bytes and keep stable root separate from selected physical generation home.
+Pause a legacy writer after Open/read, attempt cutover, and prove enforceable exclusion before authority transfer.
+Current APIs cannot prove that lease, so absence of proof must refuse activation; do not simulate it with `ps` or an operator boolean.
+A repeated or interrupted attempt must neither lose obligations nor permit mixed writers/senders.
+Do not claim a production migration was tested while this prerequisite is unavailable.
+Test rollback against actual binary capabilities and active receipts/endpoints, not a manifest alone.
+An old schema-one runtime must not reactivate the inactive archive.
+Compatible rollback preserves domain records and uncertainty.
 
-Raise the lab installation to ten or more slots with `sumctl settings set --global 12 --per-repository 1` and dispatch that many tiny approved tasks across throwaway repositories with the authenticated harnesses in use.
-Confirm a dispatch beyond the limit creates no worktree and a second task into an occupied repository is refused even with global room.
-A reported task must still hold its slot while the worker or an owned service remains active.
-Read its attempt ID with `execution show TASK_ID`, wait for the worker to exit, then run `execution park TASK_ID --attempt ID`.
-Confirm its slot is free while its questions, report, and checkout remain available.
-Resume approved work with `execution resume TASK_ID --attempt ID`, and confirm the old ID cannot release the successor.
-With all slots occupied, confirm resume and `verify --execute` refuse before launching anything.
-Confirm idle, missing, and unobservable workers remain reserved rather than permitting duplicate execution.
-Confirm a running verifier or worker without recorded process identity cannot be parked, and that a dead parent with a surviving owned child keeps the slot.
-Then follow the fleet canary in `skills/sum-update/SKILL.md`: update, refresh, answer and report through old callbacks, roll back, refresh again.
-Record each worker's observed state, the `fanout` counts and wall time of every pass, the receipts that appeared and when, and every worker that kept its process, checkout, and partial work.
-Scripted workers in `go/internal/cli/demo_test.go` establish the bookkeeping; only this step says anything about a model acting on a refresh.
+## 9. Optional views and graph
 
-For controlled repairs, send corrections to a settled lab worker with `repair send TASK_ID --attempt ID --key KEY --file FILE`, using distinct keys.
-The default `in-scope` class consumes nothing; send two with `--class expansion --reason TEXT` to exercise the allowance, then confirm a third expansion is refused with one budget question and no native launch or prompt while a further in-scope send and an `execution resume` still proceed.
-Change the candidate, refresh the brief, and update or roll back the lab runtime; confirm the allowance remains exhausted.
-Only after an actual human decision, record `repair extend TASK_ID --question ID --additional 1 --approved --file FILE` and confirm exactly one additional expansion is permitted.
-Confirm an ordinary answer, worker report, and repeated grant do not add iterations.
-These steps require a real authorized lab and remain unrun until an operator records them; offline fixtures do not certify a model's internal loop.
+Metadata uses owned namespaced HC labels on verified terminals and never changes role, approval or native lifecycle.
+Read-only compact/grouped views preserve global decisions, unknown coverage and explicit paging.
+An on-demand codegraph remains isolated to its task checkout and is never verification or policy evidence.
+Unrelated MCP configuration and the separate Grok Bot product remain unchanged.
 
-## 9. Task-owned development services
+## 10. Evidence and release boundaries
 
-In a real task whose repository declares a dev server, have the worker run `sumctl env discover`, then `sumctl env start TASK_ID --command dev --url http://127.0.0.1:PORT`, and confirm in the Herdr UI that a pane split under the worker pane runs the repository's own command while the worker keeps working.
-Start a second task in another repository the same way on another port, and keep a shared database (or any listener started by hand) running; record it with `--ownership shared`.
-Then: start the first command again (expect `already_running`, no second pane), try a URL whose port is taken (expect a recorded `conflict` and no termination), restart the service by hand inside its pane (expect `env stop` to refuse it as not the recorded instance), and let one service ignore the interrupt (expect `stopping` after the bound, no escalation).
-Merge the first task's PR and run `cleanup TASK_ID` then `--apply`: the proven service stops, its pane closes, the checkout is removed, and the second task's server, the shared database, and the coordinator pane are untouched; run `--apply` again and confirm it is a no-op.
-Run `update apply` and `refresh request` while a service serves requests and confirm the process, pane, and port are unchanged.
-
-## 10. Native metadata in the real sidebar
-
-With two real tasks running and explicit authorization for the lab, run `sumctl metadata enable`, merge the printed `metadata snippet` rows into your own `config.toml`, and run `herdr server reload-config`.
-After recording each transition, run `metadata sync` explicitly. Confirm that an open question shows `needs-decision`, an answered question becomes `answer-pending`, a report or review shows `review-ready`, and native attention shows `needs-attention`. Compare the coordinator's known decision count with `inbox --compact`; an unreadable neighboring source must show unknown coverage. Herdr's own agent status and human labels must remain separate.
-Run `metadata inbox` outside Herdr and confirm it prints the bounded compact inbox, matching `inbox --compact` counts and leaving saved records unchanged.
-
-The #241 follow-up targets are native opening, capability probing, distinct installation ownership, occupant checks, safe clearing, and writes only when values change. Transition notification delivery is also unimplemented; `--notify` currently records a preference only. Do not record these checks as passed against this revision. Historical validation reports retain their original scope.
-Any observation of reduced coordinator narration needs a separate authenticated harness run after explicit instruction refresh and adoption. Compact byte measurements do not establish that behavior.
-
-## 11. Managed project clones and explicit skill delivery
-
-From the coordinator pane, run `./bin/sumctl project enroll <owner>/<repo>` for one repository you own and confirm exactly that repository appears under `projects/<owner>/<repo>`, that `git status --ignored` in the installation lists it as ignored and `git ls-files` does not, and that a second enroll returns `already-enrolled` without a fetch. Enroll a same-named repository of another owner and one on a non-default host with `--host`; confirm three distinct paths.
-Enroll one repository you already cloned elsewhere with `--path`, and one left under `.sum/projects/<owner>/<repo>` by the earlier procedure with a worker still running in it; confirm both are registered where they are (`external`, `legacy`), that `project migrate` names the running task as a blocker, and that `--apply` is refused while it runs.
-Dispatch a real task with `--project`, open its brief, and confirm the `## Delivered runtime` section names `<installation>/bin/sumctl` and the absolute skill path with the hash of the installed file; confirm the worker's `context --role worker` shows the same and that the worktree is outside the installation.
-Start a harness by hand inside the managed clone and run the installation's `bin/sumctl init` from there; it must refuse with "A project session is not a sum session" and leave `.sum/context.json` unchanged. Then, in that clone, run `mise tasks ls` and confirm sum's `test`/`demo` tasks resolve from the parent; run `sumctl env discover` for a task and confirm `task_origins` flags them as inherited rather than as project verification.
-Enroll `douglasjarquin/sum` itself and confirm the registration points at the installation with nothing cloned. Stage a release and confirm the bundle contains no `projects/` entry; take a records backup and confirm `state/projects.json` is present and no clone file is.
-
-In a throwaway Git project and temporary `HOME`, run `sumctl skills install` against a local fixture with one explicitly selected skill and agent.
-Confirm the pinned Vercel Skills CLI copies the selected directory into the project, creates no skill symlink, and writes no user-level skill directory.
-Request a missing skill and confirm the command fails without reporting success, then request a `sum-*` name and confirm Sum refuses it before the upstream CLI runs.
-List a real source's skills read-only (`.local/bin/skills add michael-denyer/pstack-claude --list`) and confirm nothing is copied and no selection is made; listing is inspection, not an install decision.
-Copy one real skill from a real public source (`vercel-labs/agent-skills`, skill `writing-guidelines`, agent `claude-code`) into a throwaway Git project with `sumctl skills install`; confirm the resulting Git diff is exactly one project-local `SKILL.md` plus `skills-lock.json`, review it as untrusted content per `docs/sum-skills.md`, commit it, and open an ordinary PR for it.
-Re-run the identical `sumctl skills install` command and confirm the diff is empty (an unchanged selection); then copy a second explicit skill into the same project and confirm the diff adds only that skill's files and a `skills-lock.json` entry, leaving the first skill's files untouched.
-Run the pinned Vercel Skills CLI's own `update -p -y` directly (not through `sumctl`) against that project and confirm it does not preserve the `--agent claude-code` copy made above; do not rely on `update` for a refresh, and re-run the explicit `sumctl skills install` command instead.
-
-## 12. Code graph per checkout with a real harness
-
-After `mise run setup` (or a staged release) on the pinned tools, confirm `./bin/sumctl doctor` lists `codegraph` as available at version 1.5.0 under the runtime's `.local/bin`, and that no global `codegraph install` was run (`~/.claude.json`, `~/.codex/config.toml`, `~/.cursor/mcp.json` unchanged).
-Dispatch a real task into a repository with a few source files; confirm dispatch ran no codegraph, the task has no `graph` record, and the brief's `## Code graph` section says `not built` with the `graph init` command. Run `./bin/sumctl graph init TASK_ID`; confirm `graph.state` is `ready` with index counts, `.codegraph/` exists only in the task worktree (not in the clone), `git status` there is clean, and `context TASK_ID --section execution` names the runtime binary and the checkout path. Interrupt a `graph init` on a larger repository (for example with a short `SUM_GRAPH_TIMEOUT`), confirm an immediate retry is refused while the indexer is still running, and confirm the retry after it exits records `ready` only once status reports the index complete.
-In the worker pane, run the brief's `explore` and `query` commands, then commit an edit and run `query` for the new symbol before and after the brief's `sync` command; confirm the symbol appears only after the sync and that `graph status TASK_ID` reported `stale` with a moved HEAD in between.
-Dispatch a second task into the same repository (raise `--per-repository` first) with a different implementation of one symbol and run `graph init` for it; confirm each worker's query returns its own implementation and `status --json` for the clone reports `initialized: false`.
-Run `./bin/sumctl verify TASK_ID --candidate SHA --execute` and confirm the evidence record has no `graph` and no `.codegraph/` was created under `.sum/tasks/TASK_ID/verification/`; run `dev prepare --name canary` and confirm its result has no `graph` and its `note` prints the on-demand `codegraph init` command.
-Optionally print `./bin/sumctl graph config --harness <yours>`, merge it by hand into the task checkout's local MCP file, restart the harness in that pane, and confirm the graph tools answer for that checkout; confirm cleanup after the merge reports the `codegraph serve` process as an occupant until the session exits, and that the archived task's records keep `graph.json` while the removed checkout took its index with it.
-Record init and query wall times from `graph.json` attempts and your shell; upstream's published speedups are not evidence for this host.
-
-## 13. Grok Bot live canary
-
-This section is unrun until an operator records it.
-The files under `grok-bots/sum/` are the source-controlled Sum coordinator recipe.
-The files under `grok-bots/square/` are the source-controlled Square steward recipe.
-`GROK_SUM.md` and `GROK_SQUARE.md` are the installers.
-They are not this canary.
-This repository does not publish a live Bot.
-
-Tell any Grok Bot to follow `GROK_SUM.md`.
-To install Square, follow `GROK_SQUARE.md` after Sum exists.
-Confirm it clones `https://github.com/douglasjarquin/sum.git` onto the shared computer and loads the five skills from that tree.
-Connect GitHub, and Cursor if the task is software.
-Do not enable routines yet.
-
-Ask the Bot to handle one approved task in a repository you control.
-Confirm it dispatches a worker Bot and does not do the work in the coordinator chat.
-Save a question as a file under `/workspace/sum/` with a stable key.
-Record the user's answer against that key.
-Confirm the worker writes a report file.
-Run worker verification, then a distinct coordinator verification recorded on disk.
-Reading worker logs is not the second run.
-The user merges if anything is published.
-The Bot never merges.
-
-## 14. Codex Remainder quota canary
-
-This section is unrun until an operator records it.
-Offline fixtures do not certify a live Codex account.
-
-After `mise run setup` (or a staged release) on a supported platform, confirm `./bin/sumctl doctor` lists `remainder` with `ok` true at the runtime `.local/bin/remainder` link.
-Confirm `sumctl quota --provider codex` prints Remainder TOON and exits 0 when the selected Codex account is usable, including a remaining value of 0.
-Confirm `sumctl quota --provider codex --format json` prints Remainder JSON and does not wrap it in a sum envelope.
-Confirm `sumctl quota --provider codex --format compact` still prints Remainder compact.
-Confirm a missing Remainder binary refuses Codex quota with a clear error and does not invoke quota-axi.
-Confirm `sumctl quota --provider claude` still runs quota-axi and does not invoke Remainder.
-Do not switch accounts, stop workers, or rank providers from this output.
-Record the Remainder version, platform archive, and whether remaining, exhausted, or unavailable was observed.
-
-## 15. Remote machine returns
-
-This section is unrun until an operator records it.
-Offline fixtures do not certify a real SSH host.
-
-Sum does not enroll SSH hosts.
-Herdr `machine add` does.
-Follow [Connecting machines](https://herdr.dev/docs/connecting-machines/).
-Do not add `sumctl machine` or a Sum SSH daemon.
-
-On a host with Herdr 0.9.5 and SSH to a second machine, run `herdr machine add` for that host.
-Keep the coordinator on Local.
-Confirm a task whose recorded `machine` is the remote host's identity is ignored by the local `hook event` pump.
-Confirm a local task can still `sumctl ask` and appear in records-only `sumctl inbox`.
-Confirm the local read-only status check (`inbox --live`) and local delivery (`init`, `bind --parent-only`, and `pump`) remain the degrade path when the remote Herdr session is disconnected.
-A real SSH canary is unrun if no second host is available.
-
-## Record results
-
-For each real task, record all human-labeled questions, which were saved by workers, which were found during a status check, which were missed, and time until attention. Also record unnecessary attention items and manual pane inspections.
-A useful result is fewer manual inspections and no forgotten decisions in the tested cases, not merely a successful command exit.
+Attach the canonical aggregate once for the final candidate, independent policy review, isolated native canary, actual harness matrix and explicit migration refusal evidence.
+Record every unrun manual scenario and unsupported harness as a gap.
+Local checks, hosted CI, merge, deployment and production acceptance are separate facts.
+Historical `VALIDATION.md` and `test-results.txt` are dated pre-HC receipts, not current certification.

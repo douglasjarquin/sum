@@ -10,6 +10,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
+	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -70,7 +71,7 @@ func ReviewerNativeStopped(ctx context.Context, s *store.Store, task, old *ordjs
 	if err != nil && !absent(err) {
 		return nil, err
 	}
-	if err == nil && (terminal.State == "live" || terminal.CreatedMS != endpoint.CreatedMS) {
+	if err == nil && (terminal.State != "finished" || terminal.Keep || terminal.CreatedMS != endpoint.CreatedMS) {
 		return nil, fmt.Errorf("recorded reviewer is live or replaced")
 	}
 	registration, err := s.Registration(endpoint)
@@ -228,6 +229,15 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 			replacement.Set(k, field(registration, k))
 		}
 	}
+	reviewerCandidate := ""
+	reviewerSnapshot := ""
+	if !parentOnly && role == "reviewer" {
+		reviewerCandidate = evidenceview.CurrentCandidate(task)
+		if reviewerCandidate == "" {
+			return nil, fmt.Errorf("reviewer successor needs a current Git candidate")
+		}
+		reviewerSnapshot = reviewerCandidateState(task)
+	}
 	scopeTarget := store.EndpointFromContext(ctx)
 	if replacement != nil {
 		scopeTarget = store.EndpointFromContext(replacement)
@@ -251,9 +261,28 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 	if err != nil {
 		return nil, err
 	}
+	owner, ownerErr := s.Owner()
+	if ownerErr != nil || !store.EndpointFromContext(ctx).Native().SameAuthority(store.EndpointFromContext(owner).Native()) {
+		return nil, fmt.Errorf("coordinator authority changed during native rebind")
+	}
 	if !parentOnly {
 		if !SameEndpoint(object(current, key), old) {
 			return nil, fmt.Errorf("endpoint changed during rebind")
+		}
+		if role == "reviewer" {
+			if reviewerCandidateState(current) != reviewerSnapshot {
+				return nil, fmt.Errorf("reviewer candidate records changed during native rebind")
+			}
+			candidate := reviewerCandidate
+			kickoff := ordjson.NewObject()
+			kickoff.Set("kind", "reviewer-kickoff")
+			kickoff.Set("endpoint", store.EndpointFromContext(replacement).Object())
+			kickoff.Set("candidate", candidate)
+			kickoff.Set("state", "pending")
+			kickoff.Set("bound_at", store.Now())
+			kickoff.Set("source", "native-rebind")
+			replacement.Set("candidate", candidate)
+			replacement.Set("kickoff", kickoff)
 		}
 		current.Set(key, replacement)
 	}
@@ -275,5 +304,27 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 	if err = returns.MarkDirty(s); err != nil {
 		return nil, fmt.Errorf("binding saved; reconciliation signal failed: %w", err)
 	}
+	pump.Ctx = ctx
+	pump.Tasks = []string{taskID}
+	pump.Inline = true
+	pump.CallerVerifiedRole = "coordinator"
+	pump.CallerVerifiedTask = nil
+	delivery, err := returns.Pump(s, pump)
+	if err != nil {
+		return nil, fmt.Errorf("binding saved; reconciliation failed: %w", err)
+	}
+	current.Set("returns", delivery)
+	returns.SetNotice(s, current, current)
 	return current, nil
+}
+
+// reviewerCandidateState is a pure ledger projection for the state-lock CAS.
+// Git is observed before locking; concurrent reports or checkout changes force a retry.
+func reviewerCandidateState(task *ordjson.Object) string {
+	snapshot := ordjson.NewObject()
+	for _, key := range []string{"worktree", "checkout_intent", "repository", "branch", "base_sha", "report", "evidence"} {
+		snapshot.Set(key, field(task, key))
+	}
+	data, _ := ordjson.MarshalCompact(snapshot)
+	return string(data)
 }

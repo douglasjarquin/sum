@@ -322,6 +322,15 @@ func Run(s *store.Store, args Args, endpoint *ordjson.Object, pump returns.PumpO
 }
 
 func record(s *store.Store, taskID, verdict, candidate, toolName, text string, policyReviewed bool, notes []Note, made, endpoint *ordjson.Object) (*ordjson.Object, *ordjson.Object, error) {
+	priorTask, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, nil, err
+	}
+	candidateSnapshot := reviewerCandidateState(priorTask)
+	observedCandidate := ""
+	if store.EndpointFromContext(endpoint).Role == "reviewer" {
+		observedCandidate = evidenceview.CurrentCandidate(priorTask)
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, nil, err
@@ -354,7 +363,7 @@ func record(s *store.Store, taskID, verdict, candidate, toolName, text string, p
 	}
 	role := endpointRole(host, task, endpoint)
 	if role == "reviewer" {
-		if candidate == "" || candidate != evidenceview.CurrentCandidate(task) || candidate != asString(objectField(objectField(task, "reviewer"), "prompt"), "candidate") {
+		if candidate == "" || candidate != observedCandidate || reviewerCandidateState(task) != candidateSnapshot || candidate != asString(objectField(objectField(task, "reviewer"), "prompt"), "candidate") {
 			return nil, nil, fmt.Errorf("review candidate changed or was not assigned to this reviewer")
 		}
 	}
@@ -409,6 +418,10 @@ func record(s *store.Store, taskID, verdict, candidate, toolName, text string, p
 			receipt.Set("at", store.Now())
 			prompt.Set("state", "applied")
 			prompt.Set("application_receipt", receipt)
+			if kickoff := objectField(reviewer, "kickoff"); validBoundKickoff(kickoff, store.EndpointFromContext(endpoint)) && asString(kickoff, "candidate") == candidate {
+				kickoff.Set("state", "applied")
+				kickoff.Set("application_receipt", receipt)
+			}
 			intent := objectField(reviewer, "native_launch")
 			state := asString(intent, "state")
 			if intent != nil && (state == "in-flight" || state == "uncertain") {

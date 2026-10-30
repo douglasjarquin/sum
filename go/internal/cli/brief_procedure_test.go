@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,18 +44,9 @@ func newRuntimeLab(t *testing.T, withProcedure bool) *demoLab {
 			copyFile(src.Path, 0o644)
 		}
 	}
-	home := filepath.Join(base, "state home")
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configureNativeEventsForTest(t, home, false)
-	d := &demoLab{t: t, root: runtime, helper: filepath.Join(runtime, "bin", "sumctl"), home: home, base: base, env: demoEnv(t, root, base)}
-	d.setEnv("FAKE_PARENT_CWD", runtime)
-	if role := asString(d.ctl(true, "init")["role"]); role != "coordinator" {
-		t.Fatalf("init role = %q", role)
+	d := newNativeDemoLab(t, runtime, filepath.Join(runtime, "bin", "sumctl"), base)
+	for key, name := range map[string]string{"SUM_LSOF_BIN": "lsof.py", "SUM_GH_BIN": "gh.py", "SUM_MISE_BIN": "mise.py", "SUM_CODEGRAPH_BIN": "codegraph.py"} {
+		d.setEnv(key, filepath.Join(root, "tests", "fixtures", name))
 	}
 	return d
 }
@@ -74,31 +64,12 @@ func (d *demoLab) writeProcedure(t *testing.T, body string) {
 
 func (d *demoLab) setPaneStatus(t *testing.T, pane, status string) {
 	t.Helper()
-	path := filepath.Join(d.base, "fake", "state.json")
-	var state map[string]any
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		t.Fatal(err)
-	}
-	asMap(asMap(state["panes"])[pane])["agent_status"] = status
-	out, _ := json.Marshal(state)
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	d.native.SetStatus(pane, status)
 }
 
 func (d *demoLab) prompts(t *testing.T, pane string) []string {
 	t.Helper()
-	var out []string
-	for _, call := range herdrCalls(t, d.base) {
-		if len(call) >= 4 && call[0] == "agent" && call[1] == "prompt" && call[2] == pane {
-			out = append(out, call[3])
-		}
-	}
-	return out
+	return d.native.Inputs(pane)
 }
 
 func workerProcedureRows(t *testing.T, d *demoLab, taskID, pane string) []any {
@@ -111,7 +82,8 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 	d := newRuntimeLab(t, true)
 	repo := policyProject(t, d.base, "pinned", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID, pane := asString(task["id"]), asString(task["pane"])
+	taskID, pane := asString(task["id"]), workerAddress(task)
+	d.ctlPane(pane, true, "init")
 	brief, err := os.ReadFile(asString(task["brief_path"]))
 	if err != nil {
 		t.Fatal(err)
@@ -138,7 +110,7 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 		"add a directive only when the code cannot work without it, and include no explanatory prose in it.",
 		"When Sum starts or resumes a Claude worker, it adds the active brief's task directory to the effective harness arguments after validating the brief and required pinned procedures.",
 		"Claude's normal trust and permission behavior still applies; this is not a read-only grant or a sandbox.",
-		"Sum does not start reviewers: `sumctl review` records findings from an already-running pane",
+		"The coordinator starts reviewers through `sumctl reviewer launch`, with an explicit recorded launch and separate opening-message outcome.",
 		"## Waiting",
 		"After saving a question that blocks further approved work, end the turn.",
 		"A notice is not an answer, approval, or acknowledgement.",
@@ -151,7 +123,7 @@ func TestDispatchPinsTheWorkerProcedureAndLaunchesFromIt(t *testing.T) {
 	if strings.Contains(string(brief), string(source[:200])) {
 		t.Fatal("brief embeds the procedure body")
 	}
-	launch := d.prompts(t, pane)
+	launch := d.launchPointers(pane)
 	if len(launch) != 1 || !strings.Contains(launch[0], asString(task["brief_path"])) || !strings.Contains(launch[0], "every required worker procedure file") {
 		t.Fatalf("launch prompt = %v", launch)
 	}
@@ -271,7 +243,8 @@ func TestDecisionOnlyRefreshReadsThroughBoundedContext(t *testing.T) {
 	d := newRuntimeLab(t, true)
 	repo := policyProject(t, d.base, "decisions", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID, pane := asString(task["id"]), asString(task["pane"])
+	taskID, pane := asString(task["id"]), workerAddress(task)
+	d.ctlPane(pane, true, "init")
 	ask := func(key string) string {
 		d.ctlPane(pane, true, "ask", taskID, "--key", key, "--text", "Keep "+key+"?")
 		questions := asSlice(d.ctl(true, "show", taskID)["questions"])
@@ -320,7 +293,8 @@ func TestBusyWorkerGetsDecisionOnlyWordingFromTheReturnNotice(t *testing.T) {
 	d := newRuntimeLab(t, true)
 	repo := policyProject(t, d.base, "busy", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID, pane := asString(task["id"]), asString(task["pane"])
+	taskID, pane := asString(task["id"]), workerAddress(task)
+	d.ctlPane(pane, true, "init")
 	d.ctlPane(pane, true, "ask", taskID, "--key", "punctuation", "--text", "Keep it?")
 	qid := asString(asMap(asSlice(d.ctl(true, "show", taskID)["questions"])[0])["id"])
 	d.ctl(true, "answer", taskID, qid, "--text", "Yes.")
@@ -370,28 +344,31 @@ func TestBackupCarriesThePinnedProcedure(t *testing.T) {
 func TestStartLaunchesFromTheAdoptedRevision(t *testing.T) {
 	d := newRuntimeLab(t, true)
 	repo := policyProject(t, d.base, "relaunch", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID, pane := asString(task["id"]), asString(task["pane"])
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	taskID, pane := asString(task["id"]), workerAddress(task)
+	d.ctlPane(pane, true, "init")
 	d.writeProcedure(t, "# sum-work\nrevised procedure\n")
 	staged := d.ctl(true, "brief", "regenerate", taskID)
 	r2 := asString(asMap(staged["revision"])["path"])
 	if !strings.HasSuffix(r2, filepath.Join("briefs", "r2.md")) {
-		t.Fatalf("regenerate staged %v", staged["revision"])
+		t.Fatalf("staged revision: %v", staged)
 	}
 	d.ctl(true, "brief", "request", taskID, "r2")
 	d.ctlPane(pane, true, "brief", "adopt", taskID, "r2")
-	before := len(d.prompts(t, pane))
-	d.ctl(true, "start", taskID)
-	launch := d.prompts(t, pane)[before:]
+	attempt := asString(asMap(asMap(task["execution"])["worker"])["id"])
+	d.native.Exit(pane, 0)
+	d.ctl(true, "execution", "park", taskID, "--attempt", attempt)
+	resumed := d.ctl(true, "execution", "resume", taskID, "--attempt", attempt)
+	launch := d.launchPointers(workerAddress(resumed))
 	if len(launch) != 1 || !strings.Contains(launch[0], r2) || strings.Contains(launch[0], asString(task["brief_path"])) {
-		t.Fatalf("launch prompt after adopting r2 = %v, want %s", launch, r2)
+		t.Fatalf("resumed native launch pointer=%v, want %s", launch, r2)
 	}
 	body, err := os.ReadFile(r2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := os.ReadFile(pinnedProcedure(t, string(body))); string(got) != "# sum-work\nrevised procedure\n" {
-		t.Fatalf("r2 names a procedure that is not the revised one: %q", got)
+		t.Fatalf("resumed procedure: %q", got)
 	}
 }
 
@@ -401,16 +378,18 @@ func TestWorkerInitReportsAnUnreadableProcedureRecord(t *testing.T) {
 	d := newRuntimeLab(t, true)
 	repo := policyProject(t, d.base, "unreadable", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID, pane := asString(task["id"]), asString(task["pane"])
+	taskID, pane := asString(task["id"]), workerAddress(task)
+	d.ctlPane(pane, true, "init")
 	if rows := asSlice(d.ctlPane(pane, true, "init")["procedure"]); len(rows) != len(procedure.Sources) {
 		t.Fatalf("worker init procedure before corruption = %v", rows)
 	}
 	if err := os.WriteFile(filepath.Join(d.home, "tasks", taskID, "versions.json"), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	view := d.ctlPane(pane, true, "init")
-	rows := asSlice(view["procedure"])
-	if view["role"] != "worker" || len(rows) != 1 || asMap(rows[0])["ok"] != false || !strings.Contains(asString(asMap(rows[0])["error"]), "unreadable") {
-		t.Fatalf("worker init with an unreadable versions record = role %v, procedure %v", view["role"], rows)
+	before := snapshotTree(t, filepath.Join(d.home, "tasks", taskID))
+	view := d.ctlPane(pane, false, "init")
+	if asString(view["error"]) == "" {
+		t.Fatalf("unreadable versions granted initialized authority: %v", view)
 	}
+	assertTreeUnchanged(t, before, snapshotTree(t, filepath.Join(d.home, "tasks", taskID)))
 }

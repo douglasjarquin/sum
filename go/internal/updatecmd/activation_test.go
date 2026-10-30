@@ -616,6 +616,18 @@ func plantNativeHelper(t *testing.T, runtimeRoot, body string) {
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if raw, err := ordjson.ReadFile(filepath.Join(runtimeRoot, "release.json")); err == nil {
+		manifest := asObject(raw)
+		dependencies, _ := manifest.Get("dependencies")
+		native, _ := asObject(dependencies).Get("native")
+		entry, _ := asObject(native).Get("sumctl")
+		if entry != nil {
+			asObject(entry).Set("sha256", sha256Hex([]byte(body)))
+			if err = ordjson.WriteFile(filepath.Join(runtimeRoot, "release.json"), manifest); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 }
 
 const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"hc_core":"0.1.14","hc_generation":1,"endpoint_schema":2,"notification_protocol":2},"supports":{"state_schema":[2],"brief_schema":[1],"machine_identity":[1],"wake_protocol":[1],"endpoint_schema":[2],"notification_protocol":[2],"observer_protocol":[1]}}`

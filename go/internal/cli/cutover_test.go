@@ -37,13 +37,7 @@ func runCLI(t *testing.T, home string, args ...string) (string, error) {
 
 func writeDesignatedHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home := nativeTestStore(t, t.TempDir()).Home
 	configureNativeEventsForTest(t, home, false)
 	return home
 }
@@ -81,26 +75,22 @@ func assertNativeEventsEnabledForTest(t *testing.T, home string) {
 	}
 }
 
-func herdrEnv(t *testing.T, home string) {
+func nativeEnv(t *testing.T, home string) {
 	t.Helper()
-	root := repoRoot(t)
-	fake := filepath.Join(root, "tests", "fixtures", "herdr.py")
-	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
-	t.Setenv("HERDR_SESSION", "sum-test")
-	t.Setenv("SUM_SESSION", "sum-test")
-	t.Setenv("SUM_HERDR_BIN", fake)
-	t.Setenv("SUM_PS_BIN", filepath.Join(root, "tests", "fixtures", "ps.py"))
-	t.Setenv("FAKE_HERDR_ROOT", filepath.Join(home, "fake-herdr"))
-	t.Setenv("FAKE_SESSION", "sum-test")
-	t.Setenv("FAKE_PARENT_CWD", home)
-	t.Setenv("FAKE_PARENT_STATUS", "idle")
-	t.Setenv("FAKE_PARENT_KIND", "claude")
+	root, helper := repoReference(t)
+	d := newNativeDemoLabAt(t, root, helper, t.TempDir(), home)
+	for _, pair := range d.env {
+		parts := strings.SplitN(pair, "=", 2)
+		if strings.HasPrefix(parts[0], "SUM_") || strings.HasPrefix(parts[0], "HC_") || parts[0] == "CODEX_HOME" || parts[0] == "PATH" {
+			t.Setenv(parts[0], parts[1])
+		}
+	}
+
 }
 
-func clearHerdrEnv(t *testing.T) {
+func clearNativeEnv(t *testing.T) {
 	t.Helper()
-	for _, v := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", "SUM_SESSION", "SUM_NOW"} {
+	for _, v := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", "SUM_SESSION", "SUM_NOW", "HC_SOCKET", "HC_TERMINAL_ID", "SUM_CORE_ID", "SUM_ROLE", "SUM_TASK", "SUM_ATTEMPT", "SUM_BINDING_GENERATION"} {
 		t.Setenv(v, "")
 		os.Unsetenv(v)
 	}
@@ -112,7 +102,7 @@ func decodeObject(t *testing.T, raw string) map[string]any {
 
 func TestInit_designatedFirstPaneClaimsCoordinator(t *testing.T) {
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	out, err := runCLI(t, home, "init")
 	if err != nil {
 		t.Fatalf("init: %v\n%s", err, out)
@@ -135,7 +125,7 @@ func TestInit_designatedFirstPaneClaimsCoordinator(t *testing.T) {
 	if err := json.Unmarshal(ownerRaw, &owner); err != nil {
 		t.Fatal(err)
 	}
-	if owner["role"] != "coordinator" || owner["pane"] != "w-parent:p1" {
+	if owner["role"] != "coordinator" || owner["address"] != "t1" || owner["backend"] != "hc" || owner["core_id"] != os.Getenv("SUM_CORE_ID") {
 		t.Fatalf("owner = %v", owner)
 	}
 }
@@ -171,49 +161,31 @@ func TestBackup_createsRecordsOnlyArchive(t *testing.T) {
 }
 
 func TestReport_recordsWorkerClaim(t *testing.T) {
-	home := writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
-"questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing",
-"base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
-	out, err := runCLI(t, home, "report", "t-aaaaaaaaaaaa", "--text", "done")
-	if err != nil {
-		t.Fatalf("report: %v\n%s", err, out)
-	}
-	value := decodeObject(t, out)
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "report", map[string]string{"README": "base\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	id := asString(task["id"])
+	value := d.workerReport(true, id, "--text", "done")
 	if value["status"] != "reported-not-verified" {
-		t.Fatalf("status = %v", value["status"])
+		t.Fatalf("report result: %v", value)
 	}
-	evidence, _ := value["evidence"].([]any)
-	if len(evidence) != 1 {
-		t.Fatalf("evidence = %v", evidence)
+	saved := d.taskRecord(id)
+	if saved["status"] != "reported" || asMap(saved["report"])["text"] != "done" {
+		t.Fatalf("durable worker report: %v", saved)
 	}
-	raw, err := os.ReadFile(filepath.Join(home, "tasks", "t-aaaaaaaaaaaa", "task.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var task map[string]any
-	if err := json.Unmarshal(raw, &task); err != nil {
-		t.Fatal(err)
-	}
-	if task["status"] != "reported" {
-		t.Fatalf("task status = %v", task["status"])
-	}
-	report, _ := task["report"].(map[string]any)
-	if report["text"] != "done" {
-		t.Fatalf("report text = %v", report["text"])
+	if len(asSlice(saved["evidence"])) < 2 {
+		t.Fatal("native bootstrap or report evidence missing")
 	}
 }
 
 func TestAttention_marksOpenRecordSeen(t *testing.T) {
 	home := writeDesignatedHome(t)
-	configureNativeEventsForTest(t, home, true)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	assertNativeEventsEnabledForTest(t, home)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
-"questions": [], "evidence": [], "report": null, "notice": null,
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+"parent": {}, "questions": [], "evidence": [], "report": null, "notice": null,
 "attention": [{"id": "a-aaaaaaaaaa", "kind": "blocked", "status": "open", "at": "2026-01-01T00:00:00+00:00"}],
 "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
 	out, err := runCLI(t, home, "attention", "t-aaaaaaaaaaaa", "a-aaaaaaaaaa", "--seen")
@@ -224,42 +196,28 @@ func TestAttention_marksOpenRecordSeen(t *testing.T) {
 	if value["status"] != "seen" {
 		t.Fatalf("status = %v", value["status"])
 	}
-	if value["closed_by"] != "coordinator" {
+	if actor := asMap(value["closed_by"]); actor["role"] != "coordinator" || actor["address"] != "t1" || actor["core_id"] != os.Getenv("SUM_CORE_ID") {
 		t.Fatalf("closed_by = %v", value["closed_by"])
 	}
 }
 
 func TestBind_parentOnlyUpdatesParent(t *testing.T) {
-	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
-	if _, err := runCLI(t, home, "init"); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	host, err := machine.ID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{
-"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
-"questions": [], "evidence": [], "report": null, "notice": null, "attention": [],
-"brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship",
-"machine": "`+host+`", "session": "sum-test", "pane": "w-worker:p1", "worktree": "/tmp/work",
-"parent": {"machine": "old", "session": "old", "pane": "old:p1"}
-}`)
-	out, err := runCLI(t, home, "bind", "t-aaaaaaaaaaaa", "--parent-only")
-	if err != nil {
-		t.Fatalf("bind: %v\n%s", err, out)
-	}
-	value := decodeObject(t, out)
-	parent, _ := value["parent"].(map[string]any)
-	if parent["pane"] != "w-parent:p1" {
-		t.Fatalf("parent = %v", parent)
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "parent-bind", map[string]string{"README": "base\n"})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	id := asString(task["id"])
+	task["parent"] = nil
+	writeJSONFile(t, filepath.Join(d.home, "tasks", id, "task.json"), task)
+	value := d.ctl(true, "bind", id, "--parent-only")
+	parent := asMap(value["parent"])
+	if parent["address"] != "t1" || parent["core_id"] != d.native.CoreID {
+		t.Fatalf("rebound parent: %v", value)
 	}
 }
 
 func TestPrepare_createsIsolatedWorktree(t *testing.T) {
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -324,7 +282,7 @@ func TestPrepare_createsIsolatedWorktree(t *testing.T) {
 
 func TestPrepare_usesEnrolledProject(t *testing.T) {
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -420,7 +378,7 @@ func execCommand(name string, args ...string) cmdResult {
 
 func TestReview_appendsFindings(t *testing.T) {
 	home := writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "reported", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "reported", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": {"text": "done"}, "notice": null, "attention": [], "brief": "do the thing",
 "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship"}`)
 	out, err := runCLI(t, home, "review", "t-aaaaaaaaaaaa", "--verdict", "comment", "--text", "looks fine")
@@ -442,7 +400,7 @@ func TestReview_appendsFindings(t *testing.T) {
 
 func TestExecutionPark_releasesVerifierAttempt(t *testing.T) {
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -453,7 +411,7 @@ func TestExecutionPark_releasesVerifierAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{
 "schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "machine": %q, "session": "sum-test", "pane": "w-worker:p1",
 "questions": [{"id": "q-aaaaaaaaaa", "status": "open", "text": "keep going?"}],
@@ -493,14 +451,14 @@ func TestExecutionPark_releasesVerifierAttempt(t *testing.T) {
 
 func TestRepairExtend_requiresCoordinator(t *testing.T) {
 	home := writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "waiting", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "waiting", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing",
 "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship"}`)
 	_, err := runCLI(t, home, "repair", "extend", "t-aaaaaaaaaaaa", "--question", "q-aaaaaaaaaa", "--additional", "2", "--approved", "--text", "grant more")
 	if err == nil {
 		t.Fatal("expected coordinator requirement")
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "Herdr pane") {
+	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "HC session") {
 		t.Fatalf("err = %v", err)
 	}
 }

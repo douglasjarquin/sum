@@ -3,459 +3,271 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/launch"
 )
 
-func TestReviewerLaunchUsesTaskTabAndRecordsEndpoint(t *testing.T) {
-	tests := []struct {
-		name      string
-		preset    bool
-		wantAgent string
-		wantArgv  []string
-	}{
-		{name: "coordinator harness fallback", wantAgent: "claude"},
-		{name: "saved reviewer preset", preset: true, wantAgent: "grok", wantArgv: []string{"-m", "review-model", "--reasoning-effort", "high"}},
+func launchNativeReviewer(t *testing.T, d *demoLab, taskID string, flags ...string) map[string]any {
+	t.Helper()
+	sent := true
+	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: true, Started: &sent}})
+	out := d.ctl(true, append([]string{"reviewer", "launch", taskID}, flags...)...)
+	reviewer := asMap(out["reviewer"])
+	address := workerAddress(reviewer)
+	if address == "" {
+		t.Fatalf("reviewer endpoint missing: %v", out)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			d := newPolicyLab(t)
-			repo := policyProject(t, d.base, "reviewer-launch", map[string]string{"README.md": "A reviewer launch fixture.\n"})
-			if tc.preset {
-				d.ctl(true, "preset", "set", "review", "--harness", "grok", "--model", "review-model", "--reasoning", "high")
+	d.ctlPane(address, true, "init")
+	return d.taskRecord(taskID)["reviewer"].(map[string]any)
+}
+func nativeReviewerTerminal(t *testing.T, d *demoLab, address string) hcclient.Terminal {
+	t.Helper()
+	for _, terminal := range d.native.Terminals() {
+		if terminal.Address == address {
+			return terminal
+		}
+	}
+	t.Fatalf("native terminal %s missing", address)
+	return hcclient.Terminal{}
+}
+func nativeRunCount(d *demoLab) int {
+	count := 0
+	for _, call := range d.native.Calls() {
+		if call.Method == "terminal.run" {
+			count++
+		}
+	}
+	return count
+}
+
+func TestReviewerLaunchUsesTaskCheckoutAndRecordsNativeEndpoint(t *testing.T) {
+	for _, preset := range []bool{false, true} {
+		t.Run(map[bool]string{false: "coordinator harness", true: "saved reviewer preset"}[preset], func(t *testing.T) {
+			d, taskID := reviewLab(t)
+			task := d.taskRecord(taskID)
+			if preset {
+				d.ctl(true, "preset", "set", "review", "--harness", "codex", "--model", "review-model", "--reasoning", "high")
 				d.ctl(true, "settings", "set", "--reviewer-preset", "review")
 			}
-			task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-			taskID := asString(task["id"])
-			if taskID == "" {
-				t.Fatalf("dispatch result has no task id: %#v", task)
+			denied := d.ctlPane(workerAddress(task), false, "reviewer", "launch", taskID)
+			if !strings.Contains(asString(denied["error"]), "coordinator") {
+				t.Fatalf("worker could launch independent reviewer: %v", denied)
 			}
-			denied := d.ctlPane(asString(task["pane"]), false, "reviewer", "launch", taskID)
-			if !strings.Contains(asString(denied["error"]), "registered coordinator") {
-				t.Fatalf("worker pane reviewer launch error = %#v, want coordinator refusal", denied)
+			before := nativeRunCount(d)
+			reviewer := launchNativeReviewer(t, d, taskID)
+			address := workerAddress(reviewer)
+			if reviewer["cwd"] != task["worktree"] || reviewer["role"] != "reviewer" || reviewer["backend"] != "hc" || reviewer["core_id"] != d.native.CoreID {
+				t.Fatalf("native reviewer identity: %v", reviewer)
 			}
-			launched := d.ctl(true, "reviewer", "launch", taskID)
-			if launched["placement"] != "tab" || launched["harness"] != tc.wantAgent {
-				t.Fatalf("launch result = %#v, want tab with harness %q", launched, tc.wantAgent)
+			if workerAddress(task) == address || nativeRunCount(d) != before+1 {
+				t.Fatal("reviewer reused worker or created duplicate terminal")
 			}
-			bound := asMap(launched["reviewer"])
-			if bound["cwd"] != task["worktree"] {
-				t.Fatalf("reviewer cwd = %v, want task checkout %v", bound["cwd"], task["worktree"])
+			if asString(asMap(reviewer["native_receipt"])["kind"]) != "reviewer-init" {
+				t.Fatal("reviewer has no init receipt")
 			}
-			pane := asString(bound["pane"])
-			if pane == "" {
-				t.Fatal("launch result has no reviewer pane")
+			pinned := asString(reviewer["skill_path"])
+			if !strings.HasPrefix(pinned, filepath.Join(d.home, "tasks", taskID, "procedure")+string(filepath.Separator)) {
+				t.Fatalf("procedure not task pinned: %q", pinned)
 			}
-			home := d.home
-			if resolved, err := filepath.EvalSymlinks(d.home); err == nil {
-				home = resolved
-			}
-			wantArgv := append([]string(nil), tc.wantArgv...)
-			if tc.wantAgent == "claude" {
-				wantArgv = []string{"--add-dir", filepath.Join(home, "tasks", taskID), "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
-			}
-			if !reflect.DeepEqual(asSlice(bound["argv"]), stringsToAny(wantArgv)) {
-				t.Fatalf("recorded reviewer argv = %v, want %v", bound["argv"], wantArgv)
-			}
-			if tc.wantAgent == "claude" {
-				pinned := asString(bound["skill_path"])
-				if !strings.HasPrefix(pinned, filepath.Join(home, "tasks", taskID, "procedure")+string(filepath.Separator)) {
-					t.Fatalf("reviewer delivery skill path = %q, want task-local procedure file", pinned)
-				}
-				context := d.ctl(true, "context", taskID, "--role", "reviewer")
-				environment := asMap(context["environment"])
-				files := asSlice(asMap(environment["skills"])["files"])
-				if len(files) != 1 || asString(asMap(files[0])["path"]) != pinned {
-					t.Fatalf("reviewer context skill reference = %v, want pinned task-local path %q", files, pinned)
+			if preset {
+				want := []any{"-m", "review-model", "-c", `model_reasoning_effort=high`}
+				if !reflect.DeepEqual(asSlice(reviewer["argv"]), want) {
+					t.Fatalf("reviewer argv %v want %v", reviewer["argv"], want)
 				}
 			}
-			var tabCreate []string
-			for _, call := range herdrCalls(t, d.base) {
-				if len(call) >= 2 && call[0] == "tab" && call[1] == "create" {
-					tabCreate = call
-				}
-				if len(call) >= 2 && call[0] == "pane" && call[1] == "split" {
-					t.Fatalf("reviewer launch split the worker pane: %v", call)
-				}
-			}
-			want := []string{"tab", "create", "--workspace", asString(task["workspace"]), "--cwd", asString(task["worktree"]), "--label", "reviewer", "--no-focus"}
-			if !reflect.DeepEqual(tabCreate, want) {
-				t.Fatalf("tab create = %v, want %v", tabCreate, want)
-			}
-			starts := agentStartCalls(t, d.base)
-			if len(starts) != 2 || starts[1][2] != "reviewer-"+taskID || starts[1][4] != tc.wantAgent || starts[1][6] != pane {
-				t.Fatalf("agent starts = %v, want reviewer %s in pane %s", starts, tc.wantAgent, pane)
-			}
-			if tc.preset {
-				if !reflect.DeepEqual(starts[1][len(starts[1])-len(tc.wantArgv):], tc.wantArgv) {
-					t.Fatalf("reviewer start argv = %v, want suffix %v", starts[1], tc.wantArgv)
-				}
-			}
-			if tc.wantAgent == "claude" && !reflect.DeepEqual(starts[1][len(starts[1])-len(wantArgv):], wantArgv) {
-				t.Fatalf("reviewer start argv = %v, want task grant suffix %v", starts[1], wantArgv)
-			}
-			stateRaw, err := os.ReadFile(filepath.Join(d.base, "fake", "state.json"))
+			terminal := nativeReviewerTerminal(t, d, address)
+			s := nativeTestStore(t, d.home)
+			instance, err := s.Instance()
 			if err != nil {
 				t.Fatal(err)
 			}
-			var state struct {
-				Panes map[string]map[string]any `json:"panes"`
+			if terminal.Keep || terminal.RM || terminal.Notify || terminal.DieWithParent || terminal.Labels["sum.installation"] != instance || terminal.Labels["sum.task"] != taskID || terminal.Labels["sum.role"] != "reviewer" || terminal.Labels["sum.attempt"] != reviewer["attempt"] {
+				t.Fatalf("managed reviewer lifecycle/labels: %+v", terminal)
 			}
-			if err := json.Unmarshal(stateRaw, &state); err != nil {
-				t.Fatal(err)
-			}
-			if state.Panes[pane]["label"] != "reviewer" || state.Panes[pane]["cwd"] != task["worktree"] {
-				t.Fatalf("reviewer pane fixture = %#v, want label reviewer and task checkout", state.Panes[pane])
-			}
-			prompt := asString(state.Panes[pane]["last_prompt"])
-			for _, want := range []string{"context " + taskID + " --role reviewer", "do not edit the checkout", "Review candidate " + asString(task["base_sha"]), "review " + taskID + " --verdict"} {
-				if !strings.Contains(prompt, want) {
-					t.Fatalf("reviewer prompt = %q, want %q", prompt, want)
+			params := asMap(asMap(reviewer["native_launch"])["params"])
+			pointer := asString(asSlice(params["argv"])[1])
+			for _, want := range []string{"init --role reviewer", "context " + taskID + " --role reviewer", "do not edit the checkout", reviewCandidateFor(d, taskID), pinned, "review " + taskID + " --verdict"} {
+				if !strings.Contains(pointer, want) {
+					t.Fatalf("reviewer pointer lacks %q: %s", want, pointer)
 				}
 			}
-			if tc.wantAgent == "claude" && !strings.Contains(prompt, asString(bound["skill_path"])) {
-				t.Fatalf("reviewer prompt = %q, want the pinned delivery skill path", prompt)
+			verdict := d.ctlPane(address, true, "review", taskID, "--verdict", "comment", "--candidate", reviewCandidateFor(d, taskID), "--text", "Read-only inspection")
+			if asString(asMap(verdict["evidence"])["source"]) != "reviewer" || asString(asMap(asMap(verdict["evidence"])["endpoint"])["address"]) != address {
+				t.Fatal("review attributed to another execution")
 			}
-			if strings.Contains(prompt, "--policy-reviewed") {
-				t.Fatalf("reviewer prompt = %q, want no policy guidance for a candidate without a policy change", prompt)
-			}
-			delivery := asMap(launched["prompt"])
-			if delivery["state"] != "delivered" || delivery["pane"] != pane || launched["action"] != "launched" {
-				t.Fatalf("launch prompt outcome = %#v action = %v, want delivered to %s", delivery, launched["action"], pane)
-			}
-			persisted := d.ctl(true, "show", taskID)
-			if asMap(persisted["reviewer"])["pane"] != pane || asMap(asMap(persisted["reviewer"])["prompt"])["state"] != "delivered" {
-				t.Fatalf("saved task reviewer endpoint does not name %s with a delivered prompt: %#v", pane, persisted["reviewer"])
-			}
-			d.ctlPane(pane, true, "review", taskID, "--verdict", "comment", "--candidate", asString(task["base_sha"]), "--text", "Inspected the current candidate.")
-			persisted = d.ctl(true, "show", taskID)
-			evidence := asSlice(asMap(persisted["evidence_view"])["records"])
-			if len(evidence) != 1 || asMap(evidence[0])["source"] != "reviewer" {
-				t.Fatalf("review from launched pane was not attributed to reviewer: %#v", evidence)
-			}
-			state.Panes[pane]["last_prompt"] = ""
-			writeFakeState(t, d.base, state.Panes)
-			again := d.ctl(true, "reviewer", "launch", taskID)
-			if again["action"] != "prompted" || again["placement"] != "recorded-pane" || asMap(again["reviewer"])["pane"] != pane {
-				t.Fatalf("re-review result = %#v, want the live recorded pane prompted", again)
-			}
-			state.Panes = readFakeState(t, d.base)
-			if !strings.Contains(asString(state.Panes[pane]["last_prompt"]), "context "+taskID+" --role reviewer") {
-				t.Fatalf("re-review did not prompt recorded pane %s: %#v", pane, state.Panes[pane]["last_prompt"])
-			}
-			if n := countCalls(herdrCalls(t, d.base), "tab", "create"); n != 1 {
-				t.Fatalf("tab create calls = %d after re-review, want the single original tab", n)
-			}
-			if n := len(agentStartCalls(t, d.base)); n != 2 {
-				t.Fatalf("agent start calls = %d after re-review, want no new reviewer start", n)
-			}
-			flagged := d.ctl(false, "reviewer", "launch", taskID, "--harness", "grok")
-			if !strings.Contains(asString(flagged["error"]), "apply only to a new reviewer") {
-				t.Fatalf("explicit flags against a recorded reviewer = %v, want refusal", flagged)
-			}
-			state.Panes[pane]["agent"] = nil
-			state.Panes[pane]["agent_status"] = "idle"
-			writeFakeState(t, d.base, state.Panes)
-			cleanupResult := d.ctl(true, "cleanup", taskID, "--reviewer-only", "--apply")
-			stateRaw, err = os.ReadFile(filepath.Join(d.base, "fake", "state.json"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			state = struct {
-				Panes map[string]map[string]any `json:"panes"`
-			}{}
-			if err := json.Unmarshal(stateRaw, &state); err != nil {
-				t.Fatal(err)
-			}
-			if _, exists := state.Panes[pane]; exists {
-				t.Fatalf("reviewer pane %s remains after reviewer-only cleanup: result=%#v pane=%#v calls=%v", pane, cleanupResult, state.Panes[pane], herdrCalls(t, d.base))
-			}
-			if _, err := os.Stat(asString(task["worktree"])); err != nil {
-				t.Fatalf("reviewer-only cleanup removed the task checkout: %v", err)
-			}
-			persisted = d.ctl(true, "show", taskID)
-			closed := asSlice(persisted["closed_panes"])
-			if len(closed) != 1 || asMap(closed[0])["pane"] != pane || asMap(closed[0])["role"] != "reviewer" {
-				t.Fatalf("reviewer closure was not durably recorded: %#v", closed)
-			}
-			relaunched := d.ctl(true, "reviewer", "launch", taskID)
-			assertReviewerRelaunched(t, d, taskID, task, relaunched, pane, "pane_not_found", tc.wantAgent)
-		})
-	}
-}
-
-func assertReviewerRelaunched(t *testing.T, d *demoLab, taskID string, task, relaunched map[string]any, oldPane, wantPaneCode, wantHarness string) {
-	t.Helper()
-	if relaunched["action"] != "relaunched" || relaunched["placement"] != "tab" || relaunched["harness"] != wantHarness {
-		t.Fatalf("launch after a gone reviewer = %#v, want a relaunched tab with harness %s", relaunched, wantHarness)
-	}
-	newPane := asString(asMap(relaunched["reviewer"])["pane"])
-	if newPane == "" || newPane == oldPane {
-		t.Fatalf("relaunched reviewer pane = %q, want a fresh pane replacing %s", newPane, oldPane)
-	}
-	rebind := asMap(relaunched["rebind"])
-	stop := asMap(rebind["stop_evidence"])
-	if asString(asMap(rebind["from"])["pane"]) != oldPane || asString(asMap(rebind["to"])["pane"]) != newPane || asString(stop["agent_code"]) != "agent_not_found" || asString(stop["pane_code"]) != wantPaneCode || stop["pane_present"] != (wantPaneCode == "") {
-		t.Fatalf("relaunch rebind = %#v, want %s -> %s proven by agent_not_found with pane code %q", rebind, oldPane, newPane, wantPaneCode)
-	}
-	if asMap(relaunched["prompt"])["state"] != "delivered" || asMap(relaunched["prompt"])["pane"] != newPane {
-		t.Fatalf("relaunch prompt = %#v, want delivered to %s", relaunched["prompt"], newPane)
-	}
-	panes := readFakeState(t, d.base)
-	if panes[newPane]["label"] != "reviewer" || panes[newPane]["cwd"] != task["worktree"] || panes[newPane]["agent"] != wantHarness {
-		t.Fatalf("relaunched pane fixture = %#v, want a reviewer tab at the task checkout running %s", panes[newPane], wantHarness)
-	}
-	if !strings.Contains(asString(panes[newPane]["last_prompt"]), "context "+taskID+" --role reviewer") {
-		t.Fatalf("relaunched pane %s was not prompted: %#v", newPane, panes[newPane]["last_prompt"])
-	}
-	calls := herdrCalls(t, d.base)
-	if n := countCalls(calls, "tab", "create"); n != 2 {
-		t.Fatalf("tab create calls = %d after relaunch, want the original tab plus one replacement", n)
-	}
-	if n := countCalls(calls, "pane", "split"); n != 0 {
-		t.Fatalf("relaunch split a pane: %v", calls)
-	}
-	starts := agentStartCalls(t, d.base)
-	last := starts[len(starts)-1]
-	if len(starts) != 3 || last[2] != "reviewer-"+taskID || last[4] != wantHarness || last[6] != newPane {
-		t.Fatalf("agent starts = %v, want one reviewer start for %s in %s", starts, wantHarness, newPane)
-	}
-	persisted := readTaskObject(t, d.home, taskID)
-	if asString(asMap(persisted["reviewer"])["pane"]) != newPane {
-		t.Fatalf("saved reviewer endpoint = %#v, want %s", persisted["reviewer"], newPane)
-	}
-	var recorded map[string]any
-	for _, raw := range asSlice(persisted["evidence"]) {
-		if asString(asMap(raw)["kind"]) == "reviewer-rebind" {
-			recorded = asMap(raw)
-		}
-	}
-	if recorded == nil || asString(recorded["source"]) != "coordinator" || asString(asMap(recorded["from"])["pane"]) != oldPane || asString(asMap(recorded["to"])["pane"]) != newPane {
-		t.Fatalf("relaunch rebind evidence = %#v, want a coordinator record %s -> %s", recorded, oldPane, newPane)
-	}
-	d.ctlPane(newPane, true, "review", taskID, "--verdict", "comment", "--candidate", asString(task["base_sha"]), "--text", "Inspected from the replacement pane.")
-	records := asSlice(asMap(d.ctl(true, "show", taskID)["evidence_view"])["records"])
-	lastReview := asMap(records[len(records)-1])
-	if lastReview["source"] != "reviewer" || asString(asMap(lastReview["endpoint"])["pane"]) != newPane {
-		t.Fatalf("review from the relaunched pane was not attributed to it: %#v", lastReview)
-	}
-}
-
-func TestReviewerLaunchRelaunchesAfterRecordedReviewerIsGone(t *testing.T) {
-	cases := []struct {
-		name         string
-		flags        []string
-		harness      string
-		gone         func(t *testing.T, base, pane string)
-		wantPaneCode string
-	}{
-		{name: "agent gone from an idle pane", harness: "claude", gone: func(t *testing.T, base, pane string) {
-			panes := readFakeState(t, base)
-			panes[pane]["agent"] = nil
-			panes[pane]["agent_status"] = "idle"
-			panes[pane]["processes"] = []any{}
-			writeFakeState(t, base, panes)
-		}},
-		{name: "pane gone with explicit flags", flags: []string{"--harness", "grok", "--model", "review-model"}, harness: "grok", wantPaneCode: "pane_not_found", gone: func(t *testing.T, base, pane string) {
-			panes := readFakeState(t, base)
-			delete(panes, pane)
-			writeFakeState(t, base, panes)
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			d := newPolicyLab(t)
-			repo := policyProject(t, d.base, "reviewer-relaunch", map[string]string{"README.md": "A reviewer relaunch fixture.\n"})
-			task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-			taskID := asString(task["id"])
-			launched := d.ctl(true, "reviewer", "launch", taskID)
-			pane := asString(asMap(launched["reviewer"])["pane"])
-			tc.gone(t, d.base, pane)
-			relaunched := d.ctl(true, append([]string{"reviewer", "launch", taskID}, tc.flags...)...)
-			assertReviewerRelaunched(t, d, taskID, task, relaunched, pane, tc.wantPaneCode, tc.harness)
-			if len(tc.flags) > 0 && !reflect.DeepEqual(asSlice(asMap(relaunched["reviewer"])["argv"]), stringsToAny([]string{"-m", "review-model"})) {
-				t.Fatalf("relaunched reviewer argv = %v, want the explicit flags applied to the new reviewer", asMap(relaunched["reviewer"])["argv"])
+			again := d.ctl(false, "reviewer", "launch", taskID)
+			if !strings.Contains(asString(again["error"]), "no automatic replay") || nativeRunCount(d) != before+1 {
+				t.Fatalf("applied candidate replayed: %v", again)
 			}
 		})
 	}
 }
 
-func TestReviewerLaunchRefusesReplacementWhileGonePaneIsOccupied(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "reviewer-occupied", map[string]string{"README.md": "A reviewer occupancy fixture.\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID := asString(task["id"])
-	launched := d.ctl(true, "reviewer", "launch", taskID)
-	pane := asString(asMap(launched["reviewer"])["pane"])
-	panes := readFakeState(t, d.base)
-	panes[pane]["agent"] = nil
-	panes[pane]["agent_status"] = "idle"
-	panes[pane]["processes"] = []any{map[string]any{"pid": 7777, "name": "vim", "argv0": "vim", "argv": []any{"vim"}, "cwd": task["worktree"]}}
-	writeFakeState(t, d.base, panes)
-	refused := d.ctl(false, "reviewer", "launch", taskID)
-	message := asString(refused["error"])
-	for _, want := range []string{"pane " + pane + " is gone (agent_not_found)", "replacement is refused", "foreground processes"} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("occupied-pane launch error = %q, want %q", message, want)
+func TestReviewerLaunchRelaunchesOnlyAfterRecordedNativeReviewerStops(t *testing.T) {
+	d, taskID := reviewLab(t)
+	old := launchNativeReviewer(t, d, taskID)
+	address := workerAddress(old)
+	before := nativeRunCount(d)
+	live := d.ctl(false, "reviewer", "launch", taskID, "--model", "different")
+	if !strings.Contains(asString(live["error"]), "new reviewer") {
+		t.Fatalf("live reviewer replaced: %v", live)
+	}
+	d.native.Exit(address, 0)
+	fresh := launchNativeReviewer(t, d, taskID)
+	if workerAddress(fresh) == address || fresh["attempt"] == old["attempt"] || nativeRunCount(d) != before+1 {
+		t.Fatal("stopped reviewer not replaced with fresh attempt")
+	}
+	found := false
+	for _, raw := range asSlice(d.taskRecord(taskID)["evidence"]) {
+		row := asMap(raw)
+		if row["kind"] == "reviewer-rebind" {
+			found = true
+			if asString(asMap(row["from"])["address"]) != address || asString(asMap(row["to"])["address"]) != workerAddress(fresh) || asMap(row["stop_evidence"])["outcome"] != "stopped" {
+				t.Fatalf("replacement omitted stop proof: %v", row)
+			}
 		}
 	}
-	if n := countCalls(herdrCalls(t, d.base), "tab", "create"); n != 1 {
-		t.Fatalf("tab create calls = %d, want no replacement tab while the old pane is occupied", n)
+	if !found {
+		t.Fatal("replacement did not preserve reviewer-rebind evidence")
 	}
-	if asString(asMap(readTaskObject(t, d.home, taskID)["reviewer"])["pane"]) != pane {
-		t.Fatal("the recorded reviewer endpoint changed although the replacement was refused")
+}
+
+func TestReviewerLaunchRefusesReplacementWithSurvivingCheckoutWriter(t *testing.T) {
+	d, taskID := reviewLab(t)
+	reviewer := launchNativeReviewer(t, d, taskID)
+	address := workerAddress(reviewer)
+	d.native.Exit(address, 0)
+	startReviewerCheckoutWriter(t, d, taskID)
+	before := nativeRunCount(d)
+	out := d.ctl(false, "reviewer", "launch", taskID)
+	if !strings.Contains(asString(out["error"]), "writers") || nativeRunCount(d) != before {
+		t.Fatalf("surviving checkout writer did not prevent replacement: %v", out)
 	}
 }
 
 func TestReviewerLaunchFlagsOverrideSavedPreset(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "reviewer-flags", map[string]string{"README.md": "A reviewer flag fixture.\n"})
-	d.ctl(true, "preset", "set", "review", "--harness", "grok", "--model", "review-model", "--reasoning", "high")
-	d.ctl(true, "preset", "set", "alt", "--harness", "codex", "--model", "alt-model")
-	d.ctl(true, "settings", "set", "--reviewer-preset", "review")
-	cases := []struct {
-		name     string
-		flags    []string
-		harness  string
-		wantArgv []string
-	}{
-		{name: "harness model reasoning", flags: []string{"--harness", "grok", "--model", "flag-model", "--reasoning", "low"}, harness: "grok", wantArgv: []string{"-m", "flag-model", "--reasoning-effort", "low"}},
-		{name: "preset", flags: []string{"--preset", "alt"}, harness: "codex", wantArgv: []string{"-m", "alt-model"}},
-	}
-	for _, tc := range cases {
+	for _, tc := range []struct {
+		name  string
+		flags []string
+		model string
+	}{{"explicit", []string{"--harness", "codex", "--model", "flag-model", "--reasoning", "low"}, "flag-model"}, {"preset", []string{"--preset", "alt"}, "alt-model"}} {
 		t.Run(tc.name, func(t *testing.T) {
-			task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-			taskID := asString(task["id"])
-			launched := d.ctl(true, append([]string{"reviewer", "launch", taskID}, tc.flags...)...)
-			if launched["harness"] != tc.harness {
-				t.Fatalf("launch harness = %v, want %s from explicit flags over the saved reviewer preset", launched["harness"], tc.harness)
-			}
-			argv := asSlice(asMap(launched["reviewer"])["argv"])
-			if !reflect.DeepEqual(argv, stringsToAny(tc.wantArgv)) {
-				t.Fatalf("recorded reviewer argv = %v, want %v", argv, tc.wantArgv)
-			}
-			starts := agentStartCalls(t, d.base)
-			last := starts[len(starts)-1]
-			if last[4] != tc.harness || !reflect.DeepEqual(last[len(last)-len(tc.wantArgv):], tc.wantArgv) {
-				t.Fatalf("reviewer start = %v, want harness %s with argv %v", last, tc.harness, tc.wantArgv)
+			d, taskID := reviewLab(t)
+			d.ctl(true, "preset", "set", "review", "--harness", "grok", "--model", "unqualified-model")
+			d.ctl(true, "preset", "set", "alt", "--harness", "codex", "--model", "alt-model")
+			d.ctl(true, "settings", "set", "--reviewer-preset", "review")
+			reviewer := launchNativeReviewer(t, d, taskID, tc.flags...)
+			if reviewer["harness"] != "codex" || !strings.Contains(strings.Join(anyStrings(asSlice(reviewer["argv"])), " "), tc.model) {
+				t.Fatalf("explicit selection lost: %v", reviewer)
 			}
 		})
 	}
 }
 
-func TestReviewerLaunchRefusesWhenWorkerWorkspaceIsGone(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "reviewer-workspace", map[string]string{"README.md": "A reviewer workspace fixture.\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID := asString(task["id"])
-	workspace := asString(task["workspace"])
-	statePath := filepath.Join(d.base, "fake", "state.json")
-	raw, err := os.ReadFile(statePath)
-	if err != nil {
-		t.Fatal(err)
+func TestReviewerLaunchRefusesUnqualifiedHarnessAndChangedCheckout(t *testing.T) {
+	for _, harness := range []string{"claude", "grok"} {
+		t.Run(harness, func(t *testing.T) {
+			d, taskID := reviewLab(t)
+			before := nativeRunCount(d)
+			out := d.ctl(false, "reviewer", "launch", taskID, "--harness", harness)
+			if !strings.Contains(asString(out["error"]), "no qualified native") || nativeRunCount(d) != before {
+				t.Fatalf("unqualified harness auto launched: %v", out)
+			}
+		})
 	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
+	d, taskID := reviewLab(t)
+	task := d.taskRecord(taskID)
+	if out, err := exec.Command("git", "-C", asString(task["worktree"]), "switch", "--detach").CombinedOutput(); err != nil {
+		t.Fatalf("detach: %v %s", err, out)
 	}
-	delete(asMap(state["workspaces"]), workspace)
-	for pane, row := range asMap(state["panes"]) {
-		if asMap(row)["workspace_id"] == workspace {
-			delete(asMap(state["panes"]), pane)
-		}
-	}
-	raw, err = json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(statePath, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	before := nativeRunCount(d)
 	refused := d.ctl(false, "reviewer", "launch", taskID)
-	message := asString(refused["error"])
-	for _, want := range []string{"workspace " + workspace + " is gone", "workspace_not_found", "herdr worktree open --path " + asString(task["worktree"]) + " --no-focus", "sumctl bind " + taskID + " --worker-pane PANE"} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("workspace-gone launch error = %q, want %q", message, want)
-		}
-	}
-	if n := countCalls(herdrCalls(t, d.base), "tab", "create"); n != 0 {
-		t.Fatalf("tab create calls = %d, want none when the worker workspace is gone", n)
-	}
-	if _, has := d.ctl(true, "show", taskID)["reviewer"].(map[string]any); has {
-		t.Fatal("a reviewer endpoint was recorded although launch was refused")
+	if asString(refused["error"]) == "" || nativeRunCount(d) != before {
+		t.Fatal("changed task checkout identity launched reviewer")
 	}
 }
 
-func TestReviewerLaunchPromptNamesPolicyReviewAndRecordsDeliveryFailure(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "reviewer-policy", map[string]string{"README.md": "A reviewer policy fixture.\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID := asString(task["id"])
-	candidate := asString(task["base_sha"])
+func TestReviewerLaunchPolicyPointerAndKnownUnsentOpeningAreDurable(t *testing.T) {
+	d, taskID := reviewLab(t)
+	task := d.taskRecord(taskID)
+	candidate := reviewCandidateFor(d, taskID)
 	handoff := filepath.Join(d.base, "handoff.json")
-	body, err := json.Marshal(map[string]any{
-		"outcome": "completed", "candidate": candidate, "next_action": "review",
-		"verification": map[string]any{"run_id": "20261004T000000Z-policy", "outcome": "pass", "record": "run.json", "candidate": candidate, "certifies": nil, "requires_root_review": true},
-	})
+	body, err := json.Marshal(map[string]any{"outcome": "completed", "candidate": candidate, "next_action": "review", "verification": map[string]any{"run_id": "policy-test", "outcome": "pass", "record": "run.json", "candidate": candidate, "certifies": nil, "requires_root_review": true}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(handoff, body, 0o644); err != nil {
+	if err = os.WriteFile(handoff, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	d.ctlPane(asString(task["pane"]), true, "report", taskID, "--text", "policy candidate ready", "--handoff", handoff)
-	d.setEnv("FAKE_FAIL_PROMPT", "1")
-	launched := d.ctl(true, "reviewer", "launch", taskID)
-	delivery := asMap(launched["prompt"])
-	if delivery["state"] != "not-delivered" || !strings.Contains(asString(delivery["detail"]), "simulated uncertain prompt") {
-		t.Fatalf("prompt outcome = %#v, want not-delivered with the Herdr detail", delivery)
+	d.workerReport(true, taskID, "--text", "policy candidate ready", "--handoff", handoff)
+	no := false
+	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: false, Started: &no}})
+	out := d.ctl(true, "reviewer", "launch", taskID)
+	reviewer := asMap(out["reviewer"])
+	address := workerAddress(reviewer)
+	if asMap(reviewer["prompt"])["state"] != "not-delivered" || address == "" {
+		t.Fatalf("unsent kickoff lost created terminal: %v", out)
 	}
-	pane := asString(asMap(launched["reviewer"])["pane"])
-	persisted := asMap(d.ctl(true, "show", taskID)["reviewer"])
-	if persisted["pane"] != pane || asMap(persisted["prompt"])["state"] != "not-delivered" {
-		t.Fatalf("saved reviewer endpoint = %#v, want pane %s with a not-delivered prompt", persisted, pane)
-	}
-	if n := countCalls(herdrCalls(t, d.base), "agent", "prompt"); n != 2 {
-		t.Fatalf("agent prompt calls = %d (worker plus reviewer), want exactly one reviewer attempt and no retry", n)
-	}
-	d.setEnv("FAKE_FAIL_PROMPT", "")
-	again := d.ctl(true, "reviewer", "launch", taskID)
-	if again["action"] != "prompted" || asMap(again["prompt"])["state"] != "delivered" {
-		t.Fatalf("second launch = %#v, want the recorded pane prompted", again)
-	}
-	prompt := asString(readFakeState(t, d.base)[pane]["last_prompt"])
-	for _, want := range []string{"review " + taskID + " --policy-reviewed", "line by line", "Review candidate " + candidate} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("policy reviewer prompt = %q, want %q", prompt, want)
+	pointer := asString(asSlice(asMap(asMap(reviewer["native_launch"])["params"])["argv"])[1])
+	for _, want := range []string{"--policy-reviewed", "line by line", candidate} {
+		if !strings.Contains(pointer, want) {
+			t.Fatalf("policy pointer lacks %q", want)
 		}
 	}
+	before := nativeRunCount(d)
+	again := d.ctl(false, "reviewer", "launch", taskID)
+	if asString(again["error"]) == "" || nativeRunCount(d) != before {
+		t.Fatal("unsent opening triggered automatic duplicate")
+	}
+	// Model the already created harness before explicit recovery; init follows delivery.
+	terminal := nativeReviewerTerminal(t, d, address)
+	var spec launch.HCTemplate
+	raw, _ := json.Marshal(asMap(asMap(reviewer["native_template"])["spec"]))
+	if err = json.Unmarshal(raw, &spec); err != nil {
+		t.Fatal(err)
+	}
+	pid := uint32(310000)
+	terminal.PID = &pid
+	terminal.Foreground = &hcclient.Foreground{PID: 310001, Name: "codex", Argv: spec.Argv, Cwd: asString(task["worktree"])}
+	terminal.Status = &hcclient.Status{State: "idle"}
+	d.native.SetTerminal(terminal)
+	redelivered := d.ctl(true, "reviewer", "redeliver", taskID, "--attempt", asString(reviewer["attempt"]))
+	if asMap(redelivered["prompt"])["state"] != "submitted" || nativeRunCount(d) != before {
+		t.Fatal("explicit recovery failed or created duplicate")
+	}
+	d.ctlPane(address, true, "init")
 }
 
-func TestReviewerLaunchSwallowedKickoffIsNotDelivered(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "reviewer-dialog", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	taskID := asString(task["id"])
-	d.setEnv("FAKE_PROMPT_EATEN", "1")
-	launched := d.ctl(true, "reviewer", "launch", taskID)
-	if launched["action"] != "needs-attention" {
-		t.Fatalf("reviewer launch action = %v, want needs-attention", launched["action"])
+func TestReviewerLaunchLostResponseAndUnknownFirstMessageAreNotReplayed(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unknown first message", true: "lost run response"}[lost], func(t *testing.T) {
+			d, taskID := reviewLab(t)
+			d.native.QueueFault("terminal.run", hctest.Fault{LoseResponse: lost})
+			out := d.ctl(!lost, "reviewer", "launch", taskID)
+			if lost && asString(out["error"]) == "" {
+				t.Fatal("lost response accepted")
+			}
+			before := nativeRunCount(d)
+			again := d.ctl(false, "reviewer", "launch", taskID)
+			if asString(again["error"]) == "" || nativeRunCount(d) != before {
+				t.Fatalf("ambiguous launch replayed: %v", again)
+			}
+		})
 	}
-	delivery := asMap(launched["prompt"])
-	if delivery["state"] != "not-delivered" || !strings.Contains(asString(delivery["detail"]), "agent_prompt_stalled") {
-		t.Fatalf("prompt outcome = %#v, want not-delivered naming the stalled submission", delivery)
+}
+func anyStrings(values []any) []string {
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i] = asString(v)
 	}
-	persisted := asMap(d.ctl(true, "show", taskID)["reviewer"])
-	if asMap(persisted["prompt"])["state"] != "not-delivered" {
-		t.Fatalf("saved reviewer prompt = %#v, want not-delivered", persisted["prompt"])
-	}
-	d.setEnv("FAKE_PROMPT_EATEN", "")
-	again := d.ctl(true, "reviewer", "launch", taskID)
-	if again["action"] != "prompted" || asMap(again["prompt"])["state"] != "delivered" {
-		t.Fatalf("re-prompt of the recorded reviewer = %#v, want delivered once the dialog is gone", again)
-	}
+	return out
 }
 
 func countCalls(calls [][]string, first, second string) int {
@@ -510,4 +322,26 @@ func stringsToAny(values []string) []any {
 		result[i] = value
 	}
 	return result
+}
+
+func startReviewerCheckoutWriter(t *testing.T, d *demoLab, taskID string) {
+	t.Helper()
+	cwd := asString(d.taskRecord(taskID)["worktree"])
+	writer := exec.Command("sleep", "30")
+	writer.Dir = cwd
+	if err := writer.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = writer.Process.Kill(); _ = writer.Wait() })
+	data, err := json.Marshal(map[string]any{"processes": []map[string]any{{"pid": writer.Process.Pid, "cwd": cwd}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(d.base, "fake-lsof", "cwds.json")
+	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
 }

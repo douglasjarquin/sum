@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"context"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/graph"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
@@ -45,7 +45,10 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 		row.Set("tool", name)
 		if path, err := toolpath.Find(runtimeRoot, name); err == nil {
 			row.Set("path", path)
-			row.Set("ok", true)
+			row.Set("ok", isExecutable(path))
+			if !isExecutable(path) {
+				row.Set("detail", "Resolved path is not an executable file.")
+			}
 		} else {
 			row.Set("ok", false)
 			row.Set("detail", err.Error())
@@ -53,24 +56,16 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 		rows = append(rows, row)
 	}
 
-	nativeVersion := ordjson.NewObject()
-	nativeVersion.Set("tool", "hc-core")
-	owner, _ := s.Owner()
+	ctx, ctxErr := store.Context(runtimeRoot)
+	owner, ownerErr := s.Owner()
 	endpoint := store.EndpointFromContext(owner)
-	if endpoint.CoreID != "" {
-		client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
-		hello, err := client.Hello(context.Background())
-		nativeVersion.Set("ok", err == nil)
-		if err != nil {
-			nativeVersion.Set("detail", err.Error())
-		} else {
-			nativeVersion.Set("detail", func() any { o, _ := ordjson.FromValue(hello); return o }())
-		}
-	} else {
-		nativeVersion.Set("ok", false)
-		nativeVersion.Set("detail", "no recorded local HC endpoint; doctor never starts or binds a core")
+	source := "registered-coordinator"
+	if endpoint.CoreID == "" && ctxErr == nil {
+		endpoint = store.EndpointFromContext(ctx)
+		source = "caller-context"
 	}
-	rows = append(rows, nativeVersion)
+	rows = append(rows, hcCoreCheck(endpoint, source))
+	rows = append(rows, hcArtifactCheck(runtimeRoot))
 
 	rows = append(rows, ghAttachCheck(runtimeRoot))
 
@@ -80,11 +75,13 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 
 	role := ordjson.NewObject()
 	role.Set("tool", "role")
-	role.Set("ok", true)
+	role.Set("ok", ownerErr == nil)
+	if ownerErr != nil {
+		role.Set("detail", ownerErr.Error())
+	}
 	designated := s.Designated()
 	role.Set("installation", designated)
 	if designated {
-		owner, _ := s.Owner()
 		if owner != nil {
 			role.Set("coordinator", owner)
 		} else {
@@ -96,7 +93,6 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 
 	nativeContext := ordjson.NewObject()
 	nativeContext.Set("tool", "hc-context")
-	ctx, ctxErr := store.Context(runtimeRoot)
 	nativeContext.Set("ok", ctxErr == nil)
 	if ctxErr != nil {
 		nativeContext.Set("detail", ctxErr.Error())
@@ -125,13 +121,9 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 	harnessRow.Set("tool", "harness")
 	harnessRow.Set("ok", anyInstalled)
 	harnessRow.Set("installed", installed)
+	harnessRow.Set("qualification", "unknown")
+	harnessRow.Set("detail", "Executable discovery only; readiness and the effective command/keymap are qualified for each managed launch, without changing harness settings.")
 	rows = append(rows, harnessRow)
-
-	meshRow := ordjson.NewObject()
-	meshRow.Set("tool", "mesh")
-	meshRow.Set("ok", isExecutable(filepath.Join(runtimeRoot, ".local", "bin", "herdr-mesh")) ||
-		isExecutable(filepath.Join(runtimeRoot, ".local", "bin", "herdr-mesh-go")))
-	rows = append(rows, meshRow)
 
 	graphTool := graph.Tool(runtimeRoot)
 	available, _ := graphTool.Get("available")
@@ -222,21 +214,11 @@ func ghAttachCheck(runtimeRoot string) *ordjson.Object {
 }
 
 func findExecutable(runtimeRoot, exe string) string {
-	if path, err := exec.LookPath(exe); err == nil {
+	path, err := toolpath.Find(runtimeRoot, exe)
+	if err == nil && isExecutable(path) {
 		return path
 	}
-	local := filepath.Join(runtimeRoot, ".local", "bin", exe)
-	if isFile(local) {
-		return local
-	}
 	return ""
-}
-
-func isFile(path string) bool {
-	if info, err := os.Stat(path); err == nil {
-		return !info.IsDir()
-	}
-	return false
 }
 
 func isExecutable(path string) bool {
@@ -357,4 +339,45 @@ func shortSHA(sha string) string {
 		return sha[:7]
 	}
 	return sha
+}
+
+func hcCoreCheck(endpoint store.Endpoint, source string) *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("tool", "hc-core")
+	row.Set("ok", false)
+	row.Set("available", false)
+	if endpoint.CoreID == "" || endpoint.Socket == "" {
+		row.Set("detail", "No recorded local HC endpoint or attested caller context; doctor never starts or binds a core.")
+		return row
+	}
+	row.Set("source", source)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	hello, err := client.Hello(ctx)
+	if err != nil {
+		row.Set("detail", err.Error())
+		return row
+	}
+	detail, _ := ordjson.FromValue(hello)
+	row.Set("detail", detail)
+	row.Set("ok", true)
+	row.Set("available", true)
+	return row
+}
+func hcArtifactCheck(runtimeRoot string) *ordjson.Object {
+	row := ordjson.NewObject()
+	row.Set("tool", "hc-runtime")
+	row.Set("ok", false)
+	row.Set("qualified", false)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := release.VerifyHCRuntime(ctx, runtimeRoot); err != nil {
+		row.Set("detail", err.Error())
+		return row
+	}
+	row.Set("ok", true)
+	row.Set("qualified", true)
+	row.Set("detail", "Published HC executable, pinned artifact receipt and matched schema/manual verified; this does not qualify a harness or prove a core is running.")
+	return row
 }

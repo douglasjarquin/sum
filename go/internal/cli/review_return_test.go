@@ -3,33 +3,29 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-const reviewCandidate = "9ed1264000000000000000000000000000000000"
+func reviewCandidateFor(d *demoLab, taskID string) string {
+	d.t.Helper()
+	task := d.taskRecord(taskID)
+	out, err := exec.Command("git", "-C", asString(task["worktree"]), "rev-parse", "HEAD").Output()
+	if err != nil {
+		d.t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
+}
 
-// reviewLab dispatches one task under the lab coordinator pane w-parent:p1 and returns the task ID.
+// reviewLab dispatches one approved task under the receipt-bound native coordinator.
 func reviewLab(t *testing.T) (*demoLab, string) {
 	t.Helper()
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "reviewed", map[string]string{"README.md": "A project.\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
 	return d, asString(task["id"])
-}
-
-func fakePane(t *testing.T, base, pane string) map[string]any {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(base, "fake", "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	return asMap(asMap(state["panes"])[pane])
 }
 
 // reviewReturns lists the task's open review returns as the status view shows them.
@@ -47,20 +43,20 @@ func TestReviewVerdictNotifiesAnIdleParent(t *testing.T) {
 	for _, verdict := range []string{"approve", "changes-requested", "blocked"} {
 		t.Run(verdict, func(t *testing.T) {
 			d, taskID := reviewLab(t)
-			settleFakePane(t, d.base, "w-parent:p1")
+			settleNativeTerminal(t, d.base, "t1")
 
-			out := d.ctlPane("w-review:p1", true, "review", taskID, "--verdict", verdict, "--candidate", reviewCandidate, "--text", "findings")
+			out := d.independentReview(true, taskID, "--verdict", verdict, "--candidate", reviewCandidateFor(d, taskID), "--text", "findings")
 			evidenceID := asString(asMap(out["evidence"])["id"])
 			rows := asSlice(asMap(asMap(out["notice"])["returns"])["recipients"])
 			if len(rows) != 1 {
 				t.Fatalf("notice = %v, want one recipient row", out["notice"])
 			}
 			row := asMap(rows[0])
-			if asString(row["state"]) != "submitted" || asString(row["via"]) != "prompt" || asString(asMap(row["recipient"])["pane"]) != "w-parent:p1" {
+			if asString(row["state"]) != "submitted" || asString(row["via"]) != "prompt" || asString(asMap(row["recipient"])["address"]) != "t1" {
 				t.Fatalf("recipient row = %v, want a prompt submitted to the coordinator pane", row)
 			}
-			prompt := asString(fakePane(t, d.base, "w-parent:p1")["last_prompt"])
-			for _, want := range []string{taskID, "review " + evidenceID, "verdict " + verdict, reviewCandidate, "--kind review", "not approval"} {
+			prompt := strings.Join(d.native.Inputs("t1"), "\n")
+			for _, want := range []string{taskID, "review " + evidenceID, "verdict " + verdict, reviewCandidateFor(d, taskID), "--kind review", "not approval"} {
 				if !strings.Contains(prompt, want) {
 					t.Fatalf("parent prompt %q lacks %q", prompt, want)
 				}
@@ -68,7 +64,7 @@ func TestReviewVerdictNotifiesAnIdleParent(t *testing.T) {
 
 			open := reviewReturns(d, taskID)
 			if len(open) != 1 || asString(open[0]["id"]) != "review:"+evidenceID || asString(open[0]["verdict"]) != verdict ||
-				asString(open[0]["candidate"]) != reviewCandidate || asString(asMap(open[0]["notification"])["state"]) != "submitted" {
+				asString(open[0]["candidate"]) != reviewCandidateFor(d, taskID) || asString(asMap(open[0]["notification"])["state"]) != "submitted" {
 				t.Fatalf("open review returns = %v, want review:%s submitted and still open", open, evidenceID)
 			}
 		})
@@ -77,15 +73,20 @@ func TestReviewVerdictNotifiesAnIdleParent(t *testing.T) {
 
 func TestReviewVerdictWaitsForABusyParent(t *testing.T) {
 	d, taskID := reviewLab(t)
-	// demoEnv leaves the coordinator pane working, as it is mid-turn.
-	out := d.ctlPane("w-review:p1", true, "review", taskID, "--verdict", "approve", "--candidate", reviewCandidate, "--text", "ok")
-	row := asMap(asSlice(asMap(asMap(out["notice"])["returns"])["recipients"])[0])
+	d.native.SetStatus("t1", "working")
+	out := d.independentReview(true, taskID, "--verdict", "approve", "--candidate", reviewCandidateFor(d, taskID), "--text", "ok")
+	rows := asSlice(asMap(asMap(out["notice"])["returns"])["recipients"])
+	if len(rows) != 1 {
+		t.Fatalf("busy review notice missing recipient: %v", out)
+	}
+	row := asMap(rows[0])
 	if asString(row["state"]) != "not-delivered" || !strings.Contains(asString(row["reason"]), "working") {
-		t.Fatalf("recipient row = %v, want not-delivered to the working parent", row)
+		t.Fatalf("busy parent should defer native input: %v", row)
 	}
-	if prompt, ok := fakePane(t, d.base, "w-parent:p1")["last_prompt"]; ok {
-		t.Fatalf("busy parent was prompted mid-turn: %v", prompt)
+	if len(d.native.Inputs("t1")) != 0 {
+		t.Fatal("observed working parent received input")
 	}
+
 	if open := reviewReturns(d, taskID); len(open) != 1 {
 		t.Fatalf("open review returns = %v, want the verdict still owed", open)
 	}
@@ -102,6 +103,8 @@ func TestReviewVerdictWaitsForABusyParent(t *testing.T) {
 
 func TestReviewWithoutAParentCreatesNoReturn(t *testing.T) {
 	d, taskID := reviewLab(t)
+	reviewer := launchNativeReviewer(t, d, taskID)
+	address := workerAddress(reviewer)
 	path := filepath.Join(d.home, "tasks", taskID, "task.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -119,8 +122,8 @@ func TestReviewWithoutAParentCreatesNoReturn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := d.ctlPane("w-review:p1", true, "review", taskID, "--verdict", "approve", "--candidate", reviewCandidate, "--text", "ok")
-	if out["notice"] != nil || !strings.Contains(asString(out["note"]), "no parent pane") {
+	out := d.ctlPane(address, true, "review", taskID, "--verdict", "approve", "--candidate", reviewCandidateFor(d, taskID), "--text", "ok")
+	if out["notice"] != nil || !strings.Contains(asString(out["note"]), "no parent") {
 		t.Fatalf("review without a parent = %v, want no notice and a note saying why", out)
 	}
 	if open := reviewReturns(d, taskID); len(open) != 0 {
@@ -132,9 +135,9 @@ func TestReviewWithoutAParentCreatesNoReturn(t *testing.T) {
 // and the fixed notice carries neither the findings nor the notes.
 func TestReviewWithNotesStillReturnsToTheParent(t *testing.T) {
 	d, taskID := reviewLab(t)
-	settleFakePane(t, d.base, "w-parent:p1")
+	settleNativeTerminal(t, d.base, "t1")
 
-	out := d.ctlPane("w-review:p1", true, "review", taskID, "--verdict", "approve", "--candidate", reviewCandidate,
+	out := d.independentReview(true, taskID, "--verdict", "approve", "--candidate", reviewCandidateFor(d, taskID),
 		"--text", "# Independent review\n\nlong durable report", "--focus", "hero CTA is scoped on purpose", "--limitation", "source inspected only")
 	evidenceID := asString(asMap(out["evidence"])["id"])
 	saved, err := json.Marshal(out["evidence"])
@@ -151,7 +154,7 @@ func TestReviewWithNotesStillReturnsToTheParent(t *testing.T) {
 	if len(open) != 1 || asString(open[0]["id"]) != "review:"+evidenceID || asString(asMap(open[0]["notification"])["state"]) != "submitted" {
 		t.Fatalf("open review returns = %v, want review:%s submitted and still open", open, evidenceID)
 	}
-	prompt := asString(fakePane(t, d.base, "w-parent:p1")["last_prompt"])
+	prompt := strings.Join(d.native.Inputs("t1"), "\n")
 	if !strings.Contains(prompt, "review "+evidenceID) {
 		t.Fatalf("parent prompt %q does not name review %s", prompt, evidenceID)
 	}

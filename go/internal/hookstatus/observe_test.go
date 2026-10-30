@@ -186,6 +186,37 @@ func TestNativeObserverReconcilesEventsDirtyCommitsAndMissedSnapshots(t *testing
 	if len(f.Inputs(e.Address)) != 2 {
 		t.Fatal("reconnect replayed a submitted obligation")
 	}
+	// Actual native blocked/finished edges persist bounded observations and do not replay.
+	f.SetScreen(e.Address, "\x1b[31mPermission needed: allow write?\x1b[0m\x00")
+	f.SetStatus(e.Address, "blocked")
+	attentionCount := func() int {
+		current, err := s.ReadTask(e.Task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(asList(value(current, "attention")))
+	}
+	await(t, func() bool { return attentionCount() == 1 })
+	current, _ := s.ReadTask(e.Task)
+	blocked := asObject(asList(value(current, "attention"))[0])
+	if value(blocked, "kind") != "blocked" || value(blocked, "excerpt") != "Permission needed: allow write?" {
+		t.Fatalf("blocked observation = %v", blocked)
+	}
+	f.Miss()
+	await(t, func() bool { return subscriptions() > 3 })
+	if attentionCount() != 1 {
+		t.Fatal("snapshot replayed attention")
+	}
+	f.Exit(e.Address, 1)
+	await(t, func() bool { return attentionCount() == 2 })
+	current, _ = s.ReadTask(e.Task)
+	exited := asObject(asList(value(current, "attention"))[1])
+	if value(exited, "kind") != "exited" || value(current, "status") != "running" || value(current, "report") != nil {
+		t.Fatalf("native exit changed business outcome: %v", current)
+	}
+	if len(f.Inputs(e.Address)) != 2 {
+		t.Fatal("attention sent input to blocked or finished worker")
+	}
 	if err = settings.SetNativeEventsEnabled(s, false); err != nil {
 		t.Fatal(err)
 	}
@@ -300,5 +331,28 @@ func TestNativeObserverUncertainLaunchWithoutEndpointBlocksActivation(t *testing
 	}
 	if n != 1 {
 		t.Fatalf("runs %d", n)
+	}
+}
+
+func TestPendingAgeUsesStoreClock(t *testing.T) {
+	t.Setenv("SUM_NOW", "2026-01-02T00:00:00Z")
+	s, err := store.Open(filepath.Join(t.TempDir(), "home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := ordjson.NewObject()
+	task.Set("id", "t-000000000001")
+	task.Set("status", "reported")
+	question := ordjson.NewObject()
+	question.Set("id", "q1")
+	question.Set("status", "open")
+	question.Set("created_at", "2026-01-01T00:00:00Z")
+	task.Set("questions", []any{question})
+	row, err := pendingSummary(s, []*ordjson.Object{task})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if age, _ := row.Get("oldest_age_s"); fmt.Sprint(age) != "86400" {
+		t.Fatalf("age = %v; summary = %v", age, row)
 	}
 }

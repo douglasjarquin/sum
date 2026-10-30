@@ -53,7 +53,6 @@ func TestNativeReviewerCreationPersistsUnsentFirstMessage(t *testing.T) {
 	no := false
 	f.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: false, Started: &no}})
 	reviewer := ep.Object()
-	reviewer.Set("candidate", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 	result, err := launchPreparedNative(context.Background(), s, task, ep, reviewer, hcclient.RunParams{Argv: []string{"qualified", "review pointer"}, Cwd: ep.Cwd, OutliveParent: true, NoNotify: true})
 	if err != nil {
 		t.Fatal(err)

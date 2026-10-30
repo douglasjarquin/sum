@@ -22,7 +22,7 @@ func TestContext_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("minimal task: no worktree, evidence, notes, or environment record", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextMatches(t, home, "t-aaaaaaaaaaaa")
@@ -41,7 +41,7 @@ func TestContext_pinsStdoutAcrossScenarios(t *testing.T) {
   {"schema": 1, "id": "e-0000000002", "kind": "verification", "source": "coordinator", "at": "2026-01-01T00:08:00+00:00",
    "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null, "run_id": "run-root-1", "result": "pass", "outcome": "all green"}
 ]}`, baseSha, filepath.Join(root, "checkout"), head, head)
-		writeTaskFixture(t, home, "t-bbbbbbbbbbbb", taskJSON)
+		home = writeTaskFixture(t, home, "t-bbbbbbbbbbbb", taskJSON)
 		assertContextMatches(t, home, "t-bbbbbbbbbbbb")
 	})
 
@@ -56,7 +56,7 @@ func TestContext_pinsStdoutAcrossScenarios(t *testing.T) {
   {"id": "q2", "key": "scope", "status": "applied", "created_at": "2026-01-01T00:00:10+00:00", "answered_at": "2026-01-01T00:00:20+00:00",
    "applied_at": "2026-01-01T00:00:25+00:00", "text": "in scope?", "answer": "yes"}
 ]}`, baseSha)
-		writeTaskFixture(t, home, "t-cccccccccccc", taskJSON)
+		home = writeTaskFixture(t, home, "t-cccccccccccc", taskJSON)
 		if err := os.WriteFile(filepath.Join(home, "tasks", "t-cccccccccccc", "notes.md"),
 			[]byte("# Notes for t-cccccccccccc\n\n## 2026-01-01T00:00:15+00:00 worker p1\n\nfound the thing\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -92,7 +92,7 @@ func TestContextSections_pinStdoutAcrossScenarios(t *testing.T) {
   {"id": "q2", "key": "scope", "status": "applied", "created_at": "2026-01-01T00:00:10+00:00", "answered_at": "2026-01-01T00:00:20+00:00",
    "applied_at": "2026-01-01T00:00:25+00:00", "text": "in scope?", "answer": "yes"}
 ]}`, baseSha)
-		writeTaskFixture(t, home, "t-eeeeeeeeeeee", taskJSON)
+		home = writeTaskFixture(t, home, "t-eeeeeeeeeeee", taskJSON)
 		assertContextSectionsMatch(t, home, "t-eeeeeeeeeeee", "decisions", "returns")
 	})
 
@@ -113,7 +113,7 @@ func TestContextSections_pinStdoutAcrossScenarios(t *testing.T) {
   {"schema": 1, "id": "e-0000000003", "kind": "review", "source": "reviewer", "at": "2026-01-01T00:09:00+00:00",
    "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null, "verdict": "approve", "tool": "made"}
 ]}`, baseSha, head, filepath.Join(root, "checkout"), head, head, head)
-		writeTaskFixture(t, home, "t-ffffffffffff", taskJSON)
+		home = writeTaskFixture(t, home, "t-ffffffffffff", taskJSON)
 		assertContextSectionsMatch(t, home, "t-ffffffffffff", "handoff", "evidence")
 	})
 
@@ -128,13 +128,13 @@ func TestContextSections_pinStdoutAcrossScenarios(t *testing.T) {
    "handoff": {"outcome": "done", "next_action": "review it", "checks": [{"command": "go test ./...", "exit": 0}],
     "pr": "https://github.com/owner/repo/pull/265"}}
 ]}`, baseSha)
-		writeTaskFixture(t, home, "t-2a2a2a2a2a2a", taskJSON)
+		home = writeTaskFixture(t, home, "t-2a2a2a2a2a2a", taskJSON)
 		assertContextSectionsMatch(t, home, "t-2a2a2a2a2a2a", "handoff")
 	})
 
 	t.Run("brief section, legacy task with no versions.json", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextSectionsMatch(t, home, "t-aaaaaaaaaaaa", "brief")
@@ -142,7 +142,7 @@ func TestContextSections_pinStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("notes section, a present notes.md with two entries", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-0a0a0a0a0a0a", fmt.Sprintf(`{"schema": 1, "id": "t-0a0a0a0a0a0a", "status": "running", "repository": "owner/repoG",
+		home = writeTaskFixture(t, home, "t-0a0a0a0a0a0a", fmt.Sprintf(`{"schema": 1, "id": "t-0a0a0a0a0a0a", "status": "running", "repository": "owner/repoG",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		if err := os.WriteFile(filepath.Join(home, "tasks", "t-0a0a0a0a0a0a", "notes.md"),
@@ -155,7 +155,7 @@ func TestContextSections_pinStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("notes section, no notes.md present", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-0b0b0b0b0b0b", fmt.Sprintf(`{"schema": 1, "id": "t-0b0b0b0b0b0b", "status": "running", "repository": "owner/repoH",
+		home = writeTaskFixture(t, home, "t-0b0b0b0b0b0b", fmt.Sprintf(`{"schema": 1, "id": "t-0b0b0b0b0b0b", "status": "running", "repository": "owner/repoH",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextSectionsMatch(t, home, "t-0b0b0b0b0b0b", "notes")
@@ -163,7 +163,7 @@ func TestContextSections_pinStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("execution section, no graph record, no launch/parent/reviewer", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-0c0c0c0c0c0c", fmt.Sprintf(`{"schema": 1, "id": "t-0c0c0c0c0c0c", "status": "running", "repository": "owner/repoI",
+		home = writeTaskFixture(t, home, "t-0c0c0c0c0c0c", fmt.Sprintf(`{"schema": 1, "id": "t-0c0c0c0c0c0c", "status": "running", "repository": "owner/repoI",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "branch": "task-branch", "harness": "claude",
 "machine": "m1", "session": "s1", "pane": "p1"}`, baseSha))
@@ -172,7 +172,7 @@ func TestContextSections_pinStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("execution section, a ready graph record, launch, parent, and reviewer", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-0d0d0d0d0d0d", fmt.Sprintf(`{"schema": 1, "id": "t-0d0d0d0d0d0d", "status": "running", "repository": "owner/repoJ",
+		home = writeTaskFixture(t, home, "t-0d0d0d0d0d0d", fmt.Sprintf(`{"schema": 1, "id": "t-0d0d0d0d0d0d", "status": "running", "repository": "owner/repoJ",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "branch": "task-branch", "harness": "claude", "started_at": "2026-01-01T00:01:00+00:00",
 "machine": "m1", "session": "s1", "pane": "p1",
@@ -199,7 +199,7 @@ func TestContextEnvironmentAndUpdateSections_pinStdoutAcrossScenarios(t *testing
 
 	t.Run("environment section, legacy task, no environment.json", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-0e0e0e0e0e0e", fmt.Sprintf(`{"schema": 1, "id": "t-0e0e0e0e0e0e", "status": "running", "repository": "owner/repoK",
+		home = writeTaskFixture(t, home, "t-0e0e0e0e0e0e", fmt.Sprintf(`{"schema": 1, "id": "t-0e0e0e0e0e0e", "status": "running", "repository": "owner/repoK",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextSectionsMatch(t, home, "t-0e0e0e0e0e0e", "environment")
@@ -207,7 +207,7 @@ func TestContextEnvironmentAndUpdateSections_pinStdoutAcrossScenarios(t *testing
 
 	t.Run("environment section, a present environment.json record", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-0f0f0f0f0f0f", fmt.Sprintf(`{"schema": 1, "id": "t-0f0f0f0f0f0f", "status": "running", "repository": "owner/repoL",
+		home = writeTaskFixture(t, home, "t-0f0f0f0f0f0f", fmt.Sprintf(`{"schema": 1, "id": "t-0f0f0f0f0f0f", "status": "running", "repository": "owner/repoL",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		writeEnvironmentFixture(t, home, "t-0f0f0f0f0f0f", `{
@@ -222,7 +222,7 @@ func TestContextEnvironmentAndUpdateSections_pinStdoutAcrossScenarios(t *testing
 
 	t.Run("update section, legacy task with no versions.json, outside an installation", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-1a1a1a1a1a1a", fmt.Sprintf(`{"schema": 1, "id": "t-1a1a1a1a1a1a", "status": "running", "repository": "owner/repoM",
+		home = writeTaskFixture(t, home, "t-1a1a1a1a1a1a", fmt.Sprintf(`{"schema": 1, "id": "t-1a1a1a1a1a1a", "status": "running", "repository": "owner/repoM",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextSectionsMatch(t, home, "t-1a1a1a1a1a1a", "update")
@@ -250,7 +250,7 @@ func TestContextRole_pinsStdoutAcrossScenarios(t *testing.T) {
   {"id": "q1", "key": "approach", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "which way?", "answer": null},
   {"id": "q2", "key": "scope", "status": "answered", "created_at": "2026-01-01T00:00:10+00:00", "answered_at": "2026-01-01T00:00:20+00:00", "text": "in scope?", "answer": "yes"}
 ]}`, baseSha)
-		writeTaskFixture(t, home, "t-1b1b1b1b1b1b", taskJSON)
+		home = writeTaskFixture(t, home, "t-1b1b1b1b1b1b", taskJSON)
 		assertContextRoleMatches(t, home, "t-1b1b1b1b1b1b", "worker", nil)
 	})
 
@@ -263,7 +263,7 @@ func TestContextRole_pinsStdoutAcrossScenarios(t *testing.T) {
   {"id": "q1", "key": "approach", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "which way?", "answer": null},
   {"id": "q2", "key": "scope", "status": "answered", "created_at": "2026-01-01T00:00:10+00:00", "answered_at": "2026-01-01T00:00:20+00:00", "text": "in scope?", "answer": "yes"}
 ]}`, baseSha)
-		writeTaskFixture(t, home, "t-1c1c1c1c1c1c", taskJSON)
+		home = writeTaskFixture(t, home, "t-1c1c1c1c1c1c", taskJSON)
 		assertContextRoleMatches(t, home, "t-1c1c1c1c1c1c", "coordinator", nil)
 	})
 
@@ -280,7 +280,7 @@ func TestContextRole_pinsStdoutAcrossScenarios(t *testing.T) {
    "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null,
    "handoff": {"outcome": "done", "next_action": null, "artifacts": ["README.md", "../outside.md", "/etc/passwd", "~/secret"]}}
 ]}`, baseSha, checkout, head)
-		writeTaskFixture(t, home, "t-1d1d1d1d1d1d", taskJSON)
+		home = writeTaskFixture(t, home, "t-1d1d1d1d1d1d", taskJSON)
 		assertContextRoleMatches(t, home, "t-1d1d1d1d1d1d", "reviewer", []string{"environment"})
 	})
 }
@@ -314,7 +314,7 @@ func TestContextSince_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("unchanged cursor: early return with just a note, no sections", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-1e1e1e1e1e1e", fmt.Sprintf(`{"schema": 1, "id": "t-1e1e1e1e1e1e", "status": "running", "repository": "owner/repoQ",
+		home = writeTaskFixture(t, home, "t-1e1e1e1e1e1e", fmt.Sprintf(`{"schema": 1, "id": "t-1e1e1e1e1e1e", "status": "running", "repository": "owner/repoQ",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		initial, err := runCLIForGolden(t, home, []string{"context", "t-1e1e1e1e1e1e"})
@@ -327,7 +327,7 @@ func TestContextSince_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("changed since cursor: a new question, no section requested", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-1f1f1f1f1f1f", fmt.Sprintf(`{"schema": 1, "id": "t-1f1f1f1f1f1f", "status": "running", "repository": "owner/repoR",
+		home = writeTaskFixture(t, home, "t-1f1f1f1f1f1f", fmt.Sprintf(`{"schema": 1, "id": "t-1f1f1f1f1f1f", "status": "running", "repository": "owner/repoR",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		initial, err := runCLIForGolden(t, home, []string{"context", "t-1f1f1f1f1f1f"})
@@ -335,7 +335,7 @@ func TestContextSince_pinsStdoutAcrossScenarios(t *testing.T) {
 			t.Fatalf("context: %v", err)
 		}
 		cursor := extractCursor(t, initial)
-		writeTaskFixture(t, home, "t-1f1f1f1f1f1f", fmt.Sprintf(`{"schema": 1, "id": "t-1f1f1f1f1f1f", "status": "running", "repository": "owner/repoR",
+		home = writeTaskFixture(t, home, "t-1f1f1f1f1f1f", fmt.Sprintf(`{"schema": 1, "id": "t-1f1f1f1f1f1f", "status": "running", "repository": "owner/repoR",
 "questions": [{"id": "q1", "key": "approach", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "which way?", "answer": null}],
 "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:01:00+00:00"}`, baseSha))
@@ -344,7 +344,7 @@ func TestContextSince_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("changed since cursor, with an explicit --section: changes and the section both render", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-2a2a2a2a2a2a", fmt.Sprintf(`{"schema": 1, "id": "t-2a2a2a2a2a2a", "status": "running", "repository": "owner/repoS",
+		home = writeTaskFixture(t, home, "t-2a2a2a2a2a2a", fmt.Sprintf(`{"schema": 1, "id": "t-2a2a2a2a2a2a", "status": "running", "repository": "owner/repoS",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		initial, err := runCLIForGolden(t, home, []string{"context", "t-2a2a2a2a2a2a"})
@@ -352,7 +352,7 @@ func TestContextSince_pinsStdoutAcrossScenarios(t *testing.T) {
 			t.Fatalf("context: %v", err)
 		}
 		cursor := extractCursor(t, initial)
-		writeTaskFixture(t, home, "t-2a2a2a2a2a2a", fmt.Sprintf(`{"schema": 1, "id": "t-2a2a2a2a2a2a", "status": "running", "repository": "owner/repoS",
+		home = writeTaskFixture(t, home, "t-2a2a2a2a2a2a", fmt.Sprintf(`{"schema": 1, "id": "t-2a2a2a2a2a2a", "status": "running", "repository": "owner/repoS",
 "questions": [{"id": "q1", "key": "approach", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "which way?", "answer": null}],
 "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:01:00+00:00"}`, baseSha))
@@ -361,7 +361,7 @@ func TestContextSince_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("malformed cursor is a command-level failure", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-2b2b2b2b2b2b", fmt.Sprintf(`{"schema": 1, "id": "t-2b2b2b2b2b2b", "status": "running", "repository": "owner/repoT",
+		home = writeTaskFixture(t, home, "t-2b2b2b2b2b2b", fmt.Sprintf(`{"schema": 1, "id": "t-2b2b2b2b2b2b", "status": "running", "repository": "owner/repoT",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextSinceFailureMatches(t, home, "t-2b2b2b2b2b2b", "not-a-real-cursor")
@@ -398,7 +398,7 @@ func TestContextPagingAndRevisionFlags_pinStdoutAcrossScenarios(t *testing.T) {
   {"id": "q2", "key": "b", "status": "open", "created_at": "2026-01-01T00:00:20+00:00", "text": "two?", "answer": null},
   {"id": "q3", "key": "c", "status": "open", "created_at": "2026-01-01T00:00:30+00:00", "text": "three?", "answer": null}
 ]}`, baseSha)
-		writeTaskFixture(t, home, "t-2c2c2c2c2c2c", taskJSON)
+		home = writeTaskFixture(t, home, "t-2c2c2c2c2c2c", taskJSON)
 		assertContextArgsMatch(t, home, "t-2c2c2c2c2c2c", "--section", "decisions", "--after", "1", "--limit", "1")
 	})
 
@@ -417,13 +417,13 @@ func TestContextPagingAndRevisionFlags_pinStdoutAcrossScenarios(t *testing.T) {
   {"schema": 1, "id": "e-0000000003", "kind": "review", "source": "reviewer", "at": "2026-01-01T00:09:00+00:00",
    "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null, "verdict": "approve", "tool": "made"}
 ]}`, baseSha, filepath.Join(root, "checkout"), head, head, head)
-		writeTaskFixture(t, home, "t-2d2d2d2d2d2d", taskJSON)
+		home = writeTaskFixture(t, home, "t-2d2d2d2d2d2d", taskJSON)
 		assertContextArgsMatch(t, home, "t-2d2d2d2d2d2d", "--section", "evidence", "--kind", "verification")
 	})
 
 	t.Run("--max-chars truncates the brief section's approved text", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-2e2e2e2e2e2e", fmt.Sprintf(`{"schema": 1, "id": "t-2e2e2e2e2e2e", "status": "running", "repository": "owner/repoW",
+		home = writeTaskFixture(t, home, "t-2e2e2e2e2e2e", fmt.Sprintf(`{"schema": 1, "id": "t-2e2e2e2e2e2e", "status": "running", "repository": "owner/repoW",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "a brief that is longer than ten characters", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		assertContextArgsMatch(t, home, "t-2e2e2e2e2e2e", "--section", "brief", "--max-chars", "10")
@@ -431,7 +431,7 @@ func TestContextPagingAndRevisionFlags_pinStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("--revision looks up a recorded brief revision by ID", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-2f2f2f2f2f2f", fmt.Sprintf(`{"schema": 1, "id": "t-2f2f2f2f2f2f", "status": "running", "repository": "owner/repoX", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+		home = writeTaskFixture(t, home, "t-2f2f2f2f2f2f", fmt.Sprintf(`{"schema": 1, "id": "t-2f2f2f2f2f2f", "status": "running", "repository": "owner/repoX", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		sha := writeRevisionFile(t, home, "t-2f2f2f2f2f2f", "contracts/r1.md", "revision content")
 		versionsJSON := fmt.Sprintf(`{"schema": 1, "task": "t-2f2f2f2f2f2f", "legacy": false, "runtime": {"sum_version": "0.1.0"}, "brief_schema": 1,
@@ -446,7 +446,7 @@ func TestContextPagingAndRevisionFlags_pinStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("--revision with an unknown ID is a command-level failure", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-3a3a3a3a3a3a", fmt.Sprintf(`{"schema": 1, "id": "t-3a3a3a3a3a3a", "status": "running", "repository": "owner/repoY", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
+		home = writeTaskFixture(t, home, "t-3a3a3a3a3a3a", fmt.Sprintf(`{"schema": 1, "id": "t-3a3a3a3a3a3a", "status": "running", "repository": "owner/repoY", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, baseSha))
 		sha := writeRevisionFile(t, home, "t-3a3a3a3a3a3a", "contracts/r1.md", "revision content")
 		versionsJSON := fmt.Sprintf(`{"schema": 1, "task": "t-3a3a3a3a3a3a", "legacy": false, "runtime": {"sum_version": "0.1.0"}, "brief_schema": 1,
@@ -461,14 +461,14 @@ func TestContextPagingAndRevisionFlags_pinStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("--limit out of range is a command-level failure", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-3b3b3b3b3b3b", fmt.Sprintf(`{"schema": 1, "id": "t-3b3b3b3b3b3b", "status": "running", "repository": "owner/repoZ", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
+		home = writeTaskFixture(t, home, "t-3b3b3b3b3b3b", fmt.Sprintf(`{"schema": 1, "id": "t-3b3b3b3b3b3b", "status": "running", "repository": "owner/repoZ", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
 		assertContextArgsFailureMatches(t, home, "t-3b3b3b3b3b3b", "--limit", "0")
 		assertContextArgsFailureMatches(t, home, "t-3b3b3b3b3b3b", "--limit", "201")
 	})
 
 	t.Run("negative --after or --max-chars is a command-level failure", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-3c3c3c3c3c3c", fmt.Sprintf(`{"schema": 1, "id": "t-3c3c3c3c3c3c", "status": "running", "repository": "owner/repoAA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
+		home = writeTaskFixture(t, home, "t-3c3c3c3c3c3c", fmt.Sprintf(`{"schema": 1, "id": "t-3c3c3c3c3c3c", "status": "running", "repository": "owner/repoAA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
 		assertContextArgsFailureMatches(t, home, "t-3c3c3c3c3c3c", "--after", "-1")
 		assertContextArgsFailureMatches(t, home, "t-3c3c3c3c3c3c", "--max-chars", "-1")
 	})
@@ -491,9 +491,7 @@ func TestContext_unknownFlagsAreGoErrors(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home = nativeTestStore(t, home).Home
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
 	root.SetArgs([]string{"--home", home, "context", "t-aaaaaaaaaaaa", "--role", "not-a-real-role"})
 	err := root.ExecuteContext(context.Background())
@@ -518,7 +516,7 @@ func TestContext_unknownFlagOrExtraPositionalDoesNotCallView(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, taskPath, before := contextUsageLab(t)
 			stdout, stderr, err := runContext(t, home, tc.args...)
 			if err == nil {
@@ -568,7 +566,7 @@ func TestContextCommands(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, taskPath, before := contextUsageLab(t)
 			stdout, stderr, err := runContext(t, home, tc.args...)
 			switch {
@@ -635,7 +633,7 @@ func contextUsageLab(t *testing.T) (home, taskPath string, before []byte) {
 	t.Helper()
 	home = writeDesignatedHome(t)
 	taskID := "t-aaaaaaaaaaaa"
-	writeTaskFixture(t, home, taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing",
 "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "task", "brief_path": "brief.md",
 "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00"}`, taskID))

@@ -28,14 +28,16 @@ func initGitClone(t *testing.T, dir, remoteURL string) {
 	}
 }
 
-func writeProjectsRegistry(t *testing.T, home, registryJSON string) {
+func writeProjectsRegistry(t *testing.T, home, registryJSON string) string {
 	t.Helper()
+	home = nativeTestStore(t, home).Home
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(home, "projects.json"), []byte(registryJSON), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return home
 }
 
 func projectRecordJSON(name, host, owner, repo, kind, path, remote string) string {
@@ -80,7 +82,7 @@ func TestProjectList_pinsStdoutAcrossScenarios(t *testing.T) {
 			projectRecordJSON("owner/mismatched-proj", "github.com", "owner", "mismatched-proj", "managed", mismatchedPath, "https://github.com/owner/mismatched-proj.git"),
 			projectRecordJSON("owner/missing-proj", "github.com", "owner", "missing-proj", "managed", missingPath, "https://github.com/owner/missing-proj.git"),
 		)
-		writeProjectsRegistry(t, home, registry)
+		home = writeProjectsRegistry(t, home, registry)
 		assertProjectMatches(t, home, []string{"project", "list"})
 	})
 }
@@ -95,19 +97,19 @@ func TestProjectShow_pinsStdoutAcrossScenarios(t *testing.T) {
 
 		registry := fmt.Sprintf(`{"schema": 1, "projects": {"owner/clean-proj": %s}}`,
 			projectRecordJSON("owner/clean-proj", "github.com", "owner", "clean-proj", "managed", cleanPath, "https://github.com/owner/clean-proj.git"))
-		writeProjectsRegistry(t, home, registry)
+		home = writeProjectsRegistry(t, home, registry)
 
 		baseSha := "0123456789abcdef0123456789abcdef01234567"
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": %q, "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "worktree": "/tmp/worktree-a"}`, cleanPath, baseSha))
-		writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fmt.Sprintf(`{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "archived", "repository": %q, "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do thing b", "base_sha": %q, "kind": "task"}`, cleanPath, baseSha))
-		writeTaskFixture(t, home, "t-cccccccccccc", fmt.Sprintf(`{"schema": 1, "id": "t-cccccccccccc", "status": "running", "repository": "/tmp/unrelated", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "unrelated", "base_sha": %q, "kind": "task"}`, baseSha))
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": %q, "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "worktree": "/tmp/worktree-a"}`, cleanPath, baseSha))
+		home = writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fmt.Sprintf(`{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "archived", "repository": %q, "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do thing b", "base_sha": %q, "kind": "task"}`, cleanPath, baseSha))
+		home = writeTaskFixture(t, home, "t-cccccccccccc", fmt.Sprintf(`{"schema": 1, "id": "t-cccccccccccc", "status": "running", "repository": "/tmp/unrelated", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "unrelated", "base_sha": %q, "kind": "task"}`, baseSha))
 
 		assertProjectMatches(t, home, []string{"project", "show", "owner/clean-proj"})
 	})
 
 	t.Run("unknown project is a command-level failure", func(t *testing.T) {
 		home := t.TempDir()
-		writeProjectsRegistry(t, home, `{"schema": 1, "projects": {}}`)
+		home = writeProjectsRegistry(t, home, `{"schema": 1, "projects": {}}`)
 		assertProjectFailureMatches(t, home, []string{"project", "show", "owner/nope"})
 	})
 }
@@ -123,13 +125,13 @@ func assertProjectFailureMatches(t *testing.T, home string, args []string) {
 }
 
 func TestProjectEnroll_requiresCoordinator(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := writeDesignatedHome(t)
 	stdout, stderr, err := runProject(t, home, "project", "enroll", "owner/repo")
 	if err == nil {
 		t.Fatalf("expected coordinator requirement, stdout=%s stderr=%s", stdout, stderr)
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "Herdr pane") {
+	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "HC session") {
 		t.Fatalf("err = %v", err)
 	}
 	assertProjectRegistryUnchanged(t, home, "")
@@ -154,7 +156,7 @@ func TestProjectEnrollMigrate_unknownFlagOrExtraPositionalDoesNotRunDomain(t *te
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			before := ""
 			if tc.migrate {
@@ -192,11 +194,11 @@ func TestProjectCommands(t *testing.T) {
 		{name: "valid show", args: []string{"project", "show", "owner/clean-proj"}, lab: "show", success: true},
 		{name: "valid show after dashdash", args: []string{"project", "show", "--", "owner/clean-proj"}, lab: "show", success: true},
 		{name: "valid migrate inspect", args: []string{"project", "migrate", "owner/clean-proj"}, lab: "show", success: true},
-		{name: "valid migrate --apply", args: []string{"project", "migrate", "owner/clean-proj", "--apply"}, lab: "show", herdr: true, domainErr: "registered coordinator"},
-		{name: "valid enroll --host", args: []string{"project", "enroll", "owner/repo", "--host", "github.com"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid enroll --host=", args: []string{"project", "enroll", "owner/repo", "--host=github.com"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid enroll --remote", args: []string{"project", "enroll", "owner/repo", "--remote", "https://github.com/owner/repo.git"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid enroll --path", args: []string{"project", "enroll", "owner/repo", "--path", "/tmp/no-such-clone"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid migrate --apply", args: []string{"project", "migrate", "owner/clean-proj", "--apply"}, lab: "show", herdr: true, domainErr: "registration identity mismatch"},
+		{name: "valid enroll --host", args: []string{"project", "enroll", "owner/repo", "--host", "github.com"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "valid enroll --host=", args: []string{"project", "enroll", "owner/repo", "--host=github.com"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "valid enroll --remote", args: []string{"project", "enroll", "owner/repo", "--remote", "https://github.com/owner/repo.git"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "valid enroll --path", args: []string{"project", "enroll", "owner/repo", "--path", "/tmp/no-such-clone"}, herdr: true, domainErr: "registration identity mismatch"},
 		{name: "project missing subcommand", args: []string{"project"}, usage: true},
 		{name: "show missing name", args: []string{"project", "show"}, usage: true},
 		{name: "enroll missing spec", args: []string{"project", "enroll"}, usage: true},
@@ -212,17 +214,17 @@ func TestProjectCommands(t *testing.T) {
 		{name: "migrate extra positional", args: []string{"project", "migrate", "owner/clean-proj", "extra"}, lab: "show", usage: true},
 		{name: "migrate unknown flag", args: []string{"project", "migrate", "owner/clean-proj", "--unexpected"}, lab: "show", usage: true, unknown: true},
 		{name: "migrate extra after --apply", args: []string{"project", "migrate", "owner/clean-proj", "--apply", "extra"}, lab: "show", usage: true},
-		{name: "enroll requires coordinator", args: []string{"project", "enroll", "owner/repo"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "enroll requires pane without herdr", args: []string{"project", "enroll", "owner/repo"}, domainErr: "Herdr pane"},
+		{name: "enroll requires coordinator", args: []string{"project", "enroll", "owner/repo"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "enroll requires pane without herdr", args: []string{"project", "enroll", "owner/repo"}, domainErr: "HC session"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := projectUsageLab(t, tc.lab)
 			if tc.herdr {
-				herdrEnv(t, home)
-				t.Setenv("HERDR_PANE_ID", "w-other:p1")
+				nativeEnv(t, home)
+				t.Setenv("SUM_ROLE", "developer")
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			stdout, stderr, err := runProject(t, home, tc.args...)
 			switch {
@@ -294,7 +296,7 @@ func projectUsageLab(t *testing.T, lab string) (home, before string) {
 		root := t.TempDir()
 		cleanPath := filepath.Join(root, "clean-proj")
 		initGitClone(t, cleanPath, "https://github.com/owner/clean-proj.git")
-		writeProjectsRegistry(t, home, fmt.Sprintf(`{"schema": 1, "projects": {"owner/clean-proj": %s}}`,
+		home = writeProjectsRegistry(t, home, fmt.Sprintf(`{"schema": 1, "projects": {"owner/clean-proj": %s}}`,
 			projectRecordJSON("owner/clean-proj", "github.com", "owner", "clean-proj", "managed", cleanPath, "https://github.com/owner/clean-proj.git")))
 		before = readProjectRegistry(t, home)
 	}
@@ -306,7 +308,7 @@ func writeProjectRegistry(t *testing.T, home string) string {
 	root := t.TempDir()
 	cleanPath := filepath.Join(root, "clean-proj")
 	initGitClone(t, cleanPath, "https://github.com/owner/repo.git")
-	writeProjectsRegistry(t, home, fmt.Sprintf(`{"schema": 1, "projects": {"owner/repo": %s}}`,
+	home = writeProjectsRegistry(t, home, fmt.Sprintf(`{"schema": 1, "projects": {"owner/repo": %s}}`,
 		projectRecordJSON("owner/repo", "github.com", "owner", "repo", "managed", cleanPath, "https://github.com/owner/repo.git")))
 	return readProjectRegistry(t, home)
 }

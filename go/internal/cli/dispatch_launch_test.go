@@ -2,15 +2,19 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/prepare"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 var devinWorkerArgv = []string{"--permission-mode", "dangerous", "--respect-workspace-trust", "false"}
@@ -71,18 +75,22 @@ func argsAfterSeparator(call []string) ([]string, bool) {
 func TestDispatchDevinWorkerCarriesTrustGateArgv(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "devin-worker", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--arg=--permission-mode", "--arg=dangerous", "--arg=--respect-workspace-trust", "--arg=false", "--permission-override", "--approved")
-	if argv := startedArgv(task); !reflect.DeepEqual(argv, devinWorkerArgv) {
-		t.Fatalf("devin worker started_argv = %v, want %v", argv, devinWorkerArgv)
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--arg=--permission-mode", "--arg=dangerous", "--arg=--respect-workspace-trust", "--arg=false", "--permission-override", "--approved")
+	if !strings.Contains(asString(refused["error"]), "no qualified") {
+		t.Fatalf("unqualified Devin launch: %v", refused)
 	}
-	starts := agentStartCalls(t, d.base)
-	if len(starts) != 1 {
-		t.Fatalf("agent start calls = %v, want exactly one", starts)
+	task := onlyNativeTask(t, d)
+	var recorded []string
+	for _, a := range asSlice(asMap(task["launch"])["argv"]) {
+		recorded = append(recorded, asString(a))
 	}
-	passed, ok := argsAfterSeparator(starts[0])
-	if !ok || !reflect.DeepEqual(passed, devinWorkerArgv) {
-		t.Fatalf("agent start args = %v, want -- followed by %v", starts[0], devinWorkerArgv)
+	if !reflect.DeepEqual(recorded, devinWorkerArgv) {
+		t.Fatalf("recorded approved arguments %v", recorded)
 	}
+	if len(nativeCalls(d, "terminal.run")) != 0 {
+		t.Fatal("unqualified harness was launched")
+	}
+
 }
 
 func TestDispatchOtherHarnessHasNoDevinArgv(t *testing.T) {
@@ -90,66 +98,72 @@ func TestDispatchOtherHarnessHasNoDevinArgv(t *testing.T) {
 	repo := policyProject(t, d.base, "codex-worker", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
 	if argv := startedArgv(task); len(argv) != 0 {
-		t.Fatalf("codex worker started_argv = %v, want none", argv)
+		t.Fatalf("Codex inherited unrelated permission arguments %v", argv)
 	}
-	starts := agentStartCalls(t, d.base)
-	if len(starts) != 1 {
-		t.Fatalf("agent start calls = %v, want exactly one", starts)
+	calls := nativeCalls(d, "terminal.run")
+	if len(calls) != 1 {
+		t.Fatalf("native run calls %v", calls)
 	}
-	if _, ok := argsAfterSeparator(starts[0]); ok {
-		t.Fatalf("codex agent start args = %v, want no -- separator", starts[0])
+	for _, arg := range asSlice(calls[0].Params["argv"]) {
+		if strings.Contains(asString(arg), "dangerous") {
+			t.Fatal("Devin-only flags reached Codex")
+		}
 	}
+	if len(nativeCalls(d, "terminal.send")) != 0 {
+		t.Fatal("first message was sent separately")
+	}
+
 }
 
 func TestClaudeDispatchGrantsOnlyItsTaskInstructions(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "claude-task-access", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--arg", "existing", "--approved")
-	home := d.home
-	if resolved, err := filepath.EvalSymlinks(d.home); err == nil {
-		home = resolved
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--arg", "existing", "--approved")
+	st := nativeTestStore(t, d.home)
+	record, err := st.ReadTask(asString(task["id"]))
+	if err != nil {
+		t.Fatal(err)
 	}
-	taskDir := filepath.Join(home, "tasks", asString(task["id"]))
-	want := []string{"existing", "--add-dir", taskDir}
-	if argv := startedArgv(task); !reflect.DeepEqual(argv, want) {
-		t.Fatalf("Claude started_argv = %v, want only the active task directory %v", argv, want)
+	args, err := prepare.TaskAccessArgs(st, record, "claude", asString(task["brief_path"]), asString(task["worktree"]))
+	if err != nil {
+		t.Fatal(err)
 	}
-	launch := asMap(task["launch"])
-	if got := asSlice(launch["argv"]); !reflect.DeepEqual(got, []any{"existing", "--add-dir", taskDir}) {
-		t.Fatalf("recorded launch argv = %v, want %v", got, want)
+	want := []string{"--add-dir", filepath.Join(d.home, "tasks", asString(task["id"]))}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("task grant %v want %v", args, want)
 	}
-	if got := asSlice(launch["task_access_args"]); !reflect.DeepEqual(got, []any{"--add-dir", taskDir}) {
-		t.Fatalf("recorded task access arguments = %v, want %v", got, want)
-	}
-	starts := agentStartCalls(t, d.base)
-	if len(starts) != 1 {
-		t.Fatalf("agent start calls = %v, want exactly one", starts)
-	}
-	passed, ok := argsAfterSeparator(starts[0])
-	if !ok || !reflect.DeepEqual(passed, want) {
-		t.Fatalf("Claude agent start args = %v, want -- followed by %v", starts[0], want)
-	}
-	for _, arg := range passed {
-		if arg == home || arg == filepath.Join(home, "tasks") || arg == filepath.Join(home, "tasks", "t-other") {
-			t.Fatalf("Claude received a state-wide or unrelated task grant: %v", passed)
+	for _, arg := range args {
+		if arg == d.home || arg == filepath.Join(d.home, "tasks") || arg == filepath.Join(d.home, "tasks", "t-other") {
+			t.Fatalf("statewide grant %v", args)
 		}
 	}
+	refused := d.ctl(false, "start", asString(task["id"]))
+	if !strings.Contains(asString(refused["error"]), "no qualified") {
+		t.Fatalf("unqualified Claude: %v", refused)
+	}
+	if len(nativeCalls(d, "terminal.run")) != 0 {
+		t.Fatal("unqualified Claude launched")
+	}
+
 }
 
 func TestDispatchRecordsTheStableMachineIdentity(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "identity-worker", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	d.ctlPane(workerAddress(task), true, "init")
+	task = d.taskRecord(asString(task["id"]))
 	id, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	attempt, occupant := launchedWorker(task)
-	for name, recorded := range map[string]any{"task": task["machine"], "attempt owner": asMap(attempt["owner"])["machine"], "occupant": occupant["machine"]} {
+	attempt, _ := launchedWorker(task)
+	for name, recorded := range map[string]any{"task": task["machine"], "attempt owner": asMap(attempt["owner"])["machine"], "native endpoint": asMap(task["worker_endpoint"])["machine"]} {
 		if recorded != id {
-			t.Fatalf("%s machine = %v, want the stable identity %s", name, recorded, id)
+			t.Fatalf("%s machine %v want %s", name, recorded, id)
 		}
 	}
+
 }
 
 func launchedWorker(task map[string]any) (attempt, occupant map[string]any) {
@@ -182,41 +196,62 @@ func settleFakeWorker(t *testing.T, base, pane string) {
 
 func TestDispatchBindsAgentThatStartsForegroundChildren(t *testing.T) {
 	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "mcp-children", map[string]string{"README.md": "x\n"})
-	d.setEnv("FAKE_AGENT_CHILDREN", "2")
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--approved")
-	attempt, occupant := launchedWorker(task)
-	if state := asString(attempt["state"]); state != "running" {
-		t.Fatalf("worker attempt state = %q, want running; observations %v", state, attempt["observations"])
+	repo := policyProject(t, d.base, "native-foreground", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	address := workerAddress(task)
+	d.ctlPane(address, true, "init")
+	task = d.taskRecord(asString(task["id"]))
+	attempt, _ := launchedWorker(task)
+	endpoint := store.EndpointFromContext(mapObject(t, asMap(task["worker_endpoint"])))
+	st := nativeTestStore(t, d.home)
+	reg, err := st.Registration(endpoint)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if occupant["pid"] == nil || !reflect.DeepEqual(occupant["argv"], []any{"claude"}) || occupant["shell_pid"] == nil {
-		t.Fatalf("occupant = %v, want the claude group leader bound with its shell", occupant)
+	inc, _ := reg.Get("incarnation")
+	raw, _ := ordjson.MarshalCompact(inc)
+	var bound incarnation.NativeEvidence
+	if err = json.Unmarshal(raw, &bound); err != nil {
+		t.Fatal(err)
 	}
-	settleFakeWorker(t, d.base, asString(task["pane"]))
+	if attempt["state"] != "running" || bound.PID == 0 || bound.Foreground == nil || bound.Foreground.PID <= 0 {
+		t.Fatalf("native leader was not receipt-bound: %v %s", attempt, raw)
+	}
+	d.native.SetStatus(address, "idle")
 	sent := d.ctl(false, "repair", "send", asString(task["id"]), "--attempt", asString(attempt["id"]), "--key", "rebase", "--text", "Rebase onto main.")
 	if msg := asString(sent["error"]); msg != "" {
-		t.Fatalf("repair send to the bound worker failed: %s", msg)
+		t.Fatalf("repair to receipt-bound native leader: %s", msg)
 	}
+
 }
 
 func TestDispatchKeepsForegroundWithoutItsLeaderUncertain(t *testing.T) {
 	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "orphaned-group", map[string]string{"README.md": "x\n"})
-	d.setEnv("FAKE_AGENT_CHILDREN", "2")
-	d.setEnv("FAKE_AGENT_LEADER_GONE", "1")
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--approved")
-	attempt, occupant := launchedWorker(task)
-	if state := asString(attempt["state"]); state != "uncertain" {
-		t.Fatalf("worker attempt state = %q, want uncertain when no group leader is observed", state)
+	repo := policyProject(t, d.base, "missing-native-leader", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	address := workerAddress(task)
+	for _, terminal := range d.native.Terminals() {
+		if terminal.Address == address {
+			pid := uint32(200000)
+			terminal.PID = &pid
+			terminal.Foreground = nil
+			d.native.SetTerminal(terminal)
+		}
 	}
-	if occupant["pid"] != nil || occupant["argv"] != nil {
-		t.Fatalf("occupant = %v, want no guessed pid", occupant)
+	refused := d.ctlPane(address, false, "init")
+	if asString(refused["role"]) == "worker" {
+		t.Fatalf("missing foreground leader adopted: %v", refused)
 	}
-	settleFakeWorker(t, d.base, asString(task["pane"]))
+	task = d.taskRecord(asString(task["id"]))
+	attempt, _ := launchedWorker(task)
+	if attempt["state"] == "running" {
+		t.Fatal("missing leader marked running")
+	}
 	sent := d.ctl(false, "repair", "send", asString(task["id"]), "--attempt", asString(attempt["id"]), "--key", "rebase", "--text", "Rebase onto main.")
-	if msg := asString(sent["error"]); !strings.Contains(msg, "exact running worker attempt") {
-		t.Fatalf("repair send to an uncertain attempt = %v, want refusal", sent)
+	if asString(sent["error"]) == "" {
+		t.Fatal("repair to unverified bootstrap was accepted")
 	}
+
 }
 
 func flagAfter(call []string, name string) (string, bool) {
@@ -229,105 +264,74 @@ func flagAfter(call []string, name string) (string, bool) {
 }
 
 func TestDispatchAgentStartTimeoutAllowsGrokColdStart(t *testing.T) {
-	if herdrclient.AgentStartTimeout.Milliseconds() == 30000 {
-		t.Fatalf("AgentStartTimeout = %s, want a bound above 30s", herdrclient.AgentStartTimeout)
-	}
-	if herdrclient.AgentStartCallTimeout <= herdrclient.AgentStartTimeout {
-		t.Fatalf("AgentStartCallTimeout = %s, want above AgentStartTimeout %s", herdrclient.AgentStartCallTimeout, herdrclient.AgentStartTimeout)
-	}
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "grok-cold-start", map[string]string{"README.md": "x\n"})
-	d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "grok", "--approved")
-	starts := agentStartCalls(t, d.base)
-	if len(starts) != 1 {
-		t.Fatalf("agent start calls = %v, want exactly one", starts)
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "grok", "--approved")
+	if !strings.Contains(asString(refused["error"]), "no qualified") {
+		t.Fatalf("unqualified Grok status contract: %v", refused)
 	}
-	got, ok := flagAfter(starts[0], "--timeout")
-	want := fmt.Sprint(herdrclient.AgentStartTimeout.Milliseconds())
-	if !ok || got != want || got == "30000" {
-		t.Fatalf("agent start --timeout = %q, want %s in %v", got, want, starts[0])
+	if len(nativeCalls(d, "terminal.run")) != 0 {
+		t.Fatal("unqualified harness auto-launched")
 	}
+
 }
 
 func TestDispatchSwallowedBriefRecordsLaunchUncertain(t *testing.T) {
 	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "dialog-worker", map[string]string{"README.md": "x\n"})
-	d.setEnv("FAKE_PROMPT_EATEN", "1")
-	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
-	if msg := asString(refused["error"]); !strings.Contains(msg, "Launch/prompt uncertain") || !strings.Contains(msg, "agent_prompt_stalled") {
-		t.Fatalf("dispatch error = %q, want a launch-uncertain refusal naming the stalled prompt", msg)
+	repo := policyProject(t, d.base, "lost-run-response", map[string]string{"README.md": "x\n"})
+	d.native.QueueFault("terminal.run", hctest.Fault{LoseResponse: true})
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if !strings.Contains(asString(refused["error"]), "uncertain") {
+		t.Fatalf("lost launch response %v", refused)
 	}
-	entries, err := os.ReadDir(filepath.Join(d.home, "tasks"))
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("tasks dir = %v, %v; want the one refused task record", entries, err)
+	task := onlyNativeTask(t, d)
+	attempt, _ := launchedWorker(task)
+	if task["status"] != "needs-attention" || attempt["state"] != "uncertain" || asMap(attempt["native_launch"])["intent"] == nil {
+		t.Fatalf("uncertainty missing %v", task)
 	}
-	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", entries[0].Name(), "task.json"))
-	if status := asString(recorded["status"]); status != "needs-attention" {
-		t.Fatalf("task status = %q, want needs-attention, never running", status)
+	if workerAddress(task) != "" {
+		t.Fatal("lost response fabricated a terminal endpoint")
 	}
-	if asString(recorded["error"]) == "" {
-		t.Fatal("task error is empty; a swallowed brief must record its reason")
+	d.ctl(false, "start", asString(task["id"]))
+	if len(nativeCalls(d, "terminal.run")) != 1 || len(nativeCalls(d, "terminal.send")) != 0 {
+		t.Fatal("lost effect automatically replayed")
 	}
-	attempt, _ := launchedWorker(recorded)
-	if state := asString(attempt["state"]); state != "uncertain" {
-		t.Fatalf("worker attempt state = %q, want uncertain", state)
-	}
-	found := false
-	for _, raw := range asSlice(attempt["observations"]) {
-		if asString(asMap(raw)["outcome"]) == "launch-uncertain" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("worker observations = %v, want a launch-uncertain outcome", attempt["observations"])
-	}
-	var prompts [][]string
-	for _, call := range herdrCalls(t, d.base) {
-		if len(call) >= 2 && call[0] == "agent" && call[1] == "prompt" {
-			prompts = append(prompts, call)
-		}
-	}
-	if len(prompts) != 1 {
-		t.Fatalf("agent prompt calls = %d, want exactly one confirmed submission", len(prompts))
-	}
-	joined := strings.Join(prompts[0], " ")
-	if !strings.Contains(joined, "--wait") || !strings.Contains(joined, "--until working") {
-		t.Fatalf("brief prompt = %v, want --wait delivery confirmation", prompts[0])
-	}
+
 }
 
 func TestDispatchBlockedStartupNeverSubmitsTheBrief(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "blocked-worker", map[string]string{"README.md": "x\n"})
-	d.setEnv("FAKE_START_STATUS", "blocked")
-	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
-	if msg := asString(refused["error"]); !strings.Contains(msg, "startup or permission dialog") {
-		t.Fatalf("dispatch error = %q, want the blocked-startup refusal", msg)
+	reason := "blocked"
+	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: false, Reason: &reason}})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if task["status"] != "needs-attention" {
+		t.Fatalf("blocked initial message adopted: %v", task)
 	}
-	if n := countCalls(herdrCalls(t, d.base), "agent", "prompt"); n != 0 {
-		t.Fatalf("agent prompt calls = %d, want none typed into an open dialog", n)
+	if len(nativeCalls(d, "terminal.send")) != 0 || len(nativeCalls(d, "terminal.run")) != 1 {
+		t.Fatal("blocked startup received blind input or another process")
 	}
-	entries, err := os.ReadDir(filepath.Join(d.home, "tasks"))
-	if err != nil || len(entries) != 1 {
-		t.Fatalf("tasks dir = %v, %v; want the one refused task record", entries, err)
+	worker, _ := launchedWorker(task)
+	if asMap(asMap(worker["native_launch"])["first_message"])["sent"] != false {
+		t.Fatal("unsent initial message fact missing")
 	}
-	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", entries[0].Name(), "task.json"))
-	if status := asString(recorded["status"]); status != "needs-attention" {
-		t.Fatalf("task status = %q, want needs-attention", status)
-	}
+
 }
 
 func TestDispatchRetriesAgentPaneBusy(t *testing.T) {
 	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "busy-pane", map[string]string{"README.md": "x\n"})
-	d.setEnv("FAKE_START_BUSY", "2")
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	if status := asString(task["status"]); status != "running" {
-		t.Fatalf("task status = %q, want running", status)
+	repo := policyProject(t, d.base, "busy-native-run", map[string]string{"README.md": "x\n"})
+	d.native.QueueFault("terminal.run", hctest.Fault{RefuseKind: "name_taken"})
+	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if asString(refused["error"]) == "" {
+		t.Fatal("native refusal ignored")
 	}
-	if starts := agentStartCalls(t, d.base); len(starts) != 3 {
-		t.Fatalf("agent start calls = %d, want two busy refusals then one success", len(starts))
+	task := onlyNativeTask(t, d)
+	d.ctl(false, "start", asString(task["id"]))
+	if len(nativeCalls(d, "terminal.run")) != 1 {
+		t.Fatal("native creation refusal was automatically replayed")
 	}
+
 }
 
 func TestDispatchBranchesFromTheFetchedBase(t *testing.T) {
@@ -370,11 +374,10 @@ func TestDispatchRefusesABaseTheRemoteDoesNotAnswer(t *testing.T) {
 	if len(entries) != 0 {
 		t.Fatalf("a refused dispatch left task records: %v", entries)
 	}
-	for _, call := range herdrCalls(t, d.base) {
-		if len(call) >= 2 && call[0] == "worktree" && call[1] == "create" {
-			t.Fatalf("a refused dispatch still created a worktree: %v", call)
-		}
+	if len(nativeCalls(d, "terminal.run")) != 0 {
+		t.Fatal("refused dispatch still launched a native terminal")
 	}
+	assertPrimaryCheckoutsOnly(t, d)
 }
 
 func TestDispatchHonorsAnExplicitBaseRef(t *testing.T) {
@@ -432,11 +435,10 @@ func assertNothingPrepared(t *testing.T, d *demoLab) {
 	if len(entries) != 0 {
 		t.Fatalf("a refused dispatch left task records: %v", entries)
 	}
-	for _, call := range herdrCalls(t, d.base) {
-		if len(call) >= 2 && call[0] == "worktree" && call[1] == "create" {
-			t.Fatalf("a refused dispatch still created a worktree: %v", call)
-		}
+	if len(nativeCalls(d, "terminal.run")) != 0 {
+		t.Fatal("refused dispatch still launched a native terminal")
 	}
+	assertPrimaryCheckoutsOnly(t, d)
 }
 
 func TestDispatchRecordsAReleaseBranchAsTheDeliveryTarget(t *testing.T) {
@@ -510,7 +512,8 @@ func TestDispatchAcceptsATagStartOnlyWithAnAncestorTargetBranch(t *testing.T) {
 	if head := strings.TrimSpace(gitIn(t, asString(task["worktree"]), "rev-parse", "HEAD")); head != start {
 		t.Fatalf("worktree HEAD = %s, want the tag's commit %s (not the release tip %s)", head, start, release)
 	}
-	herdrBefore := len(herdrCalls(t, d.base))
+	nativeBefore := len(nativeCalls(d, "terminal.run"))
+	gitBefore := gitIn(t, repo, "worktree", "list", "--porcelain")
 
 	refusals := map[string][]string{
 		"not an ancestor":                      {"--base", "v2.0", "--target-branch", "release/1.2"},
@@ -532,11 +535,10 @@ func TestDispatchAcceptsATagStartOnlyWithAnAncestorTargetBranch(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("task records = %d, want only the accepted tag-start task", len(entries))
 	}
-	for _, call := range herdrCalls(t, d.base)[herdrBefore:] {
-		if len(call) >= 2 && call[0] == "worktree" && call[1] == "create" {
-			t.Fatalf("a refused prepare still created a worktree: %v", call)
-		}
+	if len(nativeCalls(d, "terminal.run")) != nativeBefore || gitIn(t, repo, "worktree", "list", "--porcelain") != gitBefore {
+		t.Fatal("refused prepare changed native terminals or Git worktree registrations")
 	}
+
 }
 
 func readTaskJSON(t *testing.T, path string) map[string]any {
@@ -558,19 +560,29 @@ func TestDispatchRecordsTheWorkerPanesIncarnation(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "incarnation-worker", map[string]string{"README.md": "x\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
-	id, err := machine.ID()
+	address := workerAddress(task)
+	if worker := d.ctlPane(address, true, "init"); asString(worker["role"]) != "worker" {
+		t.Fatalf("worker init %v", worker)
+	}
+	task = d.taskRecord(asString(task["id"]))
+	endpoint := store.EndpointFromContext(mapObject(t, asMap(task["worker_endpoint"])))
+	st := nativeTestStore(t, d.home)
+	reg, err := st.Registration(endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pane := asString(task["pane"])
-	registration := readJSON(t, sessionPath(d.home, id, pane))
-	inc := asMap(registration["incarnation"])
-	if registration["role"] != "worker" || inc["terminal"] != "term-"+pane || asMap(inc["shell"])["pid"] == nil {
-		t.Fatalf("worker registration = %v, want the pane's terminal and shell recorded", registration)
+	var bound incarnation.NativeEvidence
+	raw, _ := ordjson.MarshalCompact(func() any { v, _ := reg.Get("incarnation"); return v }())
+	if err = json.Unmarshal(raw, &bound); err != nil {
+		t.Fatal(err)
 	}
-	if worker := d.ctlPane(pane, true, "init"); asString(worker["role"]) != "worker" || asString(asMap(worker["incarnation"])["outcome"]) != "same" {
-		t.Fatalf("worker init = %v, want worker judged same", worker)
+	if !bound.Endpoint.SameAuthority(endpoint.Native()) || bound.PID == 0 || bound.Foreground == nil {
+		t.Fatalf("native incarnation not persisted: %s", raw)
 	}
+	if receipt, _ := reg.Get("native_receipt"); receipt == nil {
+		t.Fatal("actual worker init produced no receipt")
+	}
+
 }
 
 func uncertainTask(t *testing.T, d *demoLab) (taskID string, attempt map[string]any) {
@@ -589,185 +601,169 @@ func uncertainTask(t *testing.T, d *demoLab) (taskID string, attempt map[string]
 }
 
 func TestRedeliverRecordsSwallowedBriefRunning(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "redeliver-worker", map[string]string{"README.md": "x\n"})
-	d.setEnv("FAKE_PROMPT_EATEN", "1")
-	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
-	if msg := asString(refused["error"]); !strings.Contains(msg, "Launch/prompt uncertain") {
-		t.Fatalf("dispatch error = %q, want a launch-uncertain refusal", msg)
-	}
-	taskID, attempt := uncertainTask(t, d)
+	d, task := nativeUnsentTask(t, "redeliver-worker")
+	id := asString(task["id"])
+	attempt, _ := launchedWorker(task)
 	attemptID := asString(attempt["id"])
-	pane := asString(readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))["pane"])
-
-	settleFakeWorker(t, d.base, pane)
-	sent := d.ctl(false, "repair", "send", taskID, "--attempt", attemptID, "--key", "rebase", "--text", "Rebase onto main.")
-	if msg := asString(sent["error"]); !strings.Contains(msg, "exact running worker attempt") {
-		t.Fatalf("repair send to an uncertain attempt = %v, want refusal", sent)
+	address := workerAddress(task)
+	seedBootstrapProgram(t, d, task)
+	sent := d.ctl(false, "repair", "send", id, "--attempt", attemptID, "--key", "rebase", "--text", "Rebase onto main.")
+	if asString(sent["error"]) == "" {
+		t.Fatal("repair accepted before worker receipt")
+	}
+	d.ctl(true, "execution", "redeliver", id, "--attempt", attemptID)
+	saved := d.taskRecord(id)
+	w, _ := launchedWorker(saved)
+	if w["state"] == "running" {
+		t.Fatal("native send result supplied an application receipt")
+	}
+	if len(nativeCalls(d, "terminal.run")) != 1 || len(nativeCalls(d, "terminal.send")) != 1 {
+		t.Fatal("explicit redelivery duplicated launch or input")
+	}
+	d.ctlPane(address, true, "init")
+	confirmed := d.ctl(true, "execution", "confirm", id, "--attempt", attemptID)
+	if confirmed["confirmed"] != true {
+		t.Fatal("matching receipt did not confirm")
+	}
+	d.native.SetStatus(address, "idle")
+	sent = d.ctl(false, "repair", "send", id, "--attempt", attemptID, "--key", "rebase", "--text", "Rebase onto main.")
+	if asString(sent["error"]) != "" {
+		t.Fatalf("receipt-bound repair %v", sent)
 	}
 
-	view := d.ctl(true, "execution", "redeliver", taskID, "--attempt", attemptID)
-	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
-	if status := asString(recorded["status"]); status != "running" {
-		t.Fatalf("task status = %q, want running after redeliver; view %v", status, view)
-	}
-	if recorded["error"] != nil {
-		t.Fatalf("task error = %v, want null after a confirmed redelivery", recorded["error"])
-	}
-	attempt, _ = launchedWorker(recorded)
-	if state := asString(attempt["state"]); state != "running" {
-		t.Fatalf("worker attempt state = %q, want running", state)
-	}
-	var prompts [][]string
-	for _, call := range herdrCalls(t, d.base) {
-		if len(call) >= 2 && call[0] == "agent" && call[1] == "prompt" {
-			prompts = append(prompts, call)
-		}
-	}
-	if len(prompts) != 2 {
-		t.Fatalf("agent prompt calls = %d, want the swallowed dispatch and one redelivery", len(prompts))
-	}
-	if joined := strings.Join(prompts[1], " "); !strings.Contains(joined, "--wait") || !strings.Contains(joined, "--until working") {
-		t.Fatalf("redelivery prompt = %v, want --wait delivery confirmation", prompts[1])
-	}
-
-	settleFakeWorker(t, d.base, pane)
-	sent = d.ctl(false, "repair", "send", taskID, "--attempt", attemptID, "--key", "rebase", "--text", "Rebase onto main.")
-	if msg := asString(sent["error"]); msg != "" {
-		t.Fatalf("repair send to the redelivered worker failed: %s", msg)
-	}
 }
 
 func TestConfirmRequiresWorkerReceipt(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "confirm-worker", map[string]string{"README.md": "x\n"})
-	d.setEnv("FAKE_PROMPT_EATEN", "1")
-	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
-	if msg := asString(refused["error"]); !strings.Contains(msg, "Launch/prompt uncertain") {
-		t.Fatalf("dispatch error = %q, want a launch-uncertain refusal", msg)
-	}
-	taskID, attempt := uncertainTask(t, d)
+	d, task := nativeUnsentTask(t, "confirm-worker")
+	id := asString(task["id"])
+	attempt, _ := launchedWorker(task)
 	attemptID := asString(attempt["id"])
 	generation := attempt["generation"]
-	pane := asString(readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))["pane"])
-	d.setEnv("SUM_NOW", "2027-06-01T00:00:00Z")
-
-	stillUncertain := func() map[string]any {
-		t.Helper()
-		recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
-		attempt, _ := launchedWorker(recorded)
-		if state := asString(attempt["state"]); state != "uncertain" {
-			t.Fatalf("worker attempt state = %q, want still uncertain", state)
-		}
-		if attempt["generation"] != generation {
-			t.Fatalf("worker attempt generation = %v, want unchanged %v", attempt["generation"], generation)
-		}
-		return attempt
+	refused := d.ctl(false, "execution", "confirm", id, "--attempt", attemptID)
+	if !strings.Contains(asString(refused["error"]), "receipt") {
+		t.Fatalf("missing receipt %v", refused)
 	}
-
-	view := d.ctl(false, "execution", "confirm", taskID, "--attempt", attemptID)
-	if msg := asString(view["error"]); !strings.Contains(msg, "no receipt") {
-		t.Fatalf("confirm without a receipt = %v, want a refusal naming the missing receipt", view)
+	d.ctl(true, "report", id, "--text", "Coordinator-side report is not a worker bootstrap receipt.")
+	refused = d.ctl(false, "execution", "confirm", id, "--attempt", attemptID)
+	if !strings.Contains(asString(refused["error"]), "receipt") {
+		t.Fatalf("off-terminal report became receipt %v", refused)
 	}
-	stillUncertain()
-
-	d.ctl(true, "report", taskID, "--text", "A report filed outside the worker pane.")
-	view = d.ctl(false, "execution", "confirm", taskID, "--attempt", attemptID)
-	if msg := asString(view["error"]); !strings.Contains(msg, "no receipt") {
-		t.Fatalf("confirm with an off-pane report = %v, want a refusal naming the missing receipt", view)
+	before := d.taskRecord(id)
+	w, _ := launchedWorker(before)
+	if w["generation"] != generation || w["state"] == "running" {
+		t.Fatal("missing receipt mutated attempt")
 	}
-	stillUncertain()
-
-	worker := d.ctlPane(pane, true, "init")
-	if asString(worker["role"]) != "worker" {
-		t.Fatalf("worker init = %v, want the worker role", worker)
+	d.ctlPane(workerAddress(task), true, "init")
+	sends := len(nativeCalls(d, "terminal.send"))
+	refused = d.ctl(false, "execution", "redeliver", id, "--attempt", attemptID)
+	if asString(refused["error"]) == "" || len(nativeCalls(d, "terminal.send")) != sends {
+		t.Fatal("receipt-bearing worker was blindly redelivered")
 	}
-	receipt := false
-	for _, raw := range asSlice(readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))["evidence"]) {
-		record := asMap(raw)
-		if asString(record["kind"]) == "worker-init" && asString(record["source"]) == "worker" && asString(record["attempt"]) == attemptID {
-			receipt = true
-		}
-	}
-	if !receipt {
-		t.Fatal("worker init did not record a worker-init receipt for the uncertain attempt")
-	}
-
-	before := countCalls(herdrCalls(t, d.base), "agent", "prompt")
-	view = d.ctl(false, "execution", "redeliver", taskID, "--attempt", attemptID)
-	if msg := asString(view["error"]); !strings.Contains(msg, "execution confirm") {
-		t.Fatalf("redeliver with a receipt = %v, want a refusal pointing at execution confirm", view)
-	}
-	if after := countCalls(herdrCalls(t, d.base), "agent", "prompt"); after != before {
-		t.Fatalf("a refused redeliver sent %d more agent prompts", after-before)
-	}
-
-	confirmed := d.ctl(true, "execution", "confirm", taskID, "--attempt", attemptID)
+	confirmed := d.ctl(true, "execution", "confirm", id, "--attempt", attemptID)
 	if confirmed["confirmed"] != true {
-		t.Fatalf("confirm result = %v, want confirmed", confirmed)
+		t.Fatalf("confirmation %v", confirmed)
 	}
-	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
-	attempt, _ = launchedWorker(recorded)
-	if state := asString(attempt["state"]); state != "running" {
-		t.Fatalf("worker attempt state = %q, want running", state)
-	}
-	if recorded["error"] != nil {
-		t.Fatalf("task error = %v, want null after a confirmed launch", recorded["error"])
+	saved := d.taskRecord(id)
+	w, _ = launchedWorker(saved)
+	if w["state"] != "running" || saved["error"] != nil {
+		t.Fatal("current receipt failed to discharge bootstrap")
 	}
 
-	settleFakeWorker(t, d.base, pane)
-	sent := d.ctl(false, "repair", "send", taskID, "--attempt", attemptID, "--key", "rebase", "--text", "Rebase onto main.")
-	if msg := asString(sent["error"]); msg != "" {
-		t.Fatalf("repair send to the confirmed worker failed: %s", msg)
-	}
 }
 
 func TestConfirmRefusesReplacedOccupant(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "replaced-worker", map[string]string{"README.md": "x\n"})
-	d.setEnv("FAKE_PROMPT_EATEN", "1")
-	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--approved")
-	if msg := asString(refused["error"]); !strings.Contains(msg, "Launch/prompt uncertain") {
-		t.Fatalf("dispatch error = %q, want a launch-uncertain refusal", msg)
-	}
-	taskID, attempt := uncertainTask(t, d)
+	d, task := nativeUnsentTask(t, "replaced-worker")
+	id := asString(task["id"])
+	attempt, _ := launchedWorker(task)
 	attemptID := asString(attempt["id"])
-	pane := asString(readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))["pane"])
-	d.setEnv("SUM_NOW", "2027-06-01T00:00:00Z")
-
-	worker := d.ctlPane(pane, true, "init")
-	if asString(worker["role"]) != "worker" {
-		t.Fatalf("worker init = %v, want the worker role", worker)
+	address := workerAddress(task)
+	d.ctlPane(address, true, "init")
+	before := d.taskRecord(id)
+	generation := asMap(asMap(before["execution"])["worker"])["generation"]
+	for _, terminal := range d.native.Terminals() {
+		if terminal.Address == address {
+			terminal.Foreground.PID++
+			d.native.SetTerminal(terminal)
+		}
+	}
+	refused := d.ctl(false, "execution", "confirm", id, "--attempt", attemptID)
+	if asString(refused["error"]) == "" {
+		t.Fatal("replacement process inherited receipt")
+	}
+	after := d.taskRecord(id)
+	if asMap(asMap(after["execution"])["worker"])["generation"] != generation {
+		t.Fatal("refused confirmation changed generation")
 	}
 
-	statePath := filepath.Join(d.base, "fake", "state.json")
-	raw, err := os.ReadFile(statePath)
+}
+
+func nativeCalls(d *demoLab, method string) []hctest.Call {
+	var out []hctest.Call
+	for _, call := range d.native.Calls() {
+		if call.Method == method {
+			out = append(out, call)
+		}
+	}
+	return out
+}
+func onlyNativeTask(t *testing.T, d *demoLab) map[string]any {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(d.home, "tasks", "*", "task.json"))
+	if err != nil || len(files) != 1 {
+		t.Fatalf("task records %v %v", files, err)
+	}
+	return readTaskJSON(t, files[0])
+}
+func mapObject(t *testing.T, value map[string]any) *ordjson.Object {
+	t.Helper()
+	out, err := ordjson.FromValue(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
+	return out
+}
+func nativeUnsentTask(t *testing.T, name string) (*demoLab, map[string]any) {
+	t.Helper()
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, name, map[string]string{"README.md": "x\n"})
+	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: false}})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	if task["status"] != "needs-attention" {
+		t.Fatalf("known unsent launch %v", task)
 	}
-	row := asMap(asMap(state["panes"])[pane])
-	row["terminal_id"] = "term-replaced-occupant"
-	row["shell_pid"] = 9911
-	out, err := json.Marshal(state)
+	return d, task
+}
+
+// Seed only native creation/process facts, never an application receipt.
+func seedBootstrapProgram(t *testing.T, d *demoLab, task map[string]any) {
+	t.Helper()
+	endpoint := store.EndpointFromContext(mapObject(t, asMap(task["worker_endpoint"])))
+	st := nativeTestStore(t, d.home)
+	for _, terminal := range d.native.Terminals() {
+		if terminal.Address == endpoint.Address {
+			pid := uint32(200000)
+			terminal.PID = &pid
+			terminal.Foreground = &hcclient.Foreground{PID: 200001, Name: "codex", Argv: []string{"codex", "--no-daemon"}, Cwd: terminal.Cwd}
+			d.native.SetTerminal(terminal)
+			d.native.SetStatus(terminal.Address, "idle")
+			bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: terminal.Foreground}
+			if err := st.SetIncarnation(endpoint, bound.Record(store.Now())); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func assertPrimaryCheckoutsOnly(t *testing.T, d *demoLab) {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(d.base, "projects", "*", ".git"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(statePath, out, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	d.setEnv("FAKE_PS_STARTS", `{"9911": "2030-01-01T00:00:00Z"}`)
-
-	view := d.ctl(false, "execution", "confirm", taskID, "--attempt", attemptID)
-	if msg := asString(view["error"]); !strings.Contains(msg, "occupant") {
-		t.Fatalf("confirm against a replaced occupant = %v, want an incarnation refusal", view)
-	}
-	recorded := readTaskJSON(t, filepath.Join(d.home, "tasks", taskID, "task.json"))
-	attempt, _ = launchedWorker(recorded)
-	if state := asString(attempt["state"]); state != "uncertain" {
-		t.Fatalf("worker attempt state = %q, want still uncertain", state)
+	for _, path := range paths {
+		repo := filepath.Dir(path)
+		if count := strings.Count(gitIn(t, repo, "worktree", "list", "--porcelain"), "worktree "); count != 1 {
+			t.Fatalf("refused dispatch created Git worktrees in %s: %d", repo, count)
+		}
 	}
 }

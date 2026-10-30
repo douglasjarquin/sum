@@ -165,10 +165,11 @@ def main():
     for note in notes:
         print("note: " + note, file=sys.stderr)
     print("\n" + ("Local configuration generated; dependencies were not installed." if args.configure_only else "Setup complete.") + " No global harness configs, credentials, or HC settings were changed.")
-    print("Inside the selected HC terminal: cd into sum, optionally run ./bin/sumctl doctor (observation only), then launch codex, claude, grok, cursor-agent, pi, devin, or another configured harness.")
-    print("The harness runs ./bin/sumctl init itself: the first pane claims coordinator; later panes here are developers unless dispatched.")
-    print("Read any harness trust or authentication prompt yourself. For a harness without native project instructions, paste: Read AGENTS.md and initialize sum.")
-    print("No installed harness? Re-run mise run setup -- --install-codex, then authenticate Codex normally.")
+    print("Automatic terminal launches currently require Codex 0.166.0 and its qualified default Tab queue keymap; other harnesses and custom keymaps are refused until qualified.")
+    print("Select an existing HC core explicitly, then run: ./bin/sumctl coordinator start --socket <existing-socket> --session <name> --hc-config-home <that-core-config-home> --harness codex")
+    print("Use that core's existing XDG config home. Sum publishes namespaced, content-bound templates with Tab submission there; it preserves unrelated templates and global harness settings.")
+    print("./bin/sumctl doctor observes the staged runtime and existing core without starting, binding, or changing either.")
+    print("Handle Codex trust and authentication prompts yourself. No installed qualified Codex? Re-run mise run setup -- --install-codex, then authenticate normally.")
 
 
 if __name__ == "__main__":

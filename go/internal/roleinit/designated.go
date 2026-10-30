@@ -144,8 +144,6 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		reclaim = incarnation.Verdict{Outcome: incarnation.Absent, Reason: "recorded terminal is finished or native not_found"}
 
 	}
-	// Unbound sessions can inspect their development procedure but cannot claim a
-	// coordinator unless the user explicitly selected the coordinator operation.
 	if opts.Role == "" && endpoint.Role == "" {
 		return developerView(opts, s, endpoint), nil
 	}
@@ -512,6 +510,34 @@ func qualifyTask(s *store.Store, task *ordjson.Object, e store.Endpoint, t hccli
 	}
 	value, _ := attempt.Get("native_launch")
 	launchRecord, _ := value.(*ordjson.Object)
+	if launchRecord == nil && e.Role == "reviewer" {
+		if _, hasReceipt := attempt.Get("native_receipt"); !hasReceipt {
+			return nil, nil, fmt.Errorf("reviewer rebind needs its own native init receipt")
+		}
+		kickoffValue, _ := attempt.Get("kickoff")
+		kickoff, _ := kickoffValue.(*ordjson.Object)
+		if asString(kickoff, "kind") != "reviewer-kickoff" || asString(kickoff, "source") != "native-rebind" || asString(kickoff, "candidate") == "" || asString(kickoff, "candidate") != asString(attempt, "candidate") {
+			return nil, nil, fmt.Errorf("reviewer rebind kickoff does not match its current candidate")
+		}
+		endpointValue, _ := kickoff.Get("endpoint")
+		endpointObject, _ := endpointValue.(*ordjson.Object)
+		bound := store.EndpointFromContext(endpointObject)
+		if !bound.Native().SameAuthority(e.Native()) || bound.Socket != e.Socket || bound.Session != e.Session {
+			return nil, nil, fmt.Errorf("reviewer kickoff belongs to another native binding")
+		}
+		templateValue, _ := attempt.Get("native_template")
+		var provenance nativeTemplate
+		if err = decode(templateValue, &provenance); err != nil {
+			return nil, nil, err
+		}
+		if err = launch.ValidateHCTemplate(provenance.ConfigHome, provenance.Spec, provenance.Options); err != nil {
+			return nil, nil, err
+		}
+		if !nativeProgramMatches(t, provenance.Spec) {
+			return nil, nil, fmt.Errorf("reviewer rebind program differs from its qualified template")
+		}
+		return attempt, templateValue, nil
+	}
 	if launchRecord == nil {
 		return nil, nil, fmt.Errorf("no persisted native launch intent; historical procedures do not adopt HC")
 	}

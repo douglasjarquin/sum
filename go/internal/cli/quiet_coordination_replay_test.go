@@ -22,8 +22,8 @@ import (
 
 // TestQuietCoordinationReplay is the one integrated replay of the quiet-coordinator program (#238 R17, #242): twelve
 // dispatched workers across three enrolled projects with distinct canonical identities, two enrolled factories holding
-// one lane each, driven only through the built helper against the fake Herdr and a fake GitHub CLI. It proves, on
-// saved records and fake call logs:
+// one lane each, driven only through the built helper against the native HC Unix socket fixture and a fake GitHub CLI. It proves, on
+// saved records, actual observer receipts and native request logs:
 //
 //   - AE1: twelve concurrent routine reports while the adopted coordinator is idle submit exactly one routine prompt
 //     before consumption; every obligation stays retrievable (`inbox`, `wake show` included/omitted,
@@ -34,15 +34,15 @@ import (
 //     merged observation -> cleanup -> lane release, and the digests (`factory status --project --since`,
 //     `status --grouped --project --since`) label each step as a new outcome without performing any of them; the
 //     second factory's gated issue keeps its lane; capacity and cleanup stay green.
-//   - Fallbacks: with the hook disabled, metadata disabled and the native capability absent, an explicit pass still
+//   - Fallbacks: with automatic observation and metadata disabled, an explicit pass still
 //     delivers and `wake show`/`metadata status`/`hook status` say so honestly.
-//   - Read purity: every read-only phase leaves the whole home tree byte-identical, adds no fake gh call and no
-//     Herdr prompt; the fake gh log holds only the explicitly driven workflow verbs and never a merge.
+//   - Read purity: every read-only phase leaves the task and coordination files byte-identical (the observer heartbeat is independently refreshed), adds no fake gh call and no
+//     native terminal send; the fake gh log holds only the explicitly driven workflow verbs and never a merge.
 //
-// It records (never asserts as guarantees) baseline versus candidate prompt submissions on identical inputs, coalesced
+// It records (never asserts as guarantees) native prompt submissions, an explicit unavailable historical baseline,, coalesced
 // and deferred counts, structured stdout bytes, helper calls and lock waits into replay.json (and SUM_MEASURE_OUT when
-// set). It claims nothing about tokens, latency or agent narration; the native/harness lab is separately not-run.
-// Older helpers on these records are covered by TestOlderHelpersOnCandidateRecords, not rebuilt here.
+// set). It claims nothing about tokens, latency or agent narration; real-HC/harness proof remains separately not-run.
+// Legacy schema1 write rejection is covered separately; old helpers cannot share these native generations.
 func TestQuietCoordinationReplay(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not on PATH")
@@ -55,13 +55,11 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	}
 	lab := newReplayLab(t)
 	m := lab.measure
-	configureNativeEventsForTest(t, lab.home, true)
 
 	// --- Setup: coordinator, projects, workers, factories -----------------------------------------------------------
 	if got := asString(lab.ctl(true, "init")["role"]); got != "coordinator" {
 		t.Fatalf("init role %q", got)
 	}
-	assertNativeEventsEnabledForTest(t, lab.home)
 	if owner := lab.owner(t); ownerField(owner, "wake_protocol") == "" {
 		t.Fatal("init did not adopt the wake protocol on the owner record")
 	}
@@ -69,11 +67,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	if asMap(capacity["capacity"])["global"] != float64(14) {
 		t.Fatalf("capacity %v", capacity)
 	}
-	hook := lab.ctl(true, "hook", "enable")
-	lab.pluginID = asString(hook["plugin_id"])
-	if lab.pluginID == "" {
-		t.Fatalf("hook enable %v", hook)
-	}
+	lab.observerAddress = startNativeObserver(t, lab.demoLab)
 	meta := lab.ctl(true, "metadata", "enable")
 	if meta["error"] != nil {
 		t.Fatalf("metadata enable %v", meta)
@@ -87,7 +81,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		p := lab.projects[i%3]
 		task := lab.ctl(true, "dispatch", "--project", p.name, "--brief", lab.brief, "--approved")
-		id, pane, worktree := asString(task["id"]), asString(task["pane"]), asString(task["worktree"])
+		id, pane, worktree := asString(task["id"]), workerAddress(task), asString(task["worktree"])
 		if id == "" || pane == "" || worktree == "" {
 			t.Fatalf("dispatch %d: %v", i, task)
 		}
@@ -113,7 +107,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	if ticks := tickActions(lab.ctl(true, "factory", "tick")); ticks["a/repo"] != "occupied" || ticks["b/repo"] != "occupied" {
 		t.Fatalf("occupied tick %v", ticks)
 	}
-	m.record("setup", map[string]any{"tasks": len(lab.tasks), "projects": 3, "factories": 2, "gh_calls": lab.ghCalls(), "herdr_calls": lab.herdrCalls()})
+	m.record("setup", map[string]any{"tasks": len(lab.tasks), "projects": 3, "factories": 2, "gh_calls": lab.ghCalls(), "native_calls": lab.nativeCalls()})
 	markPhase("setup")
 
 	// The lane-A worker finishes its change before the burst: a candidate commit and the project's own verify run, so
@@ -125,7 +119,6 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	markPhase("handoff-and-preburst-reads")
 
 	// --- AE1: twelve concurrent routine reports, coordinator idle, one routine prompt ------------------------------
-	baseline := lab.snapshotForBaseline(t)
 	handoffs := map[string]string{laneA.id: handoff}
 	burst, edges := lab.arrivals(t, handoffs)
 	prompts := lab.promptsTo(lab.coordinatorPane)
@@ -163,8 +156,8 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	lab.coordinatorStatus(t, "idle")
 	for _, task := range lab.tasks[3:5] {
 		lab.setScreen(t, task.pane, "Permission needed: allow write?")
-		event := lab.herdrEvent(lab.pluginID, task.pane, "blocked", "sum-test")
-		if asString(event["outcome"]) != "handled" {
+		event := lab.nativeStatusEvent(t, task.pane, "blocked")
+		if len(asSlice(asMap(lab.ctl(true, "show", task.id))["attention"])) == 0 {
 			t.Fatalf("blocked edge %v", event)
 		}
 	}
@@ -174,27 +167,16 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	candidateBurst := map[string]any{
 		"prompts": prompts, "arrivals": "6 concurrent, idle edge, 6 concurrent, 2 idle edges", "submitted": burst.submitted, "coalesced": burst.coalesced, "deferred": burst.deferred,
 		"other_states": burst.other, "open_obligations": lab.openObligations(t, lab.taskIDs()),
-		"report_passes":   map[string]any{"lock_wait_ms_total": burst.lockWaitMS, "lock_wait_ms_max": burst.maxLockWaitMS, "herdr_calls": burst.herdrCalls},
-		"pump_after_wake": map[string]any{"prompts": pump["prompts"], "state": pumpRow["state"], "via": pumpRow["via"], "deferred": fanout["deferred"], "lock_wait_ms": fanout["lock_wait_ms"], "herdr_calls": fanout["herdr_calls"]},
+		"report_passes":   map[string]any{"lock_wait_ms_total": burst.lockWaitMS, "lock_wait_ms_max": burst.maxLockWaitMS, "native_calls": burst.nativeCalls},
+		"pump_after_wake": map[string]any{"prompts": pump["prompts"], "state": pumpRow["state"], "via": pumpRow["via"], "deferred": fanout["deferred"], "lock_wait_ms": fanout["lock_wait_ms"], "native_calls": fanout["native_calls"]},
 		"wake_included":   len(asSlice(show["included"])), "wake_omitted": len(asSlice(show["omitted"])),
 	}
 	markPhase("candidate-burst-and-assertions")
 	lab.coordinatorStatus(t, "working")
 	lab.readPhase(t, "reads-after-burst")
 
-	// Baseline: the same twelve reports on a byte-identical copy of the inputs whose owner record never adopted the
-	// wake protocol (an older helper's coordinator): legacy one-prompt-per-pass. Recorded, not asserted as a guarantee.
-	baselineBurst, _ := baseline.arrivals(t, handoffs)
-	baselinePrompts := baseline.promptsTo(baseline.coordinatorPane)
-	m.record("burst", map[string]any{
-		"candidate": candidateBurst,
-		"baseline": map[string]any{"prompts": baselinePrompts, "arrivals": "6 concurrent, idle edge, 6 concurrent, 2 idle edges", "submitted": baselineBurst.submitted, "coalesced": baselineBurst.coalesced,
-			"deferred": baselineBurst.deferred, "other_states": baselineBurst.other, "open_obligations": baseline.openObligations(t, baseline.taskIDs()),
-			"report_passes": map[string]any{"lock_wait_ms_total": baselineBurst.lockWaitMS, "lock_wait_ms_max": baselineBurst.maxLockWaitMS, "herdr_calls": baselineBurst.herdrCalls},
-			"wake_sidecar":  baseline.wakeSidecarExists()},
-		"note": "identical inputs: the baseline home is a copy taken before the burst with wake_protocol removed from the owner record; both labs run six report processes started together while the coordinator is idle, one coordinator idle edge (hook event), six more concurrent reports, then two more idle edges; the fake marks a prompted pane working, as Herdr does, so per-run submitted/not-delivered splits inside a burst vary while the prompt count across arrivals and edges is the contract",
-	})
-	markPhase("baseline-burst-and-assertions")
+	m.record("burst", map[string]any{"candidate": candidateBurst, "baseline": map[string]any{"status": "unavailable", "reason": "Legacy helpers cannot share the schema2 writable generation; no fabricated baseline was executed."}})
+	markPhase("candidate-burst-and-assertions")
 
 	// --- #240b: a new decision behind the routine wake ----------------------------------------------------------------
 	lab.coordinatorStatus(t, "idle")
@@ -286,7 +268,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 			}
 		}, "verified"},
 		{"review", func() {
-			lab.ctlPane("w-review:p1", true, "review", laneA.id, "--verdict", "approve", "--candidate", candidate, "--policy-reviewed", "--text", "Independent review of the replay candidate.")
+			lab.independentReview(true, laneA.id, "--verdict", "approve", "--candidate", candidate, "--policy-reviewed", "--text", "Independent review of the replay candidate.")
 		}, "review-accepted"},
 		{"pipeline pr", func() {
 			lab.ctl(true, "pipeline", "document", laneA.id)
@@ -363,7 +345,16 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	}
 	digest = next
 	lab.agentExited(t, laneA.pane)
-	lab.agentExited(t, "w-review:p1")
+	lab.agentExited(t, workerAddress(asMap(lab.taskRecord(laneA.id)["reviewer"])))
+	waitNativeCondition(t, func() bool {
+		seen := 0
+		for _, raw := range asSlice(lab.taskRecord(laneA.id)["attention"]) {
+			if asMap(raw)["kind"] == "exited" {
+				seen++
+			}
+		}
+		return seen == 2
+	})
 	cleaned := lab.ctl(true, "cleanup", laneA.id, "--apply")
 	if asString(cleaned["state"]) != "complete" {
 		t.Fatalf("cleanup %v", cleaned)
@@ -391,10 +382,9 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	lab.readPhase(t, "reads-after-cleanup")
 	markPhase("factory-lane-and-cleanup")
 
-	// --- Fallbacks: hook off, metadata off, native capability absent ---------------------------------------------------
+	// --- Explicit delivery with automatic observation and metadata off ---------------------------------------------------
 	lab.ctl(true, "hook", "disable")
 	lab.ctl(true, "metadata", "disable")
-	lab.setEnv("FAKE_NO_METADATA", "1")
 	lab.coordinatorStatus(t, "idle")
 	fallbackTask := lab.tasks[5]
 	before := lab.promptsTo(lab.coordinatorPane)
@@ -416,7 +406,7 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	}
 	lab.coordinatorStatus(t, "working")
 	m.record("fallback", map[string]any{"prompts_added": 1, "hook": hookStatus["enabled"], "metadata": metaStatus, "wake_outstanding": fallbackWake["outstanding"],
-		"note": "older helpers on these records: TestOlderHelpersOnCandidateRecords (not rebuilt here)"})
+		"note": "manual delivery retains the same native identity and receipt gates"})
 	lab.readPhase(t, "reads-fallback")
 	markPhase("fallback-and-read-purity")
 
@@ -433,8 +423,8 @@ func TestQuietCoordinationReplay(t *testing.T) {
 		t.Fatalf("gh workflow verbs %v, want one create, one draft promotion, two claims, and no merge or edit", verbs)
 	}
 	m.record("gh_verbs", verbs)
-	m.record("herdr", map[string]any{"calls": lab.herdrCalls(), "prompts_coordinator": lab.promptsTo(lab.coordinatorPane), "prompts_workers": lab.promptsToWorkers(), "prompt_log": lab.promptLog()})
-	m.record("not_run", map[string]any{"native_canary": "not-run: no real Herdr session or agent harness in this lab; simulated output proves no narration compliance",
+	m.record("native", map[string]any{"calls": lab.nativeCalls(), "prompts_coordinator": lab.promptsTo(lab.coordinatorPane), "prompts_workers": lab.promptsToWorkers(), "prompt_log": lab.promptLog()})
+	m.record("not_run", map[string]any{"native_canary": "not-run: no real HC core or agent harness in this lab; simulated output proves no narration compliance",
 		"task_reads":     "unavailable: not strace-instrumented here; TestMeasureCoordinationPasses counts them under SUM_MEASURE_OUT",
 		"tokens_latency": "not measured; stdout bytes and call counts only"})
 	markPhase("audit-and-measure-write")
@@ -455,25 +445,17 @@ type replayTask struct {
 
 type replayLab struct {
 	*demoLab
-	coordinatorPane string
-	brief, pluginID string
-	projects        []replayProject
-	tasks           []replayTask
-	measure         *replayMeasure
+	coordinatorPane        string
+	brief, observerAddress string
+	projects               []replayProject
+	tasks                  []replayTask
+	measure                *replayMeasure
 }
 
 func newReplayLab(t *testing.T) *replayLab {
 	t.Helper()
 	root, helper := repoReference(t)
 	base := t.TempDir()
-	home := filepath.Join(base, "state")
-	if err := os.Mkdir(home, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configureNativeEventsForTest(t, home, false)
 	bin := filepath.Join(base, "bin")
 	if err := os.Mkdir(bin, 0o755); err != nil {
 		t.Fatal(err)
@@ -493,10 +475,16 @@ func newReplayLab(t *testing.T) *replayLab {
 		t.Fatal(err)
 	}
 	lab := &replayLab{
-		demoLab:         &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: replayEnv(t, root, base, bin, gh)},
-		coordinatorPane: "w-parent:p1",
+		demoLab:         newNativeDemoLab(t, root, helper, base),
+		coordinatorPane: "t1",
 		brief:           brief,
 		measure:         &replayMeasure{sections: map[string]any{}, order: []string{}},
+	}
+	for _, pair := range replayEnv(t, root, base, bin, gh) {
+		key, value, ok := strings.Cut(pair, "=")
+		if ok {
+			lab.setEnv(key, value)
+		}
 	}
 	for _, p := range []struct{ spec, name, slug string }{
 		{"a/repo", "a/repo", "a-repo"},
@@ -511,7 +499,7 @@ func newReplayLab(t *testing.T) *replayLab {
 func replayEnv(t *testing.T, root, base, bin, gh string) []string {
 	t.Helper()
 	env := demoEnv(t, root, base)
-	pythonDir := filepath.Dir(mustLookPath(t, "python3"))
+	pythonDir := filepath.Dir(pinnedFixturePython(t))
 	path := strings.Join([]string{bin, pythonDir, os.Getenv("PATH")}, string(os.PathListSeparator))
 	if goroot := os.Getenv("GOROOT"); goroot != "" {
 		path = strings.Join([]string{bin, pythonDir, filepath.Join(goroot, "bin"), os.Getenv("PATH")}, string(os.PathListSeparator))
@@ -560,26 +548,31 @@ func replayProjectRepo(t *testing.T, root, base, spec, name, slug string) replay
 	return replayProject{spec: spec, name: name, repo: repo, origin: origin, baseSHA: git("rev-parse", "HEAD")}
 }
 
-// coordinatorStatus is scenario data: what Herdr reports for the coordinator pane from now on. The fake refreshes the
-// scripted root pane only on a call made from that pane, so one observation from it records the new status.
+// coordinatorStatus changes the native fixture observation and emits its matching event.
 func (l *replayLab) coordinatorStatus(t *testing.T, status string) {
 	t.Helper()
-	l.setEnv("FAKE_PARENT_STATUS", status)
-	cmd := exec.Command(filepath.Join(l.root, "tests", "fixtures", "herdr.py"), "--session", "sum-test", "pane", "get", l.coordinatorPane)
-	cmd.Env = l.env
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fake herdr pane get: %v\n%s", err, out)
-	}
+	l.native.SetStatus(l.coordinatorPane, status)
 }
-
-// idleEdges replays the coordinator finishing turns: each idle edge is the hook event Herdr would send, which runs
-// one delivery pass for the coordinator. A legacy coordinator is prompted again on each; an adopted one is not.
+func (l *replayLab) nativeStatusEvent(t *testing.T, address, status string) map[string]any {
+	t.Helper()
+	l.native.SetStatus(address, status)
+	if status == "blocked" {
+		waitNativeCondition(t, func() bool {
+			for _, task := range l.tasks {
+				if task.pane == address {
+					return len(asSlice(l.taskRecord(task.id)["attention"])) > 0
+				}
+			}
+			return false
+		})
+	}
+	return l.ctl(true, "hook", "status")
+}
 func (l *replayLab) idleEdges(t *testing.T, n int) []map[string]any {
 	t.Helper()
 	var rows []map[string]any
-	for i := 0; i < n; i++ {
-		l.setEnv("FAKE_PARENT_STATUS", "idle")
-		rows = append(rows, l.herdrEvent(l.pluginID, l.coordinatorPane, "idle", "sum-test"))
+	for range n {
+		rows = append(rows, l.nativeStatusEvent(t, l.coordinatorPane, "idle"))
 	}
 	return rows
 }
@@ -592,12 +585,9 @@ func (l *replayLab) taskIDs() []string {
 	return ids
 }
 
-func (l *replayLab) ghRoot() string    { return filepath.Join(l.base, "fake-gh") }
-func (l *replayLab) herdrRoot() string { return filepath.Join(l.base, "fake") }
-func (l *replayLab) ghCalls() int      { return measureLines(filepath.Join(l.ghRoot(), "calls.jsonl")) }
-func (l *replayLab) herdrCalls() int {
-	return measureLines(filepath.Join(l.herdrRoot(), "calls.jsonl"))
-}
+func (l *replayLab) ghRoot() string   { return filepath.Join(l.base, "fake-gh") }
+func (l *replayLab) ghCalls() int     { return measureLines(filepath.Join(l.ghRoot(), "calls.jsonl")) }
+func (l *replayLab) nativeCalls() int { return len(l.native.Calls()) }
 
 func (l *replayLab) writeGH(name string, value any) {
 	l.t.Helper()
@@ -626,8 +616,8 @@ func (l *replayLab) readGH(t *testing.T, name string) map[string]any {
 	return out
 }
 
-// herdrPrompts returns every `agent prompt` the fake Herdr logged, as pane ids in order.
-func (l *replayLab) herdrPrompts() []string {
+// nativePrompts returns each actual terminal.send destination in order.
+func (l *replayLab) nativePrompts() []string {
 	var panes []string
 	for _, p := range l.promptLog() {
 		panes = append(panes, p["pane"])
@@ -637,32 +627,23 @@ func (l *replayLab) herdrPrompts() []string {
 
 // promptLog is every prompt submission with the head of its message, the evidence behind every prompt count.
 func (l *replayLab) promptLog() []map[string]string {
-	raw, err := os.ReadFile(filepath.Join(l.herdrRoot(), "calls.jsonl"))
-	if err != nil {
-		return nil
-	}
 	var out []map[string]string
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		var call struct {
-			Args []string `json:"args"`
-		}
-		if json.Unmarshal([]byte(line), &call) != nil || len(call.Args) < 4 {
+	for _, call := range l.native.Calls() {
+		if call.Method != "terminal.send" {
 			continue
 		}
-		if call.Args[0] == "agent" && call.Args[1] == "prompt" {
-			head := call.Args[3]
-			if len(head) > 90 {
-				head = head[:90] + "..."
-			}
-			out = append(out, map[string]string{"pane": call.Args[2], "message": head})
+		head := asString(call.Params["text"])
+		if len(head) > 90 {
+			head = head[:90] + "..."
 		}
+		out = append(out, map[string]string{"pane": asString(call.Params["terminal"]), "message": head})
 	}
 	return out
 }
 
 func (l *replayLab) promptsTo(pane string) int {
 	n := 0
-	for _, p := range l.herdrPrompts() {
+	for _, p := range l.nativePrompts() {
 		if p == pane {
 			n++
 		}
@@ -671,7 +652,7 @@ func (l *replayLab) promptsTo(pane string) int {
 }
 
 func (l *replayLab) promptsToWorkers() int {
-	return len(l.herdrPrompts()) - l.promptsTo(l.coordinatorPane)
+	return len(l.nativePrompts()) - l.promptsTo(l.coordinatorPane)
 }
 
 // ghVerbs counts the fake gh calls by their first two words (`pr create`, `issue list`, ...).
@@ -755,7 +736,7 @@ func (l *replayLab) wakeRow(t *testing.T) map[string]any {
 	rows := asSlice(view["recipients"])
 	for _, raw := range rows {
 		row := asMap(raw)
-		if asString(asMap(row["recipient"])["pane"]) == l.coordinatorPane {
+		if asString(asMap(row["recipient"])["address"]) == l.coordinatorPane {
 			return row
 		}
 	}
@@ -834,56 +815,21 @@ func (l *replayLab) workerHandoff(task replayTask, candidate string) string {
 }
 
 // setScreen plants what `agent read` shows for a worker pane, so a blocked edge has an excerpt.
-func (l *replayLab) setScreen(t *testing.T, pane, text string) {
+func (l *replayLab) setScreen(t *testing.T, address, text string) {
 	t.Helper()
-	l.editFakePane(t, pane, func(row map[string]any) { row["screen"] = text })
+	l.native.SetScreen(address, text)
 }
-
-// paneStatus is scenario data for a pane the fake created (a worker or reviewer): what Herdr reports for its agent.
-func (l *replayLab) paneStatus(t *testing.T, pane, status string) {
+func (l *replayLab) paneStatus(t *testing.T, address, status string) {
 	t.Helper()
-	l.editFakePane(t, pane, func(row map[string]any) { row["agent_status"] = status })
+	l.native.SetStatus(address, status)
 }
-
-func (l *replayLab) editFakePane(t *testing.T, pane string, change func(row map[string]any)) {
-	t.Helper()
-	path := filepath.Join(l.herdrRoot(), "state.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	row := asMap(asMap(state["panes"])[pane])
-	if row == nil {
-		t.Fatalf("no fake pane %s", pane)
-	}
-	change(row)
-	out, _ := json.Marshal(state)
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// agentExited is scenario data: the pane's harness (worker or reviewer) has ended and only its shell remains.
-func (l *replayLab) agentExited(t *testing.T, pane string) {
-	t.Helper()
-	l.editFakePane(t, pane, func(row map[string]any) {
-		row["agent"] = nil
-		row["agent_status"] = "unknown"
-		delete(row, "agent_pid")
-		delete(row, "name")
-		row["processes"] = []any{}
-	})
-}
+func (l *replayLab) agentExited(t *testing.T, address string) { t.Helper(); l.native.Exit(address, 0) }
 
 type burstResult struct {
 	submitted, coalesced, deferred int
 	other                          map[string]int
 	lockWaitMS, maxLockWaitMS      int // summed and largest recipient-lock wait the report passes reported in their fanout
-	herdrCalls                     int
+	nativeCalls                    int
 }
 
 func (b burstResult) add(o burstResult) burstResult {
@@ -891,7 +837,7 @@ func (b burstResult) add(o burstResult) burstResult {
 	b.coalesced += o.coalesced
 	b.deferred += o.deferred
 	b.lockWaitMS += o.lockWaitMS
-	b.herdrCalls += o.herdrCalls
+	b.nativeCalls += o.nativeCalls
 	if o.maxLockWaitMS > b.maxLockWaitMS {
 		b.maxLockWaitMS = o.maxLockWaitMS
 	}
@@ -902,7 +848,7 @@ func (b burstResult) add(o burstResult) burstResult {
 }
 
 // arrivals is the AE1 shape across processes and passes: six concurrent reports, a coordinator idle edge, six more
-// concurrent reports, then two more idle edges. The same sequence runs on the candidate and the baseline.
+// concurrent reports, then two more idle edges. The typed native fixture records every submission.
 func (l *replayLab) arrivals(t *testing.T, handoffs map[string]string) (burstResult, []map[string]any) {
 	t.Helper()
 	l.coordinatorStatus(t, "idle")
@@ -915,7 +861,7 @@ func (l *replayLab) arrivals(t *testing.T, handoffs map[string]string) (burstRes
 }
 
 // burst submits the twelve workers' reports from twelve helper processes started together. Each report's own
-// notice row says what its pass did for the coordinator; the fake Herdr log is the arbiter of prompts.
+// notice row says what its pass did for the coordinator; the native request log records submissions.
 func (l *replayLab) burst(t *testing.T, tasks []replayTask, handoffs map[string]string) burstResult {
 	t.Helper()
 	results := make([]map[string]any, len(tasks))
@@ -941,9 +887,9 @@ func (l *replayLab) burst(t *testing.T, tasks []replayTask, handoffs map[string]
 		row := recipientRow(pass, l.coordinatorPane)
 		if fanout := asMap(pass["fanout"]); fanout != nil {
 			wait, _ := fanout["lock_wait_ms"].(float64)
-			calls, _ := fanout["herdr_calls"].(float64)
+			calls, _ := fanout["native_calls"].(float64)
 			out.lockWaitMS += int(wait)
-			out.herdrCalls += int(calls)
+			out.nativeCalls += int(calls)
 			if int(wait) > out.maxLockWaitMS {
 				out.maxLockWaitMS = int(wait)
 			}
@@ -971,7 +917,10 @@ func (l *replayLab) ctlPaneNoFatal(pane string, args ...string) map[string]any {
 	ctx, cancel := context.WithTimeout(context.Background(), burstTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, l.helper, append([]string{"--format", "json", "--home", l.home}, args...)...)
-	cmd.Env = append(append([]string{}, l.env...), "HERDR_PANE_ID="+pane)
+	cmd.Env = append([]string{}, l.env...)
+	for key, value := range l.callerEnv(pane, args) {
+		cmd.Env = append(cmd.Env, key+"="+value)
+	}
 	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.Output()
 	var view map[string]any
@@ -991,7 +940,7 @@ func (l *replayLab) ctlPaneNoFatal(pane string, args ...string) map[string]any {
 func recipientRow(view map[string]any, pane string) map[string]any {
 	for _, raw := range asSlice(view["recipients"]) {
 		row := asMap(raw)
-		if asString(asMap(row["recipient"])["pane"]) == pane {
+		if asString(asMap(row["recipient"])["address"]) == pane {
 			return row
 		}
 	}
@@ -1016,27 +965,6 @@ func countDecisions(view map[string]any) int {
 	return int(n)
 }
 
-// snapshotForBaseline copies the whole lab (home, fakes, repos) so the baseline burst runs on identical inputs; the
-// copy's owner record then loses wake_protocol, exactly what an older helper's coordinator looks like.
-func (l *replayLab) snapshotForBaseline(t *testing.T) *replayLab {
-	t.Helper()
-	base := filepath.Join(t.TempDir(), "baseline")
-	if out, err := exec.Command("cp", "-a", l.base, base).CombinedOutput(); err != nil {
-		t.Fatalf("cp: %v\n%s", err, out)
-	}
-	copy := &replayLab{
-		demoLab:         &demoLab{t: t, root: l.root, helper: l.helper, home: filepath.Join(base, "state"), base: base, env: replayEnv(t, l.root, base, filepath.Join(base, "bin"), filepath.Join(base, "bin", "gh"))},
-		coordinatorPane: l.coordinatorPane, brief: l.brief, pluginID: l.pluginID, projects: l.projects, tasks: l.tasks,
-		measure: &replayMeasure{sections: map[string]any{}},
-	}
-	owner := copy.owner(t)
-	owner.Delete("wake_protocol")
-	if err := ordjson.WriteFile(filepath.Join(copy.home, "context.json"), owner); err != nil {
-		t.Fatal(err)
-	}
-	return copy
-}
-
 // --- read purity ------------------------------------------------------------------------------------------------------
 
 var replayReads = [][]string{
@@ -1045,11 +973,13 @@ var replayReads = [][]string{
 }
 
 // readPhase runs every coordinator-facing read and proves it wrote nothing under the home, called gh not at all and
-// prompted nothing through Herdr; it records the structured stdout bytes of each command.
+// prompted nothing through HC; it records the structured stdout bytes of each command.
 func (l *replayLab) readPhase(t *testing.T, name string) {
 	t.Helper()
 	before := hashTree(t, l.home)
-	ghBefore, herdrBefore, promptsBefore := l.ghCalls(), l.herdrCalls(), len(l.herdrPrompts())
+	// The independently running observer refreshes only its health heartbeat during reads.
+	delete(before, "hook/health.json")
+	ghBefore, nativeBefore, promptsBefore := l.ghCalls(), l.nativeCalls(), len(l.nativePrompts())
 	bytes := map[string]int{}
 	reads := append([][]string{}, replayReads...)
 	if len(l.tasks) > 0 {
@@ -1068,16 +998,18 @@ func (l *replayLab) readPhase(t *testing.T, name string) {
 		}
 		bytes[strings.Join(args, " ")] = len(out)
 	}
-	if after := hashTree(t, l.home); !reflect.DeepEqual(before, after) {
+	after := hashTree(t, l.home)
+	delete(after, "hook/health.json")
+	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("%s: read-only commands changed the home: %v", name, treeDiff(before, after))
 	}
 	if l.ghCalls() != ghBefore {
 		t.Fatalf("%s: reads called gh %d times", name, l.ghCalls()-ghBefore)
 	}
-	if len(l.herdrPrompts()) != promptsBefore {
-		t.Fatalf("%s: reads prompted through Herdr", name)
+	if len(l.nativePrompts()) != promptsBefore {
+		t.Fatalf("%s: reads prompted through HC", name)
 	}
-	l.measure.record("reads/"+name, map[string]any{"stdout_bytes": bytes, "herdr_calls": l.herdrCalls() - herdrBefore, "gh_calls": 0, "home_changed": false})
+	l.measure.record("reads/"+name, map[string]any{"stdout_bytes": bytes, "native_calls": l.nativeCalls() - nativeBefore, "gh_calls": 0, "home_changed": false})
 }
 
 func hashTree(t *testing.T, root string) map[string]string {
@@ -1212,26 +1144,21 @@ func (m *replayMeasure) write(t *testing.T, base string) {
 		}
 	}
 	burst := asMap(m.sections["burst"])
-	c, b := asMap(burst["candidate"]), asMap(burst["baseline"])
+	c := asMap(burst["candidate"])
 	t.Logf("replay measurements (recorded, not guarantees) -> %s", filepath.Join(dirs[len(dirs)-1], "replay.json"))
-	t.Logf("| metric | baseline (not adopted) | candidate (adopted) |")
-	t.Logf("| routine prompts across 12 arrivals (6 concurrent, idle edge, 6 concurrent, 2 idle edges), before consumption | %v | %v |", b["prompts"], c["prompts"])
-	t.Logf("| submitted / coalesced / deferred / other | %v / %v / %v / %v | %v / %v / %v / %v |", b["submitted"], b["coalesced"], b["deferred"], b["other_states"], c["submitted"], c["coalesced"], c["deferred"], c["other_states"])
-	t.Logf("| open obligations after the burst | %v | %v |", b["open_obligations"], c["open_obligations"])
-	bp, cp := asMap(b["report_passes"]), asMap(c["report_passes"])
-	t.Logf("| report passes: lock_wait_ms total / max / herdr calls | %v / %v / %v | %v / %v / %v |", bp["lock_wait_ms_total"], bp["lock_wait_ms_max"], bp["herdr_calls"], cp["lock_wait_ms_total"], cp["lock_wait_ms_max"], cp["herdr_calls"])
-	pump := asMap(c["pump_after_wake"])
-	t.Logf("| pump after the wake: prompts / state / deferred / lock_wait_ms / herdr calls | - | %v / %v / %v / %v / %v |", pump["prompts"], pump["state"], pump["deferred"], pump["lock_wait_ms"], pump["herdr_calls"])
+	t.Logf("historical baseline: %v", burst["baseline"])
+	t.Logf("routine prompts=%v submitted=%v coalesced=%v deferred=%v other=%v open_obligations=%v", c["prompts"], c["submitted"], c["coalesced"], c["deferred"], c["other_states"], c["open_obligations"])
+	t.Logf("report passes: %v; pump after wake: %v", c["report_passes"], c["pump_after_wake"])
 	for _, name := range m.order {
 		if strings.HasPrefix(name, "reads/") {
 			section := asMap(m.sections[name])
-			t.Logf("| %s stdout bytes | - | %v (herdr calls %v, gh calls %v) |", name, section["stdout_bytes"], section["herdr_calls"], section["gh_calls"])
+			t.Logf("| %s stdout bytes | - | %v (native calls %v, gh calls %v) |", name, section["stdout_bytes"], section["native_calls"], section["gh_calls"])
 		}
 	}
 	t.Logf("| gh verbs | - | %v |", m.sections["gh_verbs"])
-	herdr := asMap(m.sections["herdr"])
-	t.Logf("| herdr calls / prompts to the coordinator / prompts to workers | - | %v / %v / %v |", herdr["calls"], herdr["prompts_coordinator"], herdr["prompts_workers"])
-	if log, ok := herdr["prompt_log"].([]map[string]string); ok {
+	native := asMap(m.sections["native"])
+	t.Logf("| native calls / prompts to the coordinator / prompts to workers | - | %v / %v / %v |", native["calls"], native["prompts_coordinator"], native["prompts_workers"])
+	if log, ok := native["prompt_log"].([]map[string]string); ok {
 		for _, p := range log {
 			t.Logf("|   prompt -> %s | - | %s |", p["pane"], p["message"])
 		}

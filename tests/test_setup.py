@@ -8,6 +8,9 @@ import tarfile
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
+from contextlib import redirect_stdout
+import io
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("setup_sum", ROOT / "scripts/setup.py")
 setup = importlib.util.module_from_spec(spec)
@@ -184,6 +187,17 @@ class SetupTest(unittest.TestCase):
         pin = {"version": "0.2.1", "sha256": "abc", "asset": "remainder_v0.2.1_darwin_arm64.tar.gz"}
         with self.assertRaisesRegex(setup.runtime_install.InstallError, "disabled"):
             setup.runtime_install.install_remainder(self.root / "runtime", pin=pin, platform_name="darwin-arm64")
+
+    def test_setup_guidance_uses_qualified_launch_and_explicit_core_config(self):
+        output = io.StringIO()
+        with patch.object(setup.sys, 'argv', ['setup.py', '--configure-only']), patch.object(setup, 'configure'), redirect_stdout(output):
+            setup.main()
+        text = output.getvalue()
+        self.assertIn('Codex 0.166.0', text)
+        self.assertIn('Tab', text)
+        self.assertIn('--hc-config-home', text)
+        self.assertIn('refused', text)
+        self.assertNotIn('then launch codex, claude', text)
 
     def test_mise_and_all_python_sources_parse(self):
         tomllib.loads((ROOT / 'mise.toml').read_text())

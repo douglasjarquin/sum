@@ -37,7 +37,7 @@ func newPublishLab(t *testing.T, ghState map[string]any) publishLab {
 	t.Helper()
 	lab := publishLab{home: writeDesignatedHome(t), repo: t.TempDir(), worktree: t.TempDir(), taskID: "t-aaaaaaaaaaaa"}
 	lab.ghRoot = filepath.Join(lab.home, "fake-gh")
-	herdrEnv(t, lab.home)
+	nativeEnv(t, lab.home)
 	t.Setenv("SUM_GH_BIN", filepath.Join(repoRoot(t), "tests", "fixtures", "gh_attach.py"))
 	t.Setenv("FAKE_GH_ROOT", lab.ghRoot)
 	lab.writeGitHub(t, ghState)
@@ -45,7 +45,7 @@ func newPublishLab(t *testing.T, ghState map[string]any) publishLab {
 		t.Fatalf("coordinator init: %v", err)
 	}
 	comparison := writeEvidenceRun(t, filepath.Join(lab.worktree, "evidence"), evidenceBase, evidenceCandidate)
-	writeTaskFixture(t, lab.home, lab.taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "reported", "repository": %q, "worktree": %q,
+	lab.home = writeTaskFixture(t, lab.home, lab.taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "reported", "repository": %q, "worktree": %q,
 "questions": [], "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "ship", "branch": "sum/t-aaaaaaaaaaaa",
 "report": {"text": "done", "candidate": %q},
 "evidence": [{"schema": 1, "id": "e-0000000001", "kind": "handoff", "source": "worker", "at": "2026-01-01T00:00:00+00:00", "candidate": %q,

@@ -5,39 +5,59 @@ description: Improve sum itself from an isolated development checkout and lab st
 # Develop sum
 
 Use this when the user asks a second thread in the sum installation to change sum, or when `init` returned `developer`.
-You are here to modify or test sum, not to run it. The installation checkout serves the live coordinator and its workers. Nobody edits, builds, or tests there while it is in service; one writer per checkout. Work only in a development checkout, never in the live installation directory's state or source.
-Do not initialize a coordinator, dispatch work, run setup for the installation, edit the installation's `.sum/`, or perform instance-wide updates. Do not operate on panes you did not create; the bridge lets a developer registration observe only. If the user wants a change deployed, tell them; they decide when the coordinator picks it up.
+You are here to modify or test sum, not to run it.
+The installation checkout serves the live coordinator and its workers.
+Nobody edits, builds, or tests there while it is in service; one writer per checkout.
+Work only in a development checkout, never in the live installation directory's state or source.
+Do not initialize a coordinator, dispatch work, run setup for the installation, edit the installation's `.sum/`, or perform instance-wide updates.
+Do not operate on terminals you did not create; a developer registration grants no task runtime mutation authority.
+If the user wants a change deployed, tell them; they decide when the coordinator picks it up.
 
 ## Prepare the checkout
 
 From the installation directory, with the installed helper:
 
 ```sh
-./bin/sumctl dev prepare --name short-topic          # add --pane for an ordinary Herdr pane starting there
+./bin/sumctl dev prepare --name short-topic          # add --pane for an ordinary HC terminal starting there
 ```
 
 This runs plain `git worktree add` into `.sum/dev/<name>` on branch `sum-dev/<name>` from `HEAD` (or `--base REF`) and writes `.sum/dev.json` inside the new checkout.
 Read the returned `path`, `branch`, `role`, and `note`; tell the user the path you will work in and that you remain a developer there.
 Rerunning the same name reopens the existing checkout with its uncommitted work intact.
 The helper refuses symlinked or overlapping paths and never nests a development checkout inside another one.
-`--pane` creates a Herdr workspace whose root pane starts in the checkout; it starts no agent and copies no coordinator identity.
+`--pane` creates an ordinary HC terminal at the checkout; it starts no agent and copies no coordinator identity.
+It uses only the current existing qualified HC context and never starts a core.
+The shell launch strips inherited task/home/role identity and records durable intent, effect and the returned terminal in the development marker.
+Repeating prepare observes that saved launch; it never automatically replays a lost response or replaces a finished or uncertain shell terminal.
 
-Move all edits, builds, and tests into that path. Run `./bin/sumctl init` there; it reports `developer` and writes nothing.
-`dev prepare` builds no code graph. When one would help, index your own checkout on demand with the installation's pinned codegraph, as the result's `note` prints: `CODEGRAPH_NO_DAEMON=1 CODEGRAPH_NO_DOWNLOAD=1 <installation>/.local/bin/codegraph init <checkout>` (index at `<checkout>/.codegraph`, ignored by sum's own `.gitignore`). Then use `codegraph explore ... -p <checkout>` and `sync` after edits. Without an index, read the source; nothing about the checkout depends on it.
+Move all edits, builds, and tests into that path.
+Run `./bin/sumctl init` there; it reports `developer` and writes nothing.
+`dev prepare` builds no code graph.
+When one would help, index your own checkout on demand with the installation's pinned codegraph, as the result's `note` prints: `CODEGRAPH_NO_DAEMON=1 CODEGRAPH_NO_DOWNLOAD=1 <installation>/.local/bin/codegraph init <checkout>` (index at `<checkout>/.codegraph`, ignored by sum's own `.gitignore`).
+Then use `codegraph explore ... -p <checkout>` and `sync` after edits.
+Without an index, read the source; nothing about the checkout depends on it.
 
 ## Keep production separate
 
-- The checkout's own `.sum`, `.local`, `.deps`, generated MCP configs, and artifacts live inside the checkout. `mise run setup` there installs its own dependencies and leaves the checkout undesignated because of `.sum/dev.json`; it can never host a coordinator.
+- The checkout's own `.sum`, `.local`, `.deps`, generated MCP configs, and artifacts live inside the checkout.
+  `mise run setup` there installs its own dependencies and leaves the checkout undesignated because of `.sum/dev.json`; it can never host a coordinator.
 - Do not share a writable `.deps` or `.local` tree with the installation. mise's read-only tool installs are fine to reuse.
-- Setup never rewrites an existing `.local/bin/herdr-mesh` or retargets a tool link, so a changed Mesh binary is tested by staging a release from a commit of your checkout (`./bin/sumctl release stage --ref <sha>` run with the installation's helper) or by moving the checkout's own `.local/bin/herdr-mesh` aside yourself before re-running setup there.
-- The candidate `bin/sumctl` refuses every write aimed at the installation's state home, including through an inherited `SUM_HOME`. Only `show`, `status`, `inbox`, and `doctor` are allowed there. Use lab state (`--home` under a temporary directory) for everything else.
-- Tests and demos blank inherited `SUM_HOME`, `SUM_SESSION`, `SUM_NOW`, and `HERDR_*` values and use a fake Herdr or a named lab session such as `sum-test-<id>`; never the user's `default` session.
+- Stage and test only the checkout's own helper, exact HC dependency, matched manual and namespaced template.
+  Never retarget the installation's runtime links or replace a live core.
+- The candidate `bin/sumctl` refuses every write aimed at the installation's state home, including through an inherited `SUM_HOME`.
+  Only `show`, `status`, `inbox`, and `doctor` are allowed there.
+  Use lab state (`--home` under a temporary directory) for everything else.
+- Tests and demos blank inherited `SUM_HOME`, `SUM_SESSION`, `SUM_NOW`, and `HC_*` and `HERDR_*` values and use a fake HC or a named lab session such as `sum-test-<id>`; never the user's `default` session.
 - `SUM_NOW` is a test-only clock pin that a test sets explicitly so two processes it compares read one instant; never export it in a live shell, where it would freeze every stamp sum records, and `./bin/sumctl doctor` warns on a `clock` row whenever it is set.
 - If your work is a dispatched task on sum, its brief's callbacks use the installed trusted helper `<installation>/bin/sumctl`; keep using exactly those commands.
 
 ## Verify and ship
 
-`VERIFY.md` at the root is this repository's verification contract; `.agents/skills/verify` is the portable procedure and runner behind `mise run verify`, usable in any clone without sum. `.agents/skills/evidence` captures before/after proof of one mapped scenario from the base and candidate builds; `.agents/skills/create-verification` bootstraps that contract in another repository and `.agents/skills/maintain-verification` audits it after a change. Herdr CLI facts come from `herdr --skill`, not remembered flags.
+`VERIFY.md` at the root is this repository's verification contract; `.agents/skills/verify` is the portable procedure and runner behind `mise run verify`, usable in any clone without sum.
+`.agents/skills/evidence` captures before/after proof of one mapped scenario from the base and candidate builds; `.agents/skills/create-verification` bootstraps that contract in another repository and `.agents/skills/maintain-verification` audits it after a change.
+HC CLI facts come from the staged release-matched HC manual, not remembered flags.
+The observer is a non-agent event subscriber; it does not grant authority to operate another session.
+Never claim an existing-installation migration succeeded without an enforceable old-writer/sender exclusion lease; current legacy APIs do not provide that proof.
 
 Run the canonical verifier once for this role in the checkout, using the candidate's merge base:
 
@@ -46,7 +66,7 @@ MISE_ENABLE_TOOLS=go,python,node python3 .agents/skills/verify/scripts/verify_ru
 ```
 
 Do not run the aggregate's constituent offline suites and demo in addition to that final aggregate for the same role.
-Run `mise run test-live` separately only when a real Herdr is available and the live smoke scenario applies; otherwise the verifier records it as `not-run`.
+Run `mise run test-live` separately only when a real HC is available and the live smoke scenario applies; otherwise the verifier records it as `not-run`.
 
 Commit on the `sum-dev/<name>` branch, then follow `skills/sum-deliver/SKILL.md` like any other project: verification, a reviewable PR, no merge.
 Candidate code becomes installation code only when a human merges it and the coordinator picks it up; a checked-out branch is not an update.
@@ -54,7 +74,8 @@ Candidate code becomes installation code only when a human merges it and the coo
 ## Clean up
 
 `./bin/sumctl dev list` shows checkouts and whether they are dirty.
-`./bin/sumctl dev remove --name short-topic` uses plain `git worktree remove` and `git branch -d`: it refuses dirty trees and keeps unmerged branches. There is no forced removal.
+`./bin/sumctl dev remove --name short-topic` uses plain `git worktree remove` and `git branch -d`: it refuses dirty trees and keeps unmerged branches.
+There is no forced removal.
 
 ## Bootstrap without `sumctl dev`
 

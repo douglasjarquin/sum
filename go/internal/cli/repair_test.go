@@ -3,17 +3,15 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -41,7 +39,7 @@ func TestRepairUnknownFlagsAreUsageErrorsBeforeRepair(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := repairUsageLab(t)
 			stdout, stderr, err := runRepairCLI(t, home, tc.args...)
 			if err == nil {
@@ -63,17 +61,17 @@ func TestRepairCommands(t *testing.T) {
 	cases := []struct {
 		name      string
 		args      []string
-		herdr     bool
+		native    bool
 		usage     bool
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid send --text", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, domainErr: "Herdr pane"},
-		{name: "valid send --attempt= --key= --text=", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa", "--key=k1", "--text=fix"}, domainErr: "Herdr pane"},
-		{name: "valid send with herdr", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid extend --approved --text", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question", "q-aaaaaaaaaa", "--additional", "2", "--approved", "--text", "grant"}, domainErr: "Herdr pane"},
-		{name: "valid extend --question= --additional= --approved=", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question=q-aaaaaaaaaa", "--additional=2", "--approved=true", "--text=grant"}, domainErr: "Herdr pane"},
-		{name: "valid extend with herdr", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question", "q-aaaaaaaaaa", "--additional", "2", "--approved", "--text", "grant"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid send --text", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, domainErr: "HC session"},
+		{name: "valid send --attempt= --key= --text=", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa", "--key=k1", "--text=fix"}, domainErr: "HC session"},
+		{name: "valid send with native context", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, native: true, domainErr: "Task belongs to another machine"},
+		{name: "valid extend --approved --text", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question", "q-aaaaaaaaaa", "--additional", "2", "--approved", "--text", "grant"}, domainErr: "HC session"},
+		{name: "valid extend --question= --additional= --approved=", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question=q-aaaaaaaaaa", "--additional=2", "--approved=true", "--text=grant"}, domainErr: "HC session"},
+		{name: "valid extend with native context", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question", "q-aaaaaaaaaa", "--additional", "2", "--approved", "--text", "grant"}, native: true, domainErr: "Task belongs to another machine"},
 		{name: "repair missing subcommand", args: []string{"repair"}, usage: true},
 		{name: "send missing --attempt", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, usage: true},
 		{name: "send missing --key", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa", "--text", "fix"}, usage: true},
@@ -88,10 +86,10 @@ func TestRepairCommands(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := repairUsageLab(t)
-			if tc.herdr {
-				herdrEnv(t, home)
+			if tc.native {
+				nativeEnv(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			stdout, stderr, err := runRepairCLI(t, home, tc.args...)
 			switch {
@@ -120,7 +118,7 @@ func TestRepairCommands(t *testing.T) {
 func repairUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "waiting", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "waiting", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
 	before = readNamedTask(t, home, "t-aaaaaaaaaaaa")
 	return home, before
@@ -169,90 +167,35 @@ func assertRepairTaskUnchanged(t *testing.T, home, before string) {
 }
 
 const repairSendTask = "t-aaaaaaaaaaaa"
-const repairSendAttempt = "x-aaaaaaaaaaaa"
 
-// repairSendLab builds a lab where the coordinator is registered and a settled
-// worker agent waits on pane w-worker:p1 in the fake Herdr session.
+// repairSendLab supplies an exact receipt-bound native worker to the CLI.
 func repairSendLab(t *testing.T) (home, worktree string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	herdrEnv(t, home)
-	if _, _, err := runRepairCLI(t, home, "init"); err != nil {
-		t.Fatalf("init: %v", err)
-	}
-	worktree = t.TempDir()
-	fakeRoot := filepath.Join(home, "fake-herdr")
-	state := map[string]any{
-		"panes": map[string]any{
-			"w-worker:p1": map[string]any{
-				"pane_id": "w-worker:p1", "cwd": worktree, "workspace_id": "w-worker",
-				"agent_status": "idle", "agent": "claude", "created": true, "shell_pid": 4242, "terminal_id": "term-w-worker:p1",
-			},
-		},
-		"workspaces": map[string]any{
-			"w-worker": map[string]any{"workspace_id": "w-worker", "label": "task", "worktree": nil},
-		},
-	}
-	raw, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(fakeRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(fakeRoot, "state.json"), raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	host, err := machine.ID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256([]byte(strings.Join([]string{host, "sum-test", "w-worker:p1"}, "\n")))
-	key := hex.EncodeToString(sum[:])[:16]
-	registration := fmt.Sprintf(`{"schema": 1, "key": %q, "role": "worker", "task": %q,
-"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "cwd": %q,
-"incarnation": {"terminal": "term-w-worker:p1", "agent_session": null, "shell": null, "observed_at": "2026-01-01T00:00:00+00:00"}}`, key, repairSendTask, host, worktree)
-	if err := os.MkdirAll(filepath.Join(home, "sessions"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "sessions", key+".json"), []byte(registration), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	writeTaskFixture(t, home, repairSendTask, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
-"machine": %q, "session": "sum-test", "pane": "w-worker:p1", "workspace": "w-worker",
-"worktree": %q, "branch": "sum/t-aaaaaaaaaaaa",
-"questions": [], "evidence": [], "report": {"text": "done"}, "notice": null, "attention": [],
-"brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md",
-"execution": {"schema": 1,
-  "worker": {"id": %q, "kind": "worker", "state": "running", "generation": 1,
-             "owner": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}, "checkout": %q,
-             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []},
-  "verifiers": []}}`, repairSendTask, host, worktree, repairSendAttempt, host, worktree))
-	return home, worktree
+	nativeEnv(t, home)
+	d := nativeLabFor(t, home)
+	s := nativeTestStore(t, home)
+	task := ordjson.NewObject()
+	task.Set("id", repairSendTask)
+	task.Set("status", "running")
+	task.Set("repository", "owner/repo")
+	task.Set("worktree", s.Home)
+	task.Set("questions", []any{})
+	task.Set("evidence", []any{})
+	task.Set("attention", []any{})
+	report := ordjson.NewObject()
+	report.Set("text", "done")
+	task.Set("report", report)
+	seedNativeWorker(t, d, s, task)
+	return s.Home, s.Home
 }
-
-// settleRepairWorker returns the fake worker pane to idle, like a worker that
-// finished a turn and is settled for the next instruction.
+func repairAttempt(t *testing.T, home string) string {
+	t.Helper()
+	return asString(asMap(readJSON(t, filepath.Join(home, "tasks", repairSendTask, "task.json"))["worker_endpoint"])["attempt"])
+}
 func settleRepairWorker(t *testing.T, home string) {
 	t.Helper()
-	path := filepath.Join(home, "fake-herdr", "state.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	pane := state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)
-	pane["agent_status"] = "idle"
-	out, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	nativeLabFor(t, home).native.SetStatus("t2", "idle")
 }
 
 func repairLedger(t *testing.T, home string) map[string]any {
@@ -283,7 +226,7 @@ func TestRepairSend_classificationControlsCharging(t *testing.T) {
 	home, _ := repairSendLab(t)
 
 	// The default in-scope send is recorded but consumes nothing.
-	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main")
+	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "rebase onto main")
 	if err != nil {
 		t.Fatalf("in-scope send: %v", err)
 	}
@@ -296,20 +239,20 @@ func TestRepairSend_classificationControlsCharging(t *testing.T) {
 	}
 
 	// Repeating the same key replays the recorded operation; a different class is another instruction.
-	view, err = sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main")
+	view, err = sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "rebase onto main")
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
 	if view["duplicate"] != true {
 		t.Fatalf("replay = %v, want duplicate", view)
 	}
-	if _, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main", "--class", "expansion", "--reason", "new work"); err == nil {
+	if _, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "rebase onto main", "--class", "expansion", "--reason", "new work"); err == nil {
 		t.Fatal("same key with another class was accepted")
 	}
 
 	// Expansion sends are the only class that consumes the allowance.
 	for _, key := range []string{"k2", "k3"} {
-		view, err = sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", key, "--text", "extra work outside the brief", "--class", "expansion", "--reason", "user asked for more")
+		view, err = sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", key, "--text", "extra work outside the brief", "--class", "expansion", "--reason", "user asked for more")
 		if err != nil {
 			t.Fatalf("expansion send %s: %v", key, err)
 		}
@@ -323,7 +266,7 @@ func TestRepairSend_classificationControlsCharging(t *testing.T) {
 	}
 
 	// At exhaustion an expansion send saves the budget question and sends nothing.
-	if _, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k4", "--text", "even more", "--class", "expansion", "--reason", "still outside"); err == nil || !strings.Contains(err.Error(), "allowance is exhausted") {
+	if _, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k4", "--text", "even more", "--class", "expansion", "--reason", "still outside"); err == nil || !strings.Contains(err.Error(), "allowance is exhausted") {
 		t.Fatalf("exhausted expansion send err = %v", err)
 	}
 	raw := readNamedTask(t, home, repairSendTask)
@@ -347,7 +290,7 @@ func TestRepairSend_classificationControlsCharging(t *testing.T) {
 	}
 
 	// In-scope sends are never blocked by the exhausted allowance.
-	view, err = sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k5", "--text", "fix the lint failure")
+	view, err = sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k5", "--text", "fix the lint failure")
 	if err != nil {
 		t.Fatalf("in-scope send after exhaustion: %v", err)
 	}
@@ -358,10 +301,10 @@ func TestRepairSend_classificationControlsCharging(t *testing.T) {
 
 func TestRepairSend_deliveryRefusalRecordsAndChargesNothing(t *testing.T) {
 	home, _ := repairSendLab(t)
-	t.Setenv("FAKE_FAIL_PROMPT_PANES", "w-worker:p1")
+	nativeLabFor(t, home).native.QueueFault("terminal.send", hctest.Fault{RefuseKind: "blocked"})
 
 	// A hard refusal never reaches the worker: no operation, no consumption, same key retryable.
-	if _, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief"); err == nil || !strings.Contains(err.Error(), "refused") {
+	if _, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief"); err == nil || !strings.Contains(err.Error(), "refused") {
 		t.Fatalf("refused expansion send err = %v", err)
 	}
 	repairs := repairLedger(t, home)
@@ -372,8 +315,7 @@ func TestRepairSend_deliveryRefusalRecordsAndChargesNothing(t *testing.T) {
 		t.Fatalf("operations = %v after refusal, want none", ops)
 	}
 
-	t.Setenv("FAKE_FAIL_PROMPT_PANES", "")
-	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief")
+	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief")
 	if err != nil {
 		t.Fatalf("retry after refusal: %v", err)
 	}
@@ -390,10 +332,10 @@ func TestRepairSend_uncertainExpansionStaysCharged(t *testing.T) {
 	oldPromptTimeout := repair.SendPromptTimeout
 	repair.SendPromptTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { repair.SendPromptTimeout = oldPromptTimeout })
-	t.Setenv("FAKE_PROMPT_HANG", "10")
+	nativeLabFor(t, home).native.QueueFault("terminal.send", hctest.Fault{LoseResponse: true})
 
 	// The prompt reached the pane but the answer timed out: uncertain stays recorded and charged.
-	if _, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief"); err == nil || !strings.Contains(err.Error(), "remains charged") {
+	if _, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief"); err == nil || !strings.Contains(err.Error(), "remains charged") {
 		t.Fatalf("uncertain expansion send err = %v", err)
 	}
 	repairs := repairLedger(t, home)
@@ -406,7 +348,7 @@ func TestRepairSend_uncertainExpansionStaysCharged(t *testing.T) {
 	}
 
 	// The same key replays the recorded operation instead of risking a second delivery.
-	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief")
+	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief")
 	if err != nil {
 		t.Fatalf("uncertain replay: %v", err)
 	}
@@ -419,10 +361,10 @@ func TestRepairSend_classFlagValidation(t *testing.T) {
 	home, _ := repairSendLab(t)
 	before := readNamedTask(t, home, repairSendTask)
 
-	if _, _, err := runRepairCLI(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "x", "--class", "bogus"); err == nil || !strings.Contains(err.Error(), "invalid repair class") {
+	if _, _, err := runRepairCLI(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "x", "--class", "bogus"); err == nil || !strings.Contains(err.Error(), "invalid repair class") {
 		t.Fatalf("err = %v, want invalid class", err)
 	}
-	if _, _, err := runRepairCLI(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "x", "--class", "expansion"); err == nil || !strings.Contains(err.Error(), "--reason is required") {
+	if _, _, err := runRepairCLI(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "x", "--class", "expansion"); err == nil || !strings.Contains(err.Error(), "--reason is required") {
 		t.Fatalf("err = %v, want --reason requirement", err)
 	}
 	if got := readNamedTask(t, home, repairSendTask); got != before {
@@ -456,7 +398,7 @@ func TestRepairSend_waitsForAConcurrentDeliveryToTheSameWorker(t *testing.T) {
 	before := readNamedTask(t, home, repairSendTask)
 
 	release := holdRepairWorker(t, home)
-	_, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main")
+	_, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "rebase onto main")
 	release()
 	if err == nil || !strings.Contains(err.Error(), "still in progress; nothing was sent or recorded") {
 		t.Fatalf("send while another delivery holds the worker = %v", err)
@@ -465,7 +407,7 @@ func TestRepairSend_waitsForAConcurrentDeliveryToTheSameWorker(t *testing.T) {
 		t.Fatalf("task changed although nothing was sent:\n%s", after)
 	}
 	// Once the other delivery finishes, the same key sends.
-	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main")
+	view, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "rebase onto main")
 	if err != nil || view["duplicate"] != false {
 		t.Fatalf("send after release = %v, %v", view, err)
 	}
@@ -477,7 +419,7 @@ func TestRepairSend_refusesAWorkerReboundWhileItWaited(t *testing.T) {
 	release := holdRepairWorker(t, home)
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := runRepairCLI(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "rebase onto main")
+		_, _, err := runRepairCLI(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "rebase onto main")
 		done <- err
 	}()
 	time.Sleep(300 * time.Millisecond) // The send has read the route and is waiting for the worker's lock.
@@ -493,7 +435,8 @@ func TestRepairSend_refusesAWorkerReboundWhileItWaited(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task.Set("pane", "w-worker:p9")
+	endpoint, _ := task.Get("worker_endpoint")
+	endpoint.(*ordjson.Object).Set("address", "t9")
 	if err := other.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
@@ -512,27 +455,20 @@ func TestRepairSend_refusesAWorkerReboundWhileItWaited(t *testing.T) {
 	}
 }
 
-// A worker pane Herdr restored under a new server is not the running attempt's occupant: the correction is refused
+// A recreated native address is not the running attempt's occupant: the correction is refused
 // before anything is stamped in-flight, and nothing is charged.
 func TestRepairSend_refusesAReplacedWorkerPaneBeforeAnythingIsStamped(t *testing.T) {
 	home, _ := repairSendLab(t)
-	path := filepath.Join(home, "fake-herdr", "state.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	d := nativeLabFor(t, home)
+	var terminal hcclient.Terminal
+	for _, candidate := range d.native.Terminals() {
+		if candidate.Address == "t2" {
+			terminal = candidate
+		}
 	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	pane := state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)
-	pane["terminal_id"], pane["shell_pid"] = "term-after-restart", 5151
-	raw, _ = json.Marshal(state)
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("FAKE_PS_STARTS", `{"5151": "2030-01-01T00:00:00Z"}`)
-	_, err = sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairSendAttempt, "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief")
+	terminal.CreatedMS++
+	d.native.SetTerminal(terminal)
+	_, err := sendRepair(t, home, "repair", "send", repairSendTask, "--attempt", repairAttempt(t, home), "--key", "k1", "--text", "extra work", "--class", "expansion", "--reason", "outside the brief")
 	if err == nil || !strings.Contains(err.Error(), "replaced") {
 		t.Fatalf("send to a replaced worker pane = %v, want the replaced refusal", err)
 	}

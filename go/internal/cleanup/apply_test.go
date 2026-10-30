@@ -460,9 +460,8 @@ func TestCleanup_applyStopsOrphanThenAdopts(t *testing.T) {
 	}
 }
 
-// writeWorkspaceWithoutPane plants a Herdr world where the task workspace still
-// exists — workspaces persist until cleanup removes them — but the recorded
-// worker pane is already gone.
+// The old workspace fixture maps to native terminal absence with Git registration
+// retained independently. No runtime workspace is synthesized.
 func (l *lab) writeWorkspaceWithoutPane() { l.t.Helper() }
 
 // startArgvBoundDaemon launches a detached long-lived process whose argv names
@@ -551,7 +550,7 @@ func TestCleanup_applySettlesGrantedQuestionThenArchives(t *testing.T) {
 	}
 }
 
-// The pane is dead but its Herdr workspace still exists — workspaces persist
+// The native terminal is gone but Git registration still exists.
 // until cleanup removes them, which is exactly the state the wedged codegraph
 // daemons left behind. A checkout-bound process is still a stoppable orphan:
 // apply sends one SIGTERM, verifies exit, and removes the workspace.

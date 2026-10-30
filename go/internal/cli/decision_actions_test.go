@@ -1,13 +1,10 @@
 package cli
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/ask"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -16,7 +13,7 @@ import (
 func decisionActionLab(t *testing.T) (string, *store.Store, *ordjson.Object, string) {
 	t.Helper()
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if out, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init coordinator: %v\n%s", err, out)
 	}
@@ -65,29 +62,7 @@ func decisionActionLab(t *testing.T) (string, *store.Store, *ordjson.Object, str
 	if err := s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	endpoint := store.Endpoint{Machine: host, Session: "sum-test", Pane: "w-worker:p1"}
-	workerIncarnation := incarnation.Evidence{Terminal: "term-worker", Agent: "claude"}.Record(store.Now())
-	if _, err := s.Register(endpoint, "worker", "t-aaaaaaaaaaaa", workerIncarnation); err != nil {
-		t.Fatal(err)
-	}
-	herdrStatePath := filepath.Join(os.Getenv("FAKE_HERDR_ROOT"), "state.json")
-	stateBytes, err := os.ReadFile(herdrStatePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := map[string]any{}
-	if err := json.Unmarshal(stateBytes, &state); err != nil {
-		t.Fatal(err)
-	}
-	panes := state["panes"].(map[string]any)
-	panes[endpoint.Pane] = map[string]any{"pane_id": endpoint.Pane, "cwd": home, "workspace_id": "w-worker", "agent_status": "idle", "agent": "claude", "agent_pid": 4242, "terminal_id": "term-worker", "created": true}
-	stateBytes, err = json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(herdrStatePath, stateBytes, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	seedNativeWorker(t, nativeLabFor(t, home), s, task)
 	recipient, err := ask.ExpectedWorkerRecipient(s, task)
 	if err != nil {
 		t.Fatal(err)
@@ -154,26 +129,7 @@ func TestDecisionCommandsRejectReplacedWorkerBeforeWriting(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home, s, _, recipient := decisionActionLab(t)
-			t.Setenv("FAKE_PS_STARTS", `{"4242":"2030-01-01T00:00:00Z"}`)
-			path := filepath.Join(os.Getenv("FAKE_HERDR_ROOT"), "state.json")
-			stateBytes, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			state := map[string]any{}
-			if err := json.Unmarshal(stateBytes, &state); err != nil {
-				t.Fatal(err)
-			}
-			panes := state["panes"].(map[string]any)
-			worker := panes["w-worker:p1"].(map[string]any)
-			worker["terminal_id"] = "term-replaced"
-			stateBytes, err = json.Marshal(state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, stateBytes, 0o600); err != nil {
-				t.Fatal(err)
-			}
+			nativeLabFor(t, home).native.SetForeground("t2", hcclient.Foreground{PID: 300001, Name: "codex", Argv: []string{"codex"}, Cwd: home})
 			out, err := runCLI(t, home, tc.args(recipient)...)
 			if err == nil {
 				t.Fatalf("%s action accepted a replaced worker: %s", tc.name, out)

@@ -182,7 +182,9 @@ func offeredContracts(manifest *ordjson.Object) (sumVersion string, stateSchema,
 // immutable release activation. Neither source markers nor a staged manifest
 // supplies executable capabilities.
 func nativeTargetContract(candidatePath string) (*ordjson.Object, error) {
- if err:=release.VerifyHCRuntime(context.Background(),candidatePath);err!=nil{return nil,err}
+	if err := release.VerifyHCRuntime(context.Background(), candidatePath); err != nil {
+		return nil, err
+	}
 	offered, err := release.ReadTargetContract(context.Background(), candidatePath)
 	if err != nil {
 		return nil, err
@@ -288,6 +290,7 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 		blocking = append(blocking, "active observer: "+observerErr.Error())
 	}
 	blocking = append(blocking, unresolvedEffects(s, all)...)
+	blocking = append(blocking, deliveryQualification(s, all)...)
 	for _, task := range all {
 		status, _ := task.Get("status")
 		if status == "archived" {

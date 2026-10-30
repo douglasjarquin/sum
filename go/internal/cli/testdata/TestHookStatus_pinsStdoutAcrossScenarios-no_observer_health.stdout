@@ -1,0 +1,12 @@
+schema: 2
+enabled: false
+errors: []
+pending:
+  count: 0
+  oldest_at: ""
+backend: hc
+note: Native observations trigger bounded reconciliation. Only matching application receipts close durable obligations.
+observer_observed:
+  enabled: false
+  compatible: true
+  reason: native events explicitly disabled

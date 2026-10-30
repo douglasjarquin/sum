@@ -35,7 +35,7 @@ func (v *verifyLab) reportWithWorkerRun(t *testing.T, candidate string) {
 	if err := os.WriteFile(handoff, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	v.ctl(true, "report", v.taskID, "--text", "candidate ready", "--handoff", handoff)
+	v.workerReport(true, v.taskID, "--text", "candidate ready", "--handoff", handoff)
 }
 
 func TestVerifyFlagsAContractThatMovedSinceDispatch(t *testing.T) {

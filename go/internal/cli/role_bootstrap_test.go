@@ -69,7 +69,7 @@ func procedureRow(t *testing.T, view map[string]any) map[string]any {
 func TestInitNamesEachRoleCoreFromTheRuntime(t *testing.T) {
 	runtime := roleRuntime(t)
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 
 	coordinator, errText, err := runCLIFrom(t, runtime, home, "init")
 	if err != nil {
@@ -84,7 +84,9 @@ func TestInitNamesEachRoleCoreFromTheRuntime(t *testing.T) {
 		t.Fatalf("coordinator note does not point at the core: %v", coordinator["note"])
 	}
 
-	t.Setenv("HERDR_PANE_ID", "w-second:p1")
+	t.Setenv("SUM_ROLE", "developer")
+	t.Setenv("SUM_ATTEMPT", "")
+	t.Setenv("SUM_BINDING_GENERATION", "")
 	developer, errText, err := runCLIFrom(t, runtime, home, "init")
 	if err != nil {
 		t.Fatalf("second init: %s", errText)
@@ -119,8 +121,20 @@ func TestCoordinatorInitRefusesARuntimeWithoutItsCore(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	contextPath := filepath.Join(home, "context.json")
+	ownerBackup := filepath.Join(home, "pre-claim-owner.json")
+	if err = os.Rename(contextPath, ownerBackup); err != nil {
+		t.Fatal(err)
+	}
+	sessions := filepath.Join(home, "sessions")
+	sessionsBackup := filepath.Join(home, "pre-claim-sessions")
+	if err = os.Rename(sessions, sessionsBackup); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Mkdir(sessions, 0700); err != nil {
+		t.Fatal(err)
+	}
 
 	// First claim: refused before anything is recorded.
 	if _, errText, err := runCLIFrom(t, runtime, home, "init"); err == nil || !strings.Contains(errText, "COORDINATOR.md is missing") || !strings.Contains(errText, "no coordinator role was granted") {
@@ -133,6 +147,16 @@ func TestCoordinatorInitRefusesARuntimeWithoutItsCore(t *testing.T) {
 		t.Fatalf("a refused claim registered the pane: %v", entries)
 	}
 
+	// Restore the fixture's existing verified owner; re-init must still validate its current role core.
+	if err = os.Rename(ownerBackup, contextPath); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(sessions, filepath.Join(home, "empty-preclaim-sessions")); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Rename(sessionsBackup, sessions); err != nil {
+		t.Fatal(err)
+	}
 	// The owner's own re-init is refused too, and leaves its record untouched.
 	if err := os.WriteFile(core, body, 0o644); err != nil {
 		t.Fatal(err)
@@ -149,7 +173,15 @@ func TestCoordinatorInitRefusesARuntimeWithoutItsCore(t *testing.T) {
 	}
 
 	// A reclaim of a verifiably replaced pane is refused as well: the old record stays.
-	restartHerdr(t, "term-after-restart")
+	d := nativeLabFor(t, home)
+	terminal := nativeCoordinatorTerminal(t, d)
+	terminal.State = "finished"
+	d.native.SetTerminal(terminal)
+	terminal.Address = "t3"
+	terminal.CreatedMS = 3
+	terminal.State = "live"
+	d.native.SetTerminal(terminal)
+	t.Setenv("HC_TERMINAL_ID", "t3")
 	if _, errText, err := runCLIFrom(t, runtime, home, "init", "--role", "coordinator", "--reclaim"); err == nil || !strings.Contains(errText, "COORDINATOR.md is empty") {
 		t.Fatalf("reclaim with an empty core = %v %s", err, errText)
 	}
@@ -161,7 +193,7 @@ func TestCoordinatorInitRefusesARuntimeWithoutItsCore(t *testing.T) {
 func TestContractRevisionEmbedsTheCoordinatorCore(t *testing.T) {
 	runtime := roleRuntime(t)
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, errText, err := runCLIFrom(t, runtime, home, "init"); err != nil {
 		t.Fatalf("init: %s", errText)
 	}

@@ -31,7 +31,7 @@ func TestRefreshUnknownFlagsAreUsageErrorsBeforeRefresh(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := refreshUsageLab(t)
 			stdout, stderr, err := runRefreshCLI(t, home, tc.args...)
 			if err == nil {
@@ -53,7 +53,7 @@ func TestRefreshCommands(t *testing.T) {
 	cases := []struct {
 		name      string
 		args      []string
-		herdr     bool
+		native    bool
 		success   bool
 		usage     bool
 		unknown   bool
@@ -63,12 +63,12 @@ func TestRefreshCommands(t *testing.T) {
 		{name: "valid status after dashdash", args: []string{"refresh", "status", "--"}, success: true},
 		{name: "valid status --task", args: []string{"refresh", "status", "--task", "t-aaaaaaaaaaaa"}, success: true},
 		{name: "valid status --task= repeated", args: []string{"refresh", "status", "--task=t-aaaaaaaaaaaa", "--task", "t-bbbbbbbbbbbb"}, success: true},
-		{name: "valid request --task --coordinator", args: []string{"refresh", "request", "--task", "t-aaaaaaaaaaaa", "--coordinator"}, domainErr: "Herdr pane"},
-		{name: "valid request --task= --coordinator=", args: []string{"refresh", "request", "--task=t-aaaaaaaaaaaa", "--coordinator=true"}, domainErr: "Herdr pane"},
-		{name: "valid request with herdr", args: []string{"refresh", "request", "--coordinator"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid adopt --coordinator", args: []string{"refresh", "adopt", "--coordinator", "r1"}, domainErr: "Herdr pane"},
-		{name: "valid adopt --coordinator= after dashdash", args: []string{"refresh", "adopt", "--coordinator=true", "--", "r1"}, domainErr: "Herdr pane"},
-		{name: "valid adopt with herdr", args: []string{"refresh", "adopt", "--coordinator", "r1"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid request --task --coordinator", args: []string{"refresh", "request", "--task", "t-aaaaaaaaaaaa", "--coordinator"}, domainErr: "HC session"},
+		{name: "valid request --task= --coordinator=", args: []string{"refresh", "request", "--task=t-aaaaaaaaaaaa", "--coordinator=true"}, domainErr: "HC session"},
+		{name: "valid request with native context", args: []string{"refresh", "request", "--coordinator"}, native: true, success: true},
+		{name: "valid adopt --coordinator", args: []string{"refresh", "adopt", "--coordinator", "r1"}, domainErr: "HC session"},
+		{name: "valid adopt --coordinator= after dashdash", args: []string{"refresh", "adopt", "--coordinator=true", "--", "r1"}, domainErr: "HC session"},
+		{name: "valid adopt with native context", args: []string{"refresh", "adopt", "--coordinator", "r1"}, native: true, domainErr: "is not the requested revision"},
 		{name: "refresh missing subcommand", args: []string{"refresh"}, usage: true},
 		{name: "status extra positional", args: []string{"refresh", "status", "extra"}, usage: true},
 		{name: "status unknown flag", args: []string{"refresh", "status", "--unexpected"}, usage: true, unknown: true},
@@ -82,10 +82,11 @@ func TestRefreshCommands(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := refreshUsageLab(t)
-			if tc.herdr {
-				herdrEnv(t, home)
+			if tc.native {
+				nativeEnv(t, home)
+				before = readRefreshState(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			stdout, stderr, err := runRefreshCLI(t, home, tc.args...)
 			switch {
@@ -121,7 +122,7 @@ func TestRefreshCommands(t *testing.T) {
 func refreshUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
 	before = readRefreshState(t, home)
 	return home, before
@@ -142,7 +143,7 @@ func assertRefreshUsageError(t *testing.T, err error) {
 		t.Fatal("expected usage failure")
 	}
 	msg := err.Error()
-	if strings.Contains(msg, "registered coordinator") || strings.Contains(msg, "Herdr pane") {
+	if strings.Contains(msg, "registered coordinator") || strings.Contains(msg, "HC session") {
 		t.Fatalf("err = %v, want a usage failure", err)
 	}
 	usage := strings.Contains(msg, "unknown flag") ||

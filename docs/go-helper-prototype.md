@@ -1,13 +1,6 @@
-# Go sumctl
+# Native helper
 
-`bin/sumctl` execs the staged cgo-free binary at `.local/bin/sumctl`, built from `go/cmd/sumctl`.
-
-`--version` prints `sum 0.1.0`.
-`--home` defaults to `SUM_HOME` or `<installation>/.sum`.
-There is no Python CLI and no `SUM_PYTHON_HELPER` compatibility path.
-
-Build:
-
-```
-(cd go && go build -trimpath -buildvcs=false -o ../.local/bin/sumctl ./cmd/sumctl)
-```
+The supported helper is the Go `sumctl` implementation.
+The terminal runtime uses one typed client for unmodified upstream HC 0.1.14 and Git-owned worktrees.
+There is no prototype Mesh path or Python runtime fallback.
+See [architecture](architecture.md), [HC runtime](herdr-backend.md) and `VERIFY.md` for the active contracts.

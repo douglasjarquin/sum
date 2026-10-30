@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"os"
 	"path/filepath"
 	"sort"
@@ -164,6 +166,13 @@ func attemptDelivery(s *store.Store, sn *snapshots, endpoint *ordjson.Object, ex
 	defer release()
 	recipient, err := returns.ObserveNative(ctx, store.EndpointFromContext(endpoint), expectedCwd)
 	if err != nil {
+		var native *hcclient.Error
+		var diagnostic struct {
+			Kind string `json:"kind"`
+		}
+		if errors.As(err, &native) && native.RPC != nil && json.Unmarshal(native.RPC.Data, &diagnostic) == nil && diagnostic.Kind == "not_found" {
+			return fail(versions.RefreshUnreachable, err)
+		}
 		return fail("pending-busy", err)
 	}
 	var current *ordjson.Object

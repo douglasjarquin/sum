@@ -39,7 +39,7 @@ environment:
       discover: "$ROOT/bin/sumctl --home $HOME env discover t-1d1d1d1d1d1d"
       record: "$ROOT/bin/sumctl --home $HOME env record t-1d1d1d1d1d1d --url http://127.0.0.1:PORT"
       inspect: "$ROOT/bin/sumctl --home $HOME env inspect t-1d1d1d1d1d1d"
-    note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container."
+    note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, terminal, or container."
   note: Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout. `dev` is the task-local environment record as last observed.
   artifacts:
     items[4]{artifact,handoff,scope,redactions}:

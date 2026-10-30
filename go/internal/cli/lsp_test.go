@@ -72,7 +72,7 @@ func TestLspUnknownFlagsAreUsageErrorsBeforeEnsure(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			root, logPath, helper := setupLspCheckout(t)
 			var stdout, stderr bytes.Buffer
 			cmd := NewRoot(helper, &stdout, &stderr)

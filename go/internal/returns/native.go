@@ -35,7 +35,7 @@ func ObserveNative(ctx context.Context, endpoint store.Endpoint, expectedCwd str
 	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID, Timeout: ObserveTimeout}
 	terminal, err := client.Get(ctx, endpoint.Address)
 	if err != nil {
-		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error()}
+		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient cannot be observed: " + err.Error(), cause: err}
 	}
 	return checkNativeTerminal(endpoint, terminal, expectedCwd)
 }

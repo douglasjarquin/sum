@@ -50,7 +50,48 @@ execution:
       pendingChanges: false
     fallback: Read and search the source with your normal tools; a graph that is not `ready` or a result that contradicts a file is never a structural conclusion.
     authority: Tool observation recorded by sum; a graph result is never verification evidence.
-  endpoints[3:]{machine,session,pane}:
-    worker: m1,s1,p1
-    parent: m1,s1,p0
-    reviewer: m1,s1,p2
+  endpoints:
+    historical_worker:
+      machine: m1
+      session: s1
+      pane: p1
+      authority: historical
+    worker:
+      schema: null
+      backend: null
+      machine: null
+      core_id: null
+      session: null
+      socket: null
+      address: null
+      task: null
+      role: null
+      attempt: null
+      binding_generation: null
+      created_ms: null
+    parent:
+      schema: null
+      backend: null
+      machine: m1
+      core_id: null
+      session: s1
+      socket: null
+      address: null
+      task: null
+      role: null
+      attempt: null
+      binding_generation: null
+      created_ms: null
+    reviewer:
+      schema: null
+      backend: null
+      machine: m1
+      core_id: null
+      session: s1
+      socket: null
+      address: null
+      task: null
+      role: null
+      attempt: null
+      binding_generation: null
+      created_ms: null

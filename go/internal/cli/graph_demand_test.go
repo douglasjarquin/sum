@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,28 +185,12 @@ func TestGraphInit_refusesWhileAWriterIsRunning(t *testing.T) {
 }
 
 func TestDevPrepare_runsNoCodegraph(t *testing.T) {
-	l := newGraphDemandLab(t)
-	inst := filepath.Join(l.base, "installation")
-	if err := os.MkdirAll(filepath.Join(inst, ".sum"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for name, text := range map[string]string{
-		".sum/state.json": "{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n",
-		".gitignore":      ".sum/\n",
-		"a.py":            "def a():\n    pass\n",
-	} {
-		if err := os.WriteFile(filepath.Join(inst, name), []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	l.git(inst, "init", "-q", "-b", "main")
-	l.git(inst, "add", "-A")
-	l.git(inst, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "installation")
-
-	dev := &demoLab{t: t, root: l.root, helper: l.helper, home: filepath.Join(inst, ".sum"), base: l.base, env: l.env}
-	before := countLines(t, l.calls)
+	l := newFleetLab(t)
+	calls := filepath.Join(l.base, "fake-codegraph", "calls.jsonl")
+	dev := l.demoLab
+	before := countLines(t, calls)
 	out := dev.ctl(true, "dev", "prepare", "--name", "graphless")
-	if added := countLines(t, l.calls) - before; added != 0 {
+	if added := countLines(t, calls) - before; added != 0 {
 		t.Fatalf("dev prepare invoked codegraph %d times", added)
 	}
 	if graph, ok := out["graph"]; ok {
@@ -215,7 +200,7 @@ func TestDevPrepare_runsNoCodegraph(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(path, ".codegraph")); !os.IsNotExist(err) {
 		t.Fatalf("dev prepare created an index: %v", err)
 	}
-	if note := asString(out["note"]); !strings.Contains(note, " init "+path) || !strings.Contains(note, "CODEGRAPH_NO_DAEMON=1") {
+	if note := asString(out["note"]); !strings.Contains(note, " init "+shquote.Quote(path)) || !strings.Contains(note, "CODEGRAPH_NO_DAEMON=1") {
 		t.Fatalf("note does not print the on-demand init command: %q", note)
 	}
 }

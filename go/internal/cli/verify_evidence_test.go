@@ -118,7 +118,7 @@ func (v *verifyLab) report(t *testing.T, candidate string, artifacts ...string) 
 	if err := os.WriteFile(handoff, body, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	v.ctl(true, "report", v.taskID, "--text", "candidate ready", "--handoff", handoff)
+	v.workerReport(true, v.taskID, "--text", "candidate ready", "--handoff", handoff)
 }
 
 func (v *verifyLab) pipelineRow(t *testing.T, stage string) map[string]any {

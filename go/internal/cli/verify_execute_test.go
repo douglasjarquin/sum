@@ -64,13 +64,6 @@ func newVerifyLabWith(t *testing.T, prepare func(repo string)) *verifyLab {
 	git("remote", "add", "origin", origin)
 	git("push", "-q", "origin", "main")
 
-	home := filepath.Join(base, "state")
-	if err := os.Mkdir(home, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	bin := filepath.Join(base, "bin")
 	if err := os.Mkdir(bin, 0o755); err != nil {
 		t.Fatal(err)
@@ -78,7 +71,7 @@ func newVerifyLabWith(t *testing.T, prepare func(repo string)) *verifyLab {
 	if err := os.Symlink(filepath.Join(root, "tests", "fixtures", "mise.py"), filepath.Join(bin, "mise")); err != nil {
 		t.Fatal(err)
 	}
-	pythonDir := filepath.Dir(mustLookPath(t, "python3"))
+	pythonDir := filepath.Dir(pinnedFixturePython(t))
 	path := strings.Join([]string{bin, pythonDir, os.Getenv("PATH")}, string(os.PathListSeparator))
 	if goroot := os.Getenv("GOROOT"); goroot != "" {
 		path = strings.Join([]string{bin, pythonDir, filepath.Join(goroot, "bin"), os.Getenv("PATH")}, string(os.PathListSeparator))
@@ -96,10 +89,12 @@ func newVerifyLabWith(t *testing.T, prepare func(repo string)) *verifyLab {
 	if err := os.WriteFile(brief, []byte("Add a note and verify the greeting fixture.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d := &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: env}
-	configureNativeEventsForTest(t, home, false)
-	if asString(d.ctl(true, "init")["role"]) != "coordinator" {
-		t.Fatal("first init")
+	d := newNativeDemoLab(t, root, helper, base)
+	for _, pair := range env {
+		parts := strings.SplitN(pair, "=", 2)
+		if parts[0] == "PATH" {
+			d.setEnv(parts[0], parts[1])
+		}
 	}
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", brief, "--approved")
 	taskID := asString(task["id"])
@@ -189,7 +184,7 @@ func (v *verifyLab) commit(name, text string) string {
 
 func (v *verifyLab) workerRun(args ...string) map[string]any {
 	v.t.Helper()
-	cmd := exec.Command(mustLookPath(v.t, "python3"), append([]string{filepath.Join(v.worktree, verifyRunner), "--json", "--base", v.baseSHA}, args...)...)
+	cmd := exec.Command(pinnedFixturePython(v.t), append([]string{filepath.Join(v.worktree, verifyRunner), "--json", "--base", v.baseSHA}, args...)...)
 	cmd.Dir = v.worktree
 	cmd.Env = v.env
 	out, err := cmd.Output()
@@ -492,8 +487,10 @@ func TestVerifyExecute_missingRunnerRefusesAndReleasesAfterEmptyBoundary(t *test
 func TestVerifyExecute_nonCoordinatorPaneIsRefused(t *testing.T) {
 	v := newVerifyLab(t)
 	sha := v.commit("NOTES.md", "notes\n")
-	out := v.ctlPane("w-other:p2", false, "verify", v.taskID, "--candidate", sha, "--execute")
-	if !strings.Contains(asString(out["error"]), "not the registered coordinator") {
+	worker := workerAddress(v.taskFile())
+	v.ctlPane(worker, true, "init")
+	out := v.ctlPane(worker, false, "verify", v.taskID, "--candidate", sha, "--execute")
+	if !strings.Contains(asString(out["error"]), "registered coordinator") {
 		t.Fatalf("non-coordinator error %q", out["error"])
 	}
 }

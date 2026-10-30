@@ -316,3 +316,25 @@ func TestNativePumpDoesNotClaimNewEffectsDuringTerminalMaintenance(t *testing.T)
 		})
 	}
 }
+
+func TestNativeInlineReadAllowsWorkingCoordinatorWithoutSending(t *testing.T) {
+	l := newNativeLab(t)
+	l.task("report")
+	l.f.SetStatus(l.owner.Address, "working")
+	result, err := Pump(l.s, PumpOpts{Recipient: "parent", Ctx: l.owner.Object(), Inline: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipients, _ := result.Get("recipients")
+	rows, _ := recipients.([]any)
+	if len(rows) != 1 {
+		t.Fatalf("recipients = %v", recipients)
+	}
+	row := rows[0].(*ordjson.Object)
+	if via, _ := row.Get("via"); via != "inline" {
+		t.Fatalf("working caller read = %v", row)
+	}
+	if len(l.f.Inputs(l.owner.Address)) != 0 {
+		t.Fatal("inline read sent native input")
+	}
+}

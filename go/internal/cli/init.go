@@ -6,11 +6,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/cleanup"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
+	"github.com/douglasjarquin/sum/go/internal/lifecycle"
+	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/versions"
 	"github.com/spf13/cobra"
 )
 
@@ -84,6 +88,32 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 				activationCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 				view.Set("hook_activation", hookstatus.AutoEnableAfterInit(activationCtx, st, caller, o.runtimeRoot, o.sumctlPath()))
 				cancel()
+				tasks, err := st.AllTasks()
+				if err != nil {
+					return err
+				}
+				view.Set("contract", versions.ContractState(st))
+				view.Set("maintenance", lifecycle.Pending(st, o.sumctlPath(), tasks))
+				pendingCleanup := make([]any, 0)
+				for _, task := range tasks {
+					if pending := cleanup.Pending(task); pending != nil {
+						row := ordjson.NewObject()
+						id, _ := task.Get("id")
+						row.Set("task", id)
+						for _, key := range pending.Keys() {
+							value, _ := pending.Get(key)
+							row.Set(key, value)
+						}
+						pendingCleanup = append(pendingCleanup, row)
+					}
+				}
+				view.Set("cleanup_pending", pendingCleanup)
+				hook, err := hookstatus.SummaryOf(st, tasks)
+				if err != nil {
+					return err
+				}
+				view.Set("hook", hook)
+				view.Set("metadata", metadata.Summary(st))
 			}
 			if actualRole == "coordinator" || actualRole == "worker" {
 				endpoint := store.EndpointFromContext(caller)

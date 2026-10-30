@@ -244,7 +244,7 @@ func buildCompatibleReleaseSkills(t *testing.T, releasesRoot, sha string, worker
 		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if existing, err := os.Readlink(link); err == nil && existing == target {
+		if existing, err := os.Readlink(link); err == nil && (existing == target || name == "hc") {
 		} else if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
 		}
@@ -266,6 +266,7 @@ func buildCompatibleReleaseSkills(t *testing.T, releasesRoot, sha string, worker
 }`, sha, tree, root, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "), root)
 	writeFile(t, filepath.Join(dir, "release.json"), manifest)
 	plantNativeHelper(t, dir, workingHelper(""))
+	hctest.InstallRuntime(t, dir)
 	stateStore, err := store.Open(filepath.Join(root, ".sum"))
 	if err != nil {
 		t.Fatal(err)
@@ -279,6 +280,13 @@ func buildCompatibleReleaseSkills(t *testing.T, releasesRoot, sha string, worker
 		t.Fatal(err)
 	}
 	object := asObject(value)
+	pinHash, err := release.ContentID(filepath.Join(dir, "config/hc-release.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	filesValue, _ := object.Get("files")
+	asObject(filesValue).Set("config/hc-release.json", pinHash)
+
 	staged, _ := object.Get("staged_by")
 	instance, _ := asObject(state).Get("instance")
 	asObject(staged).Set("instance", instance)
@@ -287,6 +295,29 @@ func buildCompatibleReleaseSkills(t *testing.T, releasesRoot, sha string, worker
 	supports, _ := offered.Get("supports")
 	object.Set("contracts", contracts)
 	object.Set("supports", supports)
+	dependencies, _ := object.Get("dependencies")
+	rawHC, err := ordjson.ReadFile(filepath.Join(dir, ".local/share/hc/provenance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	asObject(dependencies).Set("hc", rawHC)
+	helperBytes, err := os.ReadFile(filepath.Join(dir, ".local/bin/sumctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	native, _ := ordjson.FromValue(map[string]any{"sumctl": map[string]any{"path": ".local/bin/sumctl", "sha256": sha256Hex(helperBytes), "platform": runtime.GOOS + "-" + runtime.GOARCH}})
+	catalog, _ := ordjson.FromValue(map[string]any{"schema": 1, "dependencies": []any{map[string]any{"id": "sumctl", "source": "go/cmd/sumctl", "version": "0.1.0", "checksum": "synthetic unit artifact", "license": "MIT", "platforms": []string{runtime.GOOS + "-" + runtime.GOARCH}, "requirements": []any{}, "role": "runtime", "owner": "sum", "contracts": map[string]any{}}}})
+	asObject(dependencies).Set("native", native)
+	asObject(dependencies).Set("inventory", catalog)
+
+	paths, _ := asObject(asObject(dependencies)).Get("tools")
+	actualPaths, _ := asObject(paths).Get("paths")
+	hcLink, err := os.Readlink(filepath.Join(dir, ".local/bin/hc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	asObject(actualPaths).Set("hc", hcLink)
+
 	if err = ordjson.WriteFile(filepath.Join(dir, "release.json"), object); err != nil {
 		t.Fatal(err)
 	}

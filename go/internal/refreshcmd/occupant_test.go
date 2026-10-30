@@ -72,6 +72,16 @@ func TestNativeRefreshClaimRejectsReplacementAndNeverReplaysUncertainty(t *testi
 	attempt := func() *ordjson.Object {
 		return attemptDelivery(s, newSnapshots(""), e.Object(), e.Cwd, "read requested revision r1", host, record, task)
 	}
+	for _, kind := range []string{"not_found", "unavailable"} {
+		f.QueueFault("terminal.get", hctest.Fault{RefuseKind: kind})
+		want := "pending-busy"
+		if kind == "not_found" {
+			want = versions.RefreshUnreachable
+		}
+		if state, _ := attempt().Get("state"); state != want {
+			t.Fatalf("%s refresh state %v, want %s", kind, state, want)
+		}
+	}
 	f.SetStatus(e.Address, "working")
 	if state, _ := attempt().Get("state"); state != "pending-busy" {
 		t.Fatalf("busy refresh state %v", state)

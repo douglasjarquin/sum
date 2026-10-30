@@ -107,7 +107,7 @@ func TestStatusUnknownFlagsAreUsageErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			stdout, stderr, err := runStatus(t, home, tc.args...)
 			if err == nil {
@@ -149,7 +149,7 @@ func TestStatusCommands(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			stdout, stderr, err := runStatus(t, home, tc.args...)
 			switch {
@@ -161,10 +161,10 @@ func TestStatusCommands(t *testing.T) {
 					t.Fatal("expected status output")
 				}
 				value := decodeObject(t, stdout)
-				// Outside a Herdr pane --live observes nothing, says so, and still returns the records view.
+				// An empty native task list completes without inventing observations.
 				if tc.live {
-					if value["live"] != false || value["live_reason"] == nil {
-						t.Fatalf("live = %v (%v), want false with a reason outside Herdr", value["live"], value["live_reason"])
+					if value["live"] != true || len(asSlice(value["tasks"])) != 0 {
+						t.Fatalf("live = %v (%v), want completed empty live view", value["live"], value["live_reason"])
 					}
 				} else if value["live"] != false {
 					t.Fatalf("live = %v, want false", value["live"])

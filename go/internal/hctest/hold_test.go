@@ -33,3 +33,17 @@ func TestHoldNextDoesNotBlockOtherNativeRecipientsAndCloseReleasesWaiter(t *test
 		t.Fatal("fixture close leaked a held request")
 	}
 }
+
+func TestExitRetainsFinishedTimestampInNativeSnapshot(t *testing.T) {
+	f := New(t)
+	f.SetTerminal(hcclient.Terminal{Address: "t1", State: "live"})
+	f.Exit("t1", 0)
+	client := f.Client()
+	terminal, err := client.Get(context.Background(), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if terminal.FinishedMS == nil {
+		t.Fatal("finished event timestamp missing from terminal snapshot")
+	}
+}

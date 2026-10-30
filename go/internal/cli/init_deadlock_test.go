@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 )
 
@@ -27,15 +28,15 @@ func TestInitAndBindDeliveryPassDoNotSelfDeadlock(t *testing.T) {
 	if err := os.Mkdir(home, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configureNativeEventsForTest(t, home, true)
-	d := &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: demoEnv(t, root, base)}
+	home = nativeTestStore(t, home).Home
+	configureNativeEventsForTest(t, home, false)
+	d := newNativeDemoLabAt(t, root, helper, base, home)
 	if got := d.ctl(true, "init")["role"]; got != "coordinator" {
 		t.Fatalf("init role = %v, want coordinator", got)
 	}
-	assertNativeEventsEnabledForTest(t, home)
+	if value := d.ctl(true, "hook", "status")["enabled"]; value != false {
+		t.Fatalf("disabled observer preference changed: %v", value)
+	}
 
 	host, err := machine.ID()
 	if err != nil {
@@ -48,8 +49,8 @@ func TestInitAndBindDeliveryPassDoNotSelfDeadlock(t *testing.T) {
  "attention": [], "evidence": [], "report": null, "notice": null, "brief": "worker task", "brief_path": "brief.md"}`,
 			id, host, host, root, questionID)
 	}
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fixture("t-aaaaaaaaaaaa", "q-aaaa"))
-	writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fixture("t-bbbbbbbbbbbb", "q-bbbb"))
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fixture("t-aaaaaaaaaaaa", "q-aaaa"))
+	home = writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fixture("t-bbbbbbbbbbbb", "q-bbbb"))
 
 	const deadline = 20 * time.Second
 	bound := func(args ...string) map[string]any {
@@ -91,13 +92,15 @@ func TestInitAndBindDeliveryPassDoNotSelfDeadlock(t *testing.T) {
 		}
 	}
 
+	attachNativeTaskCheckout(t, home, "t-aaaaaaaaaaaa")
+	attachNativeTaskCheckout(t, home, "t-bbbbbbbbbbbb")
 	// bind re-saves the parent route and pumps inline for this task's open
 	// question; it used to hold .lock across the pump and hang here.
 	assertSubmitted(bound("bind", "t-bbbbbbbbbbbb", "--parent-only"), "bind")
 
 	// init's post-registration delivery pass still owes task A's question to this
 	// pane; it used to hang while holding both .lock and .deliver.lock.
-	beforeInit := herdrCalls(t, d.base)
+	beforeInit := d.native.Calls()
 	initView := bound("init")
 	assertSubmitted(initView, "init")
 	activation, _ := initView["hook_activation"].(map[string]any)
@@ -107,27 +110,17 @@ func TestInitAndBindDeliveryPassDoNotSelfDeadlock(t *testing.T) {
 	if _, hasReconciliation := activation["reconciliation"]; hasReconciliation {
 		t.Fatalf("hook activation = %v, want no second reconciliation", activation)
 	}
-	afterInit := herdrCalls(t, d.base)
-	countCall := func(calls [][]string, command ...string) int {
+	afterInit := d.native.Calls()
+	countRuns := func(calls []hctest.Call) int {
 		count := 0
 		for _, call := range calls {
-			for start := 0; start+len(command) <= len(call); start++ {
-				matches := true
-				for i := range command {
-					if call[start+i] != command[i] {
-						matches = false
-						break
-					}
-				}
-				if matches {
-					count++
-					break
-				}
+			if call.Method == "terminal.run" {
+				count++
 			}
 		}
 		return count
 	}
-	if countCall(afterInit, "plugin", "link") != countCall(beforeInit, "plugin", "link") {
-		t.Fatalf("second init linked the hook again: before=%v after=%v", beforeInit, afterInit)
+	if countRuns(afterInit) != countRuns(beforeInit) {
+		t.Fatalf("second init launched a duplicate observer: before=%v after=%v", beforeInit, afterInit)
 	}
 }

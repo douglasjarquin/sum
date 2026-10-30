@@ -207,9 +207,6 @@ func (l *passLab) worker(session, alias string) string {
 	}
 	return id
 }
-func boundTo(alias string) *ordjson.Object {
-	return incarnation.Evidence{Terminal: "term-" + alias}.Record(store.Now())
-}
 func (l *passLab) pane(status, cwd string) map[string]any {
 	return map[string]any{"agent_status": status, "cwd": cwd}
 }

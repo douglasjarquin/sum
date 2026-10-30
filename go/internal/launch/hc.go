@@ -307,3 +307,14 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 	}
 	return nil
 }
+
+// ValidateHCInputConfig checks the known effective input configuration without
+// publishing a template or changing a harness. Future checkout-specific config
+// must still be qualified when that checkout is launched.
+func ValidateHCInputConfig(harness string, argv []string, options HCTemplateOptions) error {
+	if harness != "codex" {
+		return fmt.Errorf("no qualified native status and input contract for %s", harness)
+	}
+	_, _, err := codexDefaultKeymap(argv, options)
+	return err
+}

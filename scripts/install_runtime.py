@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -288,7 +289,7 @@ def install_hc(target, *, fetch=None, manifest=None, platform_name=None):
         raise InstallError("HC manifest does not match the selected version and protocol generation")
     pin = locked.get("targets", {}).get(key)
     expected_url = f"https://releases.herdr.dev/core/{HC_VERSION}/herdr-core-{key}.tar.gz"
-    if not isinstance(pin, dict) or pin.get("url") != expected_url or len(pin.get("sha256", "")) != 64:
+    if not isinstance(pin, dict) or pin.get("url") != expected_url or not re.fullmatch(r"[0-9a-f]{64}", str(pin.get("sha256", ""))):
         raise InstallError(f"HC manifest has no complete exact artifact pin for {key}")
     dest = target / ".deps/hc" / f"{HC_VERSION}-{platform_name}"
     link = target / ".local/bin/hc"
@@ -335,15 +336,37 @@ def install_hc(target, *, fetch=None, manifest=None, platform_name=None):
             os.rename(extract, dest)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+    if read_json(dest / "contract/manifest.json") != locked:
+        raise InstallError("Existing HC matched manifest differs from the selected release manifest")
     provenance = read_json(dest / "contract/provenance.json")
-    binary = dest / provenance.get("binary", "")
+    if (provenance.get("version") != HC_VERSION or provenance.get("generation") != 1
+            or provenance.get("platform") != platform_name
+            or provenance.get("source_commit") != "29e6d375623de40cb4820e0894aa131ba057b796"):
+        raise InstallError("Existing HC provenance identifies another release or platform")
+    relative = Path(provenance.get("binary", ""))
+    if not str(relative) or str(relative) == "." or relative.is_absolute() or ".." in relative.parts:
+        raise InstallError("Existing HC provenance binary path is invalid")
+    binary = dest / relative
+    if binary.is_symlink() or not os.access(binary, os.X_OK):
+        raise InstallError("Existing HC executable is not an executable regular file")
     if provenance.get("archive_sha256") != pin["sha256"] or not binary.is_file() or sha256_file(binary) != provenance.get("binary_sha256"):
         raise InstallError("Existing HC staging does not match its immutable artifact receipt")
     for name, key_name in (("openrpc.json", "schema_sha256"), ("manual.md", "manual_sha256")):
         if sha256_file(dest / "contract" / name) != provenance.get(key_name):
             raise InstallError(f"Existing HC {name} differs from its matched artifact receipt")
+    metadata_link = target / ".local/share/hc"
+    def preview(existing, desired):
+        if existing.is_symlink():
+            return os.readlink(existing) != link_destination(existing, desired)
+        if existing.exists():
+            raise InstallError(f"Refusing to replace non-symlink {existing}")
+        return None
+    binary_differs = preview(link, binary)
+    metadata_differs = preview(metadata_link, dest / "contract")
+    if (binary_differs is True) != (metadata_differs is True):
+        raise InstallError("HC executable and matched contract links do not select the same release; existing links preserved")
     result = link_tool(link, binary)
-    metadata = link_tool(target / ".local/share/hc", dest / "contract")
+    metadata = link_tool(metadata_link, dest / "contract")
     if metadata["differs"] != result["differs"]:
         raise InstallError("HC executable and matched contract links point to different releases")
     return {**result, "installed": True, "path": str(dest), "provenance": provenance}

@@ -5,14 +5,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"encoding/json"
+	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/release"
+	"runtime"
 )
 
 func sha256Hex(data []byte) string {
@@ -31,57 +34,63 @@ func writeReleaseFile(t *testing.T, dir, rel string, content []byte, mode os.Fil
 	}
 }
 
-// buildValidRelease creates a release directory tree at <releasesRoot>/<sha> that satisfies every check in
-// verify_release, with an empty "native"/"inventory" to skip that nested (and separately testable) branch.
+// buildValidRelease creates a controlled native bundle with a real current helper
+// and a synthetic HC executable whose matching contract is checked by subprocess.
 func buildValidRelease(t *testing.T, releasesRoot, sha string) {
 	t.Helper()
 	dir := filepath.Join(releasesRoot, sha)
-
-	requiredContents := []struct{ rel, content string }{
-		{"bin/sumctl", "#!/bin/sh\necho sumctl\n"},
-		{"bin/herdr-mesh", "#!/bin/sh\necho herdr-mesh\n"},
-		{"bin/herdr-scoped", "#!/bin/sh\necho herdr-scoped\n"},
-		{"go/cmd/sumctl/main.go", "package main\n"},
-		{"skills/sum-work/SKILL.md", "# worker\n"},
+	for name, body := range map[string]string{"bin/sumctl": "#!/bin/sh\necho sumctl\n", "go/cmd/sumctl/main.go": "package main\n", "skills/sum-work/SKILL.md": "# worker\n"} {
+		writeReleaseFile(t, dir, name, []byte(body), 0755)
 	}
-	var filesEntries []string
-	for _, entry := range requiredContents {
-		writeReleaseFile(t, dir, entry.rel, []byte(entry.content), 0o644)
-		filesEntries = append(filesEntries, fmt.Sprintf("%q: %q", entry.rel, "sha256:"+sha256Hex([]byte(entry.content))))
-	}
-	if err := os.Chmod(filepath.Join(dir, "bin", "sumctl"), 0o755); err != nil {
+	hctest.InstallRuntime(t, dir)
+	helper, err := os.ReadFile(filepath.Join(repoRoot(t), ".local/bin/sumctl"))
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	var toolPaths []string
-	for _, name := range release.CoreTools {
-		targetRel := filepath.Join("native", name)
-		writeReleaseFile(t, dir, targetRel, []byte("#!/bin/sh\n"), 0o755)
-		target := filepath.Join(dir, targetRel)
-		link := filepath.Join(dir, ".local", "bin", name)
-		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+	writeReleaseFile(t, dir, ".local/bin/sumctl", helper, 0755)
+	files := map[string]string{}
+	for _, name := range []string{"bin/sumctl", "go/cmd/sumctl/main.go", "skills/sum-work/SKILL.md", "config/hc-release.json"} {
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
 			t.Fatal(err)
 		}
+		files[name] = "sha256:" + sha256Hex(body)
+	}
+	tools := map[string]string{}
+	for _, name := range release.CoreTools {
+		if name == "hc" {
+			resolved, err := os.Readlink(filepath.Join(dir, ".local/bin/hc"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tools[name] = resolved
+			continue
+		}
+		target := filepath.Join(dir, "native", name)
+		writeReleaseFile(t, dir, filepath.Join("native", name), []byte("#!/bin/sh\n"), 0755)
+		link := filepath.Join(dir, ".local/bin", name)
 		if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
 		}
-		toolPaths = append(toolPaths, fmt.Sprintf("%q: %q", name, target))
+		tools[name] = target
 	}
-
-	manifest := fmt.Sprintf(`{
-  "schema": 1, "kind": "sum-release", "sum_version": "0.1.0",
-  "source": {"sha": %q, "tree": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", "repository": "/tmp/installation"},
-  "files": {%s},
-  "dependencies": {
-    "tools": {"pins": {}, "paths": {%s}},
-    "codegraph": {"package": "@colbymchenry/codegraph", "version": "1.5.0", "license": "MIT"},
-    "inventory": null,
-    "native": {}
-  },
-  "contracts": {}, "supports": {},
-  "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": {"machine": "m1", "installation": "/tmp/installation", "instance": null}
-}`, sha, strings.Join(filesEntries, ", "), strings.Join(toolPaths, ", "))
-	writeReleaseFile(t, dir, "release.json", []byte(manifest), 0o644)
+	offered := contract.BuildRelease()
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	inventory := map[string]any{"schema": 1, "dependencies": []any{map[string]any{"id": "sumctl", "source": "go/cmd/sumctl", "version": offered.SumVersion, "checksum": "built artifact", "license": "MIT", "platforms": []string{platform}, "requirements": []string{}, "role": "runtime", "owner": "sum", "contracts": map[string]any{}}}}
+	var hcReceipt map[string]any
+	receiptBody, err := os.ReadFile(filepath.Join(dir, ".local/share/hc/provenance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(receiptBody, &hcReceipt); err != nil {
+		t.Fatal(err)
+	}
+	manifest := map[string]any{"schema": 1, "kind": "sum-release", "sum_version": offered.SumVersion, "source": map[string]any{"sha": sha, "tree": strings.Repeat("d", 40), "repository": "/tmp/installation"}, "files": files, "contracts": offered.Contracts, "supports": offered.Supports, "staged_at": "2026-01-01T00:00:00+00:00", "staged_by": map[string]any{"machine": "m1", "installation": "/tmp/installation", "instance": nil}, "dependencies": map[string]any{"tools": map[string]any{"pins": map[string]any{}, "paths": tools}, "inventory": inventory, "native": map[string]any{"sumctl": map[string]any{"path": ".local/bin/sumctl", "platform": platform, "sha256": sha256Hex(helper)}}, "hc": hcReceipt}}
+	body, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeReleaseFile(t, dir, "release.json", body, 0644)
 }
 
 // buildInstallation creates a synthetic "installation" root: a git repo whose .sum/state.json designates it
@@ -97,9 +106,7 @@ func buildInstallation(t *testing.T) (root, home string) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home = nativeTestStore(t, home).Home
 	return root, home
 }
 
@@ -124,13 +131,20 @@ func TestReleaseList_emptyAndMixedBundles(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(releasesRoot, ".staging-ccccccccc"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		out := runRelease(t, home, []string{"release", "list"})
-		if !strings.Contains(out, validSHA) {
-			t.Fatalf("valid SHA missing: %s", out)
+		out := runRelease(t, home, []string{"--format", "json", "release", "list"})
+		view := decodeCLIMap(t, out)
+		states := map[string]any{}
+		for _, raw := range asSlice(view["releases"]) {
+			row := asMap(raw)
+			states[asString(row["sha"])] = row["ok"]
 		}
-		if !strings.Contains(out, "ok: false") && !strings.Contains(out, `"ok": false`) {
-			t.Fatalf("broken bundle should be ok=false: %s", out)
+		if states[validSHA] != true || states[brokenSHA] != false {
+			t.Fatalf("valid and broken bundle results: %v", view)
 		}
+		if len(asSlice(view["in_progress"])) != 1 {
+			t.Fatalf("staging directory lost: %v", view)
+		}
+
 	})
 }
 
@@ -185,9 +199,7 @@ func TestReleaseStage_requiresInstallationHome(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home = nativeTestStore(t, home).Home
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
 	root.SetArgs([]string{"--home", home, "release", "stage", "--ref", "HEAD"})
 	err := root.ExecuteContext(context.Background())

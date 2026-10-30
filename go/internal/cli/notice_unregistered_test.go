@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,10 +16,11 @@ func TestNoticeToUnregisteredWorkerIsNotDelivered(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "unregistered", map[string]string{"README.md": "A project.\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
-	taskID, pane := asString(task["id"]), asString(task["pane"])
+	taskID, pane := asString(task["id"]), workerAddress(task)
+	d.ctlPane(pane, true, "init")
 	d.ctlPane(pane, true, "ask", taskID, "--key", "choice", "--text", "Which way?")
 	removeWorkerRegistration(t, d.home, taskID)
-	settleFakePane(t, d.base, pane)
+	settleNativeTerminal(t, d.base, pane)
 
 	var questionID string
 	for _, item := range asSlice(d.ctl(true, "show", taskID)["questions"]) {
@@ -60,25 +60,9 @@ func removeWorkerRegistration(t *testing.T, home, taskID string) {
 	}
 }
 
-func settleFakePane(t *testing.T, base, pane string) {
+func settleNativeTerminal(t *testing.T, base, address string) {
 	t.Helper()
-	path := filepath.Join(base, "fake", "state.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	asMap(asMap(state["panes"])[pane])["agent_status"] = "idle"
-	raw, err = json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	nativeLabFor(t, base).native.SetStatus(address, "idle")
 }
 
 func assertUnregisteredNotice(t *testing.T, command string, view map[string]any) {
@@ -92,10 +76,10 @@ func assertUnregisteredNotice(t *testing.T, command string, view map[string]any)
 		t.Fatalf("%s: want one recipient row, got %v", command, view)
 	}
 	row := asMap(rows[0])
-	if asString(row["state"]) != "not-delivered" || !strings.HasPrefix(asString(row["reason"]), unregisteredWorkerReason) {
+	if asString(row["state"]) != "refused" || !strings.HasPrefix(asString(row["reason"]), unregisteredWorkerReason) {
 		t.Fatalf("%s: row %v", command, row)
 	}
-	if !strings.HasPrefix(asString(notice["error"]), unregisteredWorkerReason) {
-		t.Fatalf("%s: notice %v", command, notice)
+	if len(asSlice(row["obligations"])) != 1 {
+		t.Fatalf("%s: refused delivery lost its pending obligation: %v", command, row)
 	}
 }

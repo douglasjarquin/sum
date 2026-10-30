@@ -280,20 +280,19 @@ func TestPipelineShow_reportsEveryStageBeforeAnythingHasRun(t *testing.T) {
 }
 
 func TestVerifyAndReviewRefreshTheRecordedPipeline(t *testing.T) {
-	lab := newPublishLab(t, map[string]any{})
-
-	if _, stderr, err := runPRCLI(t, lab.home, "verify", lab.taskID, "--candidate", evidenceCandidate,
-		"--result", "pass", "--text", "ran the contract"); err != nil {
-		t.Fatalf("verify: %v stderr=%s", err, stderr)
+	v := newVerifyLab(t)
+	candidate := v.commit("NOTES.md", "candidate ready\n")
+	handoff := filepath.Join(v.base, "handoff.json")
+	if err := os.WriteFile(handoff, []byte(`{"outcome":"completed","candidate":"`+candidate+`"}`), 0600); err != nil {
+		t.Fatal(err)
 	}
+	v.workerReport(true, v.taskID, "--text", "ready", "--handoff", handoff)
+	v.ctl(true, "verify", v.taskID, "--candidate", candidate, "--execute")
+	lab := publishLab{home: v.home, taskID: v.taskID}
 	if got := pipelineRow(t, lab.pipelineRecord(t), "test")["status"]; got != "pass" {
-		t.Fatalf("test stage = %v after verify, want pass", got)
+		t.Fatalf("test stage after actual verification: %v", got)
 	}
-
-	if _, stderr, err := runPRCLI(t, lab.home, "review", lab.taskID, "--verdict", "approve",
-		"--candidate", evidenceCandidate, "--text", "approved"); err != nil {
-		t.Fatalf("review: %v stderr=%s", err, stderr)
-	}
+	v.independentReview(true, v.taskID, "--verdict", "approve", "--candidate", candidate, "--text", "approved")
 	record := lab.pipelineRecord(t)
 	if got := pipelineRow(t, record, "review")["status"]; got != "pass" {
 		t.Fatalf("review stage = %v after review, want pass", got)
@@ -392,7 +391,7 @@ func TestPipelineDocument_skipsAProjectThatDeclaresNoContract(t *testing.T) {
 
 func (lab publishLab) rewriteTask(t *testing.T, base, candidate string) {
 	t.Helper()
-	writeTaskFixture(t, lab.home, lab.taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "reported", "repository": %q, "worktree": %q,
+	lab.home = writeTaskFixture(t, lab.home, lab.taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "reported", "repository": %q, "worktree": %q,
 "questions": [], "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "ship", "branch": "sum/t-aaaaaaaaaaaa",
 "report": {"text": "done", "candidate": %q}, "evidence": []}`, lab.taskID, lab.worktree, lab.worktree, base, candidate))
 }

@@ -14,9 +14,7 @@ func TestSettings_unknownSubcommandIsGoError(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home = nativeTestStore(t, home).Home
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
 	root.SetArgs([]string{"--home", home, "settings", "explode"})
 	err := root.ExecuteContext(context.Background())
@@ -47,7 +45,7 @@ func TestSettingsUnknownFlagsAreUsageErrorsBeforeSet(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			writeSettingsFile(t, home, `{"schema": 1, "capacity": {"global": 2, "per_repository": 1}}`)
 			before := readSettingsFile(t, home)
@@ -81,10 +79,10 @@ func TestSettingsCommands(t *testing.T) {
 	}{
 		{name: "valid show", args: []string{"settings", "show"}, success: true},
 		{name: "valid show after dashdash", args: []string{"settings", "show", "--"}, success: true},
-		{name: "valid set --global", args: []string{"settings", "set", "--global", "3"}, domainErr: "Herdr pane"},
-		{name: "valid set --global=", args: []string{"settings", "set", "--global=3"}, domainErr: "Herdr pane"},
-		{name: "valid set --clear-capacity", args: []string{"settings", "set", "--clear-capacity"}, domainErr: "Herdr pane"},
-		{name: "valid set --worker-preset=", args: []string{"settings", "set", "--worker-preset=fast"}, domainErr: "Herdr pane"},
+		{name: "valid set --global", args: []string{"settings", "set", "--global", "3"}, domainErr: "HC session"},
+		{name: "valid set --global=", args: []string{"settings", "set", "--global=3"}, domainErr: "HC session"},
+		{name: "valid set --clear-capacity", args: []string{"settings", "set", "--clear-capacity"}, domainErr: "HC session"},
+		{name: "valid set --worker-preset=", args: []string{"settings", "set", "--worker-preset=fast"}, domainErr: "HC session"},
 		{name: "settings missing subcommand", args: []string{"settings"}, usage: true},
 		{name: "show extra positional", args: []string{"settings", "show", "extra"}, usage: true},
 		{name: "show unknown flag", args: []string{"settings", "show", "--unexpected"}, usage: true, unknown: true},
@@ -92,18 +90,18 @@ func TestSettingsCommands(t *testing.T) {
 		{name: "set unknown flag", args: []string{"settings", "set", "--unexpected"}, usage: true, unknown: true},
 		{name: "set missing --global value", args: []string{"settings", "set", "--global"}, usage: true},
 		{name: "set invalid --global", args: []string{"settings", "set", "--global", "nope"}, usage: true},
-		{name: "set requires pane without herdr", args: []string{"settings", "set"}, domainErr: "Herdr pane"},
-		{name: "set requires coordinator", args: []string{"settings", "set", "--global", "3"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "set requires pane without herdr", args: []string{"settings", "set"}, domainErr: "HC session"},
+		{name: "set requires coordinator", args: []string{"settings", "set", "--global", "3"}, herdr: true, domainErr: "registration identity mismatch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := writeDesignatedHome(t)
 			writeSettingsFile(t, home, `{"schema": 1, "capacity": {"global": 2, "per_repository": 1}}`)
 			if tc.herdr {
-				herdrEnv(t, home)
-				t.Setenv("HERDR_PANE_ID", "w-other:p1")
+				nativeEnv(t, home)
+				t.Setenv("SUM_ROLE", "developer")
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			before := readSettingsFile(t, home)
 			stdout, stderr, err := runSettings(t, home, tc.args...)

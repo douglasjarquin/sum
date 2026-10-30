@@ -39,8 +39,9 @@ type subscriber struct {
 }
 type terminal struct {
 	hcclient.Terminal
-	outlive bool
-	inputs  []string
+	outlive    bool
+	inputs     []string
+	screenText *string
 }
 type requestHold struct {
 	method, address string
@@ -155,6 +156,17 @@ func (f *Fixture) SetTerminal(t hcclient.Terminal) {
 	}
 	f.terminals[t.Address] = &terminal{Terminal: clone(t)}
 	f.eventLocked(t.Address, "created", t)
+}
+
+// SetScreen supplies visible native terminal.read output independently from inputs.
+func (f *Fixture) SetScreen(address, text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	t := f.terminals[address]
+	if t == nil {
+		panic("unknown fixture terminal " + address)
+	}
+	t.screenText = &text
 }
 func (f *Fixture) SetStatus(address, state string) {
 	f.mu.Lock()
@@ -504,7 +516,11 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 		}
 		return v, "", nil
 	case "terminal.read":
-		return hcclient.ReadResult{Text: strings.Join(t.inputs, "\n"), Complete: true, How: "screen"}, "", nil
+		text := strings.Join(t.inputs, "\n")
+		if t.screenText != nil {
+			text = *t.screenText
+		}
+		return hcclient.ReadResult{Text: text, Complete: true, How: "screen"}, "", nil
 	case "terminal.wait":
 		v := hcclient.WaitResult{Terminal: address, Reason: "timeout", Turn: t.Turn, Children: []hcclient.WaitResult{}}
 		if t.State == "finished" {
