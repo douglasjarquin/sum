@@ -167,7 +167,7 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		value, readErr := ordjson.ReadFile(pendingPath)
 		if readErr == nil {
 			pending, _ = value.(*ordjson.Object)
-		} else if !os.IsNotExist(readErr) {
+		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return nil, readErr
 		}
 	}
@@ -320,6 +320,13 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		owner.Set("incarnation", observed.Record(store.Now()))
 		owner.Set("native_receipt", receiptObj)
 		owner.Set("native_template", qualified)
+		if pending == nil {
+			var provenance nativeTemplate
+			if err = decode(qualified, &provenance); err != nil {
+				return nil, err
+			}
+			owner.Set("launch", existingCoordinatorLaunch(provenance.Spec))
+		}
 		if pending != nil {
 			launchValue, _ := pending.Get("launch")
 			owner.Set("launch", launchValue)
@@ -361,6 +368,9 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 				return nil, err
 			}
 		}
+		if role == "worker" {
+			reconcileWorkerInit(task, attempt, receiptObj)
+		}
 		body := ordjson.NewObject()
 		body.Set("attempt", endpoint.Attempt)
 		body.Set("native_receipt", receiptObj)
@@ -379,7 +389,8 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 	view.Set("role", role)
 	view.Set("task", taskValue(endpoint.Task))
 	view.Set("endpoint", endpoint.Object())
-	view.Set("environment", map[string]string{"SUM_CORE_ID": endpoint.CoreID, "SUM_ROLE": endpoint.Role, "SUM_ATTEMPT": endpoint.Attempt, "SUM_BINDING_GENERATION": fmt.Sprint(endpoint.BindingGeneration)})
+	environment, _ := ordjson.FromValue(map[string]string{"SUM_CORE_ID": endpoint.CoreID, "SUM_ROLE": endpoint.Role, "SUM_ATTEMPT": endpoint.Attempt, "SUM_BINDING_GENERATION": fmt.Sprint(endpoint.BindingGeneration)})
+	view.Set("environment", environment)
 	view.Set("registration", registration)
 	view.Set("coordinator", owner)
 	view.Set("registered", true)
@@ -535,6 +546,24 @@ func qualifyTask(s *store.Store, task *ordjson.Object, e store.Endpoint, t hccli
 	if previous, err := s.Registration(e); err != nil {
 		return nil, nil, err
 	} else if previous != nil {
+		if _, hasReceipt := previous.Get("native_receipt"); !hasReceipt {
+			if _, attemptHasReceipt := attempt.Get("native_receipt"); attemptHasReceipt {
+				return nil, nil, fmt.Errorf("receipt-bound attempt cannot adopt an unreceipted registration")
+			}
+			// terminal.run can finish and save its exact registration before the agent
+			// initializes. The sealed intent checks above authorize only this first init;
+			// they grant no business authority until its new application receipt is saved.
+			if recorded, ok := previous.Get("incarnation"); ok && recorded != nil {
+				var baseline incarnation.NativeEvidence
+				if err = decode(recorded, &baseline); err != nil {
+					return nil, nil, err
+				}
+				if !baseline.Endpoint.SameAuthority(e.Native()) || (baseline.PID != 0 && (t.PID == nil || baseline.PID != *t.PID)) || (baseline.Foreground != nil && !reflect.DeepEqual(baseline.Foreground, t.Foreground)) {
+					return nil, nil, fmt.Errorf("unreceipted launch registration process differs from the current terminal")
+				}
+			}
+			return attempt, templateValue, nil
+		}
 		recorded, _ := previous.Get("incarnation")
 		receipt, err := app.NativeReceipt(previous)
 		if err != nil {
@@ -560,4 +589,24 @@ func incarnationView(judged *incarnation.Verdict, judgedRole, role string, obser
 
 func nativeProgramMatches(t hcclient.Terminal, spec launch.HCTemplate) bool {
 	return t.Template != nil && *t.Template == spec.Name && t.Submit != nil && *t.Submit == "tab" && reflect.DeepEqual(t.Argv, []string{"sh", "-c", templateCommand(spec)})
+}
+
+func reconcileWorkerInit(task, attempt, receipt *ordjson.Object) {
+	errorText := asString(task, "error")
+	startupError := errorText == "Native terminal created without a submitted first message; inspect and explicitly redeliver this attempt. Do not launch again." || errorText == "Created terminal does not attest the qualified template and Tab submit; inspect without relaunching." || strings.HasPrefix(errorText, "Launch/prompt uncertain:")
+	if status := asString(task, "status"); status == "starting" || (status == "needs-attention" && startupError) {
+		task.Set("status", "running")
+	}
+	if startupError {
+		task.Set("error", nil)
+	}
+	value, _ := attempt.Get("native_launch")
+	native, _ := value.(*ordjson.Object)
+	if native != nil {
+		reconciled := ordjson.NewObject()
+		reconciled.Set("state", "receipt-confirmed")
+		reconciled.Set("receipt", receipt)
+		reconciled.Set("at", store.Now())
+		native.Set("application_reconciliation", reconciled)
+	}
 }

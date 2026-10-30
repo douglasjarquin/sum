@@ -289,6 +289,13 @@ func TestNativeReviewerPendingLaunchReceipt(t *testing.T) {
 	submit := "tab"
 	terminal := hcclient.Terminal{Address: endpoint.Address, CreatedMS: 1, State: "live", Labels: labels, Cwd: root, Argv: []string{"sh", "-c", templateCommand(spec)}, Template: &template, Submit: &submit, PID: &pid, Foreground: &hcclient.Foreground{PID: 102, Name: "codex", Argv: spec.Argv, Cwd: root}}
 	f.SetTerminal(terminal)
+	registration, err := s.Register(endpoint, "reviewer", endpoint.Task, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = app.NativeReceipt(registration); err == nil {
+		t.Fatal("pre-init launch registration has application authority")
+	}
 	view, err := InitDesignated(DesignatedOpts{RuntimeRoot: root, Store: s, Ctx: endpoint.Object(), Role: "reviewer", Task: endpoint.Task})
 	if err != nil {
 		t.Fatal(err)

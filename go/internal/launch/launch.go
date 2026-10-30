@@ -386,6 +386,9 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 			errText := asString(func() any { v, _ := root.Get("error"); return v }())
 			return nil, fmt.Errorf("Cannot determine the coordinator's own harness (%s). Pass --harness explicitly or save a worker default with `settings set --worker-harness`.", errText)
 		}
+		if args.SameAsRoot && asString(func() any { value, _ := root.Get("model"); return value }()) == "" {
+			return nil, fmt.Errorf("The coordinator's model is not exposed or explicitly recorded; --same-as-you cannot prove a matching model. Pass --harness and --model explicitly.")
+		}
 		harness = h
 		if args.SameAsRoot {
 			source.Set("harness", "same-as-you")
