@@ -41,20 +41,21 @@ type terminal struct {
 	inputs  []string
 }
 type Fixture struct {
-	Socket      string
-	CoreID      string
-	mu          sync.Mutex
-	listener    net.Listener
-	connections map[net.Conn]bool
-	subscribers map[*subscriber]bool
-	terminals   map[string]*terminal
-	faults      map[string][]Fault
-	calls       []Call
-	templates   []hcclient.TemplateInfo
-	seq         uint64
-	next        uint64
-	closed      bool
-	wg          sync.WaitGroup
+	Socket          string
+	CoreID          string
+	mu              sync.Mutex
+	listener        net.Listener
+	connections     map[net.Conn]bool
+	subscribers     map[*subscriber]bool
+	terminals       map[string]*terminal
+	faults          map[string][]Fault
+	calls           []Call
+	templates       []hcclient.TemplateInfo
+	templateSubmits map[string]string
+	seq             uint64
+	next            uint64
+	closed          bool
+	wg              sync.WaitGroup
 }
 
 var methods = []string{"hello", "terminal.run", "terminal.get", "terminal.list", "terminal.send", "terminal.read", "terminal.wait", "terminal.label", "terminal.kill", "terminal.interrupt", "terminal.rm", "events.subscribe", "templates.list"}
@@ -373,6 +374,21 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 			argv = []string{}
 		}
 		value := hcclient.Terminal{Address: address, Labels: labels, Argv: argv, Cwd: args.Cwd, State: "live", CreatedMS: f.next, Screen: "exact", Cols: 80, Rows: 24, Keep: args.Keep, RM: args.RM, Notify: !args.NoNotify, DieWithParent: !args.OutliveParent}
+
+		if len(args.Argv) > 0 {
+			for _, template := range f.templates {
+				if template.Name == args.Argv[0] {
+					name := template.Name
+					value.Template = &name
+					value.Argv = []string{"sh", "-c", template.Command}
+					if submit, ok := f.templateSubmits[name]; ok {
+						key := submit
+						value.Submit = &key
+					}
+					break
+				}
+			}
+		}
 		if args.Parent != "" {
 			value.Parent = &args.Parent
 		}
@@ -510,4 +526,15 @@ func (f *Fixture) SetTemplates(templates []hcclient.TemplateInfo) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.templates = append([]hcclient.TemplateInfo{}, templates...)
+}
+
+// SetTemplateSubmit configures the fixture's template file contents separately
+// from templates.list, whose upstream result does not expose the submit key.
+func (f *Fixture) SetTemplateSubmit(name, key string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.templateSubmits == nil {
+		f.templateSubmits = map[string]string{}
+	}
+	f.templateSubmits[name] = key
 }

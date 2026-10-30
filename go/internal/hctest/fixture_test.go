@@ -111,3 +111,17 @@ func TestParentExitAndNonKeptIdentity(t *testing.T) {
 		t.Fatal("finished worker became shell")
 	}
 }
+
+func TestTemplateRunAttestsNativeShellCommand(t *testing.T) {
+	f := hctest.New(t)
+	f.SetTemplates([]hcclient.TemplateInfo{{Name: "sum-qualified", Command: "'/codex' '--no-daemon'"}})
+	f.SetTemplateSubmit("sum-qualified", "tab")
+	c := f.Client()
+	v, err := c.Run(context.Background(), hcclient.RunParams{Argv: []string{"sum-qualified", "pointer"}, OutliveParent: true, NoNotify: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Template == nil || *v.Template != "sum-qualified" || v.Submit == nil || *v.Submit != "tab" || len(v.Argv) != 3 || v.Argv[0] != "sh" || v.Argv[2] != "'/codex' '--no-daemon'" {
+		t.Fatalf("template attestation: %#v", v)
+	}
+}
