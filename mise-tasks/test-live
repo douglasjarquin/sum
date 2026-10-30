@@ -27,7 +27,6 @@ done
 incarnation=()
 smoke=()
 if [[ -n "$artifact" ]]; then
-  # One invocation must preserve both proofs instead of replacing the first.
   prefix="${artifact%.json}"
   incarnation=(--artifact "${prefix}-incarnation.json")
   smoke=(--artifact "${prefix}-smoke.json")

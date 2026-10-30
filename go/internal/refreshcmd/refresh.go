@@ -190,7 +190,7 @@ func attemptDelivery(s *store.Store, sn *snapshots, endpoint *ordjson.Object, ex
 	if !record.unchanged(s) {
 		return fail("pending-unreachable", fmt.Errorf("recipient binding changed; nothing was sent"))
 	}
-	// This sidecar records only the effect claim, never another payload queue.
+
 	key := sha256Text(fmt.Sprintf("%s:%s:%s", store.RegistrationKey(recipient.Endpoint), recipient.Endpoint.Attempt, record.revision))
 	path := filepath.Join(s.Home, "deliver", "refresh-"+key+".json")
 	unlock, err := s.Lock()
@@ -933,8 +933,6 @@ func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator 
 	return result, nil
 }
 
-// ReconcileCoordinator delivers only an already-requested operating revision.
-// It neither regenerates policy nor adopts it on the coordinator's behalf.
 func ReconcileCoordinator(s *store.Store, scope store.Endpoint, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
 	owner, err := s.Owner()
 	if err != nil || owner == nil {

@@ -226,7 +226,7 @@ func TestReviewerLaunchPolicyPointerAndKnownUnsentOpeningAreDurable(t *testing.T
 	if asString(again["error"]) == "" || nativeRunCount(d) != before {
 		t.Fatal("unsent opening triggered automatic duplicate")
 	}
-	// Model the already created harness before explicit recovery; init follows delivery.
+
 	terminal := nativeReviewerTerminal(t, d, address)
 	var spec launch.HCTemplate
 	raw, _ := json.Marshal(asMap(asMap(reviewer["native_template"])["spec"]))

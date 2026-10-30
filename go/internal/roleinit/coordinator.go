@@ -24,8 +24,6 @@ type CoordinatorStartOpts struct {
 	Launch         launch.ResolveArgs
 }
 
-// StartCoordinator is an explicit lifecycle operation, using an already running
-// core. Persisted intent precedes native I/O; only init grants coordinator authority.
 func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Object, error) {
 	if !s.Designated() {
 		return nil, fmt.Errorf("coordinator start requires the designated installation")
@@ -122,8 +120,7 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 		return nil, err
 	}
 	defer unlock()
-	// Init may have completed while terminal.run waited for readiness. Preserve its
-	// saved endpoint and receipt when recording this independent transport outcome.
+
 	value, err := ordjson.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -169,8 +166,6 @@ func verifyLoadedTemplate(ctx context.Context, client hcclient.Client, spec laun
 	return fmt.Errorf("selected HC core does not expose the exact qualified template command")
 }
 
-// A native response can be lost after the application has initialized. Preserve
-// transport uncertainty while separately reconciling the exact saved receipt.
 func reconcileCoordinatorReceipt(record *ordjson.Object, expected store.Endpoint) {
 	receipt, err := app.NativeReceipt(record)
 	if err != nil {

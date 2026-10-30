@@ -165,8 +165,7 @@ func TestNativeObserverReconcilesEventsDirtyCommitsAndMissedSnapshots(t *testing
 	f.QueueFault("terminal.list", hctest.Fault{LoseResponse: true})
 	f.SetStatus(e.Address, "idle")
 	await(t, func() bool { return len(f.Inputs(e.Address)) == 1 })
-	// The native status is already idle before the next obligation exists. The
-	// Sum-only commit signal must expose it without another native status event.
+
 	f.SetStatus(e.Address, "idle")
 	f.QueueFault("terminal.list", hctest.Fault{LoseResponse: true})
 	task.Set("questions", []any{question("q1"), question("q2")})
@@ -193,7 +192,7 @@ func TestNativeObserverReconcilesEventsDirtyCommitsAndMissedSnapshots(t *testing
 	if len(f.Inputs(e.Address)) != 2 {
 		t.Fatal("reconnect replayed a submitted obligation")
 	}
-	// Actual native blocked/finished edges persist bounded observations and do not replay.
+
 	f.SetScreen(e.Address, "\x1b[31mPermission needed: allow write?\x1b[0m\x00")
 	f.QueueFault("terminal.get", hctest.Fault{LoseResponse: true})
 	f.SetStatus(e.Address, "blocked")

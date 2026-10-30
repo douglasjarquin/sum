@@ -22,8 +22,6 @@ func newID() (string, error) {
 	return "e-" + hex.EncodeToString(buf), nil
 }
 
-// Endpoint retains the complete native binding on newly appended evidence.
-// Historical records are never rewritten by this projection.
 func Endpoint(endpoint *ordjson.Object) *ordjson.Object {
 	if endpoint == nil {
 		return nil

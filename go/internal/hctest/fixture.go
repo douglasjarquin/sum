@@ -1,5 +1,3 @@
-// Package hctest supplies a native generation-one HC socket fixture.
-// It models the published API boundary, never a legacy Herdr CLI.
 package hctest
 
 import (
@@ -23,8 +21,6 @@ type Call struct {
 	Params map[string]any
 }
 
-// Fault affects the next matching request. A lost response happens after its
-// native effect; RefuseKind rejects before any input or launch effect.
 type Fault struct {
 	Delay        time.Duration
 	LoseResponse bool
@@ -159,7 +155,6 @@ func (f *Fixture) SetTerminal(t hcclient.Terminal) {
 	f.eventLocked(t.Address, "created", t)
 }
 
-// SetScreen supplies visible native terminal.read output independently from inputs.
 func (f *Fixture) SetScreen(address, text string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -392,8 +387,7 @@ func (f *Fixture) serve(c net.Conn) {
 		if replyHold != nil {
 			close(replyHold.entered)
 			disconnected := make(chan struct{})
-			// Ordinary HC calls close this connection after their one operation. A
-			// client cancellation closes it too, releasing this post-effect waiter.
+
 			go func() { var b [1]byte; _, _ = c.Read(b[:]); close(disconnected) }()
 			defer func() { c.Close(); <-disconnected }()
 			select {
@@ -411,7 +405,7 @@ func (f *Fixture) serve(c net.Conn) {
 		if enc.Encode(response) != nil {
 			return
 		}
-		if sub != nil { // Plain subscribe dedicates the connection to notifications.
+		if sub != nil {
 			done := make(chan struct{})
 			go func() { defer close(done); _, _ = rReader(r, c) }()
 			for {
@@ -428,7 +422,6 @@ func (f *Fixture) serve(c net.Conn) {
 	}
 }
 
-// Reading detects a disconnected subscriber without a fixture polling goroutine.
 func rReader(_ *bufio.Scanner, c net.Conn) (int, error) { var b [1]byte; return c.Read(b[:]) }
 func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c net.Conn) (any, string, *subscriber) {
 	address, _ := p["terminal"].(string)
@@ -602,7 +595,6 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 	return nil, "method_not_found", nil
 }
 
-// AssertNoForce checks the input boundary independently from domain receipts.
 func (f *Fixture) AssertNoForce(t testing.TB) {
 	t.Helper()
 	for _, c := range f.Calls() {
@@ -618,8 +610,6 @@ func (f *Fixture) SetTemplates(templates []hcclient.TemplateInfo) {
 	f.templates = append([]hcclient.TemplateInfo{}, templates...)
 }
 
-// SetTemplateSubmit configures the fixture's template file contents separately
-// from templates.list, whose upstream result does not expose the submit key.
 func (f *Fixture) SetTemplateSubmit(name, key string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -629,8 +619,6 @@ func (f *Fixture) SetTemplateSubmit(name, key string) {
 	f.templateSubmits[name] = key
 }
 
-// HoldNext synchronizes one native method boundary without holding the fixture
-// mutex. Closing the fixture releases every waiter and never executes its effect.
 func (f *Fixture) HoldNext(method, address string) (<-chan struct{}, func()) {
 	hold := &requestHold{method: method, address: address, entered: make(chan struct{}), release: make(chan struct{})}
 	f.mu.Lock()
@@ -639,8 +627,6 @@ func (f *Fixture) HoldNext(method, address string) (<-chan struct{}, func()) {
 	return hold.entered, func() { hold.once.Do(func() { close(hold.release) }) }
 }
 
-// HoldReplyNext holds an ordinary operation's response after its effect, outside
-// the fixture mutex. Client cancellation or Close releases the response waiter.
 func (f *Fixture) HoldReplyNext(method, address string) (<-chan struct{}, func()) {
 	if method == "hello" || method == "events.subscribe" {
 		panic("reply holds require an ordinary terminal operation")

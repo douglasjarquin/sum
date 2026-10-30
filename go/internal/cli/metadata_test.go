@@ -242,8 +242,6 @@ func TestMetadataInboxOpen_isRefusedBeforeNativeEffects(t *testing.T) {
 	}
 }
 
-// Legacy callback transports no longer enter reconciliation. Native event scope
-// and application-receipt reconciliation are proved by the observer socket tests.
 func TestHookEventLegacyCallbackIsRefusedWithoutEffects(t *testing.T) {
 	l := newMetaLab(t)
 	before := snapshotTree(t, l.home)

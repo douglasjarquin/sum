@@ -51,7 +51,7 @@ Scoped tasks stay available for iteration: `mise run test` (suites only), `mise 
 `mise run web:test` also runs the Playwright end-to-end suite; it needs the browser once from `mise run web:deps`, so it is manual in the feature maps.
 `mise run lint` is the project's declared lint task (`mise-tasks/lint`); the delivery pipeline Lint gate runs it.
 `mise run test-live` is the explicit isolated pinned-HC smoke test and is not part of the aggregate because it needs the pinned HC binary; `mise run doctor` observes the installation and is not a check.
-With `--artifact /path/proof.json`, the native runner retains separate `/path/proof-incarnation.json` and `/path/proof-smoke.json` records and does not overwrite an existing base `proof.json`.
+With `--artifact /path/proof.json`, the native runner retains separate `/path/proof-incarnation.json` and `/path/proof-smoke.json` records and does not overwrite an existing base `/path/proof.json`.
 An explicitly selected missing `--hc` binary is a refusal, never a PATH fallback.
 Offline Python runner tests validate routing/selection; actual native execution still requires its own candidate-bound evidence.
 

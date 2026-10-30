@@ -32,7 +32,6 @@ func fixture(t *testing.T) *store.Store {
 	return s
 }
 
-// Native routes are saved data. Snapshot reads must never contact their socket.
 func savedEndpoint(s *store.Store, role, address string) store.Endpoint {
 	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: "m-lab", CoreID: "core-lab", Session: "lab", Socket: filepath.Join(s.Home, "hc.sock"), Address: address, Role: role, Attempt: role + "-attempt", BindingGeneration: 1, CreatedMS: 100}
 	if role == "worker" {

@@ -130,7 +130,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 		t.Fatalf("unqualified current worker changed runtime selection: %v", refusedQualification)
 	}
 	assertFleetReadOnly(t, f.native.Calls()[qualificationCalls:])
-	// Restore exact qualified input before activation; refresh failure is introduced only at its own delivery boundary.
+
 	f.native.SetTerminal(qualifiedFailedRefresh)
 	applied := f.ctl(true, "update", "apply", "--ref", sha1, "--no-fetch")
 	if applied["changed"] != true || asString(asMap(applied["default"])["sha"]) != sha1 {
@@ -188,7 +188,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	if sends != 9 {
 		t.Fatalf("refresh sends=%d, want nine eligible workers", sends)
 	}
-	// The refused refresh records no receipt; later activations again require a currently qualified recipient.
+
 	f.native.SetTerminal(qualifiedFailedRefresh)
 	oldRuntime := f.readVersions(asString(tasks["old-runtime-client"]["id"]))
 	if asString(oldRuntime["active"]) != "r1" || asString(oldRuntime["requested"]) != "r2" {
@@ -212,8 +212,7 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	sha2 := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nUpdate two: reread decisions before continuing.\n")
 	f.stageFixture(sha2)
 	f.ctl(true, "update", "apply", "--ref", sha2, "--no-fetch")
-	// Stop the real helper at an observed native send boundary, after durable
-	// refresh intent is recorded. Retrying must preserve ambiguity without replay.
+
 	target := tasks["cooperative-b"]
 	initialInputs := len(f.native.Inputs(workerAddress(target)))
 	entered, release := f.native.HoldNext("terminal.send", workerAddress(target))
@@ -736,9 +735,6 @@ func pinnedProcedure(t *testing.T, brief string) string {
 	return match[1]
 }
 
-// stageFixture builds a complete immutable unit artifact from an approved lab
-// commit. Its synthetic HC contract is explicit fixture evidence; this never
-// upgrades an offline unqualified bundle or claims published-artifact proof.
 func (f *fleetLab) stageFixture(sha string) {
 	f.t.Helper()
 	dir := filepath.Join(f.root, ".local", "releases", sha)

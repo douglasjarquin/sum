@@ -27,14 +27,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// TestMeasureCoordinationPasses records successful stdout bytes, wall time, task reads, and helper/HC/gh calls of the fast coordination
-// commands over synthesized homes of 1, 12, and 100 tasks (one third archived; active tasks mixing open questions,
-// unapplied answers, reports, open PRs, and merged cleanup-pending tasks), with healthy fakes and with a slow
-// dependency. It runs only when SUM_MEASURE_OUT names an output directory; SUM_MEASURE_BINS adds binaries to compare
-// as name=path[,name=path] (the candidate helper is always measured). Counts of task reads and subprocesses come from
-// one strace'd run per cell when strace is available. The integrated 12-worker replay (TestQuietCoordinationReplay)
-// records its own prompt, byte and call measurements over records it produced through real CLI operations; when it
-// wrote replay.json into the same SUM_MEASURE_OUT, raw.json points at it so the two are read together.
 func TestMeasureCoordinationPasses(t *testing.T) {
 	out := os.Getenv("SUM_MEASURE_OUT")
 	if out == "" {
@@ -184,8 +176,6 @@ type measureRun struct {
 	stderr string
 }
 
-// newMeasureFixture describes a schema-two native workload. Every sample builds
-// an independent generation and socket fixture before the timed command starts.
 func newMeasureFixture(t *testing.T, root string, n int, scenario string) *measureFixture {
 	t.Helper()
 	active := 0

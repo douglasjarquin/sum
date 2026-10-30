@@ -681,7 +681,7 @@ func observeTerminal(task *ordjson.Object, address, runtimeRoot string) (*ordjso
 	row.Set("state", "observed")
 	row.Set("cwd", terminal.Cwd)
 	row.Set("ownership", "unknown")
-	// A matching cwd is a reference only, never process ownership or stop authority.
+
 	if address == endpoint.Address && terminal.CreatedMS == endpoint.CreatedMS {
 		row.Set("ownership", "owned")
 		row.Set("endpoint", endpoint.Object())

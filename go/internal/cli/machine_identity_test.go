@@ -20,9 +20,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// Native core and terminal identity must keep the stable machine component
-// across host renames and refuse authority on a different machine.
-
 const (
 	thisHostRaw  = "11111111111111111111111111111111"
 	otherHostRaw = "22222222222222222222222222222222"
@@ -270,8 +267,7 @@ func TestMachineIdentity_aRestoredBackupFromAnotherMachineIsRefused(t *testing.T
 	if _, err := os.Stat(filepath.Join(exported, "context.json")); !os.IsNotExist(err) {
 		t.Fatal("records backup included coordinator ownership")
 	}
-	// Deliberately import only domain records into a fresh native generation on the other host.
-	// This does not reinterpret any task endpoint as a local execution.
+
 	onHost(t, otherHostRaw, "dev")
 	restored := writeDesignatedHome(t)
 	copyTree(t, filepath.Join(exported, "tasks"), filepath.Join(restored, "tasks"))

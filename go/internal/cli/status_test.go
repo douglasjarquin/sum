@@ -161,7 +161,7 @@ func TestStatusCommands(t *testing.T) {
 					t.Fatal("expected status output")
 				}
 				value := decodeObject(t, stdout)
-				// An empty native task list completes without inventing observations.
+
 				if tc.live {
 					if value["live"] != true || len(asSlice(value["tasks"])) != 0 {
 						t.Fatalf("live = %v (%v), want completed empty live view", value["live"], value["live_reason"])

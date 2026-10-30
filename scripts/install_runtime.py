@@ -278,7 +278,6 @@ def hc_binary(root):
 
 
 def install_hc(target, *, fetch=None, manifest=None, platform_name=None):
-    """Stage an exact published HC without starting a core or changing its config."""
     target = Path(target)
     platform_name = platform_name or native_platform()
     key = HC_TARGETS.get(platform_name)
@@ -293,7 +292,6 @@ def install_hc(target, *, fetch=None, manifest=None, platform_name=None):
         raise InstallError(f"HC manifest has no complete exact artifact pin for {key}")
     dest = target / ".deps/hc" / f"{HC_VERSION}-{platform_name}"
     link = target / ".local/bin/hc"
-    # Never replace a live tool or conceal an existing customization.
     if link.exists() and not link.is_symlink():
         raise InstallError(f"Refusing to replace non-symlink {link}")
     if not dest.exists():

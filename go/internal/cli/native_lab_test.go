@@ -44,8 +44,6 @@ func nativeTestStore(t *testing.T, home string) *store.Store {
 	return s
 }
 
-// newNativeDemoLab binds a complete coordinator receipt to a real JSON-RPC
-// socket, while keeping every binary, configuration and ledger in the lab.
 func newNativeDemoLab(t *testing.T, root, helper, base string) *demoLab {
 	t.Helper()
 	return newNativeDemoLabAt(t, root, helper, base, filepath.Join(base, "state"))
@@ -153,8 +151,6 @@ func workerAddress(record map[string]any) string {
 	return asString(record["address"])
 }
 
-// callerEnv selects only a recorded native endpoint. An explicit init models
-// the harness becoming observable and runs the real receipt-producing command.
 func (d *demoLab) callerEnv(address string, args []string) map[string]string {
 	d.t.Helper()
 	var endpoint map[string]any
@@ -236,8 +232,6 @@ func (d *demoLab) independentReview(check bool, args ...string) map[string]any {
 	return d.ctlPane(address, check, append([]string{"review"}, args...)...)
 }
 
-// seedNativeWorker supplies static ledger scenarios with complete native
-// identity. Lifecycle tests use real start/init commands instead.
 func seedNativeWorker(t *testing.T, d *demoLab, s *store.Store, task *ordjson.Object) store.Endpoint {
 	t.Helper()
 	host, err := s.Machine()

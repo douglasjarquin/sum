@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-// AwaitReady waits for an actual helper startup receipt and a fresh matching
-// process observation. Native creation alone remains submitted, never active.
 func AwaitReady(parent context.Context, s *store.Store) (*ordjson.Object, error) {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()

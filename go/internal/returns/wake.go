@@ -97,17 +97,20 @@ type WakeRef struct {
 
 // WakeCovered is one presentation-consumed identity; it is pruned only after canonical closure is established.
 type WakeCovered struct {
-	Task     string `json:"task"`
-	ID       string `json:"id"`
-	Revision string `json:"revision,omitempty"`
+	InputRevision string `json:"input_revision,omitempty"`
+	Task          string `json:"task"`
+	ID            string `json:"id"`
+	Revision      string `json:"revision,omitempty"`
 }
 
 type WakeReceipt struct {
-	Fingerprint string `json:"fingerprint"`
-	Generation  int    `json:"generation"`
-	At          string `json:"at"`
-	Result      string `json:"result"`
-	Delivery    string `json:"delivery,omitempty"`
+	Boundary    *Boundary     `json:"boundary,omitempty"`
+	Accepted    []WakeCovered `json:"accepted,omitempty"`
+	Fingerprint string        `json:"fingerprint"`
+	Generation  int           `json:"generation"`
+	At          string        `json:"at"`
+	Result      string        `json:"result"`
+	Delivery    string        `json:"delivery,omitempty"`
 }
 
 // WakeDecision is one decision (an open question owed to this coordinator) a prompt named, by task, obligation and
@@ -804,9 +807,9 @@ func buildBoundary(inst installation, w *Wake, included, omitted []WakeCovered) 
 
 func normalizeCovered(items []WakeCovered) []WakeCovered {
 	out := []WakeCovered{}
-	seen := map[[3]string]bool{}
+	seen := map[[4]string]bool{}
 	for _, c := range items {
-		k := [3]string{c.Task, c.ID, c.Revision}
+		k := [4]string{c.Task, c.ID, c.Revision, c.InputRevision}
 		if seen[k] {
 			continue
 		}
@@ -820,7 +823,10 @@ func normalizeCovered(items []WakeCovered) []WakeCovered {
 		if out[i].ID != out[j].ID {
 			return out[i].ID < out[j].ID
 		}
-		return out[i].Revision < out[j].Revision
+		if out[i].Revision != out[j].Revision {
+			return out[i].Revision < out[j].Revision
+		}
+		return out[i].InputRevision < out[j].InputRevision
 	})
 	return out
 }
@@ -995,6 +1001,10 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
+	actor, err := app.ObserveTaskActor(s, ctx)
+	if err != nil {
+		return nil, err
+	}
 	caller, err := callerEndpoint(s, ctx)
 	if err != nil {
 		return nil, err
@@ -1009,6 +1019,9 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		return nil, err
 	}
 	defer unlock()
+	if err = s.CheckWritable(); err != nil {
+		return nil, err
+	}
 	w, status := readWake(s, inst, caller)
 	switch status.State {
 	case WakeBlocked:
@@ -1090,6 +1103,9 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 			open[taskID] = nil
 			return nil, "task record is unreadable: " + err.Error()
 		}
+		if err := app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
+			return nil, err.Error()
+		}
 		obligations, err := OpenObligations(s, task)
 		if err != nil {
 			open[taskID] = nil
@@ -1108,6 +1124,7 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		return ids, ""
 	}
 	rejected := []any{}
+	accepted := []WakeCovered{}
 	existing := map[[2]string]bool{}
 	for _, c := range w.Covered {
 		existing[[2]string{c.Task, c.ID}] = true
@@ -1117,6 +1134,12 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		if why == "" && !ids[c.ID] {
 			why = "not an open obligation of that task owed to this coordinator"
 		}
+		if why == "" {
+			task, err := s.ReadTask(c.Task)
+			if err != nil || (c.InputRevision != "" && ObligationRevision(task, c.ID) != c.InputRevision) {
+				why = "business input revision changed since boundary"
+			}
+		}
 		if why != "" {
 			row := ordjson.NewObject()
 			row.Set("task", c.Task)
@@ -1125,6 +1148,7 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 			rejected = append(rejected, row)
 			continue
 		}
+		accepted = append(accepted, c)
 		if existing[[2]string{c.Task, c.ID}] {
 			continue
 		}
@@ -1134,7 +1158,7 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 	now := store.Now()
 	w.Episode.Phase = WakeConsumed
 	w.Episode.ConsumedAt = now
-	w.AddReceipt(WakeReceipt{Fingerprint: fingerprint, Generation: w.Generation, At: now, Result: "consumed", Delivery: w.Episode.Delivery})
+	w.AddReceipt(WakeReceipt{Fingerprint: fingerprint, Generation: w.Generation, At: now, Result: "consumed", Delivery: w.Episode.Delivery, Boundary: b, Accepted: accepted})
 	persisted, err := CommitWake(s, w)
 	if err != nil {
 		return nil, fmt.Errorf("the receipt could not be persisted: %v", err)
@@ -1498,6 +1522,7 @@ func currentCoverage(host machine.Identity, endpoint [3]string, tasks []showTask
 			c := WakeCovered{Task: t.id, ID: fmt.Sprint(id)}
 			if ref, ok := o.Get("ref"); ok && ref != nil {
 				c.Revision = fmt.Sprint(ref)
+				c.InputRevision = ObligationRevision(t.task, c.ID)
 			}
 			included = append(included, c)
 		}

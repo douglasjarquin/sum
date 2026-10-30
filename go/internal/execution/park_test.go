@@ -615,7 +615,6 @@ func (l *lab) identity() machine.Identity {
 	return host
 }
 
-// A replaced creation never proves the recorded program exited.
 func TestParkNativeReusedAddressKeepsCapacity(t *testing.T) {
 	l := newLab(t)
 	l.writeSettings(1, 1)

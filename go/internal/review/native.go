@@ -174,8 +174,6 @@ func decodeObject(obj *ordjson.Object, out any) error {
 	return json.Unmarshal(raw, out)
 }
 
-// The intent is durable before HC I/O. A prior attempt, including an uncertain
-// attempt without an address, must be reconciled explicitly rather than replayed.
 func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Object, endpoint store.Endpoint, reviewer *ordjson.Object, params hcclient.RunParams) (*ordjson.Object, error) {
 	candidate := evidenceview.CurrentCandidate(task)
 	snapshot := reviewerCandidateState(task)
@@ -513,8 +511,6 @@ func validateNativeReview(s *store.Store, taskID, candidate, tool string, ctx *o
 	return nil
 }
 
-// Redeliver is an explicit recovery of one known-unsent opening message. It
-// never creates a terminal and never grants reviewer authority without init.
 func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt string) (*ordjson.Object, error) {
 	if attempt == "" {
 		return nil, fmt.Errorf("explicit reviewer launch attempt required")
@@ -649,8 +645,6 @@ func validBoundKickoff(kickoff *ordjson.Object, endpoint store.Endpoint) bool {
 	return kickoff != nil && asString(kickoff, "kind") == "reviewer-kickoff" && asString(kickoff, "source") == "native-rebind" && asString(kickoff, "candidate") != "" && endpoint.Native().SameAuthority(saved.Native()) && endpoint.Socket == saved.Socket && endpoint.Session == saved.Session
 }
 
-// reviewerCandidateState compares saved candidate/checkout facts without Git I/O
-// while the ledger lock is held. Live Git observations happen before the lock.
 func reviewerCandidateState(task *ordjson.Object) string {
 	snapshot := ordjson.NewObject()
 	for _, key := range []string{"worktree", "checkout_intent", "repository", "branch", "base_sha", "report", "evidence"} {

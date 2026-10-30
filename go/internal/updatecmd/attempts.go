@@ -12,8 +12,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// unresolvedEffects never rewrites or retries effects when selecting code. A
-// receipt or explicit reconciliation must resolve them from the serving runtime.
 func unresolvedEffects(s *store.Store, tasks []*ordjson.Object) []any {
 	var blocked []any
 	for _, task := range tasks {
@@ -43,23 +41,8 @@ func unresolvedEffects(s *store.Store, tasks []*ordjson.Object) []any {
 				}
 			}
 		}
-		sidecar, err := returns.ReadReturns(s, id)
-		if err != nil {
-			blocked = append(blocked, fmt.Sprintf("task %s notification attempts cannot be validated: %v", id, err))
-			continue
-		}
-		raw, _ := sidecar.Get("deliveries")
-		rows, _ := raw.([]any)
-		for _, raw := range rows {
-			row := asObject(raw)
-			if row == nil {
-				blocked = append(blocked, fmt.Sprintf("task %s has an unreadable notification attempt", id))
-				continue
-			}
-			state := effectField(row, "state")
-			if state == "in-flight" || state == "uncertain" {
-				blocked = append(blocked, fmt.Sprintf("task %s has an unresolved %s notification attempt; reconcile it from the serving runtime before activation", id, state))
-			}
+		if err := returns.PendingDeliveryEffects(s, task); err != nil {
+			blocked = append(blocked, fmt.Sprintf("task %s notification effects: %v", id, err))
 		}
 	}
 	return blocked
@@ -89,9 +72,6 @@ func effectField(o *ordjson.Object, key string) string {
 	return asString(v)
 }
 
-// A saved matching application init can resolve an uncertain transport effect.
-// Keep the original launch/send diagnosis intact; status and native Started
-// fields cannot stand in for this exact attempt and binding receipt.
 func nativeReceiptResolvesLaunch(s *store.Store, task, attempt *ordjson.Object) bool {
 	if effectField(attempt, "state") != "running" {
 		return false

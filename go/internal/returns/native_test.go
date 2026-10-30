@@ -76,7 +76,6 @@ func TestNativeObservationDefersUnsafeStatusAndReplacement(t *testing.T) {
 	}
 }
 
-// The fixture exercises the real Pump ledger boundary over the native socket.
 type nativeLab struct {
 	t     *testing.T
 	f     *hctest.Fixture
@@ -270,7 +269,7 @@ func TestNativeQualifiedDoneUsesOrdinarySendAndRejectsChangedProvenance(t *testi
 	if err = recipient.Qualify(record); err != nil {
 		t.Fatal(err)
 	}
-	l.f.SetStatus(endpoint.Address, "working") // qualified Codex queues this raced submission
+	l.f.SetStatus(endpoint.Address, "working")
 	if _, err = recipient.Send(context.Background(), "follow up"); err != nil {
 		t.Fatal(err)
 	}

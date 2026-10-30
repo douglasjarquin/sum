@@ -27,12 +27,7 @@ type StopProof struct {
 	Outcome     string
 	Reason      string
 	Observation *ordjson.Object
-	// Orphans lists surviving processes provably bound to the task checkout
-	// (cwd inside it or argv naming it, as with a detached
-	// `serve --mcp --path <checkout>` daemon), populated only when the worker
-	// terminal is verified absent or finished. The attempt
-	// outcome stays unknown for callers like park; cleanup may stop orphans
-	// once exact terminal and program death are proven.
+
 	Orphans []proc.BoundProcess
 }
 
@@ -180,8 +175,6 @@ func stoppedServices(s *store.Store, task *ordjson.Object, extra func(*ordjson.O
 	return stopped(extra)
 }
 
-// Non-kept HC terminals never become disposable endpoint shells.
-// A live reviewer process remains a checkout writer and blocks release.
 func EndpointShells(host machine.Identity, runtimeRoot string, task *ordjson.Object) map[int]bool {
 	return map[int]bool{}
 }
@@ -302,10 +295,6 @@ func normalizeRecordedArgv(argv any) []string {
 	return out
 }
 
-// NativeProgramStopped proves the saved program ended independently of capacity
-// state. Cleanup must call it even after an attempt was released: a released
-// ledger reservation cannot prove native process death or authorize history rm.
-// Checkout writers and resource reservations remain the caller's responsibility.
 func NativeProgramStopped(s *store.Store, endpoint store.Endpoint) StopProof {
 	if err := endpoint.Validate(); err != nil {
 		return unknown(err.Error())

@@ -33,6 +33,9 @@ func (o *rootOptions) openStore(command string) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	if st.RecordsOnly() && !guard.ReadOnlyCommands[command] {
+		return nil, store.ErrHistoricalReadOnly
+	}
 	if err := guard.Candidate(o.installRoot, st, command); err != nil {
 		return nil, err
 	}
@@ -424,7 +427,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := ask.Resolve(st, args[0], args[1])
+			view, err := ask.Resolve(st, args[0], args[1], app.OptionalContext(o.installRoot))
 			if err != nil {
 				return err
 			}

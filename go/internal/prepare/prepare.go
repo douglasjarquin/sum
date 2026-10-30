@@ -370,8 +370,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	return completePreparation(s, args.RuntimeRoot, args.SumctlPath, tid, true)
 }
 
-// Reconcile finishes only the original saved preparation. It never starts a
-// terminal, advances the base, resets work, or creates another task identity.
 func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath, taskID string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
@@ -387,8 +385,6 @@ type preparationClaim struct {
 	versions  string
 }
 
-// The task lease serializes only this task's preparation. Git never holds the
-// installation ledger lock, and another task can keep making progress.
 func preparationLease(s *store.Store, tid string) (func() error, error) {
 	if err := s.CheckWritable(); err != nil {
 		return nil, err
@@ -574,8 +570,7 @@ func completePreparation(s *store.Store, runtimeRoot, sumctlPath, tid string, in
 		verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{Repository: claim.intent.Repository, Project: asObject(policyField(claim.task, "project")), Launch: launchSpec, RuntimeRoot: runtimeRoot, Worktree: checkout.Path, GitRoot: checkout.GitRoot, Head: checkout.Head, Branch: checkout.Branch, GitCommonDir: checkout.CommonDir})
 		verifycontract.SealPolicy(policy)
 	}
-	// Materialization can take time. Re-observe the original Git identity before
-	// the final ledger CAS, still without holding the ledger lock.
+
 	checkout, err = taskcheckout.Verify(context.Background(), claim.intent, true)
 	if err != nil {
 		return nil, err

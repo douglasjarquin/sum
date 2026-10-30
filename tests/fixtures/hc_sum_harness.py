@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Model-free Codex-shaped TUI fixture for the real-HC Sum composition canary.
-
-The version string permits existing qualification code to exercise its ordinary
-path. This fixture is not evidence that Codex itself is qualified.
-"""
 import json
 import os
 from pathlib import Path
@@ -21,7 +16,6 @@ if "--version" in sys.argv:
 
 output = Path(os.environ["SUM_CANARY_OUTPUT"])
 output.mkdir(parents=True, exist_ok=True)
-# HC's shell environment must not choose a different Python for helper children.
 os.environ["PATH"] = os.pathsep.join((str(output.parent / "fixture-bin"), str(Path(sys.executable).parent), os.environ.get("PATH", "")))
 role = os.environ["SUM_ROLE"]
 address = os.environ["HC_TERMINAL_ID"]
@@ -114,7 +108,6 @@ def process(text):
             foreground_ready()
             record("init", call(["init"]))
         else:
-            # Native notices are logged; they are never interpreted as authority.
             with (output / (address + "-notices.jsonl")).open("a") as stream:
                 stream.write(json.dumps({"text": text}) + "\n")
     except Exception as error:
@@ -136,7 +129,7 @@ try:
         if not data:
             break
         for byte in data:
-            if byte == 9:  # The qualified HC template's submit key.
+            if byte == 9:
                 text = bytes(pending).replace(b"\x1b[200~", b"").replace(b"\x1b[201~", b"").decode()
                 pending.clear()
                 process(text)

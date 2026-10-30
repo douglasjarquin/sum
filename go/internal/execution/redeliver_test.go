@@ -120,8 +120,7 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 	if err = endpoint.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	// Model native creation/process evidence without creating an application
-	// receipt. The receipt tests below invoke actual worker init separately.
+
 	for _, terminal := range fixture.Terminals() {
 		if terminal.Address == endpoint.Address {
 			program := uint32(200000)
@@ -250,8 +249,7 @@ func TestRedeliverRevalidatesReceiptLaunchFactsAndMaintenanceAtClaim(t *testing.
 				t.Fatal("redelivery never observed template")
 			}
 			if kind == "init receipt checkpoint" {
-				// Init writes this exact registration receipt before its task transition.
-				// Model a crash at that durable checkpoint: task generation is unchanged.
+
 				other, err := store.Open(l.s.Root)
 				if err != nil {
 					t.Fatal(err)

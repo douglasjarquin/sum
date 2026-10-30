@@ -57,19 +57,10 @@ func Pending(task *ordjson.Object) *ordjson.Object {
 	return nil
 }
 
-// RefusePendingEffects keeps uncertain native submissions reviewable instead of
-// silently ending their obligation by archiving the task.
 func RefusePendingEffects(s *store.Store, taskID string) error {
-	record, err := returns.ReadReturns(s, taskID)
+	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return err
 	}
-	for _, raw := range asList(func() any { v, _ := record.Get("deliveries"); return v }()) {
-		delivery := asObject(raw)
-		switch stringField(delivery, "state") {
-		case "in-flight", "uncertain", "unknown":
-			return fmt.Errorf("native delivery %s still has an unresolved effect", stringField(delivery, "id"))
-		}
-	}
-	return nil
+	return returns.PendingDeliveryEffects(s, task)
 }

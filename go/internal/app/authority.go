@@ -14,9 +14,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// TaskActor is public runtime evidence observed before acquiring the state lock.
-// CheckTaskRole rechecks the ledger binding under that lock before any mutation.
-// Its fields are private so callers cannot manufacture successful observations.
 type TaskActor struct {
 	endpoint     store.Endpoint
 	terminal     hcclient.Terminal
@@ -97,8 +94,6 @@ func ObserveTaskActor(s *store.Store, ctx *ordjson.Object) (*TaskActor, error) {
 	return actor, nil
 }
 
-// CheckTaskRole does no HC I/O. The caller holds the state lock and supplies the
-// task just reread under that lock. Historical pane records grant no role.
 func CheckTaskRole(s *store.Store, task *ordjson.Object, actor *TaskActor, roles ...string) error {
 	if actor == nil || task == nil {
 		return fmt.Errorf("current native task actor required")

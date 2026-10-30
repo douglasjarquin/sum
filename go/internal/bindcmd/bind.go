@@ -58,9 +58,6 @@ func absent(err error) bool {
 	return json.Unmarshal(rpc.Data, &data) == nil && data.Kind == "not_found"
 }
 
-// ReviewerNativeStopped proves the exact old native terminal and process ended.
-// Surviving writers block replacement; only the current receipt-bound worker
-// process and its observed descendants can be excluded.
 func ReviewerNativeStopped(ctx context.Context, s *store.Store, task, old *ordjson.Object, successors ...store.Endpoint) (*ordjson.Object, error) {
 	endpoint := store.EndpointFromContext(old)
 	if err := endpoint.Validate(); err != nil {
@@ -318,8 +315,6 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 	return current, nil
 }
 
-// reviewerCandidateState is a pure ledger projection for the state-lock CAS.
-// Git is observed before locking; concurrent reports or checkout changes force a retry.
 func reviewerCandidateState(task *ordjson.Object) string {
 	snapshot := ordjson.NewObject()
 	for _, key := range []string{"worktree", "checkout_intent", "repository", "branch", "base_sha", "report", "evidence"} {

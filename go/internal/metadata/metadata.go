@@ -413,8 +413,6 @@ func rootTokens(snapshot inboxview.Snapshot, active int) map[string]string {
 	return map[string]string{"sum_inbox": inboxToken(snapshot), "sum_tasks": tasks}
 }
 
-// Native labels project saved facts. They grant no task authority and supply no
-// receipt. Each mutation revalidates the current binding and public process.
 type pass struct {
 	s     *store.Store
 	meta  *ordjson.Object
@@ -460,7 +458,7 @@ func (p *pass) project(ctx context.Context, endpoint store.Endpoint, tokens map[
 			return fail(err)
 		}
 	}
-	// A saved identical projection performs no runtime calls.
+
 	if !p.force && prior != nil && store.EndpointFromContext(asObject(get(prior, "endpoint"))).Native().SameAuthority(endpoint.Native()) && reflect.DeepEqual(recordTokens(prior), labels) {
 		row.Set("outcome", "unchanged")
 		return row
@@ -475,7 +473,7 @@ func (p *pass) project(ctx context.Context, endpoint store.Endpoint, tokens map[
 	if err != nil {
 		return fail(err)
 	}
-	// Native observation for projection may be busy; input eligibility is irrelevant.
+
 	recipient := &returns.NativeRecipient{Endpoint: endpoint, Terminal: terminal}
 	unlock, err := p.s.Lock()
 	if err != nil {

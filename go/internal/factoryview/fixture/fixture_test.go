@@ -54,14 +54,11 @@ func normalizedFixtureState(t *testing.T, s *store.Store, path string) []byte {
 	if root, ok := state["root"]; ok && root != s.Root {
 		t.Fatalf("generation points at %v, want %s", root, s.Root)
 	}
-	// Only each independent authority's generation and physical path vary.
-	// Preserve the original byte layout and every other field in the comparison.
+
 	data = bytes.ReplaceAll(data, []byte(s.Generation), []byte("<GENERATION>"))
 	return bytes.ReplaceAll(data, []byte(s.Root), []byte("<ROOT>"))
 }
 
-// Fixture records remain byte-stable across isolated native homes. Physical
-// generation identities and root back-pointers remain independently valid.
 func TestWriteStandardIsStable(t *testing.T) {
 	t.Setenv("SUM_NOW", "2026-01-01T00:00:00+00:00")
 	firstRoot, secondRoot := t.TempDir(), t.TempDir()

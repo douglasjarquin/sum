@@ -206,10 +206,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	}
 	var orphansStopped []any
 	if len(asList(func() any { v, _ := plan.Get("blockers"); return v }())) > 0 && orphansAreOnlyBlockers(plan) {
-		// The only thing holding this cleanup is a set of processes whose owner
-		// native owner and original program are verified dead. Stop each one explicitly,
-		// verify exit, and take one fresh inspection; a survivor leaves the named
-		// blockers exactly where they were.
+
 		stopped, stopErr := stopOrphans(task, plan)
 		if stopErr != nil {
 			return nil, stopErr
@@ -290,8 +287,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 		removed.Set("orphans_stopped", orphansStopped)
 	}
 	resources := asObject(func() any { v, _ := plan.Get("resources"); return v }())
-	// Observe outside the ledger lock. The saved exact intent excludes admission
-	// of new task effects while the task maintenance lock excludes another cleanup.
+
 	fresh, err := s.ReadTask(args.Task)
 	if err != nil {
 		return nil, err
@@ -306,7 +302,7 @@ func Run(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Args) (*o
 	if err = claimCleanupEffects(s, fresh, freshPlan, intent, mergedHead); err != nil {
 		return nil, err
 	}
-	// The ledger lock is released before either runtime or Git I/O.
+
 	if err = removeTaskTerminals(s, fresh); err != nil {
 		return nil, err
 	}
@@ -503,12 +499,6 @@ func closeReviewerOnly(s *store.Store, task, ctx *ordjson.Object, runtimeRoot st
 	return out, nil
 }
 
-// intentMatches compares the exact native endpoint, Git checkout, merge evidence,
-// and recorded execution
-// attempts that fresh inspection just produced. When it does, a previously
-// interrupted apply may continue; when it does not, the fresh plan replaces the
-// saved intent so a stale snapshot can never wedge the task or authorize removal
-// of resources it no longer describes.
 func intentMatches(saved *ordjson.Object, task, plan *ordjson.Object, mergedHead string, attempts any) bool {
 	if !taskWorker(task).Native().SameAuthority(store.EndpointFromContext(asObject(func() any { v, _ := saved.Get("worker_endpoint"); return v }())).Native()) {
 		return false
@@ -604,10 +594,6 @@ func settleAnsweredQuestions(s *store.Store, taskID string, ids []any, ctx *ordj
 	return t, nil
 }
 
-// orphansAreOnlyBlockers reports whether every remaining blocker is a live
-// writer bound to the checkout whose exact native owner is verified absent.
-// Every other blocker keeps the refuse path; live recorded owners and their
-// descendants never become termination candidates.
 func orphansAreOnlyBlockers(plan *ordjson.Object) bool {
 	orphans := asList(func() any { v, _ := plan.Get("orphans"); return v }())
 	if len(orphans) == 0 {
@@ -626,11 +612,6 @@ func orphansAreOnlyBlockers(plan *ordjson.Object) bool {
 	return true
 }
 
-// stopOrphans terminates processes the inspection plan proved are orphans:
-// bound to the checkout while every recorded terminal owner is dead.
-// One SIGTERM per process, then a re-scan; anything still alive (sum never
-// force-kills) keeps its reservation and leaves a fresh intent for the next
-// bounded pass.
 func stopOrphans(task, plan *ordjson.Object) ([]any, error) {
 	worktree := stringField(task, "worktree")
 	if worktree == "" {
@@ -674,10 +655,6 @@ func stopOrphans(task, plan *ordjson.Object) ([]any, error) {
 	return nil, fmt.Errorf("Cleanup terminated orphan processes in %s but pid %v is still alive; the reservation stays held and the intent is refreshed for the next pass", worktree, pid)
 }
 
-// adoptCheckout asks Git to remove the registered checkout after safe proof. It re-verifies registration and
-// cleanliness at removal time, then asks git to remove the worktree without
-// force; the branch is kept like every other cleanup, and every failure leaves
-// the checkout untouched and the intent saved for the next bounded pass.
 func adoptCheckout(task *ordjson.Object) error {
 	worktree := stringField(task, "worktree")
 	repository := stringField(task, "repository")
@@ -787,7 +764,7 @@ func releaseCleanupReservations(s *store.Store, taskID, runtimeRoot string, deta
 	}
 	var releases []release
 	stamp := store.Now()
-	// Native/process observations run outside the ledger transaction.
+
 	for _, row := range append([]*ordjson.Object{execVal.Worker}, execVal.Verifiers...) {
 		state := stringField(row, "state")
 		if state == "released" {
@@ -835,8 +812,6 @@ func releaseCleanupReservations(s *store.Store, taskID, runtimeRoot string, deta
 	return s.SaveTask(current)
 }
 
-// MaintenanceLock serializes explicit task terminal maintenance and cleanup.
-// It is independent of the ledger lock and remains held across bounded effects.
 func MaintenanceLock(s *store.Store, taskID string) (func() error, error) {
 	return cleanupLock(s, taskID)
 }

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Isolated published-HC lab support; no model, user socket or implicit start."""
 from __future__ import annotations
 
 import argparse
@@ -103,7 +102,6 @@ class Events:
 class Lab:
     def __init__(self, binary=None, artifact=None):
         self.binary = selected_binary(binary)
-        # No automatic finalizer: uncertain cores must retain their state and socket route.
         self.root = Path(tempfile.mkdtemp(prefix="shc-", dir="/tmp"))
         self.session = "sum-test-" + uuid.uuid4().hex[:8]
         self.env = {key: value for key, value in os.environ.items() if key in ("PATH", "LANG", "LC_ALL", "TERM", "TMPDIR")}
@@ -135,7 +133,6 @@ class Lab:
             self.summary["core_id"] = self.core_id
             return self
         except BaseException as error:
-            # __exit__ is not called when __enter__ fails.
             self.summary["startup_error"] = str(error)
             self._finish(error)
             raise
@@ -227,7 +224,6 @@ class Lab:
             except BaseException as failure:
                 failures.append(failure)
         try:
-            # Never stop a core whose permanent identity was not established.
             if not self.core_id:
                 raise RuntimeError("scratch core identity not established; refusing teardown")
             if self.call("hello", generation=1)["core"]["id"] != self.core_id:
@@ -249,7 +245,6 @@ class Lab:
         except BaseException as failure:
             failures.append(failure)
             self.summary.update(outcome="failed", retained_scope=str(self.root), evidence_error=str(failure))
-            # The local scope remains the diagnostic when an external artifact cannot be written.
             try:
                 (self.root / "evidence.json").write_text(json.dumps({**self.summary, "records": self.records}, indent=2) + "\n")
             except OSError:

@@ -1,4 +1,3 @@
-// Package hcclient implements the published HC generation-one JSON-RPC API.
 package hcclient
 
 import "encoding/json"
@@ -92,8 +91,6 @@ type RunParams struct {
 	Timeout       *float64          `json:"timeout,omitempty"`
 }
 
-// SendParams intentionally exposes no force or raw key bypass.
-// An omitted If is reserved by Sum's caller for a qualified Done queue path.
 type SendParams struct {
 	Terminal string   `json:"terminal"`
 	Text     string   `json:"text"`
@@ -151,7 +148,6 @@ type SubscribeResult struct {
 	Channel   *uint32    `json:"channel,omitempty"`
 }
 
-// Notification retains the native payload, including event-specific fields.
 type Notification struct {
 	Method string
 	Params json.RawMessage

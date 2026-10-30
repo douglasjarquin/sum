@@ -13,6 +13,7 @@ import (
 // interrupted, or replaced-occupant episode conservatively. Consume and reconcile are coordinator-only, judged from
 // the caller's Herdr context exactly as `attention --seen` is.
 func (o *rootOptions) addWakeCommands(root *cobra.Command) {
+	o.addDeliveryCommands(root)
 	wakeCmd := &cobra.Command{
 		Use:                "wake",
 		DisableSuggestions: true,

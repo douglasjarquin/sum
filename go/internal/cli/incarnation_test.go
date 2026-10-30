@@ -29,7 +29,10 @@ func TestIncarnation_aRestoredPaneUnderANewServerDoesNotInheritTheCoordinator(t 
 		t.Fatal(err)
 	}
 	d.setEnv("SUM_CORE_ID", "replacement-core")
-	for _, args := range [][]string{{"init"}, {"init", "--role", "coordinator"}, {"settings", "set", "--global", "3"}} {
+	if view := d.ctl(true, "init"); view["role"] != "developer" || view["registered"] != false || view["endpoint"] != nil {
+		t.Fatalf("replacement core inherited native identity: %v", view)
+	}
+	for _, args := range [][]string{{"init", "--role", "coordinator"}, {"settings", "set", "--global", "3"}} {
 		result := d.ctl(false, args...)
 		if asString(result["error"]) == "" {
 			t.Fatalf("replacement core accepted %v: %v", args, result)
@@ -92,8 +95,11 @@ func TestIncarnation_aLegacyCoordinatorRecordNeedsProof(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result := d.ctl(false, "init"); !strings.Contains(asString(result["error"]), "receipt") {
-		t.Fatalf("unreceipted owner: %v", result)
+	if view := d.ctl(true, "init"); view["role"] != "developer" || view["registered"] != false || view["endpoint"] != nil {
+		t.Fatalf("unreceipted owner inherited native authority: %v", view)
+	}
+	if result := d.ctl(false, "init", "--role", "coordinator"); !strings.Contains(asString(result["error"]), "receipt") {
+		t.Fatalf("explicit unreceipted coordinator: %v", result)
 	}
 	after, err := os.ReadFile(path)
 	if err != nil {
@@ -137,7 +143,10 @@ func TestIncarnation_anUnreachableBackendIsNotIdentityProof(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.setEnv("HC_SOCKET", filepath.Join(d.base, "absent.sock"))
-	for _, args := range [][]string{{"init"}, {"init", "--role", "coordinator", "--reclaim"}, {"settings", "set", "--global", "3"}} {
+	if view := d.ctl(true, "init"); view["role"] != "developer" || view["registered"] != false || view["endpoint"] != nil {
+		t.Fatalf("unavailable socket inherited native identity: %v", view)
+	}
+	for _, args := range [][]string{{"init", "--role", "coordinator", "--reclaim"}, {"settings", "set", "--global", "3"}} {
 		if result := d.ctl(false, args...); asString(result["error"]) == "" {
 			t.Fatalf("unreachable socket accepted %v", args)
 		}

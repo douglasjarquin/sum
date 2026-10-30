@@ -69,8 +69,7 @@ func TestMigrationRequiresExclusionAndPreservesEvidence(t *testing.T) {
 	if _, err = s.ReadTask("t-0123456789ab"); err != nil {
 		t.Fatal(err)
 	}
-	// An old Store process has the original path already cached and can write it
-	// after publication. It cannot touch the new physical generation.
+
 	os.WriteFile(filepath.Join(root, "tasks", "t-0123456789ab", "task.json"), []byte("old paused writer"), 0600)
 	got, _ = os.ReadFile(filepath.Join(s.Tasks, "t-0123456789ab", "task.json"))
 	if string(got) != string(original) {
@@ -132,5 +131,71 @@ func TestPublicationJournalCanFinishAfterPointerSwitch(t *testing.T) {
 	}
 	if recovered.Phase != "published" || recovered.Generation != result.Generation {
 		t.Fatal("publication was not recovered")
+	}
+}
+
+func TestPublicationRecoveryPreservesPostCutoverWrites(t *testing.T) {
+	root, _ := legacy(t)
+	result, err := Migrate(context.Background(), Options{Home: root, Exclusion: &lease{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Phase = "publishing"
+	result.PublishedAt = ""
+	if err = writeJournal(root, result); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := current.ReadTask("t-0123456789ab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Set("post_cutover", "legitimate progress")
+	if err = current.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(current.Tasks, "t-0123456789ab", "task.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := Migrate(context.Background(), Options{Home: root, Exclusion: &lease{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(filepath.Join(current.Tasks, "t-0123456789ab", "task.json"))
+	if resumed.Phase != "published" || string(before) != string(after) {
+		t.Fatal("recovery rewrote selected live records")
+	}
+}
+func TestPublicationRecoveryRejectsWrongPointerAndTamperedExport(t *testing.T) {
+	for _, kind := range []string{"wrong generation", "tampered export"} {
+		t.Run(kind, func(t *testing.T) {
+			root, _ := legacy(t)
+			result, err := Migrate(context.Background(), Options{Home: root, Exclusion: &lease{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.Phase = "publishing"
+			if err = writeJournal(root, result); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "wrong generation" {
+				pointer, _ := readObject(filepath.Join(root, "state.json"))
+				pointer.Set("generation", "g-ffffffffffffffffffffffff")
+				if err = ordjson.WriteFile(filepath.Join(root, "state.json"), pointer); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err = os.WriteFile(filepath.Join(result.Export, "tasks", "t-0123456789ab", "task.json"), []byte("tampered immutable export"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = Migrate(context.Background(), Options{Home: root, Exclusion: &lease{}}); err == nil {
+				t.Fatal("invalid publication evidence accepted")
+			}
+		})
 	}
 }

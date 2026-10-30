@@ -93,8 +93,6 @@ func ResumeNote(taskID string) string {
 	return "pane closed, resume via execution resume " + taskID
 }
 
-// ClosedEndpoint judges only a complete native application binding. Historical
-// pane strings are readable history and never authority for an HC terminal.
 func ClosedEndpoint(task *ordjson.Object, endpoint store.Endpoint) bool {
 	if endpoint.Validate() != nil {
 		return false

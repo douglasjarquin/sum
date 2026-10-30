@@ -1,4 +1,3 @@
-// Package taskcheckout owns Git checkout isolation independently of the terminal runtime.
 package taskcheckout
 
 import (
@@ -16,8 +15,6 @@ import (
 var taskPattern = regexp.MustCompile(`^t-[a-f0-9]+$`)
 var commitPattern = regexp.MustCompile(`^[a-f0-9]{40}([a-f0-9]{24})?$`)
 
-// Intent must be persisted in the task before Create is called.
-// Its path stays outside writable ledger generations so migration never copies a checkout.
 type Intent struct {
 	Repository string `json:"repository"`
 	Path       string `json:"path"`
@@ -58,7 +55,7 @@ func validate(i Intent) error {
 	if !filepath.IsAbs(i.Repository) || !filepath.IsAbs(i.Path) || filepath.Clean(i.Path) != i.Path || i.Path == i.Repository || !commitPattern.MatchString(i.BaseSHA) || !strings.HasPrefix(i.Branch, "sum/") || !taskPattern.MatchString(strings.TrimPrefix(i.Branch, "sum/")) || filepath.Base(i.Path) != strings.TrimPrefix(i.Branch, "sum/") {
 		return fmt.Errorf("invalid persisted checkout intent")
 	}
-	// Existing path components must be real directories; never follow an injected link.
+
 	for p := i.Path; ; p = filepath.Dir(p) {
 		info, err := os.Lstat(p)
 		if err == nil {
@@ -103,8 +100,6 @@ func registered(ctx context.Context, i Intent) (bool, error) {
 	return false, nil
 }
 
-// Create reconciles Git registration before acting. It never resets, forces,
-// prunes, removes or automatically substitutes a branch or checkout.
 func Create(ctx context.Context, i Intent) (Evidence, error) {
 	if err := validate(i); err != nil {
 		return Evidence{}, err
@@ -139,8 +134,6 @@ func canonicalGitPath(cwd, value string) (string, error) {
 	return filepath.EvalSymlinks(filepath.Clean(value))
 }
 
-// Verify requires initial HEAD equality only while reconciling creation.
-// Later recovery permits legitimate commits while preserving repository/branch ownership.
 func Verify(ctx context.Context, i Intent, initial bool) (Evidence, error) {
 	if err := validate(i); err != nil {
 		return Evidence{}, err
@@ -190,8 +183,6 @@ func Verify(ctx context.Context, i Intent, initial bool) (Evidence, error) {
 	return Evidence{Path: i.Path, GitRoot: root, CommonDir: common, Branch: branch, Head: head}, nil
 }
 
-// Resolve an existing ancestor before sealing intent (macOS /var and /tmp are
-// system symlinks). After sealing, validate rejects any path substitution.
 func futurePath(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {

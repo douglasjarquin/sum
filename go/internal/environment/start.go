@@ -741,9 +741,6 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	return out, nil
 }
 
-// HC returns creation before its foreground snapshot is necessarily available.
-// Follow-up observations retain the exact returned creation, program and argv;
-// they never adopt another terminal or synthesize status readiness.
 func serviceProcessGroup(pid int) (int, error) {
 	result, err := proc.Run([]string{"ps", "-p", strconv.Itoa(pid), "-o", "pgid="}, "", 3*time.Second, true, nil)
 	if err != nil {
@@ -971,7 +968,7 @@ func stopService(s *store.Store, task, service *ordjson.Object, timeout int, run
 	running, _ := view.Get("running")
 	action := "none"
 	if running == true {
-		// Persist the single interrupt claim before input; retries observe without replay.
+
 		claimed, current, err := claimServiceInterrupt(s, task, service)
 		if err != nil {
 			return nil, err

@@ -29,12 +29,13 @@ const SumVersion = "0.1.0"
 var taskIDPattern = regexp.MustCompile(`^t-[a-f0-9]{12}$`)
 
 type Store struct {
-	Root       string
-	Generation string
-	readOnly   bool
-	Home       string
-	Tasks      string
-	Sessions   string
+	Root        string
+	Generation  string
+	readOnly    bool
+	recordsOnly bool
+	Home        string
+	Tasks       string
+	Sessions    string
 
 	machine *machine.Identity
 	locks   lockRanks
@@ -42,7 +43,6 @@ type Store struct {
 
 func Open(home string) (*Store, error) { return open(home, false) }
 
-// OpenHistorical is an explicit saved-evidence reader, never a writable backend.
 func OpenHistorical(home string) (*Store, error) { return open(home, true) }
 
 func open(home string, historical bool) (*Store, error) {
@@ -65,20 +65,24 @@ func open(home string, historical bool) (*Store, error) {
 	if !ok {
 		return nil, fmt.Errorf("state.json is not a JSON object")
 	}
+	if records, _ := state.Get("records_only"); records == true {
+		s.recordsOnly = true
+		s.readOnly = true
+	}
 	if !schemaMatches(state) {
 		if historical && number(state, "schema") == 1 {
 			return s, nil
 		}
 		return nil, fmt.Errorf("unsupported state schema; preserve the original and use explicit migration or a historical reader")
 	}
-	if text(state, "backend") != "hc" {
+	if backend := text(state, "backend"); backend != "hc" && !(backend == "records" && s.recordsOnly) {
 		return nil, fmt.Errorf("unsupported state backend")
 	}
 	generation, _ := state.Get("generation")
 	g, _ := generation.(string)
 	rootValue, _ := state.Get("root")
 	rootPath, _ := rootValue.(string)
-	if rootPath != "" { // A helper pinned to the physical generation still checks the stable authority pointer.
+	if rootPath != "" {
 		s.Root = rootPath
 		if !filepath.IsAbs(rootPath) || resolved != filepath.Join(rootPath, "generations", g) {
 			return nil, fmt.Errorf("invalid generation root")
@@ -97,8 +101,17 @@ func open(home string, historical bool) (*Store, error) {
 	if err = s.checkGeneration(); err != nil {
 		return nil, err
 	}
-	if _, err = os.Stat(filepath.Join(s.Home, "state.json")); err != nil {
-		return nil, fmt.Errorf("generation state unavailable: %w", err)
+	headerValue, headerErr := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
+	if headerErr != nil {
+		return nil, fmt.Errorf("generation state unavailable: %w", headerErr)
+	}
+	header, ok := headerValue.(*ordjson.Object)
+	if !ok {
+		return nil, fmt.Errorf("generation state is not an object")
+	}
+	if records, _ := header.Get("records_only"); records == true {
+		s.recordsOnly = true
+		s.readOnly = true
 	}
 	return s, nil
 }
@@ -190,7 +203,7 @@ func (s *Store) Init() error {
 	if s.Generation != "" {
 		return s.CheckWritable()
 	}
-	return s.initializeGeneration()
+	return s.initializeGeneration(false)
 }
 
 // Lock order. A process takes the delivery compatibility lock, then at most one recipient lock, then the state lock,
@@ -513,7 +526,7 @@ type Endpoint struct {
 	BindingGeneration uint64 `json:"binding_generation"`
 	CreatedMS         uint64 `json:"created_ms"`
 	Cwd               string `json:"cwd"`
-	// Pane is parsed solely to display historical records. It grants no HC authority.
+
 	Pane string `json:"pane,omitempty"`
 }
 
@@ -566,6 +579,9 @@ func (s *Store) registrationPaths(host machine.Identity, endpoint Endpoint) []st
 }
 
 func (s *Store) Designated() bool {
+	if s.recordsOnly {
+		return false
+	}
 	if info, err := os.Stat(filepath.Join(s.Home, "state.json")); err != nil || info.IsDir() {
 		return false
 	}

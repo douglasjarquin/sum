@@ -122,6 +122,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addHookCommands(root)
 
 	opts.addShowCommand(root)
+	opts.addRestoreCommand(root)
 	opts.addContextCommand(root)
 	opts.addDoctorCommand(root)
 	opts.addInitCommand(root)

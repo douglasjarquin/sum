@@ -109,8 +109,6 @@ func (o *Occupant) Send(ctx context.Context, text string) (string, error) {
 	return state, err
 }
 
-// Check revalidates the observed native recipient against the current ledger.
-// The caller holds the state lock; this method performs no runtime I/O.
 func (r *NativeRecipient) Check(s *store.Store) error {
 	if msg := checkOccupant(s, r.Endpoint.Object(), &occupant{native: r}); msg != "" {
 		return fmt.Errorf("%s", msg)

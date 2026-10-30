@@ -11,8 +11,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// Compatibility observes saved observer ownership without starting a core or
-// helper. Absence and explicit disablement need no running observer to preserve.
 func Compatibility(ctx context.Context, s *store.Store) (*ordjson.Object, error) {
 	if err := s.CheckWritable(); err != nil {
 		return nil, err
@@ -56,8 +54,6 @@ func Compatibility(ctx context.Context, s *store.Store) (*ordjson.Object, error)
 	return row, nil
 }
 
-// Handoff replaces only the proven-owned helper. A lost stop response leaves
-// uncertainty and blocks a replacement. It never changes delivery preferences.
 func Handoff(ctx context.Context, s *store.Store, caller *ordjson.Object, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, caller); err != nil {
 		return nil, err

@@ -1,6 +1,3 @@
-// Package migration stages an HC ledger generation without rewriting the
-// original ledger or its sealed evidence. It never discovers or stops runtime
-// processes: activation must supply and retain a proven exclusion lease.
 package migration
 
 import (
@@ -23,11 +20,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// ExclusionLease is held across both snapshot checks and authority publication.
-// Its implementation must exclude every legacy writer, callback, MCP sender and
-// in-flight/lock-waiting operation, including processes with no open file today.
-// A process census, removed configuration or a boolean operator assertion alone
-// is insufficient. This package has no permissive default implementation.
 type ExclusionLease interface {
 	Verify(context.Context, string, string) (Evidence, error)
 	Close() error
@@ -62,9 +54,6 @@ type Journal struct {
 	PublishedAt  string     `json:"published_at,omitempty"`
 }
 
-// Migrate copies the historical ledger byte-for-byte into a physically isolated
-// generation. Only its state header changes; all old endpoints remain historical
-// and acquire no native HC authority. Active work needs a separate handover.
 func Migrate(ctx context.Context, opts Options) (result Journal, err error) {
 	if opts.Exclusion == nil {
 		return result, fmt.Errorf("migration requires a held, verifiable legacy writer and sender exclusion lease")
@@ -97,19 +86,13 @@ func Migrate(ctx context.Context, opts Options) (result Journal, err error) {
 			return result, fmt.Errorf("schema2 state and migration journal disagree")
 		}
 		if result.Phase == "publishing" {
-			target, readErr := readObject(filepath.Join(root, "generations", result.Generation, "state.json"))
-			if readErr != nil {
-				return result, readErr
-			}
-			if integer(target, "schema") != 2 {
-				return result, fmt.Errorf("published target schema mismatch")
+			if err = validatePublication(root, state, result); err != nil {
+				return result, err
 			}
 			if err = validateFiles(result.Export, result.Files); err != nil {
 				return result, err
 			}
-			if err = validateFiles(filepath.Join(root, "generations", result.Generation), withoutHeader(result.Files)); err != nil {
-				return result, err
-			}
+
 			result.Phase = "published"
 			result.PublishedAt = store.Now()
 			if err = writeJournal(root, result); err != nil {
@@ -121,8 +104,7 @@ func Migrate(ctx context.Context, opts Options) (result Journal, err error) {
 	if integer(state, "schema") != 1 {
 		return result, fmt.Errorf("only explicit schema1 to schema2 migration is supported")
 	}
-	// Preserve the legacy lock inodes. The exclusion lease must additionally
-	// exclude helpers that had not yet acquired these locks.
+
 	deliveryUnlock, err := lock(ctx, filepath.Join(root, ".deliver.lock"))
 	if err != nil {
 		return result, err
@@ -233,8 +215,7 @@ func Migrate(ctx context.Context, opts Options) (result Journal, err error) {
 	if err = ordjson.WriteFile(filepath.Join(target, "migration.json"), evidence); err != nil {
 		return result, err
 	}
-	// Record publication intent before the single atomic authority switch. A crash
-	// afterward is recoverable from the root pointer and this exact target.
+
 	result.Phase = "publishing"
 	if err = writeJournal(root, result); err != nil {
 		return result, err
@@ -335,8 +316,6 @@ func writeJournal(root string, j Journal) error {
 	return ordjson.WriteFile(journalPath(root), object)
 }
 
-// Stable installation assets, checkout ownership and live lock inodes are not
-// ledger data. They retain their original paths and are never copied or removed.
 func excluded(path string, isDir bool) bool {
 	first := strings.Split(filepath.ToSlash(path), "/")[0]
 	switch first {
@@ -527,6 +506,35 @@ func privateDir(root, path string) error {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("ledger generation path must not contain symlinks: %s", current)
 		}
+	}
+	return nil
+}
+
+func validatePublication(root string, pointer *ordjson.Object, j Journal) error {
+	digest, _ := pointer.Get("migration_digest")
+	if digest != j.SourceDigest {
+		return fmt.Errorf("published pointer migration digest mismatch")
+	}
+	home := filepath.Join(root, "generations", j.Generation)
+	header, err := readObject(filepath.Join(home, "state.json"))
+	if err != nil {
+		return err
+	}
+	generation, _ := header.Get("generation")
+	recordedRoot, _ := header.Get("root")
+	backend, _ := header.Get("backend")
+	if integer(header, "schema") != 2 || generation != j.Generation || recordedRoot != root || backend != "hc" {
+		return fmt.Errorf("published target identity mismatch")
+	}
+	metadata, err := readObject(filepath.Join(home, "migration.json"))
+	if err != nil {
+		return err
+	}
+	source, _ := metadata.Get("source_digest")
+	export, _ := metadata.Get("export")
+	selected, _ := metadata.Get("generation")
+	if integer(metadata, "schema") != 1 || source != j.SourceDigest || export != j.Export || selected != j.Generation {
+		return fmt.Errorf("published migration metadata mismatch")
 	}
 	return nil
 }

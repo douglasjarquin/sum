@@ -33,7 +33,6 @@ var (
 )
 
 type PumpOpts struct {
-	// Scope limits an observer to its recorded core/session; empty values are explicit manual passes.
 	CoreID       string
 	Session      string
 	RuntimeRoot  string
@@ -381,7 +380,7 @@ func (p *pass) deferRow(row *ordjson.Object, reason string) *ordjson.Object {
 func (p *pass) deliver(b *bucket, wait bool) (*ordjson.Object, bool, error) {
 	route := b.route
 	recipientObj := ordjson.NewObject()
-	for _, k := range []string{"recipient", "role", "machine", "core_id", "session", "address", "attempt", "binding_generation"} {
+	for _, k := range []string{"schema", "backend", "socket", "created_ms", "task", "recipient", "role", "machine", "core_id", "session", "address", "attempt", "binding_generation"} {
 		recipientObj.Set(k, routeValue(route, k))
 	}
 	row := ordjson.NewObject()
@@ -599,7 +598,7 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 	delivery.Set("id", deliveryID)
 	delivery.Set("at", store.Now())
 	recipient := ordjson.NewObject()
-	for _, k := range []string{"recipient", "role", "machine", "core_id", "session", "address", "attempt", "binding_generation"} {
+	for _, k := range []string{"schema", "backend", "socket", "created_ms", "task", "recipient", "role", "machine", "core_id", "session", "address", "attempt", "binding_generation"} {
 		recipient.Set(k, routeValue(route, k))
 	}
 	recipient.Set("key", key)
@@ -697,6 +696,15 @@ func (p *pass) deliverLocked(b *bucket, row *ordjson.Object) (*ordjson.Object, e
 		}
 		if !p.fits(PromptTimeout) {
 			return claimResult{deferReason: "the pass budget ran out after this recipient was observed and before the prompt; nothing was sent or recorded"}, nil
+		}
+		if episode {
+			ep, gen := adm.wake.Episode, adm.wake.Generation
+			if adm.pending != nil {
+				ep = adm.pending
+				gen++
+			}
+			delivery.Set("wake_episode", ep.ID)
+			delivery.Set("wake_generation", jsonInt(gen))
 		}
 		if err := stampDeliveryLocked(s, survivors, delivery, nil); err != nil {
 			return claimResult{}, err

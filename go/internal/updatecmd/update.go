@@ -178,9 +178,6 @@ func offeredContracts(manifest *ordjson.Object) (sumVersion string, stateSchema,
 	return
 }
 
-// nativeTargetContract asks the exact artifact selected for both checkout and
-// immutable release activation. Neither source markers nor a staged manifest
-// supplies executable capabilities.
 func nativeTargetContract(candidatePath string) (*ordjson.Object, error) {
 	if err := release.VerifyHCRuntime(context.Background(), candidatePath); err != nil {
 		return nil, err
@@ -1027,9 +1024,6 @@ func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	return completeObserverHandoff(s, ctx, root, result)
 }
 
-// completeObserverHandoff runs after selection locks have been released. The
-// observer owns a different scope lock and may reconcile pending work; nesting
-// it under the delivery lock would deadlock that bounded reconciliation.
 func completeObserverHandoff(s *store.Store, ctx *ordjson.Object, root string, result *ordjson.Object) (*ordjson.Object, error) {
 	active := DefaultRuntime(root)
 	activeRoot := asString(func() any { v, _ := active.Get("path"); return v }())
@@ -1153,7 +1147,6 @@ func recoverSelection(s *store.Store, ctx *ordjson.Object, generation string) (*
 	return recoverPendingLocked(s, root, generation)
 }
 
-// compensate restores the previous runtime only after the same native compatibility checks.
 func compensate(s *store.Store, root, generation string) (*ordjson.Object, error) {
 	return recoverPendingLocked(s, root, generation)
 }

@@ -1,4 +1,3 @@
-"""Current benchmark reporting; historical language baselines are not current proof."""
 from __future__ import annotations
 
 import math

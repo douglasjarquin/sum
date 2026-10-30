@@ -1,4 +1,3 @@
-"""Measure published HC transport only inside hc_lab's explicit private scope."""
 from __future__ import annotations
 
 import resource

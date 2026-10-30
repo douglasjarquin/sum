@@ -34,9 +34,6 @@ func waitNativeCondition(t *testing.T, predicate func() bool) {
 	}
 }
 
-// startNativeObserver executes the actual observer program named by terminal.run.
-// The pipe gates process startup until HC can attest that same process identity;
-// the application itself writes its startup receipt and subscribes to events.
 func startNativeObserver(t *testing.T, d *demoLab) string {
 	t.Helper()
 	s, openErr := store.Open(d.home)

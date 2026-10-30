@@ -34,8 +34,6 @@ func writeReleaseFile(t *testing.T, dir, rel string, content []byte, mode os.Fil
 	}
 }
 
-// buildValidRelease creates a controlled native bundle with a real current helper
-// and a synthetic HC executable whose matching contract is checked by subprocess.
 func buildValidRelease(t *testing.T, releasesRoot, sha string) {
 	t.Helper()
 	dir := filepath.Join(releasesRoot, sha)

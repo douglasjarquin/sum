@@ -42,8 +42,6 @@ func awaitReviewerOperation(t *testing.T, result <-chan reviewerOperationResult)
 	}
 }
 
-// This writes the same durable ownership barrier as cleanup, under the task
-// state lock, while the reviewer is paused outside that lock on a native call.
 func claimReviewerMaintenance(t *testing.T, s *store.Store, taskID, kind string) {
 	t.Helper()
 	unlock, err := s.Lock()

@@ -1,4 +1,3 @@
-// Package incarnation verifies HC process and receipt bindings.
 package incarnation
 
 import (
@@ -102,7 +101,7 @@ func earliest(values ...string) string {
 	return best
 }
 
-// Recovery names the explicit action after a refused native binding.
+// Recovery is the deliberate step that recovers a role refused with outcome, for messages.
 func Recovery(role, outcome string) string {
 	preserved := "Tasks, decisions, reservations, and delivery history are unchanged; nothing is taken over or relaunched automatically. "
 	if outcome == Unobservable {

@@ -10,7 +10,7 @@ const preIdentityContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli"
 func TestNativeIdentityComesFromArtifactInsteadOfManifestOrSource(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
 	dir := filepath.Join(lab.root, ".local/releases", lab.newSHA)
-	// The manifest offers all native contracts, but this artifact does not.
+
 	plantNativeHelper(t, dir, "#!/bin/sh\nprintf '%s\n' '"+preIdentityContractJSON+"'\n")
 	current := DefaultRuntime(lab.root)
 	compat, err := Compatibility(lab.store, lab.root, dir, current)

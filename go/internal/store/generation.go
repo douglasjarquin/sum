@@ -19,10 +19,6 @@ var generationPattern = regexp.MustCompile(`^g-[a-f0-9]{24}$`)
 var ErrInactiveGeneration = errors.New("inactive state generation; reopen the current authority before writing or sending")
 var ErrHistoricalReadOnly = errors.New("historical evidence is read-only; use an explicit HC handover for new work")
 
-// CheckWritable fences helpers opened before an authority transfer.
-// Legacy binaries cannot make this check; physical isolation prevents their old
-// task paths from changing the new ledger, and migration additionally requires
-// an exclusion lease for every old writer and sender before publication.
 func (s *Store) CheckWritable() error {
 	if s.readOnly {
 		return ErrHistoricalReadOnly
@@ -47,11 +43,11 @@ func (s *Store) checkGeneration() error {
 	}
 	return nil
 }
-func (s *Store) initializeGeneration() error {
+func (s *Store) initializeGeneration(recordsOnly bool) error {
 	if err := os.MkdirAll(s.Root, 0700); err != nil {
 		return err
 	}
-	// Keep this inode forever: concurrent initializers must not publish different roots.
+
 	lock, err := os.OpenFile(filepath.Join(s.Root, ".init.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return err
@@ -62,6 +58,9 @@ func (s *Store) initializeGeneration() error {
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	if _, err = os.Stat(filepath.Join(s.Root, "state.json")); err == nil {
+		if recordsOnly {
+			return fmt.Errorf("records restore requires a new state home")
+		}
 		current, err := Open(s.Root)
 		if err != nil {
 			return err
@@ -70,7 +69,9 @@ func (s *Store) initializeGeneration() error {
 		s.Tasks = current.Tasks
 		s.Sessions = current.Sessions
 		s.Generation = current.Generation
-		return nil
+		s.readOnly = current.readOnly
+		s.recordsOnly = current.recordsOnly
+		return s.CheckWritable()
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -94,6 +95,10 @@ func (s *Store) initializeGeneration() error {
 	state.Set("root", s.Root)
 	state.Set("sum_version", SumVersion)
 	state.Set("created_at", Now())
+	if recordsOnly {
+		state.Set("backend", "records")
+		state.Set("records_only", true)
+	}
 	if err = ordjson.WriteFile(filepath.Join(home, "state.json"), state); err != nil {
 		return err
 	}
@@ -101,10 +106,16 @@ func (s *Store) initializeGeneration() error {
 	pointer.Set("schema", json.Number("2"))
 	pointer.Set("backend", "hc")
 	pointer.Set("generation", generation)
+	if recordsOnly {
+		pointer.Set("backend", "records")
+		pointer.Set("records_only", true)
+	}
 	if err = ordjson.WriteFile(filepath.Join(s.Root, "state.json"), pointer); err != nil {
 		return err
 	}
 	s.Generation = generation
+	s.recordsOnly = recordsOnly
+	s.readOnly = recordsOnly
 	s.Home = home
 	s.Tasks = filepath.Join(home, "tasks")
 	s.Sessions = filepath.Join(home, "sessions")
@@ -123,9 +134,6 @@ func (s *Store) authorityLock(ctx context.Context, path string, how, rank int, b
 	return unlock, nil
 }
 
-// Register is a deliberate domain mutation; a replacement binding may overwrite
-// only the same permanent native terminal. Passive Registration remains strict
-// about the attempt and role, so stale callers cannot inherit a new binding.
 func (s *Store) registrationForReplacement(endpoint Endpoint) (*ordjson.Object, error) {
 	path := filepath.Join(s.Sessions, RegistrationKey(endpoint)+".json")
 	value, err := ordjson.ReadFile(path)
@@ -148,3 +156,12 @@ func (s *Store) registrationForReplacement(endpoint Endpoint) (*ordjson.Object, 
 	}
 	return object, nil
 }
+
+func (s *Store) InitRecordsOnly() error {
+	if s.Generation != "" || s.readOnly {
+		return fmt.Errorf("records restore requires a new state home")
+	}
+	return s.initializeGeneration(true)
+}
+
+func (s *Store) RecordsOnly() bool { return s.recordsOnly }

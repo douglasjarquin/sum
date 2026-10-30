@@ -14,9 +14,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// deliveryQualification revalidates input provenance, independently of whether
-// the current terminal is ready for input. It performs only passive runtime I/O;
-// callers must not hold the state lock.
 func deliveryQualification(s *store.Store, tasks []*ordjson.Object) []any {
 	var blocked []any
 	check := func(label string, record *ordjson.Object, optional bool) {
@@ -80,8 +77,7 @@ func deliveryQualification(s *store.Store, tasks []*ordjson.Object) []any {
 			check("task "+id+" reviewer", reviewer, true)
 		}
 	}
-	// A saved preset is a shortcut, not an enabled runtime. Only selected defaults
-	// participate; per-launch effective configuration is qualified before Run.
+
 	loaded, err := settings.LoadSettings(s)
 	if err != nil {
 		blocked = append(blocked, "automatic delivery settings: "+err.Error())

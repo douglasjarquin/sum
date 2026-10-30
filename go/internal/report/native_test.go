@@ -63,8 +63,7 @@ func nativeReportLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoin
 }
 func TestReportRequiresCurrentWorkerAndPreservesNativeEvidence(t *testing.T) {
 	s, _, endpoint, fixture := nativeReportLab(t)
-	// Notification may remain pending without a coordinator route; the report is
-	// durable before delivery and still requires current worker authority.
+
 	if _, err := Run(s, endpoint.Task, "work completed", nil, endpoint.Object(), returns.PumpOpts{}); err != nil {
 		t.Fatal(err)
 	}

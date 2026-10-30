@@ -12,9 +12,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// NativeRecipient is a fresh public HC observation, never an application receipt.
-// Callers serialize by recipient, revalidate authority and persist their claim
-// before Send. No state lock may be held during either operation.
 type NativeRecipient struct {
 	Endpoint      store.Endpoint
 	Terminal      hcclient.Terminal
@@ -54,8 +51,6 @@ func checkNativeTerminal(endpoint store.Endpoint, terminal hcclient.Terminal, ex
 	return &NativeRecipient{Endpoint: endpoint, Terminal: terminal}, nil
 }
 
-// observeNativeIdentity permits passive reads regardless of input readiness.
-// The binding and process receipt are still judged before presentation.
 func observeNativeIdentity(ctx context.Context, endpoint store.Endpoint, expectedCwd string) (*NativeRecipient, error) {
 	if err := endpoint.Validate(); err != nil {
 		return nil, err
@@ -80,7 +75,6 @@ func checkNativeIdentity(endpoint store.Endpoint, terminal hcclient.Terminal, ex
 	return &NativeRecipient{Endpoint: endpoint, Terminal: terminal}, nil
 }
 
-// Qualify verifies saved command/keymap/template provenance without modifying it.
 func (r *NativeRecipient) Qualify(record *ordjson.Object) error {
 	return r.QualifyContext(context.Background(), record)
 }
@@ -142,7 +136,6 @@ func (r *NativeRecipient) Send(ctx context.Context, text string) (hcclient.SendR
 	return client.Send(ctx, params)
 }
 
-// DeliveryFailure is the common effect classification for every native send.
 func DeliveryFailure(err error) (state, detail string) {
 	if err == nil {
 		return "submitted", "native input submitted; a matching application receipt is still required"

@@ -140,8 +140,7 @@ func TestNativeBindRequiresSuccessorReceiptAndPreservesGit(t *testing.T) {
 		t.Fatal("refusal changed worker binding")
 	}
 	register(next, uint32(live.Process.Pid), "worker-init", true)
-	// This test exercises explicit manual delivery. Automatic binding coverage
-	// separately requires the observer's actual startup receipt.
+
 	if err = settings.SetNativeEventsEnabled(st, false); err != nil {
 		t.Fatal(err)
 	}

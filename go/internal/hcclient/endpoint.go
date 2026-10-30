@@ -6,7 +6,6 @@ import (
 	"regexp"
 )
 
-// Endpoint separates transport routing from permanent runtime and ledger identity.
 type Endpoint struct {
 	Schema            int    `json:"schema"`
 	Backend           string `json:"backend"`

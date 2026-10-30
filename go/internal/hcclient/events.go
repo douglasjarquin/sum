@@ -7,8 +7,6 @@ import (
 	"time"
 )
 
-// Subscription owns a dedicated connection. A loss requires a new snapshot,
-// never silent sequence continuation. The caller reconciles on missed events.
 type Subscription struct {
 	Snapshot SubscribeResult
 	conn     *connection
@@ -24,7 +22,7 @@ func (c *Client) Subscribe(ctx context.Context, p SubscribeParams) (*Subscriptio
 		n.close()
 		return nil, err
 	}
-	// The handshake is bounded; the stream lives until the supplied context ends.
+
 	n.stop()
 	n.cancel()
 	n.cancel = func() {}

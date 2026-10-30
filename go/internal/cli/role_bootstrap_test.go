@@ -147,7 +147,6 @@ func TestCoordinatorInitRefusesARuntimeWithoutItsCore(t *testing.T) {
 		t.Fatalf("a refused claim registered the pane: %v", entries)
 	}
 
-	// Restore the fixture's existing verified owner; re-init must still validate its current role core.
 	if err = os.Rename(ownerBackup, contextPath); err != nil {
 		t.Fatal(err)
 	}

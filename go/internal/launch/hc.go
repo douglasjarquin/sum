@@ -17,9 +17,6 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// HCTemplateOptions names the effective launch location and configuration sources.
-// ConfigFiles supplements the discovered system/user/ancestor configuration.
-// CoreConfigHome is an explicit publication target, never inferred from HOME.
 type HCTemplateOptions struct {
 	Cwd         string
 	CodexHome   string
@@ -42,7 +39,6 @@ func (t HCTemplate) RunArgv(taskPointer string) []string { return []string{t.Nam
 func digest(data []byte) string                          { v := sha256.Sum256(data); return hex.EncodeToString(v[:]) }
 func shellArgument(text string) string                   { return "'" + strings.ReplaceAll(text, "'", "'\"'\"'") + "'" }
 
-// TemplateCommand renders the exact command text published in HC templates.
 func TemplateCommand(argv []string) string {
 	quoted := make([]string, len(argv))
 	for i, arg := range argv {
@@ -64,9 +60,6 @@ func binaryDigest(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-// PrepareHCTemplate qualifies the effective command and publishes a content-bound
-// namespaced template into the explicitly selected core configuration home.
-// Existing nonmatching files are an ownership conflict, never overwritten.
 func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []string, options HCTemplateOptions) (HCTemplate, error) {
 	var result HCTemplate
 	if harness != "codex" {
@@ -244,7 +237,7 @@ func codexDefaultKeymap(argv []string, options HCTemplateOptions) (map[string]st
 		}
 		hashes[path] = digest(data)
 	}
-	// The source-qualified default has Tab submit when idle and queue when busy.
+
 	return hashes, digest([]byte("codex-cli/0.166.0/default-tui-keymap/tab-submit-or-queue")), nil
 }
 func containsKeymap(value any) bool {
@@ -268,7 +261,6 @@ func containsKeymap(value any) bool {
 	return false
 }
 
-// ValidateHCTemplate checks sealed input provenance without rewriting any config.
 func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTemplateOptions) error {
 	if spec.Harness != "codex" || spec.Version != "0.166.0" || spec.Submit != "tab" || len(spec.CommandSHA256) != 64 || len(spec.Argv) == 0 || spec.Argv[0] != spec.Binary {
 		return fmt.Errorf("unqualified HC template record")
@@ -308,9 +300,6 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 	return nil
 }
 
-// ValidateHCInputConfig checks the known effective input configuration without
-// publishing a template or changing a harness. Future checkout-specific config
-// must still be qualified when that checkout is launched.
 func ValidateHCInputConfig(harness string, argv []string, options HCTemplateOptions) error {
 	if harness != "codex" {
 		return fmt.Errorf("no qualified native status and input contract for %s", harness)

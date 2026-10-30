@@ -17,8 +17,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/proc"
 )
 
-// VerifyHCRuntime verifies the executable and its matched public contract without
-// starting a core. A helper's capability report alone cannot qualify its runtime.
 func VerifyHCRuntime(ctx context.Context, target string) error {
 	read := func(path string, value any) error {
 		body, err := os.ReadFile(path)

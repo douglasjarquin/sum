@@ -65,7 +65,7 @@ def execute_canary(args, source, lab):
     runtime = lab.root / "installation"
     shutil.copytree(source, runtime, ignore=shutil.ignore_patterns(".sum", ".local", ".deps", ".git", ".artifacts", ".codegraph", "node_modules", "__pycache__", ".venv", ".aube"))
     helper = runtime / "bin/sumctl"
-    helper.rename(helper.with_name("sumctl-wrapper-source"))  # Preserve the staged wrapper beside the lab binary.
+    helper.rename(helper.with_name("sumctl-wrapper-source"))
     go = Path(os.environ["GOROOT"]) / "bin/go" if os.environ.get("GOROOT") else "go"
     run([go, "build", "-trimpath", "-buildvcs=false", "-o", helper, "./cmd/sumctl"], cwd=runtime / "go", env={**os.environ, "GOTOOLCHAIN": "local"})
     lab.summary["helper_sha256"] = hashlib.sha256(helper.read_bytes()).hexdigest()
@@ -185,7 +185,6 @@ def execute_canary(args, source, lab):
         lab.summary["checkpoints"].append("local-bare-push-and-fake-github-publication")
         command(worker, "exit", action="exit")
         command(reviewer, "exit", action="exit")
-        # Model only an external merge receipt; no actual external write is possible.
         fake_state = json.loads((gh_root / "github.json").read_text())
         pr = fake_state["pr"]
         pr.update(state="MERGED", merged_at="2026-10-30T00:00:00Z", merge_commit=candidate)

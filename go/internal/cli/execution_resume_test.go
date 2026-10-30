@@ -18,8 +18,7 @@ func TestResumeLaunchesAtCurrentHEADAfterReportedCommit(t *testing.T) {
 	if id == "" || checkout == "" || address == "" || attempt == "" {
 		t.Fatalf("dispatch %v", task)
 	}
-	// A real local process supplies the original PID, while the native fixture
-	// supplies the qualified harness's public foreground record.
+
 	process := exec.Command("sleep", "60")
 	process.Dir = checkout
 	if err := process.Start(); err != nil {

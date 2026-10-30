@@ -19,8 +19,6 @@ import (
 	"sync"
 )
 
-// passLab uses actual generation-one native sockets. Aliases exist only in
-// test descriptions; endpoints always contain core/address/attempt authority.
 type heldNative struct {
 	entered <-chan struct{}
 	release func()

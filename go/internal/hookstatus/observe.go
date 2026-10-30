@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-// Observe is the single scoped non-agent HC observer. Its event connection is
-// dedicated; reconciliation uses independent bounded native connections.
 func Observe(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath string) error {
 	if e.CoreID == "" || e.Session == "" || !filepath.IsAbs(e.Socket) {
 		return fmt.Errorf("explicit HC observer scope required")
@@ -39,7 +37,7 @@ func Observe(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot,
 		return ctx.Err()
 	}
 	client := hcclient.Client{Socket: e.Socket, CoreID: e.CoreID}
-	// The helper attests its exact HC-created process before it can reconcile.
+
 	address := e.Address
 	if address == "" {
 		address = os.Getenv("HC_TERMINAL_ID")

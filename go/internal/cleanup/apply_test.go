@@ -460,8 +460,6 @@ func TestCleanup_applyStopsOrphanThenAdopts(t *testing.T) {
 	}
 }
 
-// The old workspace fixture maps to native terminal absence with Git registration
-// retained independently. No runtime workspace is synthesized.
 func (l *lab) writeWorkspaceWithoutPane() { l.t.Helper() }
 
 // startArgvBoundDaemon launches a detached long-lived process whose argv names
@@ -550,10 +548,6 @@ func TestCleanup_applySettlesGrantedQuestionThenArchives(t *testing.T) {
 	}
 }
 
-// The native terminal is gone but Git registration still exists.
-// until cleanup removes them, which is exactly the state the wedged codegraph
-// daemons left behind. A checkout-bound process is still a stoppable orphan:
-// apply sends one SIGTERM, verifies exit, and removes the workspace.
 func TestCleanup_applyStopsOrphanWhileWorkspacePresent(t *testing.T) {
 	l := newLab(t)
 	head := l.makeWorktreeCheckout()

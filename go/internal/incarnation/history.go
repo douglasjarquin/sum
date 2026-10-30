@@ -2,17 +2,14 @@ package incarnation
 
 import "github.com/douglasjarquin/sum/go/internal/ordjson"
 
-// Session is a historical integration conversation, used only for saved usage attribution.
 type Session struct{ Agent, Kind, Value string }
 
-// HistoricalInfo projects saved pre-HC records; it never grants live authority.
 type HistoricalInfo struct {
 	Terminal string
 	Agent    string
 	Session  *Session
 }
 
-// FromInfo reads a historical record without observing or changing a runtime.
 func FromInfo(value any) HistoricalInfo {
 	obj := unwrap(value)
 	if obj == nil {

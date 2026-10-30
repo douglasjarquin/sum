@@ -2,12 +2,13 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"strings"
 	"testing"
 
-	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
 // closeLab registers this pane as coordinator and writes one task whose worker
@@ -21,31 +22,45 @@ func closeLab(t *testing.T, workerState string) string {
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	host, err := machine.ID()
+
+	s, err := store.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	execution := ""
-	if workerState != "" {
-		execution = fmt.Sprintf(`,
-"execution": {"schema": 1,
-  "worker": {"id": "x-aaaaaaaaaaaa", "kind": "worker", "state": %q, "generation": 1,
-             "owner": {"machine": %q, "session": "sum-test", "pane": "w-worker:p1"}, "checkout": "/tmp/x",
-             "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:00:00+00:00", "observations": []},
-  "verifiers": []}`, workerState, host)
+	task := ordjson.NewObject()
+	task.Set("schema", json.Number("2"))
+	task.Set("id", "t-aaaaaaaaaaaa")
+	task.Set("status", "waiting")
+	task.Set("repository", "owner/repo")
+	owner, err := s.Owner()
+	if err != nil {
+		t.Fatal(err)
 	}
-	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{
-"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "waiting", "repository": "owner/repo",
-"machine": %q, "session": "sum-test", "pane": "w-worker:p1",
-"parent": {"machine": %q, "session": "sum-test", "pane": "w-parent:p1"},
-"questions": [
-  {"id": "q-aaaaaaaaaa", "key": "gone", "status": "answered", "text": "keep going?", "answer": "yes", "created_at": "2026-01-01T00:00:00+00:00", "answered_at": "2026-01-02T00:00:00+00:00"},
-  {"id": "q-bbbbbbbbbb", "key": "unanswered", "status": "open", "text": "which one?", "answer": null, "created_at": "2026-01-01T00:00:00+00:00"},
-  {"id": "q-cccccccccc", "key": "applied", "status": "answered", "text": "rename it?", "answer": "no", "created_at": "2026-01-01T00:00:00+00:00", "answered_at": "2026-01-02T00:00:00+00:00"}
-],
-"evidence": [], "report": {"text": "done"}, "notice": null, "attention": [],
-"brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship"%s
-}`, host, host, execution))
+	task.Set("parent", owner)
+	questions, err := ordjson.Decode([]byte(`[
+ {"id":"q-aaaaaaaaaa","key":"gone","status":"answered","text":"keep going?","answer":"yes","created_at":"2026-01-01T00:00:00+00:00","answered_at":"2026-01-02T00:00:00+00:00"},
+ {"id":"q-bbbbbbbbbb","key":"unanswered","status":"open","text":"which one?","answer":null,"created_at":"2026-01-01T00:00:00+00:00"},
+ {"id":"q-cccccccccc","key":"applied","status":"answered","text":"rename it?","answer":"no","created_at":"2026-01-01T00:00:00+00:00","answered_at":"2026-01-02T00:00:00+00:00"}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Set("questions", questions)
+	task.Set("evidence", []any{})
+	task.Set("brief", "do the thing")
+	task.Set("kind", "ship")
+	task.Set("base_sha", strings.Repeat("a", 40))
+	if workerState != "" {
+		seedNativeWorker(t, nativeLabFor(t, home), s, task)
+		worker, err := reservations.Worker(task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		worker.Set("state", workerState)
+	}
+	if err = s.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+
 	return home
 }
 
@@ -72,10 +87,8 @@ func questionRecord(t *testing.T, home, questionID string) map[string]any {
 }
 
 func TestAnswerClose_releasedAttemptLetsArchiveSucceed(t *testing.T) {
-	home := closeLab(t, "released")
-	if _, err := runCLI(t, home, "resolve", "t-aaaaaaaaaaaa", "q-cccccccccc"); err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
+	home := closeLab(t, "running")
+	closeApplyThenRelease(t, home)
 	if out, err := runCLI(t, home, "archive", "t-aaaaaaaaaaaa", "--acknowledge"); err == nil || !strings.Contains(err.Error(), "Outstanding questions") {
 		t.Fatalf("archive before closing: err=%v out=%s", err, out)
 	}
@@ -99,10 +112,8 @@ func TestAnswerClose_releasedAttemptLetsArchiveSucceed(t *testing.T) {
 }
 
 func TestAnswerClose_recordDistinguishesCoordinatorClosureFromWorkerApplication(t *testing.T) {
-	home := closeLab(t, "released")
-	if _, err := runCLI(t, home, "resolve", "t-aaaaaaaaaaaa", "q-cccccccccc"); err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
+	home := closeLab(t, "running")
+	closeApplyThenRelease(t, home)
 	if out, err := closeQuestion(t, home, "q-aaaaaaaaaa", "worker pane is gone"); err != nil {
 		t.Fatalf("close: %v\n%s", err, out)
 	}
@@ -113,7 +124,7 @@ func TestAnswerClose_recordDistinguishesCoordinatorClosureFromWorkerApplication(
 	if _, ok := closed["applied_at"]; ok {
 		t.Fatalf("closed question carries applied_at: %v", closed)
 	}
-	if closed["answer"] != "yes" || closed["close_reason"] != "worker pane is gone" || closed["closed_attempt"] != "x-aaaaaaaaaaaa" {
+	if closed["answer"] != "yes" || closed["close_reason"] != "worker pane is gone" || closed["closed_attempt"] != closeAttempt(t, home) {
 		t.Fatalf("closed record = %v", closed)
 	}
 	if at, _ := closed["closed_at"].(string); at == "" {
@@ -131,8 +142,13 @@ func TestAnswerClose_recordDistinguishesCoordinatorClosureFromWorkerApplication(
 		t.Fatalf("applied_at = %v", applied["applied_at"])
 	}
 	// A worker can never turn a coordinator closure into its own application.
-	if out, err := runCLI(t, home, "resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa"); err == nil {
-		t.Fatalf("resolve applied a closed answer\n%s", out)
+	beforeResolve := readNamedTask(t, home, "t-aaaaaaaaaaaa")
+	refused := nativeLabFor(t, home).ctlPane("t2", false, "resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa")
+	if asString(refused["error"]) == "" {
+		t.Fatalf("worker resolve applied a closed answer: %v", refused)
+	}
+	if readNamedTask(t, home, "t-aaaaaaaaaaaa") != beforeResolve {
+		t.Fatal("refused worker application rewrote the task")
 	}
 	if got := questionRecord(t, home, "q-aaaaaaaaaa")["status"]; got != "closed-unapplied" {
 		t.Fatalf("status after resolve attempt = %v", got)
@@ -216,5 +232,50 @@ func TestAnswerClose_flagsAreUsageErrors(t *testing.T) {
 				t.Fatalf("task changed:\n%s", got)
 			}
 		})
+	}
+}
+
+func closeAttempt(t *testing.T, home string) string {
+	t.Helper()
+	s, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := worker.Get("id")
+	return id.(string)
+}
+func closeApplyThenRelease(t *testing.T, home string) {
+	t.Helper()
+	d := nativeLabFor(t, home)
+	s, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, _ := task.Get("worker_endpoint")
+	endpoint := store.EndpointFromContext(value.(*ordjson.Object))
+	d.ctlPane(endpoint.Address, true, "resolve", "t-aaaaaaaaaaaa", "q-cccccccccc")
+	task, err = s.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.Set("state", "released")
+	if err = s.SaveTask(task); err != nil {
+		t.Fatal(err)
 	}
 }

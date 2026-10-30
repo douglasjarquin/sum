@@ -19,7 +19,6 @@ func reviewCandidateFor(d *demoLab, taskID string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// reviewLab dispatches one approved task under the receipt-bound native coordinator.
 func reviewLab(t *testing.T) (*demoLab, string) {
 	t.Helper()
 	d := newPolicyLab(t)

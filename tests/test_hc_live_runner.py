@@ -1,4 +1,3 @@
-"""The canonical native runner retains independently inspectable canary proofs."""
 import json
 import os
 from pathlib import Path

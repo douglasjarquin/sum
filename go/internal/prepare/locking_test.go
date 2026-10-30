@@ -376,8 +376,7 @@ func TestPreparationUnknownGitEffectReconcilesOneCheckout(t *testing.T) {
 	}
 	directory := t.TempDir()
 	first := filepath.Join(directory, "first-create")
-	// The owned wrapper lets Git create its checkout, then loses the success
-	// response once. Reconciliation must discover that exact registration.
+
 	script := "#!/bin/sh\ncase \" $* \" in *\" worktree add \"*)\n if test ! -e " + shquote.Quote(first) + "; then\n  printf claimed > " + shquote.Quote(first) + "\n  " + shquote.Quote(realGit) + " \"$@\" || exit $?\n  exit 1\n fi\n ;;\nesac\nexec " + shquote.Quote(realGit) + " \"$@\"\n"
 	if err = os.WriteFile(filepath.Join(directory, "git"), []byte(script), 0700); err != nil {
 		t.Fatal(err)

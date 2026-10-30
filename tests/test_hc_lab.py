@@ -1,4 +1,3 @@
-"""Failure-path checks for private HC lab ownership and truthful teardown."""
 import importlib.util
 import json
 from pathlib import Path

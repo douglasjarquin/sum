@@ -75,8 +75,29 @@ Routine wake episodes preserve prepared, claimed, intent, submitted, uncertain a
 `wake consume --boundary TOKEN` records only the work presented, not its approval, application or verification.
 `wake reconcile` resolves an interrupted episode from its phase without sending again.
 New questions retain priority behind a routine wake; they do not interrupt a working terminal.
-Inspect an uncertain return before authorizing one explicit `notice TASK_ID --to parent|worker` recovery.
+Inspect exact durable receipts for an uncertain return and use `delivery reconcile` when they prove its historical application.
+An explicitly requested `notice TASK_ID --to parent|worker` is a separate delivery attempt; its success does not resolve or erase the earlier uncertain effect.
 Do not loop or use another key to evade an uncertain attempt.
+
+## Reconcile one historical delivery effect
+
+```sh
+./bin/sumctl delivery reconcile TASK_ID --delivery DELIVERY_ID
+```
+
+This coordinator-only command resolves one exact historical `in-flight`, `uncertain` or `unknown` delivery effect from existing durable application or consumed-boundary evidence.
+It sends no input and accepts no proof, force, reason or operator-override flags.
+A generic later success, a new notice, native status or an operator assertion is not proof that the old input was applied.
+The receipt must bind the exact original endpoint, obligation and semantic input revision; missing historical proof is an explicit refusal.
+The locked claim rereads current task authority and the matching receipt rather than trusting an earlier snapshot.
+
+The original returns row, effect state and native error remain unchanged.
+A separate `delivery-reconciliations.json` sidecar records the original row digest, copies of the exact resolving receipts, coordinator endpoint and timestamp.
+Success returns `task`, `delivery`, `result:reconciled` and `original_state`; an identical repeat returns `result:repeated` without rewriting the file.
+Cleanup, lifecycle maintenance and activation consult the same strict resolution validator instead of treating every historical uncertain row as permanently unresolved.
+No reconciliation closes a question, applies an answer, verifies a report, releases capacity or approves publication.
+Wake consumption still closes only its presentation episode; reconciling a historical native effect is a separate durable operation.
+A changed or insufficient receipt does not make replay safe.
 
 ## Cleanup
 
@@ -115,8 +136,11 @@ Use `restore ARCHIVE NEW_HOME`, not direct extraction followed by opening the ex
 `NEW_HOME` must not exist; an existing destination is refused without overwrite.
 The importer accepts the current schema-two records-only archive and validates its manifest, source schema, regular entry paths, uniqueness and complete gzip stream before creating the destination.
 Unknown schemas/scopes, traversal or absolute/backslash paths, links and duplicate entries are refused.
+Import limits are 64 MiB per entry, 512 MiB total expanded archive including trailing data, and 100,000 entries; oversized input is refused rather than read without bound.
 
 Restore creates a fresh instance, a new physical generation and `records_only:true` quarantine.
+Both the root pointer and physical header use schema two with `backend:"records"` and `records_only:true`; ordinary active homes use `backend:"hc"`.
+The reader accepts the records backend only with its quarantine flag, while HC-only helpers that require the HC backend reject it rather than treating an unknown flag as writable authority.
 Imported task and pinned procedure/version files retain their exact archived bytes; settings, findings and other saved records remain historical records rather than live authority.
 The complete archive entries, including the original header and old sessions, are retained under `NEW_HOME/restore-source/` for inspection.
 No live session registrations, coordinator owner, observer or runtime binding is imported.

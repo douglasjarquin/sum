@@ -18,8 +18,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// reconcileAttention saves runtime observations, never task reports or receipts.
-// The subscription is only a hint: every fact comes from the current core snapshot.
 func reconcileAttention(ctx context.Context, s *store.Store, scope store.Endpoint) error {
 	ctx, cancel := context.WithTimeout(ctx, returns.DefaultPassBudget)
 	defer cancel()
@@ -132,7 +130,7 @@ func reconcileAttention(ctx context.Context, s *store.Store, scope store.Endpoin
 			chars = chars[:2000]
 		}
 		excerpt = string(chars)
-		// Refuse a transition or replacement observed while reading its screen.
+
 		current, err := client.Get(ctx, endpoint.Address)
 		if err != nil && retryNativeObservation(ctx, err) {
 			return err

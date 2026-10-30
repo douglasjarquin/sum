@@ -135,7 +135,7 @@ func TestNativeCoordinatorLaunchAndReceipt(t *testing.T) {
 	}
 	endpointValue, _ := result.Get("endpoint")
 	e := store.EndpointFromContext(endpointValue.(*ordjson.Object))
-	// Model init arriving before terminal.run has returned its endpoint.
+
 	pendingPath := filepath.Join(s.Home, "coordinator-launch.json")
 	savedValue, err := ordjson.ReadFile(pendingPath)
 	if err != nil {
@@ -170,7 +170,7 @@ func TestNativeCoordinatorLaunchAndReceipt(t *testing.T) {
 	if err = app.RequireCoordinator(s, e.Object()); err != nil {
 		t.Fatal(err)
 	}
-	// A second init verifies the same receipt rather than minting a new attempt.
+
 	if _, err = InitDesignated(DesignatedOpts{RuntimeRoot: root, Store: s, Ctx: e.Object()}); err != nil {
 		t.Fatal(err)
 	}

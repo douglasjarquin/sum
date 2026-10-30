@@ -1,4 +1,3 @@
-// Package maintenance guards task effects while cleanup owns terminal resources.
 package maintenance
 
 import (

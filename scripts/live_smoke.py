@@ -26,7 +26,6 @@ def main():
         refused = lab.rpc("terminal.send", terminal=address, text="must-not-answer-dialog")
         assert refused["error"]["data"]["kind"] == "blocked", refused
         assert len(receipts.read_text().splitlines()) == 2
-        # Reconnect starts with a fresh snapshot. No sequence is used as an application ack.
         reconnected = lab.subscribe(labels={"sum.lab": lab.session})
         assert len(reconnected.snapshot["terminals"]) == 1
         assert reconnected.snapshot["terminals"][0]["status"]["state"] == "blocked"

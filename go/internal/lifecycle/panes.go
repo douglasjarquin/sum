@@ -21,8 +21,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// hasRemovableTerminal is the records-only check sweep uses to queue a task: a worker
-// or reviewer pane whose obligation is settled and not yet recorded closed.
 func hasRemovableTerminal(task *ordjson.Object) bool {
 	if reason, _ := workerCloseReason(task); reason != "" && !panes.WorkerIsClosed(task) {
 		return true
@@ -50,7 +48,6 @@ func terminalState(task *ordjson.Object) string {
 	return ""
 }
 
-// currentSHA is records-only so Pending and state-locked claims never run Git.
 func currentSHA(task *ordjson.Object) string {
 	var candidate string
 	for _, raw := range asList(field(task, "evidence")) {
@@ -184,8 +181,6 @@ func roleEndpoint(task *ordjson.Object, role string) store.Endpoint {
 	return store.EndpointFromContext(asObject(field(task, key)))
 }
 
-// Only explicit maintenance calls this function. Durable evidence is retained
-// before a finished native history is removed; no status value proves exit.
 func removeSettledTerminals(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string) []any {
 	task, err := s.ReadTask(taskID)
 	if err != nil {
@@ -282,7 +277,7 @@ func removeOneTerminal(s *store.Store, caller *ordjson.Object, runtimeRoot, task
 	if !absent && (terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep || terminal.State != "finished" || terminal.FinishedMS == nil || (terminal.ExitCode == nil && terminal.Signal == nil) || resolvePath(terminal.Cwd) != resolvePath(expectedCwd)) {
 		return fail(fmt.Errorf("native terminal is live, replaced, kept, or lacks finished exit evidence"))
 	}
-	// Git observation stays outside the ledger lock; Pending and claim checks use saved candidates only.
+
 	if terminalState(task) != "archived" {
 		head := evidenceview.CurrentCandidate(task)
 		if head == "" || head != currentSHA(task) {
@@ -310,8 +305,7 @@ func removeOneTerminal(s *store.Store, caller *ordjson.Object, runtimeRoot, task
 			return fail(err)
 		}
 	}
-	// Commit an exact effect claim under the state lock, then release it
-	// before HC I/O. Task writers refuse admission while this claim exists.
+
 	if err = claimTerminalMaintenance(s, task, endpoint, role, reason, stoppedProof); err != nil {
 		return fail(err)
 	}

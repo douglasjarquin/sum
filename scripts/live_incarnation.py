@@ -22,7 +22,6 @@ def main():
         lab.call("terminal.kill", terminal=parent["address"])
         surviving = lab.call("terminal.get", terminal=address)
         assert surviving["state"] == "live" and surviving["parent"] == parent["address"]
-        # A native wait may end on idle before exit; require the exit observation.
         lifetimes.wait_event(dependent["address"], "finished")
         assert lab.call("terminal.get", terminal=dependent["address"])["state"] == "finished"
         lab.command(control, "exit")
@@ -32,7 +31,6 @@ def main():
         replacement, _, _ = lab.fake("worker")
         assert replacement["address"] != address
         assert lab.call("hello", generation=1)["core"]["id"] == lab.core_id
-        # Kept loss is a replacement shell, never the original worker command.
         kept, _, _ = lab.fake("kept", keep=True)
         kept_events = lab.subscribe(terminal=kept["address"])
         old_foreground = kept_events.wait_foreground(kept["address"])

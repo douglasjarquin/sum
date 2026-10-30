@@ -535,6 +535,7 @@ func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expecte
 	if choiceID != "" {
 		question.Set("answer_choice", choiceID)
 	}
+	question.Set("read_receipt", returns.ApplicationReceipt(task, "question:"+questionID, "question-answered", store.EndpointFromContext(endpoint)))
 	question.Set("answer", text)
 	question.Set("answered_at", store.Now())
 	question.Set("status", "answered")
@@ -624,17 +625,27 @@ func answerFeedback(value any) string {
 	}
 }
 
-func Resolve(s *store.Store, taskID, questionID string) (*ordjson.Object, error) {
+func Resolve(s *store.Store, taskID, questionID string, ctx *ordjson.Object) (*ordjson.Object, error) {
+	if err := s.CheckWritable(); err != nil {
+		return nil, err
+	}
+	actor, err := app.ObserveTaskActor(s, ctx)
+	if err != nil {
+		return nil, err
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	if err := s.CheckWritable(); err != nil {
+		return nil, err
+	}
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
 	}
-	if err := maintenance.Refuse(task, "Answer application"); err != nil {
+	if err := app.CheckTaskRole(s, task, actor, "worker"); err != nil {
 		return nil, err
 	}
 
@@ -649,6 +660,13 @@ func Resolve(s *store.Store, taskID, questionID string) (*ordjson.Object, error)
 	if status == ClosedUnapplied {
 		return nil, fmt.Errorf("The coordinator closed this answer unapplied; it cannot be marked applied.")
 	}
+	if status == "applied" {
+		return question, nil
+	}
+	if status != "answered" {
+		return nil, fmt.Errorf("Only an answered question can be marked applied.")
+	}
+	question.Set("application_receipt", returns.ApplicationReceipt(task, "answer:"+questionID, "answer-applied", store.EndpointFromContext(ctx)))
 	question.Set("status", "applied")
 	question.Set("applied_at", store.Now())
 	if allApplied(task) {

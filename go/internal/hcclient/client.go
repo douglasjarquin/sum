@@ -23,7 +23,6 @@ const (
 	Uncertain    Effect = "uncertain"
 )
 
-// Error carries effect certainty independently from the native diagnostic.
 type Error struct {
 	Effect Effect
 	Method string
@@ -42,8 +41,6 @@ type RPCError struct {
 
 func (e *RPCError) Error() string { return fmt.Sprintf("RPC %d: %s (%s)", e.Code, e.Message, e.Data) }
 
-// Client never starts a core, reconnects an operation, or replays an effect.
-// Each ordinary call performs hello on its own existing-socket connection.
 type Client struct {
 	Socket           string
 	CoreID           string
@@ -116,7 +113,7 @@ func (c *connection) exchange(method string, params any, id int, out any) (bool,
 		return false, err
 	}
 	data = append(data, '\n')
-	// From the first write attempt onward, transport errors cannot prove no effect.
+
 	for len(data) > 0 {
 		n, e := c.Write(data)
 		if e != nil {
@@ -192,7 +189,7 @@ func (c *Client) call(ctx context.Context, method string, params, out any, mutat
 		effect = Uncertain
 	}
 	var rpc *RPCError
-	// Only native stable pre-input refusals are eligible for a safe retry.
+
 	if errors.As(err, &rpc) && method == "terminal.send" && knownSendRefusal(rpc) {
 		effect = Refused
 	}
@@ -311,9 +308,6 @@ func validateResult(method string, raw json.RawMessage) error {
 	return nil
 }
 
-// Inspect discovers identity on an explicitly selected existing socket for
-// operator bootstrap. It grants no endpoint or ledger authority. Effectful
-// clients must still be constructed with the saved, expected permanent ID.
 func Inspect(ctx context.Context, socket string) (HelloResult, error) {
 	c := Client{Socket: socket}
 	n, err := c.connect(ctx)

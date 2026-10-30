@@ -10,8 +10,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 )
 
-// Only read transport failures reconnect. Durable records, incompatible cores
-// and uncertain mutations retain their own explicit failure contracts.
 func retryNativeObservation(ctx context.Context, err error) bool {
 	if err == nil || ctx.Err() != nil {
 		return false

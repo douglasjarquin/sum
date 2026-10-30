@@ -10,8 +10,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// Coordinator labels let the scoped observer discover events. They carry no
-// authority; init still verifies the process and rechecks the owner under lock.
 func labelCoordinator(ctx context.Context, s *store.Store, client hcclient.Client, e store.Endpoint, observed incarnation.NativeEvidence, t hcclient.Terminal) (incarnation.NativeEvidence, hcclient.Terminal, error) {
 	instance, err := s.Instance()
 	if err != nil {

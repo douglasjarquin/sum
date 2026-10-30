@@ -1,4 +1,3 @@
-"""Private schema-two fixtures and external process measurements for benchmarks."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -40,7 +39,6 @@ class BenchmarkError(Exception):
 
 
 class Core(hc_fixture.Core):
-    """The existing native test fixture with one explicit bounded-delay fault."""
     def _execute(self, method, params, fault, connection):
         if delay := fault.get("delay_seconds"):
             time.sleep(delay)
@@ -71,7 +69,6 @@ def rpc(core, method, timeout=5, **params):
 
 @lru_cache(maxsize=1)
 def local_machine():
-    # Match the production host identity, without recording its raw OS identifier.
     if platform.system() == "Darwin":
         output = subprocess.check_output(["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], text=True, timeout=10)
         match = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', output)
@@ -213,7 +210,6 @@ def add_tasks(home, source_id, count, status):
         endpoint = task["worker_endpoint"]
         endpoint.update(task=task_id, address=f"t{index + 100}", attempt=f"x-benchmark-{index}")
         task["execution"]["worker"].update(id=endpoint["attempt"])
-        # Extra status rows are saved workload fixtures, not claimed live agents.
         task["execution"]["worker"].pop("native_receipt", None)
         task["execution"]["worker"].pop("incarnation", None)
         write_json(task_path, task)
@@ -228,9 +224,6 @@ def measured_process(argv, env, timeout=60):
     command = [str(item) for item in argv]
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started = time.perf_counter_ns()
-    # A constant shell program execs structured argv; only the owned numeric
-    # descriptor is interpolated. Product stderr stays separate from time's
-    # diagnostics, even when the product prints resource-like text.
     with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as diagnostics:
         fd = diagnostics.fileno()
         launch = ["/bin/sh", "-c", f'exec "$@" 2>&{fd}', "sum-benchmark", *command]

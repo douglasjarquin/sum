@@ -9,8 +9,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
-// NativeEvidence contains only public HC process facts. It never substitutes
-// legacy agent_session or HC's private program_started_ms for an init receipt.
 type NativeEvidence struct {
 	Endpoint   hcclient.Endpoint    `json:"endpoint"`
 	PID        uint32               `json:"pid"`
@@ -29,9 +27,6 @@ func (e NativeEvidence) Record(at string) *ordjson.Object {
 	return object
 }
 
-// JudgeNative requires a current binding and matching application bootstrap
-// receipt as well as public runtime/process identity. Labels, cwd, environment,
-// status, pid alone and native turn counters cannot adopt an attempt.
 func JudgeNative(recorded any, current hcclient.Endpoint, observed hcclient.Terminal, receipt *NativeReceipt) Verdict {
 	object, ok := recorded.(*ordjson.Object)
 	if !ok || object == nil {

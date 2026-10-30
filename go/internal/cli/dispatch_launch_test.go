@@ -742,7 +742,6 @@ func nativeUnsentTask(t *testing.T, name string) (*demoLab, map[string]any) {
 	return d, task
 }
 
-// Seed only native creation/process facts, never an application receipt.
 func seedBootstrapProgram(t *testing.T, d *demoLab, task map[string]any) {
 	t.Helper()
 	endpoint := store.EndpointFromContext(mapObject(t, asMap(task["worker_endpoint"])))

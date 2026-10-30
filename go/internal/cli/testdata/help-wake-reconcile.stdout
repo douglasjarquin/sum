@@ -1,5 +1,5 @@
 topic: wake-reconcile
-help: "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file"
+help: "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file; wake recovery never resolves returns history by itself: use delivery reconcile for separately proven historical native effects"
 arguments[1]{name,help}:
   "--recipient",Reconcile the sidecar with this key (as `wake show` lists it) instead of this terminal's own
 subcommands: null

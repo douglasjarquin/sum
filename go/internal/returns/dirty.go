@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 )
 
-// MarkDirty is a level-triggered reconciliation hint with no message payload.
-// It never records receipt, authority or delivery success.
 func MarkDirty(s *store.Store) error {
 	path := filepath.Join(s.Home, "hook", "dirty")
 	file, err := os.OpenFile(path, os.O_WRONLY, 0600)

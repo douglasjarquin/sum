@@ -864,7 +864,7 @@ func TestSweep_parkFailureDoesNotRecordClosed(t *testing.T) {
 	l.save(task)
 	if err := os.WriteFile(filepath.Join(l.home, "fake-lsof", "cwds.json"), []byte(fmt.Sprintf(`{"processes":[{"pid":%d,"cwd":%q}]}`, os.Getpid(), l.checkout)), 0600); err != nil {
 		t.Fatal(err)
-	} // own process is intentionally excluded by proc; use a real checkout writer
+	}
 	writer := exec.Command("sleep", "60")
 	writer.Dir = l.checkout
 	if err := writer.Start(); err != nil {

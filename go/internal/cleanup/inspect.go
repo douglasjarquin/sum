@@ -257,7 +257,6 @@ func (ins *inspection) block(code, detail string) {
 	ins.blockers = append(ins.blockers, row)
 }
 
-// workerTerminalGone distinguishes native absence from a status update.
 func (ins *inspection) workerTerminalGone() bool {
 	return stringField(ins.resources, "worker_terminal") == "absent"
 }
@@ -295,8 +294,6 @@ func attemptRecordedPIDs(attempt *ordjson.Object) []int {
 	return pids
 }
 
-// ownedDescendants protects live recorded native programs and descendants.
-// Unobservable ownership never authorizes orphan termination.
 func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
 	if ins.descendants != nil {
 		return ins.descendants, true
@@ -363,9 +360,6 @@ func (ins *inspection) ownedDescendants() (map[int]bool, bool) {
 	return owned, true
 }
 
-// addOrphans records surviving writers only after their native owner is gone
-// and every other recorded owner and descendant is excluded from orphan status.
-// They remain named blockers until explicit cleanup stops and reobserves them.
 func (ins *inspection) addOrphans(inside []any) {
 	if ins.orphanPIDs == nil {
 		ins.orphanPIDs = map[int]bool{}
@@ -474,7 +468,7 @@ func (ins *inspection) native() error {
 			ins.block("terminal", proof.Reason)
 		}
 	}
-	// List catches unrecorded native launches from an interrupted intent, without adopting by label.
+
 	endpoint := taskWorker(ins.task)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -942,8 +936,7 @@ func executionStopProof(ins *inspection, execVal *reservations.Execution) []any 
 		rows = append(rows, item)
 		isWorker := stringField(row, "kind") == "worker"
 		if isWorker && (proof.Outcome == execution.OutcomeStopped || len(proof.Orphans) > 0) {
-			// The worker terminal is verified absent; surviving checkout processes are
-			// orphans, not a consuming worker. No live attempt can apply an answer.
+
 			ins.workerStopped = true
 		}
 		if proof.Outcome != execution.OutcomeStopped {

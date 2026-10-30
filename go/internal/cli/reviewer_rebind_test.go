@@ -24,9 +24,6 @@ func reviewerRebindLab(t *testing.T) (*demoLab, string, string) {
 	return d, taskID, asString(d.taskRecord(taskID)["worktree"])
 }
 
-// successorReviewer records a bootstrap receipt as supplied by an explicit
-// handover. Binding must still prove the retired reviewer and checkout writers
-// stopped; this registration alone never assigns a candidate review.
 func successorReviewer(t *testing.T, d *demoLab, taskID string) store.Endpoint {
 	t.Helper()
 	old := asMap(d.taskRecord(taskID)["reviewer"])
@@ -166,8 +163,7 @@ func TestBindReviewerTerminalRefusesLiveRecordedReviewer(t *testing.T) {
 func TestReviewRefusalRequiresExplicitNativeReviewerBinding(t *testing.T) {
 	d, taskID, _ := reviewerRebindLab(t)
 	successor := successorReviewer(t, d, taskID)
-	// Caller identity is explicit; labels and a receipt on another terminal cannot
-	// replace the task's recorded native endpoint by merely recording a verdict.
+
 	env := endpointEnv(successor)
 	for key, value := range env {
 		d.setEnv(key, value)

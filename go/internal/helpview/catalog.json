@@ -53,7 +53,8 @@
       "update": "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running",
       "usage": "Opt-in per-task agent usage accounting over the Claude Code transcripts of the terminals Sum bound to one task; reports counts and coverage, never a bill, and never changes delivery or cleanup",
       "coordinator": "Start a bound coordinator with exact HC identity, recorded launch environment and matching initialization receipt",
-      "restore": "Import a current records-only archive into a fresh quarantined instance/generation; preserve task/procedure bytes, transfer no live authority and block all mutations"
+      "restore": "Import records into a fresh schema-two backend:records quarantine; preserve task/procedure bytes, transfer no live authority and block all mutations",
+      "delivery": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error"
     },
     "read_only": [
       "brief-list",
@@ -1173,7 +1174,7 @@
     "subcommands": {
       "show": "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), the decisions already prompted (priority_prompts, with their deliveries), and uncoalesced legacy prompts; writes nothing",
       "consume": "Coordinator only: record the exact consume receipt for one boundary after reading its included work; closes only that episode, answers/applies/verifies/approves nothing, changes no reservation",
-      "reconcile": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file"
+      "reconcile": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file; wake recovery never resolves returns history by itself: use delivery reconcile for separately proven historical native effects"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1209,7 +1210,7 @@
   },
   "wake-reconcile": {
     "topic": "wake-reconcile",
-    "help": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file",
+    "help": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file; wake recovery never resolves returns history by itself: use delivery reconcile for separately proven historical native effects",
     "arguments": [
       {
         "name": "--recipient",
@@ -2963,16 +2964,45 @@
   },
   "restore": {
     "topic": "restore",
-    "help": "Import a current records-only archive into a fresh quarantined instance/generation; preserve task/procedure bytes, transfer no live authority and block all mutations",
+    "help": "Import records into a fresh schema-two backend:records quarantine; preserve task/procedure bytes, transfer no live authority and block all mutations",
     "arguments": [
       {
         "name": "archive",
-        "help": "Current schema-two records-only backup tar.gz; manifest, paths, duplicates, links and complete gzip stream are validated",
+        "help": "Current schema-two records-only tar.gz; safe unique regular entries, schema/scope and gzip trailer validated before creation. Limits: 64 MiB/entry, 512 MiB expanded, 100000 entries",
         "required": true
       },
       {
         "name": "new_home",
         "help": "Nonexistent destination; never overwrite. Partial quarantined imports are retained after I/O failure; use another fresh destination for explicit retry",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "delivery": {
+    "topic": "delivery",
+    "help": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error",
+    "arguments": [],
+    "subcommands": {
+      "reconcile": "Resolve an exact saved delivery ID from durable receipt proof; no force/proof/reason override and no task-obligation or capacity changes"
+    },
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "delivery-reconcile": {
+    "topic": "delivery-reconcile",
+    "help": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error; missing endpoint or semantic input revision proof refuses. Identical repeats are no-ops",
+    "arguments": [
+      {
+        "name": "task",
+        "help": "Saved task owning the historical delivery",
+        "required": true
+      },
+      {
+        "name": "--delivery",
+        "help": "Exact delivery ID; validation binds original row digest, native endpoint and obligation/input revision to its existing receipt",
         "required": true
       }
     ],

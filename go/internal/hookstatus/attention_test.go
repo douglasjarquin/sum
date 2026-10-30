@@ -113,7 +113,7 @@ func TestNativeAttentionRefusesMissingReceiptAndCleanupRacingRead(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("native read not reached")
 	}
-	// This lock acquisition proves no state lock spans native terminal.read.
+
 	unlock, err := s.Lock()
 	if err != nil {
 		t.Fatal(err)

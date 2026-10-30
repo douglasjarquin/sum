@@ -233,8 +233,6 @@ func observerProof(record *ordjson.Object, current store.Endpoint, terminal hccl
 	return nil
 }
 
-// beginObserverLaunch retires the old proof and claims a distinct native launch
-// before IO. The original binding must still be the one observed by the caller.
 func beginObserverLaunch(s *store.Store, observed *ordjson.Object, e store.Endpoint, args []string) (string, error) {
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {

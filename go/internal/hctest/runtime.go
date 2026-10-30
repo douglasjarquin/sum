@@ -11,9 +11,6 @@ import (
 	"testing"
 )
 
-// InstallRuntime builds a portable synthetic executable and matched contract for
-// unit tests of the activation verifier. This is deliberately a controlled
-// fixture, never proof of a published HC artifact or real harness qualification.
 func InstallRuntime(t testing.TB, target string) {
 	t.Helper()
 	platform := runtime.GOOS + "-" + runtime.GOARCH

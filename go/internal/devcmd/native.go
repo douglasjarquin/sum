@@ -16,8 +16,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// A developer terminal is an ordinary shell, with no Sum task registration or
-// role receipt. Its marker separates the durable launch from its native effect.
 func developerTerminal(s *store.Store, caller *ordjson.Object, path, name string) (*ordjson.Object, error) {
 	parent := store.EndpointFromContext(caller)
 	if parent.Schema != 2 || parent.Backend != "hc" || parent.CoreID == "" || parent.Session == "" || !filepath.IsAbs(parent.Socket) {

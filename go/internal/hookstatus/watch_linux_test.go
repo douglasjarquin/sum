@@ -24,7 +24,7 @@ func TestLinuxWatchReadyThenAtomicHealthReplacement(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("watch did not signal startup readiness")
 	}
-	// Stage outside the watched directory so MOVED_TO is the only change event.
+
 	staged := filepath.Join(t.TempDir(), "health")
 	if err := os.WriteFile(staged, []byte("ready"), 0600); err != nil {
 		t.Fatal(err)

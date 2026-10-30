@@ -75,6 +75,8 @@ func TestInitCommands(t *testing.T) {
 		unknown   bool
 		invalid   bool
 		domainErr string
+		wantRole  string
+		readonly  bool
 	}{
 		{name: "valid init", args: []string{"init"}, native: true, success: true},
 		{name: "valid init after dashdash", args: []string{"init", "--"}, native: true, success: true},
@@ -87,7 +89,7 @@ func TestInitCommands(t *testing.T) {
 		{name: "extra after --reclaim", args: []string{"init", "--reclaim", "extra"}, usage: true},
 		{name: "unrecognized role", args: []string{"init", "--role", "bogus"}, invalid: true},
 		{name: "missing --role value", args: []string{"init", "--role"}, usage: true},
-		{name: "requires explicit HC terminal", args: []string{"init"}, domainErr: "explicit HC session required"},
+		{name: "unbound designated init is read-only developer", args: []string{"init"}, success: true, wantRole: "developer", readonly: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -98,6 +100,7 @@ func TestInitCommands(t *testing.T) {
 				clearNativeEnv(t)
 			}
 			before := readContextFile(t, home)
+			beforeState := snapshotHome(t, home)
 			stdout, stderr, err := runInit(t, home, tc.args...)
 			switch {
 			case tc.success:
@@ -107,6 +110,16 @@ func TestInitCommands(t *testing.T) {
 				if stdout == "" {
 					t.Fatal("expected init output")
 				}
+				if tc.wantRole != "" {
+					view := decodeObject(t, stdout)
+					if view["role"] != tc.wantRole || view["registered"] != false {
+						t.Fatalf("unbound init claimed authority: %v", view)
+					}
+				}
+				if tc.readonly && snapshotHome(t, home) != beforeState {
+					t.Fatal("developer init changed designated state")
+				}
+
 			case tc.invalid:
 				if err == nil {
 					t.Fatalf("expected invalid init arguments, stdout=%s", stdout)

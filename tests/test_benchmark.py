@@ -1,4 +1,3 @@
-"""Native benchmark fixtures preserve behavior and report only measured facts."""
 from __future__ import annotations
 
 from contextlib import ExitStack

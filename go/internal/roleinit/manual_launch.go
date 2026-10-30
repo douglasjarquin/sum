@@ -10,9 +10,6 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// existingCoordinatorLaunch records the command already proven by the selected
-// HC core and current terminal. It neither launches a process nor changes its
-// flags. CLI requests are provenance, not runtime-exposed model or permissions.
 func existingCoordinatorLaunch(spec launch.HCTemplate) *ordjson.Object {
 	argv := append([]string(nil), spec.Argv[1:]...)
 	model, reasoning := explicitCodexSelection(argv)
@@ -58,8 +55,6 @@ func existingCoordinatorLaunch(spec launch.HCTemplate) *ordjson.Object {
 	return result
 }
 
-// Ambiguous/conflicting command requests remain unknown. In particular, this
-// does not inspect user profiles, configuration defaults, status, or title text.
 func explicitCodexSelection(argv []string) (any, any) {
 	candidates := map[string][]string{"model": {}, "model_reasoning_effort": {}}
 	add := func(key, value string) { candidates[key] = append(candidates[key], value) }

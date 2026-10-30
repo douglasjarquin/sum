@@ -121,7 +121,6 @@ def configure(root=ROOT, *, retire_legacy=False):
             changes.append((path, value))
     codex = root / ".codex/config.toml"
     text = codex_retirement(codex, command)
-    # Validate ownership for the complete retirement before changing any config.
     designate(root)
     if retire_legacy:
         for path, value in changes:

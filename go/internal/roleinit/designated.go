@@ -73,8 +73,6 @@ func decode(value any, out any) error {
 	return json.Unmarshal(raw, out)
 }
 
-// BootstrapContext discovers identity only for an explicitly requested coordinator
-// bootstrap. Discovery reads an existing socket and never starts a core.
 func BootstrapContext(ctx context.Context, socket, session, address string, s *store.Store, cwd string) (*ordjson.Object, error) {
 	if !filepath.IsAbs(socket) || session == "" || address == "" {
 		return nil, fmt.Errorf("explicit HC_SOCKET, HC_TERMINAL_ID and HC session required")
@@ -100,6 +98,12 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 		return nil, fmt.Errorf("--role %s needs --task TASK_ID.", opts.Role)
 	}
 	s := opts.Store
+	if opts.Role == "developer" && opts.Ctx == nil {
+		if opts.Task != "" || opts.Reclaim {
+			return nil, fmt.Errorf("Developer initialization cannot adopt task or coordinator authority.")
+		}
+		return developerView(opts, s, store.Endpoint{}), nil
+	}
 	endpoint := store.EndpointFromContext(opts.Ctx)
 	if endpoint.Schema != 2 || endpoint.Backend != "hc" || endpoint.CoreID == "" || endpoint.Address == "" || !filepath.IsAbs(endpoint.Socket) {
 		return nil, fmt.Errorf("verified current HC terminal context required; legacy context grants no role")
@@ -436,7 +440,11 @@ func developerView(opts DesignatedOpts, s *store.Store, e store.Endpoint) *ordjs
 	v.Set("installation", true)
 	v.Set("role", "developer")
 	v.Set("task", nil)
-	v.Set("endpoint", e.Object())
+	if e.Schema == 0 {
+		v.Set("endpoint", nil)
+	} else {
+		v.Set("endpoint", e.Object())
+	}
 	v.Set("registered", false)
 	v.Set("procedure", roleProcedure(opts.RuntimeRoot, s, "developer", nil, nil))
 	v.Set("note", "No coordinator or task role was claimed; follow the developer procedure.")
@@ -604,9 +612,7 @@ func qualifyTask(s *store.Store, task *ordjson.Object, e store.Endpoint, t hccli
 			if _, attemptHasReceipt := attempt.Get("native_receipt"); attemptHasReceipt {
 				return nil, nil, fmt.Errorf("receipt-bound attempt cannot adopt an unreceipted registration")
 			}
-			// terminal.run can finish and save its exact registration before the agent
-			// initializes. The sealed intent checks above authorize only this first init;
-			// they grant no business authority until its new application receipt is saved.
+
 			if recorded, ok := previous.Get("incarnation"); ok && recorded != nil {
 				var baseline incarnation.NativeEvidence
 				if err = decode(recorded, &baseline); err != nil {

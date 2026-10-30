@@ -10,8 +10,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// A pre-native release is historical evidence, not an executable writer for the
-// current authority. No command silently upgrades or adopts its saved routes.
 func TestOlderHelpersOnCandidateRecords(t *testing.T) {
 	root, helper := repoReference(t)
 	for _, args := range [][]string{{"init"}, {"status"}, {"ask", "t-aaaaaaaaaaaa", "--text", "continue?"}, {"report", "t-aaaaaaaaaaaa", "--text", "done"}, {"answer", "t-aaaaaaaaaaaa", "q-one", "--text", "yes"}, {"bind", "t-aaaaaaaaaaaa", "--parent-only"}} {

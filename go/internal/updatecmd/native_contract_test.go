@@ -385,9 +385,6 @@ func TestMatchingApplicationReceiptResolvesUncertainLaunchWithoutRewritingIt(t *
 	}
 }
 
-// startNativeObserverProgram runs the actual observer entrypoint when the native
-// fixture emits its created event. The fixture supplies public process facts;
-// Observe must produce the matching application receipt itself.
 func startNativeObserverProgram(t *testing.T, lab *applyLab) {
 	t.Helper()
 	observerStore, err := store.Open(lab.store.Root)

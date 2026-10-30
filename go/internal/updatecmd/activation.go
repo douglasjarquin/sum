@@ -552,7 +552,7 @@ func verifyCurrentKnownGood(s *store.Store, root string, current, currentDesc *o
 	if resolveErr != nil {
 		return resolveErr
 	}
-	// Serving a generation does not waive the native compatibility contract.
+
 	compat, _, validErr := ValidateTarget(s, root, target, current)
 	if validErr != nil {
 		blocking := ""

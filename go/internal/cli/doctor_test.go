@@ -17,7 +17,6 @@ func normalizeTimestamps(s string) string {
 	return isoTimestamp.ReplaceAllString(s, `"<at>"`)
 }
 
-// Doctor argument validation runs only against temporary lab state.
 func TestDoctor_extraArgsAreGoErrors(t *testing.T) {
 	clearNativeEnv(t)
 	home := t.TempDir()

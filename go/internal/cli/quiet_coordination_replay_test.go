@@ -20,29 +20,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// TestQuietCoordinationReplay is the one integrated replay of the quiet-coordinator program (#238 R17, #242): twelve
-// dispatched workers across three enrolled projects with distinct canonical identities, two enrolled factories holding
-// one lane each, driven only through the built helper against the native HC Unix socket fixture and a fake GitHub CLI. It proves, on
-// saved records, actual observer receipts and native request logs:
-//
-//   - AE1: twelve concurrent routine reports while the adopted coordinator is idle submit exactly one routine prompt
-//     before consumption; every obligation stays retrievable (`inbox`, `wake show` included/omitted,
-//     returns.OpenObligations).
-//   - #240b: a new decision behind the outstanding routine wake gets exactly one priority prompt; nothing is
-//     suppressed; `wake consume --boundary` closes exactly the shown episode; the answer reaches the worker.
-//   - #242: one factory lane progresses report -> coordinator verify -> independent review -> pipeline pr (fake gh) ->
-//     merged observation -> cleanup -> lane release, and the digests (`factory status --project --since`,
-//     `status --grouped --project --since`) label each step as a new outcome without performing any of them; the
-//     second factory's gated issue keeps its lane; capacity and cleanup stay green.
-//   - Fallbacks: with automatic observation and metadata disabled, an explicit pass still
-//     delivers and `wake show`/`metadata status`/`hook status` say so honestly.
-//   - Read purity: every read-only phase leaves the task and coordination files byte-identical (the observer heartbeat is independently refreshed), adds no fake gh call and no
-//     native terminal send; the fake gh log holds only the explicitly driven workflow verbs and never a merge.
-//
-// It records (never asserts as guarantees) native prompt submissions, an explicit unavailable historical baseline,, coalesced
-// and deferred counts, structured stdout bytes, helper calls and lock waits into replay.json (and SUM_MEASURE_OUT when
-// set). It claims nothing about tokens, latency or agent narration; real-HC/harness proof remains separately not-run.
-// Legacy schema1 write rejection is covered separately; old helpers cannot share these native generations.
 func TestQuietCoordinationReplay(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not on PATH")
@@ -382,7 +359,6 @@ func TestQuietCoordinationReplay(t *testing.T) {
 	lab.readPhase(t, "reads-after-cleanup")
 	markPhase("factory-lane-and-cleanup")
 
-	// --- Explicit delivery with automatic observation and metadata off ---------------------------------------------------
 	lab.ctl(true, "hook", "disable")
 	lab.ctl(true, "metadata", "disable")
 	lab.coordinatorStatus(t, "idle")
@@ -548,7 +524,6 @@ func replayProjectRepo(t *testing.T, root, base, spec, name, slug string) replay
 	return replayProject{spec: spec, name: name, repo: repo, origin: origin, baseSHA: git("rev-parse", "HEAD")}
 }
 
-// coordinatorStatus changes the native fixture observation and emits its matching event.
 func (l *replayLab) coordinatorStatus(t *testing.T, status string) {
 	t.Helper()
 	l.native.SetStatus(l.coordinatorPane, status)
@@ -616,7 +591,6 @@ func (l *replayLab) readGH(t *testing.T, name string) map[string]any {
 	return out
 }
 
-// nativePrompts returns each actual terminal.send destination in order.
 func (l *replayLab) nativePrompts() []string {
 	var panes []string
 	for _, p := range l.promptLog() {
@@ -847,8 +821,6 @@ func (b burstResult) add(o burstResult) burstResult {
 	return b
 }
 
-// arrivals is the AE1 shape across processes and passes: six concurrent reports, a coordinator idle edge, six more
-// concurrent reports, then two more idle edges. The typed native fixture records every submission.
 func (l *replayLab) arrivals(t *testing.T, handoffs map[string]string) (burstResult, []map[string]any) {
 	t.Helper()
 	l.coordinatorStatus(t, "idle")
@@ -860,8 +832,6 @@ func (l *replayLab) arrivals(t *testing.T, handoffs map[string]string) (burstRes
 	return result, edges
 }
 
-// burst submits the twelve workers' reports from twelve helper processes started together. Each report's own
-// notice row says what its pass did for the coordinator; the native request log records submissions.
 func (l *replayLab) burst(t *testing.T, tasks []replayTask, handoffs map[string]string) burstResult {
 	t.Helper()
 	results := make([]map[string]any, len(tasks))
@@ -972,12 +942,10 @@ var replayReads = [][]string{
 	{"status", "--grouped", "--project", "a/repo"}, {"factory", "status", "--project", "b/repo"},
 }
 
-// readPhase runs every coordinator-facing read and proves it wrote nothing under the home, called gh not at all and
-// prompted nothing through HC; it records the structured stdout bytes of each command.
 func (l *replayLab) readPhase(t *testing.T, name string) {
 	t.Helper()
 	before := hashTree(t, l.home)
-	// The independently running observer refreshes only its health heartbeat during reads.
+
 	delete(before, "hook/health.json")
 	ghBefore, nativeBefore, promptsBefore := l.ghCalls(), l.nativeCalls(), len(l.nativePrompts())
 	bytes := map[string]int{}

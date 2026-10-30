@@ -9,8 +9,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// AutoEnableAfterInit runs only after the coordinator binding transaction has
-// released its state lock. A helper creation is unconfirmed until AwaitReady.
 func AutoEnableAfterInit(ctx context.Context, s *store.Store, caller *ordjson.Object, runtimeRoot, sumctlPath string) *ordjson.Object {
 	if err := app.RequireCoordinator(s, caller); err != nil {
 		row := ordjson.NewObject()
@@ -36,8 +34,6 @@ func AutoEnableAfterInit(ctx context.Context, s *store.Store, caller *ordjson.Ob
 	return row
 }
 
-// EnsureScope establishes coverage before committing a binding in another local
-// runtime scope. Unsupported additional scopes fail explicitly, never silently.
 func EnsureScope(ctx context.Context, s *store.Store, caller *ordjson.Object, target store.Endpoint, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, caller); err != nil {
 		return nil, err

@@ -247,7 +247,7 @@ var reviewClosers = map[string]bool{"verification": true, "push": true, "pr": tr
 // reviewObligations lists each recorded review the parent has not acted on yet. A review stays open until, after it,
 // the coordinator takes its candidate further (its own verification, push, PR, CI read, or PR publication) or sends
 // the worker a repair, or until a later report, handoff, or review names another candidate and so supersedes it.
-// Archiving the task ends it too. A delivery or notice closes nothing, and a task with no native parent terminal owes no one.
+
 func reviewObligations(task *ordjson.Object) []*ordjson.Object {
 	parent, _ := routeValue(task, "parent").(*ordjson.Object)
 	if store.EndpointFromContext(parent).Validate() != nil {

@@ -26,9 +26,6 @@ func SessionFromEnv() (string, error) {
 	return value, nil
 }
 
-// Context observes a native local caller. Environment supplies its expected
-// route; the existing core must attest the permanent identity before use.
-// Legacy HERDR variables never grant authority to the HC runtime.
 func Context(root string) (*ordjson.Object, error) {
 	session, err := SessionFromEnv()
 	if err != nil {

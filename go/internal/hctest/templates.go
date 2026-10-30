@@ -9,9 +9,6 @@ import (
 	"strings"
 )
 
-// LoadTemplatesFrom reads fixture-local native template files at each native
-// Templates/Run boundary. Explicit SetTemplates/SetTemplateSubmit entries win,
-// so a test can deliberately model an advertised-command or submit mismatch.
 func (f *Fixture) LoadTemplatesFrom(configHome string) error {
 	if !filepath.IsAbs(configHome) {
 		return fmt.Errorf("absolute fixture HC configuration home required")

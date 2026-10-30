@@ -11,11 +11,11 @@ No production update or migration is authorized or claimed.
 | --- | --- | --- |
 | Native protocol | Typed socket fixtures and published-HC smoke/identity scripts exercise responses, uncertainty, process identity and teardown. | A fixture response is not an application receipt. |
 | Codex readiness | Actual Codex 0.166.0 probes passed a Done follow-up and an ordered Tab submission during a held working turn. | This is no atomic Done predicate; other harnesses remain unqualified. |
-| Packaging | Exact cached published archive, matched schema/manual/provenance, native helper capability report and full release race suite pass. | Cache-only staging does not claim that software installation or activation ran. |
+| Packaging | Retained checks exercise exact cached artifact, matched schema/manual/provenance, helper capabilities and release concurrency. | Read their exact candidate/log/result; cached staging and focused checks are not production installation or final aggregate proof. |
 | Application composition | The full application canary passed through actual HC terminals and actual Sum helper callbacks. | Its scripted TUI is not authenticated Codex; GitHub and the Git destination are private fixtures. |
 | Services | Actual published-HC service Start/Stop canary passed readiness, one interrupt, conclusive exit and process death. | No production service was touched. |
 | Migration | Generation isolation, historical readers, admission fences and resumable migration contracts have deterministic tests. | No production exclusion lease exists, so existing-installation cutover remains blocked. |
-| Verification policy | The feature-map audit passes with explicit retirement rationale. | Changed policy requires independent review and cannot certify itself. |
+| Verification policy | Candidate-bound audit records distinguish mapped source changes, explicit retirement rationale and policy review. | Every later contract/map edit needs a fresh final audit; changed policy cannot certify itself. |
 
 ## Reproduce the native canaries
 
@@ -61,7 +61,26 @@ Migration therefore refuses without an independently enforceable writer/sender e
 Physical state generations protect the new ledger from old file handles, but cannot stop old terminal sends.
 No hot adoption, legacy automatic rollback, production cutover or fabricated successful migration is part of this evidence.
 
+## Browser and independent-review availability
+
+The browser attempt is recorded in `.artifacts/hc-contract/browser-check.json` as blocked before the first navigation.
+The browser access host was unavailable, and the agent-browser CLI fallback was absent; no installation workaround was authorized.
+All eight affected routes remain Skip: `/sum/`, `/sum/architecture/`, `/sum/configuration/`, `/sum/docs/`, `/sum/herdr/`, `/sum/install/`, `/sum/skills/` and `/sum/update/`.
+No browser interaction, screenshot, visual comparison or console proof was produced.
+The owned local preview started and stopped; that establishes no rendered-page acceptance.
+Astro typechecking, unit tests, static build and route emission are separate local checks, not substitutes for the skipped browser scenarios.
+
+The configured external Claude ACP review failed before provider initialization and before any reviewed content reached the provider.
+No cross-model corroboration was obtained from that attempt.
+The in-process source review and adversarial fallback remain attributable local reviews, with their own limits.
+The original independent review reported twelve defects.
+Each has targeted repair work and focused evidence; closure still requires follow-up independent validation against the integrated candidate rather than assuming a submitted repair is correct.
+
 ## Final delivery checks
 
-The clean candidate still needs the canonical verifier, lint, final audit, independent runtime/policy review and hosted CI before a merge-readiness claim.
+Use the final candidate's actual run records to report canonical verification, lint, feature-map audit, independent runtime/policy review and hosted CI separately.
+A failed or provisional run, an unrun browser scenario and an unavailable external review stay explicit; do not turn focused passing checks or an older helper/source digest into a final passing aggregate.
+Use the original review and candidate-bound follow-up record to determine which findings remain open.
+Local fixtures, actual native/model-free canaries, authenticated harness qualification, hosted CI, merge, deployment and production acceptance are distinct claims.
+No production activation or legacy-writer exclusion lease is supplied by these records.
 Only the user decides whether to merge and later activate it.

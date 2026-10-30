@@ -168,7 +168,6 @@ func assertRepairTaskUnchanged(t *testing.T, home, before string) {
 
 const repairSendTask = "t-aaaaaaaaaaaa"
 
-// repairSendLab supplies an exact receipt-bound native worker to the CLI.
 func repairSendLab(t *testing.T) (home, worktree string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
@@ -455,8 +454,6 @@ func TestRepairSend_refusesAWorkerReboundWhileItWaited(t *testing.T) {
 	}
 }
 
-// A recreated native address is not the running attempt's occupant: the correction is refused
-// before anything is stamped in-flight, and nothing is charged.
 func TestRepairSend_refusesAReplacedWorkerPaneBeforeAnythingIsStamped(t *testing.T) {
 	home, _ := repairSendLab(t)
 	d := nativeLabFor(t, home)

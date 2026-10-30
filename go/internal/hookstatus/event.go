@@ -9,14 +9,10 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// Event refuses obsolete environment callbacks. HC subscriptions are the only
-// runtime event source; a forged environment callback cannot trigger a send.
 func Event(s *store.Store, environ map[string]string, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
 	return nil, fmt.Errorf("legacy plugin callbacks are retired; run hook observe in its recorded HC observer terminal")
 }
 
-// Reconcile drains budget-deferred recipients fairly, without waiting for
-// another native event. Submitted and uncertain attempts are never replayed.
 func Reconcile(ctx context.Context, s *store.Store, endpoint store.Endpoint, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
 	if err := reconcileAttention(ctx, s, endpoint); err != nil {
 		return nil, err

@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""Native HC generation-one Unix socket fixture for Python CLI tests.
-
-Import Core and use it as a context manager. Test controls are local methods;
-product requests always cross the actual JSON-RPC socket boundary.
-"""
 from __future__ import annotations
 
 from collections import defaultdict, deque
@@ -121,7 +116,6 @@ class Core:
                 self._subscribers.pop(connection, None)
 
     def queue_fault(self, method, **fault):
-        """refuse rejects before effects; lose_response drops after effects."""
         with self._lock:
             self.faults[method].append(fault)
 

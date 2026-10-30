@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Model-free interactive OSC 7501 reporter used only by isolated HC labs."""
 import argparse
 import json
 import os

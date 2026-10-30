@@ -1,4 +1,3 @@
-"""Native socket fixture characterization independent of legacy CLI fixtures."""
 import importlib.util
 import json
 from pathlib import Path

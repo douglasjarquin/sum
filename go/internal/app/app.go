@@ -85,8 +85,6 @@ func RequireCoordinator(s *store.Store, ctx *ordjson.Object) error {
 	return nil
 }
 
-// ObserveNative reads public runtime facts from an existing identity-checked core.
-// It never starts a core or treats runtime status as application authority.
 func ObserveNative(endpoint store.Endpoint) (incarnation.NativeEvidence, hcclient.Terminal, error) {
 	var evidence incarnation.NativeEvidence
 	if err := endpoint.Validate(); err != nil {

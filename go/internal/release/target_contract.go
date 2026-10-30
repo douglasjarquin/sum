@@ -13,8 +13,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/proc"
 )
 
-// ReadTargetContract executes the staged artifact's read-only report. Source
-// markers and the stager's own contract cannot prove what that artifact supports.
 func ReadTargetContract(ctx context.Context, target string) (contract.Release, error) {
 	var offered contract.Release
 	helper := filepath.Join(target, ".local", "bin", "sumctl")

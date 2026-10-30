@@ -1,16 +1,3 @@
-// Package machine names the host sum runs on. Terminal addresses are unique only
-// within one HC core, so every recorded endpoint carries a machine
-// component, and that component must stay the same when the host is renamed
-// and differ between hosts.
-//
-// The identity is derived from the operating system's own machine identifier
-// (/etc/machine-id on Linux, the platform UUID on macOS), hashed with a
-// sum-specific key so the raw identifier is never stored. The hostname is read
-// only for display and to recognise records written before this identity
-// existed.
-//
-// The update guard treats this file's path as the marker that a release tree
-// carries the stable identity (#202); moving it changes that classification.
 package machine
 
 import (
@@ -301,8 +288,6 @@ func (m Identity) Same(a, b any) bool {
 	return m.Canonical(a) == m.Canonical(b)
 }
 
-// SameEndpoint compares native binding authority. Routing names and socket paths
-// can change without adopting another terminal, role, or attempt.
 func (m Identity) SameEndpoint(a, b *ordjson.Object) bool {
 	decode := func(o *ordjson.Object) (hcclient.Endpoint, bool) {
 		var e hcclient.Endpoint

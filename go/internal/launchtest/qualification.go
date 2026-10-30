@@ -11,8 +11,6 @@ import (
 	"testing"
 )
 
-// QualifyCodex seals fixture-local command/keymap provenance and advertises the
-// exact matching native template. No actual coding agent or credentials run.
 func QualifyCodex(t testing.TB, f *hctest.Fixture, cwd string) (launch.HCTemplate, string, launch.HCTemplateOptions) {
 	t.Helper()
 	runtime := t.TempDir()

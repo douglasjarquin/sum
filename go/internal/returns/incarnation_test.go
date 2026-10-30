@@ -119,8 +119,6 @@ func TestPassUncertainDeliveryStaysUncertainAfterTheAddressIsRecycled(t *testing
 	}
 }
 
-// A terminal replacement inherits no authority. An explicit new binding with
-// its matching bootstrap receipt makes the approved pending answer eligible.
 func TestPassHandoffRequiresExplicitNativeBindingThenPromptsOnce(t *testing.T) {
 	l := newPassLab(t)
 	id := l.worker("lab", "w1:p1")
@@ -142,8 +140,6 @@ func TestPassHandoffRequiresExplicitNativeBindingThenPromptsOnce(t *testing.T) {
 	}
 }
 
-// Unsupported conversation metadata can never supply a native application
-// receipt or adopt a replacement program, even when its text stays the same.
 func TestPassLateConversationMetadataNeverAdoptsANativeReplacement(t *testing.T) {
 	l := newPassLab(t)
 	id := l.worker("lab", "w1:p1")

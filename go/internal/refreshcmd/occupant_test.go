@@ -13,8 +13,6 @@ import (
 	"testing"
 )
 
-// The revision stays owed across busy, replacement, lost-response and repeated
-// observation. A native submission never adopts the revision for the worker.
 func TestNativeRefreshClaimRejectsReplacementAndNeverReplaysUncertainty(t *testing.T) {
 	f := hctest.New(t)
 	physical, err := filepath.EvalSymlinks(t.TempDir())
@@ -112,8 +110,7 @@ func TestNativeRefreshClaimRejectsReplacementAndNeverReplaysUncertainty(t *testi
 	if active, _ := ledger.Get("active"); active == "r1" {
 		t.Fatal("submission adopted a revision")
 	}
-	// A new requested revision is independently eligible, but a request changing
-	// during observation must be revalidated before claiming its native input.
+
 	ledger.Set("requested", "r2")
 	if err = versions.WriteVersions(s, ledger); err != nil {
 		t.Fatal(err)

@@ -1,5 +1,5 @@
 // Package fixture writes deterministic factory/task homes for digest tests and the integrated replay.
-// It writes saved records only: task.json files and the factory registry, never a checkout or a live terminal.
+// It writes saved records only: task.json files and the factory registry, never a checkout or a Herdr pane.
 package fixture
 
 import (

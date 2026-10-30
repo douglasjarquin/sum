@@ -170,9 +170,16 @@ Deliveries to different recipients no longer wait for each other; only two opera
 A recipient the budget or a busy delivery lock did not reach is `deferred`: nothing was recorded for it, it stays pending, and it goes first on the next pass.
 A HC call that fails or times out makes that session unavailable for the rest of the pass, so its later recipients are `not-delivered` and count toward `stalled`.
 `fanout` shows the sessions, HC calls, elapsed and budget milliseconds, and the deferred count.
-For an `uncertain` or `stalled` item, first look at the recipient terminal, then try once with `sumctl notice TASK_ID --to worker` (or `--to parent`).
+For an uncertain historical effect, inspect its exact durable application/consumed-boundary receipt and use `sumctl delivery reconcile TASK_ID --delivery DELIVERY_ID`.
+It sends nothing, requires current coordinator authority and exact endpoint/obligation/input-revision proof, and accepts no proof/force/reason override.
+It preserves the original effect/error and writes a separate digest-bound reconciliation receipt; repeated identical resolution is a no-op.
+It closes no business obligation or reservation.
+A separate explicitly requested `sumctl notice TASK_ID --to worker` (or `--to parent`) is a new attempt, never evidence resolving the old uncertain one.
 `sumctl pump` repeats the ordinary pass, which also reaches deferred recipients; `--force` is an explicit ledger recovery selection, never a native force-input flag.
 Do not replay uncertainty automatically or loop.
+
+Wake consumption and `wake reconcile` affect the wake episode only; they do not by themselves resolve its historical native delivery effect.
+Cleanup and activation require the exact separately validated delivery reconciliation where such an effect remains uncertain.
 
 ### Coordinator wake episodes
 
@@ -262,6 +269,8 @@ Use `sumctl restore ARCHIVE NEW_HOME` with a nonexistent destination to inspect 
 Direct extraction and `--home` against the archived original generation header is not a supported writable restore.
 The importer validates scope/schema, safe unique regular paths and the complete gzip stream before target creation.
 The imported home has a fresh instance/generation and `records_only:true` quarantine; exact original entries remain under its `restore-source/` directory.
+The schema-two pointer/header use `backend:"records"`, distinct from active `backend:"hc"`, so HC-only readers cannot ignore the quarantine flag and acquire authority.
+Import is bounded to 64 MiB per entry, 512 MiB expanded archive including trailing data, and 100,000 entries.
 It preserves task and pinned procedure bytes but imports no live coordinator, sessions, observer or runtime authority.
 Use saved `show`, `status` and bounded `context` reads; all mutations, role claims, binds, capacity adoption and native launch/send are blocked.
 There is no automatic promotion or schema-one executable fallback.
