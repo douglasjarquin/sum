@@ -22,7 +22,7 @@ type Endpoint struct {
 	CreatedMS         uint64 `json:"created_ms"`
 }
 
-var addressPattern = regexp.MustCompile(`^t[0-9]+$`)
+var addressPattern = regexp.MustCompile(`^t[0-9a-z]+$`)
 
 func (e Endpoint) Validate() error {
 	if e.Schema != 2 || e.Backend != "hc" || e.CoreID == "" || !addressPattern.MatchString(e.Address) || !filepath.IsAbs(e.Socket) || e.Role == "" || e.Attempt == "" || e.BindingGeneration == 0 {

@@ -162,6 +162,14 @@ func (c *Client) open(ctx context.Context, method string) (*connection, HelloRes
 		n.close()
 		return nil, h, fmt.Errorf("core identity, pinned version or method mismatch")
 	}
+	if (method == "terminal.send" || method == "terminal.get") && !slices.Contains(h.Features, "status") {
+		n.close()
+		return nil, h, fmt.Errorf("required native status feature unavailable")
+	}
+	if method == "events.subscribe" && !slices.Contains(h.Features, "events") {
+		n.close()
+		return nil, h, fmt.Errorf("required native event feature unavailable")
+	}
 	return n, h, nil
 }
 func (c *Client) call(ctx context.Context, method string, params, out any, mutates bool) error {
