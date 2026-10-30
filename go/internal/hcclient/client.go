@@ -66,8 +66,8 @@ type connection struct {
 
 func (c *connection) close() { c.stop(); c.cancel(); c.Conn.Close() }
 func (c *Client) connect(ctx context.Context) (*connection, error) {
-	if c.Socket == "" || c.CoreID == "" {
-		return nil, fmt.Errorf("explicit existing socket and expected core ID required")
+	if c.Socket == "" {
+		return nil, fmt.Errorf("explicit existing socket required")
 	}
 	timeout := c.Timeout
 	if timeout <= 0 {
@@ -150,6 +150,9 @@ func (c *connection) exchange(method string, params any, id int, out any) (bool,
 }
 func (c *Client) open(ctx context.Context, method string) (*connection, HelloResult, error) {
 	var h HelloResult
+	if c.CoreID == "" {
+		return nil, h, fmt.Errorf("expected permanent core ID required")
+	}
 	n, err := c.connect(ctx)
 	if err != nil {
 		return nil, h, err
@@ -289,4 +292,24 @@ func validateResult(method string, raw json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// Inspect discovers identity on an explicitly selected existing socket for
+// operator bootstrap. It grants no endpoint or ledger authority. Effectful
+// clients must still be constructed with the saved, expected permanent ID.
+func Inspect(ctx context.Context, socket string) (HelloResult, error) {
+	c := Client{Socket: socket}
+	n, err := c.connect(ctx)
+	var h HelloResult
+	if err != nil {
+		return h, err
+	}
+	defer n.close()
+	if _, err = n.exchange("hello", map[string]int{"generation": 1}, 1, &h); err != nil {
+		return h, err
+	}
+	if h.Generation != 1 || h.Version != "0.1.14" || h.Core.ID == "" {
+		return h, fmt.Errorf("unsupported or unidentified HC core")
+	}
+	return h, nil
 }

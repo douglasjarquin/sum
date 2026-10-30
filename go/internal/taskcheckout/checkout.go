@@ -75,7 +75,7 @@ func validate(i Intent) error {
 	return nil
 }
 func run(ctx context.Context, repo string, args ...string) (string, error) {
-	out, err := proc.RunContext(ctx, proc.Cmd{Argv: append([]string{"git", "-C", repo}, args...), Timeout: 2 * time.Minute, Env: append(proc.ScrubbedEnv(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")})
+	out, err := proc.RunContext(ctx, proc.Cmd{Argv: append([]string{"git", "-C", repo}, args...), Timeout: 2 * time.Minute, Env: gitEnv()})
 	if err != nil {
 		return "", err
 	}
@@ -218,4 +218,15 @@ func futurePath(path string) (string, error) {
 		root = filepath.Join(root, tail[n])
 	}
 	return root, nil
+}
+
+func gitEnv() []string {
+	var env []string
+	for _, entry := range proc.ScrubbedEnv() {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(key, "GIT_") {
+			env = append(env, entry)
+		}
+	}
+	return append(env, "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 }

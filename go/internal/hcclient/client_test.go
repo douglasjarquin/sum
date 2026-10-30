@@ -221,3 +221,22 @@ func TestSubscriptionIndependent(t *testing.T) {
 		t.Fatal("subscription ignored cancellation")
 	}
 }
+
+func TestReadOnlyDiscoveryDoesNotAuthorizeEffects(t *testing.T) {
+	socket := serve(t, func(c net.Conn, r *bufio.Reader) {
+		hello(c, r, "discovered-core")
+		if q := request(r); len(q) > 0 {
+			t.Error("discovery sent an operation")
+		}
+	})
+	h, err := Inspect(context.Background(), socket)
+	if err != nil || h.Core.ID != "discovered-core" {
+		t.Fatalf("%#v %v", h, err)
+	}
+	c := Client{Socket: socket}
+	_, err = c.Send(context.Background(), SendParams{Terminal: "t1b", Text: "no"})
+	var ce *Error
+	if !errors.As(err, &ce) || ce.Effect != NotSubmitted {
+		t.Fatalf("missing expected identity allowed effects: %v", err)
+	}
+}
