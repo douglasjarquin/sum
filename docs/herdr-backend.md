@@ -48,6 +48,11 @@ A second unsupported scope is refused rather than silently left without delivery
 `sumctl hook status` shows saved health and observer ownership/readiness evidence.
 Enabled preference alone is not proof of a running observer.
 Startup failure is fail-open and explicitly degraded; `init`, `bind`, task-write notices and `sumctl pump` remain available.
+After proving a prior observer finished, replacement retires its old endpoint/receipt proof and persists a distinct `launch_attempt` before native creation.
+An early child may record its exact matching startup receipt before `terminal.run` replies; the parent merges only that same launch intent and never overwrites a newer receipt or changed launch.
+Transient read-only HC transport/observation failures reconnect to the existing core with bounded backoff and a fresh subscription snapshot.
+Cancellation or explicit disablement stops the observer; wrong core, incompatible config/protocol and invalid durable records are hard failures rather than reconnect permission.
+No reconnect replays a submitted or uncertain mutation.
 `hook enable` ensures the observer, while `hook disable` preserves the explicit preference and stops only a proven owned observer.
 Only the user chooses to disable delivery.
 Native attention points to output requiring inspection; it is not a question, report, verification or approval.

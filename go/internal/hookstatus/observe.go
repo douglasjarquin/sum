@@ -56,6 +56,7 @@ func Observe(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot,
 		return err
 	}
 	args := []string{sumctlPath, "--home", s.Root, "hook", "observe", "--core-id", e.CoreID, "--session", e.Session, "--socket", e.Socket}
+	attempt, _ := value(health, "launch_attempt").(string)
 	effect, _ := health.Get("launch_effect")
 	core, _ := health.Get("core_id")
 	session, _ := health.Get("session")
@@ -69,7 +70,7 @@ func Observe(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot,
 		}
 		expectedArgs = append(expectedArgs, arg)
 	}
-	if (effect != "in-flight" && effect != "submitted") || core != e.CoreID || session != e.Session || socket != e.Socket || !reflect.DeepEqual(expectedArgs, args) {
+	if attempt == "" || terminal.Labels["sum.attempt"] != attempt || (effect != "in-flight" && effect != "submitted") || core != e.CoreID || session != e.Session || socket != e.Socket || !reflect.DeepEqual(expectedArgs, args) {
 		return fmt.Errorf("observer has no matching owned launch intent for this scope")
 	}
 	if raw, _ := health.Get("observer"); raw != nil {
@@ -90,7 +91,7 @@ func Observe(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot,
 	}
 	e.Machine = host.ID
 	e.Role = "observer"
-	e.Attempt = "observer-" + scopeKey(s, e)
+	e.Attempt = attempt
 	e.BindingGeneration = 1
 	e.Address = address
 	e.CreatedMS = terminal.CreatedMS
@@ -100,21 +101,29 @@ func Observe(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot,
 	proof.Set("observer", e.Object())
 	proof.Set("observer_incarnation", evidence.Record(store.Now()))
 	proof.Set("observer_receipt", receipt)
-	if _, err = writeHealth(s, nil, proof); err != nil {
+	if _, err = writeHealthForAttempt(s, attempt, proof); err != nil {
 		return err
 	}
 
 	backoff := 100 * time.Millisecond
 	for {
-		reconnect, err := observeConnection(ctx, s, e, runtimeRoot, sumctlPath, dirty, watchErrors)
+		reconnect, err, established := observeConnection(ctx, s, e, runtimeRoot, sumctlPath, dirty, watchErrors)
 		if !reconnect {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 		changes := ordjson.NewObject()
 		if err != nil {
 			changes.Set("degraded", err.Error())
 		}
-		_, _ = writeHealth(s, nil, changes)
+		if _, writeErr := writeHealthForAttempt(s, attempt, changes); writeErr != nil {
+			return writeErr
+		}
+		if established {
+			backoff = 100 * time.Millisecond
+		}
 		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
@@ -127,30 +136,29 @@ func Observe(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot,
 			timer.Stop()
 			return err
 		}
-		if backoff < 5*time.Second {
-			backoff *= 2
-		}
+		backoff = min(5*time.Second, backoff*2)
 	}
 }
 
-func observeConnection(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath string, dirty <-chan struct{}, watchErrors <-chan error) (bool, error) {
+func observeConnection(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath string, dirty <-chan struct{}, watchErrors <-chan error) (bool, error, bool) {
+	established := false
 	enabled, present, err := settings.NativeEventsPreference(s)
 	if err != nil {
-		return false, err
+		return false, err, established
 	}
 	if present && !enabled {
-		return false, nil
+		return false, nil, established
 	}
 	streamCtx, stopStream := context.WithCancel(ctx)
 	defer stopStream()
 	client := hcclient.Client{Socket: e.Socket, CoreID: e.CoreID}
 	instance, err := s.Instance()
 	if err != nil {
-		return false, err
+		return false, err, established
 	}
 	sub, err := client.Subscribe(streamCtx, hcclient.SubscribeParams{Labels: map[string]string{"sum.installation": instance}})
 	if err != nil {
-		return true, err
+		return retrySubscription(ctx, err), err, established
 	}
 	defer sub.Close()
 	events := make(chan hcclient.Notification, 1)
@@ -173,41 +181,44 @@ func observeConnection(ctx context.Context, s *store.Store, e store.Endpoint, ru
 		}
 	}()
 	if _, err = Reconcile(ctx, s, e, runtimeRoot, sumctlPath); err != nil {
-		return false, err
+		return retryNativeObservation(ctx, err), err, established
 	}
+	established = true
 	changes := ordjson.NewObject()
 	changes.Set("degraded", nil)
 	changes.Set("connected_at", store.Now())
 	changes.Set("snapshot_seq", jsonInt(int(sub.Snapshot.Seq)))
-	_, _ = writeHealth(s, nil, changes)
+	if _, writeErr := writeHealthForAttempt(s, e.Attempt, changes); writeErr != nil {
+		return false, writeErr, established
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return false, ctx.Err()
+			return false, ctx.Err(), established
 		case err = <-watchErrors:
-			return false, err
+			return false, err, established
 		case err = <-streamErrors:
-			return true, err
+			return retrySubscription(ctx, err), err, established
 		case event := <-events:
 			if event.Method == "heartbeat" {
 				continue
 			}
 			if event.Method == "missed" {
-				return true, nil
+				return true, nil, established
 			}
 			if _, err = Reconcile(ctx, s, e, runtimeRoot, sumctlPath); err != nil {
-				return false, err
+				return retryNativeObservation(ctx, err), err, established
 			}
 		case <-dirty:
 			enabled, present, err = settings.NativeEventsPreference(s)
 			if err != nil {
-				return false, err
+				return false, err, established
 			}
 			if present && !enabled {
-				return false, nil
+				return false, nil, established
 			}
 			if _, err = Reconcile(ctx, s, e, runtimeRoot, sumctlPath); err != nil {
-				return false, err
+				return retryNativeObservation(ctx, err), err, established
 			}
 		}
 	}

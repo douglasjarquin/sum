@@ -98,6 +98,9 @@ func reconcileAttention(ctx context.Context, s *store.Store, scope store.Endpoin
 		}
 		terminal, err := client.Get(ctx, endpoint.Address)
 		if err != nil {
+			if retryNativeObservation(ctx, err) {
+				return err
+			}
 			continue
 		}
 		registration, err := s.Registration(endpoint)
@@ -131,6 +134,9 @@ func reconcileAttention(ctx context.Context, s *store.Store, scope store.Endpoin
 		excerpt = string(chars)
 		// Refuse a transition or replacement observed while reading its screen.
 		current, err := client.Get(ctx, endpoint.Address)
+		if err != nil && retryNativeObservation(ctx, err) {
+			return err
+		}
 		if err != nil || !reflect.DeepEqual(current, terminal) {
 			continue
 		}

@@ -111,10 +111,11 @@ func TestNativeObserverReconcilesEventsDirtyCommitsAndMissedSnapshots(t *testing
 	}
 	args := []string{"/sumctl", "--home", s.Root, "hook", "observe", "--core-id", f.CoreID, "--session", "lab", "--socket", f.Socket}
 	observerPID := uint32(222)
-	f.SetTerminal(hcclient.Terminal{Address: "t0", State: "live", CreatedMS: 99, Argv: args, PID: &observerPID, Foreground: &hcclient.Foreground{PID: 222, Name: "sumctl"}})
+	f.SetTerminal(hcclient.Terminal{Address: "t0", State: "live", CreatedMS: 99, Labels: map[string]string{"sum.attempt": "observer-test"}, Argv: args, PID: &observerPID, Foreground: &hcclient.Foreground{PID: 222, Name: "sumctl"}})
 	scope := store.Endpoint{CoreID: f.CoreID, Session: "lab", Socket: f.Socket, Address: "t0"}
 	intent := ordjson.NewObject()
 	intent.Set("launch_effect", "submitted")
+	intent.Set("launch_attempt", "observer-test")
 	intent.Set("core_id", f.CoreID)
 	intent.Set("session", "lab")
 	intent.Set("socket", f.Socket)
@@ -134,6 +135,7 @@ func TestNativeObserverReconcilesEventsDirtyCommitsAndMissedSnapshots(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.QueueFault("terminal.list", hctest.Fault{LoseResponse: true})
 	go func() { done <- Observe(ctx, observerStore, scope, "/runtime", "/sumctl") }()
 	subscriptions := func() int {
 		n := 0
@@ -159,11 +161,14 @@ func TestNativeObserverReconcilesEventsDirtyCommitsAndMissedSnapshots(t *testing
 	if ready, _ := readyView.Get("ready"); ready != true {
 		t.Fatal("startup receipt not confirmed")
 	}
+	await(t, func() bool { return subscriptions() > 1 })
+	f.QueueFault("terminal.list", hctest.Fault{LoseResponse: true})
 	f.SetStatus(e.Address, "idle")
 	await(t, func() bool { return len(f.Inputs(e.Address)) == 1 })
 	// The native status is already idle before the next obligation exists. The
 	// Sum-only commit signal must expose it without another native status event.
 	f.SetStatus(e.Address, "idle")
+	f.QueueFault("terminal.list", hctest.Fault{LoseResponse: true})
 	task.Set("questions", []any{question("q1"), question("q2")})
 	if err = s.SaveTask(task); err != nil {
 		t.Fatal(err)
@@ -179,15 +184,18 @@ func TestNativeObserverReconcilesEventsDirtyCommitsAndMissedSnapshots(t *testing
 		}
 		return len(f.Inputs(e.Address)) == 2
 	})
+	seenSubscriptions := subscriptions()
 	f.Miss()
-	await(t, func() bool { return subscriptions() > 1 })
+	await(t, func() bool { return subscriptions() > seenSubscriptions })
+	seenSubscriptions = subscriptions()
 	f.DisconnectSubscribers()
-	await(t, func() bool { return subscriptions() > 2 })
+	await(t, func() bool { return subscriptions() > seenSubscriptions })
 	if len(f.Inputs(e.Address)) != 2 {
 		t.Fatal("reconnect replayed a submitted obligation")
 	}
 	// Actual native blocked/finished edges persist bounded observations and do not replay.
 	f.SetScreen(e.Address, "\x1b[31mPermission needed: allow write?\x1b[0m\x00")
+	f.QueueFault("terminal.get", hctest.Fault{LoseResponse: true})
 	f.SetStatus(e.Address, "blocked")
 	attentionCount := func() int {
 		current, err := s.ReadTask(e.Task)
@@ -202,8 +210,9 @@ func TestNativeObserverReconcilesEventsDirtyCommitsAndMissedSnapshots(t *testing
 	if value(blocked, "kind") != "blocked" || value(blocked, "excerpt") != "Permission needed: allow write?" {
 		t.Fatalf("blocked observation = %v", blocked)
 	}
+	seenSubscriptions = subscriptions()
 	f.Miss()
-	await(t, func() bool { return subscriptions() > 3 })
+	await(t, func() bool { return subscriptions() > seenSubscriptions })
 	if attentionCount() != 1 {
 		t.Fatal("snapshot replayed attention")
 	}

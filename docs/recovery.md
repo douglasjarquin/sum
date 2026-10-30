@@ -37,6 +37,8 @@ If the exact attempt proves its opening message was not submitted, use one expli
 ```
 
 Do not redeliver an uncertain message or type the brief into a terminal by hand.
+Worker opening-message recovery requires the saved native effect to be `created` and `first_message.sent` explicitly false; true, missing and null outcomes are refused.
+The final claim rechecks the exact launch, initialization receipt and maintenance barrier; a concurrent receipt or cleanup prevents duplicate input.
 `execution confirm TASK_ID --attempt ATTEMPT_ID` requires the matching worker receipt and fresh native identity evidence.
 A trust/auth dialog is for the user to answer, never for Sum to accept.
 A failed non-kept HC launch may leave no recoverable address; uncertainty is retained rather than claiming it can always be rediscovered.
@@ -62,6 +64,11 @@ A failed observer startup does not fail the saved task operation.
 Use `pump` for one bounded explicit pass while degraded.
 Reconnect uses fresh snapshots and ledger reconciliation; an event sequence is never a delivery acknowledgement.
 The observer contains no independent payload queue and never automatically replays a submitted or uncertain mutation.
+After proving a prior observer finished, replacement retires its old endpoint/receipt proof and persists a distinct `launch_attempt` before native creation.
+An early child may record its exact matching startup receipt before `terminal.run` replies; the parent merges only that same launch intent and never overwrites a newer receipt or changed launch.
+Transient read-only HC transport/observation failures reconnect to the existing core with bounded backoff and a fresh subscription snapshot.
+Cancellation or explicit disablement stops the observer; wrong core, incompatible config/protocol and invalid durable records are hard failures rather than reconnect permission.
+No reconnect replays a submitted or uncertain mutation.
 
 Routine wake episodes preserve prepared, claimed, intent, submitted, uncertain and closed states.
 `wake show` reads them and provides the exact included/omitted boundary.
@@ -92,14 +99,32 @@ A schema-one runtime cannot reactivate the inactive archive as writable state.
 Rollback requires the actual target binary's compatible capabilities, not merely a compatible-looking manifest.
 No production migration has been established by offline tests.
 
-## Records-only backup
+## Records-only backup and restore
 
 ```sh
 ./bin/sumctl backup /path/outside/state/sum-records.tar.gz
+./bin/sumctl restore /path/to/sum-records.tar.gz /new/absolute/state-home
+./bin/sumctl --home /new/absolute/state-home show TASK_ID
+./bin/sumctl --home /new/absolute/state-home context TASK_ID --role coordinator
 ```
 
-The archive preserves task records, brief revisions, reports, decisions and its manifest.
+Backup preserves task records, brief/procedure revisions, reports, decisions and its manifest.
 It does not capture worktree code, unpushed commits, dirty files, credentials or live processes.
 Back up code separately and protect archives whose task text may be sensitive.
-Restore into a new directory, retain the original, inspect the manifest and preserve unsupported schema files unchanged.
-Native addresses are scoped to the original core and process; restoring records never transfers their authority.
+Use `restore ARCHIVE NEW_HOME`, not direct extraction followed by opening the extracted source header as writable state.
+`NEW_HOME` must not exist; an existing destination is refused without overwrite.
+The importer accepts the current schema-two records-only archive and validates its manifest, source schema, regular entry paths, uniqueness and complete gzip stream before creating the destination.
+Unknown schemas/scopes, traversal or absolute/backslash paths, links and duplicate entries are refused.
+
+Restore creates a fresh instance, a new physical generation and `records_only:true` quarantine.
+Imported task and pinned procedure/version files retain their exact archived bytes; settings, findings and other saved records remain historical records rather than live authority.
+The complete archive entries, including the original header and old sessions, are retained under `NEW_HOME/restore-source/` for inspection.
+No live session registrations, coordinator owner, observer or runtime binding is imported.
+Old native addresses and worktree paths inside historical records never establish authority at the new location.
+Saved `show`, `status` and `context` reads are available; `init` may report developer only.
+All writes, coordinator claims, rebindings, capacity adoption, native launch/send and other mutations are blocked.
+There is no automatic promotion or executable schema-one fallback.
+
+The result names the absolute `home`, new `generation`, `records_only:true`, archive `sha256` and a historical/no-authority note.
+If an I/O failure occurs after destination creation, retain that quarantined partial result and the original archive for inspection.
+There is no automatic replay, overwrite or cleanup; use a different fresh destination for a deliberate retry.

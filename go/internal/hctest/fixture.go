@@ -45,6 +45,7 @@ type terminal struct {
 }
 type requestHold struct {
 	method, address string
+	reply           bool
 	entered         chan struct{}
 	release         chan struct{}
 	once            sync.Once
@@ -332,15 +333,22 @@ func (f *Fixture) serve(c net.Conn) {
 			fault = q[0]
 			f.faults[req.Method] = q[1:]
 		}
-		var hold *requestHold
+		var hold, replyHold *requestHold
 		address, _ := req.Params["terminal"].(string)
-		for i, candidate := range f.holds {
-			if candidate.method == req.Method && (candidate.address == "" || candidate.address == address) {
-				hold = candidate
-				f.holds = append(f.holds[:i], f.holds[i+1:]...)
-				break
+		remaining := f.holds[:0]
+		for _, candidate := range f.holds {
+			if candidate.method == req.Method && (candidate.address == "" || candidate.address == address) && ((!candidate.reply && hold == nil) || (candidate.reply && replyHold == nil)) {
+				if candidate.reply {
+					replyHold = candidate
+				} else {
+					hold = candidate
+				}
+			} else {
+				remaining = append(remaining, candidate)
 			}
 		}
+		f.holds = remaining
+
 		f.mu.Unlock()
 		if hold != nil {
 			close(hold.entered)
@@ -381,6 +389,22 @@ func (f *Fixture) serve(c net.Conn) {
 			response["result"] = result
 		}
 		f.mu.Unlock()
+		if replyHold != nil {
+			close(replyHold.entered)
+			disconnected := make(chan struct{})
+			// Ordinary HC calls close this connection after their one operation. A
+			// client cancellation closes it too, releasing this post-effect waiter.
+			go func() { var b [1]byte; _, _ = c.Read(b[:]); close(disconnected) }()
+			defer func() { c.Close(); <-disconnected }()
+			select {
+			case <-replyHold.release:
+			case <-f.closeSignal:
+				return
+			case <-disconnected:
+				return
+			}
+		}
+
 		if fault.LoseResponse {
 			return
 		}
@@ -609,6 +633,19 @@ func (f *Fixture) SetTemplateSubmit(name, key string) {
 // mutex. Closing the fixture releases every waiter and never executes its effect.
 func (f *Fixture) HoldNext(method, address string) (<-chan struct{}, func()) {
 	hold := &requestHold{method: method, address: address, entered: make(chan struct{}), release: make(chan struct{})}
+	f.mu.Lock()
+	f.holds = append(f.holds, hold)
+	f.mu.Unlock()
+	return hold.entered, func() { hold.once.Do(func() { close(hold.release) }) }
+}
+
+// HoldReplyNext holds an ordinary operation's response after its effect, outside
+// the fixture mutex. Client cancellation or Close releases the response waiter.
+func (f *Fixture) HoldReplyNext(method, address string) (<-chan struct{}, func()) {
+	if method == "hello" || method == "events.subscribe" {
+		panic("reply holds require an ordinary terminal operation")
+	}
+	hold := &requestHold{method: method, address: address, reply: true, entered: make(chan struct{}), release: make(chan struct{})}
 	f.mu.Lock()
 	f.holds = append(f.holds, hold)
 	f.mu.Unlock()

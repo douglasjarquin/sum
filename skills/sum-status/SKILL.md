@@ -254,14 +254,16 @@ Capacity remains held until `execution park` proves actual stop and no owned sur
 Normal Open/init/status never migrate schema-one state; existing-installation cutover refuses without an enforceable legacy writer/sender exclusion lease unavailable from current legacy APIs.
 See `docs/recovery.md`.
 
-## Backup
+## Backup and records-only restore
 
-`sumctl backup /path/outside/state/sum-records.tar.gz` saves versioned task records, every brief revision and version sidecar, reports, and decisions with a manifest.
-It is explicitly **records-only**.
-Worktree code, unpushed commits, dirty files, credentials, and live processes are not captured.
-Back up code separately through the repo/host's existing process.
-A backup of this directory is not a full machine-crash recovery guarantee.
-Restore into a new directory, retain the original, and inspect the manifest.
-Schema mismatches fail rather than attempting an in-place migration.
-Do not reuse another machine's terminal IDs.
-The helper refuses cross-machine interaction until explicitly rebound to recovered work.
+`sumctl backup /path/outside/state/sum-records.tar.gz` saves task records, exact brief/procedure revisions, reports, decisions and its manifest.
+It does not capture worktree code, unpushed commits, dirty files, credentials or processes; back up code separately.
+Use `sumctl restore ARCHIVE NEW_HOME` with a nonexistent destination to inspect a current schema-two records-only backup.
+Direct extraction and `--home` against the archived original generation header is not a supported writable restore.
+The importer validates scope/schema, safe unique regular paths and the complete gzip stream before target creation.
+The imported home has a fresh instance/generation and `records_only:true` quarantine; exact original entries remain under its `restore-source/` directory.
+It preserves task and pinned procedure bytes but imports no live coordinator, sessions, observer or runtime authority.
+Use saved `show`, `status` and bounded `context` reads; all mutations, role claims, binds, capacity adoption and native launch/send are blocked.
+There is no automatic promotion or schema-one executable fallback.
+Retain the archive and any partial quarantined destination after an I/O failure; a deliberate retry requires another fresh destination rather than overwrite or automatic replay.
+See `docs/recovery.md` for the result fields and safety boundaries.

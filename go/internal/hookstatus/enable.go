@@ -2,6 +2,7 @@ package hookstatus
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -84,9 +85,10 @@ func ensureObserver(s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath st
 		}
 		terminal, getErr := client.Get(context.Background(), old.Address)
 		if getErr == nil && observerProof(health, old, terminal) == nil && reflect.DeepEqual(terminal.Argv, args) {
-			health.Set("enabled", true)
-			health.Set("degraded", nil)
-			return writeHealth(s, nil, health)
+			changes := ordjson.NewObject()
+			changes.Set("enabled", true)
+			changes.Set("degraded", nil)
+			return writeHealthForAttempt(s, old.Attempt, changes)
 		}
 		if getErr == nil && terminal.State == "live" {
 			return nil, fmt.Errorf("recorded observer process or receipt changed; explicit recovery is required")
@@ -96,7 +98,7 @@ func ensureObserver(s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath st
 		}
 	}
 	effect, _ := health.Get("launch_effect")
-	if effect == "in-flight" || effect == "uncertain" {
+	if effect == "in-flight" || effect == "uncertain" || effect == "claimed" || effect == "unknown" {
 		return nil, fmt.Errorf("observer launch is uncertain; inspect exact native scope before replacement")
 	}
 	dirty, err := os.OpenFile(filepath.Join(s.Home, HookDir, "dirty"), os.O_CREATE|os.O_RDWR, 0600)
@@ -104,38 +106,30 @@ func ensureObserver(s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath st
 		return nil, err
 	}
 	dirty.Close()
-	health.Set("launch_effect", "in-flight")
-	health.Set("enabled", true)
-	health.Set("core_id", e.CoreID)
-	health.Set("session", e.Session)
-	health.Set("socket", e.Socket)
-	argv := make([]any, len(args))
-	for i, arg := range args {
-		argv[i] = arg
-	}
-	health.Set("argv", argv)
-	if _, err = writeHealth(s, nil, health); err != nil {
+	attempt, err := beginObserverLaunch(s, health, e, args)
+	if err != nil {
 		return nil, err
 	}
 	instance, err := s.Instance()
 	if err != nil {
 		return nil, err
 	}
-	result, runErr := client.Run(context.Background(), hcclient.RunParams{Argv: args, Cwd: runtimeRoot, NoParent: true, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: map[string]string{"sum.installation": instance, "sum.kind": "observer", "sum.scope": scopeKey(s, e)}})
+	result, runErr := client.Run(context.Background(), hcclient.RunParams{Argv: args, Cwd: runtimeRoot, NoParent: true, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: map[string]string{"sum.installation": instance, "sum.kind": "observer", "sum.scope": scopeKey(s, e), "sum.attempt": attempt}})
 	if runErr != nil {
 		effect := "uncertain"
 		if native, ok := runErr.(*hcclient.Error); ok && native.Effect != hcclient.Uncertain {
 			effect = "not-submitted"
 		}
-		health.Set("launch_effect", effect)
-		health.Set("degraded", runErr.Error())
-		_, _ = writeHealth(s, nil, health)
+		changes := ordjson.NewObject()
+		changes.Set("launch_effect", effect)
+		changes.Set("degraded", runErr.Error())
+		_, _ = writeHealthForAttempt(s, attempt, changes)
 		return nil, runErr
 	}
 	observer := e
 	observer.Role = "observer"
 	observer.Task = ""
-	observer.Attempt = "observer-" + scopeKey(s, e)
+	observer.Attempt = attempt
 	observer.BindingGeneration = 1
 	observer.Address = result.Address
 	observer.CreatedMS = result.CreatedMS
@@ -143,7 +137,7 @@ func ensureObserver(s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath st
 	changes.Set("observer", observer.Object())
 	changes.Set("launch_effect", "submitted")
 	changes.Set("degraded", "observer startup is unconfirmed; native helper creation alone is not readiness")
-	out, err := writeHealth(s, nil, changes)
+	out, err := writeHealthForAttempt(s, attempt, changes)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +206,9 @@ func markDirty(s *store.Store) error {
 }
 
 func observerProof(record *ordjson.Object, current store.Endpoint, terminal hcclient.Terminal) error {
+	if value(record, "launch_attempt") != current.Attempt {
+		return fmt.Errorf("observer proof does not belong to the current launch intent")
+	}
 	var evidence incarnation.NativeEvidence
 	raw, _ := record.Get("observer_incarnation")
 	data, err := ordjson.MarshalCompact(raw)
@@ -234,4 +231,64 @@ func observerProof(record *ordjson.Object, current store.Endpoint, terminal hccl
 		return fmt.Errorf("observer process and matching scope receipt cannot be verified")
 	}
 	return nil
+}
+
+// beginObserverLaunch retires the old proof and claims a distinct native launch
+// before IO. The original binding must still be the one observed by the caller.
+func beginObserverLaunch(s *store.Store, observed *ordjson.Object, e store.Endpoint, args []string) (string, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	attempt := "observer-" + hex.EncodeToString(nonce)
+	unlock, err := s.Lock()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	if err = s.CheckWritable(); err != nil {
+		return "", err
+	}
+	current, err := readHealth(s)
+	if err != nil {
+		return "", err
+	}
+	for _, key := range []string{"observer", "observer_incarnation", "observer_receipt", "launch_attempt", "launch_effect"} {
+		a, _ := ordjson.MarshalCompact(value(observed, key))
+		b, _ := ordjson.MarshalCompact(value(current, key))
+		if string(a) != string(b) {
+			return "", fmt.Errorf("observer binding changed before launch claim; no helper launched")
+		}
+	}
+	if prior := value(current, "observer"); prior != nil {
+		retired := ordjson.NewObject()
+		for _, key := range []string{"observer", "observer_incarnation", "observer_receipt", "launch_attempt"} {
+			retired.Set(key, value(current, key))
+		}
+		retired.Set("retired_at", store.Now())
+		current.Set("retired_observers", append(asList(value(current, "retired_observers")), retired))
+	}
+	for _, key := range []string{"observer", "observer_incarnation", "observer_receipt"} {
+		current.Set(key, nil)
+	}
+	current.Set("connected_at", nil)
+	current.Set("snapshot_seq", nil)
+	current.Set("degraded", "observer launch claimed; startup is unconfirmed")
+	current.Set("launch_attempt", attempt)
+	current.Set("launch_effect", "in-flight")
+	current.Set("enabled", true)
+	current.Set("core_id", e.CoreID)
+	current.Set("session", e.Session)
+	current.Set("socket", e.Socket)
+	argv := make([]any, len(args))
+	for i, arg := range args {
+		argv[i] = arg
+	}
+	current.Set("argv", argv)
+	current.Set("updated_at", store.Now())
+	current.Set("schema", jsonInt(HookSchema))
+	if err = ordjson.WriteFile(filepath.Join(s.Home, HookDir, HookHealth), current); err != nil {
+		return "", err
+	}
+	return attempt, nil
 }

@@ -55,7 +55,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         questions, answers, report, an append-only evidence list, the bound
         reviewer endpoint, the last reconciled PR identity, and a versions
         sidecar with brief revisions. File updates are locked and atomically
-        replaced on one local machine.
+        replaced on one local machine. Records-only backups import through <code>restore ARCHIVE NEW_HOME</code> into a fresh write-blocked quarantine. Saved reads preserve exact task/procedure history; no coordinator, session or native runtime authority transfers, and direct extraction is not a writable restore.
       </p>
       <p>
         Workers use the exact commands in their generated brief. The core

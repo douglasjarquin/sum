@@ -92,6 +92,12 @@ Test rollback against actual binary capabilities and active receipts/endpoints, 
 An old schema-one runtime must not reactivate the inactive archive.
 Compatible rollback preserves domain records and uncertainty.
 
+Restore a real records-only backup with `restore ARCHIVE NEW_HOME` into a nonexistent destination on the same host and another simulated machine identity.
+Compare imported task and pinned procedure bytes/hashes, assert a fresh instance/generation and `records_only:true`, and read the saved task through the new home.
+Reject coordinator registration, binding, capacity adoption, native launch/send and every mutation; old sessions, owner and observer must remain historical evidence only.
+Reject unsupported schema/scope, unsafe paths, links, duplicate entries and a damaged gzip trailer without a created destination; preserve any partial quarantine after a later I/O failure and refuse destination overwrite.
+This restores records for inspection, never a live installation or schema-one authority.
+
 ## 9. Optional views and graph
 
 Metadata uses owned namespaced HC labels on verified terminals and never changes role, approval or native lifecycle.

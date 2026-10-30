@@ -63,6 +63,12 @@ func readHealth(s *store.Store) (*ordjson.Object, error) {
 }
 func Health(s *store.Store) (*ordjson.Object, error) { return readHealth(s) }
 func writeHealth(s *store.Store, increments map[string]int, changes *ordjson.Object) (*ordjson.Object, error) {
+	return updateHealth(s, increments, changes, "")
+}
+func writeHealthForAttempt(s *store.Store, attempt string, changes *ordjson.Object) (*ordjson.Object, error) {
+	return updateHealth(s, nil, changes, attempt)
+}
+func updateHealth(s *store.Store, increments map[string]int, changes *ordjson.Object, attempt string) (*ordjson.Object, error) {
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -71,6 +77,19 @@ func writeHealth(s *store.Store, increments map[string]int, changes *ordjson.Obj
 	health, err := readHealth(s)
 	if err != nil {
 		return nil, err
+	}
+	if attempt != "" && value(health, "launch_attempt") != attempt {
+		return nil, fmt.Errorf("observer launch intent changed; stale result was not recorded")
+	}
+	if attempt != "" && value(changes, "observer") != nil && value(health, "observer") != nil {
+		existing := store.EndpointFromContext(asObject(value(health, "observer")))
+		proposed := store.EndpointFromContext(asObject(value(changes, "observer")))
+		if !existing.Native().SameAuthority(proposed.Native()) {
+			return nil, fmt.Errorf("observer startup proof differs from launch result; preserved for explicit reconciliation")
+		}
+		if value(changes, "launch_effect") == "submitted" && value(health, "observer_receipt") != nil && value(health, "observer_incarnation") != nil {
+			changes.Delete("degraded")
+		}
 	}
 	for key, n := range increments {
 		health.Set(key, jsonInt(intField(health, key)+n))

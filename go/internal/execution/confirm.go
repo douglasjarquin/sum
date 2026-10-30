@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/repair"
@@ -201,6 +203,10 @@ func Redeliver(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 		unlock()
 		return nil, err
 	}
+	if err = maintenance.Refuse(current, "Execution redeliver"); err != nil {
+		unlock()
+		return nil, err
+	}
 	w, err := reservations.Worker(current)
 	if err != nil {
 		unlock()
@@ -214,6 +220,29 @@ func Redeliver(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if native == nil {
 		unlock()
 		return nil, fmt.Errorf("no saved native launch intent")
+	}
+	first := asObject(field(native, "first_message"))
+	sent, explicit := field(first, "sent").(bool)
+	if field(native, "effect") != "created" || !explicit || sent {
+		unlock()
+		return nil, fmt.Errorf("the opening message is not proven unsent for this created attempt; preserve uncertainty and use execution confirm after a matching worker-init receipt")
+	}
+	currentRegistration, err := s.Registration(endpoint)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if field(currentRegistration, "native_receipt") != nil {
+		unlock()
+		return nil, fmt.Errorf("worker already recorded an init receipt; use execution confirm")
+	}
+	for _, key := range []string{"incarnation", "native_template"} {
+		observed, _ := ordjson.MarshalCompact(field(registration, key))
+		current, _ := ordjson.MarshalCompact(field(currentRegistration, key))
+		if !bytes.Equal(observed, current) {
+			unlock()
+			return nil, fmt.Errorf("worker registration changed during redelivery observation; inspect the current attempt")
+		}
 	}
 	if field(native, "redelivery") != nil {
 		unlock()

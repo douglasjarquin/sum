@@ -53,6 +53,8 @@ An explicit migration requires an enforceable lease excluding all legacy writers
 Existing-installation cutover therefore refuses without proof.
 No production migration or automatic hot adoption is claimed.
 See [Update](update.md).
+`restore ARCHIVE NEW_HOME` imports a records-only backup into a fresh write-blocked quarantine, preserving task/procedure bytes without transferring coordinator, session or native runtime authority.
+Read the imported saved records through `--home NEW_HOME`; direct extraction is not a writable generation restore.
 
 Each terminal binding includes permanent core ID, returned address, creation time, task/role/attempt/generation, process and matching receipt.
 Names, labels, cwd, sockets, PIDs and native status alone cannot confer authority.
