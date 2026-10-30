@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/updatecmd"
 )
@@ -164,7 +166,6 @@ func TestDeliveryReconcileLostReportResponse(t *testing.T) {
 	if err = cleanup.RefusePendingEffects(s, id); err != nil {
 		t.Fatal(err)
 	}
-	// Business obligations survive transport recovery.
 	inbox := d.ctl(true, "show", id)
 	if len(asSlice(asMap(inbox["returns"])["open"])) == 0 {
 		t.Fatal("reconciliation waived the report obligation")
@@ -259,5 +260,77 @@ func TestDeliveryReconcileLostQuestionResponseUsesExactAnswerRead(t *testing.T) 
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(before, after) || len(d.native.Inputs("t1")) != inputs {
 		t.Fatal("question recovery changed original effect or sent input")
+	}
+}
+
+func TestDeliveryReconcileFirstRecoveryAfterWakeReceiptEviction(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "delivery-retention", map[string]string{"README.md": "Retention lab.\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	id, worker := asString(task["id"]), workerAddress(task)
+	d.ctlPane(worker, true, "init")
+	d.native.SetStatus("t1", "idle")
+	d.native.QueueFault("terminal.send", hctest.Fault{LoseResponse: true})
+	d.ctlPane(worker, true, "report", id, "--text", "First uncertain report.")
+	path := filepath.Join(d.home, "tasks", id, "returns.json")
+	var delivery string
+	for _, raw := range asSlice(deliveryRead(t, path)["deliveries"]) {
+		row := asMap(raw)
+		if row["state"] == "uncertain" {
+			delivery = asString(row["id"])
+		}
+	}
+	if delivery == "" {
+		t.Fatal("missing uncertain effect")
+	}
+	consume := func() {
+		t.Helper()
+		view := d.ctl(true, "wake", "show")
+		recipients := asSlice(view["recipients"])
+		if len(recipients) != 1 {
+			t.Fatalf("wake: %v", view)
+		}
+		token := asString(asMap(recipients[0])["boundary"])
+		if token == "" {
+			t.Fatalf("no boundary: %v", view)
+		}
+		d.ctl(true, "wake", "consume", "--boundary", token)
+	}
+	consume()
+	for i := 0; i < 21; i++ {
+		d.native.SetStatus("t1", "idle")
+		d.ctlPane(worker, true, "report", id, "--text", fmt.Sprintf("Subsequent report %d.", i))
+		consume()
+	}
+	s, err := store.Open(d.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := s.Owner()
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := store.EndpointFromContext(owner)
+	w, status := returns.ReadWake(s, [3]string{endpoint.Machine, endpoint.CoreID, endpoint.Address})
+	if status.State != returns.WakeOK {
+		t.Fatal(status)
+	}
+	for _, r := range w.Receipts {
+		if r.Delivery == delivery {
+			t.Fatal("original receipt was not evicted")
+		}
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := len(d.native.Inputs("t1"))
+	d.ctl(true, "delivery", "reconcile", id, "--delivery", delivery)
+	if err = cleanup.RefusePendingEffects(s, id); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(path)
+	if !bytes.Equal(before, after) || len(d.native.Inputs("t1")) != inputs {
+		t.Fatal("retention recovery changed original effect or sent input")
 	}
 }

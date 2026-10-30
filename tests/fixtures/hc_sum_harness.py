@@ -34,6 +34,8 @@ def record(tag, value):
 
 
 def call(args):
+    with (output / (address + "-helper-calls.jsonl")).open("a") as stream:
+        stream.write(json.dumps({"args": args}) + "\n")
     inspection = None
     if args and args[0] == "review":
         if role != "reviewer":
@@ -98,6 +100,14 @@ def process(text):
                            "contract_sha256": verification["contract"]["sha256"], "policy_changed": verification["policy"]["changed"]}
                 handoff.write_text(json.dumps({"outcome": "completed", "candidate": candidate, "files": ["canary-note.txt"], "verification": summary}))
                 result = {"code": 0, "candidate": candidate, "handoff": str(handoff)}
+            elif request.get("action") in ("hold-working", "ready"):
+                if role != "worker":
+                    raise RuntimeError("native readiness controls require the scripted worker")
+                state = "working" if request["action"] == "hold-working" else "done"
+                result = {"code": 0, "state": state, "helper_invoked": False}
+                if state == "working":
+                    record(request["tag"], result)
+                    return
             elif request.get("action") == "exit":
                 record(request["tag"], {"code": 0, "exited": True})
                 raise SystemExit

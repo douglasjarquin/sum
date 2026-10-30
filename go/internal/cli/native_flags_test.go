@@ -135,7 +135,7 @@ func TestNativeCommands(t *testing.T) {
 		{name: "valid answer --text", args: []string{"answer", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "--text", "yes"}, domainErr: "native Sum execution on another machine is unsupported"},
 		{name: "answer missing --text and --file", args: []string{"answer", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa"}, usage: true},
 		{name: "answer unknown flag", args: []string{"answer", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "--text", "yes", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid resolve", args: []string{"resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa"}, domainErr: "Only an answered question"},
+		{name: "valid resolve", args: []string{"resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa"}, domainErr: "native Sum execution on another machine is unsupported"},
 		{name: "resolve extra positional", args: []string{"resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "extra"}, usage: true},
 		{name: "resolve unknown flag", args: []string{"resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
 		{name: "valid notice", args: []string{"notice", "t-aaaaaaaaaaaa"}, ok: true},
@@ -199,6 +199,10 @@ func TestNativeCommands(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), tc.domainErr) {
 					t.Fatalf("err = %v, want substring %q", err, tc.domainErr)
+				}
+				if tc.args[0] == "resolve" {
+					assertNativeUsageErrorNot(t, err)
+					assertNativeTaskUnchanged(t, home, before)
 				}
 			}
 		})

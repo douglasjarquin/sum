@@ -29,6 +29,14 @@ func AutoEnableAfterInit(ctx context.Context, s *store.Store, caller *ordjson.Ob
 		row.Set("reason", err.Error())
 		return row
 	}
+	fresh, err := confirmedStartupHealth(s, ready)
+	if err != nil {
+		row.Set("degraded", true)
+		row.Set("readiness", "submitted-unconfirmed")
+		row.Set("reason", err.Error())
+		return row
+	}
+	row = fresh
 	row.Set("readiness", "ready")
 	row.Set("startup", ready)
 	return row

@@ -48,8 +48,12 @@ func AwaitReady(parent context.Context, s *store.Store) (*ordjson.Object, error)
 		endpoint := store.EndpointFromContext(asObject(func() any { v, _ := health.Get("observer"); return v }()))
 		if endpoint.CoreID != "" {
 			if value, err := Compatibility(ctx, s); err == nil {
-				if running, _ := value.Get("running"); running == true {
+				if running, _ := value.Get("running"); running == true && healthReadyFor(health, asObject(func() any { v, _ := value.Get("observer"); return v }())) {
 					value.Set("ready", true)
+					for _, key := range []string{"launch_attempt", "connected_at", "snapshot_seq"} {
+						v, _ := health.Get(key)
+						value.Set(key, v)
+					}
 					return value, nil
 				}
 			} else {
@@ -64,4 +68,20 @@ func AwaitReady(parent context.Context, s *store.Store) (*ordjson.Object, error)
 		case <-changes:
 		}
 	}
+}
+
+func healthReadyFor(health, endpointRecord *ordjson.Object) bool {
+	endpoint := store.EndpointFromContext(endpointRecord)
+	current := store.EndpointFromContext(asObject(value(health, "observer")))
+	return endpoint.Validate() == nil && endpoint.Native().SameAuthority(current.Native()) && value(health, "launch_attempt") == endpoint.Attempt && asString(value(health, "connected_at")) != "" && value(health, "snapshot_seq") != nil && value(health, "observer_receipt") != nil && value(health, "observer_incarnation") != nil
+}
+func confirmedStartupHealth(s *store.Store, ready *ordjson.Object) (*ordjson.Object, error) {
+	health, err := readHealth(s)
+	if err != nil {
+		return nil, err
+	}
+	if !healthReadyFor(health, asObject(value(ready, "observer"))) {
+		return nil, fmt.Errorf("observer startup binding changed after readiness proof")
+	}
+	return health, nil
 }

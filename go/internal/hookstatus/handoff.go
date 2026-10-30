@@ -156,6 +156,10 @@ func startAndAwait(ctx context.Context, s *store.Store, endpoint store.Endpoint,
 		created.Set("reason", err.Error())
 		return created, err
 	}
+	created, err = confirmedStartupHealth(s, ready)
+	if err != nil {
+		return nil, err
+	}
 	created.Set("readiness", "ready")
 	created.Set("startup", ready)
 	return created, nil

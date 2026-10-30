@@ -4,58 +4,185 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
+	"errors"
+	"io"
+
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
+type restoreEntry struct {
+	header tar.Header
+	data   []byte
+}
+
+func validRestoreEntries(t *testing.T) []restoreEntry {
+	t.Helper()
+	source, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = source.Init(); err != nil {
+		t.Fatal(err)
+	}
+	task := ordjson.NewObject()
+	task.Set("schema", json.Number("2"))
+	task.Set("id", "t-0123456789ab")
+	task.Set("status", "archived")
+	if err = source.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "valid-records.tar.gz")
+	if _, err = Run(source, archive); err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	compressed, err := gzip.NewReader(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer compressed.Close()
+	reader := tar.NewReader(compressed)
+	var entries []restoreEntry
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, restoreEntry{header: *header, data: data})
+	}
+	return entries
+}
+func writeRestoreEntries(t *testing.T, entries []restoreEntry) string {
+	t.Helper()
+	filename := filepath.Join(t.TempDir(), "records.tar.gz")
+	file, err := os.Create(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compressed := gzip.NewWriter(file)
+	writer := tar.NewWriter(compressed)
+	for _, entry := range entries {
+		header := entry.header
+		header.Size = int64(len(entry.data))
+		if err = writer.WriteHeader(&header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = writer.Write(entry.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return filename
+}
+func changeRestoreJSON(t *testing.T, entries []restoreEntry, name, key string, value any) []restoreEntry {
+	t.Helper()
+	for i := range entries {
+		if entries[i].header.Name != name {
+			continue
+		}
+		var object map[string]any
+		if err := json.Unmarshal(entries[i].data, &object); err != nil {
+			t.Fatal(err)
+		}
+		object[key] = value
+		data, err := json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[i].data = data
+		return entries
+	}
+	t.Fatalf("valid archive lacks %s", name)
+	return nil
+}
 func TestRestoreRefusesUnsafeArchiveBeforeCreatingDestination(t *testing.T) {
+	baseline := validRestoreEntries(t)
+	t.Run("valid control", func(t *testing.T) {
+		archive := writeRestoreEntries(t, baseline)
+		target := filepath.Join(t.TempDir(), "restored")
+		if _, err := Restore(archive, target); err != nil {
+			t.Fatalf("otherwise-valid control failed: %v", err)
+		}
+		restored, err := store.Open(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = restored.ReadTask("t-0123456789ab"); err != nil {
+			t.Fatal(err)
+		}
+		if !restored.RecordsOnly() || restored.Designated() {
+			t.Fatal("control did not restore as historical records")
+		}
+		if err = restored.CheckWritable(); !errors.Is(err, store.ErrHistoricalReadOnly) {
+			t.Fatalf("control adopted live authority: %v", err)
+		}
+	})
 	for _, tc := range []struct {
-		name     string
-		headers  []tar.Header
-		contents [][]byte
+		name  string
+		fault func(*testing.T, []restoreEntry) []restoreEntry
+		want  string
 	}{
-		{"absolute", []tar.Header{{Name: "/absolute", Typeflag: tar.TypeReg}}, [][]byte{nil}},
-		{"hardlink", []tar.Header{{Name: "state/tasks/link", Typeflag: tar.TypeLink, Linkname: "state/state.json"}}, [][]byte{nil}},
-		{"traversal", []tar.Header{{Name: "state/../../escape", Size: 1, Typeflag: tar.TypeReg}}, [][]byte{[]byte("x")}},
-		{"symlink", []tar.Header{{Name: "state/tasks/link", Typeflag: tar.TypeSymlink, Linkname: "/tmp/elsewhere"}}, [][]byte{nil}},
-		{"duplicates", []tar.Header{{Name: "manifest.json", Size: 2, Typeflag: tar.TypeReg}, {Name: "manifest.json", Size: 2, Typeflag: tar.TypeReg}}, [][]byte{[]byte("{}"), []byte("{}")}},
-		{"unknown schema", []tar.Header{{Name: "manifest.json", Size: 36, Typeflag: tar.TypeReg}}, [][]byte{[]byte(`{"schema":99,"scope":"records-only"}`)}},
+		{"absolute", func(t *testing.T, e []restoreEntry) []restoreEntry {
+			return append(e, restoreEntry{header: tar.Header{Name: filepath.Join(t.TempDir(), "absolute"), Typeflag: tar.TypeReg}})
+		}, "unsafe records archive path"},
+		{"traversal", func(t *testing.T, e []restoreEntry) []restoreEntry {
+			return append(e, restoreEntry{header: tar.Header{Name: "state/../../escape", Typeflag: tar.TypeReg}, data: []byte("x")})
+		}, "unsafe records archive path"},
+		{"backslash", func(t *testing.T, e []restoreEntry) []restoreEntry {
+			return append(e, restoreEntry{header: tar.Header{Name: `state\tasks\escape`, Typeflag: tar.TypeReg}})
+		}, "unsafe records archive path"},
+		{"symlink", func(t *testing.T, e []restoreEntry) []restoreEntry {
+			return append(e, restoreEntry{header: tar.Header{Name: "state/tasks/link", Typeflag: tar.TypeSymlink, Linkname: "state.json"}})
+		}, "non-regular archive entry"},
+		{"hardlink", func(t *testing.T, e []restoreEntry) []restoreEntry {
+			return append(e, restoreEntry{header: tar.Header{Name: "state/tasks/link", Typeflag: tar.TypeLink, Linkname: "state/state.json"}})
+		}, "non-regular archive entry"},
+		{"duplicates", func(t *testing.T, e []restoreEntry) []restoreEntry { return append(e, e[0]) }, "duplicate records archive entry"},
+		{"scope", func(t *testing.T, e []restoreEntry) []restoreEntry {
+			return changeRestoreJSON(t, e, "manifest.json", "scope", "live-installation")
+		}, "restore requires a records-only backup"},
+		{"manifest schema", func(t *testing.T, e []restoreEntry) []restoreEntry {
+			return changeRestoreJSON(t, e, "manifest.json", "schema", 99)
+		}, "unsupported records backup schema"},
+		{"source schema", func(t *testing.T, e []restoreEntry) []restoreEntry {
+			return changeRestoreJSON(t, e, "state/state.json", "schema", 99)
+		}, "unsupported source state schema"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			root := t.TempDir()
-			archive := filepath.Join(root, "invalid.tar.gz")
-			file, err := os.Create(archive)
-			if err != nil {
-				t.Fatal(err)
+			entries := tc.fault(t, append([]restoreEntry(nil), baseline...))
+			archive := writeRestoreEntries(t, entries)
+			destination := filepath.Join(t.TempDir(), "restored")
+			if _, err := Restore(archive, destination); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected %q for this single archive fault, got %v", tc.want, err)
 			}
-			gz := gzip.NewWriter(file)
-			writer := tar.NewWriter(gz)
-			for i, h := range tc.headers {
-				h.Size = int64(len(tc.contents[i]))
-				if err = writer.WriteHeader(&h); err != nil {
-					t.Fatal(err)
-				}
-				if _, err = writer.Write(tc.contents[i]); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if err = writer.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if err = gz.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if err = file.Close(); err != nil {
-				t.Fatal(err)
-			}
-			destination := filepath.Join(root, "restored")
-			if _, err = Restore(archive, destination); err == nil {
-				t.Fatal("invalid archive accepted")
-			}
-			if _, err = os.Stat(destination); !os.IsNotExist(err) {
-				t.Fatal("invalid archive created destination")
+			if _, err := os.Stat(destination); !os.IsNotExist(err) {
+				t.Fatal("invalid archive selected destination")
 			}
 		})
 	}
@@ -72,28 +199,20 @@ func TestRestoreRefusesOversizedEntryBeforeReadingBody(t *testing.T) {
 	}
 }
 func TestRestoreRefusesCorruptGzipBeforeCreatingDestination(t *testing.T) {
-	root := t.TempDir()
-	archive := filepath.Join(root, "bad.tar.gz")
-	var compressed bytes.Buffer
-	gz := gzip.NewWriter(&compressed)
-	writer := tar.NewWriter(gz)
-	manifest := []byte(`{"schema":2,"scope":"records-only"}`)
-	if err := writer.WriteHeader(&tar.Header{Name: "manifest.json", Size: int64(len(manifest)), Typeflag: tar.TypeReg}); err != nil {
+	archive := writeRestoreEntries(t, validRestoreEntries(t))
+	raw, err := os.ReadFile(archive)
+	if err != nil {
 		t.Fatal(err)
 	}
-	writer.Write(manifest)
-	writer.Close()
-	gz.Close()
-	raw := compressed.Bytes()
 	raw[len(raw)-8] ^= 0xff
-	if err := os.WriteFile(archive, raw, 0600); err != nil {
+	if err = os.WriteFile(archive, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(root, "restored")
-	if _, err := Restore(archive, target); err == nil {
-		t.Fatal("corrupt gzip accepted")
+	target := filepath.Join(t.TempDir(), "restored")
+	if _, err = Restore(archive, target); !errors.Is(err, gzip.ErrChecksum) {
+		t.Fatalf("expected gzip checksum failure, got %v", err)
 	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
+	if _, err = os.Stat(target); !os.IsNotExist(err) {
 		t.Fatal("corrupt gzip selected destination")
 	}
 }

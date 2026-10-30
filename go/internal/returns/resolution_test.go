@@ -252,6 +252,32 @@ func TestDeliveryReconciliationValidatesExactConsumedReceipt(t *testing.T) {
 			if err := WriteWake(l.s, w); err != nil {
 				t.Fatal(err)
 			}
+			if name != "matching" {
+				row, err := deliveryByID(l.s, taskIDOf(task), id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = validateProofs(l.s, task, row, []deliveryProof{{Consumption: r}}); err == nil {
+					t.Fatal("unrelated consumed proof validated")
+				}
+				proofs, err := retainedConsumptions(l.s, taskIDOf(task), row)
+				if err != nil || len(proofs) != 1 {
+					t.Fatalf("retained original proof: %v %v", proofs, err)
+				}
+				path, err := consumptionPath(l.s, taskIDOf(task), *proofs[0].Consumption)
+				if err != nil {
+					t.Fatal(err)
+				}
+				archived, err := readConsumption(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				archived.Receipt = *r
+				object, _ := ordjson.FromValue(archived)
+				if err = ordjson.WriteFile(path, object); err != nil {
+					t.Fatal(err)
+				}
+			}
 			_, err := ReconcileDelivery(l.s, l.owner.Object(), taskIDOf(task), id)
 			if name == "matching" {
 				if err != nil {

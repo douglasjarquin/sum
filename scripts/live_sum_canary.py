@@ -131,7 +131,33 @@ def execute_canary(args, source, lab):
         coordinator = started["endpoint"]["address"]
         init = wait_record(output, coordinator, "init")
         assert init["result"]["role"] == "coordinator", init
+        lab.summary.setdefault("callbacks", {})[coordinator + "-init.json"] = init
+        activation = init["result"].get("hook_activation") or {}
+        observer = activation.get("observer") or {}
+        diagnostics = {"activation": activation}
+        lab.summary["observer_startup"] = diagnostics
+        if observer.get("address"):
+            diagnostics["terminal_get"] = lab.rpc("terminal.get", terminal=observer["address"])
+            diagnostics["terminal_read"] = lab.rpc("terminal.read", terminal=observer["address"], lines=40)
+        for label, arguments in (("hook_status", ("hook", "status")), ("status", ("status", "--live"))):
+            try:
+                diagnostics[label] = cli(*arguments)
+            except Exception as error:
+                diagnostics[label] = {"diagnostic_error": str(error)}
+        health = diagnostics.get("hook_status") or {}
+        terminal = (diagnostics.get("terminal_get") or {}).get("result") or {}
+        receipt = health.get("observer_receipt") or {}
+        incarnation = health.get("observer_incarnation") or {}
+        receipt_endpoint = receipt.get("endpoint") or {}
+        assert activation.get("readiness") == "ready" and (activation.get("startup") or {}).get("ready") is True, diagnostics
+        assert health.get("connected_at") and health.get("snapshot_seq") is not None and receipt.get("kind") == "observer-start", diagnostics
+        assert activation.get("launch_attempt") == health.get("launch_attempt") == observer.get("attempt") == receipt.get("attempt"), diagnostics
+        assert all(receipt_endpoint.get(key) == observer.get(key) for key in ("core_id", "address", "created_ms", "attempt", "binding_generation")), diagnostics
+        assert activation.get("observer_receipt") == receipt and activation.get("observer_incarnation") == incarnation, diagnostics
+        assert receipt_endpoint.get("core_id") == lab.core_id and receipt_endpoint.get("address") == terminal.get("address") and receipt_endpoint.get("created_ms") == terminal.get("created_ms") and incarnation.get("endpoint") == receipt_endpoint, diagnostics
+        assert terminal.get("state") == "live" and terminal.get("pid") is not None and terminal.get("pid") == incarnation.get("pid") and terminal.get("foreground") == incarnation.get("foreground") and terminal.get("foreground"), diagnostics
         lab.summary["checkpoints"].append("coordinator-start-and-init-receipt")
+        lab.summary["checkpoints"].append("native-observer-startup-receipt-and-fresh-snapshot")
 
         def command(address, tag, *arguments, action=None):
             payload = {"tag": tag, "args": list(arguments)}
@@ -158,7 +184,76 @@ def execute_canary(args, source, lab):
         command(coordinator, "consume-question", "wake", "consume", "--boundary", current_wake["boundary"])
         consumed = command(coordinator, "wake-after-consume", "wake", "show")["result"]
         assert not next(row for row in consumed["recipients"] if row["recipient"]["address"] == coordinator)["outstanding"], consumed
-        command(coordinator, "answer", "answer", task_id, question_id, "--text", "Yes, keep punctuation.")
+        working_events = lab.subscribe(terminal=worker)
+        held = command(worker, "hold-working", action="hold-working")
+        assert held.get("helper_invoked") is False and held.get("state") == "working", held
+        working_events.wait_status(worker, "working")
+        working = lab.call("terminal.get", terminal=worker)
+        assert (working.get("status") or {}).get("state") == "working", working
+        obligation = "answer:" + question_id
+        notices_path = output / (worker + "-notices.jsonl")
+        task_directory = Path(worker_init["result"]["home"]) / "tasks" / task_id
+
+        def notice_records():
+            rows = notices_path.read_text().splitlines(keepends=True) if notices_path.exists() else []
+            return [json.loads(row) for row in rows if row.endswith("\n")]
+
+        def answer_notices():
+            return [row for row in notice_records() if task_id in row["text"] and question_id in row["text"] and "answer to " in row["text"]]
+
+        def helper_calls():
+            return {path.name: [json.loads(row) for row in path.read_text().splitlines()] for path in sorted(output.glob("*-helper-calls.jsonl"))}
+
+        def answer_deliveries():
+            ledger_path = task_directory / "returns.json"
+            ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else {}
+            return [row for row in ledger.get("deliveries", []) if obligation in row.get("obligations", []) and (row.get("recipient") or {}).get("address") == worker]
+
+        proof = {"working": working, "hold_action": held, "obligation": obligation,
+                 "observer_receipt": receipt, "notices_before_answer": answer_notices(), "all_notices_before_answer": notice_records()}
+        lab.summary["native_event_delivery"] = proof
+        assert not proof["notices_before_answer"], proof
+        answered = command(coordinator, "answer", "answer", task_id, question_id, "--text", "Yes, keep punctuation.")["result"]
+        deferred = next(row for row in answered["notice"]["returns"]["recipients"] if row["recipient"]["address"] == worker)
+        proof.update(answer=answered, deferred=deferred, working_after_answer=lab.call("terminal.get", terminal=worker),
+                     notices_while_working=answer_notices(), all_notices_while_working=notice_records(), deliveries_while_working=answer_deliveries())
+        assert deferred["state"] == "not-delivered" and deferred.get("reason") == "Recipient is working; notice remains pending." and answered["notice"]["returns"]["prompts"] == 0, proof
+        assert (proof["working_after_answer"].get("status") or {}).get("state") == "working", proof
+        assert not proof["notices_while_working"] and proof["deliveries_while_working"] and all(row.get("state") == "not-delivered" for row in proof["deliveries_while_working"]), proof
+        assert proof["all_notices_while_working"] == proof["all_notices_before_answer"], proof
+        proof["helper_calls_before_ready"] = helper_calls()
+        ready_events = lab.subscribe(terminal=worker)
+        proof["ready_snapshot"] = ready_events.snapshot
+        assert any(row.get("address") == worker and (row.get("status") or {}).get("state") == "working" for row in ready_events.snapshot["terminals"]), proof
+        ready = command(worker, "ready", action="ready")
+        assert ready.get("helper_invoked") is False and ready.get("state") == "done", ready
+        proof["ready_action"] = ready
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            ready_events.connection.settimeout(max(0.001, deadline - time.monotonic()))
+            event = ready_events.read()
+            params = event.get("params") or {}
+            if event.get("method") == "event" and params.get("terminal") == worker and params.get("type") == "status" and ((params.get("data") or {}).get("status") or {}).get("state") == "done":
+                proof["native_done_event"] = event
+                break
+        assert "native_done_event" in proof, proof
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            proof["notices_after_done"] = answer_notices()
+            proof["deliveries_after_done"] = answer_deliveries()
+            if proof["notices_after_done"] and any(row.get("state") == "submitted" for row in proof["deliveries_after_done"]):
+                break
+            time.sleep(0.02)
+        assert len(proof["notices_after_done"]) == 1, proof
+        submitted = [row for row in proof["deliveries_after_done"] if row.get("state") == "submitted"]
+        assert len(submitted) == 1 and submitted[0].get("via") == "prompt" and submitted[0]["recipient"]["core_id"] == lab.core_id, proof
+        saved_task = json.loads((task_directory / "task.json").read_text())
+        unapplied = next(row for row in saved_task["questions"] if row["id"] == question_id)
+        assert unapplied["status"] == "answered", proof
+        proof["helper_calls_after_delivery"] = helper_calls()
+        assert proof["helper_calls_before_ready"] == proof["helper_calls_after_delivery"], proof
+        proof.update(no_sum_command_before_notice=True, question_before_resolve=unapplied)
+        lab.summary["checkpoints"].append("native-done-event-delivers-deferred-answer-without-sum-command")
         applied = command(worker, "apply", "resolve", task_id, question_id)["result"]
         assert applied["status"] == "applied" and applied["answer"] == "Yes, keep punctuation.", applied
         authored = command(worker, "candidate", action="candidate")

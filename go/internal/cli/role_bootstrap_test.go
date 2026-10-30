@@ -137,7 +137,7 @@ func TestCoordinatorInitRefusesARuntimeWithoutItsCore(t *testing.T) {
 	}
 
 	// First claim: refused before anything is recorded.
-	if _, errText, err := runCLIFrom(t, runtime, home, "init"); err == nil || !strings.Contains(errText, "COORDINATOR.md is missing") || !strings.Contains(errText, "no coordinator role was granted") {
+	if _, errText, err := runCLIFrom(t, runtime, home, "init", "--role", "coordinator"); err == nil || !strings.Contains(errText, "COORDINATOR.md is missing") || !strings.Contains(errText, "no coordinator role was granted") {
 		t.Fatalf("first claim without the core = %v %s", err, errText)
 	}
 	if _, err := os.Stat(contextPath); err == nil {

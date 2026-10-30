@@ -78,8 +78,12 @@ func Observe(ctx context.Context, s *store.Store, e store.Endpoint, runtimeRoot,
 		}
 	}
 
-	if terminal.State != "live" || terminal.Keep || terminal.PID == nil || terminal.Foreground == nil || !reflect.DeepEqual(terminal.Argv, args) {
-		return fmt.Errorf("observer terminal program cannot be verified")
+	if terminal.State != "live" || terminal.Keep || terminal.PID == nil || !reflect.DeepEqual(terminal.Argv, args) {
+		return fmt.Errorf("observer terminal program cannot be verified: state=%s keep=%t program_pid_present=%t foreground_present=%t argv_matches=%t", terminal.State, terminal.Keep, terminal.PID != nil, terminal.Foreground != nil, reflect.DeepEqual(terminal.Argv, args))
+	}
+	terminal, err = awaitObserverForeground(ctx, &client, terminal)
+	if err != nil {
+		return err
 	}
 	e.Schema = 2
 	e.Backend = "hc"

@@ -241,6 +241,10 @@ func endpointOf(row *ordjson.Object) (store.Endpoint, error) {
 }
 
 func validateProofs(s *store.Store, task, row *ordjson.Object, proofs []deliveryProof) error {
+	return validateProofCoverage(s, task, row, proofs, true)
+}
+
+func validateProofCoverage(s *store.Store, task, row *ordjson.Object, proofs []deliveryProof, complete bool) error {
 	endpoint, err := endpointOf(row)
 	if err != nil {
 		return fmt.Errorf("delivery lacks full historical native endpoint: %w", err)
@@ -321,6 +325,14 @@ func validateProofs(s *store.Store, task, row *ordjson.Object, proofs []delivery
 				}
 			}
 		}
+	}
+	if !complete {
+		for _, c := range cov {
+			if matched[c.ID+"\n"+c.Revision] {
+				return nil
+			}
+		}
+		return fmt.Errorf("consumed receipt covers no delivery input")
 	}
 	for _, c := range cov {
 		if !matched[c.ID+"\n"+c.Revision] {
@@ -452,7 +464,10 @@ func ReconcileDelivery(s *store.Store, ctx *ordjson.Object, taskID, deliveryID s
 	if err != nil {
 		return nil, err
 	}
-	proofs := []deliveryProof{}
+	proofs, err := retainedConsumptions(s, taskID, row)
+	if err != nil {
+		return nil, err
+	}
 	for _, c := range cov {
 		kind, ref, _ := strings.Cut(c.ID, ":")
 		if kind != "question" && kind != "answer" {

@@ -97,6 +97,8 @@ Success returns `task`, `delivery`, `result:reconciled` and `original_state`; an
 Cleanup, lifecycle maintenance and activation consult the same strict resolution validator instead of treating every historical uncertain row as permanently unresolved.
 No reconciliation closes a question, applies an answer, verifies a report, releases capacity or approves publication.
 Wake consumption still closes only its presentation episode; reconciling a historical native effect is a separate durable operation.
+Consumed proof for unresolved deliveries is retained per task before rolling wake history can discard it, so a delayed first reconciliation remains possible.
+Retention reads only a successfully committed wake; if retention fails, later wake replacement refuses and preserves that source rather than losing the proof.
 A changed or insufficient receipt does not make replay safe.
 
 ## Cleanup

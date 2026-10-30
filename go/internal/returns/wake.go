@@ -382,6 +382,12 @@ func readWakeFile(inst installation, path string) (*Wake, WakeStatus) {
 // WriteWake replaces w's sidecar atomically: temp file, fsync, rename, directory sync. A *WakeSyncError means the
 // rename happened but its durability is unknown; CommitWake handles that by reloading.
 func WriteWake(s *store.Store, w *Wake) error {
+	if err := s.CheckWritable(); err != nil {
+		return err
+	}
+	if err := archivePriorWakeConsumptions(s, w); err != nil {
+		return err
+	}
 	return writeWakeAt(s.WakePath(w.Endpoint()), w)
 }
 
@@ -1071,6 +1077,9 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		}
 		view.Set("prior_result", r.Result)
 		view.Set("prior_at", r.At)
+		if err := archiveWakeConsumptions(s, w); err != nil {
+			return nil, fmt.Errorf("wake consumption is already committed, but delivery receipt retention failed: %w; repair storage and retry this same consumption", err)
+		}
 		return finish("repeated"), nil
 	}
 	if b.Generation < w.Generation {
@@ -1164,6 +1173,9 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		return nil, fmt.Errorf("the receipt could not be persisted: %v", err)
 	}
 	w = persisted
+	if err := archiveWakeConsumptions(s, w); err != nil {
+		return nil, fmt.Errorf("wake consumption was committed, but delivery receipt retention failed: %w; the saved wake is retained; repair storage and retry this same consumption", err)
+	}
 	view.Set("rejected", rejected)
 	return finish("consumed"), nil
 }

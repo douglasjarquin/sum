@@ -47,6 +47,8 @@ A second unsupported scope is refused rather than silently left without delivery
 
 `sumctl hook status` shows saved health and observer ownership/readiness evidence.
 Enabled preference alone is not proof of a running observer.
+Startup waits within a bound for native foreground evidence while preserving the exact terminal creation, program PID, argv, labels and cwd.
+Readiness requires the matching observer receipt and the first connected snapshot; activation and handoff return that proven health rather than a pre-start snapshot.
 Startup failure is fail-open and explicitly degraded; `init`, `bind`, task-write notices and `sumctl pump` remain available.
 After proving a prior observer finished, replacement retires its old endpoint/receipt proof and persists a distinct `launch_attempt` before native creation.
 An early child may record its exact matching startup receipt before `terminal.run` replies; the parent merges only that same launch intent and never overwrites a newer receipt or changed launch.

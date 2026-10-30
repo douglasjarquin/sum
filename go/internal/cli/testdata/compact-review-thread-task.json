@@ -1,0 +1,121 @@
+{
+  "schema": 2,
+  "id": "t-eeeeeeeeeeee",
+  "status": "running",
+  "repository": "evidence-fixture/project",
+  "machine": "m-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "session": "saved-worker",
+  "pane": "saved-pane",
+  "questions": [
+    {
+      "id": "q-action",
+      "status": "open",
+      "text": "Complete the private setup.",
+      "created_at": "2026-10-30T12:00:00Z",
+      "human_action": {
+        "why": "The saved setup needs a person.",
+        "steps": [
+          {
+            "kind": "url",
+            "content": "https://example.invalid/setup",
+            "source": "docs/setup.md#browser"
+          },
+          {
+            "kind": "command",
+            "content": "fixture --credential [REDACTED]",
+            "source": "docs/setup.md#command",
+            "redactions": 1
+          },
+          {
+            "kind": "path",
+            "content": "config/fixture.toml",
+            "source": "docs/setup.md#file"
+          }
+        ],
+        "expected": "The setup confirms ready.",
+        "report": "Confirm the setup result.",
+        "check": "The worker checks the saved result.",
+        "redactions": 1
+      }
+    },
+    {
+      "id": "q-keyed",
+      "key": "strategy",
+      "status": "open",
+      "text": "Choose a strategy. access_token=synthetic-read-secret",
+      "created_at": "2026-10-30T12:00:00Z",
+      "choices": [
+        {
+          "id": "keep",
+          "label": "Keep the guard"
+        },
+        {
+          "id": "revert",
+          "label": "Revert the guard"
+        }
+      ],
+      "recommended": "keep",
+      "rationale": "The guard has evidence.",
+      "sources": [
+        "docs/review.md#guard"
+      ]
+    },
+    {
+      "id": "q-legacy",
+      "status": "open",
+      "text": "Legacy text remains readable.",
+      "created_at": "2026-10-30T12:00:00Z"
+    },
+    {
+      "id": "q-answered",
+      "status": "answered",
+      "text": "May the worker continue?",
+      "answer": "Proceed with the guard.",
+      "created_at": "2026-10-30T12:00:00Z",
+      "answered_at": "2026-10-30T12:01:00Z"
+    }
+  ],
+  "attention": [],
+  "evidence": [],
+  "report": null,
+  "pr": {
+    "identity": {
+      "url": "https://github.com/evidence-fixture/project/pull/7",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repository": "evidence-fixture/project",
+      "number": 7
+    },
+    "review_threads": {
+      "status": "complete",
+      "repository": "evidence-fixture/project",
+      "pr_number": 7,
+      "observed_at": "2026-10-30T12:00:00Z",
+      "observed_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "review_decision": "CHANGES_REQUESTED",
+      "threads": [
+        {
+          "id": "PRRT_evidence1",
+          "path": "src/worker.go",
+          "line": 42,
+          "original_line": 41,
+          "resolved": false,
+          "outdated": false,
+          "latest_comment_id": "PRRC_evidence1",
+          "latest_updated_at": "2026-10-30T12:00:00Z",
+          "latest_author": "fixture-reviewer",
+          "source_url": "https://github.com/evidence-fixture/project/pull/7#discussion_r123",
+          "observed_at": "2026-10-30T12:00:00Z",
+          "observed_head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "comments": [
+            {
+              "id": "PRRC_evidence1",
+              "body": "Explain the saved guard.",
+              "author": "fixture-reviewer",
+              "updated_at": "2026-10-30T12:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

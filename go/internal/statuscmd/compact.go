@@ -68,7 +68,10 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 			row.Set("source_url", item.SourceURL)
 			row.Set("author", item.Author)
 			row.Set("file", item.File)
-			row.Set("line", item.Line)
+			row.Set("line", nil)
+			if item.Line != nil {
+				row.Set("line", *item.Line)
+			}
 			row.Set("resolved", item.Resolved)
 			row.Set("outdated", item.Outdated)
 			row.Set("observed_at", item.ObservedAt)

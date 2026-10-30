@@ -5,6 +5,7 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
+| `verify.fixture-git-isolation` | Offline Go and Python test processes use a private retained Git configuration with explicit fixture identity and unsigned fixture commits/tags; inherited signing requirements cannot invoke a desktop signer, parent configuration is unchanged, and child failures retain their exit status. Builds and web checks keep their existing environment. | automated: `tests/test_git_env.py` | Offline poisoned-signer red/green regression; implementation: `scripts/test_git_env.py`, `mise-tasks/test`, `mise-tasks/verify`. |
 | `verify.contract-check` | `--check` validates the contract, maps, task ownership, and requirements without running anything | automated: `go/internal/skilltest/verify_test.go` | offline suite |
 | `verify.clean-pass` | A clean committed tree passing `mise run verify` yields a record that certifies the exact SHA | automated: `go/internal/skilltest/verify_test.go` | offline suite |
 | `verify.dirty-provisional` | A dirty tree yields a provisional record that certifies nothing | automated: `go/internal/skilltest/verify_test.go` | offline suite |
