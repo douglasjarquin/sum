@@ -185,7 +185,7 @@ func TestProjectionSkipsWithoutCapabilityAndWritesOnlyVerifiedPanes(t *testing.T
 		t.Fatal("unverified process got task labels")
 	}
 	l.f.QueueFault("terminal.label", hctest.Fault{RefuseKind: "config"})
- l.question("open")
+	l.question("open")
 	l.meta.Set("root", nil)
 	result := l.run()
 	if root := asObject(get(result, "root")); get(root, "outcome") != "failed" {
