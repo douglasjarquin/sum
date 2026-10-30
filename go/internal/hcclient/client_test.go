@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -252,5 +253,23 @@ func TestTemplatesAreObservedOnSelectedCore(t *testing.T) {
 	v, err := c.Templates(context.Background())
 	if err != nil || len(v.Templates) != 1 || v.Templates[0].Name != "sum-codex-bound" {
 		t.Fatalf("%#v %v", v, err)
+	}
+}
+
+func TestMalformedFirstMessageCannotBecomeKnownUnsent(t *testing.T) {
+	for _, first := range []any{map[string]any{}, map[string]any{"sent": nil}, map[string]any{"sent": "false"}} {
+		t.Run(fmt.Sprint(first), func(t *testing.T) {
+			socket := serve(t, func(c net.Conn, r *bufio.Reader) {
+				hello(c, r, "core-a")
+				q := request(r)
+				reply(c, q["id"], map[string]any{"address": "t1", "labels": map[string]string{}, "argv": []string{}, "cwd": "/tmp", "state": "live", "created_ms": 1, "screen": "exact", "cols": 80, "rows": 24, "first_message": first})
+			})
+			c := Client{Socket: socket, CoreID: "core-a"}
+			_, err := c.Run(context.Background(), RunParams{})
+			var ce *Error
+			if !errors.As(err, &ce) || ce.Effect != Uncertain {
+				t.Fatalf("malformed outcome authorized retry: %v", err)
+			}
+		})
 	}
 }

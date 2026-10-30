@@ -293,6 +293,19 @@ func validateResult(method string, raw json.RawMessage) error {
 			return fmt.Errorf("%s result missing required %s", method, key)
 		}
 	}
+	if method == "terminal.run" {
+		if first, ok := object["first_message"]; ok && !bytes.Equal(first, []byte("null")) {
+			var outcome struct {
+				Sent *bool `json:"sent"`
+			}
+			if err := json.Unmarshal(first, &outcome); err != nil {
+				return err
+			}
+			if outcome.Sent == nil {
+				return fmt.Errorf("native first_message missing required boolean sent")
+			}
+		}
+	}
 	return nil
 }
 
