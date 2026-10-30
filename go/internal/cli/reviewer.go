@@ -13,7 +13,7 @@ func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 	var permissionOverride bool
 	launchCmd := &cobra.Command{
 		Use:         "launch TASK",
-		Short:       "Launch the task reviewer in its own labeled tab",
+		Short:       "Launch the independent task reviewer in HC",
 		Annotations: map[string]string{projectsAnnotation: "task"},
 		Args:        cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -50,5 +50,27 @@ func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 	launchCmd.Flags().StringVar(&preset, "preset", "", "")
 	launchCmd.Flags().BoolVar(&permissionOverride, "permission-override", false, "")
 	cmd.AddCommand(launchCmd)
+	var attempt string
+	redeliver := &cobra.Command{Use: "redeliver TASK", Short: "Recover a proven unsent reviewer opening message", Annotations: map[string]string{projectsAnnotation: "task"}, Args: cobra.ExactArgs(1), RunE: func(command *cobra.Command, args []string) error {
+		st, err := o.openStore("reviewer redeliver")
+		if err != nil {
+			return err
+		}
+		ctx, err := store.Context(o.installRoot)
+		if err != nil {
+			return err
+		}
+		if err = app.RequireCoordinator(st, ctx); err != nil {
+			return err
+		}
+		view, err := review.Redeliver(st, ctx, args[0], attempt)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(command.OutOrStdout(), view)
+	}}
+	redeliver.Flags().StringVar(&attempt, "attempt", "", "")
+	_ = redeliver.MarkFlagRequired("attempt")
+	cmd.AddCommand(redeliver)
 	root.AddCommand(cmd)
 }
