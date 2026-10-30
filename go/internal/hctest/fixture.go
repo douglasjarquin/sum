@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 )
@@ -25,6 +26,7 @@ type Call struct {
 // Fault affects the next matching request. A lost response happens after its
 // native effect; RefuseKind rejects before any input or launch effect.
 type Fault struct {
+	Delay        time.Duration
 	LoseResponse bool
 	RefuseKind   string
 	FirstMessage *hcclient.FirstMessage
@@ -40,22 +42,31 @@ type terminal struct {
 	outlive bool
 	inputs  []string
 }
+type requestHold struct {
+	method, address string
+	entered         chan struct{}
+	release         chan struct{}
+	once            sync.Once
+}
 type Fixture struct {
-	Socket          string
-	CoreID          string
-	mu              sync.Mutex
-	listener        net.Listener
-	connections     map[net.Conn]bool
-	subscribers     map[*subscriber]bool
-	terminals       map[string]*terminal
-	faults          map[string][]Fault
-	calls           []Call
-	templates       []hcclient.TemplateInfo
-	templateSubmits map[string]string
-	seq             uint64
-	next            uint64
-	closed          bool
-	wg              sync.WaitGroup
+	templateConfigHome string
+	holds              []*requestHold
+	closeSignal        chan struct{}
+	Socket             string
+	CoreID             string
+	mu                 sync.Mutex
+	listener           net.Listener
+	connections        map[net.Conn]bool
+	subscribers        map[*subscriber]bool
+	terminals          map[string]*terminal
+	faults             map[string][]Fault
+	calls              []Call
+	templates          []hcclient.TemplateInfo
+	templateSubmits    map[string]string
+	seq                uint64
+	next               uint64
+	closed             bool
+	wg                 sync.WaitGroup
 }
 
 var methods = []string{"hello", "terminal.run", "terminal.get", "terminal.list", "terminal.send", "terminal.read", "terminal.wait", "terminal.label", "terminal.kill", "terminal.interrupt", "terminal.rm", "events.subscribe", "templates.list"}
@@ -66,7 +77,7 @@ func New(t testing.TB) *Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &Fixture{Socket: filepath.Join(dir, "hc.sock"), CoreID: "test-" + filepath.Base(dir), connections: map[net.Conn]bool{}, subscribers: map[*subscriber]bool{}, terminals: map[string]*terminal{}, faults: map[string][]Fault{}}
+	f := &Fixture{closeSignal: make(chan struct{}), Socket: filepath.Join(dir, "hc.sock"), CoreID: "test-" + filepath.Base(dir), connections: map[net.Conn]bool{}, subscribers: map[*subscriber]bool{}, terminals: map[string]*terminal{}, faults: map[string][]Fault{}}
 	f.listener, err = net.Listen("unix", f.Socket)
 	if err != nil {
 		os.RemoveAll(dir)
@@ -105,6 +116,7 @@ func (f *Fixture) Close() {
 		return
 	}
 	f.closed = true
+	close(f.closeSignal)
 	f.listener.Close()
 	for c := range f.connections {
 		c.Close()
@@ -306,6 +318,38 @@ func (f *Fixture) serve(c net.Conn) {
 			fault = q[0]
 			f.faults[req.Method] = q[1:]
 		}
+		var hold *requestHold
+		address, _ := req.Params["terminal"].(string)
+		for i, candidate := range f.holds {
+			if candidate.method == req.Method && (candidate.address == "" || candidate.address == address) {
+				hold = candidate
+				f.holds = append(f.holds[:i], f.holds[i+1:]...)
+				break
+			}
+		}
+		f.mu.Unlock()
+		if hold != nil {
+			close(hold.entered)
+			select {
+			case <-hold.release:
+			case <-f.closeSignal:
+				return
+			}
+		}
+		if fault.Delay > 0 {
+			timer := time.NewTimer(fault.Delay)
+			select {
+			case <-timer.C:
+			case <-f.closeSignal:
+				timer.Stop()
+				return
+			}
+		}
+		f.mu.Lock()
+		if f.closed {
+			f.mu.Unlock()
+			return
+		}
 		response := map[string]any{"jsonrpc": "2.0", "id": req.ID}
 		var result any
 		var refusal string
@@ -353,7 +397,7 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 	t := f.terminals[address]
 	switch method {
 	case "templates.list":
-		v := append([]hcclient.TemplateInfo{}, f.templates...)
+		v, _ := f.nativeTemplatesLocked()
 		return hcclient.TemplatesResult{Templates: v}, "", nil
 	case "hello":
 		return hcclient.HelloResult{Generation: 1, Version: "0.1.14", Core: hcclient.CoreInfo{ID: f.CoreID, Name: "sum-test"}, Framed: true, Methods: methods, Features: []string{"framed", "events", "status", "shell"}}, "", nil
@@ -376,12 +420,13 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 		value := hcclient.Terminal{Address: address, Labels: labels, Argv: argv, Cwd: args.Cwd, State: "live", CreatedMS: f.next, Screen: "exact", Cols: 80, Rows: 24, Keep: args.Keep, RM: args.RM, Notify: !args.NoNotify, DieWithParent: !args.OutliveParent}
 
 		if len(args.Argv) > 0 {
-			for _, template := range f.templates {
+			templates, submits := f.nativeTemplatesLocked()
+			for _, template := range templates {
 				if template.Name == args.Argv[0] {
 					name := template.Name
 					value.Template = &name
 					value.Argv = []string{"sh", "-c", template.Command}
-					if submit, ok := f.templateSubmits[name]; ok {
+					if submit, ok := submits[name]; ok {
 						key := submit
 						value.Submit = &key
 					}
@@ -537,4 +582,14 @@ func (f *Fixture) SetTemplateSubmit(name, key string) {
 		f.templateSubmits = map[string]string{}
 	}
 	f.templateSubmits[name] = key
+}
+
+// HoldNext synchronizes one native method boundary without holding the fixture
+// mutex. Closing the fixture releases every waiter and never executes its effect.
+func (f *Fixture) HoldNext(method, address string) (<-chan struct{}, func()) {
+	hold := &requestHold{method: method, address: address, entered: make(chan struct{}), release: make(chan struct{})}
+	f.mu.Lock()
+	f.holds = append(f.holds, hold)
+	f.mu.Unlock()
+	return hold.entered, func() { hold.once.Do(func() { close(hold.release) }) }
 }
