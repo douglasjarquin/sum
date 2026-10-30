@@ -2,6 +2,7 @@ package inboxview
 
 import (
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/presentation"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -19,7 +21,7 @@ func fixture(t *testing.T) *store.Store {
 	t.Helper()
 	for _, pair := range os.Environ() {
 		key, _, _ := strings.Cut(pair, "=")
-		if strings.HasPrefix(key, "SUM_") || strings.HasPrefix(key, "HERDR_") {
+		if strings.HasPrefix(key, "SUM_") || strings.HasPrefix(key, "HERDR_") || strings.HasPrefix(key, "HC_") {
 			t.Setenv(key, "")
 		}
 	}
@@ -28,6 +30,27 @@ func fixture(t *testing.T) *store.Store {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// Native routes are saved data. Snapshot reads must never contact their socket.
+func savedEndpoint(s *store.Store, role, address string) store.Endpoint {
+	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: "m-lab", CoreID: "core-lab", Session: "lab", Socket: filepath.Join(s.Home, "hc.sock"), Address: address, Role: role, Attempt: role + "-attempt", BindingGeneration: 1, CreatedMS: 100}
+	if role == "worker" {
+		endpoint.Task = "t-aaaaaaaaaaaa"
+	}
+	return endpoint
+}
+func savedRoute(t *testing.T, s *store.Store, role, address string, socket ...string) string {
+	t.Helper()
+	endpoint := savedEndpoint(s, role, address)
+	if len(socket) > 0 {
+		endpoint.Socket = socket[0]
+	}
+	data, err := ordjson.MarshalCompact(endpoint.Object())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func write(t *testing.T, s *store.Store, path, data string) {
@@ -64,6 +87,18 @@ func bytesOf(t *testing.T, root string) map[string]string {
 
 func TestReadRetainsHealthyDecisionsAndReportsSourceGaps(t *testing.T) {
 	s := fixture(t)
+	socketDir, err := os.MkdirTemp("", "iv-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(socketDir) })
+	socket := filepath.Join(socketDir, "hc.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
 	for _, name := range []string{"gh", "herdr", "herdr-mesh"} {
 		write(t, s, "bin/"+name, "#!/bin/sh\nprintf called >> \"$INBOXVIEW_CALL_LOG\"\nexit 1\n")
 		if err := os.Chmod(filepath.Join(s.Home, "bin", name), 0700); err != nil {
@@ -73,7 +108,7 @@ func TestReadRetainsHealthyDecisionsAndReportsSourceGaps(t *testing.T) {
 	callLog := filepath.Join(s.Home, "external-calls")
 	t.Setenv("INBOXVIEW_CALL_LOG", callLog)
 	t.Setenv("PATH", filepath.Join(s.Home, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":1,"id":"t-aaaaaaaaaaaa","status":"waiting","questions":[{"id":"q-open","status":"open","key":"choice","text":"routine update"},{"id":"q-answered","status":"answered"},{"id":"q-unknown","status":"unexpected"}]}`)
+	write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":2,"id":"t-aaaaaaaaaaaa","status":"waiting","worker_endpoint":`+savedRoute(t, s, "worker", "t2", socket)+`,"parent":`+savedRoute(t, s, "coordinator", "t1", socket)+`,"questions":[{"id":"q-open","status":"open","key":"choice","text":"routine update"},{"id":"q-answered","status":"answered"},{"id":"q-unknown","status":"unexpected"}]}`)
 	write(t, s, "tasks/t-aaaaaaaaaaaa/versions.json", `{broken`)
 	write(t, s, "tasks/t-bbbbbbbbbbbb/task.json", `{broken`)
 	before := bytesOf(t, s.Home)
@@ -96,12 +131,21 @@ func TestReadRetainsHealthyDecisionsAndReportsSourceGaps(t *testing.T) {
 	if _, err := os.Stat(callLog); !os.IsNotExist(err) {
 		t.Fatalf("read invoked an external tool: %v", err)
 	}
+	if err := listener.SetDeadline(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if connection, err := listener.Accept(); err == nil {
+		connection.Close()
+		t.Fatal("saved snapshot contacted HC")
+	} else if timeout, ok := err.(net.Error); !ok || !timeout.Timeout() {
+		t.Fatal(err)
+	}
 }
 
 func TestReadUsesCanonicalObligationsAndQuestionStates(t *testing.T) {
 	s := fixture(t)
 	path := "tasks/t-aaaaaaaaaaaa/task.json"
-	data := `{"schema":1,"id":"t-aaaaaaaaaaaa","status":"reported","parent":{"pane":"parent"},"questions":[{"id":"q1","key":"one","status":"open"},{"id":"q2","status":"answered"},{"id":"q3","status":"applied"},{"id":"q4","status":"settled"},{"id":"q5","status":"closed-unapplied"}],"evidence":[{"id":"e1","kind":"report","at":"2026-09-25T00:00:00Z","candidate":"sha1"},{"id":"e2","kind":"review","at":"2026-09-25T00:01:00Z","candidate":"sha1","verdict":"reject"}]}`
+	data := `{"schema":2,"id":"t-aaaaaaaaaaaa","status":"reported","parent":` + savedRoute(t, s, "coordinator", "t1") + `,"questions":[{"id":"q1","key":"one","status":"open"},{"id":"q2","status":"answered"},{"id":"q3","status":"applied"},{"id":"q4","status":"settled"},{"id":"q5","status":"closed-unapplied"}],"evidence":[{"id":"e1","kind":"report","at":"2026-09-25T00:00:00Z","candidate":"sha1"},{"id":"e2","kind":"review","at":"2026-09-25T00:01:00Z","candidate":"sha1","verdict":"reject"}]}`
 	write(t, s, path, data)
 	got := Read(s)
 	counts := map[presentation.Kind]int{}
@@ -124,7 +168,7 @@ func TestMalformedVersionsKeepEveryHealthyObligation(t *testing.T) {
 	for _, broken := range []string{`{broken`, `{"schema":1,"task":"t-aaaaaaaaaaaa","requested":"r1","revisions":[null]}`, `{"schema":1,"task":"t-aaaaaaaaaaaa","requested":"r1","revisions":[]}`} {
 		t.Run(broken, func(t *testing.T) {
 			s := fixture(t)
-			write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":1,"id":"t-aaaaaaaaaaaa","parent":{"pane":"p"},"questions":[{"id":"q1","status":"open"}],"evidence":[{"id":"e1","kind":"report","at":"1"},{"id":"e2","kind":"review","at":"2","candidate":"sha"}],"attention":[{"id":"a1","kind":"idle","status":"open","at":"3"}]}`)
+			write(t, s, "tasks/t-aaaaaaaaaaaa/task.json", `{"schema":2,"id":"t-aaaaaaaaaaaa","parent":`+savedRoute(t, s, "coordinator", "t1")+`,"questions":[{"id":"q1","status":"open"}],"evidence":[{"id":"e1","kind":"report","at":"1"},{"id":"e2","kind":"review","at":"2","candidate":"sha"}],"attention":[{"id":"a1","kind":"idle","status":"open","at":"3"}]}`)
 			write(t, s, "tasks/t-aaaaaaaaaaaa/versions.json", broken)
 			got := Read(s)
 			kinds := map[presentation.SourceKind]bool{}
@@ -146,10 +190,10 @@ func TestMalformedVersionsKeepEveryHealthyObligation(t *testing.T) {
 func TestRefreshDeliveryAndStableCanonicalIdentity(t *testing.T) {
 	s := fixture(t)
 	taskPath := "tasks/t-aaaaaaaaaaaa/task.json"
-	task := `{"schema":1,"id":"t-aaaaaaaaaaaa","machine":"m-lab","session":"lab","pane":"worker","parent":{"machine":"m-lab","session":"lab","pane":"parent"},"project":{"host":"git.example.com","owner":"team","repo":"repo"},"questions":[{"id":"q1","key":"choice","status":"open","text":"routine"}],"evidence":[{"id":"e1","kind":"review","candidate":"sha1"}]}`
+	task := `{"schema":2,"id":"t-aaaaaaaaaaaa","machine":"m-lab","worker_endpoint":` + savedRoute(t, s, "worker", "t2") + `,"parent":` + savedRoute(t, s, "coordinator", "t1") + `,"project":{"host":"git.example.com","owner":"team","repo":"repo"},"questions":[{"id":"q1","key":"choice","status":"open","text":"routine"}],"evidence":[{"id":"e1","kind":"review","candidate":"sha1"}]}`
 	write(t, s, taskPath, task)
 	write(t, s, "tasks/t-aaaaaaaaaaaa/versions.json", `{"schema":1,"task":"t-aaaaaaaaaaaa","requested":"r1","revisions":[{"id":"r1","status":"requested"}],"refresh":[{"event":"requested","revision":"r1","at":"1"},{"event":"delivery","revision":"r1","state":"submitted-unconfirmed"}]}`)
-	key := store.RegistrationKey(store.Endpoint{Machine: "m-lab", Session: "lab", Pane: "parent"})
+	key := store.RegistrationKey(savedEndpoint(s, "coordinator", "t1"))
 	write(t, s, "tasks/t-aaaaaaaaaaaa/returns.json", `{"schema":1,"task":"t-aaaaaaaaaaaa","deliveries":[{"id":"d1","state":"submitted","obligations":["question:q1"],"recipient":{"key":"`+key+`"}}]}`)
 	first := Read(s)
 	find := func(snapshot Snapshot, kind presentation.SourceKind) presentation.Item {

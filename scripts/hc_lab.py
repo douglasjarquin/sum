@@ -19,9 +19,14 @@ VERSION = "hc 0.1.14"
 
 
 def selected_binary(explicit=None):
-    candidate = explicit or str(ROOT / ".local/bin/hc")
-    if not Path(candidate).is_file():
-        candidate = shutil.which("hc")
+    if explicit is not None:
+        if not Path(explicit).is_file():
+            raise RuntimeError(f"explicit HC binary is unavailable: {explicit}")
+        candidate = explicit
+    else:
+        candidate = str(ROOT / ".local/bin/hc")
+        if not Path(candidate).is_file():
+            candidate = shutil.which("hc")
     if not candidate:
         raise RuntimeError("pinned HC is unavailable; stage HC 0.1.14 before running test-live")
     binary = str(Path(candidate).resolve())

@@ -643,7 +643,15 @@ func TestConfirmRequiresWorkerReceipt(t *testing.T) {
 	if !strings.Contains(asString(refused["error"]), "receipt") {
 		t.Fatalf("missing receipt %v", refused)
 	}
-	d.ctl(true, "report", id, "--text", "Coordinator-side report is not a worker bootstrap receipt.")
+	beforeReport := d.taskRecord(id)
+	report := d.ctl(false, "report", id, "--text", "Coordinator-side report is not a worker bootstrap receipt.")
+	if !strings.Contains(asString(report["error"]), "required task role") {
+		t.Fatalf("coordinator report bypassed worker authority: %v", report)
+	}
+	if !reflect.DeepEqual(beforeReport, d.taskRecord(id)) {
+		t.Fatal("refused coordinator report rewrote the task or worker receipt")
+	}
+
 	refused = d.ctl(false, "execution", "confirm", id, "--attempt", attemptID)
 	if !strings.Contains(asString(refused["error"]), "receipt") {
 		t.Fatalf("off-terminal report became receipt %v", refused)

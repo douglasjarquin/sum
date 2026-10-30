@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"github.com/douglasjarquin/sum/go/internal/store"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -22,32 +26,98 @@ func TestCompiledEntrypointCancellationExitsOnce(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build failed: %v\n%s", err, output)
 	}
-	home := filepath.Join(dir, "state")
-	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
+
+	stableHome := filepath.Join(dir, "state")
+	state, err := store.Open(stableHome)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
+	if err = state.Init(); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(binary, "--home", home, "help")
-	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
-	select {
-	case err := <-done:
+	snapshot := func(t *testing.T) map[string]string {
+		t.Helper()
+		files := map[string]string{}
+		err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				files[path+string(os.PathSeparator)] = "directory"
+				return nil
+			}
+			if path == binary {
+				return nil
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			files[path] = string(body)
+			return nil
+		})
 		if err != nil {
-			t.Fatalf("help failed: %v\n%s", err, stderr.String())
+			t.Fatal(err)
 		}
-	case <-time.After(5 * time.Second):
-		_ = command.Process.Kill()
-		t.Fatal("compiled helper did not exit")
+		return files
 	}
-	if !strings.Contains(stdout.String(), "commands:") && !strings.Contains(stdout.String(), `"commands"`) {
-		t.Fatalf("help output missing commands: %s", stdout.String())
+	var environment []string
+	for _, pair := range os.Environ() {
+		if strings.HasPrefix(pair, "SUM_") || strings.HasPrefix(pair, "HC_") || strings.HasPrefix(pair, "HERDR_") {
+			continue
+		}
+		environment = append(environment, pair)
+	}
+	for _, scenario := range []struct{ name, home, format string }{
+		{"physical-generation-toon", state.Home, ""},
+		{"physical-generation-json", state.Home, "json"},
+		{"uninitialized-toon", filepath.Join(dir, "uninitialized"), ""},
+		{"uninitialized-json", filepath.Join(dir, "uninitialized"), "json"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			before := snapshot(t)
+			args := []string{"--home", scenario.home}
+			if scenario.format != "" {
+				args = append(args, "--format", scenario.format)
+			}
+			args = append(args, "help")
+			command := exec.Command(binary, args...)
+			command.Env = environment
+			var stdout, stderr bytes.Buffer
+			command.Stdout = &stdout
+			command.Stderr = &stderr
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- command.Wait() }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("help failed: %v\n%s", err, stderr.String())
+				}
+			case <-time.After(5 * time.Second):
+				_ = command.Process.Kill()
+				<-done
+				t.Fatal("compiled helper did not exit")
+			}
+			if stderr.Len() != 0 {
+				t.Fatalf("help wrote stderr: %s", stderr.String())
+			}
+			if scenario.format == "json" {
+				var view map[string]any
+				if err := json.Unmarshal(stdout.Bytes(), &view); err != nil {
+					t.Fatalf("invalid JSON help: %v\n%s", err, stdout.String())
+				}
+				if _, ok := view["commands"]; !ok {
+					t.Fatalf("JSON help missing commands: %s", stdout.String())
+				}
+			} else if !strings.Contains(stdout.String(), "commands:") {
+				t.Fatalf("TOON help missing commands: %s", stdout.String())
+			}
+			if after := snapshot(t); !reflect.DeepEqual(before, after) {
+				t.Fatalf("help changed isolated state: before=%v after=%v", before, after)
+			}
+		})
 	}
 }

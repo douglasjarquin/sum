@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"os"
@@ -96,8 +97,10 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	if _, err := client.Remove(context.Background(), unknown); err != nil {
 		t.Fatal(err)
 	}
+	var qualifiedFailedRefresh hcclient.Terminal
 	for _, terminal := range f.native.Terminals() {
 		if terminal.Address == workerAddress(tasks["failed-refresh"]) {
+			qualifiedFailedRefresh = terminal
 			bad := "return"
 			terminal.Submit = &bad
 			f.native.SetTerminal(terminal)
@@ -120,10 +123,23 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	}
 	sha1 := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nUpdate one: reread decisions before continuing.\n")
 	f.stageFixture(sha1)
+	selectedBefore := f.currentPath()
+	qualificationCalls := len(f.native.Calls())
+	refusedQualification := f.ctl(false, "update", "apply", "--ref", sha1, "--no-fetch")
+	if !strings.Contains(asString(refusedQualification["error"]), "automatic delivery qualification") || f.currentPath() != selectedBefore {
+		t.Fatalf("unqualified current worker changed runtime selection: %v", refusedQualification)
+	}
+	assertFleetReadOnly(t, f.native.Calls()[qualificationCalls:])
+	// Restore exact qualified input before activation; refresh failure is introduced only at its own delivery boundary.
+	f.native.SetTerminal(qualifiedFailedRefresh)
 	applied := f.ctl(true, "update", "apply", "--ref", sha1, "--no-fetch")
 	if applied["changed"] != true || asString(asMap(applied["default"])["sha"]) != sha1 {
 		t.Fatalf("apply one=%v", applied)
 	}
+	unqualifiedRefresh := qualifiedFailedRefresh
+	wrongSubmit := "return"
+	unqualifiedRefresh.Submit = &wrongSubmit
+	f.native.SetTerminal(unqualifiedRefresh)
 	start := len(f.native.Calls())
 	first := f.ctl(true, "refresh", "request")
 	rows := f.targetRows(first, byID)
@@ -172,6 +188,8 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	if sends != 9 {
 		t.Fatalf("refresh sends=%d, want nine eligible workers", sends)
 	}
+	// The refused refresh records no receipt; later activations again require a currently qualified recipient.
+	f.native.SetTerminal(qualifiedFailedRefresh)
 	oldRuntime := f.readVersions(asString(tasks["old-runtime-client"]["id"]))
 	if asString(oldRuntime["active"]) != "r1" || asString(oldRuntime["requested"]) != "r2" {
 		t.Fatalf("native submission adopted old client=%v", oldRuntime)

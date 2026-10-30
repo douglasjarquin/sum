@@ -2,5 +2,35 @@
 #MISE description="Run isolated pinned-HC canaries with model-free OSC programs"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-python scripts/live_incarnation.py "$@"
-exec python scripts/live_smoke.py "$@"
+common=()
+artifact=""
+while (($#)); do
+  case "$1" in
+    --artifact)
+      if (($# < 2)); then
+        echo "--artifact requires a path" >&2
+        exit 2
+      fi
+      artifact="$2"
+      shift 2
+      ;;
+    --artifact=*)
+      artifact="${1#--artifact=}"
+      shift
+      ;;
+    *)
+      common+=("$1")
+      shift
+      ;;
+  esac
+done
+incarnation=()
+smoke=()
+if [[ -n "$artifact" ]]; then
+  # One invocation must preserve both proofs instead of replacing the first.
+  prefix="${artifact%.json}"
+  incarnation=(--artifact "${prefix}-incarnation.json")
+  smoke=(--artifact "${prefix}-smoke.json")
+fi
+python scripts/live_incarnation.py ${common[@]+"${common[@]}"} ${incarnation[@]+"${incarnation[@]}"}
+exec python scripts/live_smoke.py ${common[@]+"${common[@]}"} ${smoke[@]+"${smoke[@]}"}

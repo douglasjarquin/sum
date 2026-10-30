@@ -16,6 +16,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -187,6 +188,10 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 	}
 	current, err := s.ReadTask(endpoint.Task)
 	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if err = maintenance.Refuse(current, "Reviewer launch"); err != nil {
 		unlock()
 		return nil, err
 	}
@@ -374,6 +379,9 @@ func promptNativeReviewer(ctx context.Context, s *store.Store, task, recorded *o
 		return nil, err
 	}
 	current, err := s.ReadTask(endpoint.Task)
+	if err == nil {
+		err = maintenance.Refuse(current, "Reviewer kickoff")
+	}
 	if err == nil && (!endpoint.Native().SameAuthority(store.EndpointFromContext(objectField(current, "reviewer")).Native()) || reviewerCandidateState(current) != snapshot) {
 		err = fmt.Errorf("reviewer endpoint or candidate changed before input")
 	}
@@ -586,6 +594,9 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 		return nil, err
 	}
 	current, err := s.ReadTask(taskID)
+	if err == nil {
+		err = maintenance.Refuse(current, "Reviewer redelivery")
+	}
 	if err == nil {
 		saved := objectField(current, "reviewer")
 		if !ep.Native().SameAuthority(store.EndpointFromContext(saved).Native()) || !caller.Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) || asString(objectField(saved, "prompt"), "state") != "not-delivered" || reviewerCandidateState(current) != snapshot {

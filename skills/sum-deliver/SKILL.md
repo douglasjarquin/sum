@@ -58,15 +58,40 @@ Before `reviewer launch`, append an `intended` line to `.sum/action-log.md` the 
 A new candidate is a new target; the same candidate inside six hours is `skipped-duplicate` unless the user asked for the launch again.
 Launch a separately accountable reviewer with `./bin/sumctl reviewer launch TASK_ID`.
 HC creates a unique bounded native reviewer name and exact terminal at the Git checkout; no tab, split or workspace API is involved.
-Use explicit `--harness`, `--model`, `--reasoning` or `--preset` for the authorized launch, otherwise the saved reviewer selection and recorded coordinator launch apply.
-A preset never wraps or overrides the repository's own verification tool.
+Explicit `--harness`, `--model`, `--reasoning`, or `--preset` flags choose the reviewer for that launch; otherwise the saved reviewer preset (`reviewer.preset`) supplies the harness and argv, and without one the command uses the coordinator's recorded launch harness.
+The preset is a launch shortcut only: it applies solely to a reviewer Sum is responsible for starting, never wraps or overrides MADE or the repository's own verification tool, and its absence changes nothing.
 Terminal creation, candidate binding and opening-message outcome are separate saved facts.
 A proven-unsent opening message has one explicit recovery: `sumctl reviewer redeliver TASK_ID --attempt ATTEMPT_ID`.
 Never manually prompt it or automatically replay an uncertain message.
-A new candidate may reuse a verified live endpoint, while a replacement requires conclusive stop evidence for the previous exact endpoint and process.
+For a new candidate, run `reviewer launch TASK_ID` again: it reuses the verified live endpoint without a duplicate terminal; a replacement requires conclusive stop evidence for the previous exact endpoint and process.
+A missing or mismatched task checkout is a refusal, never permission to recreate or overwrite work.
+A surviving foreground process or a reviewer on another machine or unsupported core/session scope is refused rather than silently replaced.
 A live reviewer cannot be silently replaced; a native address alone confers no authority.
 The candidate's `requires_root_review` policy remains required and a modified policy cannot certify itself.
 Use the review route required by the repository; independent review never substitutes for the coordinator's own verification.
+A candidate whose verification record requires root review gets the `--policy-reviewed` guidance in the reviewer kickoff.
+The reviewer receives the task contract and candidate, not an instruction to rubber-stamp the worker's summary.
+Do not have simultaneous writers in the checkout.
+Treat any added code comment or edit to an existing code comment in the candidate diff as a blocking finding.
+This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files.
+Do not flag comments left unchanged while surrounding code changes.
+Commit messages, PR descriptions and `sumctl report` text are not code comments.
+Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; a directive may be added only when the code cannot work without it and must include no explanatory prose.
+Treat any added or expanded test, and any deleted, rewritten, skipped or disabled existing test, in the candidate diff as a blocking finding, unless the user explicitly asked for that test in this task.
+Do not flag a candidate because existing tests still run.
+If a separate reviewer is unavailable, say independent review was not performed; do not label the result fully reviewed.
+Check `sumctl brief list TASK_ID`: the report is bound to a brief revision, and `verification_policy_changed_since` means a later revision changed the worker procedure or brief schema, or `contract_changed_since_dispatch` shows the `VERIFY.md` the worker's own run saw no longer hashes to what dispatch recorded.
+Review under the current policy before accepting that evidence.
+Tie the review to the exact candidate SHA.
+Re-run required checks for later candidates; review the intervening changes rather than treating the previous SHA's approval as current.
+A nit is not automatically a blocker.
+Limit repair cycles; escalate repeated failure rather than opening an endless review/fix loop.
+Use `repair send TASK_ID --attempt ID --key KEY --file FILE` for a controlled corrective instruction to a settled worker.
+The default `in-scope` class covers whatever the worker needs to satisfy its approved brief and consumes nothing; `--class expansion --reason TEXT` is for work outside the brief and consumes the task's persisted allowance.
+Execution resumes consume no allowance.
+An uncertain expansion send stays charged and its key is never automatically replayed; a send HC refuses before delivery records nothing and charges nothing.
+At exhaustion, present the saved budget decision instead of launching another expansion repair.
+Record additional iterations only after the user's explicit approval, using `repair extend` with that question ID and the actual decision text.
 
 A reviewer terminal saves its findings with `sumctl review TASK_ID --verdict approve|changes-requested|blocked|comment --candidate SHA --file findings.md` plus the compact notes the PR will publish: repeatable `--focus`, `--finding`, and `--limitation`, or `--notes notes.json` (`kind` is `review-focus`, `open-finding`, or `limitation`).
 Keep the full findings in `--file`; they stay on the task record.
@@ -80,6 +105,15 @@ The worker terminal cannot review its own candidate.
 To adopt an inspected replacement after the prior reviewer is proven stopped, use `sumctl bind TASK_ID --reviewer-terminal ADDRESS`.
 It verifies native and process identity, task checkout and role/attempt evidence; it refuses the worker and any live previous reviewer.
 The rebind is appended to task evidence and later review records name the replacement.
+The replacement terminal's cwd must match the task checkout.
+The old exact reviewer process and any foreground occupant must be proven stopped, with no surviving process bound to that checkout; a missing address or a changed cwd is not permission to replace a live reviewer.
+A normal `review` never silently replaces a live endpoint.
+
+Every recorded review, including `--tool made`, is a `review:ID` return to you, delivered like a report through the same bounded notice (the task, verdict, candidate, and the `context ... --kind review` command to read it).
+Act on it: take an approved candidate on with `verify`, `pipeline push`, `pipeline pr`, `pipeline ci`, or `pr reconcile`, send the worker back with `repair send`, or bring a `blocked` verdict to the user, whose decision ends in one of those records or in archiving the task.
+Any of those records after the verdict closes the return, and a newer candidate supersedes it; the notice itself closes nothing and approves nothing.
+Record what you verified yourself with `sumctl verify TASK_ID --candidate SHA --result pass|fail|inconclusive --text '...'`, or with `--run`/`--execute` as above.
+A newer candidate marks earlier records as not current; it deletes nothing and restarts nothing.
 
 When the repository's configured MADE/No Mistakes route owns the review, record its result yourself from your terminal with `sumctl review TASK_ID --verdict ... --candidate SHA --tool made --run report.json`.
 The file is a JSON report with `repository`, `candidate`, `run_id`, `outcome`, optional `findings` (`path`, `invariant`, `severity` blocking or advisory), and `limitations`.
@@ -221,14 +255,31 @@ Only the user merges, except a factory lane explicitly governed by its authorize
 `init`, `pump`, observer events and status never observe GitHub merges.
 After the user reports a merge, inspect `cleanup TASK_ID`, or run bounded `sweep` for saved PRs and pending cleanup.
 Cleanup requires the exact merged PR/candidate, settled questions, applied answers, required evidence and stopped attempts.
+It re-observes that exact PR through `gh`, requires `merged` with a merge commit (closed is not merged), and compares the checkout HEAD with the merged head; squash and rebase merges pass, while an extra local commit blocks.
+Every ignored path is disposable only after the merge gates pass; inspection lists up to 50 ignored entries with a total and omitted count and saves that summary in the cleanup record, and the completed result lists those removed.
+Every blocker is named; inspection removes nothing.
+Report blockers to the user as they are.
+A blocked task stays visibly cleanup-pending and keeps working.
+Ignored outputs such as `.codegraph/`, `node_modules/`, `.artifacts/`, build directories, and `.env` files leave with the checkout only after the merge gates pass.
+Inspection reports the ignored entries and their bounded count; `graph.json` stays with the records.
+Sum started no graph watcher, so it stops none; a harness's own `codegraph serve --mcp` still running inside the checkout is an ordinary occupant until that session exits.
 It verifies Git repository/branch/checkout identity and native core/address/creation/process/receipt identity under a maintenance barrier.
 Dirty, staged, non-ignored untracked or unmerged work blocks cleanup.
 Surviving, shared, replaced or unproven processes/services remain named blockers.
 Owned services receive one interrupt; actual exit and survivor/port proof is required, and ended-idle waits are insufficient.
+Services launched with `env start` appear as `[service]` blockers with `stoppable` IDs only when their exact recorded native terminal and process identity still match.
+`cleanup --apply` stops exactly those and re-inspects only once evidence, obligations, identity and the checkout are settled; a proven service's process identities are not reported again as anonymous occupants.
+A `[service-unknown]` blocker (restarted or replaced outside Sum), a `[writing]` blocker (an owned log modified within the last seconds), or a survivor after the bound keeps the task cleanup-pending.
+Sum never kills by name, port, or cwd, never runs a broad compose down, and never closes a terminal it did not create.
+Do not kill processes to clear blockers.
 No kill escalation, broad compose shutdown, `git clean`, reset or force operation is permitted to clear a blocker.
 When inspection is ready, `cleanup TASK_ID --apply` rechecks, saves intent, removes exact owned native terminal/history and uses Git for the verified worktree removal without force.
 No HC I/O runs while holding the ledger lock.
+Cleanup verifies the task branch survived and archives the record only after the guarded removal succeeds.
+Repeating completed cleanup is a no-op.
+While native metadata is enabled, a merged-on-record task remains `merged-cleanup-pending` until cleanup; archive or completed cleanup clears exactly the owned namespaced HC labels Sum recorded on that task's terminals, and nothing else.
 `cleanup TASK_ID --reviewer-only --apply` removes only the proven stopped bound reviewer with saved findings; it leaves the shared checkout alone.
+A reviewer rebind updates the endpoint cleanup and `sweep` use.
 Never remove a task checkout, terminal or branch by hand.
 
 If the command is interrupted, run it again: it reconciles from the saved intent and HC observation rather than repeating or forcing the removal.

@@ -1,12 +1,12 @@
 topic: metadata
-help: "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle"
+help: "Optional display-only owned HC labels on verified recorded terminals; never role, lifecycle or approval authority"
 arguments: []
 subcommands:
-  enable: "Coordinator only: probe the installed Herdr's schema, record the instance-derived source, and project changed tokens to verified recorded endpoints"
+  enable: Validate HC capabilities and project owned labels to verified recorded terminals
   disable: "Coordinator only: clear exactly the recorded owned keys per endpoint (failed clears stay diagnostic) and stop projecting"
-  status: "Recorded projection summary, saved capabilities, applied tokens, ambiguous sources, error log, and native_open; writes nothing and calls no Herdr"
-  sync: "Coordinator only: re-probe capabilities and project one full pass writing only differences; --force rewrites every recorded endpoint"
-  snippet: "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum"
-  inbox: "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the linked default-on hook plugin and falls back to the overview; never syncs or writes"
+  status: Saved label projection health and diagnostics; no mutation
+  sync: Project one bounded pass of owned label differences to verified endpoints
+  snippet: Print optional visibility guidance without modifying configuration
+  inbox: Print saved bounded compact/grouped task overview; no legacy plugin-pane API
 read_only: false
 read_only_subcommands[3]: inbox,snippet,status

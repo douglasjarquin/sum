@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
@@ -365,11 +367,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	}
 	unlock()
 
-	result, err := completePreparation(s, args.RuntimeRoot, args.SumctlPath, tid, true)
-	if err != nil {
-		return failPrepare(s, tid, err)
-	}
-	return result, nil
+	return completePreparation(s, args.RuntimeRoot, args.SumctlPath, tid, true)
 }
 
 // Reconcile finishes only the original saved preparation. It never starts a
@@ -381,7 +379,94 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath, tas
 	return completePreparation(s, runtimeRoot, sumctlPath, taskID, false)
 }
 
-func completePreparation(s *store.Store, runtimeRoot, sumctlPath, tid string, initial bool) (*ordjson.Object, error) {
+type preparationClaim struct {
+	task      *ordjson.Object
+	intent    taskcheckout.Intent
+	operation string
+	snapshot  string
+	versions  string
+}
+
+// The task lease serializes only this task's preparation. Git never holds the
+// installation ledger lock, and another task can keep making progress.
+func preparationLease(s *store.Store, tid string) (func() error, error) {
+	if err := s.CheckWritable(); err != nil {
+		return nil, err
+	}
+	path, err := s.TaskPath(tid)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(filepath.Join(path, ".prepare.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("preparation for %s is already active; preserve its saved intent", tid)
+		}
+		return nil, err
+	}
+	release := func() error {
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		closeErr := file.Close()
+		if err != nil {
+			return err
+		}
+		return closeErr
+	}
+	if err = s.CheckWritable(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+func preparationSnapshot(task *ordjson.Object) (string, error) {
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		return "", err
+	}
+	record := ordjson.NewObject()
+	for _, key := range []string{"status", "cleanup", "repairs", "machine", "branch", "base_branch", "base_branch_source", "worktree", "checkout_intent", "preparation_approval", "preparation_launch_sha256", "launch", "verification_policy", "brief_path", "project", "worker_endpoint", "prepare_operation_pid", "prepare_operation_id"} {
+		record.Set(key, policyField(task, key))
+	}
+	record.Set("approved_scope", versions.ApprovedFingerprint(task))
+	record.Set("worker", worker)
+	data, err := ordjson.MarshalCompact(record)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+func preparationVersions(s *store.Store, tid string) (string, error) {
+	path, err := s.TaskPath(tid)
+	if err != nil {
+		return "", err
+	}
+	path = filepath.Join(path, versions.File)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return "missing", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("preparation versions must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+func claimPreparation(s *store.Store, tid string, initial bool) (*preparationClaim, error) {
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -429,98 +514,173 @@ func completePreparation(s *store.Store, runtimeRoot, sumctlPath, tid string, in
 	if intent.Repository != asString(policyField(task, "repository")) || intent.BaseSHA != asString(policyField(task, "base_sha")) || intent.Branch != asString(policyField(task, "branch")) {
 		return nil, fmt.Errorf("saved checkout intent differs from the approved task")
 	}
-	task.Set("prepare_operation_pid", jsonInt(os.Getpid()))
-	if err = s.SaveTask(task); err != nil {
-		return nil, err
-	}
-	checkout, err := taskcheckout.Create(context.Background(), intent)
+	versionHash, err := preparationVersions(s, tid)
 	if err != nil {
 		return nil, err
 	}
-	task.Set("worktree", checkout.Path)
-	policy := asObject(policyField(task, "verification_policy"))
-	launchSpec := launch.TaskLaunch(task)
+	operation, err := newTaskID()
+	if err != nil {
+		return nil, err
+	}
+	task.Set("prepare_operation_pid", jsonInt(os.Getpid()))
+	task.Set("prepare_operation_id", operation)
+	if err = s.SaveTask(task); err != nil {
+		return nil, err
+	}
+	snapshot, err := preparationSnapshot(task)
+	if err != nil {
+		return nil, err
+	}
+	return &preparationClaim{task: task, intent: intent, operation: operation, snapshot: snapshot, versions: versionHash}, nil
+}
+
+func completePreparation(s *store.Store, runtimeRoot, sumctlPath, tid string, initial bool) (result *ordjson.Object, err error) {
+	release, err := preparationLease(s, tid)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	claim, err := claimPreparation(s, tid, initial)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			err = failPreparationClaim(s, tid, claim, err)
+		}
+	}()
+	checkout, err := taskcheckout.Create(context.Background(), claim.intent)
+	if err != nil {
+		return nil, err
+	}
+	policy := asObject(policyField(claim.task, "verification_policy"))
+	launchSpec := launch.TaskLaunch(claim.task)
 	if policy != nil {
 		if err = verifycontract.ValidatePolicySeal(policy); err != nil {
 			return nil, err
 		}
 		prepared := snapshotObject(policy, "prepared_worktree")
-		if policyField(policy, "base_sha") != intent.BaseSHA || policyField(prepared, "path") != checkout.Path || policyField(prepared, "git_root") != checkout.GitRoot || policyField(prepared, "head") != checkout.Head || policyField(prepared, "branch") != checkout.Branch || policyField(prepared, "git_common_dir") != checkout.CommonDir {
+		if policyField(policy, "base_sha") != claim.intent.BaseSHA || policyField(prepared, "path") != checkout.Path || policyField(prepared, "git_root") != checkout.GitRoot || policyField(prepared, "head") != checkout.Head || policyField(prepared, "branch") != checkout.Branch || policyField(prepared, "git_common_dir") != checkout.CommonDir {
 			return nil, fmt.Errorf("sealed preparation policy differs from the saved Git identity")
 		}
 	} else {
-		contractRoot, cleanup, materializeErr := verifycontract.MaterializeCommit(intent.Repository, intent.BaseSHA)
+		contractRoot, cleanup, materializeErr := verifycontract.MaterializeCommit(claim.intent.Repository, claim.intent.BaseSHA)
 		if materializeErr != nil {
-			policy = verifycontract.PolicyAtDispatchUnavailable(intent.BaseSHA, materializeErr.Error())
+			policy = verifycontract.PolicyAtDispatchUnavailable(claim.intent.BaseSHA, materializeErr.Error())
 		} else {
 			defer cleanup()
-			policy = verifycontract.PolicyAtDispatch(contractRoot, intent.BaseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, runtimeRoot))
+			policy = verifycontract.PolicyAtDispatch(contractRoot, claim.intent.BaseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, runtimeRoot))
 		}
-		verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{Repository: intent.Repository, Project: asObject(policyField(task, "project")), Launch: launchSpec, RuntimeRoot: runtimeRoot, Worktree: checkout.Path, GitRoot: checkout.GitRoot, Head: checkout.Head, Branch: checkout.Branch, GitCommonDir: checkout.CommonDir})
+		verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{Repository: claim.intent.Repository, Project: asObject(policyField(claim.task, "project")), Launch: launchSpec, RuntimeRoot: runtimeRoot, Worktree: checkout.Path, GitRoot: checkout.GitRoot, Head: checkout.Head, Branch: checkout.Branch, GitCommonDir: checkout.CommonDir})
 		verifycontract.SealPolicy(policy)
-		task.Set("verification_policy", policy)
-		if err = s.SaveTask(task); err != nil {
-			return nil, err
-		}
 	}
-	taskPath, err := s.TaskPath(tid)
+	// Materialization can take time. Re-observe the original Git identity before
+	// the final ledger CAS, still without holding the ledger lock.
+	checkout, err = taskcheckout.Verify(context.Background(), claim.intent, true)
+	if err != nil {
+		return nil, err
+	}
+	return commitPreparation(s, runtimeRoot, sumctlPath, tid, claim, checkout, policy)
+}
+
+func commitPreparation(s *store.Store, runtimeRoot, sumctlPath, tid string, claim *preparationClaim, checkout taskcheckout.Evidence, policy *ordjson.Object) (*ordjson.Object, error) {
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	current, err := s.ReadTask(tid)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := preparationSnapshot(current)
+	if err != nil {
+		return nil, err
+	}
+	versionHash, err := preparationVersions(s, tid)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot != claim.snapshot || versionHash != claim.versions {
+		return nil, fmt.Errorf("preparation identity, approval, attempt or sealed history changed during Git I/O; preserve and inspect the saved checkout intent")
+	}
+	current.Set("worktree", checkout.Path)
+	if policyField(current, "verification_policy") == nil {
+		current.Set("verification_policy", policy)
+	}
+	if err = s.SaveTask(current); err != nil {
+		return nil, err
+	}
+	claim.snapshot, err = preparationSnapshot(current)
 	if err != nil {
 		return nil, err
 	}
 	var briefPath string
-	if _, statErr := os.Lstat(filepath.Join(taskPath, versions.File)); statErr == nil {
-		briefPath, err = versions.ActiveBrief(s, task)
-	} else if os.IsNotExist(statErr) {
-		briefPath, err = brief.WriteInitial(s, runtimeRoot, sumctlPath, task)
+	if versionHash != "missing" {
+		briefPath, err = versions.ActiveBrief(s, current)
 	} else {
-		err = statErr
+		briefPath, err = brief.WriteInitial(s, runtimeRoot, sumctlPath, current)
 	}
 	if err != nil {
 		return nil, err
 	}
-	task.Set("brief_path", briefPath)
-	task.Set("status", "prepared")
-	task.Set("error", nil)
-	task.Delete("prepare_operation_pid")
+	current.Set("brief_path", briefPath)
+	current.Set("status", "prepared")
+	current.Set("error", nil)
+	current.Delete("prepare_operation_pid")
+	current.Delete("prepare_operation_id")
+	worker, err := reservations.Worker(current)
+	if err != nil {
+		return nil, err
+	}
 	worker.Set("checkout", checkout.Path)
 	if policyField(worker, "state") == "uncertain" {
 		id := asString(policyField(worker, "id"))
-		if _, err = reservations.Transition(task, id, "held", store.Now(), nil, nil); err != nil {
+		if _, err = reservations.Transition(current, id, "held", store.Now(), nil, nil); err != nil {
 			return nil, err
 		}
 	}
-	if err = s.SaveTask(task); err != nil {
+	if err = s.SaveTask(current); err != nil {
 		return nil, err
 	}
-	task.Set("confirmation", launch.Confirmation(launchSpec))
-	return task, nil
+	current.Set("confirmation", launch.Confirmation(launch.TaskLaunch(current)))
+	return current, nil
 }
 
-func failPrepare(s *store.Store, tid string, cause error) (*ordjson.Object, error) {
-	errorText := fmt.Sprintf("Prepare failed or became uncertain: %s. Do not blindly create a replacement; inspect the saved Git checkout intent first.", cause)
+func failPreparationClaim(s *store.Store, tid string, claim *preparationClaim, cause error) error {
+	message := fmt.Sprintf("Prepare failed or became uncertain: %s. Do not blindly create a replacement; inspect the saved Git checkout intent first.", cause)
 	unlock, err := s.Lock()
-	if err == nil {
-		defer unlock()
-		current, readErr := s.ReadTask(tid)
-		if readErr == nil {
-			current.Set("status", "needs-attention")
-			current.Set("error", errorText)
-			if worker, werr := reservations.Worker(current); werr == nil {
-				id, _ := worker.Get("id")
-				obs := ordjson.NewObject()
-				obs.Set("at", store.Now())
-				obs.Set("outcome", "prepare-uncertain")
-				reason := cause.Error()
-				if len(reason) > 500 {
-					reason = reason[:500]
-				}
-				obs.Set("reason", reason)
-				_, _ = reservations.Transition(current, fmt.Sprint(id), "uncertain", store.Now(), obs, nil)
-			}
-			_ = s.SaveTask(current)
-		}
+	if err != nil {
+		return fmt.Errorf("%s: %s", tid, message)
 	}
-	return nil, fmt.Errorf("%s: %s", tid, errorText)
+	defer unlock()
+	current, err := s.ReadTask(tid)
+	if err != nil {
+		return fmt.Errorf("%s: %s", tid, message)
+	}
+	snapshot, err := preparationSnapshot(current)
+	if err != nil || snapshot != claim.snapshot || policyField(current, "prepare_operation_id") != claim.operation {
+		return fmt.Errorf("%s: %s", tid, message)
+	}
+	worker, err := reservations.Worker(current)
+	if err != nil {
+		return fmt.Errorf("%s: %s", tid, message)
+	}
+	observation := ordjson.NewObject()
+	observation.Set("at", store.Now())
+	observation.Set("outcome", "prepare-uncertain")
+	reason := cause.Error()
+	if len(reason) > 500 {
+		reason = reason[:500]
+	}
+	observation.Set("reason", reason)
+	if _, err = reservations.Transition(current, asString(policyField(worker, "id")), "uncertain", store.Now(), observation, nil); err == nil {
+		current.Set("status", "needs-attention")
+		current.Set("error", message)
+		current.Delete("prepare_operation_pid")
+		_ = s.SaveTask(current)
+	}
+	return fmt.Errorf("%s: %s", tid, message)
 }
 
 func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extra []string) (*ordjson.Object, error) {

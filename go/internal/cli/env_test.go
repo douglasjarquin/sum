@@ -13,7 +13,21 @@ import (
 
 func writeEnvironmentFixture(t *testing.T, home, taskID, environmentJSON string) {
 	t.Helper()
-	dir := filepath.Join(home, "tasks", taskID)
+	state, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if physical != state.Home {
+		t.Fatalf("environment fixture must use physical generation %s, got %s", state.Home, home)
+	}
+	if _, err = os.Stat(filepath.Join(state.Tasks, taskID, "task.json")); err != nil {
+		t.Fatalf("environment fixture task missing: %v", err)
+	}
+	dir := filepath.Join(state.Tasks, taskID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -29,13 +43,13 @@ func TestEnvShow_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("no environment record", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
 		assertEnvShowMatches(t, home, []string{"env", "show", "t-aaaaaaaaaaaa"})
 	})
 
 	t.Run("present record with discovery, secret-shaped command, endpoints, logs, resources, services", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
 		environmentJSON := `{
   "schema": 1, "task": "t-aaaaaaaaaaaa", "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:05:00+00:00",
   "discovery": {
@@ -93,7 +107,7 @@ func TestEnvShow_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("--max-chars truncates a long discovered command", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
 		longCommand := "npm run dev -- " + strings.Repeat("x", 200)
 		environmentJSON := fmt.Sprintf(`{
   "schema": 1, "task": "t-aaaaaaaaaaaa", "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:05:00+00:00",
@@ -112,7 +126,7 @@ func TestEnvShow_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("--max-chars 0 is unbounded", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
 		longCommand := "npm run dev -- " + strings.Repeat("x", 200)
 		environmentJSON := fmt.Sprintf(`{
   "schema": 1, "task": "t-aaaaaaaaaaaa", "created_at": "2026-01-01T00:00:00+00:00", "updated_at": "2026-01-01T00:05:00+00:00",
@@ -131,7 +145,7 @@ func TestEnvShow_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("malformed sidecar: schema mismatch surfaces as present:false, ok:false", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", taskFixture)
 		writeEnvironmentFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 2, "task": "t-aaaaaaaaaaaa"}`)
 		assertEnvShowMatches(t, home, []string{"env", "show", "t-aaaaaaaaaaaa"})
 	})

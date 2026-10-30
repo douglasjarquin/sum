@@ -5,12 +5,24 @@ from pathlib import Path
 import shutil
 import socket
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("hc_lab", Path(__file__).parents[1] / "scripts/hc_lab.py")
 hc_lab = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hc_lab)
+
+
+class BinarySelectionTests(unittest.TestCase):
+    def test_missing_explicit_binary_never_uses_path_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = str(Path(directory) / "missing-staged-hc")
+            with patch.object(hc_lab.shutil, "which", return_value="/otherwise-valid/hc") as discover, patch.object(hc_lab.subprocess, "check_output", return_value="hc 0.1.14\n") as execute:
+                with self.assertRaisesRegex(RuntimeError, "missing-staged-hc"):
+                    hc_lab.selected_binary(missing)
+                discover.assert_not_called()
+                execute.assert_not_called()
 
 
 class LabTeardownTests(unittest.TestCase):

@@ -1,7 +1,7 @@
 topic: status
 help: "All recorded tasks from saved records, with outstanding maintenance and its commands; reads only, never delivers, calls GitHub, or cleans up"
 arguments[11]{name,help}:
-  "--live",Add one bounded Herdr agent list per session; compact observes only rendered page tasks; writes nothing
+  "--live",Add one bounded HC terminal snapshot per session; compact observes only rendered page tasks; writes nothing
   "--compact",Bounded saved presentation with global known counts; full output remains the default
   "--after",Skip presentation items in compact mode (default 0); pages are fresh reads
   "--limit","Compact page size, or digest outcomes per response with --grouped, 1..100 (default 20)"
