@@ -240,3 +240,17 @@ func TestReadOnlyDiscoveryDoesNotAuthorizeEffects(t *testing.T) {
 		t.Fatalf("missing expected identity allowed effects: %v", err)
 	}
 }
+
+func TestTemplatesAreObservedOnSelectedCore(t *testing.T) {
+	socket := serve(t, func(c net.Conn, r *bufio.Reader) {
+		q := request(r)
+		reply(c, q["id"], HelloResult{Generation: 1, Version: "0.1.14", Core: CoreInfo{ID: "core-a", Name: "scratch"}, Methods: []string{"templates.list"}, Features: []string{}})
+		q = request(r)
+		reply(c, q["id"], map[string]any{"templates": []map[string]any{{"name": "sum-codex-bound", "description": "qualified", "command": "'/codex' '--no-daemon'", "error": nil}}})
+	})
+	c := Client{Socket: socket, CoreID: "core-a"}
+	v, err := c.Templates(context.Background())
+	if err != nil || len(v.Templates) != 1 || v.Templates[0].Name != "sum-codex-bound" {
+		t.Fatalf("%#v %v", v, err)
+	}
+}

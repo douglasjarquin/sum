@@ -283,6 +283,8 @@ func validateResult(method string, raw json.RawMessage) error {
 		required = []string{"outcome", "key"}
 	case "terminal.rm":
 		required = []string{"removed"}
+	case "templates.list":
+		required = []string{"templates"}
 	case "events.subscribe":
 		required = []string{"seq", "terminals"}
 	}
@@ -312,4 +314,9 @@ func Inspect(ctx context.Context, socket string) (HelloResult, error) {
 		return h, fmt.Errorf("unsupported or unidentified HC core")
 	}
 	return h, nil
+}
+
+func (c *Client) Templates(ctx context.Context) (v TemplatesResult, err error) {
+	err = c.call(ctx, "templates.list", struct{}{}, &v, false)
+	return
 }

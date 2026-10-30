@@ -164,3 +164,13 @@ type InterruptResult struct {
 type RemoveResult struct {
 	Removed string `json:"removed"`
 }
+
+type TemplateInfo struct {
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	Command     string  `json:"command"`
+	Error       *string `json:"error,omitempty"`
+}
+type TemplatesResult struct {
+	Templates []TemplateInfo `json:"templates"`
+}

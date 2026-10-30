@@ -50,13 +50,14 @@ type Fixture struct {
 	terminals   map[string]*terminal
 	faults      map[string][]Fault
 	calls       []Call
+	templates   []hcclient.TemplateInfo
 	seq         uint64
 	next        uint64
 	closed      bool
 	wg          sync.WaitGroup
 }
 
-var methods = []string{"hello", "terminal.run", "terminal.get", "terminal.list", "terminal.send", "terminal.read", "terminal.wait", "terminal.label", "terminal.kill", "terminal.interrupt", "terminal.rm", "events.subscribe"}
+var methods = []string{"hello", "terminal.run", "terminal.get", "terminal.list", "terminal.send", "terminal.read", "terminal.wait", "terminal.label", "terminal.kill", "terminal.interrupt", "terminal.rm", "events.subscribe", "templates.list"}
 
 func New(t testing.TB) *Fixture {
 	t.Helper()
@@ -350,6 +351,9 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 	address, _ := p["terminal"].(string)
 	t := f.terminals[address]
 	switch method {
+	case "templates.list":
+		v := append([]hcclient.TemplateInfo{}, f.templates...)
+		return hcclient.TemplatesResult{Templates: v}, "", nil
 	case "hello":
 		return hcclient.HelloResult{Generation: 1, Version: "0.1.14", Core: hcclient.CoreInfo{ID: f.CoreID, Name: "sum-test"}, Framed: true, Methods: methods, Features: []string{"framed", "events", "status", "shell"}}, "", nil
 	case "terminal.run":
@@ -500,4 +504,10 @@ func (f *Fixture) AssertNoForce(t testing.TB) {
 			t.Errorf("unexpected force in %s", c.Method)
 		}
 	}
+}
+
+func (f *Fixture) SetTemplates(templates []hcclient.TemplateInfo) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.templates = append([]hcclient.TemplateInfo{}, templates...)
 }
