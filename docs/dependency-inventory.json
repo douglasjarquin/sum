@@ -1,6 +1,5 @@
 {
   "schema": 1,
-  "generated_by": "issue-40",
   "dependencies": [
     {
       "id": "go",
@@ -8,11 +7,24 @@
       "version": "1.25.0",
       "checksum": "mise.toml#tools.go",
       "license": "BSD-3-Clause",
-      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
-      "requirements": ["setup-only", "CGO_ENABLED=0"],
+      "platforms": [
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64"
+      ],
+      "requirements": [
+        "setup-only",
+        "CGO_ENABLED=0"
+      ],
       "role": "build",
       "owner": "sum",
-      "contracts": {"cli": ["go build"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "go build"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "python",
@@ -20,11 +32,25 @@
       "version": "3.13.5",
       "checksum": "mise.toml#tools.python",
       "license": "PSF-2.0",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["runtime", "setup"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "runtime",
+        "setup"
+      ],
       "role": "runtime",
       "owner": "sum",
-      "contracts": {"cli": ["scripts/setup.py", "scripts/demo.py", ".agents/skills/verify", ".agents/skills/evidence"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "scripts/setup.py",
+          "scripts/demo.py",
+          ".agents/skills/verify",
+          ".agents/skills/evidence"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "node",
@@ -32,23 +58,66 @@
       "version": "22.20.0",
       "checksum": "mise.toml#tools.node",
       "license": "MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["runtime", "setup"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "runtime",
+        "setup"
+      ],
       "role": "runtime",
       "owner": "sum",
-      "contracts": {"cli": ["node scripts/mcp_smoke.mjs"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "scripts/relink_runtime_links.mjs",
+          "web/"
+        ],
+        "mcp": []
+      }
     },
     {
-      "id": "herdr",
-      "source": "https://github.com/herdrdev/herdr",
-      "version": "0.9.5",
-      "checksum": "mise.toml#tools.herdr",
-      "license": "MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["runtime", "named Herdr session"],
+      "id": "herdr-core",
+      "source": "https://github.com/herdrdev/herdr-core",
+      "version": "0.1.14",
+      "checksum": "config/hc-release.json#targets (versioned upstream manifest archive SHA256)",
+      "license": "Apache-2.0",
+      "platforms": [
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64"
+      ],
+      "requirements": [
+        "existing explicitly selected local HC core",
+        "generation 1 JSON-RPC",
+        "checksum-verified versioned release"
+      ],
       "role": "runtime",
       "owner": "Herdr",
-      "contracts": {"cli": ["agent", "pane", "workspace", "api schema"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "hc --version",
+          "hc schema",
+          "hc --skill"
+        ],
+        "rpc": [
+          "hello",
+          "terminal.run",
+          "terminal.get",
+          "terminal.list",
+          "terminal.send",
+          "terminal.read",
+          "terminal.wait",
+          "terminal.interrupt",
+          "terminal.kill",
+          "terminal.rm",
+          "terminal.label",
+          "events.subscribe",
+          "templates.list"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "gh",
@@ -56,11 +125,23 @@
       "version": "2.100.0",
       "checksum": "mise.toml#tools.github-cli",
       "license": "MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["setup/release staging", "existing user authentication"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "setup/release staging",
+        "existing user authentication"
+      ],
       "role": "runtime",
       "owner": "sum",
-      "contracts": {"cli": ["gh pr edit --attach", "gh repo clone"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "gh pr edit --attach",
+          "gh repo clone"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "quota-axi",
@@ -68,11 +149,21 @@
       "version": "0.1.37",
       "checksum": "mise.toml#tools.npm:quota-axi",
       "license": "MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["only scopes not migrated to Remainder"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "only scopes not migrated to Remainder"
+      ],
       "role": "runtime",
       "owner": "quota-axi",
-      "contracts": {"cli": ["quota-axi"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "quota-axi"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "codegraph",
@@ -80,11 +171,30 @@
       "version": "1.5.0",
       "checksum": "sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw==",
       "license": "MIT",
-      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
-      "requirements": ["optional per checkout", "CODEGRAPH_NO_DOWNLOAD=1"],
+      "platforms": [
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64"
+      ],
+      "requirements": [
+        "optional per checkout",
+        "CODEGRAPH_NO_DOWNLOAD=1"
+      ],
       "role": "runtime",
       "owner": "sum",
-      "contracts": {"cli": ["status --json", "init", "sync", "query", "explore"], "mcp": ["stdio optional"]}
+      "contracts": {
+        "cli": [
+          "status --json",
+          "init",
+          "sync",
+          "query",
+          "explore"
+        ],
+        "mcp": [
+          "stdio optional"
+        ]
+      }
     },
     {
       "id": "aube",
@@ -92,11 +202,22 @@
       "version": "2.2.4",
       "checksum": "mise.toml#tools.aube",
       "license": "MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["web/ aube-lock.yaml installs and scripts"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "web/ aube-lock.yaml installs and scripts"
+      ],
       "role": "setup",
       "owner": "sum",
-      "contracts": {"cli": ["aube -C web install|ci|run|exec", "aubr"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "aube -C web install|ci|run|exec",
+          "aubr"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "uv",
@@ -104,11 +225,21 @@
       "version": "0.12.13",
       "checksum": "mise.toml#tools.uv",
       "license": "Apache-2.0 OR MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["pipx backend for basedpyright"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "pipx backend for basedpyright"
+      ],
       "role": "setup",
       "owner": "sum",
-      "contracts": {"cli": ["uv"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "uv"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "basedpyright",
@@ -116,11 +247,22 @@
       "version": "1.40.1",
       "checksum": "mise.toml#tools.pipx:basedpyright",
       "license": "MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["pipx backend", "python 3.13.5"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "pipx backend",
+        "python 3.13.5"
+      ],
       "role": "runtime",
       "owner": "sum",
-      "contracts": {"cli": ["basedpyright-langserver"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "basedpyright-langserver"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "gopls",
@@ -128,11 +270,22 @@
       "version": "0.23.0",
       "checksum": "mise.toml#tools.go:golang.org/x/tools/gopls",
       "license": "BSD-3-Clause",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["go backend", "go 1.25.0"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "go backend",
+        "go 1.25.0"
+      ],
       "role": "runtime",
       "owner": "sum",
-      "contracts": {"cli": ["gopls"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "gopls"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "skills",
@@ -140,35 +293,26 @@
       "version": "1.5.25",
       "checksum": "sha512-E4iBTLaeih3uwzajrlvXd55dWw9/ihxxaIPePB5OoN5GOQ0HrDF2CXhwYM+LpJQ/8Zbk/IA69A0B9C27/sMCbw==",
       "license": "MIT",
-      "platforms": ["darwin", "linux"],
-      "requirements": ["Node >=22.20.0", "project-local copy mode"],
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "Node >=22.20.0",
+        "project-local copy mode"
+      ],
       "role": "runtime",
       "owner": "Vercel Labs",
-      "contracts": {"cli": ["add", "--skill", "--agent", "--copy", "--yes"], "mcp": []}
-    },
-    {
-      "id": "herdr-mesh",
-      "source": "go/cmd/herdr-mesh",
-      "version": "0.1.0",
-      "checksum": "release.json#dependencies.native.herdr-mesh.sha256",
-      "license": "MIT",
-      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
-      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
-      "role": "runtime",
-      "owner": "sum",
-      "contracts": {"cli": ["bin/herdr-mesh"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
-    },
-    {
-      "id": "herdr-mesh-go",
-      "source": "go/cmd/herdr-mesh",
-      "version": "0.1.0",
-      "checksum": "release.json#dependencies.native.herdr-mesh-go.sha256",
-      "license": "MIT",
-      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
-      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain", "prior packager artifact name"],
-      "role": "runtime",
-      "owner": "sum",
-      "contracts": {"cli": ["bin/herdr-mesh-go"], "mcp": ["herdr-mesh-sum v0.1.0, 10 tools, stdio"]}
+      "contracts": {
+        "cli": [
+          "add",
+          "--skill",
+          "--agent",
+          "--copy",
+          "--yes"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "go-toon",
@@ -176,11 +320,21 @@
       "version": "v0.0.0-20260910175100-a2d441264455",
       "checksum": "go.sum#github.com/douglasjarquin/go-toon",
       "license": "MIT",
-      "platforms": ["go-module"],
-      "requirements": ["go get", "LLM-facing sumctl stdout"],
+      "platforms": [
+        "go-module"
+      ],
+      "requirements": [
+        "go get",
+        "LLM-facing sumctl stdout"
+      ],
       "role": "build",
       "owner": "sum",
-      "contracts": {"cli": ["--format toon"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "--format toon"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "cobra",
@@ -188,23 +342,21 @@
       "version": "v1.9.1",
       "checksum": "h1:CXSaggrXdbHK9CF+8ywj8Amf7PBRmPCOJugH954Nnlo=",
       "license": "Apache-2.0",
-      "platforms": ["all supported Go targets"],
-      "requirements": ["go/go.mod", "compiled into native artifacts"],
+      "platforms": [
+        "all supported Go targets"
+      ],
+      "requirements": [
+        "go/go.mod",
+        "compiled into native artifacts"
+      ],
       "role": "build",
       "owner": "sum",
-      "contracts": {"cli": ["Cobra command/flag/help surface"], "mcp": []}
-    },
-    {
-      "id": "mcp-go-sdk",
-      "source": "https://github.com/modelcontextprotocol/go-sdk",
-      "version": "v1.6.1",
-      "checksum": "h1:0zOSupjKUxPKSocPT1Wtago+mUHU2/uZ4xSOY0FGReU=",
-      "license": "Apache-2.0/MIT transition",
-      "platforms": ["all supported Go targets"],
-      "requirements": ["go >= 1.25", "go/go.mod", "compiled into Go Mesh builtin"],
-      "role": "build",
-      "owner": "Model Context Protocol",
-      "contracts": {"cli": [], "mcp": ["MCP 2025-11-25 compatibility"]}
+      "contracts": {
+        "cli": [
+          "Cobra command/flag/help surface"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "sumctl",
@@ -212,11 +364,25 @@
       "version": "sum 0.1.0",
       "checksum": "release.json#dependencies.native.sumctl.sha256",
       "license": "MIT",
-      "platforms": ["darwin-arm64", "darwin-amd64", "linux-arm64", "linux-amd64"],
-      "requirements": ["setup/release staging", "CGO_ENABLED=0", "no runtime toolchain"],
+      "platforms": [
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64"
+      ],
+      "requirements": [
+        "setup/release staging",
+        "CGO_ENABLED=0",
+        "no runtime toolchain"
+      ],
       "role": "runtime",
       "owner": "sum",
-      "contracts": {"cli": ["sumctl compatibility argv/stdout/stderr"], "mcp": []}
+      "contracts": {
+        "cli": [
+          "sumctl native HC domain commands"
+        ],
+        "mcp": []
+      }
     },
     {
       "id": "remainder",
@@ -224,11 +390,26 @@
       "version": "0.3.0 (darwin-arm64), 0.2.2 (linux-amd64), 0.2.1 (linux-arm64)",
       "checksum": "per-platform archive SHA-256 in pins",
       "license": "MIT",
-      "platforms": ["linux-amd64", "darwin-arm64", "linux-arm64"],
-      "requirements": ["setup/release staging only", "checksum-verified GitHub release tar.gz", "Codex quota; not a mise which tool"],
+      "platforms": [
+        "linux-amd64",
+        "darwin-arm64",
+        "linux-arm64"
+      ],
+      "requirements": [
+        "setup/release staging only",
+        "checksum-verified GitHub release tar.gz",
+        "Codex quota; not a mise which tool"
+      ],
       "role": "runtime",
       "owner": "Remainder",
-      "contracts": {"cli": ["remainder --provider", "remainder --format toon", "remainder --format json"], "mcp": []},
+      "contracts": {
+        "cli": [
+          "remainder --provider",
+          "remainder --format toon",
+          "remainder --format json"
+        ],
+        "mcp": []
+      },
       "pins": {
         "linux-amd64": {
           "version": "0.2.2",
@@ -255,8 +436,12 @@
       "version": null,
       "status": "independent-consumer",
       "owner": "Pinchos",
-      "contracts": {"cli": [], "mcp": []},
+      "contracts": {
+        "cli": [],
+        "mcp": []
+      },
       "note": "Pinchos owns its executable, TOML, scheduler, and cache; Sum does not modify them."
     }
-  ]
+  ],
+  "generated_by": "scripts/generate_dependency_inventory.py"
 }
