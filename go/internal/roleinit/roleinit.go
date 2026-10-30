@@ -1,21 +1,20 @@
 package roleinit
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
-var ErrDesignated = fmt.Errorf("designated installation: init must run through the Python reference")
+var ErrDesignated = fmt.Errorf("designated installation: use native role initialization")
 
 func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, requestedTask string) (*ordjson.Object, error) {
 	if requestedRole == "worker" && requestedTask == "" {
@@ -34,21 +33,15 @@ func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, reque
 	var task *ordjson.Object
 	var verdict *incarnation.Verdict
 	var taskStore *store.Store
-	if hint != "" {
-		if hintStore, openErr := store.Open(hint); openErr == nil {
-			taskStore = hintStore
-			task, err = matchingTask(hintStore, endpoint)
-			if err != nil {
-				return nil, err
-			}
-			if task != nil {
-				v := judgeWorker(root, hintStore, task, endpoint)
-				verdict = &v
-				if !v.Verified {
-					task = nil
-				}
-			}
+	if hint != "" && endpoint.Schema == 2 && endpoint.Task != "" && (endpoint.Role == "worker" || endpoint.Role == "reviewer") {
+		hintStore, openErr := store.Open(hint)
+		if openErr != nil {
+			return nil, openErr
 		}
+		return InitDesignated(DesignatedOpts{RuntimeRoot: root, Store: hintStore, Ctx: ctx, Role: requestedRole, Task: requestedTask})
+	}
+	if requestedRole == "worker" || requestedRole == "reviewer" {
+		return nil, fmt.Errorf("no verified native task attempt names this checkout and caller")
 	}
 
 	role := "developer"
@@ -102,21 +95,19 @@ func earlierOccupantNote(role string, v incarnation.Verdict) string {
 // judgeWorker judges the calling pane against the worker registration the installation recorded for task.
 func judgeWorker(root string, s *store.Store, task *ordjson.Object, endpoint store.Endpoint) incarnation.Verdict {
 	registration, err := s.Registration(endpoint)
+	if err != nil || registration == nil {
+		return incarnation.Verdict{Outcome: incarnation.Unrecorded, Reason: "no current native registration"}
+	}
+	_, terminal, err := app.ObserveNative(endpoint)
+	if err != nil {
+		return incarnation.Verdict{Outcome: incarnation.Unobservable, Reason: err.Error()}
+	}
+	receipt, err := app.NativeReceipt(registration)
 	if err != nil {
 		return incarnation.Verdict{Outcome: incarnation.Unrecorded, Reason: err.Error()}
 	}
-	taskID, _ := task.Get("id")
-	recorded, occupiedAt, ok := incarnation.WorkerRecord(registration, taskID)
-	if !ok {
-		return incarnation.Verdict{Outcome: incarnation.Unrecorded, Reason: "no worker registration for this task records this pane; missing metadata is not proof of a match"}
-	}
-	herdrPath, err := toolpath.Find(root, "herdr")
-	if err != nil {
-		return incarnation.Verdict{Outcome: incarnation.Unobservable, Reason: "Herdr cannot be found to verify this pane: " + err.Error()}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
-	defer cancel()
-	return incarnation.Pane(incarnation.SessionCall(ctx, herdrPath, endpoint.Session), endpoint.Pane, recorded, occupiedAt)
+	recorded, _ := registration.Get("incarnation")
+	return incarnation.JudgeNative(recorded, endpoint.Native(), terminal, receipt)
 }
 
 func note(task, marker *ordjson.Object) string {
@@ -129,7 +120,7 @@ func note(task, marker *ordjson.Object) string {
 	}
 	installationValue, _ := marker.Get("installation")
 	installation, _ := installationValue.(string)
-	return base + " Tests use temporary --home state and a named lab Herdr session; the installed helper at " +
+	return base + " Tests use temporary --home state and a named lab HC session; the installed helper at " +
 		filepath.Join(installation, "bin", "sumctl") + " owns any parent-task callbacks."
 }
 
@@ -175,16 +166,20 @@ func matchingTask(s *store.Store, endpoint store.Endpoint) (*ordjson.Object, err
 // matchingTaskIn finds the unarchived task whose recorded pane is endpoint among tasks already read.
 func matchingTaskIn(s *store.Store, tasks []*ordjson.Object, endpoint store.Endpoint) (*ordjson.Object, error) {
 	for _, task := range tasks {
-		paneValue, hasPane := task.Get("pane")
-		pane, _ := paneValue.(string)
-		if !hasPane || pane == "" {
-			continue
-		}
 		status, _ := task.Get("status")
 		if status == "archived" {
 			continue
 		}
-		matches, err := s.Matches(task, endpoint)
+		key := "worker_endpoint"
+		if endpoint.Role == "reviewer" {
+			key = "reviewer"
+		}
+		value, _ := task.Get(key)
+		recorded, _ := value.(*ordjson.Object)
+		if recorded == nil {
+			continue
+		}
+		matches, err := s.Matches(recorded, endpoint)
 		if err != nil {
 			return nil, err
 		}
@@ -192,6 +187,7 @@ func matchingTaskIn(s *store.Store, tasks []*ordjson.Object, endpoint store.Endp
 			return task, nil
 		}
 	}
+
 	return nil, nil
 }
 

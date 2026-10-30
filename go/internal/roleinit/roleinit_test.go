@@ -110,13 +110,13 @@ func TestInit_developmentMarkerAppendsCallbackSentence(t *testing.T) {
 	}
 	noteValue, _ := view.Get("note")
 	want := "Development checkout: read the developer procedure under `procedure`; modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates. " +
-		"Tests use temporary --home state and a named lab Herdr session; the installed helper at /installations/sum/bin/sumctl owns any parent-task callbacks."
+		"Tests use temporary --home state and a named lab HC session; the installed helper at /installations/sum/bin/sumctl owns any parent-task callbacks."
 	if noteValue != want {
 		t.Fatalf("note = %q, want %q", noteValue, want)
 	}
 }
 
-func TestMatchingTask_findsAPaneMatchingNonArchivedTask(t *testing.T) {
+func TestMatchingTask_findsANativeEndpointMatchingNonArchivedTask(t *testing.T) {
 	hintHome := t.TempDir()
 	hintStore, err := store.Open(hintHome)
 	if err != nil {
@@ -126,13 +126,13 @@ func TestMatchingTask_findsAPaneMatchingNonArchivedTask(t *testing.T) {
 		t.Fatalf("hint store init: %v", err)
 	}
 
-	endpoint := store.Endpoint{Machine: "m1", Session: "s1", Pane: "p1"}
+	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: "m1", CoreID: "core", Session: "s1", Socket: "/tmp/lab.sock", Address: "t1", Role: "worker", Task: "t-bbbbbbbbbbbb", Attempt: "attempt", BindingGeneration: 1, CreatedMS: 1}
 
 	archived := ordjson.NewObject()
 	archived.Set("schema", jsonInt(store.Schema))
 	archived.Set("id", "t-aaaaaaaaaaaa")
 	archived.Set("status", "archived")
-	archived.Set("pane", "p1")
+	archived.Set("worker_endpoint", endpoint.Object())
 	archived.Set("session", "s1")
 	archived.Set("machine", "m1")
 	if err := hintStore.SaveTask(archived); err != nil {
@@ -143,7 +143,7 @@ func TestMatchingTask_findsAPaneMatchingNonArchivedTask(t *testing.T) {
 	running.Set("schema", jsonInt(store.Schema))
 	running.Set("id", "t-bbbbbbbbbbbb")
 	running.Set("status", "running")
-	running.Set("pane", "p1")
+	running.Set("worker_endpoint", endpoint.Object())
 	running.Set("session", "s1")
 	running.Set("machine", "m1")
 	if err := hintStore.SaveTask(running); err != nil {
