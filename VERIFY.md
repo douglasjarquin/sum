@@ -66,10 +66,10 @@ A green `mise run verify` is evidence for the automated rows only, never for a s
 Every test and the demo create temporary state homes (`--home` under a temporary directory) and named lab HC sessions or the fake HC protocol server.
 Never point a check at the live `.sum/` directory or the user's `default` HC session.
 No credentials, model calls, or GitHub writes are involved; `SUM_*`, `HC_*` and `HERDR_*` variables inherited from an installation are stripped by the lab code.
-The Go tests in `mise run test` and `mise run verify`, and the Python discovery in `mise run verify`, run through `scripts/test_git_env.py` with a private Git global configuration and system configuration disabled.
+The Go tests in `mise run test` and `mise run verify`, and the Python discovery in `mise run verify`, run through `scripts/fixture_git_env.py` with a private Git global configuration and system configuration disabled.
 Each invocation retains its configuration in a unique private `.artifacts/test-git/run-*/` directory, supplies the `Sum Test <sum-test@example.invalid>` fixture identity, disables fixture commit and tag signing, and clears inherited Git configuration, repository selectors, and author/committer identity overrides only in the child environment.
 The wrapper preserves the working directory, command arguments, and exit status; Go builds, web checks, and ordinary Git operations retain their existing environment.
-For targeted tests, run `cd go && python3 ../scripts/test_git_env.py -- go test ./internal/cli -run TestGraphInit`, or `python3 scripts/test_git_env.py -- python3 -m unittest discover -s tests -p test_git_env.py` from the repository root.
+For targeted tests, run `cd go && python3 ../scripts/fixture_git_env.py -- go test ./internal/cli -run TestGraphInit`, or `python3 scripts/fixture_git_env.py -- python3 -m unittest discover -s tests -p test_git_env.py` from the repository root.
 
 ## Artifacts
 

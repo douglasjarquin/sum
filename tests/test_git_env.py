@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-WRAPPER = ROOT / "scripts" / "test_git_env.py"
+WRAPPER = ROOT / "scripts" / "fixture_git_env.py"
 spec = importlib.util.spec_from_file_location("test_git_environment", WRAPPER)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

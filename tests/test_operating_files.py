@@ -154,11 +154,11 @@ class OperatingFilesTest(unittest.TestCase):
     def test_agents_md_still_forbids_coordinator_pane_work(self):
         agents = (ROOT / "AGENTS.md").read_text()
         self.assertIn(
-            "Never research, plan, investigate, implement, or edit repository files in this coordinator pane",
+            "Never research, plan, investigate, implement, or edit repository files in this coordinator terminal",
             agents,
         )
         coordinator = (ROOT / "COORDINATOR.md").read_text()
-        self.assertIn("Never do the requested work in this coordinator pane", coordinator)
+        self.assertIn("Never do the requested work in this coordinator terminal", coordinator)
         self.assertIn(
             "not research, not planning, not investigation, not implementation",
             coordinator,
@@ -202,7 +202,7 @@ class OperatingFilesTest(unittest.TestCase):
             "Say so rather than promising unattended delivery",
             "only the user sets it",
             "only their explicit decision permits `repair extend`",
-            "Never remove a checkout, close a pane, or delete a branch by hand",
+            "Never remove a checkout, close a terminal, or delete a branch by hand",
             "Only the user authorizes an update or rollback",
             "Native event delivery is enabled by default",
             "refresh adopt --coordinator rN",

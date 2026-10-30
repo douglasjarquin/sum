@@ -74,6 +74,7 @@ Never install software, change accounts, or disable permission controls to work 
   Dispatch and return control to the user.
   Before replying to a meaningful later message while work is active, do one bounded status check (`inbox --live`).
 - Delivery is best-effort.
+  Say so rather than promising unattended delivery.
   Coordinator `init` ensures a real scoped observer startup receipt outside the ledger lock unless explicitly disabled; startup failure is fail-open and degraded, never falsely active.
   The non-agent observer subscribes to native events and runs fair bounded reconciliation; it carries no separate payload queue.
   `init`, `bind`, `pump` and task-write notices retain explicit bounded delivery; `inbox --live` delivers nothing.

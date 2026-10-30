@@ -28,7 +28,7 @@ def main():
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        raise SystemExit("usage: test_git_env.py -- COMMAND [ARG ...]")
+        raise SystemExit("usage: fixture_git_env.py -- COMMAND [ARG ...]")
     artifact_root = Path(__file__).resolve().parents[1] / ".artifacts" / "test-git"
     artifact_root.mkdir(parents=True, exist_ok=True)
     os.execvpe(command[0], command, environment(artifact_root))
