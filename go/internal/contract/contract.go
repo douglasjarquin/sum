@@ -2,7 +2,7 @@ package contract
 
 const (
 	SumVersion  = "0.1.0"
-	StateSchema = 1
+	StateSchema = 2
 	BriefSchema = 1
 	// MachineIdentity 1 says this binary resolves recorded machine values
 	// through internal/machine. Only release-contract reports it: a checkout
@@ -14,8 +14,13 @@ const (
 	// (internal/returns/wake.go): at most one outstanding routine wake per
 	// adopted coordinator, persisted before any prompt. Reported the same way
 	// as MachineIdentity, by release-contract only.
-	WakeProtocol = 1
-	HerdrCLI     = "0.9.5"
+	WakeProtocol         = 1
+	HerdrCLI             = "0.9.5"
+	HCVersion            = "0.1.14"
+	HCGeneration         = 1
+	EndpointSchema       = 2
+	NotificationProtocol = 2
+	ObserverProtocol     = 1
 )
 
 var MCP = MCPContract{Server: "herdr-mesh-sum", Version: SumVersion, Tools: 10}
@@ -27,15 +32,22 @@ type MCPContract struct {
 }
 
 type Contracts struct {
-	HerdrCLI string      `json:"herdr_cli"`
-	MCP      MCPContract `json:"mcp"`
+	HCCore               string      `json:"hc_core"`
+	HCGeneration         int         `json:"hc_generation"`
+	EndpointSchema       int         `json:"endpoint_schema"`
+	NotificationProtocol int         `json:"notification_protocol"`
+	HerdrCLI             string      `json:"herdr_cli"`
+	MCP                  MCPContract `json:"mcp"`
 }
 
 type Supports struct {
-	StateSchema     []int `json:"state_schema"`
-	BriefSchema     []int `json:"brief_schema"`
-	MachineIdentity []int `json:"machine_identity"`
-	WakeProtocol    []int `json:"wake_protocol"`
+	EndpointSchema       []int `json:"endpoint_schema"`
+	NotificationProtocol []int `json:"notification_protocol"`
+	ObserverProtocol     []int `json:"observer_protocol"`
+	StateSchema          []int `json:"state_schema"`
+	BriefSchema          []int `json:"brief_schema"`
+	MachineIdentity      []int `json:"machine_identity"`
+	WakeProtocol         []int `json:"wake_protocol"`
 }
 
 type Release struct {
@@ -47,7 +59,7 @@ type Release struct {
 func BuildRelease() Release {
 	return Release{
 		SumVersion: SumVersion,
-		Contracts:  Contracts{HerdrCLI: HerdrCLI, MCP: MCP},
-		Supports:   Supports{StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}},
+		Contracts:  Contracts{HCCore: HCVersion, HCGeneration: HCGeneration, EndpointSchema: EndpointSchema, NotificationProtocol: NotificationProtocol, HerdrCLI: HerdrCLI, MCP: MCP},
+		Supports:   Supports{EndpointSchema: []int{EndpointSchema}, NotificationProtocol: []int{NotificationProtocol}, ObserverProtocol: []int{ObserverProtocol}, StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}},
 	}
 }
