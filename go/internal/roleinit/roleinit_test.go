@@ -97,7 +97,7 @@ func TestInit_developmentMarkerAppendsCallbackSentence(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	marker := ordjson.NewObject()
-	marker.Set("schema", jsonInt(store.Schema))
+	marker.Set("schema", jsonInt(1))
 	marker.Set("kind", "development")
 	marker.Set("installation", "/installations/sum")
 	if err := ordjson.WriteFile(filepath.Join(root, ".sum", "dev.json"), marker); err != nil {

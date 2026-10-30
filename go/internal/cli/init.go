@@ -25,7 +25,7 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 				return err
 			}
 			ctx, ctxErr := store.Context(o.runtimeRoot)
-			if ctxErr != nil {
+			if ctxErr != nil && (st.Designated() || role == "worker" || task != "") {
 				return fmt.Errorf("%s", capitalizeHerdrContext(ctxErr.Error()))
 			}
 			if !st.Designated() {

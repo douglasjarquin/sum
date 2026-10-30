@@ -211,7 +211,7 @@ func DevelopmentMarker(root string) (*ordjson.Object, error) {
 	schemaOK := false
 	if schema, has := obj.Get("schema"); has {
 		if number, isNum := schema.(json.Number); isNum {
-			if n, convErr := number.Int64(); convErr == nil && n == store.Schema {
+			if n, convErr := number.Int64(); convErr == nil && n == 1 {
 				schemaOK = true
 			}
 		}

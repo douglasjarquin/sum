@@ -292,3 +292,29 @@ func TestInit_nativeEventEnableFailureIsDegradedAndFailOpen(t *testing.T) {
 		t.Fatalf("hook status = %s, err = %v; want degraded with registry unavailable", status, statusErr)
 	}
 }
+
+func TestDeveloperInitDoesNotRequireNativeRuntime(t *testing.T) {
+	checkout := t.TempDir()
+	home := filepath.Join(checkout, ".sum")
+	if err := os.Mkdir(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "dev.json"), []byte(`{"schema":1,"kind":"development","installation":"/retained/installation"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"SUM_SESSION", "HC_SESSION", "HC_SOCKET", "HC_TERMINAL_ID", "SUM_CORE_ID", "SUM_INSTALL_ROOT", "SUM_HOME"} {
+		t.Setenv(key, "")
+	}
+	var out, errOut bytes.Buffer
+	root := NewRoot(filepath.Join(checkout, "bin", "sumctl"), &out, &errOut)
+	root.SetArgs([]string{"--home", home, "--format", "json", "init"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("developer init requires runtime: %v", err)
+	}
+	if !strings.Contains(out.String(), `"role": "developer"`) && !strings.Contains(out.String(), `"role":"developer"`) {
+		t.Fatalf("%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(home, "state.json")); !os.IsNotExist(err) {
+		t.Fatal("developer init wrote state")
+	}
+}
