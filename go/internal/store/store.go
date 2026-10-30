@@ -138,10 +138,31 @@ func resolveHome(home string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
-		return resolved, nil
+	var tail []string
+	ancestor := absolute
+	for {
+		_, err := os.Lstat(ancestor)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		tail = append(tail, filepath.Base(ancestor))
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", err
+		}
+		ancestor = parent
 	}
-	return absolute, nil
+	resolved, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", err
+	}
+	for n := len(tail) - 1; n >= 0; n-- {
+		resolved = filepath.Join(resolved, tail[n])
+	}
+	return resolved, nil
 }
 
 func expandUser(path string) (string, error) {

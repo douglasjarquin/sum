@@ -78,3 +78,29 @@ func TestLegacyOpenNeverConverts(t *testing.T) {
 		t.Fatal("historical store became writable")
 	}
 }
+
+func TestFreshGenerationCanonicalizesExistingAncestor(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "real")
+	if err := os.Mkdir(real, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "alias")
+	if err := os.Symlink(real, alias); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(filepath.Join(alias, "new-home"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(s.Home)
+	if err != nil {
+		t.Fatalf("fresh helper cannot reopen its physical generation: %v", err)
+	}
+	if reopened.Root != s.Root {
+		t.Fatalf("root drift: %q -> %q", s.Root, reopened.Root)
+	}
+}
