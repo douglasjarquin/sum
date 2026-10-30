@@ -132,7 +132,7 @@ func TestProtocolFailureAndCancellation(t *testing.T) {
 	}
 }
 func TestEndpointAuthority(t *testing.T) {
-	a := Endpoint{Schema: 2, Backend: "hc", CoreID: "a", Address: "t7", Task: "task", Role: "worker", Attempt: "one", BindingGeneration: 1}
+	a := Endpoint{Schema: 2, Backend: "hc", CoreID: "a", Address: "t7", Task: "task", Role: "worker", Attempt: "one", BindingGeneration: 1, CreatedMS: 1}
 	b := a
 	b.CoreID = "b"
 	if a.SameAuthority(b) {

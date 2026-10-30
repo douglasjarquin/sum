@@ -27,6 +27,17 @@ func TestNativeAuthorityNeedsMatchingReceiptAndForeground(t *testing.T) {
 	if JudgeNative(recorded, other, terminal, &receipt).Verified {
 		t.Fatal("changed attempt authorized")
 	}
+	other = e
+	other.CreatedMS++
+	if JudgeNative(recorded, other, terminal, &receipt).Verified {
+		t.Fatal("changed creation inherited authority")
+	}
+	renewed := terminal
+	renewed.CreatedMS = other.CreatedMS
+	renewedRecord := NativeEvidence{Endpoint: other, PID: pid, Foreground: renewed.Foreground}.Record("later")
+	if JudgeNative(renewedRecord, other, renewed, &receipt).Verified {
+		t.Fatal("stale creation receipt authorized renewed evidence")
+	}
 	terminal.Foreground = &hcclient.Foreground{PID: 99, Name: "zsh", Cwd: "/task", Argv: []string{"zsh"}}
 	if JudgeNative(recorded, e, terminal, &receipt).Verified {
 		t.Fatal("kept replacement shell authorized")
