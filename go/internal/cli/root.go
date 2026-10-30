@@ -81,7 +81,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 			opts.format = "toon"
 		}
 		outputFormat = opts.format
-		if _, err := os.Stat(filepath.Join(opts.installRoot, "release.json")); err == nil {
+		if _, err := os.Stat(filepath.Join(opts.installRoot, "release.json")); err == nil && cmd.Name() != "release-contract" {
 			return fmt.Errorf("%s is an immutable release tree. Run the installation's bin/sumctl, which selects a runtime and keeps state in its own .sum; a release never owns state.", opts.installRoot)
 		}
 		return nil
