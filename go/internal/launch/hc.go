@@ -21,6 +21,7 @@ type HCTemplateOptions struct {
 	Cwd         string
 	CodexHome   string
 	ConfigFiles []string
+	InputEnv    map[string]string
 }
 type HCTemplate struct {
 	Name          string            `json:"name"`
@@ -33,6 +34,7 @@ type HCTemplate struct {
 	KeymapSHA256  string            `json:"keymap_sha256"`
 	ConfigSHA256  map[string]string `json:"config_sha256"`
 	Submit        string            `json:"submit"`
+	InputEnv      map[string]string `json:"input_env"`
 }
 
 func (t HCTemplate) RunArgv(taskPointer string) []string { return []string{t.Name, taskPointer} }
@@ -62,13 +64,14 @@ func binaryDigest(path string) (string, error) {
 
 func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []string, options HCTemplateOptions) (HCTemplate, error) {
 	var result HCTemplate
-	if harness != "codex" {
+	profile, ok := nativeProfiles[harness]
+	if !ok {
 		return result, fmt.Errorf("no qualified native status and input contract for %s; automatic launch is disabled", harness)
 	}
 	if !filepath.IsAbs(coreConfigHome) || !filepath.IsAbs(options.Cwd) {
 		return result, fmt.Errorf("explicit absolute HC config home and launch directory required")
 	}
-	binary, err := toolpath.Find(runtimeRoot, "codex")
+	binary, err := toolpath.Find(runtimeRoot, harness)
 	if err != nil {
 		return result, err
 	}
@@ -80,19 +83,24 @@ func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []strin
 	if err != nil {
 		return result, err
 	}
-	if strings.TrimSpace(version.Stdout) != "codex-cli 0.166.0" {
-		return result, fmt.Errorf("Codex status/Tab input is qualified only for 0.166.0; found %q", strings.TrimSpace(version.Stdout))
+	if !profile.matchesVersion(strings.TrimSpace(version.Stdout)) {
+		return result, fmt.Errorf("%s native input is supported only for %s; found %q", harness, profile.version, strings.TrimSpace(version.Stdout))
 	}
 	binaryHash, err := binaryDigest(binary)
 	if err != nil {
 		return result, err
 	}
-	configs, keymapHash, err := codexDefaultKeymap(argv, options)
+	inputEnv, err := nativeEnvironment(harness, options)
+	if err != nil {
+		return result, err
+	}
+	options.InputEnv = inputEnv
+	configs, keymapHash, err := nativeInputConfig(harness, argv, options)
 	if err != nil {
 		return result, err
 	}
 	args := append([]string{}, argv...)
-	if !slices.Contains(args, "--no-daemon") {
+	if harness == "codex" && !slices.Contains(args, "--no-daemon") {
 		args = append([]string{"--no-daemon"}, args...)
 	}
 	command := append([]string{binary}, args...)
@@ -101,17 +109,18 @@ func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []strin
 			return result, fmt.Errorf("HC template argv must contain no NUL or line endings")
 		}
 	}
-	commandText := TemplateCommand(command)
+	commandText := commandWithEnvironment(command, inputEnv)
 	provenance, _ := json.Marshal(struct {
 		Command      []string
 		BinarySHA256 string
 		KeymapSHA256 string
 		ConfigSHA256 map[string]string
-	}{command, binaryHash, keymapHash, configs})
+		InputEnv     map[string]string
+	}{command, binaryHash, keymapHash, configs, inputEnv})
 	commandHash := digest(provenance)
-	name := "sum-codex-" + commandHash[:20]
-	text := "---\ndescription: Sum qualified Codex 0.166.0\ncommand: " + commandText + "\nsubmit: tab\n---\nRead the assigned Sum task pointer and follow its installed helper and procedure.\n"
-	result = HCTemplate{Name: name, Harness: harness, Binary: binary, Version: "0.166.0", Argv: command, SHA256: digest([]byte(text)), CommandSHA256: commandHash, KeymapSHA256: keymapHash, ConfigSHA256: configs, Submit: "tab"}
+	name := "sum-" + harness + "-" + commandHash[:20]
+	text := "---\ndescription: Sum qualified " + profile.label + " " + profile.version + "\ncommand: " + commandText + "\nsubmit: " + profile.submit + "\n---\nRead the assigned Sum task pointer and follow its installed helper and procedure.\n"
+	result = HCTemplate{Name: name, Harness: harness, Binary: binary, Version: profile.version, Argv: command, SHA256: digest([]byte(text)), CommandSHA256: commandHash, KeymapSHA256: keymapHash, ConfigSHA256: configs, Submit: profile.submit, InputEnv: inputEnv}
 	coreConfigHome, err = filepath.EvalSymlinks(coreConfigHome)
 	if err != nil {
 		return HCTemplate{}, fmt.Errorf("resolve explicitly selected HC config home: %w", err)
@@ -202,7 +211,7 @@ func codexDefaultKeymap(argv []string, options HCTemplateOptions) (map[string]st
 	}
 	home := options.CodexHome
 	if home == "" {
-		home = os.Getenv("CODEX_HOME")
+		home = options.InputEnv["CODEX_HOME"]
 	}
 	if home == "" {
 		user, err := os.UserHomeDir()
@@ -262,14 +271,19 @@ func containsKeymap(value any) bool {
 }
 
 func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTemplateOptions) error {
-	if spec.Harness != "codex" || spec.Version != "0.166.0" || spec.Submit != "tab" || len(spec.CommandSHA256) != 64 || len(spec.Argv) == 0 || spec.Argv[0] != spec.Binary {
+	profile, ok := nativeProfiles[spec.Harness]
+	if !ok || spec.Version != profile.version || spec.Submit != profile.submit || len(spec.CommandSHA256) != 64 || len(spec.Argv) == 0 || spec.Argv[0] != spec.Binary {
 		return fmt.Errorf("unqualified HC template record")
 	}
 	binaryHash, err := binaryDigest(spec.Binary)
 	if err != nil {
 		return err
 	}
-	configs, keymapHash, err := codexDefaultKeymap(spec.Argv[1:], options)
+	if len(spec.InputEnv) == 0 {
+		return fmt.Errorf("HC input environment is not bound")
+	}
+	options.InputEnv = spec.InputEnv
+	configs, keymapHash, err := nativeInputConfig(spec.Harness, spec.Argv[1:], options)
 	if err != nil {
 		return err
 	}
@@ -278,8 +292,9 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 		BinarySHA256 string
 		KeymapSHA256 string
 		ConfigSHA256 map[string]string
-	}{spec.Argv, binaryHash, keymapHash, configs})
-	if digest(provenance) != spec.CommandSHA256 || keymapHash != spec.KeymapSHA256 || spec.Name != "sum-codex-"+spec.CommandSHA256[:20] {
+		InputEnv     map[string]string
+	}{spec.Argv, binaryHash, keymapHash, configs, spec.InputEnv})
+	if digest(provenance) != spec.CommandSHA256 || keymapHash != spec.KeymapSHA256 || spec.Name != "sum-"+spec.Harness+"-"+spec.CommandSHA256[:20] {
 		return fmt.Errorf("HC command or effective keymap configuration changed after qualification")
 	}
 	path := filepath.Join(coreConfigHome, "herdr-core/templates", spec.Name+".md")
@@ -301,9 +316,6 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 }
 
 func ValidateHCInputConfig(harness string, argv []string, options HCTemplateOptions) error {
-	if harness != "codex" {
-		return fmt.Errorf("no qualified native status and input contract for %s", harness)
-	}
-	_, _, err := codexDefaultKeymap(argv, options)
+	_, _, err := nativeInputConfig(harness, argv, options)
 	return err
 }

@@ -94,7 +94,8 @@ func deliveryQualification(s *store.Store, tasks []*ordjson.Object) []any {
 		if preset := effectField(spec, "preset"); preset != "" {
 			spec = loaded.Presets[preset]
 		}
-		if harness := effectField(spec, "harness"); harness != "codex" {
+		harness := effectField(spec, "harness")
+		if !launch.NativeHarnessSupported(harness) {
 			blocked = append(blocked, fmt.Sprintf("selected %s default automatic delivery qualification: harness %s has no qualified native status/input contract", selected.name, harness))
 			continue
 		}
@@ -111,7 +112,8 @@ func deliveryQualification(s *store.Store, tasks []*ordjson.Object) []any {
 						argv = append(argv, text)
 					}
 				}
-				if err := launch.ValidateHCInputConfig("codex", argv, template.Options); err != nil {
+				template.Options.InputEnv = template.Spec.InputEnv
+				if err := launch.ValidateHCInputConfig(harness, argv, template.Options); err != nil {
 					blocked = append(blocked, fmt.Sprintf("selected %s default automatic delivery qualification: %v", selected.name, err))
 				}
 			}

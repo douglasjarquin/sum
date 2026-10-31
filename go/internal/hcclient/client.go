@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
@@ -193,7 +194,17 @@ func (c *Client) call(ctx context.Context, method string, params, out any, mutat
 	if errors.As(err, &rpc) && method == "terminal.send" && knownSendRefusal(rpc) {
 		effect = Refused
 	}
+	if rpc != nil && method == "terminal.run" && RunRefusedBeforeCreation(rpc) {
+		effect = Refused
+	}
 	return &Error{Effect: effect, Method: method, RPC: rpc, Cause: err}
+}
+
+func RunRefusedBeforeCreation(e *RPCError) bool {
+	var data struct {
+		Kind string `json:"kind"`
+	}
+	return e != nil && e.Code == -32000 && json.Unmarshal(e.Data, &data) == nil && data.Kind == "unavailable" && strings.HasPrefix(e.Message, "no holder: ")
 }
 func knownSendRefusal(e *RPCError) bool {
 	var d struct {

@@ -201,13 +201,7 @@ func measureWriteJSON(t *testing.T, path string, value any) {
 	}
 }
 
-func measureTemplateCommand(spec launch.HCTemplate) string {
-	quoted := make([]string, len(spec.Argv))
-	for i, arg := range spec.Argv {
-		quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-	}
-	return strings.Join(quoted, " ")
-}
+func measureTemplateCommand(spec launch.HCTemplate) string { return spec.Command() }
 
 func (f *measureFixture) fresh(t *testing.T) *measureRun {
 	t.Helper()

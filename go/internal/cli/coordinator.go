@@ -33,5 +33,19 @@ func (o *rootOptions) addCoordinatorCommand(root *cobra.Command) {
 	command.Flags().StringArrayVar(&options.Launch.Extra, "arg", nil, "")
 	command.Flags().BoolVar(&options.Launch.PermissionOverride, launch.PermissionOverrideFlag[2:], false, "")
 	group.AddCommand(command)
+	var attempt string
+	recover := &cobra.Command{Use: "recover", Short: "Archive a proven uncreated coordinator attempt without launching or sending", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		s, err := o.openStore("coordinator recover")
+		if err != nil {
+			return err
+		}
+		view, err := roleinit.RecoverCoordinator(s, attempt)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	}}
+	recover.Flags().StringVar(&attempt, "attempt", "", "exact failed launch attempt")
+	group.AddCommand(recover)
 	root.AddCommand(group)
 }

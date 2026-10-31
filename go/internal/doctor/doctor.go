@@ -29,6 +29,7 @@ var harnessExecutables = []struct {
 	{"codex", "codex"},
 	{"claude", "claude"},
 	{"grok", "grok"},
+	{"devin", "devin"},
 	{"cursor", "cursor-agent"},
 	{"pi", "pi"},
 	{"opencode", "opencode"},

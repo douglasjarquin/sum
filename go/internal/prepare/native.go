@@ -60,7 +60,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		return nil, err
 	}
 	checkout := asString(policyField(task, "worktree"))
-	options := launch.HCTemplateOptions{Cwd: checkout, CodexHome: provenance.Options.CodexHome, ConfigFiles: provenance.Options.ConfigFiles}
+	options := launch.HCTemplateOptions{Cwd: checkout, CodexHome: provenance.Options.CodexHome, ConfigFiles: provenance.Options.ConfigFiles, InputEnv: provenance.Spec.InputEnv}
 	template, err := launch.PrepareHCTemplate(runtimeRoot, provenance.ConfigHome, asString(policyField(launchSpec, "harness")), argv, options)
 	if err != nil {
 		unlock()
@@ -76,6 +76,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	params := hcclient.RunParams{Argv: template.RunArgv(WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)), Cwd: checkout, Name: NativeName(instance, taskID, "worker", attemptID), Parent: parent.Address, Caller: parent.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false,
 		Labels: map[string]string{"sum.installation": instance, "sum.task": taskID, "sum.role": "worker", "sum.attempt": attemptID},
 		Env:    map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": parent.Session, "SUM_CORE_ID": parent.CoreID, "HC_SOCKET": parent.Socket, "SUM_TASK": taskID, "SUM_ROLE": "worker", "SUM_ATTEMPT": attemptID, "SUM_BINDING_GENERATION": "1"}}
+	template.BindInputEnvironment(params.Env)
 	intent, _ := ordjson.FromValue(params)
 	qualified, _ := ordjson.FromValue(NativeTemplate{template, provenance.ConfigHome, options})
 	native := ordjson.NewObject()
@@ -128,7 +129,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	if err = endpoint.Validate(); err != nil {
 		return FailStart(s, taskID, err)
 	}
-	attested := result.Template != nil && *result.Template == template.Name && result.Submit != nil && *result.Submit == "tab"
+	attested := result.Template != nil && *result.Template == template.Name && result.Submit != nil && *result.Submit == template.Submit
 	lock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -161,7 +162,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	native.Set("incarnation", evidence.Record(store.Now()))
 	if !attested {
 		current.Set("status", "needs-attention")
-		current.Set("error", "Created terminal does not attest the qualified template and Tab submit; inspect without relaunching.")
+		current.Set("error", "Created terminal does not attest the qualified template and submit key; inspect without relaunching.")
 		obs := ordjson.NewObject()
 		obs.Set("at", store.Now())
 		obs.Set("outcome", "launch-uncertain")

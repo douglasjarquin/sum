@@ -2866,7 +2866,8 @@
     "help": "Start a bound coordinator with exact HC identity, recorded launch environment and matching initialization receipt",
     "arguments": [],
     "subcommands": {
-      "start": "Launch on a selected existing HC core; observation never starts a core"
+      "start": "Launch on a selected existing HC core; observation never starts a core",
+      "recover": "Archive one proven uncreated coordinator attempt; never replay an uncertain launch"
     },
     "read_only": false,
     "read_only_subcommands": []
@@ -2887,12 +2888,12 @@
       },
       {
         "name": "--hc-config-home",
-        "help": "Config home containing the namespaced qualified template",
+        "help": "XDG config root (usually ~/.config); Sum appends herdr-core/templates",
         "required": true
       },
       {
         "name": "--harness",
-        "help": "Explicit harness; automatic input currently qualified for Codex 0.166.0 default keymap"
+        "help": "Explicit harness: codex 0.166.0, grok 1.0.67, claude 2.1.316, or devin 3000.11.234; default input configuration required"
       },
       {
         "name": "--model",
@@ -3003,6 +3004,20 @@
       {
         "name": "--delivery",
         "help": "Exact delivery ID; validation binds original row digest, native endpoint and obligation/input revision to its existing receipt",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "coordinator-recover": {
+    "topic": "coordinator-recover",
+    "help": "Archive one exact coordinator attempt only after proven pre-creation refusal and an identity-bound HC observation finds no matching terminal; never launch, resend or claim authority",
+    "arguments": [
+      {
+        "name": "--attempt",
+        "help": "Exact attempt from coordinator start output",
         "required": true
       }
     ],

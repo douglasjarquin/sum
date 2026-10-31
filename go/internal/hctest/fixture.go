@@ -22,6 +22,7 @@ type Call struct {
 }
 
 type Fault struct {
+	RPCError     *hcclient.RPCError
 	Delay        time.Duration
 	LoseResponse bool
 	RefuseKind   string
@@ -371,7 +372,9 @@ func (f *Fixture) serve(c net.Conn) {
 		var result any
 		var refusal string
 		var sub *subscriber
-		if fault.RefuseKind != "" {
+		if fault.RPCError != nil {
+			response["error"] = fault.RPCError
+		} else if fault.RefuseKind != "" {
 			refusal = fault.RefuseKind
 		} else if req.JSONRPC != "2.0" {
 			refusal = "invalid_request"
@@ -380,7 +383,7 @@ func (f *Fixture) serve(c net.Conn) {
 		}
 		if refusal != "" {
 			response["error"] = rpcError(refusal)
-		} else {
+		} else if fault.RPCError == nil {
 			response["result"] = result
 		}
 		f.mu.Unlock()
