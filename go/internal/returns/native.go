@@ -94,8 +94,8 @@ func (r *NativeRecipient) QualifyContext(ctx context.Context, record *ordjson.Ob
 	if err = json.Unmarshal(data, &template); err != nil {
 		return err
 	}
-	if r.Terminal.Template == nil || *r.Terminal.Template != template.Spec.Name || r.Terminal.Submit == nil || *r.Terminal.Submit != "tab" {
-		return fmt.Errorf("recipient has no matching qualified Tab template")
+	if r.Terminal.Template == nil || *r.Terminal.Template != template.Spec.Name || r.Terminal.Submit == nil || *r.Terminal.Submit != template.Spec.Submit {
+		return fmt.Errorf("recipient has no matching qualified submit template")
 	}
 	if err = launch.ValidateHCTemplate(template.ConfigHome, template.Spec, template.Options); err != nil {
 		return err
@@ -105,7 +105,7 @@ func (r *NativeRecipient) QualifyContext(ctx context.Context, record *ordjson.Ob
 	if err != nil {
 		return err
 	}
-	expected := launch.TemplateCommand(template.Spec.Argv)
+	expected := template.Spec.Command()
 	matched := false
 	for _, native := range templates.Templates {
 		if native.Name == template.Spec.Name && native.Error == nil && native.Command == expected {

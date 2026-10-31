@@ -12,7 +12,7 @@ import (
 
 func existingCoordinatorLaunch(spec launch.HCTemplate) *ordjson.Object {
 	argv := append([]string(nil), spec.Argv[1:]...)
-	model, reasoning := explicitCodexSelection(argv)
+	model, reasoning := explicitNativeSelection(spec.Harness, argv)
 	result := ordjson.NewObject()
 	result.Set("schema", launch.Schema)
 	result.Set("harness", spec.Harness)
@@ -112,4 +112,49 @@ func explicitCodexSelection(argv []string) (any, any) {
 		return values[0]
 	}
 	return known("model"), known("model_reasoning_effort")
+}
+
+func explicitNativeSelection(harness string, argv []string) (any, any) {
+	if harness == "codex" {
+		return explicitCodexSelection(argv)
+	}
+	values := map[string][]string{"model": {}, "reasoning": {}}
+	for index := 0; index < len(argv); index++ {
+		key, value, inline := strings.Cut(argv[index], "=")
+		if key == "--" {
+			break
+		}
+		field := ""
+		switch key {
+		case "--model", "-m":
+			field = "model"
+		case "--effort", "--reasoning-effort":
+			field = "reasoning"
+		}
+		if field == "" {
+			continue
+		}
+		if !inline {
+			if index+1 >= len(argv) {
+				values[field] = append(values[field], "")
+				continue
+			}
+			index++
+			value = argv[index]
+		}
+		values[field] = append(values[field], value)
+	}
+	known := func(field string) any {
+		selections := values[field]
+		if len(selections) == 0 || selections[0] == "" {
+			return nil
+		}
+		for _, value := range selections[1:] {
+			if value != selections[0] {
+				return nil
+			}
+		}
+		return selections[0]
+	}
+	return known("model"), known("reasoning")
 }

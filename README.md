@@ -72,10 +72,12 @@ cd sum
 mise trust
 mise run setup
 ./bin/sumctl coordinator start --socket /absolute/path/to/hc.sock \
-  --session sum --hc-config-home /absolute/path/to/hc-config --harness codex
+  --session sum --hc-config-home ~/.config --harness codex
 ```
 
 `coordinator start` seeds the bound environment and matching initialization receipt.
+Use `--harness grok`, `--harness claude` or `--harness devin` for the supported versions and input configurations in [configuration](docs/configuration.md#qualified-input-and-coordinator-startup).
+A refused launch is retained; `coordinator recover --attempt ATTEMPT` archives only a proven uncreated attempt before another explicit start.
 Every agent follows the exact procedure path returned by `init`.
 Without a qualified HC context, `init` defaults to developer.
 A manually launched qualified existing terminal requires explicit coordinator initialization; model values stay unknown unless established by its launch record.

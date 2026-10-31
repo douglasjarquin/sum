@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
@@ -75,10 +76,8 @@ func argsAfterSeparator(call []string) ([]string, bool) {
 func TestDispatchDevinWorkerCarriesTrustGateArgv(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "devin-worker", map[string]string{"README.md": "x\n"})
-	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--arg=--permission-mode", "--arg=dangerous", "--arg=--respect-workspace-trust", "--arg=false", "--permission-override", "--approved")
-	if !strings.Contains(asString(refused["error"]), "no qualified") {
-		t.Fatalf("unqualified Devin launch: %v", refused)
-	}
+	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: true}})
+	d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--arg=--permission-mode", "--arg=dangerous", "--arg=--respect-workspace-trust", "--arg=false", "--permission-override", "--approved")
 	task := onlyNativeTask(t, d)
 	var recorded []string
 	for _, a := range asSlice(asMap(task["launch"])["argv"]) {
@@ -87,8 +86,8 @@ func TestDispatchDevinWorkerCarriesTrustGateArgv(t *testing.T) {
 	if !reflect.DeepEqual(recorded, devinWorkerArgv) {
 		t.Fatalf("recorded approved arguments %v", recorded)
 	}
-	if len(nativeCalls(d, "terminal.run")) != 0 {
-		t.Fatal("unqualified harness was launched")
+	if len(nativeCalls(d, "terminal.run")) != 1 || asMap(asMap(task["launch"])["permissions"])["override"] != true {
+		t.Fatal("qualified launch did not retain the explicit permission authorization")
 	}
 
 }
@@ -137,13 +136,18 @@ func TestClaudeDispatchGrantsOnlyItsTaskInstructions(t *testing.T) {
 			t.Fatalf("statewide grant %v", args)
 		}
 	}
-	refused := d.ctl(false, "start", asString(task["id"]))
-	if !strings.Contains(asString(refused["error"]), "no qualified") {
-		t.Fatalf("unqualified Claude: %v", refused)
+	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: true}})
+	started := d.ctl(true, "start", asString(task["id"]))
+	if len(nativeCalls(d, "terminal.run")) != 1 {
+		t.Fatal("qualified Claude did not launch exactly once")
 	}
-	if len(nativeCalls(d, "terminal.run")) != 0 {
-		t.Fatal("unqualified Claude launched")
+	attempt, _ := launchedWorker(started)
+	spec := asMap(asMap(asMap(attempt["native_launch"])["native_template"])["spec"])
+	argv := anyStrings(asSlice(spec["argv"]))
+	if grant, ok := flagAfter(argv, "--add-dir"); !ok || grant != want[1] || spec["submit"] != "enter" {
+		t.Fatalf("Claude task-scoped launch contract changed: %v", spec)
 	}
+	d.ctlPane(workerAddress(started), true, "init")
 
 }
 
@@ -263,17 +267,18 @@ func flagAfter(call []string, name string) (string, bool) {
 	return "", false
 }
 
-func TestDispatchAgentStartTimeoutAllowsGrokColdStart(t *testing.T) {
+func TestDispatchGrokColdStartPreservesUnsentOpening(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "grok-cold-start", map[string]string{"README.md": "x\n"})
-	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "grok", "--approved")
-	if !strings.Contains(asString(refused["error"]), "no qualified") {
-		t.Fatalf("unqualified Grok status contract: %v", refused)
+	d.native.QueueFault("terminal.run", hctest.Fault{Delay: 100 * time.Millisecond, FirstMessage: &hcclient.FirstMessage{Sent: false}})
+	created := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "grok", "--approved")
+	if !strings.Contains(asString(created["error"]), "without a submitted first message") || workerAddress(created) == "" || created["status"] != "needs-attention" {
+		t.Fatalf("cold Grok lost its recoverable unsent opening: %v", created)
 	}
-	if len(nativeCalls(d, "terminal.run")) != 0 {
-		t.Fatal("unqualified harness auto-launched")
+	d.ctl(false, "start", asString(created["id"]))
+	if len(nativeCalls(d, "terminal.run")) != 1 {
+		t.Fatal("cold Grok was relaunched instead of preserving the original opening")
 	}
-
 }
 
 func TestDispatchSwallowedBriefRecordsLaunchUncertain(t *testing.T) {

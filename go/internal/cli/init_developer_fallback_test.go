@@ -182,7 +182,7 @@ func TestInitRecognizesPendingExplicitCoordinatorLaunch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.SetTemplates([]hcclient.TemplateInfo{{Name: spec.Name, Command: launch.TemplateCommand(spec.Argv)}})
+	f.SetTemplates([]hcclient.TemplateInfo{{Name: spec.Name, Command: spec.Command()}})
 	f.SetTemplateSubmit(spec.Name, "tab")
 	configureNativeEventsForTest(t, st.Home, false)
 	var startOut, startErr bytes.Buffer

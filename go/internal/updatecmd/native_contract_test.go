@@ -568,7 +568,7 @@ func TestActivationQualifiesLiveWorkerAndReviewerIndependentlyOfReadiness(t *tes
 func TestActivationQualifiesSelectedDefaultsButNotUnusedPresets(t *testing.T) {
 	lab := nativeApplyLab(t)
 	path := filepath.Join(lab.store.Home, "settings.json")
-	unused := `{"schema":1,"hook":{"enabled":false},"presets":{"manual":{"harness":"claude"}}}`
+	unused := `{"schema":1,"hook":{"enabled":false},"presets":{"manual":{"harness":"cursor"}}}`
 	writeFile(t, path, unused)
 	if blocked := deliveryQualification(lab.store, nil); len(blocked) != 0 {
 		t.Fatalf("unused preset blocked activation: %v", blocked)
@@ -589,7 +589,7 @@ func TestActivationQualifiesSelectedDefaultsButNotUnusedPresets(t *testing.T) {
 
 func TestActivationQualifiesDirectWorkerDefault(t *testing.T) {
 	lab := nativeApplyLab(t)
-	for _, harness := range []string{"codex", "claude"} {
+	for _, harness := range []string{"codex", "cursor"} {
 		writeFile(t, filepath.Join(lab.store.Home, "settings.json"), `{"schema":1,"worker":{"harness":"`+harness+`"}}`)
 		blocked := deliveryQualification(lab.store, nil)
 		if (len(blocked) > 0) != (harness != "codex") {

@@ -142,7 +142,7 @@ func maintenanceNewReviewerLab(t *testing.T) (*store.Store, *ordjson.Object, *or
 	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), ctx); err != nil {
 		t.Fatal(err)
 	}
-	f.SetTemplates([]hcclient.TemplateInfo{{Name: template.Spec.Name, Command: templateCommand(template.Spec.Argv)}})
+	f.SetTemplates([]hcclient.TemplateInfo{{Name: template.Spec.Name, Command: template.Spec.Command()}})
 	f.SetTemplateSubmit(template.Spec.Name, "tab")
 	return s, ctx, task, runtime, f
 }

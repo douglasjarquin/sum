@@ -148,7 +148,7 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.SetTemplates([]hcclient.TemplateInfo{{Name: spec.Name, Command: templateCommand(spec.Argv)}})
+	f.SetTemplates([]hcclient.TemplateInfo{{Name: spec.Name, Command: spec.Command()}})
 	f.SetTemplateSubmit(spec.Name, "tab")
 	host, err := s.Machine()
 	if err != nil {
@@ -315,7 +315,7 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
-	f.SetTemplates([]hcclient.TemplateInfo{{Name: template.Spec.Name, Command: templateCommand(template.Spec.Argv)}})
+	f.SetTemplates([]hcclient.TemplateInfo{{Name: template.Spec.Name, Command: template.Spec.Command()}})
 	f.SetTemplateSubmit(template.Spec.Name, "tab")
 	no := false
 	f.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: true, Started: &no}})

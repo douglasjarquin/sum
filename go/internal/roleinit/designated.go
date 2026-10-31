@@ -461,7 +461,7 @@ func qualifyCoordinator(opts DesignatedOpts, client hcclient.Client, t hcclient.
 		return nil, err
 	}
 	if !nativeProgramMatches(t, spec) {
-		return nil, fmt.Errorf("coordinator must already run the exact qualified HC template with Tab submission")
+		return nil, fmt.Errorf("coordinator must already run the exact qualified HC template with its recorded submit key")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -648,12 +648,12 @@ func incarnationView(judged *incarnation.Verdict, judgedRole, role string, obser
 }
 
 func nativeProgramMatches(t hcclient.Terminal, spec launch.HCTemplate) bool {
-	return t.Template != nil && *t.Template == spec.Name && t.Submit != nil && *t.Submit == "tab" && reflect.DeepEqual(t.Argv, []string{"sh", "-c", templateCommand(spec)})
+	return t.Template != nil && *t.Template == spec.Name && t.Submit != nil && *t.Submit == spec.Submit && reflect.DeepEqual(t.Argv, []string{"sh", "-c", templateCommand(spec)})
 }
 
 func reconcileWorkerInit(task, attempt, receipt *ordjson.Object) {
 	errorText := asString(task, "error")
-	startupError := errorText == "Native terminal created without a submitted first message; inspect and explicitly redeliver this attempt. Do not launch again." || errorText == "Created terminal does not attest the qualified template and Tab submit; inspect without relaunching." || strings.HasPrefix(errorText, "Launch/prompt uncertain:")
+	startupError := errorText == "Native terminal created without a submitted first message; inspect and explicitly redeliver this attempt. Do not launch again." || errorText == "Created terminal does not attest the qualified template and submit key; inspect without relaunching." || strings.HasPrefix(errorText, "Launch/prompt uncertain:")
 	if status := asString(task, "status"); status == "starting" || (status == "needs-attention" && startupError) {
 		task.Set("status", "running")
 	}

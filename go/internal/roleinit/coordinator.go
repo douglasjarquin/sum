@@ -2,6 +2,7 @@ package roleinit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -78,6 +79,7 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 		return nil, fmt.Errorf("installation identity required before coordinator start")
 	}
 	intent := hcclient.RunParams{Argv: spec.RunArgv("First run `" + shquote.CommandFor(opts.SumctlPath, s.Root, "init") + "`, then read the verified coordinator procedure named by init and follow it."), Cwd: opts.RuntimeRoot, NoParent: true, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Name: "sum-" + attempt[:28], Labels: map[string]string{"sum.installation": instance, "sum.role": "coordinator", "sum.attempt": attempt}, Env: map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": opts.Session, "SUM_CORE_ID": hello.Core.ID, "HC_SOCKET": opts.Socket, "SUM_ROLE": "coordinator", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": "1"}}
+	spec.BindInputEnvironment(intent.Env)
 	expected := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: hello.Core.ID, Socket: opts.Socket, Session: opts.Session, Role: "coordinator", Attempt: attempt, BindingGeneration: 1, Cwd: opts.RuntimeRoot}
 	record := ordjson.NewObject()
 	record.Set("endpoint", expected.Object())
@@ -102,7 +104,7 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 	}
 	if _, err = os.Stat(path); err == nil {
 		unlock()
-		return nil, fmt.Errorf("coordinator launch intent already exists; reconcile its receipt or uncertain native effect before another start")
+		return nil, fmt.Errorf("coordinator launch intent already exists; inspect it and run coordinator recover --attempt ATTEMPT before another start; uncertain native effects are never replayed automatically")
 	} else if !os.IsNotExist(err) {
 		unlock()
 		return nil, err
@@ -132,6 +134,13 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 	if runErr != nil {
 		record.Set("effect", "uncertain")
 		record.Set("error", runErr.Error())
+		var nativeErr *hcclient.Error
+		if errors.As(runErr, &nativeErr) {
+			record.Set("effect", string(nativeErr.Effect))
+			if nativeErr.RPC != nil {
+				record.Set("native_error", mustObject(nativeErr.RPC))
+			}
+		}
 	} else {
 		record.Set("effect", "created")
 		record.Set("result", mustObject(result))
@@ -151,7 +160,7 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 }
 func mustObject(value any) any { o, _ := ordjson.FromValue(value); return o }
 func templateCommand(spec launch.HCTemplate) string {
-	return launch.TemplateCommand(spec.Argv)
+	return spec.Command()
 }
 func verifyLoadedTemplate(ctx context.Context, client hcclient.Client, spec launch.HCTemplate) error {
 	templates, err := client.Templates(ctx)

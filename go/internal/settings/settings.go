@@ -61,7 +61,7 @@ var adapters = map[string]adapter{
 			"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--restricted",
 		},
 	},
-	"grok": {Model: []string{"-m"}, Reasoning: []string{"--reasoning-effort"}},
+	"grok": {Model: []string{"-m"}, Reasoning: []string{"--reasoning-effort"}, Permission: []string{"--always-approve", "--permission-mode=", "--allow=", "--allowedTools=", "--allowed-tools=", "--deny=", "--disallowedTools=", "--disallowed-tools=", "--tools=", "--sandbox=", "--no-plan"}},
 	"copilot": {
 		Model:     []string{"--model"},
 		Reasoning: []string{"--effort"},
@@ -74,7 +74,7 @@ var adapters = map[string]adapter{
 	"cursor": {Model: []string{"--model"}},
 	"pi":     {Model: []string{"--model"}},
 	"omp":    {Model: []string{"--model="}},
-	"devin":  {Permission: []string{"--permission-mode=", "--respect-workspace-trust="}},
+	"devin":  {Model: []string{"--model"}, Permission: []string{"--permission-mode=", "--respect-workspace-trust="}},
 }
 
 func PermissionFlags(harness string) ([]string, bool) {

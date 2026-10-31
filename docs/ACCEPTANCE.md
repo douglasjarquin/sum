@@ -28,12 +28,13 @@ A native send or Done transition proves no application, review, verification or 
 | Harness/runtime | Required evidence | Current boundary |
 | --- | --- | --- |
 | Published unmodified HC 0.1.14 plus Codex 0.166.0 with `--no-daemon`, default keymap, namespaced Tab template | Done follow-up, queued busy race, ordered application responses and matching Sum receipts | Isolated actual Codex Done and busy-queue probes passed; full candidate-specific Sum canary must be recorded separately |
+| Grok Build 1.0.67 stable, Claude Code 2.1.316 and local Devin CLI 3000.11.234, default input configurations and namespaced Enter templates | Exact argv/model/permission disclosure, prompt receipt, blocked dialogs, native status, submit and resume behavior | Offline launch/init/Done return and drift refusal contracts are covered; isolated unauthenticated startup found Grok blocked on auth, Claude exiting on a network error, and Devin login without status; authenticated model turns remain unrun |
 | Other terminal harnesses | Exact argv/model/permission disclosure, prompt receipt, blocked dialogs, native status, submit and resume behavior | Unqualified for automatic input; actual harness gaps remain explicit |
 | Model-free native HC lab | Typed API, identity, lifecycle and observer boundaries; separately, full Sum application composition with scripted worker/reviewer terminals and local strict fake GitHub | The full application canary passed in `/tmp/sum330-full-canary-final.json`; `authenticated_harness:false`, `model_execution:false` and confirmed core stop remain explicit; no actual-model or production qualification follows |
 | Existing production installation | Enforceable legacy writer/sender exclusion and explicit generation cutover | Current legacy APIs cannot prove exclusion; activation must refuse without the external prerequisite; production migration unrun |
 
-For qualified Codex, defer observed working, blocked and unknown; idle uses `if:idle` and observed Done uses ordinary send without `if` or `force`.
-The raced Done-to-working transition queues Tab for the next turn, deliberately relaxing an atomic Done guard.
+For supported profiles, defer observed working, blocked and unknown; idle uses `if:idle` and observed Done uses ordinary send without `if` or `force`.
+The raced Done-to-working transition uses each harness's native submission behavior, deliberately relaxing an atomic Done guard; Codex queues Tab, while Enter profiles may queue or steer at a native safe gap.
 `started`, status and native turn counts remain diagnostics; they do not replace application receipts.
 Trust/auth/permission prompts require the user's action and are never accepted by Sum.
 
@@ -44,6 +45,8 @@ Assert one verified checkout, saved branch/base and no reset or duplicate.
 Create a terminal with its opening message proven unsent, then recover once through `execution redeliver` or `reviewer redeliver` with the exact attempt.
 Lose the response after a creation/send or kill a sender during input; uncertainty must persist without automatic replay.
 A failed non-kept launch may leave no recoverable address.
+For a recorded pre-creation `no holder` refusal, restart only the authorized lab core and run `coordinator recover --attempt ATTEMPT`; verify the failed record is archived intact, the same core has no matching terminal and another explicit start can proceed.
+A lost response, a changed core, a registered coordinator, a matching live or finished terminal, or a concurrent record change must refuse recovery without native mutations.
 `started:false` or null must never become processed/completed or trigger an extra Enter.
 
 ## 5. Identity and replacement

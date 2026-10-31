@@ -7,7 +7,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -28,16 +27,12 @@ func QualifyCodex(t testing.TB, f *hctest.Fixture, cwd string) (launch.HCTemplat
 	if err != nil {
 		t.Fatal(err)
 	}
-	quoted := make([]string, len(spec.Argv))
-	for i, arg := range spec.Argv {
-		quoted[i] = "'" + strings.ReplaceAll(arg, "'", "'\"'\"'") + "'"
-	}
 	client := f.Client()
 	existing, err := client.Templates(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.SetTemplates(append(existing.Templates, hcclient.TemplateInfo{Name: spec.Name, Command: strings.Join(quoted, " ")}))
+	f.SetTemplates(append(existing.Templates, hcclient.TemplateInfo{Name: spec.Name, Command: spec.Command()}))
 	f.SetTemplateSubmit(spec.Name, "tab")
 	return spec, config, options
 }

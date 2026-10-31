@@ -119,6 +119,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 		return nil, err
 	}
 	options := ownerTemplate.Options
+	options.InputEnv = ownerTemplate.Spec.InputEnv
 	options.Cwd = worktree
 	spec, err := launch.PrepareHCTemplate(runtimeRoot, templateHome, harness, argv, options)
 	if err != nil {
@@ -131,7 +132,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	}
 	found := false
 	for _, t := range templates.Templates {
-		if t.Name == spec.Name && t.Error == nil && t.Command == templateCommand(spec.Argv) {
+		if t.Name == spec.Name && t.Error == nil && t.Command == spec.Command() {
 			found = true
 		}
 	}
@@ -159,13 +160,13 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	prompt := kickoffPrompt(sumctlPath, args.Task, candidate, skill, policyCandidate(task, candidate))
 	labels := map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "reviewer", "sum.attempt": attempt}
 	params := hcclient.RunParams{Argv: spec.RunArgv(prompt), Cwd: worktree, Name: "sum-r-" + strings.TrimPrefix(args.Task, "t-") + "-" + attempt[:12], Parent: coordinator.Address, Caller: coordinator.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: labels, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "reviewer", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(ep.BindingGeneration, 10), "SUM_CORE_ID": ep.CoreID, "SUM_SESSION": ep.Session, "HC_SOCKET": ep.Socket}}
+	spec.BindInputEnvironment(params.Env)
 	result, err := launchPreparedNative(context.Background(), s, task, ep, reviewer, params)
 	if result != nil {
 		result.Set("preset", preset)
 	}
 	return result, err
 }
-func templateCommand(argv []string) string { return launch.TemplateCommand(argv) }
 func decodeObject(obj *ordjson.Object, out any) error {
 	raw, err := ordjson.MarshalCompact(obj)
 	if err != nil {
@@ -277,7 +278,7 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 
 	var template returns.NativeTemplate
 	templateErr := decodeObject(objectField(saved, "native_template"), &template)
-	templateValid := templateErr == nil && template.Spec.Name != "" && run.Template != nil && *run.Template == template.Spec.Name && run.Submit != nil && *run.Submit == "tab"
+	templateValid := templateErr == nil && template.Spec.Name != "" && run.Template != nil && *run.Template == template.Spec.Name && run.Submit != nil && *run.Submit == template.Spec.Submit
 
 	intent.Set("state", "created")
 	result, _ := ordjson.FromValue(run)
@@ -299,7 +300,7 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 		saved.Set("incarnation", (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *run.PID, Foreground: run.Foreground}).Record(store.Now()))
 	}
 	if objectField(saved, "native_template") != nil && !templateValid {
-		intent.Set("qualification_error", "returned terminal does not attest the qualified template and Tab submission")
+		intent.Set("qualification_error", "returned terminal does not attest the qualified template and submit key")
 		prompt.Set("state", "uncertain")
 	}
 	if rebind := objectField(saved, "rebind"); rebind != nil {

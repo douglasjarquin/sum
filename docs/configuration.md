@@ -195,8 +195,41 @@ Prefer `coordinator start --socket PATH --session NAME --hc-config-home PATH --h
 Use explicit `--model`, `--reasoning`, repeatable `--arg` or `--preset` only for the user's selection.
 A manually initialized qualified existing terminal records a known launch or explicitly unknown model; `--same-as-you` cannot guess an exact model.
 `init` defaults to developer without qualified HC context and never starts a core through observation.
-Automatic input is qualified for Codex 0.166.0 with the default keymap and namespaced HC `submit: tab` template.
+The HC config home is the XDG root, usually `~/.config`, rather than `~/.config/herdr-core`.
+Sum appends `herdr-core/templates` and writes a namespaced template without changing the user's harness configuration.
+
+| Harness | Supported version | Submit key |
+| --- | --- | --- |
+| `codex` | 0.166.0 with `--no-daemon` | Tab |
+| `grok` | 1.0.67 stable | Enter |
+| `claude` | 2.1.316 | Enter |
+| `devin` | 3000.11.234, local interactive CLI | Enter |
+
+Each profile binds the executable hash, exact argv, effective input configuration, template bytes and submit key.
+The hashed template command sets the inspected home/config roots explicitly, so HC cannot substitute the core process's different configuration environment.
+Custom keymaps, composer modes that change submission, alternate CLI settings/config files, inline Grok config overlays, noninteractive launch modes and version drift are refused.
+Grok checks its managed, user, requirements, pager and system configuration layers; modal prompt editing (`ui.simple_mode=false`) and multiline submission are unqualified.
 Defer observed working/blocked/unknown, guard idle with `if:idle`, and submit observed Done without `if` or `force`.
-A raced busy transition queues submission for the next turn; this deliberately relaxed Done guard is not atomic.
-No permission/account/model/global-keymap changes are authorized to make qualification pass.
-Other harnesses remain unqualified for automatic input; see [acceptance](ACCEPTANCE.md).
+HC 0.1.14 has no atomic Done guard: a raced busy transition uses the harness's native queue or steering behavior, never a cancellation chord or extra Enter.
+Claude's [interactive input contract](https://code.claude.com/docs/en/interactive-mode#queue-messages-while-claude-works) and Grok's [keyboard reference](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/03-keyboard-shortcuts.md) distinguish normal submission from interruptive send-now keys.
+Native status and successful submission remain diagnostic; a matching Sum application receipt is required.
+Authentication, trust or permission screens require the user's action; silent startup stays unknown and receives no automatic input.
+No permission/account/model/global-keymap changes are authorized to make support pass.
+Authenticated candidate-specific harness scenarios remain separate acceptance work; see [acceptance](ACCEPTANCE.md).
+
+### Recover a refused coordinator launch
+
+A failed launch stays recorded and blocks another `coordinator start`.
+After repairing HC, inspect that attempt and recover it explicitly:
+
+```sh
+./bin/sumctl coordinator recover --attempt ATTEMPT_FROM_START_OUTPUT
+```
+
+Recovery requires the recorded machine and permanent HC core identity, no registered coordinator, no application receipt and no matching live or finished native terminal.
+Only a proven request not submitted to HC or HC 0.1.14's pre-creation `no holder` refusal can be archived as `not-created`.
+The failed record, error and recovery observation remain in `coordinator-launches/ATTEMPT.json` under the active state home.
+Repeating the completed recovery is a no-op.
+Then run `coordinator start` again with the chosen harness.
+A lost response, an in-flight request, an existing terminal or an unverifiable core remains ambiguous; absence alone does not authorize a retry.
+Recovery never starts a core, launches a terminal, resends a prompt or reclaims coordinator authority.
