@@ -75,10 +75,7 @@ func argsAfterSeparator(call []string) ([]string, bool) {
 func TestDispatchDevinWorkerCarriesTrustGateArgv(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "devin-worker", map[string]string{"README.md": "x\n"})
-	refused := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--arg=--permission-mode", "--arg=dangerous", "--arg=--respect-workspace-trust", "--arg=false", "--permission-override", "--approved")
-	if !strings.Contains(asString(refused["error"]), "no qualified") {
-		t.Fatalf("unqualified Devin launch: %v", refused)
-	}
+	d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "devin", "--arg=--permission-mode", "--arg=dangerous", "--arg=--respect-workspace-trust", "--arg=false", "--permission-override", "--approved")
 	task := onlyNativeTask(t, d)
 	var recorded []string
 	for _, a := range asSlice(asMap(task["launch"])["argv"]) {
@@ -87,8 +84,8 @@ func TestDispatchDevinWorkerCarriesTrustGateArgv(t *testing.T) {
 	if !reflect.DeepEqual(recorded, devinWorkerArgv) {
 		t.Fatalf("recorded approved arguments %v", recorded)
 	}
-	if len(nativeCalls(d, "terminal.run")) != 0 {
-		t.Fatal("unqualified harness was launched")
+	if len(nativeCalls(d, "terminal.run")) != 1 || asMap(asMap(task["launch"])["permissions"])["override"] != true {
+		t.Fatal("qualified launch did not retain the explicit permission authorization")
 	}
 
 }

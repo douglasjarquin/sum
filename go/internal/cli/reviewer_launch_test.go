@@ -172,7 +172,7 @@ func TestReviewerLaunchFlagsOverrideSavedPreset(t *testing.T) {
 }
 
 func TestReviewerLaunchRefusesUnqualifiedHarnessAndChangedCheckout(t *testing.T) {
-	for _, harness := range []string{"claude", "grok"} {
+	for _, harness := range []string{"cursor", "copilot"} {
 		t.Run(harness, func(t *testing.T) {
 			d, taskID := reviewLab(t)
 			before := nativeRunCount(d)
@@ -191,6 +191,19 @@ func TestReviewerLaunchRefusesUnqualifiedHarnessAndChangedCheckout(t *testing.T)
 	refused := d.ctl(false, "reviewer", "launch", taskID)
 	if asString(refused["error"]) == "" || nativeRunCount(d) != before {
 		t.Fatal("changed task checkout identity launched reviewer")
+	}
+}
+
+func TestReviewerLaunchSupportedNativeHarnesses(t *testing.T) {
+	for _, harness := range []string{"claude", "grok", "devin"} {
+		t.Run(harness, func(t *testing.T) {
+			d, taskID := reviewLab(t)
+			reviewer := launchNativeReviewer(t, d, taskID, "--harness", harness)
+			spec := asMap(asMap(reviewer["native_template"])["spec"])
+			if reviewer["harness"] != harness || spec["submit"] != "enter" {
+				t.Fatalf("wrong reviewer contract: %v", reviewer)
+			}
+		})
 	}
 }
 

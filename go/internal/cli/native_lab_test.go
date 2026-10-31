@@ -66,6 +66,23 @@ func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab 
 	}
 	t.Setenv("SUM_CODEX_BIN", codex)
 	t.Setenv("CODEX_HOME", codexHome)
+	for key, suffix := range map[string]string{"HOME": "user-home", "CLAUDE_CONFIG_DIR": "claude-home", "GROK_HOME": "grok-home", "XDG_CONFIG_HOME": "xdg-config"} {
+		path := filepath.Join(base, suffix)
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(key, path)
+		d.setEnv(key, path)
+	}
+	for harness, version := range map[string]string{"grok": "grok 1.0.67 (face1234) [stable]", "claude": "2.1.316 (Claude Code)", "devin": "devin 3000.11.234 (face1234)"} {
+		path := filepath.Join(base, harness)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '%s\\n' '"+version+"'\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		key := "SUM_" + strings.ToUpper(harness) + "_BIN"
+		t.Setenv(key, path)
+		d.setEnv(key, path)
+	}
 	options := launch.HCTemplateOptions{Cwd: root, CodexHome: codexHome}
 	spec, err := launch.PrepareHCTemplate(root, d.config, "codex", nil, options)
 	if err != nil {
