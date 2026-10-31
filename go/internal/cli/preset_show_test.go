@@ -59,7 +59,7 @@ func TestPresetUnknownFlagsAreUsageErrorsBeforeSet(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			writeSettingsFile(t, home, `{"schema": 1, "presets": {"fast": {"harness": "codex", "revision": 1}}}`)
 			before := readSettingsFile(t, home)
@@ -95,10 +95,10 @@ func TestPresetCommands(t *testing.T) {
 		{name: "valid list after dashdash", args: []string{"preset", "list", "--"}, success: true},
 		{name: "valid show", args: []string{"preset", "show", "fast"}, success: true},
 		{name: "valid show after dashdash", args: []string{"preset", "show", "--", "fast"}, success: true},
-		{name: "valid set --harness", args: []string{"preset", "set", "fast", "--harness", "claude"}, domainErr: "Herdr pane"},
-		{name: "valid set --harness=", args: []string{"preset", "set", "fast", "--harness=claude"}, domainErr: "Herdr pane"},
-		{name: "valid set --arg repeatable", args: []string{"preset", "set", "fast", "--arg", "--flag", "--arg=--other"}, domainErr: "Herdr pane"},
-		{name: "valid delete", args: []string{"preset", "delete", "fast"}, domainErr: "Herdr pane"},
+		{name: "valid set --harness", args: []string{"preset", "set", "fast", "--harness", "claude"}, domainErr: "HC session"},
+		{name: "valid set --harness=", args: []string{"preset", "set", "fast", "--harness=claude"}, domainErr: "HC session"},
+		{name: "valid set --arg repeatable", args: []string{"preset", "set", "fast", "--arg", "--flag", "--arg=--other"}, domainErr: "HC session"},
+		{name: "valid delete", args: []string{"preset", "delete", "fast"}, domainErr: "HC session"},
 		{name: "preset missing subcommand", args: []string{"preset"}, usage: true},
 		{name: "list extra positional", args: []string{"preset", "list", "extra"}, usage: true},
 		{name: "list unknown flag", args: []string{"preset", "list", "--unexpected"}, usage: true, unknown: true},
@@ -109,18 +109,18 @@ func TestPresetCommands(t *testing.T) {
 		{name: "set missing --harness value", args: []string{"preset", "set", "fast", "--harness"}, usage: true},
 		{name: "delete missing name", args: []string{"preset", "delete"}, usage: true},
 		{name: "delete unknown flag", args: []string{"preset", "delete", "fast", "--unexpected"}, usage: true, unknown: true},
-		{name: "set requires coordinator", args: []string{"preset", "set", "fast", "--harness", "claude"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "delete requires coordinator", args: []string{"preset", "delete", "fast"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "set requires coordinator", args: []string{"preset", "set", "fast", "--harness", "claude"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "delete requires coordinator", args: []string{"preset", "delete", "fast"}, herdr: true, domainErr: "registration identity mismatch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := writeDesignatedHome(t)
 			writeSettingsFile(t, home, `{"schema": 1, "presets": {"fast": {"harness": "codex", "revision": 1}}}`)
 			if tc.herdr {
-				herdrEnv(t, home)
-				t.Setenv("HERDR_PANE_ID", "w-other:p1")
+				nativeEnv(t, home)
+				t.Setenv("SUM_ROLE", "developer")
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			before := readSettingsFile(t, home)
 			stdout, stderr, err := runPreset(t, home, tc.args...)

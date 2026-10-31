@@ -2,34 +2,17 @@
 import DocsLayout from "../../layouts/DocsLayout.astro";
 ---
 
-<DocsLayout title="Herdr backend — sum">
+<DocsLayout title="HC terminal runtime — sum">
   <div class="doc">
-    <h1>Herdr backend</h1>
-    <p class="lede">
-      Herdr owns processes and worktrees. Pane identity, env start and stop,
-      native event delivery, and native metadata.
-    </p>
+    <h1>HC terminal runtime</h1>
+    <p class="lede">HC owns terminal processes; Git owns worktrees. Sum preserves approved briefs, roles, capacity, receipts, candidate-bound review and verification, publication and guarded cleanup.</p>
     <div class="sec">
-      <h2>Pane identity</h2>
-      <p>
-        Herdr 0.9.0 pane and agent objects carry a <code>terminal_id</code> and,
-        when an official integration reports it, an <code>agent_session</code>.
-        sum judges a recorded address against those fields. It invents no
-        generation field, and a socket path or a bare pid is never identity.
-      </p>
+      <h2>Terminal identity</h2>
+      <p>Permanent core ID and returned address identify a native terminal. Sum additionally binds creation time, task/role/attempt/generation, process and matching initialization receipt. Socket paths, names, labels, cwd, PID and status alone never grant authority.</p>
       <div class="kv" style="grid-template-columns:1fr">
-        <div class="v">
-          A <code>server stop</code> and restart restores the saved layout under
-          the same pane IDs, with a new terminal_id and a new shell.
-        </div>
-        <div class="v" style="border-bottom:1px solid var(--rule)">
-          A <code>kill -9</code> restart restores only what was saved; a later
-          pane can receive a freed ID.
-        </div>
-        <div class="v">
-          A live handoff keeps pane IDs and the shell process, and still issues
-          a new terminal_id.
-        </div>
+        <div class="v">Observation connects only to an existing socket and never starts a missing core.</div>
+        <div class="v" style="border-bottom:1px solid var(--rule)">A replacement harness process at the same address does not inherit the old role.</div>
+        <div class="v">Remote Sum execution and a second same-host core/session scope are unsupported and refused before binding.</div>
       </div>
     </div>
     <div class="sec">
@@ -41,42 +24,17 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <div>./bin/sumctl env start TASK_ID --command NAME [--url ... | --match TEXT] [--log PATH] [--timeout S]</div>
         <div>./bin/sumctl env stop TASK_ID [--service ID]</div>
       </div>
-      <p>
-        <code>env start</code> launches one command the repository declares in a
-        pane split under the worker pane inside the checkout. A timeout is an
-        explicit failed state, never a retry or restart. <code>env stop</code>
-        re-proves that identity, sends exactly one ctrl+c through Herdr, waits a
-        bound for exit, verifies the port is released, and closes only the pane
-        sum created. Environments started by hand are never stop targets.
-        Credentials in URLs, labels, or paths are refused.
-      </p>
+      <p><code>env start</code> launches one declared repository command in a proven owned HC terminal at the Git checkout. <code>env stop</code> sends one interrupt, verifies actual exit and survivor absence, and never escalates to kill. Idle status or an ended wait is not exit. Shared, replaced and unproven processes remain blockers.</p>
     </div>
     <div class="sec">
       <h2>Native event delivery (enabled by default)</h2>
       <div class="codeblock">
-        <div>./bin/sumctl hook enable      <span class="c"># coordinator only; retry or re-enable this instance's Herdr plugin</span></div>
+        <div>./bin/sumctl hook enable      <span class="c"># coordinator only; retry or re-enable the proven owned scoped observer</span></div>
         <div>./bin/sumctl hook status</div>
         <div>./bin/sumctl hook disable     <span class="c"># or --unlink</span></div>
       </div>
-      <p>
-        On a recorded pane going idle/done, the handler re-observes the pane and
-        runs one bounded pump toward that recipient: pending questions, reports,
-        answers, and requested brief revisions are delivered at the boundary
-        instead of waiting for the next rundown. A recorded worker seen blocked,
-        idle with nothing owed, exited, or closed produces an <strong
-          >attention</strong
-        > record on the task. It is evidence, not a question, a result, a quota
-        diagnosis, or permission to approve anything. Disabled, degraded, or
-        crashing, the handler changes nothing about ask/report, init, bind, and
-        pump.
-      </p>
-      <p>
-        Coordinator <code>init</code> enables the plugin for a new installation;
-        <code>update apply</code> enables it for an existing installation unless
-        <code>hook disable</code> was explicitly chosen. An enable failure is
-        recorded as degraded and does not fail init or update. The user's opt-out
-        is saved in <code>.sum/settings.json</code>.
-      </p>
+      <p>The non-agent outliving observer subscribes to native events and runs fair bounded ledger reconciliation, with a fresh snapshot after reconnect. It has no payload queue. Attention points to output for inspection; it is not a question, report, verification or approval.</p>
+      <p>Coordinator <code>init</code> ensures a real observer startup/readiness receipt outside the ledger lock unless the user explicitly disabled delivery. Enabled preference alone is not active delivery. Failure is fail-open and explicitly degraded; <code>pump</code> remains available.</p>
     </div>
     <div class="sec">
       <h2>Native metadata (optional)</h2>
@@ -84,16 +42,10 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <div>./bin/sumctl metadata enable</div>
         <div>./bin/sumctl metadata sync [--force]</div>
         <div>./bin/sumctl metadata status</div>
-        <div>./bin/sumctl metadata inbox [--grouped] [--open --placement split|overlay|tab|zoomed]</div>
+        <div>./bin/sumctl metadata inbox [--grouped]</div>
         <div>./bin/sumctl metadata disable</div>
       </div>
-      <p style="margin:14px 0 12px">
-        sum task state projected as namespaced <code>sum_*</code> tokens on the
-        endpoints sum owns, rendered by sidebar rows the user chooses to add.
-        Task panes carry sum_state, sum_pipeline, sum_task, sum_repo, sum_rev,
-        and sum_pr; the coordinator pane carries sum_inbox and sum_tasks. Panes
-        this installation never recorded are never touched.
-      </p>
+      <p style="margin:14px 0 12px">Optional metadata projects owned namespaced HC labels only to verified recorded terminals. It never changes native lifecycle, confers role authority or proves task completion. Unrelated labels and configuration remain intact.</p>
       <div class="chips">
         <span class="chip">needs-decision</span>
         <span class="chip">needs-attention</span>

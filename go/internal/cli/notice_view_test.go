@@ -13,10 +13,10 @@ func TestNoticeViewIsDerivedFromTheReturnsSidecar(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "notice-view", map[string]string{"README.md": "A project.\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
-	taskID, pane := asString(task["id"]), asString(task["pane"])
+	taskID, pane := asString(task["id"]), workerAddress(task)
 	d.ctlPane(pane, true, "init")
 	record := filepath.Join(d.home, "tasks", taskID, "task.json")
-	settleFakePane(t, d.base, "w-parent:p1")
+	settleNativeTerminal(t, d.base, "t1")
 
 	asked := d.ctlPane(pane, true, "ask", taskID, "--key", "choice", "--text", "Which way?")
 	assertNoticeStatus(t, "ask", asMap(asked["notice"]), "submitted-not-acknowledged")
@@ -41,6 +41,7 @@ func TestNoticeViewIsDerivedFromTheReturnsSidecar(t *testing.T) {
 	shown := d.ctl(true, "show", taskID)
 	assertNoticeStatus(t, "show", asMap(shown["notice"]), "submitted-not-acknowledged")
 
+	d.native.SetStatus("t1", "working")
 	noticed := d.ctl(true, "notice", taskID, "--to", "parent")
 	if asString(noticed["status"]) != "pending" || noticed["delivery"] == nil {
 		t.Fatalf("notice to the now-busy parent = %v, want pending with its delivery id", noticed)

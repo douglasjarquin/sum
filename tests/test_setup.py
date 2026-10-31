@@ -8,6 +8,9 @@ import tarfile
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
+from contextlib import redirect_stdout
+import io
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("setup_sum", ROOT / "scripts/setup.py")
 setup = importlib.util.module_from_spec(spec)
@@ -19,25 +22,23 @@ class SetupTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def test_generated_configuration_is_valid_and_local(self):
+    def test_generated_configuration_has_no_custom_sum_mcp(self):
         setup.configure(self.root)
-        claude = json.loads((self.root / '.mcp.json').read_text())
-        self.assertEqual(claude['mcpServers']['sum-herdr']['command'], str(self.root / 'bin/herdr-mesh'))
-        codex = tomllib.loads((self.root / '.codex/config.toml').read_text())
-        self.assertEqual(codex['mcp_servers']['sum-herdr']['tool_timeout_sec'], 70)
-        self.assertIn('HERDR_SOCKET_PATH', codex['mcp_servers']['sum-herdr']['env_vars'])
-        opencode = json.loads((self.root / 'opencode.json').read_text())
-        self.assertEqual(opencode['mcp']['sum-herdr']['type'], 'local')
+        for name in ('.mcp.json', '.cursor/mcp.json', 'opencode.json', '.codex/config.toml', '.local/mcp.example.json'):
+            self.assertFalse((self.root / name).exists(), name)
 
     def test_setup_designates_installation_without_claiming_a_coordinator(self):
         setup.configure(self.root)
         state = json.loads((self.root / '.sum/state.json').read_text())
-        self.assertEqual(state['schema'], 1)
-        self.assertTrue(state['instance'])
+        self.assertEqual(state['schema'], 2)
+        self.assertEqual(state['backend'], 'hc')
+        physical = self.root / '.sum/generations' / state['generation']
+        self.assertTrue(json.loads((physical / 'state.json').read_text())['instance'])
         self.assertFalse((self.root / '.sum/context.json').exists())
         (self.root / '.sum/state.json').write_text('{"schema": 1, "sum_version": "0.1.0", "created_at": "x"}')
-        setup.configure(self.root)
-        self.assertNotIn('instance', json.loads((self.root / '.sum/state.json').read_text()))  # Never rewrites existing state.
+        with self.assertRaisesRegex(RuntimeError, 'explicit HC migration'):
+            setup.configure(self.root)
+        self.assertEqual(json.loads((self.root / '.sum/state.json').read_text())['schema'], 1)
 
     def test_setup_in_a_development_checkout_never_designates_it(self):
         (self.root / '.sum').mkdir()
@@ -46,7 +47,7 @@ class SetupTest(unittest.TestCase):
         setup.configure(self.root)
         self.assertFalse((self.root / '.sum/state.json').exists())
         self.assertEqual((self.root / '.sum/dev.json').read_text(), marker)
-        self.assertEqual(json.loads((self.root / '.mcp.json').read_text())['mcpServers']['sum-herdr']['command'], str(self.root / 'bin/herdr-mesh'))
+        self.assertFalse((self.root / '.mcp.json').exists())
 
     def test_setup_is_idempotent(self):
         setup.configure(self.root)
@@ -78,13 +79,33 @@ class SetupTest(unittest.TestCase):
         data = tomllib.loads(path.read_text())
         self.assertEqual(data['model'], 'keep-my-model')
         self.assertEqual(data['mcp_servers']['other']['command'], 'keep-me')
-        self.assertEqual(path.read_text().count('# BEGIN sum-managed MCP'), 1)
+        self.assertNotIn('sum-herdr', path.read_text())
 
     def test_unmanaged_codex_entry_is_not_overwritten(self):
         path = self.root / 'config.toml'
         path.write_text('[mcp_servers.sum-herdr]\ncommand = "user-owned"\n')
         with self.assertRaises(RuntimeError):
-            setup.codex_config(path, '/new/bin')
+            setup.remove_codex_mcp(path, '/new/bin/herdr-mesh')
+
+    def test_owned_legacy_mcp_is_removed_without_replacing_unrelated_entries(self):
+        command = str(self.root / 'bin/herdr-mesh')
+        path = self.root / '.mcp.json'
+        path.write_text(json.dumps({'mcpServers': {'sum-herdr': {'command': command, 'args': []}, 'keep': {'command': 'keep'}}}))
+        codex = self.root / '.codex/config.toml'
+        codex.parent.mkdir()
+        codex.write_text('model = "keep"\n# BEGIN sum-managed MCP\n[mcp_servers.sum-herdr]\ncommand = ' + json.dumps(command) + '\nstartup_timeout_sec = 20\ntool_timeout_sec = 70\nenv_vars = ["HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", "HERDR_BIN_PATH", "SUM_SESSION"]\n# END sum-managed MCP\n')
+        setup.configure(self.root, retire_legacy=True)
+        self.assertEqual(json.loads(path.read_text()), {'mcpServers': {'keep': {'command': 'keep'}}})
+        self.assertEqual(tomllib.loads(codex.read_text()), {'model': 'keep'})
+
+    def test_customized_managed_block_is_not_removed(self):
+        path = self.root / '.codex/config.toml'
+        path.parent.mkdir()
+        text = '# BEGIN sum-managed MCP\n[mcp_servers.sum-herdr]\ncommand = "custom"\n# END sum-managed MCP\n'
+        path.write_text(text)
+        with self.assertRaisesRegex(RuntimeError, 'ownership'):
+            setup.configure(self.root)
+        self.assertEqual(path.read_text(), text)
 
     def test_all_skill_links_resolve(self):
         for parent in (ROOT / '.agents/skills', ROOT / '.claude/skills'):
@@ -166,6 +187,17 @@ class SetupTest(unittest.TestCase):
         pin = {"version": "0.2.1", "sha256": "abc", "asset": "remainder_v0.2.1_darwin_arm64.tar.gz"}
         with self.assertRaisesRegex(setup.runtime_install.InstallError, "disabled"):
             setup.runtime_install.install_remainder(self.root / "runtime", pin=pin, platform_name="darwin-arm64")
+
+    def test_setup_guidance_uses_qualified_launch_and_explicit_core_config(self):
+        output = io.StringIO()
+        with patch.object(setup.sys, 'argv', ['setup.py', '--configure-only']), patch.object(setup, 'configure'), redirect_stdout(output):
+            setup.main()
+        text = output.getvalue()
+        self.assertIn('Codex 0.166.0', text)
+        self.assertIn('Tab', text)
+        self.assertIn('--hc-config-home', text)
+        self.assertIn('refused', text)
+        self.assertNotIn('then launch codex, claude', text)
 
     def test_mise_and_all_python_sources_parse(self):
         tomllib.loads((ROOT / 'mise.toml').read_text())

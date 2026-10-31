@@ -50,7 +50,7 @@ outline:
         verdict: null
         tool: null
         policy_reviewed: false
-        reviewer_pane: null
+        reviewer_endpoint: null
       note: Worker and coordinator runs are separate executions with their own run ids; neither the worker's run nor a review substitutes for the coordinator's. Records for another SHA are historical.
   verification_policy: null
   report: null

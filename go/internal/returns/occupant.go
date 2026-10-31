@@ -1,197 +1,117 @@
 package returns
 
 import (
+	"bytes"
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"time"
-
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
-	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
-// occupant is what one fresh observation shows in a recipient pane: the terminal and native session from the agent
-// or pane object, and the shell when judging the record needed it. It is taken outside the state lock and judged
-// inside it, so a record that changed in between is judged afresh and a probe it needs but lacks refuses the prompt.
-type occupant struct {
-	evidence incarnation.Evidence
-	probed   bool
-	shell    *incarnation.Shell
-	shellErr error
-}
+type occupant struct{ native *NativeRecipient }
 
-var errNotProbed = errors.New("the pane shell was not observed before the claim")
-
-func (o *occupant) probe() (*incarnation.Shell, error) {
-	if !o.probed {
-		return nil, errNotProbed
+func nativeRecord(s *store.Store, route *ordjson.Object) (*ordjson.Object, error) {
+	if routeValue(route, "role") == "coordinator" {
+		return s.Owner()
 	}
-	return o.shell, o.shellErr
+	return s.Registration(store.EndpointFromContext(route))
 }
-
-// call adapts the pass snapshot to one incarnation observation call in session, bounded like every pass observation.
-func (p *pass) call(session string) incarnation.Call {
-	return func(_ time.Duration, args ...string) (any, string, error) {
-		value, err := p.sn.Call(session, ObserveTimeout, args...)
-		return value, "", err
+func checkOccupant(s *store.Store, route *ordjson.Object, occ *occupant) string {
+	if occ == nil || occ.native == nil {
+		return "No fresh HC process observation; nothing was sent."
 	}
-}
-
-// recordFor is the incarnation recorded for route's recipient role, read now: the owner's for the coordinator, the
-// task's worker registration for a worker. ok is false when there is no such record to judge against.
-func recordFor(s *store.Store, route *ordjson.Object, items [][2]*ordjson.Object) (recorded any, occupiedAt string, ok bool, err error) {
-	if fmt.Sprint(routeValue(route, "role")) == "coordinator" {
-		owner, err := s.Owner()
-		if err != nil || owner == nil {
-			return nil, "", false, err
-		}
-		recorded, occupiedAt = incarnation.CoordinatorRecord(owner)
-		return recorded, occupiedAt, true, nil
-	}
-	registration, err := s.Registration(store.EndpointFromContext(route))
+	record, err := nativeRecord(s, route)
 	if err != nil {
-		return nil, "", false, err
+		return err.Error()
 	}
-	for _, pair := range items {
-		id, _ := pair[0].Get("id")
-		if recorded, occupiedAt, ok := incarnation.WorkerRecord(registration, id); ok {
-			return recorded, occupiedAt, true, nil
+	if record == nil {
+		return "No current native recipient binding; nothing was sent."
+	}
+	current := store.EndpointFromContext(record)
+	expected := store.EndpointFromContext(route)
+	host, hostErr := s.Machine()
+	if hostErr != nil {
+		return hostErr.Error()
+	}
+	current.Machine = host.Canonical(current.Machine)
+	expected.Machine = host.Canonical(expected.Machine)
+	if !current.Native().SameAuthority(expected.Native()) {
+		return "Recipient binding changed during observation; nothing was sent."
+	}
+	if len(occ.native.qualification) > 0 {
+		raw, _ := record.Get("native_template")
+		now, err := ordjson.MarshalCompact(raw)
+		if err != nil || !bytes.Equal(now, occ.native.qualification) {
+			return "Recipient qualification changed during observation; nothing was sent."
 		}
 	}
-	return nil, "", false, nil
-}
-
-// observeOccupant builds the occupant from the fresh agent observation and, when judging the current record needs the
-// shell (the terminal changed, or the record is legacy), probes it now within the pass budget. A non-empty deferReason
-// means the probe did not fit: nothing was sent or recorded.
-func (p *pass) observeOccupant(route *ordjson.Object, items [][2]*ordjson.Object, session, pane string, agent *ordjson.Object) (*occupant, string) {
-	deferReason := ""
-	occ := observeOccupant(p.s, route, items, agent, func() (*incarnation.Shell, error) {
-		if !p.fits(ObserveTimeout) {
-			deferReason = "the pass budget ran out before this recipient's pane shell could be observed; nothing was sent or recorded"
-			return nil, errNotProbed
-		}
-		return incarnation.ProbeShell(p.call(session), pane)
-	})
-	return occ, deferReason
-}
-
-func observeOccupant(s *store.Store, route *ordjson.Object, items [][2]*ordjson.Object, agent *ordjson.Object, probe incarnation.ShellProbe) *occupant {
-	occ := &occupant{evidence: incarnation.FromInfo(agent)}
-	recorded, occupiedAt, ok, err := recordFor(s, route, items)
-	if err != nil || !ok {
-		return occ
-	}
-	incarnation.Judge(recorded, occupiedAt, occ.evidence, func() (*incarnation.Shell, error) {
-		shell, err := probe()
-		if err != errNotProbed {
-			occ.probed, occ.shell, occ.shellErr = true, shell, err
-		}
-		return shell, err
-	})
-	return occ
-}
-
-// checkOccupant runs under the state lock right before the in-flight stamp: the occupant observed for this prompt must
-// be the incarnation recorded for the recipient now. A verified worker whose record is out of date (a native session
-// reported since launch, a terminal replaced by a handoff or restore) has its registration refreshed from the same
-// observation, so its next restore can still be recognized. A refusal sends nothing and records nothing: the returns
-// stay pending for the recorded recipient, and an earlier submitted or uncertain delivery keeps its state.
-func (p *pass) checkOccupant(route *ordjson.Object, items [][2]*ordjson.Object, occ *occupant) string {
-	return checkOccupant(p.s, route, items, occ)
-}
-
-func checkOccupant(s *store.Store, route *ordjson.Object, items [][2]*ordjson.Object, occ *occupant) string {
-	role := fmt.Sprint(routeValue(route, "role"))
-	recorded, occupiedAt, ok, err := recordFor(s, route, items)
+	evidence, _ := record.Get("incarnation")
+	raw, _ := record.Get("native_receipt")
+	data, err := ordjson.MarshalCompact(raw)
 	if err != nil {
-		return "prompt was not accepted: " + err.Error()
+		return err.Error()
 	}
-	if !ok {
-		return fmt.Sprintf("Recipient pane %v records no %s incarnation to judge its occupant against; nothing was sent. %s", routeValue(route, "pane"), role, incarnation.Recovery(role, incarnation.Unrecorded))
+	var receipt incarnation.NativeReceipt
+	if err = json.Unmarshal(data, &receipt); err != nil {
+		return "No matching native application bootstrap receipt; nothing was sent."
 	}
-	verdict := incarnation.Judge(recorded, occupiedAt, occ.evidence, occ.probe)
+	verdict := incarnation.JudgeNative(evidence, current.Native(), occ.native.Terminal, &receipt)
 	if !verdict.Verified {
-		return fmt.Sprintf("Recipient pane %v is not the recorded %s's occupant (%s: %s); nothing was sent. %s", routeValue(route, "pane"), role, verdict.Outcome, verdict.Reason, incarnation.Recovery(role, verdict.Outcome))
-	}
-	if role != "coordinator" {
-		evidence := occ.evidence
-		if occ.probed && occ.shellErr == nil {
-			evidence.Shell = occ.shell
-		}
-		if refreshed, changed := incarnation.Refresh(recorded, evidence, store.Now()); changed {
-			if err := s.SetIncarnation(store.EndpointFromContext(route), refreshed); err != nil {
-				return "prompt was not accepted: " + err.Error()
-			}
-		}
+		return fmt.Sprintf("Recipient is not the recorded %s occupant (%s: %s); explicit recovery is required.", current.Role, verdict.Outcome, verdict.Reason)
 	}
 	return ""
 }
-
-// checkInline judges the calling pane before its own listing is presented and marked submitted. A non-empty
-// deferReason means the observation did not fit the pass.
-func (p *pass) checkInline(route *ordjson.Object, items [][2]*ordjson.Object) (msg, deferReason string) {
-	recorded, occupiedAt, ok, err := recordFor(p.s, route, items)
+func (p *pass) checkOccupant(route *ordjson.Object, occ *occupant) string {
+	return checkOccupant(p.s, route, occ)
+}
+func (p *pass) checkInline(route *ordjson.Object) (string, string) {
+	if !p.fits(ObserveTimeout) {
+		return "", "the pass budget ran out before native recipient observation"
+	}
+	recipient, err := observeNativeIdentity(p.ctx, store.EndpointFromContext(route), fmt.Sprint(routeValue(route, "cwd")))
 	if err != nil {
-		return "inline listing was not presented: " + err.Error(), ""
+		return err.Error(), ""
 	}
-	role := fmt.Sprint(routeValue(route, "role"))
-	if !ok {
-		return fmt.Sprintf("This pane records no %s incarnation, so its returns were not presented here. %s", role, incarnation.Recovery(role, incarnation.Unrecorded)), ""
-	}
-	if !p.fits(2 * ObserveTimeout) {
-		return "", "the pass budget ran out before this pane's occupant could be verified; nothing was presented or recorded"
-	}
-	session := fmt.Sprint(routeValue(route, "session"))
-	verdict := incarnation.Pane(p.call(session), fmt.Sprint(routeValue(route, "pane")), recorded, occupiedAt)
-	if !verdict.Verified {
-		return fmt.Sprintf("This pane is not the recorded %s's occupant (%s: %s); its returns were not presented or marked submitted. %s", role, verdict.Outcome, verdict.Reason, incarnation.Recovery(role, verdict.Outcome)), ""
-	}
-	return "", ""
+	return checkOccupant(p.s, route, &occupant{native: recipient}), ""
 }
 
-// Occupant is one fresh observation of a worker pane taken outside the state lock by a caller other than the delivery
-// pass (repair send), to be judged under the lock with Check.
-type Occupant struct {
-	occ   *occupant
-	items [][2]*ordjson.Object
-	agent *ordjson.Object
-}
+type Occupant struct{ occ *occupant }
 
-// ObserveWorker is ObserveRecipient for task's worker route plus the occupant judgment's inputs: the agent get's
-// terminal and native session, and the pane shell when the worker record needs it.
 func ObserveWorker(s *store.Store, runtimeRoot string, task, route *ordjson.Object, expectedCwd string) (*Occupant, error) {
-	agent, err := observeAgent(s, runtimeRoot, route, expectedCwd)
-	if err != nil {
-		if u, ok := err.(*unreachableError); ok && u.state == versions.RefreshUnreachable && panes.WorkerIsClosed(task) {
-			return nil, &unreachableError{state: "pane-closed", msg: "Recipient pane is closed; resume via execution resume. Delivery is pane-closed, not unreachable."}
-		}
-		return nil, err
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
+	host, err := s.Machine()
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*ObserveTimeout)
-	defer cancel()
-	items := [][2]*ordjson.Object{{task, nil}}
-	session, pane := fmt.Sprint(routeValue(route, "session")), fmt.Sprint(routeValue(route, "pane"))
-	occ := observeOccupant(s, route, items, agent, func() (*incarnation.Shell, error) {
-		return incarnation.ProbeShell(incarnation.SessionCall(ctx, herdrPath, session), pane)
-	})
-	return &Occupant{occ: occ, items: items, agent: agent}, nil
+	if !host.Is(routeValue(route, "machine")) {
+		return nil, fmt.Errorf("recipient is on another machine")
+	}
+	recipient, err := ObserveNative(context.Background(), store.EndpointFromContext(route), expectedCwd)
+	if err != nil {
+		return nil, err
+	}
+	record, err := nativeRecord(s, route)
+	if err != nil {
+		return nil, err
+	}
+	if err = recipient.Qualify(record); err != nil {
+		return nil, err
+	}
+	return &Occupant{occ: &occupant{native: recipient}}, nil
 }
-
-func (o *Occupant) Agent() *ordjson.Object {
-	return o.agent
-}
-
-// Check judges the observed occupant against route's record as it is now; the caller holds the state lock. A non-empty
-// result refuses the side effect and names the recovery.
 func (o *Occupant) Check(s *store.Store, route *ordjson.Object) string {
-	return checkOccupant(s, route, o.items, o.occ)
+	return checkOccupant(s, route, o.occ)
+}
+func (o *Occupant) Send(ctx context.Context, text string) (string, error) {
+	_, err := o.occ.native.Send(ctx, text)
+	state, _ := DeliveryFailure(err)
+	return state, err
+}
+
+func (r *NativeRecipient) Check(s *store.Store) error {
+	if msg := checkOccupant(s, r.Endpoint.Object(), &occupant{native: r}); msg != "" {
+		return fmt.Errorf("%s", msg)
+	}
+	return nil
 }

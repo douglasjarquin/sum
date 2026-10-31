@@ -34,7 +34,7 @@ func TestPrepareUnknownFlagsAreUsageErrorsBeforePrepare(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			before := readTasksDir(t, home)
 			stdout, stderr, err := runPrepareCLI(t, home, tc.args...)
@@ -70,49 +70,49 @@ func TestPrepareCommands(t *testing.T) {
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--harness", "codex", "--approved"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid prepare after dashdash",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--approved", "--"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid prepare equals flags",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo=owner/repo", "--brief=" + brief, "--harness=codex", "--approved"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid prepare --kind scout",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--kind", "scout", "--approved"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid prepare --kind=scout",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--kind=scout", "--approved"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid prepare --same-as-you --preset --arg",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--same-as-you", "--preset", "fast", "--arg", "foo", "--arg=bar", "--approved"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid prepare --approved=",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--approved=true"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid prepare with herdr",
@@ -127,21 +127,21 @@ func TestPrepareCommands(t *testing.T) {
 			args: func(brief string) []string {
 				return []string{"dispatch", "--repo", "owner/repo", "--brief", brief, "--harness", "codex", "--approved"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid dispatch equals flags",
 			args: func(brief string) []string {
 				return []string{"dispatch", "--repo=owner/repo", "--brief=" + brief, "--approved"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid dispatch --arg and --base",
 			args: func(brief string) []string {
 				return []string{"dispatch", "--repo", "owner/repo", "--brief", brief, "--base", "HEAD", "--arg", "foo", "--approved"}
 			},
-			domainErr: "Herdr pane",
+			domainErr: "explicit HC session required",
 		},
 		{
 			name: "valid dispatch with herdr",
@@ -215,9 +215,9 @@ func TestPrepareCommands(t *testing.T) {
 			home := writeDesignatedHome(t)
 			brief := writePrepareBrief(t)
 			if tc.herdr {
-				herdrEnv(t, home)
+				nativeUnregisteredCaller(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			before := readTasksDir(t, home)
 			stdout, stderr, err := runPrepareCLI(t, home, tc.args(brief)...)

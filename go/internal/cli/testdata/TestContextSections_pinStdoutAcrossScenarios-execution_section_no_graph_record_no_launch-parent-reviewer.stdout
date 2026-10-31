@@ -28,9 +28,23 @@ execution:
     ok: true
     note: "Not built: sum indexes a checkout only when the coordinator runs `graph init`, so this task has no code graph. Read the source."
   endpoints:
-    worker:
+    historical_worker:
       machine: m1
       session: s1
       pane: p1
+      authority: historical
+    worker:
+      schema: null
+      backend: null
+      machine: null
+      core_id: null
+      session: null
+      socket: null
+      address: null
+      task: null
+      role: null
+      attempt: null
+      binding_generation: null
+      created_ms: null
     parent: null
     reviewer: null

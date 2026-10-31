@@ -179,10 +179,7 @@ func reserveVerifier(s *store.Store, ctx *ordjson.Object, taskID, candidate, che
 	if err != nil {
 		return "", err
 	}
-	owner := ordjson.NewObject()
-	owner.Set("machine", asString(ctx, "machine"))
-	owner.Set("session", asString(ctx, "session"))
-	owner.Set("pane", asString(ctx, "pane"))
+	owner := store.EndpointFromContext(ctx).Object()
 	attempt, err := reservations.NewAttempt("verifier", owner, checkout, store.Now(), "starting", candidate)
 	if err != nil {
 		return "", wrapReservation(taskID, err)

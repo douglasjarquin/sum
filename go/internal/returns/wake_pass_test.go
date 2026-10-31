@@ -69,7 +69,7 @@ func (l *passLab) coordinatorIdle() {
 	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": l.pane("idle", l.root)}})
 }
 
-func (l *passLab) endpoint() [3]string { return [3]string{l.host, "lab", "w-root:p1"} }
+func (l *passLab) endpoint() [3]string { return identityMust(l.s, l.ctx) }
 
 func (l *passLab) wake() *Wake {
 	l.t.Helper()
@@ -95,7 +95,10 @@ func row(t *testing.T, result *ordjson.Object, pane string) *ordjson.Object {
 	for _, r := range rows.([]any) {
 		obj := r.(*ordjson.Object)
 		rec, _ := obj.Get("recipient")
-		if p, _ := rec.(*ordjson.Object).Get("pane"); fmt.Sprint(p) == pane {
+		address, _ := rec.(*ordjson.Object).Get("address")
+		core, _ := rec.(*ordjson.Object).Get("core_id")
+		alias, _ := testAliases.Load(fmt.Sprint(core) + "/" + fmt.Sprint(address))
+		if fmt.Sprint(alias) == pane {
 			return obj
 		}
 	}
@@ -364,7 +367,7 @@ func TestWakeInvalidSidecarBlocksAdmissionWithoutTouchingAttempts(t *testing.T) 
 		}},
 		{"unsupported", func(l *passLab) {
 			w, _ := NewWake(l.s, l.endpoint(), nil)
-			w.Schema = 2
+			w.Schema = 99
 			if err := WriteWake(l.s, w); err != nil {
 				l.t.Fatal(err)
 			}
@@ -423,6 +426,9 @@ func TestWakeUnsafeRecipientsLeaveNoOutstandingEpisode(t *testing.T) {
 				panes["w-root:p1"] = p
 			}
 			l.session("lab", map[string]any{"panes": panes})
+			if tc.name == "missing" {
+				l.core("lab").Exit(l.nativeEndpoint("lab", "w-root:p1").Address, 0)
+			}
 			result, _ := l.pumpFor([]string{a, worker}, "", 8*time.Second)
 			got := states(result)
 			if got["w-root:p1"] != tc.state || got["w1:p1"] != "submitted" {
@@ -659,8 +665,8 @@ func TestWakeCoverageDoesNotSurviveAnOccupantChange(t *testing.T) {
 	if view, err := l.consume(l.boundary([]WakeCovered{report(a)}, nil)); err != nil || field(t, view, "covered_count") != "1" {
 		t.Fatalf("consume = %v %v", view, err)
 	}
-	l.setOwner(func(owner *ordjson.Object) { owner.Set("incarnation", boundTo("w-root:p1-reborn")) })
-	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude", "terminal_id": "term-w-root:p1-reborn"}}})
+	l.replaceOwner()
+	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": map[string]any{"agent_status": "idle", "cwd": l.root, "agent": "claude"}}})
 	b := l.reporting()
 	next, _ := l.pumpFor([]string{a, b}, "parent", 8*time.Second)
 	r := row(t, next, "w-root:p1")
@@ -678,4 +684,12 @@ func TestWakeCoverageDoesNotSurviveAnOccupantChange(t *testing.T) {
 	if msg := prompts(l.calls(), "w-root:p1")[1]; !strings.Contains(msg, a) || !strings.Contains(msg, b) {
 		t.Fatalf("prompt to the new occupant = %q, want both %s and %s named", msg, a, b)
 	}
+}
+
+func identityMust(s *store.Store, route *ordjson.Object) [3]string {
+	host, err := s.Machine()
+	if err != nil {
+		panic(err)
+	}
+	return identity(host, route)
 }

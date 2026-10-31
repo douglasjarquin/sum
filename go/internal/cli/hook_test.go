@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,57 +31,29 @@ func writeStateJSON(t *testing.T, home, stateJSON string) {
 }
 
 func TestHookStatus_pinsStdoutAcrossScenarios(t *testing.T) {
-	// hook status observes a live Herdr session only when HERDR_ENV=1 and HERDR_PANE_ID are set; blank them so
-	// both the Go port and the Python reference take the records-only (ctx=None) path, exactly like an ordinary
-	// non-Herdr test invocation. This mirrors the existing per-package convention for isolating Herdr-adjacent env.
-	for _, v := range []string{"HERDR_ENV", "HERDR_PANE_ID", "HERDR_SESSION", "HERDR_SOCKET_PATH", "SUM_SESSION"} {
-		t.Setenv(v, "")
-		os.Unsetenv(v)
-	}
-	// Pending ages are elapsed seconds, so this process and the reference subprocess must read one instant or
-	// they disagree by one whenever a second boundary falls between their two clock reads.
-	t.Setenv("SUM_NOW", "2026-01-02T00:00:00Z")
-
-	t.Run("no health.json", func(t *testing.T) {
-		home := t.TempDir()
+	clearNativeEnv(t)
+	t.Setenv("SUM_NOW", "2026-01-02T00:00:00+00:00")
+	t.Run("no observer health", func(t *testing.T) {
+		home := writeDesignatedHome(t)
 		assertHookMatches(t, home, []string{"hook", "status"})
 	})
-
-	t.Run("disabled health with one pending obligation", func(t *testing.T) {
-		home := t.TempDir()
-		writeHookHealth(t, home, `{"schema": 1, "enabled": false, "plugin_id": null, "events": 3, "handled": 2, "ignored": 1,
-"errors": [{"at": "2026-01-01T00:00:00+00:00", "stage": "dispatch", "error": "boom", "event": "pane.exited"}],
-"last_event": "pane.exited", "last_error": "boom"}`)
-		baseSha := "0123456789abcdef0123456789abcdef01234567"
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",
-"questions": [{"id": "q1", "status": "open", "created_at": "2026-01-01T00:00:00+00:00", "text": "which way?"}],
-"evidence": [], "report": null, "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task"}`, baseSha))
+	t.Run("disabled observer with one pending obligation", func(t *testing.T) {
+		home := writeDesignatedHome(t)
+		writeHookHealth(t, home, `{"schema":2,"enabled":false,"errors":[]}`)
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema":2,"id":"t-aaaaaaaaaaaa","status":"running","repository":"owner/repo","questions":[{"id":"q1","status":"open","created_at":"2026-01-01T00:00:00+00:00","text":"which way?"}],"evidence":[],"report":null,"attention":[]}`)
 		out := assertHookMatches(t, home, []string{"hook", "status"})
 		if !strings.Contains(out, "oldest_age_s: 86400\n") {
-			t.Fatalf("pinned SUM_NOW should make the obligation exactly one day old, got\n%s", out)
+			t.Fatalf("pinned native observer age must be one day: %s", out)
 		}
 	})
-
-	t.Run("enabled with plugin_id but no instance identity yet", func(t *testing.T) {
-		home := t.TempDir()
-		writeHookHealth(t, home, `{"schema": 1, "enabled": true, "plugin_id": "sum.returns.deadbeefcafe", "events": 5, "handled": 5, "ignored": 0,
-"errors": [], "last_event": "pane.agent_detected", "last_error": null, "manifest_sha256": "abc123",
-"manifest_path": "/tmp/plugin/herdr-plugin.toml", "linked_at": "2026-01-01T00:00:00+00:00"}`)
+	t.Run("saved native observer health", func(t *testing.T) {
+		home := writeDesignatedHome(t)
+		writeHookHealth(t, home, `{"schema":2,"enabled":true,"core_id":"test-core","session":"sum-test","address":"t3","events":5,"errors":[]}`)
 		assertHookMatches(t, home, []string{"hook", "status"})
 	})
-
-	t.Run("enabled with plugin_id, instance present, mismatched manifest hash", func(t *testing.T) {
-		home := t.TempDir()
-		writeStateJSON(t, home, `{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00", "instance": "deadbeefcafe0123"}`)
-		writeHookHealth(t, home, `{"schema": 1, "enabled": true, "plugin_id": "sum.returns.deadbeefcafe", "events": 5, "handled": 5, "ignored": 0,
-"errors": [], "last_event": "pane.agent_detected", "last_error": null, "manifest_sha256": "not-the-real-hash",
-"manifest_path": "/tmp/plugin/herdr-plugin.toml", "linked_at": "2026-01-01T00:00:00+00:00"}`)
-		assertHookMatches(t, home, []string{"hook", "status"})
-	})
-
-	t.Run("malformed health.json schema is a command-level failure", func(t *testing.T) {
-		home := t.TempDir()
-		writeHookHealth(t, home, `{"schema": 2, "enabled": true}`)
+	t.Run("malformed observer health is refused", func(t *testing.T) {
+		home := writeDesignatedHome(t)
+		writeHookHealth(t, home, `[]`)
 		assertHookFailureMatches(t, home, []string{"hook", "status"})
 	})
 }
@@ -98,7 +69,7 @@ func assertHookFailureMatches(t *testing.T, home string, args []string) {
 }
 
 func TestHookEnable_requiresCoordinator(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
@@ -135,7 +106,7 @@ func TestHookUnknownFlagsAreUsageErrorsBeforeEnableDisable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			writeHookHealth(t, home, `{"schema": 1, "enabled": false, "plugin_id": null, "events": 0, "handled": 0, "ignored": 0, "errors": []}`)
 			before := readHookHealth(t, home)
@@ -167,9 +138,9 @@ func TestHookCommands(t *testing.T) {
 	}{
 		{name: "valid status", args: []string{"hook", "status"}, success: true},
 		{name: "valid status after dashdash", args: []string{"hook", "status", "--"}, success: true},
-		{name: "valid disable --unlink", args: []string{"hook", "disable", "--unlink"}, domainErr: "Herdr pane"},
-		{name: "valid disable --unlink=", args: []string{"hook", "disable", "--unlink=true"}, domainErr: "Herdr pane"},
-		{name: "valid disable --unlink with herdr", args: []string{"hook", "disable", "--unlink"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid disable --unlink", args: []string{"hook", "disable", "--unlink"}, domainErr: "HC session"},
+		{name: "valid disable --unlink=", args: []string{"hook", "disable", "--unlink=true"}, domainErr: "HC session"},
+		{name: "valid disable --unlink with herdr", args: []string{"hook", "disable", "--unlink"}, herdr: true, domainErr: "registration identity mismatch"},
 		{name: "hook missing subcommand", args: []string{"hook"}, usage: true},
 		{name: "status extra positional", args: []string{"hook", "status", "extra"}, usage: true},
 		{name: "status unknown flag", args: []string{"hook", "status", "--unexpected"}, usage: true, unknown: true},
@@ -180,20 +151,20 @@ func TestHookCommands(t *testing.T) {
 		{name: "disable extra after --unlink", args: []string{"hook", "disable", "--unlink", "extra"}, usage: true},
 		{name: "event extra positional", args: []string{"hook", "event", "extra"}, usage: true},
 		{name: "event unknown flag", args: []string{"hook", "event", "--unexpected"}, usage: true, unknown: true},
-		{name: "enable requires pane without herdr", args: []string{"hook", "enable"}, domainErr: "Herdr pane"},
-		{name: "disable requires pane without herdr", args: []string{"hook", "disable"}, domainErr: "Herdr pane"},
-		{name: "enable requires coordinator", args: []string{"hook", "enable"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "disable requires coordinator", args: []string{"hook", "disable"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "enable requires pane without herdr", args: []string{"hook", "enable"}, domainErr: "HC session"},
+		{name: "disable requires pane without herdr", args: []string{"hook", "disable"}, domainErr: "HC session"},
+		{name: "enable requires coordinator", args: []string{"hook", "enable"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "disable requires coordinator", args: []string{"hook", "disable"}, herdr: true, domainErr: "registration identity mismatch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := writeDesignatedHome(t)
 			writeHookHealth(t, home, `{"schema": 1, "enabled": false, "plugin_id": null, "events": 0, "handled": 0, "ignored": 0, "errors": []}`)
 			if tc.herdr {
-				herdrEnv(t, home)
-				t.Setenv("HERDR_PANE_ID", "w-other:p1")
+				nativeEnv(t, home)
+				t.Setenv("SUM_ROLE", "developer")
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			before := readHookHealth(t, home)
 			stdout, stderr, err := runHook(t, home, tc.args...)

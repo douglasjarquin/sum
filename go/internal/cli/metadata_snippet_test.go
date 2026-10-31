@@ -29,7 +29,7 @@ func TestMetadataSnippet_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := tc.home(t)
 			assertStdoutGolden(t, home, tc.args, scenarioGolden(t))
 		})
@@ -59,7 +59,7 @@ func TestMetadataEnableDisableSync_unknownFlagOrExtraPositionalDoesNotRunDomain(
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			before := readMetadataState(t, home)
 			stdout, stderr, err := runMetadata(t, home, tc.args...)
@@ -94,8 +94,8 @@ func TestMetadataCommands(t *testing.T) {
 		{name: "valid snippet --raw=", args: []string{"metadata", "snippet", "--raw=true"}, success: true},
 		{name: "valid status", args: []string{"metadata", "status"}, success: true},
 		{name: "valid status after dashdash", args: []string{"metadata", "status", "--"}, success: true},
-		{name: "valid enable --notify", args: []string{"metadata", "enable", "--notify"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid enable --notify=", args: []string{"metadata", "enable", "--notify=true"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid enable --notify", args: []string{"metadata", "enable", "--notify"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "valid enable --notify=", args: []string{"metadata", "enable", "--notify=true"}, herdr: true, domainErr: "registration identity mismatch"},
 		{name: "metadata missing subcommand", args: []string{"metadata"}, usage: true},
 		{name: "snippet extra positional", args: []string{"metadata", "snippet", "extra"}, usage: true},
 		{name: "snippet unknown flag", args: []string{"metadata", "snippet", "--unexpected"}, usage: true, unknown: true},
@@ -111,19 +111,19 @@ func TestMetadataCommands(t *testing.T) {
 		{name: "sync unknown flag", args: []string{"metadata", "sync", "--unexpected"}, usage: true, unknown: true},
 		{name: "sync --notify", args: []string{"metadata", "sync", "--notify"}, usage: true, unknown: true},
 		{name: "inbox unknown flag", args: []string{"metadata", "inbox", "--unexpected"}, usage: true, unknown: true},
-		{name: "enable requires coordinator", args: []string{"metadata", "enable"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "enable requires pane without herdr", args: []string{"metadata", "enable"}, domainErr: "Herdr pane"},
-		{name: "disable requires pane without herdr", args: []string{"metadata", "disable"}, domainErr: "Herdr pane"},
-		{name: "sync requires pane without herdr", args: []string{"metadata", "sync"}, domainErr: "Herdr pane"},
+		{name: "enable requires coordinator", args: []string{"metadata", "enable"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "enable requires pane without herdr", args: []string{"metadata", "enable"}, domainErr: "HC session"},
+		{name: "disable requires pane without herdr", args: []string{"metadata", "disable"}, domainErr: "HC session"},
+		{name: "sync requires pane without herdr", args: []string{"metadata", "sync"}, domainErr: "HC session"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := writeDesignatedHome(t)
 			if tc.herdr {
-				herdrEnv(t, home)
-				t.Setenv("HERDR_PANE_ID", "w-other:p1")
+				nativeEnv(t, home)
+				t.Setenv("SUM_ROLE", "developer")
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			before := readMetadataState(t, home)
 			stdout, stderr, err := runMetadata(t, home, tc.args...)

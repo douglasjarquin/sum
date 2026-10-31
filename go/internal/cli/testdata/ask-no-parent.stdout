@@ -13,4 +13,5 @@ notice:
   returns:
     recipients: []
     prompts: 0
+    deferred: 0
     note: "One bounded pass over saved returns: at most one prompt per recipient identity, nothing slept or polled, no obligation deleted."

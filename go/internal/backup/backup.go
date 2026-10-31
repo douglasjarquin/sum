@@ -185,7 +185,7 @@ func Run(s *store.Store, destination string) (*ordjson.Object, error) {
 	sort.Strings(findingEntries)
 	manifest.Set("graph", graphObj)
 	manifest.Set("managed_projects", projectsObj)
-	manifest.Set("restore", "Extract into a new directory. Start sumctl with --home <extracted>/state. Do not reuse pane bindings on another machine; inspect and bind explicitly.")
+	manifest.Set("restore", "Run sumctl restore ARCHIVE NEW_HOME, then sumctl --home NEW_HOME show TASK (or status). The importer creates a fresh records-only generation; archived task and procedure bytes remain historical. It imports no live owner, sessions, process receipts or capacity authority and cannot launch, bind, claim or send. Direct extraction is not a writable installation restore.")
 
 	if err := os.MkdirAll(filepath.Dir(expanded), 0o700); err != nil {
 		return nil, err

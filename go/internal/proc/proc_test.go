@@ -238,3 +238,21 @@ func stopFixture(t *testing.T, pidFile string) {
 		}
 	}
 }
+
+func TestScrubbedEnvSeparatesNativeAuthorityFromManagedLaunch(t *testing.T) {
+	for _, key := range []string{"HC_SOCKET", "HC_TERMINAL_ID", "HC_SESSION", "SUM_HOME", "SUM_CORE_ID", "SUM_TASK", "SUM_ROLE", "SUM_ATTEMPT", "SUM_BINDING_GENERATION", "SUM_INSTALL_ROOT", "HERDR_PANE"} {
+		t.Setenv(key, "authority")
+	}
+	t.Setenv("SUM_PROC_UNRELATED", "also-scrubbed")
+	t.Setenv("EDITOR", "vim")
+	for _, entry := range ScrubbedEnv() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "SUM_") || strings.HasPrefix(key, "HC_") || strings.HasPrefix(key, "HERDR_") {
+			t.Fatalf("leaked %s", key)
+		}
+	}
+	result, err := Run(sh("printf '%s' \"$SUM_ROLE:$HC_TERMINAL_ID\""), "", 0, true, append(ScrubbedEnv(), "SUM_ROLE=worker", "HC_TERMINAL_ID=t2"))
+	if err != nil || result.Stdout != "worker:t2" {
+		t.Fatalf("explicit managed environment lost: %q %v", result.Stdout, err)
+	}
+}

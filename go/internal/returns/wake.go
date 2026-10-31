@@ -53,7 +53,7 @@ import (
 // and appends a receipt. It answers, applies, verifies, approves, and closes nothing else; `omitted` identities and
 // anything outside `included` were never covered and stay eligible for the next pass.
 const (
-	WakeSchema        = 1
+	WakeSchema        = 2
 	WakeReceiptsBound = 20
 
 	WakePrepared     = "prepared"
@@ -81,9 +81,11 @@ const (
 )
 
 type WakeRecipient struct {
+	CoreID  string `json:"core_id"`
+	Address string `json:"address"`
 	Machine string `json:"machine"`
-	Session string `json:"session"`
-	Pane    string `json:"pane"`
+	Session string `json:"session,omitempty"`
+	Pane    string `json:"pane,omitempty"`
 	Role    string `json:"role"`
 }
 
@@ -95,17 +97,20 @@ type WakeRef struct {
 
 // WakeCovered is one presentation-consumed identity; it is pruned only after canonical closure is established.
 type WakeCovered struct {
-	Task     string `json:"task"`
-	ID       string `json:"id"`
-	Revision string `json:"revision,omitempty"`
+	InputRevision string `json:"input_revision,omitempty"`
+	Task          string `json:"task"`
+	ID            string `json:"id"`
+	Revision      string `json:"revision,omitempty"`
 }
 
 type WakeReceipt struct {
-	Fingerprint string `json:"fingerprint"`
-	Generation  int    `json:"generation"`
-	At          string `json:"at"`
-	Result      string `json:"result"`
-	Delivery    string `json:"delivery,omitempty"`
+	Boundary    *Boundary     `json:"boundary,omitempty"`
+	Accepted    []WakeCovered `json:"accepted,omitempty"`
+	Fingerprint string        `json:"fingerprint"`
+	Generation  int           `json:"generation"`
+	At          string        `json:"at"`
+	Result      string        `json:"result"`
+	Delivery    string        `json:"delivery,omitempty"`
 }
 
 // WakeDecision is one decision (an open question owed to this coordinator) a prompt named, by task, obligation and
@@ -179,7 +184,7 @@ var wakeSyncDir = func(dir string) error {
 }
 
 func (w *Wake) Endpoint() [3]string {
-	return [3]string{w.Recipient.Machine, w.Recipient.Session, w.Recipient.Pane}
+	return [3]string{w.Recipient.Machine, w.Recipient.CoreID, w.Recipient.Address}
 }
 
 // IsOutstanding reports an episode that may have a prompt in the recipient's pane: claimed, intent, submitted, or
@@ -227,7 +232,7 @@ func NewWake(s *store.Store, endpoint [3]string, incarnation json.RawMessage) (*
 	return &Wake{
 		Schema:       WakeSchema,
 		Installation: installation,
-		Recipient:    WakeRecipient{Machine: endpoint[0], Session: endpoint[1], Pane: endpoint[2], Role: "coordinator"},
+		Recipient:    WakeRecipient{Machine: endpoint[0], CoreID: endpoint[1], Address: endpoint[2], Role: "coordinator"},
 		Incarnation:  incarnation,
 		Covered:      []WakeCovered{},
 		Decisions:    []WakeDecision{},
@@ -321,7 +326,7 @@ func readWake(s *store.Store, inst installation, endpoint [3]string) (*Wake, Wak
 		return nil, status
 	}
 	if w.Recipient.Role != "coordinator" || w.Endpoint() != endpoint {
-		return nil, WakeStatus{State: WakeBlocked, Path: path, Diagnostic: fmt.Sprintf("%s records another recipient (%s %s on %s); inspect it with %s. Nothing is submitted to this recipient until it is resolved.", path, w.Recipient.Session, w.Recipient.Pane, w.Recipient.Machine, wakeShow)}
+		return nil, WakeStatus{State: WakeBlocked, Path: path, Diagnostic: fmt.Sprintf("%s records another recipient (%s %s on %s); inspect it with %s. Nothing is submitted to this recipient until it is resolved.", path, w.Recipient.CoreID, w.Recipient.Address, w.Recipient.Machine, wakeShow)}
 	}
 	return w, status
 }
@@ -377,6 +382,12 @@ func readWakeFile(inst installation, path string) (*Wake, WakeStatus) {
 // WriteWake replaces w's sidecar atomically: temp file, fsync, rename, directory sync. A *WakeSyncError means the
 // rename happened but its durability is unknown; CommitWake handles that by reloading.
 func WriteWake(s *store.Store, w *Wake) error {
+	if err := s.CheckWritable(); err != nil {
+		return err
+	}
+	if err := archivePriorWakeConsumptions(s, w); err != nil {
+		return err
+	}
 	return writeWakeAt(s.WakePath(w.Endpoint()), w)
 }
 
@@ -802,9 +813,9 @@ func buildBoundary(inst installation, w *Wake, included, omitted []WakeCovered) 
 
 func normalizeCovered(items []WakeCovered) []WakeCovered {
 	out := []WakeCovered{}
-	seen := map[[3]string]bool{}
+	seen := map[[4]string]bool{}
 	for _, c := range items {
-		k := [3]string{c.Task, c.ID, c.Revision}
+		k := [4]string{c.Task, c.ID, c.Revision, c.InputRevision}
 		if seen[k] {
 			continue
 		}
@@ -818,7 +829,10 @@ func normalizeCovered(items []WakeCovered) []WakeCovered {
 		if out[i].ID != out[j].ID {
 			return out[i].ID < out[j].ID
 		}
-		return out[i].Revision < out[j].Revision
+		if out[i].Revision != out[j].Revision {
+			return out[i].Revision < out[j].Revision
+		}
+		return out[i].InputRevision < out[j].InputRevision
 	})
 	return out
 }
@@ -993,20 +1007,27 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
+	actor, err := app.ObserveTaskActor(s, ctx)
+	if err != nil {
+		return nil, err
+	}
 	caller, err := callerEndpoint(s, ctx)
 	if err != nil {
 		return nil, err
 	}
 	host, _ := s.Machine()
-	target := [3]string{host.Canonical(b.Recipient.Machine), b.Recipient.Session, b.Recipient.Pane}
+	target := [3]string{host.Canonical(b.Recipient.Machine), b.Recipient.CoreID, b.Recipient.Address}
 	if target != caller {
-		return nil, fmt.Errorf("The boundary names another recipient (%s %s on %s); only that coordinator pane may consume it. Nothing was consumed.", b.Recipient.Session, b.Recipient.Pane, b.Recipient.Machine)
+		return nil, fmt.Errorf("The boundary names another recipient (%s %s on %s); only that coordinator pane may consume it. Nothing was consumed.", b.Recipient.CoreID, b.Recipient.Address, b.Recipient.Machine)
 	}
 	unlock, err := lockWakeRecipient(s, caller)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	if err = s.CheckWritable(); err != nil {
+		return nil, err
+	}
 	w, status := readWake(s, inst, caller)
 	switch status.State {
 	case WakeBlocked:
@@ -1056,6 +1077,9 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		}
 		view.Set("prior_result", r.Result)
 		view.Set("prior_at", r.At)
+		if err := archiveWakeConsumptions(s, w); err != nil {
+			return nil, fmt.Errorf("wake consumption is already committed, but delivery receipt retention failed: %w; repair storage and retry this same consumption", err)
+		}
 		return finish("repeated"), nil
 	}
 	if b.Generation < w.Generation {
@@ -1088,6 +1112,9 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 			open[taskID] = nil
 			return nil, "task record is unreadable: " + err.Error()
 		}
+		if err := app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
+			return nil, err.Error()
+		}
 		obligations, err := OpenObligations(s, task)
 		if err != nil {
 			open[taskID] = nil
@@ -1106,6 +1133,7 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		return ids, ""
 	}
 	rejected := []any{}
+	accepted := []WakeCovered{}
 	existing := map[[2]string]bool{}
 	for _, c := range w.Covered {
 		existing[[2]string{c.Task, c.ID}] = true
@@ -1115,6 +1143,12 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 		if why == "" && !ids[c.ID] {
 			why = "not an open obligation of that task owed to this coordinator"
 		}
+		if why == "" {
+			task, err := s.ReadTask(c.Task)
+			if err != nil || (c.InputRevision != "" && ObligationRevision(task, c.ID) != c.InputRevision) {
+				why = "business input revision changed since boundary"
+			}
+		}
 		if why != "" {
 			row := ordjson.NewObject()
 			row.Set("task", c.Task)
@@ -1123,6 +1157,7 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 			rejected = append(rejected, row)
 			continue
 		}
+		accepted = append(accepted, c)
 		if existing[[2]string{c.Task, c.ID}] {
 			continue
 		}
@@ -1132,12 +1167,15 @@ func Consume(s *store.Store, ctx *ordjson.Object, token string) (*ordjson.Object
 	now := store.Now()
 	w.Episode.Phase = WakeConsumed
 	w.Episode.ConsumedAt = now
-	w.AddReceipt(WakeReceipt{Fingerprint: fingerprint, Generation: w.Generation, At: now, Result: "consumed", Delivery: w.Episode.Delivery})
+	w.AddReceipt(WakeReceipt{Fingerprint: fingerprint, Generation: w.Generation, At: now, Result: "consumed", Delivery: w.Episode.Delivery, Boundary: b, Accepted: accepted})
 	persisted, err := CommitWake(s, w)
 	if err != nil {
 		return nil, fmt.Errorf("the receipt could not be persisted: %v", err)
 	}
 	w = persisted
+	if err := archiveWakeConsumptions(s, w); err != nil {
+		return nil, fmt.Errorf("wake consumption was committed, but delivery receipt retention failed: %w; the saved wake is retained; repair storage and retry this same consumption", err)
+	}
 	view.Set("rejected", rejected)
 	return finish("consumed"), nil
 }
@@ -1289,10 +1327,10 @@ func deliveryStamped(s *store.Store, episode *WakeEpisode) (bool, error) {
 func recipientView(w *Wake) *ordjson.Object {
 	row := ordjson.NewObject()
 	row.Set("machine", w.Recipient.Machine)
-	row.Set("session", w.Recipient.Session)
-	row.Set("pane", w.Recipient.Pane)
+	row.Set("core_id", w.Recipient.CoreID)
+	row.Set("address", w.Recipient.Address)
 	row.Set("role", w.Recipient.Role)
-	row.Set("key", store.RegistrationKey(store.Endpoint{Machine: w.Recipient.Machine, Session: w.Recipient.Session, Pane: w.Recipient.Pane}))
+	row.Set("key", store.RegistrationKey(store.Endpoint{Machine: w.Recipient.Machine, Schema: 2, Backend: "hc", CoreID: w.Recipient.CoreID, Address: w.Recipient.Address}))
 	return row
 }
 
@@ -1496,6 +1534,7 @@ func currentCoverage(host machine.Identity, endpoint [3]string, tasks []showTask
 			c := WakeCovered{Task: t.id, ID: fmt.Sprint(id)}
 			if ref, ok := o.Get("ref"); ok && ref != nil {
 				c.Revision = fmt.Sprint(ref)
+				c.InputRevision = ObligationRevision(t.task, c.ID)
 			}
 			included = append(included, c)
 		}
@@ -1525,14 +1564,7 @@ func omittedList(gaps []coverageGap) []any {
 // legacyPrompts lists prompt attempts to endpoint recorded in returns.json that no episode or receipt accounts for,
 // still submitted or uncertain: what an older or non-adopted helper sent outside the wake protocol.
 func legacyPrompts(host machine.Identity, endpoint [3]string, tasks []showTask, accounted map[string]bool) []any {
-	route := ordjson.NewObject()
-	route.Set("machine", endpoint[0])
-	route.Set("session", endpoint[1])
-	route.Set("pane", endpoint[2])
-	keys := map[any]bool{}
-	for _, k := range routeKeys(host, route) {
-		keys[k] = true
-	}
+	keys := map[any]bool{store.RegistrationKey(store.Endpoint{Schema: 2, Backend: "hc", Machine: endpoint[0], CoreID: endpoint[1], Address: endpoint[2]}): true}
 	out := []any{}
 	for _, t := range tasks {
 		for _, d := range t.deliveries {

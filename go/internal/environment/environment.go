@@ -186,11 +186,11 @@ func pick(o *ordjson.Object, keys []string) *ordjson.Object {
 }
 
 var (
-	launchKeys     = []string{"via", "runner", "project", "pane_created"}
-	processKeys    = []string{"pid", "name", "shell_pid", "observed_at"}
+	launchKeys     = []string{"via", "runner", "project"}
+	processKeys    = []string{"pid", "name", "foreground_pid", "process_group", "observed_at"}
 	readinessKeys  = []string{"ready", "checked", "waited_s", "reason"}
 	stopKeys       = []string{"action", "result", "reasons"}
-	serviceTopKeys = []string{"id", "name", "source", "kind", "state", "url", "port", "pane", "workspace", "label", "intent_at", "launched_at", "stopped_at", "exit_verified", "by"}
+	serviceTopKeys = []string{"id", "name", "source", "kind", "state", "url", "port", "endpoint", "label", "intent_at", "launched_at", "stopped_at", "exit_verified", "by"}
 	endpointKeys   = []string{"id", "url", "port", "local", "label", "ownership", "claimed_ownership", "state", "stale_reason", "config_stale", "observed_at", "recorded_by"}
 	listenerKeys   = []string{"pid", "owner"}
 	logKeys        = []string{"id", "path", "scope", "label", "ownership", "state", "bytes", "modified_at", "observed_at"}
@@ -312,7 +312,7 @@ func View(s *store.Store, taskID, sumctlPath string, limit int) (*ordjson.Object
 		result.Set("present", false)
 		result.Set("ok", true)
 		result.Set("commands", commands)
-		result.Set("note", "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container.")
+		result.Set("note", "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, terminal, or container.")
 		return result, nil
 	}
 

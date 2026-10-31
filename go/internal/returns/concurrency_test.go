@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"crypto/sha256"
+	"encoding/hex"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
@@ -211,30 +214,20 @@ func (h *helperProc) kill(t *testing.T) {
 // GOMAXPROCS instead of assuming an idle `go test` of this package alone.
 func (l *passLab) awaitHeld(h *helperProc, verb, pane string) {
 	l.t.Helper()
-	path := filepath.Join(l.root, "held-"+verb+"-"+pane)
-	budget := helperStartBudget()
-	deadline := time.Now().Add(budget)
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if _, err := os.Stat(path); err == nil {
-			return
-		}
-		select {
-		case err := <-h.done:
-			h.done <- err
-			if _, statErr := os.Stat(path); statErr == nil {
-				return
-			}
-			l.t.Fatalf("helper exited before holding %s for %s (%s): wait=%v; calls = %v; helper_out = %s",
-				verb, pane, helperExitReason(h), err, l.calls(), helperOutDump(h))
-		case <-ticker.C:
-			if time.Now().After(deadline) {
-				l.t.Fatalf("the fake Herdr never held %s for %s after %s (GOMAXPROCS=%d, %s); calls = %v; helper_out = %s",
-					verb, pane, budget, runtime.GOMAXPROCS(0), helperExitReason(h), l.calls(), helperOutDump(h))
-			}
-		}
+	hold, ok := l.holds[verb+"/"+pane]
+	if !ok {
+		l.t.Fatalf("no native hold for %s/%s", verb, pane)
 	}
+	select {
+	case <-hold.entered:
+		return
+	case err := <-h.done:
+		h.done <- err
+		l.t.Fatalf("helper exited before native hold: %v %s", err, helperOutDump(h))
+	case <-time.After(helperStartBudget()):
+		l.t.Fatal("native request did not reach held boundary")
+	}
+
 }
 
 func helperExitReason(h *helperProc) string {
@@ -256,10 +249,12 @@ func helperOutDump(h *helperProc) string {
 	return text
 }
 
-func (l *passLab) release(pane string) {
+func (l *passLab) release(alias string) {
 	l.t.Helper()
-	if err := os.WriteFile(filepath.Join(l.root, "release-"+pane), nil, 0o600); err != nil {
-		l.t.Fatal(err)
+	for _, verb := range []string{"get", "prompt"} {
+		if hold, ok := l.holds[verb+"/"+alias]; ok {
+			hold.release()
+		}
 	}
 }
 
@@ -331,11 +326,15 @@ func (l *passLab) mutate(id string, change func(task *ordjson.Object)) {
 	}
 }
 
-func prompts(calls [][]string, pane string) []string {
-	var out []string
-	for _, c := range calls {
-		if len(c) > 4 && c[1] == "agent" && c[2] == "prompt" && c[3] == pane {
-			out = append(out, c[4])
+func prompts(calls []hctest.Call, alias string) []string {
+	sum := sha256.Sum256([]byte(alias))
+	address := "t" + hex.EncodeToString(sum[:6])
+	out := []string{}
+	for _, call := range calls {
+		if call.Method == "terminal.send" && call.Params["terminal"] == address {
+			if text, ok := call.Params["text"].(string); ok {
+				out = append(out, text)
+			}
 		}
 	}
 	return out
@@ -510,7 +509,11 @@ func TestChangeDuringObservationSendsNothing(t *testing.T) {
 			questions, _ := task.Get("questions")
 			questions.([]any)[0].(*ordjson.Object).Set("status", "applied")
 		}},
-		{"rebound", func(task *ordjson.Object) { task.Set("pane", "w1:p9") }},
+		{"rebound", func(task *ordjson.Object) {
+			route := asNativeRoute(task)
+			route.Set("address", "t999")
+			task.Set("worker_endpoint", route)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l := newPassLab(t)
@@ -610,10 +613,7 @@ func (l *passLab) holdRecipient(session, pane, cwd string) func() {
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	route := ordjson.NewObject()
-	for k, v := range map[string]any{"machine": l.host, "session": session, "pane": pane, "cwd": cwd} {
-		route.Set(k, v)
-	}
+	route := l.nativeEndpoint(session, pane).Object()
 	unlock, err := LockRecipient(other, context.Background(), route)
 	if err != nil {
 		l.t.Fatal(err)
@@ -667,14 +667,14 @@ func TestDeregistrationDuringObservationIsRefusedAtTheClaim(t *testing.T) {
 		"w1:p1": l.pane("idle", l.worktree(a))}})
 	h := l.startHelper("a", []string{a}, "worker")
 	l.awaitHeld(h, "get", "w1:p1")
-	key := store.RegistrationKey(store.Endpoint{Machine: l.host, Session: "lab", Pane: "w1:p1"})
+	key := store.RegistrationKey(l.nativeEndpoint("lab", "w1:p1"))
 	if err := os.Remove(filepath.Join(l.s.Sessions, key+".json")); err != nil {
 		t.Fatal(err)
 	}
 	l.release("w1:p1")
 	result := h.result(t)
-	if got := states(result)["w1:p1"]; got != "not-delivered" {
-		t.Fatalf("state = %s (%v), want not-delivered", got, result)
+	if got := states(result)["w1:p1"]; got != "refused" {
+		t.Fatalf("state = %s (%v), want refused", got, result)
 	}
 	if n := countCalls(l.calls(), "prompt"); n != 0 {
 		t.Fatalf("prompts = %d, want none to a deregistered pane", n)

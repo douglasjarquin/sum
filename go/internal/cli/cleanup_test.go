@@ -26,7 +26,7 @@ func TestCleanupUnknownFlagsAreUsageErrorsBeforeCleanup(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := cleanupUsageLab(t)
 			stdout, stderr, err := runCleanupCLI(t, home, tc.args...)
 			if err == nil {
@@ -53,11 +53,11 @@ func TestCleanupCommands(t *testing.T) {
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid task", args: []string{"cleanup", "t-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
-		{name: "valid task after dashdash", args: []string{"cleanup", "--", "t-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
-		{name: "valid --apply --reviewer-only --number", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply", "--reviewer-only", "--number", "12"}, domainErr: "Herdr pane"},
-		{name: "valid --apply= --number=", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply=true", "--reviewer-only=true", "--number=12"}, domainErr: "Herdr pane"},
-		{name: "valid with herdr", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid task", args: []string{"cleanup", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
+		{name: "valid task after dashdash", args: []string{"cleanup", "--", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
+		{name: "valid --apply --reviewer-only --number", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply", "--reviewer-only", "--number", "12"}, domainErr: "HC session"},
+		{name: "valid --apply= --number=", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply=true", "--reviewer-only=true", "--number=12"}, domainErr: "HC session"},
+		{name: "valid with herdr", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply"}, herdr: true, domainErr: "Task belongs to another machine"},
 		{name: "unknown flag", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
 		{name: "unknown flag before task", args: []string{"cleanup", "--unexpected", "t-aaaaaaaaaaaa"}, usage: true, unknown: true},
 		{name: "extra positional", args: []string{"cleanup", "t-aaaaaaaaaaaa", "extra"}, usage: true},
@@ -70,9 +70,9 @@ func TestCleanupCommands(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := cleanupUsageLab(t)
 			if tc.herdr {
-				herdrEnv(t, home)
+				nativeEnv(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			stdout, stderr, err := runCleanupCLI(t, home, tc.args...)
 			switch {
@@ -101,7 +101,7 @@ func TestCleanupCommands(t *testing.T) {
 func cleanupUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
 	before = readCleanupTask(t, home)
 	return home, before

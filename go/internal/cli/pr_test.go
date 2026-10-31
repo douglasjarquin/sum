@@ -29,7 +29,7 @@ func TestPRUnknownFlagsAreUsageErrorsBeforePR(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := prUsageLab(t)
 			stdout, stderr, err := runPRCLI(t, home, tc.args...)
 			if err == nil {
@@ -56,23 +56,23 @@ func TestPRCommands(t *testing.T) {
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid reconcile --number --repo --replace", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--repo", "owner/repo", "--replace"}, domainErr: "Herdr pane"},
-		{name: "valid reconcile --number= --repo=", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number=12", "--repo=owner/repo", "--replace=true"}, domainErr: "Herdr pane"},
-		{name: "valid reconcile with herdr", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid reconcile --accept-base-branch", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--accept-base-branch"}, domainErr: "Herdr pane"},
-		{name: "valid evidence --run --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, domainErr: "Herdr pane"},
-		{name: "valid evidence --run= --visibility=", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run=r1", "--visibility=public"}, domainErr: "Herdr pane"},
-		{name: "valid evidence every flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--scenario", "web", "--scenario", "cli", "--evidence-root", "/tmp/promoted", "--verification-run", "20260906T010203Z-abcd", "--dry-run", "--timeout", "5", "--allow-head-mismatch", "--replace-foreign-block"}, domainErr: "Herdr pane"},
-		{name: "valid evidence without --run or --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
-		{name: "valid evidence with herdr", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid reconcile --number --repo --replace", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--repo", "owner/repo", "--replace"}, domainErr: "HC session"},
+		{name: "valid reconcile --number= --repo=", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number=12", "--repo=owner/repo", "--replace=true"}, domainErr: "HC session"},
+		{name: "valid reconcile with herdr", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12"}, herdr: true, domainErr: "PR observation for #12 is uncertain"},
+		{name: "valid reconcile --accept-base-branch", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--accept-base-branch"}, domainErr: "HC session"},
+		{name: "valid evidence --run --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, domainErr: "HC session"},
+		{name: "valid evidence --run= --visibility=", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run=r1", "--visibility=public"}, domainErr: "HC session"},
+		{name: "valid evidence every flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--scenario", "web", "--scenario", "cli", "--evidence-root", "/tmp/promoted", "--verification-run", "20260906T010203Z-abcd", "--dry-run", "--timeout", "5", "--allow-head-mismatch", "--replace-foreign-block"}, domainErr: "HC session"},
+		{name: "valid evidence without --run or --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
+		{name: "valid evidence with herdr", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, herdr: true, domainErr: "pr evidence requires a reconciled PR"},
 		{name: "pr missing subcommand", args: []string{"pr"}, usage: true},
 		{name: "reconcile missing --number", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa"}, usage: true},
 		{name: "reconcile --number 0", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "0"}, usage: true},
 		{name: "reconcile unknown flag", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--unexpected"}, usage: true, unknown: true},
 		{name: "reconcile extra positional", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "extra"}, usage: true},
 		{name: "reconcile invalid --number", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "nope"}, usage: true},
-		{name: "evidence without --run", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--visibility", "public"}, domainErr: "Herdr pane"},
-		{name: "evidence without --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1"}, domainErr: "Herdr pane"},
+		{name: "evidence without --run", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--visibility", "public"}, domainErr: "HC session"},
+		{name: "evidence without --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1"}, domainErr: "HC session"},
 		{name: "evidence invalid --timeout", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--timeout", "nope"}, usage: true},
 		{name: "evidence unknown flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--unexpected"}, usage: true, unknown: true},
 	}
@@ -80,9 +80,9 @@ func TestPRCommands(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := prUsageLab(t)
 			if tc.herdr {
-				herdrEnv(t, home)
+				nativeEnv(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			stdout, stderr, err := runPRCLI(t, home, tc.args...)
 			switch {
@@ -111,7 +111,7 @@ func TestPRCommands(t *testing.T) {
 func prUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "reported", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "reported", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": {"text": "done"}, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship"}`)
 	before = readNamedTask(t, home, "t-aaaaaaaaaaaa")
 	return home, before

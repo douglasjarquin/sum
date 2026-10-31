@@ -1,320 +1,292 @@
 package hookstatus
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"time"
-
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
+	"os"
+	"path/filepath"
+	"reflect"
+	"syscall"
 )
 
-func writeHealth(s *store.Store, increments map[string]int, changes *ordjson.Object) (*ordjson.Object, error) {
-	unlock, err := s.Lock()
+func scopeKey(s *store.Store, e store.Endpoint) string {
+	hash := sha256.Sum256([]byte(s.Root + "\x00" + e.CoreID + "\x00" + e.Session))
+	return hex.EncodeToString(hash[:12])
+}
+func scopeLock(s *store.Store, e store.Endpoint, kind string) (func(), error) {
+	if err := os.MkdirAll(filepath.Join(s.Home, HookDir), 0700); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(filepath.Join(s.Root, "observer-"+scopeKey(s, e)+"-"+kind+".lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
-	defer unlock()
+	if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		return nil, fmt.Errorf("another observer owns this installation/core/session scope: %w", err)
+	}
+	return func() { syscall.Flock(int(file.Fd()), syscall.LOCK_UN); file.Close() }, nil
+}
+func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	if err := settings.SetNativeEventsEnabled(s, true); err != nil {
+		return nil, err
+	}
+	changes := ordjson.NewObject()
+	changes.Set("disabled_at", nil)
+	if _, err := writeHealth(s, nil, changes); err != nil {
+		return nil, err
+	}
+	return ensureObserver(s, store.EndpointFromContext(ctx), runtimeRoot, sumctlPath, true)
+}
+func ensureObserver(s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath string, reconcile bool) (*ordjson.Object, error) {
+	if err := e.Validate(); err != nil {
+		return nil, err
+	}
+	release, err := scopeLock(s, e, "launch")
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	leaseCtx, cancelLease := context.WithTimeout(context.Background(), returns.DefaultPassBudget)
+	defer cancelLease()
+	releaseLease, err := s.DeliveryShared(leaseCtx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseLease()
+	if err = s.CheckWritable(); err != nil {
+		return nil, err
+	}
 	health, err := readHealth(s)
 	if err != nil {
 		return nil, err
 	}
-	for key, amount := range increments {
-		health.Set(key, jsonInt(intField(health, key)+amount))
-	}
-	if changes != nil {
-		for _, k := range changes.Keys() {
-			v, _ := changes.Get(k)
-			health.Set(k, v)
+	client := hcclient.Client{Socket: e.Socket, CoreID: e.CoreID}
+	args := []string{sumctlPath, "--home", s.Root, "hook", "observe", "--core-id", e.CoreID, "--session", e.Session, "--socket", e.Socket}
+	prior, _ := health.Get("observer")
+	old := store.EndpointFromContext(asObject(prior))
+	if old.CoreID != "" {
+		if old.CoreID != e.CoreID || old.Session != e.Session {
+			return nil, fmt.Errorf("this installation observes one HC core/session (%s/%s); bind the recipient in that scope, or explicitly disable automatic native events and use manual pump before binding another scope", old.CoreID, old.Session)
+		}
+		terminal, getErr := client.Get(context.Background(), old.Address)
+		if getErr == nil && observerProof(health, old, terminal) == nil && reflect.DeepEqual(terminal.Argv, args) {
+			changes := ordjson.NewObject()
+			changes.Set("enabled", true)
+			changes.Set("degraded", nil)
+			return writeHealthForAttempt(s, old.Attempt, changes)
+		}
+		if getErr == nil && terminal.State == "live" {
+			return nil, fmt.Errorf("recorded observer process or receipt changed; explicit recovery is required")
+		}
+		if getErr != nil {
+			return nil, fmt.Errorf("recorded observer cannot be observed; no replacement launched: %w", getErr)
 		}
 	}
-	errors := asList(func() any { v, _ := health.Get("errors"); return v }())
-	if len(errors) > HookErrors {
-		errors = errors[len(errors)-HookErrors:]
+	effect, _ := health.Get("launch_effect")
+	if effect == "in-flight" || effect == "uncertain" || effect == "claimed" || effect == "unknown" {
+		return nil, fmt.Errorf("observer launch is uncertain; inspect exact native scope before replacement")
 	}
-	health.Set("errors", errors)
-	health.Set("updated_at", store.Now())
-	if err := ordjson.WriteFile(filepath.Join(s.Home, HookDir, HookHealth), health); err != nil {
-		return nil, err
-	}
-	return health, nil
-}
-
-func intField(o *ordjson.Object, key string) int {
-	v, _ := o.Get(key)
-	switch n := v.(type) {
-	case json.Number:
-		i, _ := n.Int64()
-		return int(i)
-	case int:
-		return n
-	}
-	return 0
-}
-
-func Enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
-	return enable(s, ctx, runtimeRoot, sumctlPath, true)
-}
-
-func enable(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, reconcile bool) (*ordjson.Object, error) {
-	if err := app.RequireCoordinator(s, ctx); err != nil {
-		return nil, err
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
+	dirty, err := os.OpenFile(filepath.Join(s.Home, HookDir, "dirty"), os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := herdrclient.EnsureVersion(herdrPath, contract.HerdrCLI); err != nil {
-		return nil, err
-	}
-	pluginID, err := hookPluginID(s)
+	dirty.Close()
+	attempt, err := beginObserverLaunch(s, health, e, args)
 	if err != nil {
 		return nil, err
 	}
-	directory := filepath.Join(s.Home, HookDir, "plugin")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return nil, err
-	}
-	manifest, err := hookManifest(s, sumctlPath)
+	instance, err := s.Instance()
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(directory, "herdr-plugin.toml")
-	changed := true
-	if data, readErr := os.ReadFile(path); readErr == nil {
-		changed = string(data) != manifest
-	}
-	if changed {
-		if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
-			return nil, err
+	result, runErr := client.Run(context.Background(), hcclient.RunParams{Argv: args, Cwd: runtimeRoot, NoParent: true, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: map[string]string{"sum.installation": instance, "sum.kind": "observer", "sum.scope": scopeKey(s, e), "sum.attempt": attempt}})
+	if runErr != nil {
+		effect := "uncertain"
+		if native, ok := runErr.(*hcclient.Error); ok && native.Effect != hcclient.Uncertain {
+			effect = "not-submitted"
 		}
+		changes := ordjson.NewObject()
+		changes.Set("launch_effect", effect)
+		changes.Set("degraded", runErr.Error())
+		_, _ = writeHealthForAttempt(s, attempt, changes)
+		return nil, runErr
 	}
-	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
-	linked, err := herdrclient.Call(herdrPath, session, 15*time.Second, "plugin", "link", directory)
-	if err != nil {
-		return nil, err
-	}
-	linkedObj := asObject(linked)
-	plugin := asObject(func() any {
-		if linkedObj == nil {
-			return nil
-		}
-		if v, ok := linkedObj.Get("plugin"); ok {
-			return v
-		}
-		return linkedObj
-	}())
-	linkedID := asString(func() any { v, _ := plugin.Get("plugin_id"); return v }())
-	if linkedID != pluginID {
-		return nil, fmt.Errorf("Herdr linked %q instead of %s; inspect %s.", linkedID, pluginID, path)
-	}
-	if enabled, _ := plugin.Get("enabled"); !truthy(enabled) {
-		if _, err := herdrclient.Call(herdrPath, session, 10*time.Second, "plugin", "enable", pluginID); err != nil {
-			return nil, err
-		}
-	}
-	from := ordjson.NewObject()
-	from.Set("session", session)
-	from.Set("pane", func() any { v, _ := ctx.Get("pane"); return v }())
+	observer := e
+	observer.Role = "observer"
+	observer.Task = ""
+	observer.Attempt = attempt
+	observer.BindingGeneration = 1
+	observer.Address = result.Address
+	observer.CreatedMS = result.CreatedMS
 	changes := ordjson.NewObject()
-	changes.Set("enabled", true)
-	changes.Set("plugin_id", pluginID)
-	changes.Set("manifest_sha256", sha256Text(manifest))
-	changes.Set("manifest_path", path)
-	cmd := make([]any, 0)
-	for _, c := range hookCommand(s, sumctlPath) {
-		cmd = append(cmd, c)
-	}
-	changes.Set("command", cmd)
-	changes.Set("linked_at", store.Now())
-	changes.Set("linked_from", from)
-	changes.Set("disabled_at", nil)
-	changes.Set("degraded", nil)
-	warnings, has := plugin.Get("warnings")
-	if !has {
-		warnings = []any{}
-	}
-	changes.Set("warnings", warnings)
-	if _, err := writeHealth(s, nil, changes); err != nil {
+	changes.Set("observer", observer.Object())
+	changes.Set("launch_effect", "submitted")
+	changes.Set("degraded", "observer startup is unconfirmed; native helper creation alone is not readiness")
+	out, err := writeHealthForAttempt(s, attempt, changes)
+	if err != nil {
 		return nil, err
 	}
-	var reconciliation *ordjson.Object
 	if reconcile {
-		reconciliation, err = returns.Pump(s, returns.PumpOpts{
-			RuntimeRoot: runtimeRoot,
-			SumctlPath:  sumctlPath,
-			Ctx:         ctx,
-			Inline:      true,
-		})
-		if err != nil {
-			return nil, err
-		}
+		_, _ = Reconcile(context.Background(), s, e, runtimeRoot, sumctlPath)
 	}
-	events := make([]any, len(HookEvents))
-	for i, e := range HookEvents {
-		events[i] = e
-	}
-	result := ordjson.NewObject()
-	result.Set("plugin_id", pluginID)
-	result.Set("manifest", path)
-	result.Set("manifest_changed", changed)
-	result.Set("command", cmd)
-	result.Set("events", events)
-	result.Set("warnings", warnings)
-	if reconcile {
-		result.Set("reconciliation", reconciliation)
-		result.Set("note", "Linked live without stopping Herdr. Registration is user-global; the handler acts only on panes recorded by this instance in the event's own Herdr session. Startup hooks do not run at link time, so one bounded reconciliation ran now. Disabling or a handler failure returns to the synchronous ask/report path and `inbox --live`; nothing stops.")
-	} else {
-		result.Set("note", "Linked live without stopping Herdr. Registration is user-global; the handler acts only on panes recorded by this instance in the event's own Herdr session. Coordinator init already completed its bounded reconciliation pass. Disabling or a handler failure returns to the synchronous ask/report path and `inbox --live`; nothing stops.")
-	}
-	return result, nil
+	return out, nil
 }
-
 func EnableByDefault(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, reconcile bool) *ordjson.Object {
-	enabled, hasPreference, err := settings.NativeEventsPreference(s)
-	if err == nil && !hasPreference {
-		if health, healthErr := readHealth(s); healthErr == nil {
-			if legacyDisabled(health) {
-				err = settings.SetNativeEventsEnabled(s, false)
-				if err == nil {
-					enabled, hasPreference = false, true
-				}
+	enabled, present, err := settings.NativeEventsPreference(s)
+	if err == nil && present && !enabled {
+		row := ordjson.NewObject()
+		row.Set("enabled", false)
+		row.Set("skipped", true)
+		return row
+	}
+	if err == nil && !present {
+		if health, e := readHealth(s); e == nil {
+			if disabled, _ := health.Get("disabled_at"); disabled != nil {
+				_ = settings.SetNativeEventsEnabled(s, false)
+				row := ordjson.NewObject()
+				row.Set("enabled", false)
+				row.Set("skipped", true)
+				return row
 			}
-		} else {
-			err = healthErr
 		}
 	}
-	if err == nil && hasPreference && !enabled {
-		result := ordjson.NewObject()
-		result.Set("enabled", false)
-		result.Set("skipped", true)
-		result.Set("reason", "native event delivery was explicitly disabled in settings.json")
-		return result
-	}
+	var row *ordjson.Object
 	if err == nil {
-		if health, healthErr := readHealth(s); healthErr == nil {
-			healthEnabled, _ := health.Get("enabled")
-			if truthy(healthEnabled) {
-				current, currentErr := ManifestCurrent(s, sumctlPath)
-				if currentErr != nil {
-					err = currentErr
-				} else if current {
-					result := ordjson.NewObject()
-					result.Set("enabled", true)
-					result.Set("automatic", true)
-					result.Set("skipped", true)
-					result.Set("reason", "native event delivery is already enabled with the current manifest")
-					return result
-				}
-			}
-		} else {
-			err = healthErr
-		}
+		row, err = ensureObserver(s, store.EndpointFromContext(ctx), runtimeRoot, sumctlPath, reconcile)
 	}
-	if err == nil {
-		var view *ordjson.Object
-		view, err = enable(s, ctx, runtimeRoot, sumctlPath, reconcile)
-		if err == nil {
-			view.Set("automatic", true)
-			return view
-		}
+	if err != nil {
+		row = ordjson.NewObject()
+		row.Set("enabled", false)
+		row.Set("degraded", true)
+		row.Set("reason", err.Error())
 	}
-	reason := "automatic native event delivery could not be enabled: " + err.Error()
-	changes := ordjson.NewObject()
-	changes.Set("degraded", reason)
-	changes.Set("last_error", reason)
-	entry := ordjson.NewObject()
-	entry.Set("at", store.Now())
-	entry.Set("stage", "default-enable")
-	entry.Set("error", reason)
-	if health, readErr := readHealth(s); readErr == nil {
-		errors := asList(func() any { v, _ := health.Get("errors"); return v }())
-		errors = append(errors, entry)
-		if len(errors) > HookErrors {
-			errors = errors[len(errors)-HookErrors:]
-		}
-		changes.Set("errors", errors)
-	}
-	_, _ = writeHealth(s, nil, changes)
-	result := ordjson.NewObject()
-	result.Set("enabled", false)
-	result.Set("degraded", true)
-	result.Set("reason", reason)
-	return result
+	return row
 }
-
-func legacyDisabled(health *ordjson.Object) bool {
-	disabledAt, _ := health.Get("disabled_at")
-	if !truthy(disabledAt) {
-		return false
-	}
-	enabled, _ := health.Get("enabled")
-	if !truthy(enabled) {
-		return true
-	}
-	disabledTime, disabledOK := legacyTimestamp(disabledAt)
-	linkedAt, _ := health.Get("linked_at")
-	linkedTime, linkedOK := legacyTimestamp(linkedAt)
-	return disabledOK && linkedOK && disabledTime.After(linkedTime)
-}
-
-func legacyTimestamp(value any) (time.Time, bool) {
-	text, ok := value.(string)
-	if !ok || text == "" {
-		return time.Time{}, false
-	}
-	parsed, err := time.Parse(time.RFC3339Nano, text)
-	return parsed, err == nil
-}
-
 func Disable(s *store.Store, ctx *ordjson.Object, runtimeRoot string, unlink bool) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
-	pluginID, err := hookPluginID(s)
-	if err != nil {
+	if err := settings.SetNativeEventsEnabled(s, false); err != nil {
 		return nil, err
-	}
-	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
-	observed := observePlugin(runtimeRoot, session, pluginID)
-	var action any
-	if registered, _ := observed.Get("registered"); registered == true {
-		herdrPath, findErr := toolpath.Find(runtimeRoot, "herdr")
-		if findErr != nil {
-			return nil, findErr
-		}
-		verb := "disable"
-		if unlink {
-			verb = "unlink"
-		}
-		if _, err := herdrclient.Call(herdrPath, session, 10*time.Second, "plugin", verb, pluginID); err != nil {
-			return nil, err
-		}
-		if unlink {
-			action = "unlinked"
-		} else {
-			action = "disabled"
-		}
 	}
 	changes := ordjson.NewObject()
 	changes.Set("enabled", false)
 	changes.Set("disabled_at", store.Now())
-	changes.Set("degraded", nil)
-	if _, err := writeHealth(s, nil, changes); err != nil {
+	changes.Set("note", "delivery disabled; the observer exits on this ledger signal; explicit pump remains available")
+	health, err := writeHealth(s, nil, changes)
+	if err != nil {
 		return nil, err
 	}
-	result := ordjson.NewObject()
-	result.Set("plugin_id", pluginID)
-	result.Set("action", action)
-	result.Set("previously", observed)
-	result.Set("note", "Native delivery is off; saved returns keep accumulating and `inbox --live`, `init`, `bind`, and `pump` still deliver them. No work stopped.")
-	return result, nil
+	_ = markDirty(s)
+	return health, nil
+}
+func markDirty(s *store.Store) error {
+	file, err := os.OpenFile(filepath.Join(s.Home, HookDir, "dirty"), os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	_, err = file.WriteAt([]byte{1}, 0)
+	file.Close()
+	return err
+}
+
+func observerProof(record *ordjson.Object, current store.Endpoint, terminal hcclient.Terminal) error {
+	if value(record, "launch_attempt") != current.Attempt {
+		return fmt.Errorf("observer proof does not belong to the current launch intent")
+	}
+	var evidence incarnation.NativeEvidence
+	raw, _ := record.Get("observer_incarnation")
+	data, err := ordjson.MarshalCompact(raw)
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal(data, &evidence); err != nil {
+		return err
+	}
+	var receipt incarnation.NativeReceipt
+	raw, _ = record.Get("observer_receipt")
+	data, err = ordjson.MarshalCompact(raw)
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal(data, &receipt); err != nil {
+		return err
+	}
+	if !evidence.Endpoint.SameAuthority(current.Native()) || !receipt.Endpoint.SameAuthority(current.Native()) || receipt.Kind != "observer-start" || receipt.Attempt != current.Attempt || terminal.Address != current.Address || terminal.CreatedMS != current.CreatedMS || terminal.State != "live" || terminal.Keep || terminal.PID == nil || *terminal.PID != evidence.PID || terminal.Foreground == nil || evidence.Foreground == nil || !reflect.DeepEqual(terminal.Foreground, evidence.Foreground) {
+		return fmt.Errorf("observer process and matching scope receipt cannot be verified")
+	}
+	return nil
+}
+
+func beginObserverLaunch(s *store.Store, observed *ordjson.Object, e store.Endpoint, args []string) (string, error) {
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	attempt := "observer-" + hex.EncodeToString(nonce)
+	unlock, err := s.Lock()
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	if err = s.CheckWritable(); err != nil {
+		return "", err
+	}
+	current, err := readHealth(s)
+	if err != nil {
+		return "", err
+	}
+	for _, key := range []string{"observer", "observer_incarnation", "observer_receipt", "launch_attempt", "launch_effect"} {
+		a, _ := ordjson.MarshalCompact(value(observed, key))
+		b, _ := ordjson.MarshalCompact(value(current, key))
+		if string(a) != string(b) {
+			return "", fmt.Errorf("observer binding changed before launch claim; no helper launched")
+		}
+	}
+	if prior := value(current, "observer"); prior != nil {
+		retired := ordjson.NewObject()
+		for _, key := range []string{"observer", "observer_incarnation", "observer_receipt", "launch_attempt"} {
+			retired.Set(key, value(current, key))
+		}
+		retired.Set("retired_at", store.Now())
+		current.Set("retired_observers", append(asList(value(current, "retired_observers")), retired))
+	}
+	for _, key := range []string{"observer", "observer_incarnation", "observer_receipt"} {
+		current.Set(key, nil)
+	}
+	current.Set("connected_at", nil)
+	current.Set("snapshot_seq", nil)
+	current.Set("degraded", "observer launch claimed; startup is unconfirmed")
+	current.Set("launch_attempt", attempt)
+	current.Set("launch_effect", "in-flight")
+	current.Set("enabled", true)
+	current.Set("core_id", e.CoreID)
+	current.Set("session", e.Session)
+	current.Set("socket", e.Socket)
+	argv := make([]any, len(args))
+	for i, arg := range args {
+		argv[i] = arg
+	}
+	current.Set("argv", argv)
+	current.Set("updated_at", store.Now())
+	current.Set("schema", jsonInt(HookSchema))
+	if err = ordjson.WriteFile(filepath.Join(s.Home, HookDir, HookHealth), current); err != nil {
+		return "", err
+	}
+	return attempt, nil
 }

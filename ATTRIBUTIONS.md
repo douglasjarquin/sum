@@ -12,9 +12,12 @@ This page distinguishes conceptual inspiration, direct dependency, adapted code,
 
 ## Terminal and session runtime
 
-**[Herdr](https://github.com/herdrdev/herdr)** ([site](https://herdr.dev/)) is the terminal runtime sum is native to: pane, session, and worktree operations are Herdr's own mechanics, and sum deliberately lets an existing runtime own them instead of reimplementing process/session management.
+**[Herdr core](https://github.com/herdrdev/herdr-core)** ([site](https://herdr.dev/)) supplies the upstream HC terminal runtime and published JSON-RPC API used by Sum.
+HC owns terminal processes, while Git owns Sum's isolated worktrees.
+The active integration uses unmodified published HC 0.1.14 rather than reimplementing a terminal supervisor.
 
-**[Herdr Mesh](https://github.com/runchr-works/herdr-mesh)** supplied the early, concrete MCP bridge and the small shared pane/agent tool surface that sum's own Mesh builtin now implements natively. That credit stands even after internalizing ownership of the implementation.
+**[Herdr Mesh](https://github.com/runchr-works/herdr-mesh)** supplied the early concrete MCP bridge and shared pane/agent tool surface.
+That historical credit remains after retirement of Sum's custom terminal MCP and bridge in favor of upstream HC.
 
 **[Unpeel](https://unpeel.com/)** is a conceptual inspiration for **MCP pane/session management** and cross-harness coordination — not a claim that any implementation here was copied from it. Worth exploring if you want a more general take on coordinating multiple harnesses through MCP.
 

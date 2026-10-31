@@ -3,20 +3,20 @@ package prepare
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/brief"
-	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/environment"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
@@ -28,22 +28,16 @@ import (
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
+	"github.com/douglasjarquin/sum/go/internal/taskcheckout"
 	"github.com/douglasjarquin/sum/go/internal/verifycontract"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
+const LaunchUncertainPrefix = "Launch/prompt uncertain"
+
 const MaxText = 256 * 1024
 
 const baseFetchBound = 5 * time.Minute
-
-// A freshly created pane can report agent_pane_busy while its shell is still
-// coming up. That refusal is definite (nothing launched), so a bounded retry
-// is safe; uncertain launch errors are never retried.
-var (
-	agentPaneBusyWait = 15 * time.Second
-	agentPaneBusyPoll = 250 * time.Millisecond
-)
 
 func jsonInt(n int) json.Number { return json.Number(fmt.Sprint(n)) }
 
@@ -245,13 +239,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	if err := procedure.Check(args.RuntimeRoot); err != nil {
 		return nil, err
 	}
-	herdrPath, err := toolpath.Find(args.RuntimeRoot, "herdr")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := herdrclient.EnsureVersion(herdrPath, contract.HerdrCLI); err != nil {
-		return nil, err
-	}
 	repoArg, projectObj, err := project.ResolveTaskRepository(s, args.Repo, args.Project)
 	if err != nil {
 		return nil, err
@@ -325,10 +312,7 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		return nil, err
 	}
 	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
-	owner := ordjson.NewObject()
-	owner.Set("machine", host.ID)
-	owner.Set("session", session)
-	owner.Set("pane", nil)
+	owner := store.EndpointFromContext(ctx).Object()
 	attempt, err := reservations.NewAttempt("worker", owner, nil, store.Now(), "", nil)
 	if err != nil {
 		unlock()
@@ -353,8 +337,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	task.Set("brief", string(briefText))
 	task.Set("parent", ctx)
 	task.Set("session", session)
-	task.Set("pane", nil)
-	task.Set("workspace", nil)
 	task.Set("worktree", nil)
 	task.Set("questions", []any{})
 	task.Set("report", nil)
@@ -365,153 +347,339 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	task.Set("error", nil)
 	task.Set("admission", admission)
 	task.Set("execution", reservations.NewExecution(attempt))
+	intent, err := taskcheckout.Plan(s.Root, repo, tid, baseSHA)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	intentObject, err := ordjson.FromValue(intent)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	task.Set("checkout_intent", intentObject)
+	task.Set("prepare_operation_pid", jsonInt(os.Getpid()))
+	task.Set("preparation_approval", versions.ApprovedFingerprint(task))
+	task.Set("preparation_launch_sha256", preparationLaunchHash(task))
 	if err := s.SaveTask(task); err != nil {
 		unlock()
 		return nil, err
 	}
 	unlock()
 
-	branch := "sum/" + tid
-	created, err := herdrclient.Call(herdrPath, session, 30*time.Second, "worktree", "create", "--cwd", repo, "--branch", branch, "--base", baseSHA, "--label", "sum-"+tid, "--no-focus")
+	return completePreparation(s, args.RuntimeRoot, args.SumctlPath, tid, true)
+}
+
+func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath, taskID string) (*ordjson.Object, error) {
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	return completePreparation(s, runtimeRoot, sumctlPath, taskID, false)
+}
+
+type preparationClaim struct {
+	task      *ordjson.Object
+	intent    taskcheckout.Intent
+	operation string
+	snapshot  string
+	versions  string
+}
+
+func preparationLease(s *store.Store, tid string) (func() error, error) {
+	if err := s.CheckWritable(); err != nil {
+		return nil, err
+	}
+	path, err := s.TaskPath(tid)
 	if err != nil {
-		return failPrepare(s, tid, err)
+		return nil, err
 	}
-	createdObj := asObject(created)
-	rootPane := asObject(func() any { v, _ := createdObj.Get("root_pane"); return v }())
-	workspace := asObject(func() any { v, _ := createdObj.Get("workspace"); return v }())
-	worktreeObj := asObject(func() any { v, _ := createdObj.Get("worktree"); return v }())
-	if worktreeObj == nil && workspace != nil {
-		worktreeObj = asObject(func() any { v, _ := workspace.Get("worktree"); return v }())
-	}
-	paneID := asString(func() any { v, _ := rootPane.Get("pane_id"); return v }())
-	workspaceID := asString(func() any { v, _ := workspace.Get("workspace_id"); return v }())
-	worktreePath := asString(func() any { v, _ := worktreeObj.Get("path"); return v }())
-	worktreePath = resolvePath(worktreePath)
-	task.Set("pane", paneID)
-	task.Set("workspace", workspaceID)
-	task.Set("worktree", worktreePath)
-	actualRoot, err := runGit("-C", worktreePath, "rev-parse", "--show-toplevel")
+	file, err := os.OpenFile(filepath.Join(path, ".prepare.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
 	if err != nil {
-		return failPrepare(s, tid, err)
+		return nil, err
 	}
-	actualRoot = resolvePath(actualRoot)
-	actualHead, err := runGit("-C", worktreePath, "rev-parse", "HEAD")
+	if err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, fmt.Errorf("preparation for %s is already active; preserve its saved intent", tid)
+		}
+		return nil, err
+	}
+	release := func() error {
+		err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		closeErr := file.Close()
+		if err != nil {
+			return err
+		}
+		return closeErr
+	}
+	if err = s.CheckWritable(); err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+func preparationSnapshot(task *ordjson.Object) (string, error) {
+	worker, err := reservations.Worker(task)
 	if err != nil {
-		return failPrepare(s, tid, err)
+		return "", err
 	}
-	actualBranch, err := runGit("-C", worktreePath, "branch", "--show-current")
+	record := ordjson.NewObject()
+	for _, key := range []string{"status", "cleanup", "repairs", "machine", "branch", "base_branch", "base_branch_source", "worktree", "checkout_intent", "preparation_approval", "preparation_launch_sha256", "launch", "verification_policy", "brief_path", "project", "worker_endpoint", "prepare_operation_pid", "prepare_operation_id"} {
+		record.Set(key, policyField(task, key))
+	}
+	record.Set("approved_scope", versions.ApprovedFingerprint(task))
+	record.Set("worker", worker)
+	data, err := ordjson.MarshalCompact(record)
 	if err != nil {
-		return failPrepare(s, tid, err)
+		return "", err
 	}
-	if actualRoot == repo || actualRoot != worktreePath || actualHead != baseSHA || actualBranch != branch {
-		return failPrepare(s, tid, fmt.Errorf("Herdr returned a checkout that does not match the task. Work is preserved; inspect it manually."))
-	}
-	contractRoot, cleanupContract, err := verifycontract.MaterializeCommit(repo, baseSHA)
-	var policy *ordjson.Object
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+func preparationVersions(s *store.Store, tid string) (string, error) {
+	path, err := s.TaskPath(tid)
 	if err != nil {
-		policy = verifycontract.PolicyAtDispatchUnavailable(baseSHA, err.Error())
+		return "", err
+	}
+	path = filepath.Join(path, versions.File)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return "missing", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("preparation versions must be a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:]), nil
+}
+
+func claimPreparation(s *store.Store, tid string, initial bool) (*preparationClaim, error) {
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	task, err := s.ReadTask(tid)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.CheckMachine(task); err != nil {
+		return nil, err
+	}
+	if err = repair.RefuseDuringCleanup(task, "Preparation reconciliation"); err != nil {
+		return nil, err
+	}
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		return nil, err
+	}
+	status := asString(policyField(task, "status"))
+	if (status != "preparing" && status != "needs-attention" && status != "prepared") || policyField(worker, "native_launch") != nil || policyField(task, "worker_endpoint") != nil {
+		return nil, fmt.Errorf("task has an active or uncertain native launch; preparation reconciliation is refused")
+	}
+	if !initial {
+		if pid, ok := policyField(task, "prepare_operation_pid").(json.Number); ok {
+			n, e := pid.Int64()
+			if e != nil {
+				return nil, e
+			}
+			alive, e := proc.PIDRunning(int(n))
+			if e != nil || alive {
+				return nil, fmt.Errorf("preparation operation remains active or unobservable; preserve its intent")
+			}
+		}
+	}
+	approved, _ := ordjson.MarshalCompact(versions.ApprovedFingerprint(task))
+	savedApproval, _ := ordjson.MarshalCompact(policyField(task, "preparation_approval"))
+	if string(approved) != string(savedApproval) || policyField(task, "preparation_launch_sha256") != preparationLaunchHash(task) {
+		return nil, fmt.Errorf("saved approved scope or launch policy changed; preparation reconciliation is refused")
+	}
+	var intent taskcheckout.Intent
+	if err = decode(policyField(task, "checkout_intent"), &intent); err != nil {
+		return nil, err
+	}
+	if intent.Repository != asString(policyField(task, "repository")) || intent.BaseSHA != asString(policyField(task, "base_sha")) || intent.Branch != asString(policyField(task, "branch")) {
+		return nil, fmt.Errorf("saved checkout intent differs from the approved task")
+	}
+	versionHash, err := preparationVersions(s, tid)
+	if err != nil {
+		return nil, err
+	}
+	operation, err := newTaskID()
+	if err != nil {
+		return nil, err
+	}
+	task.Set("prepare_operation_pid", jsonInt(os.Getpid()))
+	task.Set("prepare_operation_id", operation)
+	if err = s.SaveTask(task); err != nil {
+		return nil, err
+	}
+	snapshot, err := preparationSnapshot(task)
+	if err != nil {
+		return nil, err
+	}
+	return &preparationClaim{task: task, intent: intent, operation: operation, snapshot: snapshot, versions: versionHash}, nil
+}
+
+func completePreparation(s *store.Store, runtimeRoot, sumctlPath, tid string, initial bool) (result *ordjson.Object, err error) {
+	release, err := preparationLease(s, tid)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	claim, err := claimPreparation(s, tid, initial)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil {
+			err = failPreparationClaim(s, tid, claim, err)
+		}
+	}()
+	checkout, err := taskcheckout.Create(context.Background(), claim.intent)
+	if err != nil {
+		return nil, err
+	}
+	policy := asObject(policyField(claim.task, "verification_policy"))
+	launchSpec := launch.TaskLaunch(claim.task)
+	if policy != nil {
+		if err = verifycontract.ValidatePolicySeal(policy); err != nil {
+			return nil, err
+		}
+		prepared := snapshotObject(policy, "prepared_worktree")
+		if policyField(policy, "base_sha") != claim.intent.BaseSHA || policyField(prepared, "path") != checkout.Path || policyField(prepared, "git_root") != checkout.GitRoot || policyField(prepared, "head") != checkout.Head || policyField(prepared, "branch") != checkout.Branch || policyField(prepared, "git_common_dir") != checkout.CommonDir {
+			return nil, fmt.Errorf("sealed preparation policy differs from the saved Git identity")
+		}
 	} else {
-		defer cleanupContract()
-		policy = verifycontract.PolicyAtDispatch(contractRoot, baseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, args.RuntimeRoot))
+		contractRoot, cleanup, materializeErr := verifycontract.MaterializeCommit(claim.intent.Repository, claim.intent.BaseSHA)
+		if materializeErr != nil {
+			policy = verifycontract.PolicyAtDispatchUnavailable(claim.intent.BaseSHA, materializeErr.Error())
+		} else {
+			defer cleanup()
+			policy = verifycontract.PolicyAtDispatch(contractRoot, claim.intent.BaseSHA, environment.VerificationContractStatusAtDispatch(contractRoot, runtimeRoot))
+		}
+		verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{Repository: claim.intent.Repository, Project: asObject(policyField(claim.task, "project")), Launch: launchSpec, RuntimeRoot: runtimeRoot, Worktree: checkout.Path, GitRoot: checkout.GitRoot, Head: checkout.Head, Branch: checkout.Branch, GitCommonDir: checkout.CommonDir})
+		verifycontract.SealPolicy(policy)
 	}
-	verifycontract.AddDispatchMetadata(policy, verifycontract.DispatchMetadata{
-		Repository:  repo,
-		Project:     projectObj,
-		Launch:      launchSpec,
-		RuntimeRoot: args.RuntimeRoot,
-		Worktree:    worktreePath,
-		GitRoot:     actualRoot,
-		Head:        actualHead,
-		Branch:      actualBranch,
-		Workspace:   workspaceID,
-	})
-	verifycontract.SealPolicy(policy)
-	task.Set("verification_policy", policy)
-	if err := s.SaveTask(task); err != nil {
-		return failPrepare(s, tid, err)
-	}
-	briefPath, err := brief.WriteInitial(s, args.RuntimeRoot, args.SumctlPath, task)
+
+	checkout, err = taskcheckout.Verify(context.Background(), claim.intent, true)
 	if err != nil {
-		return failPrepare(s, tid, err)
+		return nil, err
 	}
-	task.Set("brief_path", briefPath)
-	task.Set("status", "prepared")
-	// The pane Herdr created for this task is bound to it now, so its occupant is recorded now: a pane that inits
-	// before launch is judged against this record, and Start re-records it after the agent starts.
-	bound := ObserveBound(herdrPath, session, paneID, rootPane)
-	unlock, err = s.Lock()
+	return commitPreparation(s, runtimeRoot, sumctlPath, tid, claim, checkout, policy)
+}
+
+func commitPreparation(s *store.Store, runtimeRoot, sumctlPath, tid string, claim *preparationClaim, checkout taskcheckout.Evidence, policy *ordjson.Object) (*ordjson.Object, error) {
+	unlock, err := s.Lock()
 	if err != nil {
-		return failPrepare(s, tid, err)
+		return nil, err
 	}
+	defer unlock()
 	current, err := s.ReadTask(tid)
 	if err != nil {
-		unlock()
-		return failPrepare(s, tid, err)
+		return nil, err
 	}
-	for _, key := range []string{"pane", "workspace", "worktree", "verification_policy", "brief_path", "status"} {
-		v, _ := task.Get(key)
-		current.Set(key, v)
+	snapshot, err := preparationSnapshot(current)
+	if err != nil {
+		return nil, err
+	}
+	versionHash, err := preparationVersions(s, tid)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot != claim.snapshot || versionHash != claim.versions {
+		return nil, fmt.Errorf("preparation identity, approval, attempt or sealed history changed during Git I/O; preserve and inspect the saved checkout intent")
+	}
+	current.Set("worktree", checkout.Path)
+	if policyField(current, "verification_policy") == nil {
+		current.Set("verification_policy", policy)
+	}
+	if err = s.SaveTask(current); err != nil {
+		return nil, err
+	}
+	claim.snapshot, err = preparationSnapshot(current)
+	if err != nil {
+		return nil, err
+	}
+	var briefPath string
+	if versionHash != "missing" {
+		briefPath, err = versions.ActiveBrief(s, current)
+	} else {
+		briefPath, err = brief.WriteInitial(s, runtimeRoot, sumctlPath, current)
+	}
+	if err != nil {
+		return nil, err
+	}
+	current.Set("brief_path", briefPath)
+	current.Set("status", "prepared")
+	current.Set("error", nil)
+	current.Delete("prepare_operation_pid")
+	current.Delete("prepare_operation_id")
+	worker, err := reservations.Worker(current)
+	if err != nil {
+		return nil, err
+	}
+	worker.Set("checkout", checkout.Path)
+	if policyField(worker, "state") == "uncertain" {
+		id := asString(policyField(worker, "id"))
+		if _, err = reservations.Transition(current, id, "held", store.Now(), nil, nil); err != nil {
+			return nil, err
+		}
+	}
+	if err = s.SaveTask(current); err != nil {
+		return nil, err
+	}
+	current.Set("confirmation", launch.Confirmation(launch.TaskLaunch(current)))
+	return current, nil
+}
+
+func failPreparationClaim(s *store.Store, tid string, claim *preparationClaim, cause error) error {
+	message := fmt.Sprintf("Prepare failed or became uncertain: %s. Do not blindly create a replacement; inspect the saved Git checkout intent first.", cause)
+	unlock, err := s.Lock()
+	if err != nil {
+		return fmt.Errorf("%s: %s", tid, message)
+	}
+	defer unlock()
+	current, err := s.ReadTask(tid)
+	if err != nil {
+		return fmt.Errorf("%s: %s", tid, message)
+	}
+	snapshot, err := preparationSnapshot(current)
+	if err != nil || snapshot != claim.snapshot || policyField(current, "prepare_operation_id") != claim.operation {
+		return fmt.Errorf("%s: %s", tid, message)
 	}
 	worker, err := reservations.Worker(current)
 	if err != nil {
-		unlock()
-		return failPrepare(s, tid, err)
+		return fmt.Errorf("%s: %s", tid, message)
 	}
-	worker.Set("checkout", worktreePath)
-	if err := s.SaveTask(current); err != nil {
-		unlock()
-		return failPrepare(s, tid, err)
+	observation := ordjson.NewObject()
+	observation.Set("at", store.Now())
+	observation.Set("outcome", "prepare-uncertain")
+	reason := cause.Error()
+	if len(reason) > 500 {
+		reason = reason[:500]
 	}
-	if _, err := s.Register(store.Endpoint{Machine: asString(func() any { v, _ := current.Get("machine"); return v }()), Session: session, Pane: paneID, Cwd: worktreePath}, "worker", tid, bound.Record(store.Now())); err != nil {
-		unlock()
-		return failPrepare(s, tid, err)
+	observation.Set("reason", reason)
+	if _, err = reservations.Transition(current, asString(policyField(worker, "id")), "uncertain", store.Now(), observation, nil); err == nil {
+		current.Set("status", "needs-attention")
+		current.Set("error", message)
+		current.Delete("prepare_operation_pid")
+		_ = s.SaveTask(current)
 	}
-	unlock()
-	result := ordjson.NewObject()
-	for _, key := range current.Keys() {
-		v, _ := current.Get(key)
-		result.Set(key, v)
-	}
-	result.Set("confirmation", launch.Confirmation(launchSpec))
-	return result, nil
-}
-
-func failPrepare(s *store.Store, tid string, cause error) (*ordjson.Object, error) {
-	errorText := fmt.Sprintf("Prepare failed or became uncertain: %s. Do not blindly create a replacement; inspect Herdr first.", cause)
-	unlock, err := s.Lock()
-	if err == nil {
-		defer unlock()
-		current, readErr := s.ReadTask(tid)
-		if readErr == nil {
-			current.Set("status", "needs-attention")
-			current.Set("error", errorText)
-			if worker, werr := reservations.Worker(current); werr == nil {
-				id, _ := worker.Get("id")
-				obs := ordjson.NewObject()
-				obs.Set("at", store.Now())
-				obs.Set("outcome", "prepare-uncertain")
-				reason := cause.Error()
-				if len(reason) > 500 {
-					reason = reason[:500]
-				}
-				obs.Set("reason", reason)
-				_, _ = reservations.Transition(current, fmt.Sprint(id), "uncertain", store.Now(), obs, nil)
-			}
-			_ = s.SaveTask(current)
-		}
-	}
-	return nil, fmt.Errorf("%s: %s", tid, errorText)
+	return fmt.Errorf("%s: %s", tid, message)
 }
 
 func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extra []string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
-		return nil, err
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return nil, err
-	}
-	if _, err := herdrclient.EnsureVersion(herdrPath, contract.HerdrCLI); err != nil {
 		return nil, err
 	}
 	unlock, err := s.Lock()
@@ -563,7 +731,7 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 		return nil, fmt.Errorf("Worker execution reservation is missing; start is refused.")
 	}
 	resuming := asString(func() any { v, _ := worker.Get("resumes"); return v }()) != ""
-	identityMismatch := rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualBranch != asString(policyField(recordedWorktree, "branch")) || !workspaceMatchesSnapshot(task, recordedWorktree, actualCommon) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon)
+	identityMismatch := rootErr != nil || headErr != nil || branchErr != nil || commonErr != nil || repositoryCommonErr != nil || recordedWorktree == nil || resolvePath(preparedWorktree) == resolvePath(repository) || resolvePath(actualRoot) != resolvePath(preparedWorktree) || resolvePath(actualRoot) != resolvePath(asString(policyField(recordedWorktree, "git_root"))) || resolvePath(preparedWorktree) != resolvePath(asString(policyField(recordedWorktree, "path"))) || actualBranch != asString(policyField(recordedWorktree, "branch")) || resolveGitPath(preparedWorktree, actualCommon) != resolvePath(asString(policyField(recordedWorktree, "git_common_dir"))) || resolveGitPath(preparedWorktree, actualCommon) != resolveGitPath(repository, repositoryCommon)
 	headPinned := actualHead == asString(func() any { v, _ := task.Get("base_sha"); return v }()) && actualHead == asString(policyField(recordedWorktree, "head"))
 	if identityMismatch || (!resuming && !headPinned) {
 		unlock()
@@ -624,101 +792,12 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	launchSpec.Set("explicit_args", explicit)
 	launchSpec.Set("started_argv", anyStrings(argv))
 	task.Set("launch", launchSpec)
-	task.Set("status", "starting")
-	wid, _ := worker.Get("id")
-	if _, err := reservations.Transition(task, fmt.Sprint(wid), "starting", store.Now(), nil, nil); err != nil {
-		unlock()
-		return nil, err
-	}
-	if err := s.SaveTask(task); err != nil {
-		unlock()
-		return nil, err
-	}
-	pane := asString(func() any { v, _ := task.Get("pane"); return v }())
-	session := asString(func() any { v, _ := task.Get("session"); return v }())
-	unlock()
-
-	pane, err = EnsureWorkerPane(runtimeRoot, session, task)
-	if err != nil {
-		return FailStart(s, taskID, err)
-	}
-	unlock, err = s.Lock()
-	if err != nil {
-		return FailStart(s, taskID, err)
-	}
-	currentPane, err := s.ReadTask(taskID)
-	if err != nil {
-		unlock()
-		return FailStart(s, taskID, err)
-	}
-	if asString(func() any { v, _ := currentPane.Get("pane"); return v }()) != pane {
-		currentPane.Set("pane", pane)
-		if w, werr := reservations.Worker(currentPane); werr == nil && w != nil {
-			if owner := asObject(func() any { v, _ := w.Get("owner"); return v }()); owner != nil {
-				owner.Set("pane", pane)
-			}
-		}
-		if err := s.SaveTask(currentPane); err != nil {
-			unlock()
-			return FailStart(s, taskID, err)
-		}
-	}
-	unlock()
-
-	startArgs := herdrclient.AgentStartArgs(taskID, harness, pane)
-	if len(argv) > 0 {
-		startArgs = append(startArgs, "--")
-		startArgs = append(startArgs, argv...)
-	}
-	// agent_pane_busy means the pane is not an available shell yet, so nothing
-	// launched and retrying is safe. Any other error (timeout, unknown) may
-	// follow a launch with uncertain effects and never retries.
-	var started any
-	var startErr error
-	deadline := time.Now().Add(agentPaneBusyWait)
-	for {
-		started, startErr = herdrclient.Call(herdrPath, session, herdrclient.AgentStartCallTimeout, startArgs...)
-		if startErr == nil || !strings.Contains(startErr.Error(), "agent_pane_busy") || !time.Now().Before(deadline) {
-			break
-		}
-		time.Sleep(agentPaneBusyPoll)
-	}
-	if startErr != nil {
-		return FailStart(s, taskID, startErr)
-	}
-	startedObj := asObject(started)
-	agent := startedObj
-	if nested, ok := startedObj.Get("agent"); ok {
-		if inner := asObject(nested); inner != nil {
-			agent = inner
-		}
-	}
-	prompt := WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)
-	if err := DeliverBrief(herdrPath, session, pane, prompt); err != nil {
-		return FailStart(s, taskID, err)
-	}
-	// The worker registration records the occupant it binds: the terminal and native session Herdr reports now
-	// (falling back to the agent start response) and the pane shell. Observed before the state lock.
-	bound := ObserveBound(herdrPath, session, pane, started)
-	unlock, err = s.Lock()
-	if err != nil {
-		return FailStart(s, taskID, err)
-	}
-	defer unlock()
-	current, err := s.ReadTask(taskID)
-	if err != nil {
-		return FailStart(s, taskID, err)
-	}
-	result, err := RecordRunning(s, current, runtimeRoot, session, pane, harness, agent, bound)
-	if err != nil {
-		return FailStart(s, taskID, err)
-	}
-	return result, nil
+	return startNative(s, ctx, runtimeRoot, taskID, briefFile, task, worker, launchSpec, argv, unlock)
 }
 
 func WorkerPrompt(s *store.Store, runtimeRoot, taskID, briefFile string, task *ordjson.Object) string {
 	installRoot := sumruntime.ResolveInstallation(runtimeRoot, os.Getenv("SUM_INSTALL_ROOT"))
-	initCommand := shquote.CommandFor(filepath.Join(installRoot, "bin", "sumctl"), s.Home, "init")
+	initCommand := shquote.CommandFor(filepath.Join(installRoot, "bin", "sumctl"), s.Root, "init")
 	prompt := fmt.Sprintf("You are the sum worker for %s, not the coordinator. First run `%s` with the installed helper, never `./bin/sumctl` from your checkout. Then read the complete file %s and every required worker procedure file it names, and execute only that approved task. Questions and results must be saved using the commands in that brief.", taskID, initCommand, quoteJSON(briefFile))
 	if extras := repair.PendingResumeTexts(task); len(extras) > 0 {
 		prompt += " Recorded repairs waiting on this resume:"
@@ -729,121 +808,11 @@ func WorkerPrompt(s *store.Store, runtimeRoot, taskID, briefFile string, task *o
 	return prompt
 }
 
-func DeliverBrief(herdrPath, session, pane, prompt string) error {
-	ready, readyCode, readyErr := herdrclient.Observe(herdrPath, session, herdrclient.AgentReadyCallTimeout, herdrclient.AgentReadyArgs(pane)...)
-	if readyErr != nil {
-		return readyErr
-	}
-	if readyCode != "" {
-		return fmt.Errorf("the agent never reached a state that accepts input (%s)", readyCode)
-	}
-	if herdrclient.AgentStatus(herdrclient.UnwrapAgent(ready)) == "blocked" {
-		return fmt.Errorf("the agent is waiting at a startup or permission dialog (blocked)")
-	}
-	if _, promptCode, err := herdrclient.Observe(herdrPath, session, herdrclient.PromptConfirmCallTimeout, herdrclient.PromptConfirmArgs(pane, prompt)...); err != nil {
-		return err
-	} else if promptCode == "agent_prompt_stalled" {
-		return fmt.Errorf("the worker brief was submitted but no working or blocked activity followed (agent_prompt_stalled); a startup dialog may have consumed it")
-	} else if promptCode != "" {
-		return fmt.Errorf("the worker brief's delivery could not be confirmed (%s)", promptCode)
-	}
-	return nil
-}
-
-func RecordRunning(s *store.Store, current *ordjson.Object, runtimeRoot, session, pane, harness string, agent *ordjson.Object, bound incarnation.Evidence) (*ordjson.Object, error) {
-	taskID := asString(func() any { v, _ := current.Get("id"); return v }())
-	observedKind := asString(func() any { v, _ := agent.Get("agent"); return v }())
-	if st, _ := current.Get("status"); st == "starting" {
-		current.Set("status", "running")
-	}
-	current.Set("started_at", store.Now())
-	currentLaunch := launch.TaskLaunch(current)
-	observed := ordjson.NewObject()
-	observed.Set("harness", observedKind)
-	observed.Set("model", "not-exposed")
-	if observedKind == harness {
-		observed.Set("status", "harness-observed")
-	} else {
-		observed.Set("status", "harness-mismatch")
-	}
-	currentLaunch.Set("observed", observed)
-	current.Set("launch", currentLaunch)
-	currentWorker, err := reservations.Worker(current)
-	if err != nil {
-		return nil, err
-	}
-	occupant := ordjson.NewObject()
-	machine, _ := current.Get("machine")
-	occupant.Set("machine", machine)
-	occupant.Set("session", session)
-	occupant.Set("pane", pane)
-	worktree, _ := current.Get("worktree")
-	occupant.Set("checkout", worktree)
-	occupant.Set("harness", observedKind)
-	name, _ := agent.Get("name")
-	occupant.Set("name", name)
-	info, _, procErr := environment.PaneProcesses(runtimeRoot, session, pane)
-	var shellPID, occPID, occArgv any
-	captured := false
-	if procErr == nil && info != nil {
-		if v, ok := info.Get("shell_pid"); ok {
-			shellPID = v
-		}
-		if leader := environment.ForegroundLeader(info); leader != nil {
-			occPID, _ = leader.Get("pid")
-			occArgv, _ = leader.Get("argv")
-			captured = true
-		}
-	}
-	occupant.Set("shell_pid", shellPID)
-	occupant.Set("pid", occPID)
-	occupant.Set("argv", occArgv)
-	currentWorker.Set("occupant", occupant)
-	wid, _ := currentWorker.Get("id")
-	next := "uncertain"
-	obs := ordjson.NewObject()
-	obs.Set("at", store.Now())
-	if captured {
-		next = "running"
-		obs.Set("outcome", "occupant")
-		obs.Set("pid", occPID)
-	} else {
-		obs.Set("outcome", "occupant-uncertain")
-		obs.Set("reason", "no foreground process group leader besides the shell")
-	}
-	if _, err := reservations.Transition(current, fmt.Sprint(wid), next, store.Now(), obs, nil); err != nil {
-		return nil, err
-	}
-	if next == "running" {
-		if errorText, isString := func() (string, bool) { v, _ := current.Get("error"); text, ok := v.(string); return text, ok }(); isString && strings.HasPrefix(errorText, LaunchUncertainPrefix) {
-			current.Set("error", nil)
-			if st, _ := current.Get("status"); st == "needs-attention" {
-				current.Set("status", "running")
-			}
-		}
-	}
-	if err := s.SaveTask(current); err != nil {
-		return nil, err
-	}
-	endpoint := store.Endpoint{
-		Machine: asString(machine),
-		Session: session,
-		Pane:    pane,
-		Cwd:     asString(worktree),
-	}
-	if _, err := s.Register(endpoint, "worker", taskID, bound.Record(store.Now())); err != nil {
-		return nil, err
-	}
-	result := ordjson.NewObject()
-	for _, key := range current.Keys() {
-		v, _ := current.Get(key)
-		result.Set(key, v)
-	}
-	result.Set("confirmation", launch.Confirmation(currentLaunch))
-	return result, nil
-}
-
 func validVerificationSnapshot(value any, task *ordjson.Object) bool {
+	policyObject, _ := value.(*ordjson.Object)
+	if fmt.Sprint(policyField(policyObject, "dispatch_schema")) != "2" {
+		return false
+	}
 	policy := asObject(value)
 	if policy == nil {
 		return false
@@ -863,7 +832,7 @@ func validVerificationSnapshot(value any, task *ordjson.Object) bool {
 		return false
 	}
 	preparedWorktree := snapshotObject(policy, "prepared_worktree")
-	if preparedWorktree == nil || !snapshotString(preparedWorktree, "path") || !snapshotString(preparedWorktree, "git_root") || !snapshotString(preparedWorktree, "head") || !snapshotString(preparedWorktree, "branch") || !snapshotString(preparedWorktree, "workspace") {
+	if preparedWorktree == nil || !snapshotString(preparedWorktree, "path") || !snapshotString(preparedWorktree, "git_root") || !snapshotString(preparedWorktree, "head") || !snapshotString(preparedWorktree, "branch") || !snapshotString(preparedWorktree, "git_common_dir") {
 		return false
 	}
 	snapshotHash, _ := policy.Get("snapshot_sha256")
@@ -1018,100 +987,8 @@ func snapshotOptionalString(value *ordjson.Object, key string) bool {
 	return stringOK
 }
 
-func workspaceMatchesSnapshot(task, snapshot *ordjson.Object, actualCommon string) bool {
-	original := asString(policyField(snapshot, "workspace"))
-	current := asString(func() any { v, _ := task.Get("workspace"); return v }())
-	if original == "" || current == "" {
-		return false
-	}
-	if original == current {
-		return true
-	}
-	path := asString(policyField(snapshot, "path"))
-	root := asString(policyField(snapshot, "git_root"))
-	branch := asString(policyField(snapshot, "branch"))
-	repository := asString(func() any { v, _ := task.Get("repository"); return v }())
-	chain := original
-	evidenceValue, _ := task.Get("evidence")
-	rows, _ := evidenceValue.([]any)
-	for _, raw := range rows {
-		row := asObject(raw)
-		if asString(func() any { v, _ := row.Get("kind"); return v }()) != "worker-workspace-rebind" {
-			continue
-		}
-		from := asString(func() any { v, _ := row.Get("from_workspace"); return v }())
-		to := asString(func() any { v, _ := row.Get("to_workspace"); return v }())
-		valid := from == chain && to != "" && asString(func() any { v, _ := row.Get("old_workspace_code"); return v }()) == "workspace_not_found" && resolvePath(asString(func() any { v, _ := row.Get("checkout"); return v }())) == resolvePath(path) && resolvePath(asString(func() any { v, _ := row.Get("git_root"); return v }())) == resolvePath(root) && resolvePath(asString(func() any { v, _ := row.Get("repository"); return v }())) == resolvePath(repository) && resolveGitPath(path, asString(func() any { v, _ := row.Get("git_common_dir"); return v }())) == resolveGitPath(path, actualCommon) && asString(func() any { v, _ := row.Get("branch"); return v }()) == branch
-		valid = valid && asString(func() any { v, _ := row.Get("source"); return v }()) == "coordinator"
-		if valid {
-			chain = to
-		}
-	}
-	return chain == current
-}
-
-// EnsureWorkerPane returns a live shell pane in the task workspace at the recorded
-// checkout. When sweep closed the previous pane, it creates a fresh tab in that
-// workspace so execution resume starts a new session instead of requiring the old one.
-func EnsureWorkerPane(runtimeRoot, session string, task *ordjson.Object) (string, error) {
-	pane := asString(func() any { v, _ := task.Get("pane"); return v }())
-	workspace := asString(func() any { v, _ := task.Get("workspace"); return v }())
-	worktree := asString(func() any { v, _ := task.Get("worktree"); return v }())
-	if pane == "" || workspace == "" || worktree == "" {
-		return "", fmt.Errorf("Worker pane, workspace, or checkout identity is missing; start is refused.")
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return "", err
-	}
-	observed, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", pane)
-	if err != nil {
-		return "", err
-	}
-	if observed != nil {
-		paneObj := asObject(observed)
-		if nested := asObject(func() any { v, _ := paneObj.Get("pane"); return v }()); nested != nil {
-			paneObj = nested
-		}
-		got := resolvePath(asString(func() any { v, _ := paneObj.Get("cwd"); return v }()))
-		paneWorkspace := asString(func() any { v, _ := paneObj.Get("workspace_id"); return v }())
-		want := resolvePath(worktree)
-		if got != want || paneWorkspace != workspace {
-			return "", fmt.Errorf("Recorded worker pane %s has observed cwd %s and pane workspace %s; expected checkout %s and workspace %s. Start is refused.", pane, got, paneWorkspace, want, workspace)
-		}
-		return pane, nil
-	}
-	if !herdrclient.IsAbsent(code) {
-		return "", fmt.Errorf("Worker pane %s cannot be observed (%s); start is refused.", pane, code)
-	}
-	ws, wsCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "workspace", "get", workspace)
-	if err != nil {
-		return "", err
-	}
-	if ws == nil {
-		taskID := asString(func() any { v, _ := task.Get("id"); return v }())
-		repository := asString(func() any { v, _ := task.Get("repository"); return v }())
-		openCommand := shquote.Join([]string{"herdr", "worktree", "open", "--cwd", repository, "--path", worktree, "--label", "sum-" + taskID, "--no-focus"})
-		return "", fmt.Errorf("Worker workspace %s is gone (%s). Reopen the checkout with `%s`, then bind it with `bind %s --worker-pane PANE_ID` (see docs/recovery.md).", workspace, wsCode, openCommand, taskID)
-	}
-	created, err := herdrclient.Call(herdrPath, session, 15*time.Second, "tab", "create", "--workspace", workspace, "--cwd", worktree, "--no-focus")
-	if err != nil {
-		return "", fmt.Errorf("Could not create a fresh pane in workspace %s: %s", workspace, err)
-	}
-	createdObj := asObject(created)
-	rootPane := asObject(func() any { v, _ := createdObj.Get("root_pane"); return v }())
-	newPane := asString(func() any { v, _ := rootPane.Get("pane_id"); return v }())
-	if newPane == "" {
-		return "", fmt.Errorf("Herdr tab create returned no pane id in workspace %s.", workspace)
-	}
-	task.Set("pane", newPane)
-	return newPane, nil
-}
-
-const LaunchUncertainPrefix = "Launch/prompt uncertain"
-
 func FailStart(s *store.Store, taskID string, cause error) (*ordjson.Object, error) {
-	errorText := fmt.Sprintf("%s: %s. Inspect the saved pane; do not relaunch. Trust/auth prompts are for the user, never the coordinator. `execution redeliver %s --attempt X` resends the recorded brief; `execution confirm %s --attempt X` records a running attempt from the worker's own receipt.", LaunchUncertainPrefix, cause, taskID, taskID)
+	errorText := fmt.Sprintf("%s: %s. Inspect the saved native terminal; do not relaunch. Trust/auth prompts are for the user, never the coordinator. `execution redeliver %s --attempt X` resends the recorded brief; `execution confirm %s --attempt X` records a running attempt from the worker's own receipt.", LaunchUncertainPrefix, cause, taskID, taskID)
 	unlock, err := s.Lock()
 	if err == nil {
 		defer unlock()
@@ -1121,6 +998,7 @@ func FailStart(s *store.Store, taskID string, cause error) (*ordjson.Object, err
 				task.Set("status", "needs-attention")
 			}
 			if worker, werr := reservations.Worker(task); werr == nil {
+
 				if state, _ := worker.Get("state"); state == "starting" {
 					id, _ := worker.Get("id")
 					obs := ordjson.NewObject()
@@ -1163,14 +1041,8 @@ func Dispatch(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, 
 	return Start(s, ctx, args.RuntimeRoot, id, nil)
 }
 
-// observeBound is the occupant of a pane sum just bound to a task: what Herdr reports for it now (terminal, native
-// session, shell), falling back to the terminal in fallback (the creating or starting response) when the pane cannot
-// be observed. It runs outside the state lock.
-func ObserveBound(herdrPath, session, pane string, fallback any) incarnation.Evidence {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
-	defer cancel()
-	if fresh, code, err := incarnation.Observe(incarnation.SessionCall(ctx, herdrPath, session), pane); err == nil && code == "" && fresh.Terminal != "" {
-		return fresh
-	}
-	return incarnation.FromInfo(fallback)
+func preparationLaunchHash(task *ordjson.Object) string {
+	data, _ := ordjson.MarshalCompact(launch.TaskLaunch(task))
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:])
 }

@@ -229,6 +229,11 @@ func repairIsSend(task *ordjson.Object, repairID string) bool {
 }
 
 func claudeSession(record *ordjson.Object) string {
+	if record != nil {
+		if schema, _ := record.Get("schema"); fmt.Sprint(schema) == "2" {
+			return ""
+		}
+	}
 	session := incarnation.FromInfo(record).Session
 	if session == nil || session.Agent != "claude" || session.Kind != "id" {
 		return ""

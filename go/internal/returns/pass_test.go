@@ -1,7 +1,6 @@
 package returns
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,179 +8,207 @@ import (
 	"testing"
 	"time"
 
+	"crypto/sha256"
+	"encoding/hex"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
-	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/launchtest"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"sync"
 )
 
-// passFake is a scripted Herdr for one delivery pass: per-session panes and hangs from cfg.json, every call logged.
-const passFake = `#!/usr/bin/env python3
-import json, os, sys, time
-root = os.environ["PASS_FAKE"]
-args = sys.argv[1:]
-session, rest = args[1], args[2:]
-with open(os.path.join(root, "calls"), "a") as out:
-    out.write(json.dumps([session] + rest) + "\n")
-cfg = json.load(open(os.path.join(root, "cfg.json")))
-sess = cfg.get(session, {})
-panes = sess.get("panes", {})
-def hold(verb, pane):
-    # A held call marks held-<verb>-<pane> and waits for release-<pane>, standing in for a slow or unreachable pane.
-    if sess.get("hold", {}).get(pane) != verb:
-        return
-    open(os.path.join(root, "held-%s-%s" % (verb, pane)), "w").close()
-    release, deadline = os.path.join(root, "release-" + pane), time.time() + 60
-    while not os.path.exists(release) and time.time() < deadline:
-        time.sleep(0.02)
-def row(pane):
-    # Every pane reports Herdr's terminal_id; a scenario that restarts Herdr sets its own.
-    return dict({"pane_id": pane, "terminal_id": "term-" + pane}, **panes.get(pane, {}))
-if rest[:2] == ["agent", "list"]:
-    time.sleep(sess.get("list_hang", 0))
-    print(json.dumps({"result": {"agents": [row(k) for k in panes]}})); sys.exit(0)
-if rest[:2] == ["agent", "get"]:
-    if rest[2] not in panes:
-        print(json.dumps({"error": {"code": "agent_not_found", "message": "gone"}}), file=sys.stderr); sys.exit(1)
-    hold("get", rest[2])
-    r = row(rest[2])
-    if "get_terminal_id" in r: r["terminal_id"] = r.pop("get_terminal_id")  # Herdr restarted after the pass's agent list.
-    print(json.dumps({"result": {"agent": r}})); sys.exit(0)
-if rest[:2] == ["pane", "get"]:  # Any pane the scenario does not list is a plain shell, like the lab root.
-    print(json.dumps({"result": {"pane": row(rest[2])}})); sys.exit(0)
-if rest[:2] == ["pane", "process-info"]:
-    pane = rest[3]
-    print(json.dumps({"result": {"process_info": {"pane_id": pane, "shell_pid": panes.get(pane, {}).get("shell_pid", 4242)}}})); sys.exit(0)
-if rest[:2] == ["agent", "prompt"]:
-    hold("prompt", rest[2])
-    time.sleep(sess.get("prompt_hang", 0))
-    print(json.dumps({"result": {}})); sys.exit(0)
-print("unsupported", file=sys.stderr); sys.exit(2)
-`
-
-type passLab struct {
-	t     *testing.T
-	s     *store.Store
-	host  string
-	root  string
-	fake  string
-	ctx   *ordjson.Object
-	cfg   map[string]any
-	tasks int
+type heldNative struct {
+	entered <-chan struct{}
+	release func()
 }
+type passLab struct {
+	t          *testing.T
+	s          *store.Store
+	host, root string
+	ctx        *ordjson.Object
+	tasks      int
+	cores      map[string]*hctest.Fixture
+	endpoints  map[string]store.Endpoint
+	holds      map[string]heldNative
+	callStart  map[string]int
+}
+
+var testAliases sync.Map
 
 func newPassLab(t *testing.T) *passLab {
 	t.Helper()
-	for _, key := range []string{"SUM_HOME", "SUM_SESSION", "SUM_NOW", "HERDR_SESSION", "HERDR_PANE_ID", "HERDR_ENV"} {
-		t.Setenv(key, "")
-	}
-	root := t.TempDir()
-	fake := filepath.Join(root, "herdr")
-	if err := os.WriteFile(fake, []byte(passFake), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("SUM_HERDR_BIN", fake)
-	t.Setenv("PASS_FAKE", root)
-	s, err := store.Open(filepath.Join(root, "home"))
+	physical, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Init(); err != nil {
-		t.Fatal(err)
-	}
-	host, err := machine.ID()
+	st, err := store.Open(filepath.Join(physical, "home"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := ordjson.NewObject()
-	ctx.Set("machine", host)
-	ctx.Set("session", "lab")
-	ctx.Set("pane", "w-root:p1")
-	ctx.Set("cwd", root)
-	owner := ordjson.NewObject()
-	for _, k := range ctx.Keys() {
-		v, _ := ctx.Get(k)
-		owner.Set(k, v)
-	}
-	owner.Set("role", "coordinator")
-	owner.Set("incarnation", boundTo("w-root:p1"))
-	if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+	if err = st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Register(store.EndpointFromContext(ctx), "coordinator", nil, boundTo("w-root:p1")); err != nil {
+	host, err := st.Machine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &passLab{t: t, s: st, host: host.ID, root: physical, cores: map[string]*hctest.Fixture{}, endpoints: map[string]store.Endpoint{}, holds: map[string]heldNative{}, callStart: map[string]int{}}
+	e := l.nativeEndpoint("lab", "w-root:p1")
+	e.Role = "coordinator"
+	e.Task = ""
+	e.Cwd = physical
+	l.endpoints["lab/w-root:p1"] = e
+	l.ctx = e.Object()
+	owner := l.bind(e)
+	if err = ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
 		t.Fatal(err)
 	}
 	old := [2]time.Duration{ObserveTimeout, PromptTimeout}
 	ObserveTimeout, PromptTimeout = time.Second, time.Second
 	t.Cleanup(func() { ObserveTimeout, PromptTimeout = old[0], old[1] })
-	lab := &passLab{t: t, s: s, host: host, root: root, fake: fake, ctx: ctx, cfg: map[string]any{}}
-	lab.writeCfg()
-	return lab
+	l.resetCalls()
+	return l
 }
-
-func (l *passLab) writeCfg() {
-	raw, err := json.Marshal(l.cfg)
+func (l *passLab) core(session string) *hctest.Fixture {
+	f := l.cores[session]
+	if f == nil {
+		f = hctest.New(l.t)
+		l.cores[session] = f
+	}
+	return f
+}
+func (l *passLab) nativeEndpoint(session, alias string) store.Endpoint {
+	if e, ok := l.endpoints[session+"/"+alias]; ok {
+		return e
+	}
+	f := l.core(session)
+	sum := sha256.Sum256([]byte(alias))
+	address := "t" + hex.EncodeToString(sum[:6])
+	e := store.Endpoint{Schema: 2, Backend: "hc", Machine: l.host, CoreID: f.CoreID, Session: session, Socket: f.Socket, Address: address, Role: "worker", Attempt: "attempt-" + address, BindingGeneration: 1, CreatedMS: 100, Cwd: l.root}
+	l.endpoints[session+"/"+alias] = e
+	testAliases.Store(f.CoreID+"/"+address, alias)
+	return e
+}
+func (l *passLab) bind(e store.Endpoint) *ordjson.Object {
+	f := l.core(e.Session)
+	pid := uint32(4242)
+	spec, config, options := launchtest.QualifyCodex(l.t, f, e.Cwd)
+	submit := "tab"
+	terminal := hcclient.Terminal{Address: e.Address, State: "live", CreatedMS: e.CreatedMS, Cwd: e.Cwd, PID: &pid, Foreground: &hcclient.Foreground{PID: 4242, Name: "codex", Argv: spec.Argv, Cwd: e.Cwd}, Argv: spec.Argv, Template: &spec.Name, Submit: &submit, Status: &hcclient.Status{State: "idle"}}
+	f.SetTerminal(terminal)
+	var task any
+	if e.Task != "" {
+		task = e.Task
+	}
+	record, err := l.s.Register(e, e.Role, task, incarnation.NativeEvidence{Endpoint: e.Native(), PID: pid, Foreground: terminal.Foreground}.Record(store.Now()))
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(l.root, "cfg.json"), raw, 0o600); err != nil {
+	kind := map[string]string{"worker": "worker-init", "coordinator": "coordinator-init"}[e.Role]
+	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: e.Native(), Kind: kind, Attempt: e.Attempt})
+	record.Set("native_receipt", receipt)
+	qualified, _ := ordjson.FromValue(NativeTemplate{Spec: spec, ConfigHome: config, Options: options})
+	record.Set("native_template", qualified)
+	if err = ordjson.WriteFile(filepath.Join(l.s.Sessions, store.RegistrationKey(e)+".json"), record); err != nil {
 		l.t.Fatal(err)
 	}
+	return record
 }
-
-// session configures one fake Herdr session.
+func (l *passLab) resetCalls() {
+	for session, f := range l.cores {
+		l.callStart[session] = len(f.Calls())
+	}
+}
 func (l *passLab) session(name string, conf map[string]any) {
-	l.cfg[name] = conf
-	l.writeCfg()
+	f := l.core(name)
+	panes, _ := conf["panes"].(map[string]any)
+	existing := map[string]hcclient.Terminal{}
+	for _, terminal := range f.Terminals() {
+		existing[terminal.Address] = terminal
+	}
+	for alias, raw := range panes {
+		data, _ := raw.(map[string]any)
+		e := l.nativeEndpoint(name, alias)
+		terminal, ok := existing[e.Address]
+		if !ok {
+			l.bind(e)
+			for _, candidate := range f.Terminals() {
+				if candidate.Address == e.Address {
+					terminal = candidate
+					break
+				}
+			}
+		}
+		status, _ := data["agent_status"].(string)
+		terminal.Status = &hcclient.Status{State: status}
+		if cwd, ok := data["cwd"].(string); ok {
+			terminal.Cwd = cwd
+		}
+		if shell, ok := data["shell_pid"].(int); ok {
+			pid := uint32(shell)
+			terminal.PID = &pid
+			terminal.Foreground = &hcclient.Foreground{PID: int32(pid), Name: "shell"}
+		}
+		for _, field := range []string{"terminal_id", "get_terminal_id"} {
+			if native, ok := data[field].(string); ok && native != "term-"+alias {
+				terminal.CreatedMS++
+			}
+		}
+		f.SetTerminal(terminal)
+	}
+	if hold, _ := conf["hold"].(map[string]any); hold != nil {
+		for alias, raw := range hold {
+			verb := fmt.Sprint(raw)
+			method := map[string]string{"get": "terminal.get", "prompt": "terminal.send"}[verb]
+			entered, release := f.HoldNext(method, l.nativeEndpoint(name, alias).Address)
+			l.holds[verb+"/"+alias] = heldNative{entered, release}
+		}
+	}
+	if seconds, ok := conf["list_hang"].(int); ok && seconds > 0 {
+		f.QueueFault("terminal.list", hctest.Fault{Delay: time.Duration(seconds) * time.Second})
+	}
+	if seconds, ok := conf["prompt_hang"].(int); ok && seconds > 0 {
+		f.QueueFault("terminal.send", hctest.Fault{Delay: time.Duration(seconds) * time.Second})
+	}
 }
-
-// worker records a task in session whose worker owes an unapplied answer, registered and parented to the lab root.
-func (l *passLab) worker(session, pane string) string {
+func (l *passLab) worker(session, alias string) string {
 	l.t.Helper()
 	l.tasks++
 	id := fmt.Sprintf("t-%012x", l.tasks)
-	worktree := filepath.Join(l.root, "wt", id)
-	if err := os.MkdirAll(worktree, 0o700); err != nil {
+	worktree := l.worktree(id)
+	if err := os.MkdirAll(worktree, 0700); err != nil {
 		l.t.Fatal(err)
 	}
+	e := l.nativeEndpoint(session, alias)
+	e.Task = id
+	e.Cwd = worktree
+	l.endpoints[session+"/"+alias] = e
+	l.bind(e)
 	task := ordjson.NewObject()
-	task.Set("schema", json.Number("1"))
+	task.Set("schema", jsonInt(2))
 	task.Set("id", id)
 	task.Set("status", "running")
 	task.Set("machine", l.host)
-	task.Set("session", session)
-	task.Set("pane", pane)
 	task.Set("worktree", worktree)
+	task.Set("worker_endpoint", e.Object())
 	task.Set("parent", l.ctx)
-	question := ordjson.NewObject()
-	question.Set("id", "q1")
-	question.Set("status", "answered")
-	question.Set("created_at", "2026-09-24T00:00:00+00:00")
-	question.Set("answered_at", "2026-09-24T00:01:00+00:00")
-	task.Set("questions", []any{question})
-	if err := os.MkdirAll(filepath.Join(l.s.Tasks, id), 0o700); err != nil {
-		l.t.Fatal(err)
-	}
+	q := ordjson.NewObject()
+	q.Set("id", "q1")
+	q.Set("status", "answered")
+	q.Set("created_at", "2026-09-24T00:00:00+00:00")
+	q.Set("answered_at", "2026-09-24T00:01:00+00:00")
+	task.Set("questions", []any{q})
 	if err := l.s.SaveTask(task); err != nil {
-		l.t.Fatal(err)
-	}
-	if _, err := l.s.Register(store.Endpoint{Machine: l.host, Session: session, Pane: pane, Cwd: worktree}, "worker", id, boundTo(pane)); err != nil {
 		l.t.Fatal(err)
 	}
 	return id
 }
-
-// boundTo is the incarnation recorded when the fake's pane was bound: the terminal the fake reports for it.
-func boundTo(pane string) *ordjson.Object {
-	return incarnation.Evidence{Terminal: "term-" + pane}.Record(store.Now())
-}
-
 func (l *passLab) pane(status, cwd string) map[string]any {
-	return map[string]any{"agent_status": status, "cwd": cwd, "agent": "claude"}
+	return map[string]any{"agent_status": status, "cwd": cwd}
 }
-
 func (l *passLab) worktree(id string) string { return filepath.Join(l.root, "wt", id) }
-
 func (l *passLab) pump(budget time.Duration) (*ordjson.Object, time.Duration) {
 	l.t.Helper()
 	started := time.Now()
@@ -191,26 +218,23 @@ func (l *passLab) pump(budget time.Duration) (*ordjson.Object, time.Duration) {
 	}
 	return result, time.Since(started)
 }
-
-func (l *passLab) calls() [][]string {
-	raw, err := os.ReadFile(filepath.Join(l.root, "calls"))
-	if err != nil {
-		return nil
-	}
-	var out [][]string
-	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
-		var call []string
-		if err := json.Unmarshal([]byte(line), &call); err == nil {
-			out = append(out, call)
+func (l *passLab) calls() []hctest.Call {
+	out := []hctest.Call{}
+	for session, f := range l.cores {
+		calls := f.Calls()
+		for _, call := range calls[l.callStart[session]:] {
+			if call.Method != "hello" && call.Method != "templates.list" {
+				out = append(out, call)
+			}
 		}
 	}
 	return out
 }
-
-func countCalls(calls [][]string, verb string) int {
+func countCalls(calls []hctest.Call, method string) int {
+	method = map[string]string{"get": "terminal.get", "list": "terminal.list", "prompt": "terminal.send"}[method]
 	n := 0
-	for _, c := range calls {
-		if len(c) > 2 && c[1] == "agent" && c[2] == verb {
+	for _, call := range calls {
+		if call.Method == method {
 			n++
 		}
 	}
@@ -224,7 +248,9 @@ func states(result *ordjson.Object) map[string]string {
 	for _, r := range rows.([]any) {
 		row := r.(*ordjson.Object)
 		rec, _ := row.Get("recipient")
-		pane, _ := rec.(*ordjson.Object).Get("pane")
+		address, _ := rec.(*ordjson.Object).Get("address")
+		core, _ := rec.(*ordjson.Object).Get("core_id")
+		pane, _ := testAliases.Load(fmt.Sprint(core) + "/" + fmt.Sprint(address))
 		state, _ := row.Get("state")
 		out[fmt.Sprint(pane)] = fmt.Sprint(state)
 	}
@@ -265,7 +291,7 @@ func TestPassBusySessionCostsOneObservation(t *testing.T) {
 		}
 	}
 	fanout, _ := result.Get("fanout")
-	if calls, _ := fanout.(*ordjson.Object).Get("herdr_calls"); fmt.Sprint(calls) != "1" {
+	if calls, _ := fanout.(*ordjson.Object).Get("native_calls"); fmt.Sprint(calls) != "1" {
 		t.Fatalf("fanout = %v", fanout)
 	}
 }
@@ -279,7 +305,7 @@ func TestPassIdleWorkerIsReobservedThenPrompted(t *testing.T) {
 		t.Fatalf("state = %s (%v)", got, result)
 	}
 	calls := l.calls()
-	if len(calls) != 3 || calls[0][2] != "list" || calls[1][2] != "get" || calls[2][2] != "prompt" {
+	if len(calls) != 3 || calls[0].Method != "terminal.list" || calls[1].Method != "terminal.get" || calls[2].Method != "terminal.send" {
 		t.Fatalf("calls = %v, want list, get, prompt", calls)
 	}
 }
@@ -313,7 +339,7 @@ func TestPassHungObservationTripsTheSessionWithinBudget(t *testing.T) {
 	}
 }
 
-func TestPassHungPromptTripsTheSession(t *testing.T) {
+func TestPassHungPromptDoesNotStarveOtherRecipients(t *testing.T) {
 	l := newPassLab(t)
 	panes := map[string]any{}
 	for i := 0; i < 3; i++ {
@@ -326,15 +352,15 @@ func TestPassHungPromptTripsTheSession(t *testing.T) {
 	if elapsed > 10*time.Second {
 		t.Fatalf("pass took %s, budget 10s", elapsed)
 	}
-	if n := countCalls(l.calls(), "prompt"); n != 1 {
-		t.Fatalf("prompts = %d, want 1: %v", n, l.calls())
+	if n := countCalls(l.calls(), "prompt"); n != 3 {
+		t.Fatalf("prompts = %d, want three independently serialized recipients: %v", n, l.calls())
 	}
 	counts := map[string]int{}
 	for _, state := range states(result) {
 		counts[state]++
 	}
-	if counts["uncertain"] != 1 || counts["not-delivered"] != 2 {
-		t.Fatalf("states = %v, want one uncertain and two not-delivered", states(result))
+	if counts["uncertain"] != 1 || counts["submitted"] != 2 {
+		t.Fatalf("states = %v, want one uncertain and two unrelated submissions", states(result))
 	}
 }
 
@@ -428,7 +454,9 @@ func TestPassNeverPromptsARecipientReboundAfterTheSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	task, _ := l.s.ReadTask(id)
-	task.Set("pane", "w1:p9")
+	route := asNativeRoute(task)
+	route.Set("address", "t999")
+	task.Set("worker_endpoint", route)
 	if err := l.s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +624,7 @@ func TestPassRecordsAttemptsOnlyInTheReturnsSidecar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if errText, _ := NoticeOf(l.s, timedOutTask).(*ordjson.Object).Get("error"); !strings.Contains(fmt.Sprint(errText), "prompt timed out after possible submission") {
+	if errText, _ := NoticeOf(l.s, timedOutTask).(*ordjson.Object).Get("error"); !strings.Contains(fmt.Sprint(errText), "native input may have been submitted") {
 		t.Fatalf("uncertain notice error = %v, want the recorded timeout reason", errText)
 	}
 }
@@ -626,5 +654,33 @@ func TestSetNoticeKeepsTheRecordedKeyShape(t *testing.T) {
 	derived, _ := view.Get("notice")
 	if status, _ := derived.(*ordjson.Object).Get("status"); status != "submitted-not-acknowledged" {
 		t.Fatalf("derived notice status = %v", status)
+	}
+}
+
+func asNativeRoute(task *ordjson.Object) *ordjson.Object {
+	raw, _ := task.Get("worker_endpoint")
+	return cloneObject(raw.(*ordjson.Object))
+}
+
+func (l *passLab) replaceOwner() {
+	e := l.nativeEndpoint("lab", "w-root:p1")
+	e.Attempt += "-next"
+	e.BindingGeneration++
+	l.endpoints["lab/w-root:p1"] = e
+	record := l.bind(e)
+	record.Set("wake_protocol", jsonInt(1))
+	if err := ordjson.WriteFile(filepath.Join(l.s.Home, "context.json"), record); err != nil {
+		l.t.Fatal(err)
+	}
+	l.ctx = e.Object()
+	tasks, err := l.s.AllTasks()
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	for _, task := range tasks {
+		task.Set("parent", e.Object())
+		if err = l.s.SaveTask(task); err != nil {
+			l.t.Fatal(err)
+		}
 	}
 }

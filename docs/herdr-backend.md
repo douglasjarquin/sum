@@ -1,53 +1,84 @@
-# Herdr backend
+# HC terminal runtime
 
-Env start and stop, native event delivery, and native metadata. Moved out of the README.
+HC owns terminal processes; Git owns worktrees.
+Sum owns approved briefs, task roles, capacity, receipts, verification, review, publication and guarded cleanup.
+All terminal communication uses the single typed client for unmodified upstream HC 0.1.14, protocol generation one.
+There is no Sum MCP server, scoped bridge, raw terminal transport or legacy runtime fallback.
+The separate Grok Bot product and its native messaging remain outside this terminal contract.
 
-### Pane identity
+## Identity
 
-Herdr 0.9.0 pane and agent objects (`pane get`, `agent get`, `agent list`) carry a `terminal_id` and, when an official integration reports it, an `agent_session` (`{agent, kind, source, value}`, the native conversation). `pane process-info` reports the pane's `shell_pid`. A bounded lab against the pinned build (`scripts/live_incarnation.py`, run by `mise run test-live`) shows the following:
+The permanent core ID and returned terminal address identify the native terminal.
+Sum additionally binds creation time (`created_ms`), task, role, attempt, binding generation, process identity and a matching `init` receipt.
+Socket paths, names, labels, cwd, PID or status alone never grant authority.
+A replacement process at the same address does not inherit the old role.
+Observation connects only to an existing socket; it never starts a missing core through `hc connect`.
+Remote Sum execution and a second same-host core/session scope are currently refused before binding; do not infer support from HC's broader capabilities.
 
-* A `server stop` and restart restores the saved layout under the same pane IDs, with a new `terminal_id` and a new shell. The default `resume_agents_on_restore = true` resumes supported agents into their recorded `agent_session`.
-* A `kill -9` restart restores only what was saved; a later pane can receive a freed ID.
-* A live handoff (`server.live_handoff`, the path behind `herdr update --handoff`) keeps pane IDs and the shell process, and still issues a new `terminal_id`.
+## Input and receipts
 
-sum judges a recorded address against those fields (see [Pane incarnation](recovery.md#pane-incarnation)). It invents no generation field, and a socket path or a bare pid is never identity. The narrow upstream requirement that would close the remaining window: `agent.prompt` and `pane.send_*` accepting an expected `terminal_id` and failing atomically on a mismatch, and `terminal_id` documented as unique across server incarnations.
+Automatic input is qualified only for Codex 0.166.0 with the default keymap and Sum's namespaced `submit: tab` HC template.
+The qualified argv includes `--no-daemon`, and qualification hashes the effective command, keymap and configuration without changing model, permissions or account.
+Sum defers a recipient observed working, blocked or unknown, uses native `if:idle` for idle, and sends ordinarily without `if` for observed Done.
+It never supplies native `force`.
+This is a deliberately relaxed Done guard, not an atomic Done predicate.
+If Done races into working, Codex queues the Tab submission for its next turn.
+HC's blocked, human-input quiet and serialization checks remain active.
+No trust dialog, permission change, model/account switch or global keymap edit is authorized to obtain readiness.
+`started`, status, native turn count, exit zero and completed waits are diagnostics, never an application receipt or task approval.
+Only a matching Sum receipt discharges the corresponding durable obligation.
+Other harnesses remain unqualified for automatic input until their actual command, status, submit and resume behavior have evidence.
 
-### State and communication env rules
+Creation uses `outlive_parent:true`, `keep:false`, `rm:false` and `no_notify:true`.
+Creation and first-message delivery are recorded separately.
+A lost response after a mutation may have started leaves uncertainty; Sum never reconnects and automatically replays it.
+An early dial, identity or validation failure means nothing was submitted.
+A stable native refusal before input can leave an obligation pending.
+See [Recovery](recovery.md) for an explicit single recovery attempt.
 
-```sh
-./bin/sumctl env discover TASK_ID                         # declared dev commands from mise/package/Makefile/justfile/Procfile/compose/Dockerfile/devcontainer
-./bin/sumctl env record TASK_ID --url http://127.0.0.1:PORT [--log PATH | --pane ID | --container ID] [--ownership shared]
-./bin/sumctl env inspect TASK_ID                          # re-observe once: stale URLs, configuration drift, missing logs
-./bin/sumctl env start TASK_ID --command NAME [--url http://127.0.0.1:PORT | --match TEXT] [--log PATH] [--timeout S]   # launch one declared command in a pane split under the worker; identity recorded, readiness bounded
-./bin/sumctl env stop TASK_ID [--service ID]              # one interrupt to re-proven sum launches only; verified exit, then the sum-created pane closes
-```
+## Native events and attention
 
-The `environment` section carries `dev`, the task-local environment record in `environment.json`: command references discovered from the checkout's declared configuration (never executed, never a generated `sum.yml`), URLs recorded together with what `lsof` observed for their port at that moment and an ownership classification (`owned` when the listener runs inside this checkout, `shared` for another task's checkout or a deliberately shared service, `unknown` otherwise), log paths stat'ed without following symlinks (a symlinked component under the checkout is never resolved), related pane/container identities, and observation times. A URL owned by another active task is refused so parallel tasks never reuse one by accident; writing a port never binds or reserves it. `env inspect` re-observes on demand and marks stale endpoints and configuration drift; nothing polls or restarts. `env start` launches one command the repository declares (an `env discover` row, run through its own runner: `mise run`, `npm|pnpm|yarn|bun run`, `make`, `just`, a Procfile line, or `docker compose --project-name sum-<task> up <service>` so container resources are task-scoped) in a pane split under the worker pane inside the checkout; the launch intent is written before the pane exists, the pane before the command runs, and the observed process instance (pane, shell pid, pid, argv, cwd) afterwards. Readiness is one bounded wait for the given `--url` port to be taken by that pane's process (a foreign occupant is a recorded `conflict`, never terminated) or for `--match` text; a timeout is an explicit `failed` state, never a retry or restart. `env stop` re-proves that identity (pane in the task workspace and checkout, same shell pid, same pid and argv), sends exactly one `ctrl+c` through Herdr, waits a bound for exit, verifies the port is released, and closes only the pane sum created; anything unproven, restarted outside sum, or still running after the bound stays recorded (`unknown`/`stopping`) and blocks cleanup visibly. Environments started by hand are never stop targets, a shared database or another task's server never gains stop authority through observation, and an unrecorded pane in the task workspace (for example from a launch interrupted before registration) blocks a new launch until someone records or closes it: sum neither adopts nor closes it. Credentials in URLs, labels, or paths are refused; every string of a command reference, including `user:password@` in URLs, is redacted at write. Observation (`lsof`, `lstat`, `pane get`) runs before the store lock so a slow pass never stalls the coordinator. Tasks without a record behave as before, and the record travels in `backup` with those exclusions named.
+Coordinator `init` ensures a real scoped observer startup receipt outside the ledger lock unless `hook.enabled:false` records the user's opt-out.
+The observer is a non-agent HC terminal, with the same outlive-parent and non-kept lifecycle, not a supervisor or task executor.
+It subscribes to events and runs bounded reconciliation against the durable ledger, with fresh snapshots after reconnect and fair continuation for deferred recipients.
+It has no second payload queue.
+One provably owned observer serves the installation's supported core/session scope.
+A second unsupported scope is refused rather than silently left without delivery.
 
-### Native event delivery (enabled by default)
+`sumctl hook status` shows saved health and observer ownership/readiness evidence.
+Enabled preference alone is not proof of a running observer.
+Startup waits within a bound for native foreground evidence while preserving the exact terminal creation, program PID, argv, labels and cwd.
+Readiness requires the matching observer receipt and the first connected snapshot; activation and handoff return that proven health rather than a pre-start snapshot.
+Startup failure is fail-open and explicitly degraded; `init`, `bind`, task-write notices and `sumctl pump` remain available.
+After proving a prior observer finished, replacement retires its old endpoint/receipt proof and persists a distinct `launch_attempt` before native creation.
+An early child may record its exact matching startup receipt before `terminal.run` replies; the parent merges only that same launch intent and never overwrites a newer receipt or changed launch.
+Transient read-only HC transport/observation failures reconnect to the existing core with bounded backoff and a fresh subscription snapshot.
+Cancellation or explicit disablement stops the observer; wrong core, incompatible config/protocol and invalid durable records are hard failures rather than reconnect permission.
+No reconnect replays a submitted or uncertain mutation.
+`hook enable` ensures the observer, while `hook disable` preserves the explicit preference and stops only a proven owned observer.
+Only the user chooses to disable delivery.
+Native attention points to output requiring inspection; it is not a question, report, verification or approval.
+`inbox --live` observes without delivering or calling GitHub.
 
-Coordinator `init` enables native event delivery on new installations. Existing installations get it on the first successful `update apply` with this helper, or the coordinator `init` that follows it; an older helper cannot enable it during that first update. These are best-effort: if Herdr's registry cannot be observed or the plugin cannot be enabled, the command still succeeds, `hook status` shows `degraded` with the reason, and explicit delivery passes remain available. `./bin/sumctl hook enable` (coordinator only) retries or re-enables the per-installation Herdr plugin. `./bin/sumctl hook disable` is the user's opt-out; that choice is saved in `.sum/settings.json` and respected by later `init` and `update apply`.
-Enabling writes a Herdr plugin manifest under `.sum/hook/plugin/` for this installation and links it live with `herdr plugin link`; the server keeps running.
-The plugin declares `pane.agent_status_changed`, `pane.agent_detected`, `pane.exited`, `pane.closed`, `workspace.closed`, and a startup hook, all running the same command: the installation's `bin/sumctl --home <this .sum> hook event`.
-The home is fixed in that command at enable time; the handler never derives it from its working directory or the payload, and a runtime update or rollback changes what the handler runs without touching the registration.
-Herdr plugin registration is user-global, so the handler receives events from every session. Herdr 0.9.3 runs the logged command with no extra event arguments; it passes the dotted event name in `HERDR_PLUGIN_EVENT`, the event envelope in `HERDR_PLUGIN_EVENT_JSON`, and the active API socket in `HERDR_SOCKET_PATH`. The envelope has `event` and `data` fields; pane events carry their pane and workspace ids there. The handler identifies named sessions from the socket's `/sessions/<name>/herdr.sock` path, and identifies `default` only when that path exactly matches Herdr's configured default socket. If the socket path is custom, it uses `pane get` through that socket only when exactly one recorded session owns the pane and Herdr's pane and worktree observation match that record. It refuses events when the socket, event payload, and recorded identity do not resolve one session, then records the failure.
-The handler acts only when the event's session and pane match this installation's recorded coordinator or a recorded worker; everything else is counted as `ignored` and touches no record. Two installations get two plugin ids and two homes.
-On a recorded pane going `idle`/`done`, the handler re-observes the pane and runs one bounded pump toward that recipient: pending questions, reports, answers, and requested brief revisions are delivered at the boundary instead of waiting for the next status check. A stalled return is tried again on such an edge because every earlier failure was a known non-delivery; an `uncertain` one is never re-sent by an edge. Unchanged busy status and bookkeeping events wake nothing.
-A recorded worker seen `blocked`, idle with nothing owed in either direction and no report, exited, or closed produces an **attention** record on the task with a bounded recent-output excerpt and a pointer to `herdr agent read`. It is evidence, not a question, a result, a quota diagnosis, or permission to approve anything; it is owed to the coordinator like any return and is superseded the moment the worker saves a question or report, closed when the worker resumes, or marked with `sumctl attention TASK_ID ATTENTION_ID --seen`. An open saved question is preserved regardless of newer output.
-`hook enable` runs one explicit reconciliation pump because Herdr does not run startup hooks at link time; the startup hook does the same after a server restart. Every pump an event runs shares one 20-second budget, and neither an event nor `hook enable` observes a PR on GitHub or inspects or applies cleanup: that is `sweep`, `pr reconcile`, or `cleanup`. `inbox --live` reconciles no events; it observes and writes nothing. Herdr keeps no durable event replay, so a missed event is never claimed as handled: the returns it would have delivered stay pending until the next `init`, `bind`, `pump`, or task-write notice.
-`hook status` shows enabled/disabled, the last event, a bounded error log, and the count and age of pending returns. A rejected or failed event increments `events`, appears in `errors` and `errors_log`, sets `last_error`, and marks the hook degraded with its reason. An event whose pane is not owned by a recorded coordinator or worker is counted as `ignored`, not as a failure. A later successfully handled event, a successful `hook enable`, or a default-enable that actually re-links the plugin clears the current degraded reason while retaining `last_error` and the bounded error history; coordinator `init` and metadata passes leave a degraded hook that is already enabled with the current manifest as it is; `hook disable` (or `--unlink`) turns the plugin off. Disabled, degraded, or crashing, the handler changes nothing about `ask`/`report`, `init`, `bind`, and `pump`: they remain the delivery path and never stop, and `inbox --live` remains the read-only status check.
-Native idle does not detect a question asked only in prose; the attention record points a human or the coordinator at the pane, and the status check captures the question with `sumctl ask`.
+## Services and cleanup
 
-### Native metadata (optional)
+`env discover TASK` records the project's declared commands.
+`env start TASK --command NAME` starts a declared service in an owned HC terminal at the Git checkout and records readiness and process identity.
+`env inspect TASK` observes once without starting anything.
+`env stop TASK` sends one interrupt only to a matching owned instance and verifies actual exit and survivor absence.
+An ended wait or idle terminal is not process exit.
+There is no kill escalation or broad compose shutdown.
+Replaced, shared or unproven processes remain visible blockers.
 
-`./bin/sumctl metadata enable` and `metadata sync` are coordinator-only projection commands. Both first probe the installed binary's own `api schema --json` and save the result (`pane_tokens`, `workspace_tokens`, `notification`, `plugin_pane_open`, `protocol`, `probed_at`); enable refuses locally, writing nothing, when neither token field exists, and no capability is ever assumed true. The reporter source is `sum:<instance id prefix>` from `state.json`, the same derivation as the hook plugin id, so two homes with the same basename never share a source.
+Cleanup requires candidate-bound merged PR evidence, settled questions/answers/evidence/attempts, clean merged Git work, exact native identity and a maintenance barrier.
+It removes only the exact owned native terminal/history and the verified Git worktree through their respective owners.
+It never performs HC I/O while holding the state lock.
+See [verification](verification.md) and [recovery](recovery.md).
 
-A pass compares the desired tokens with what this installation recorded as successfully applied and writes only the differing keys (`--token`) and the recorded keys no longer desired (`--clear-token`); an unchanged endpoint makes no call. Task panes and workspaces carry `sum_state`, `sum_pipeline`, `sum_task`, `sum_repo`, `sum_rev` (`active>requested` while a brief revision is requested), and `sum_pr` (the recorded PR URL); the coordinator pane carries `sum_inbox` and `sum_tasks`. Before the first differing write to a pane in a pass, one `pane get` verifies it: `ok` (its cwd is the task's worktree; for the coordinator pane, the owner's recorded cwd and the recorded occupant), `absent` (the record is dropped, nothing written), `stale` (another cwd or occupant: only the keys sum recorded there are cleared, nothing new is written), or `unobservable` (no mutation, the record survives). Workspaces are written only when the task record names them. Panes this installation never recorded are never touched. A refused or failed write is not cached as applied; it is recorded under `errors_log`/`last_error`, marks the projection degraded, and the pass continues. Keys whose recorded source is another `sum:` reporter (a pre-cutover `sum:<basename>` source, another installation) are never overwritten or cleared; they are listed under `ambiguous`.
+## Metadata
 
-Projection also runs after successful domain writes and native events: `ask`, `answer`, `resolve`, `report`, `review`, `verify`, `attention`, `archive`, `cleanup`, `bind`, `prepare`, `dispatch`, `start`, `refresh request`/`adopt`, `pr reconcile`, `hook enable`, and a handled `hook event`. That pass projects the tasks the command touched plus the coordinator summary, needs no coordinator authority (a worker's `ask` writes display tokens only to endpoints already recorded, in the recorded coordinator's session), and never fails or undoes the saved operation. Reads (`status`, `inbox`, `context`, `show`, `metadata status`, `metadata inbox`, `metadata snippet`, `help`, `doctor`) never project. A disabled projection writes nothing and calls nothing.
-
-`metadata disable` clears exactly the recorded owned keys per endpoint, one call each, and reports each row; a `refused` or `failed` clear stays recorded under the task's `pending_clears` and is retried by the next pass until it succeeds, so sum's keys are never orphaned silently. Each pass runs under one bounded budget and takes the projection lock without blocking: a pass that cannot get the lock within a short wait is reported as skipped and writes nothing, and once the budget is spent the remaining endpoints are reported `skipped` (`pass budget exhausted`, counted in `last_pass.skipped`) rather than applied. `degraded` reflects the latest pass only; `last_error` and the bounded error log keep history. `metadata status` reads saved state only: summary, capabilities, `resources_detail`, `root`, `ambiguous`, `errors_log`, and a `native_open` row. Herdr keeps tokens in memory, so after a Herdr restart the sidebar is empty while records say written; `metadata sync --force` treats every recorded token as unknown and rewrites the recorded endpoints (`forgotten` is always empty; nothing reconciles automatically). `--notify` records a preference; transition notification delivery is not implemented.
-
-Open questions show `needs-decision`; native attention or unreadable task sources show `needs-attention`; reports and reviews show `review-ready`; unapplied answers show `answer-pending`; requested instruction refreshes show `instruction-refresh-pending`. Otherwise the presentation is `running`. These labels never prove verification or completion. The coordinator token distinguishes decisions, coordinator work, worker work, and inspection. Unknown coverage is explicit and never reads as clear. If all counters cannot fit Herdr's 80-character token, the token keeps the exact decision count and unknown coverage and summarizes the remaining work; `inbox --compact` retains the full known counts.
-
-Herdr 0.9.0 sidebar rows show one endpoint's tokens; they cannot group panes by project. The project grouping therefore lives in Sum's own `inbox --grouped` (and `--view`), and `metadata snippet` prints optional sidebar rows for the user to merge; Sum never writes their configuration. `./bin/sumctl metadata inbox` prints the bounded saved compact inbox (`--after`, `--limit`, `--max-chars`) or, with `--grouped`, the grouped overview; neither syncs or writes. `metadata inbox --open [--placement split|overlay|tab|zoomed]` opens that grouped view natively through the linked plugin's `inbox` entrypoint (which runs `inbox --grouped --view`): it needs the current hook manifest (enabled by default after coordinator `init`), a saved `plugin_pane_open` capability, and a Herdr pane context, and calls only `plugin pane open`. On any missing precondition or Herdr error it prints the grouped overview with `open.outcome: fallback` and a reason, exit 0; on success `open` names the placement, entrypoint, and pane (none for the manifest's popup). Opening never syncs, pumps, or writes.
+Optional metadata is display only and uses owned namespaced HC labels on verified recorded terminals.
+Labels never supply role, task completion or approval.
+`metadata status` reads saved projection health; `metadata sync` projects differences, and disable clears only recorded owned keys.
+`metadata inbox` and `inbox --grouped --view` expose saved task views.
+No legacy sidebar, workspace-token or plugin-terminal API is required.

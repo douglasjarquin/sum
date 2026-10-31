@@ -22,8 +22,13 @@ func TestOpen_initializesEmptyStoreWithoutWriting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	if s.Home != home {
-		t.Fatalf("home = %q, want %q", s.Home, home)
+	parent, err := filepath.EvalSymlinks(filepath.Dir(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join(parent, filepath.Base(home))
+	if s.Home != expected {
+		t.Fatalf("home = %q, want canonical %q", s.Home, expected)
 	}
 	if _, statErr := ordjson.ReadFile(filepath.Join(home, "state.json")); statErr == nil {
 		t.Fatal("Open must not create state.json")

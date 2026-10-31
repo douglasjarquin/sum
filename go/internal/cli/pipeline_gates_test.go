@@ -27,7 +27,7 @@ type gateLab struct {
 func newGateLab(t *testing.T) gateLab {
 	t.Helper()
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if out, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("coordinator init: %v\n%s", err, out)
 	}
@@ -68,7 +68,7 @@ func (lab gateLab) writeTask(t *testing.T, status string, evidence ...string) {
 	if lab.baseBranch != "" {
 		recorded = fmt.Sprintf(`"base_branch": %q, "base_branch_source": "explicit", `, lab.baseBranch)
 	}
-	writeTaskFixture(t, lab.home, gateTaskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": %q, "repository": %q, "worktree": %q,
+	lab.home = writeTaskFixture(t, lab.home, gateTaskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": %q, "repository": %q, "worktree": %q,
 "questions": [], "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, %s"kind": "ship", "branch": %q,
 "report": {"text": "done", "candidate": %q}, "evidence": [%s]}`,
 		gateTaskID, status, lab.clone, lab.clone, base, recorded, gateBranch, lab.candidate, strings.Join(evidence, ",\n")))

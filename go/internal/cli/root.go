@@ -10,7 +10,6 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/spf13/cobra"
@@ -50,7 +49,6 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 		runtimeRoot = cwd
 	}
 	installRoot := sumruntime.ResolveInstallation(runtimeRoot, os.Getenv("SUM_INSTALL_ROOT"))
-	incarnation.UseRuntime(runtimeRoot)
 	opts := &rootOptions{reference: reference, runtimeRoot: runtimeRoot, installRoot: installRoot, out: out, err: errOut}
 	root := &cobra.Command{
 		Use:                "sumctl",
@@ -81,7 +79,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 			opts.format = "toon"
 		}
 		outputFormat = opts.format
-		if _, err := os.Stat(filepath.Join(opts.installRoot, "release.json")); err == nil {
+		if _, err := os.Stat(filepath.Join(opts.installRoot, "release.json")); err == nil && cmd.Name() != "release-contract" {
 			return fmt.Errorf("%s is an immutable release tree. Run the installation's bin/sumctl, which selects a runtime and keeps state in its own .sum; a release never owns state.", opts.installRoot)
 		}
 		return nil
@@ -124,6 +122,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addHookCommands(root)
 
 	opts.addShowCommand(root)
+	opts.addRestoreCommand(root)
 	opts.addContextCommand(root)
 	opts.addDoctorCommand(root)
 	opts.addInitCommand(root)

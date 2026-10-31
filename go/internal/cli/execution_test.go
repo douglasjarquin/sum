@@ -29,7 +29,7 @@ func TestExecutionUnknownFlagsAreUsageErrorsBeforeExecution(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := executionUsageLab(t)
 			stdout, stderr, err := runExecutionCLI(t, home, tc.args...)
 			if err == nil {
@@ -59,11 +59,11 @@ func TestExecutionCommands(t *testing.T) {
 	}{
 		{name: "valid show", args: []string{"execution", "show", "t-aaaaaaaaaaaa"}, ok: true},
 		{name: "valid show after dashdash", args: []string{"execution", "show", "--", "t-aaaaaaaaaaaa"}, ok: true},
-		{name: "valid park --attempt", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
-		{name: "valid park --attempt=", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
+		{name: "valid park --attempt", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
+		{name: "valid park --attempt=", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
 		{name: "valid park with herdr", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid resume --attempt", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
-		{name: "valid resume --attempt=", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
+		{name: "valid resume --attempt", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
+		{name: "valid resume --attempt=", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
 		{name: "valid resume with herdr", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, herdr: true, domainErr: "registered coordinator"},
 		{name: "execution missing subcommand", args: []string{"execution"}, usage: true},
 		{name: "show extra positional", args: []string{"execution", "show", "t-aaaaaaaaaaaa", "extra"}, usage: true},
@@ -78,9 +78,9 @@ func TestExecutionCommands(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := executionUsageLab(t)
 			if tc.herdr {
-				herdrEnv(t, home)
+				nativeUnregisteredCaller(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			stdout, stderr, err := runExecutionCLI(t, home, tc.args...)
 			switch {
@@ -116,7 +116,7 @@ func TestExecutionCommands(t *testing.T) {
 func executionUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
 	before = readNamedTask(t, home, "t-aaaaaaaaaaaa")
 	return home, before

@@ -1,154 +1,156 @@
 # Recovery
 
-Backup, cleanup after a merge, and limits. Moved out of the README.
+Recover from saved task records and exact runtime identity; never infer permission to repeat an uncertain operation.
+HC owns processes and Git owns worktrees.
 
 ## Recovery and backup
 
-After reopening the coordinator, run `./bin/sumctl init`. If the previous coordinator pane is verifiably gone, run `./bin/sumctl init --role coordinator --reclaim`. It proceeds only when Herdr reports that pane as `pane_not_found`, or when a different occupant now holds that pane ID (`replaced`, see [Pane incarnation](#pane-incarnation)). A pane still held by the recorded occupant (even with its agent exited), or one whose occupant Herdr cannot establish, is refused, and reclaim never rebinds tasks by itself. Then check status. To route an existing task back to the new coordinator:
+Run `./bin/sumctl init` and read the procedure path it returns.
+A qualified terminal with no explicit coordinator launch defaults to developer rather than taking over.
+Use `coordinator start` for a new bound launch, or explicit initialization for an inspected existing qualified terminal.
+Pass `--reclaim` only when the user requested takeover and the recorded coordinator is verifiably gone or replaced.
+An unobservable core, idle status or an exited wait is insufficient proof.
+The coordinator's exit does not stop outliving workers, services or observer terminals.
 
 ```sh
 ./bin/sumctl bind TASK_ID --parent-only
+./bin/sumctl bind TASK_ID --worker-terminal ADDRESS
+./bin/sumctl bind TASK_ID --reviewer-terminal ADDRESS
 ```
 
-If a worker's pane changed, inspect the actual agent and use `bind TASK_ID --worker-pane PANE_ID`. The helper checks the recorded worktree. It never creates a replacement automatically. Herdr remains the sole owner of process/session restoration; sum does not alter its auto-resume setting.
+These are explicit rebindings after inspection, not guesses from a reused name or cwd.
+A replacement reviewer requires verified stop evidence for its predecessor; the worker cannot review itself.
+No automatic worker replacement or cross-machine transfer is supported.
+Another same-host core/session scope is currently refused before binding.
+Never close an unowned terminal or delete a checkout to make recovery appear successful.
 
-If closing the last worker pane also removed its Herdr workspace while the Git worktree still exists, reopen that checkout with `herdr worktree open --cwd <task repository> --path <task checkout> --label sum-<task> --no-focus`, start or adopt the worker in the new workspace, then run `sumctl bind TASK_ID --worker-pane PANE_ID`. Keep the rebound pane open; closing it removes the reopened workspace again. Binding changes the recorded workspace only when Herdr reports the old workspace as `workspace_not_found`, the new workspace reports the same checkout path, the pane cwd is that checkout, and Git reports the saved task branch and repository identity. Sum records those observations in task evidence; a live old workspace or a mismatch is refused. The ordinary same-workspace bind path does not change.
+## Interrupted preparation and opening messages
 
-After rebinding, `execution park` still requires conclusive stop evidence: the worker agent must be gone and no process may remain bound to the checkout. Once the attempt is released, use `execution resume` for a fresh worker at the checkout's current HEAD. Send corrections with `repair send` after resume starts the worker; it refuses a released attempt. `sweep` and `cleanup` use the rebound workspace identity for pane and workspace checks.
-
-If the task's recorded reviewer pane is gone or no longer has a live reviewer agent, inspect the replacement pane and run `bind TASK_ID --reviewer-pane PANE_ID`. Its cwd must match the task checkout, and the worker pane cannot be adopted. The recorded reviewer endpoint must be proved stopped: Herdr reports `pane_not_found` or `agent_not_found`, the old pane has no foreground process, and no other process remains bound to the checkout. A surviving old pane whose cwd moved out of the checkout is refused; close that pane so Herdr reports `pane_not_found`, then retry. A live old reviewer is never replaced. The rebind is appended to task evidence; context, reviewer-only cleanup, and sweep then use the new endpoint.
+`prepare --reconcile TASK_ID` uses only the saved approved task intent and verifies Git branch, base, path and registration.
+It neither force-resets existing work nor creates a duplicate checkout.
+Once a terminal exists, the saved endpoint and first-message outcome are separate.
+If the exact attempt proves its opening message was not submitted, use one explicit recovery:
 
 ```sh
-./bin/sumctl backup ~/backups/sum-records.tar.gz
+./bin/sumctl execution redeliver TASK_ID --attempt ATTEMPT_ID
+./bin/sumctl reviewer redeliver TASK_ID --attempt ATTEMPT_ID
 ```
 
-This is deliberately **records-only**. The manifest lists the code worktrees that were **not** captured. Back up source code and unpushed work separately. No credential store is copied, but task text can itself contain sensitive information; protect the archive accordingly.
+Do not redeliver an uncertain message or type the brief into a terminal by hand.
+Worker opening-message recovery requires the saved native effect to be `created` and `first_message.sent` explicitly false; true, missing and null outcomes are refused.
+The final claim rechecks the exact launch, initialization receipt and maintenance barrier; a concurrent receipt or cleanup prevents duplicate input.
+`execution confirm TASK_ID --attempt ATTEMPT_ID` requires the matching worker receipt and fresh native identity evidence.
+A trust/auth dialog is for the user to answer, never for Sum to accept.
+A failed non-kept HC launch may leave no recoverable address; uncertainty is retained rather than claiming it can always be rediscovered.
+`execution park` releases capacity only after conclusive stop and survivor evidence for the exact attempt.
+Then `execution resume` reacquires capacity and starts one successor at the recorded checkout's current HEAD.
+A report, idle status or missing identity releases nothing.
 
-Restore into a new empty directory, inspect the manifest, and point `sumctl --home /restored/state` at it. Keep the original archive. Unknown schema versions fail without modifying them. Pane IDs are machine-local; cross-machine process recovery is manual in this MVP. The manifest's `machine` is the stable identity of the host that made it and `hostname` its name at the time.
+## Terminal incarnation
 
-## Machine identity
+Permanent core ID and returned terminal address are native identity.
+Creation time, process identity, task, role, attempt, binding generation and matching initialization receipt establish Sum authority.
+A socket path, name, label, cwd, PID or status alone establishes none of it.
+A replacement harness process at the same terminal does not inherit the old role.
+A lost non-kept agent becoming a shell cannot receive automatic task prompts as that worker.
+Follow the helper's explicit recovery reason; preserve pending answers, uncertainty and prior evidence.
+Do not manufacture a receipt, endpoint or model observation.
 
-Herdr pane IDs such as `w5K:p1` are unique only within one Herdr server, so every recorded endpoint carries a `machine`, and sum refuses to reuse another machine's pane IDs. That value is `m-` and 32 hex digits: an HMAC of the operating system's machine ID (`/etc/machine-id` or `/var/lib/dbus/machine-id` on Linux, the `IOPlatformUUID` on macOS) under a sum-specific key. The raw machine ID is never stored. A Linux host with neither file gets a random ID created once at `~/.local/state/sum/machine-id`, outside any installation. On macOS, a failed `ioreg` read is an error, never a different identity.
+## Observer and wake recovery
 
-Renaming the host changes nothing: the coordinator stays coordinator, registrations and return routes keep resolving, and `--reclaim` is not needed. A different host, including one that shares the hostname, is still another machine.
+`hook status` reports preference, startup/readiness receipt, owned scope and health.
+Coordinator `init` ensures startup unless explicitly disabled; enabled preference without a real observer receipt is degraded, not active.
+A failed observer startup does not fail the saved task operation.
+Use `pump` for one bounded explicit pass while degraded.
+Reconnect uses fresh snapshots and ledger reconciliation; an event sequence is never a delivery acknowledgement.
+The observer contains no independent payload queue and never automatically replays a submitted or uncertain mutation.
+After proving a prior observer finished, replacement retires its old endpoint/receipt proof and persists a distinct `launch_attempt` before native creation.
+An early child may record its exact matching startup receipt before `terminal.run` replies; the parent merges only that same launch intent and never overwrites a newer receipt or changed launch.
+Transient read-only HC transport/observation failures reconnect to the existing core with bounded backoff and a fresh subscription snapshot.
+Cancellation or explicit disablement stops the observer; wrong core, incompatible config/protocol and invalid durable records are hard failures rather than reconnect permission.
+No reconnect replays a submitted or uncertain mutation.
 
-Records written before this identity existed carry the hostname instead. No manual step migrates them. Such a value names this host when it is the current hostname, or when this host recorded it under its own identity in `.sum/machine.json`; each registration (`sumctl init`, and dispatch for the worker pane) records the current hostname there. The coordinator's next `init` rewrites its own record and session file to the stable identity, and a session file keyed by the old hostname is still found and re-keyed when that pane registers again. A name recorded under a different identity never names this host.
+Routine wake episodes preserve prepared, claimed, intent, submitted, uncertain and closed states.
+`wake show` reads them and provides the exact included/omitted boundary.
+`wake consume --boundary TOKEN` records only the work presented, not its approval, application or verification.
+`wake reconcile` resolves an interrupted episode from its phase without sending again.
+New questions retain priority behind a routine wake; they do not interrupt a working terminal.
+Inspect exact durable receipts for an uncertain return and use `delivery reconcile` when they prove its historical application.
+An explicitly requested `notice TASK_ID --to parent|worker` is a separate delivery attempt; its success does not resolve or erase the earlier uncertain effect.
+Do not loop or use another key to evade an uncertain attempt.
 
-A name this host carried only before this release is not provable. If the host was renamed under the older release and this release first runs under the new name, the coordinator record still names the old one: `init` returns `developer`, and reclaim is refused as other-machine. Recover without editing records: set the old hostname again (`hostnamectl set-hostname OLD`), run `./bin/sumctl init` in the coordinator pane, which records the name and rewrites the coordinator record, then set the current hostname back. Tasks recorded under the old name resolve from then on.
-
-A malformed `.sum/machine.json` stops every command that needs the machine identity and names the file. Restore it from the copy you trust. Removing it only forgets the recorded names, so records under a name the host no longer carries become other-machine again.
-
-* A VM clone is a different machine only if it regenerates `/etc/machine-id`, as cloned systemd hosts must. Such a clone does not inherit the original's coordinator, tasks, or hostname records, even with the whole `.sum/` copied and the hostname kept. A clone that keeps the machine ID is the same machine to sum.
-* A records backup does not include `.sum/machine.json` or the coordinator claim. Restored on another host, its tasks and pane bindings are other-machine until recovered and bound explicitly. The exception is a record from before this identity whose hostname the restoring host happens to share, which resolves there as it did before.
-* A reinstalled operating system with a new machine ID is a new machine: reclaim the coordinator and rebind tasks explicitly.
-* A release from before this identity compares `machine` to the raw hostname. Once this release has written records, rolling back below it leaves those records other-machine to the older code, and its reclaim refuses them.
-
-## Pane incarnation
-
-A Herdr pane ID names an address, not an occupant. After a Herdr restart the saved layout comes back under the same pane IDs with new shells, and a pane that was never saved hands its ID to whatever is created next. So sum records what occupied a pane when it bound it and checks that occupant again before any authority or prompt. The record, `incarnation`, sits on the pane's registration (`sessions/*.json`) and, for the coordinator, on `context.json`. It holds the `terminal_id` and native `agent_session` Herdr reports, plus the pane shell's pid and OS start time. `init`, `prepare`, `dispatch`, `bind --worker-pane`, and `reclaim` write it; a verified delivery refreshes a worker's, and a verified coordinator command refreshes the coordinator's after a restore or handoff. Coordinator commands, the bridge and MCP (for anything but observation), delivery, `repair send`, and refresh check it.
-
-| Outcome | What Herdr shows | Result |
-| --- | --- | --- |
-| `same` | the recorded `terminal_id` | the role stands |
-| `new-conversation` | the same terminal, a different native session (for example a new harness conversation in the pane) | the role stands; the new session is recorded |
-| `handoff` | a new `terminal_id`, the same shell process (pid and start time), as after a live handoff | the role stands; the new terminal is recorded |
-| `restored` | a new terminal and shell, but Herdr resumed the recorded native conversation (same agent, same session id) | the role stands |
-| `legacy-verified` | a record written before this release, whose pane shell already ran more than 2 s before the record's first occupancy time | the role stands, and this record is adopted at its next write |
-| `replaced` | a new terminal, a different shell, no matching native session; or a legacy record older than the pane's shell | no role; the returns stay pending |
-| `unrecorded` | a legacy record that cannot be proven either way | no role; the registration is left untouched |
-| `unobservable` | Herdr cannot report the terminal or shell (unreachable server, stale socket) | no role; the registration is left untouched |
-
-A refusal changes no task, question, answer, reservation, or delivery record. A `submitted` or `uncertain` delivery keeps its state: a recycled address never makes an ambiguous prompt safe to repeat. The recovery is always deliberate:
-
-* Coordinator `replaced`, or pane gone: if the user confirms the pane should coordinate, run `./bin/sumctl init --role coordinator --reclaim` there.
-* Coordinator `unrecorded`: if the user confirms the recorded coordinator is gone, close that pane so Herdr reports `pane_not_found`, then reclaim.
-* Worker not verified: after inspecting the pane, the coordinator runs `./bin/sumctl bind TASK_ID --worker-pane PANE`. That records the worker registration for the inspected occupant.
-* `unobservable`: rerun once Herdr answers.
-
-Nothing is relaunched, and no replacement worker is started.
-
-Limits:
-
-* Herdr 0.9.0 has no server generation and no prompt precondition. A restart in the moment between sum's last observation and `agent prompt` can still deliver one prompt to the new occupant.
-* `restored` trusts the native session an integration reports. Any process in the pane can report one: role bookkeeping is not an OS security sandbox.
-* The legacy proof assumes the wall clock was not stepped backwards by more than the gap between a record and a later Herdr restart.
-* An older sum helper neither records nor checks incarnation. While one runs (for example during a refresh), protection covers only this release's paths, and a record it rewrites becomes legacy again.
-
-## Wake recovery
-
-An adopted coordinator's routine wake episode lives in `.sum/deliver/<recipient key>.wake.json`, written before any prompt (`prepared`), after the in-flight attempts are stamped (`claimed`), right before the prompt call (`intent`), and after the attempt is finalized (`submitted`, `uncertain`, `not-delivered`, `not-submitted`). `sumctl wake show` reads every sidecar and writes nothing. Recovery is explicit; no timer, PID check, or elapsed time closes an episode or resends a prompt.
-
-| Phase found | What it means | `sumctl wake reconcile` | What remains |
-| --- | --- | --- | --- |
-| `prepared` | a pass crashed after persisting the claims and before stamping anything | closes it as `not-submitted` | nothing was sent; the next pass may prompt for the same returns |
-| `claimed` | the in-flight attempts are stamped; the prompt was never started | marks it `uncertain`, attempts untouched | outstanding; `wake consume` after reading the work; nothing is resent |
-| `intent` | the prompt call may have started | marks it `uncertain`, attempts untouched | outstanding; `wake consume`; nothing is resent |
-| `submitted`, `uncertain` | the prompt reached, or may have reached, the pane | no change | `wake consume --boundary TOKEN` from `wake show`, or `sumctl notice TASK --to parent` supersedes it explicitly |
-| `consumed`, `not-delivered`, `not-submitted`, `replaced` | closed | no change | the next pass may open a new episode |
-| any outstanding phase, occupant replaced | the owner record no longer names the occupant the episode was bound to | closes it as `replaced` | the old occupant's attempts are preserved; the new occupant gained no coverage and is prompted afresh |
-| unreadable, foreign, or unsupported file | the sidecar cannot be trusted | reports the diagnostic, rewrites nothing | nothing is submitted to that recipient until the user resolves the file by path |
-
-A consume receipt is an exact fingerprint of the boundary token: repeating it is idempotent (`repeated`, no write), even after a later episode or after coverage was pruned; a receipt for an older generation is `expired` and never adds coverage or closes the current episode; a receipt whose coverage differs from the one already consumed for that episode is refused. A directory-sync failure after the receipt's rename is reloaded from the persisted file, so a replay is safe. Consumption covers only the token's `included` identities: omitted tasks and later arrivals stay eligible, and nothing is ever presented as all clear on their behalf.
-
-Decision priority attempts (an open question sent behind an outstanding routine episode) follow the per-obligation attempt rules, not the episode's: a `not-delivered` attempt (busy or absent pane) leaves the decision unrecorded and the next eligible pass tries once more (a decision that reads `stalled` after repeated busy observations is tried again by the idle-hook pass, like a stalled routine return); a `submitted` or `uncertain` attempt records the decision on the sidecar and it is never resent by a pass (an uncertain one included); `wake show` lists recorded decisions with their deliveries under `priority_prompts`, so they are never reported as uncoalesced. Consuming the routine wake does not close a decision; answering the question (`sumctl answer TASK_ID QUESTION_ID --text ...`) does, and the next pass then prunes the record behind a `decision-closed` receipt. `wake reconcile` leaves them alone except when it closes an episode as `replaced`, which clears them: a new occupant inherits nothing and is prompted once. A decision leaves the record only when its question is no longer open.
-
-Limits: an episode that reached a coordinator occupant who is now gone can only be closed by `wake reconcile` as `replaced`, never consumed; a prompt sent by an older or non-adopted helper is reported as uncoalesced and is never retroactively coalesced; and a target release without the wake protocol is refused by `update apply`/`update rollback` while an episode is outstanding, uncertain, or unreadable (see `docs/update.md`); for an unreadable or foreign sidecar that refusal names the file by path, because sum never rewrites it: inspect it with `sumctl wake show` and move or remove the file by hand, then retry.
-
-## Limits worth knowing
-
-* Plain-text questions from non-cooperative workers are found during a status check, not guaranteed to be detected immediately while unattended.
-
-* This is a trusted-local workflow, not an adversarial sandbox. Workers share your execution account unless you supply isolation. Profiles/instructions do not isolate credentials.
-
-* Repository tests run repository-authored code. Use existing safe dev containers/CI and retain normal harness permissions.
-
-* No automatic worker replacement, cross-machine ownership transfer, hard cost enforcement, or exactly-once PR publication.
-
-* Cleanup establishes that an agent and its children exited only through Herdr observation and a process-cwd scan; a writer that runs from outside the checkout is not detected, and cleanup never kills anything.
-
-* Shell-capable harnesses share the task contract. Native instruction, MCP, quota, and resume capabilities still vary. The source does not claim all harnesses have been live-certified.
-
-* Protocol/version mismatches fail visibly. No tmux fallback, terminal-banner classifier, or silent downgrade is installed.
-
-* macOS and Linux are the targets. Windows is not supported by the file-locking helper in this MVP.
-
-### Cleanup after a merge
-
-A merged PR archives nothing by itself, and nothing observes a merge on its own: `init`, `pump`, `bind`, hook events, and status checks never call GitHub or apply cleanup; they list recorded open PRs (with the time each was last observed) and pending cleanup under `maintenance`.
-`cleanup: pending` appears only after `sweep`, `pr reconcile`, or `cleanup` observed the merge.
-When you say a task is merged, or status shows a task as `cleanup: pending`, the coordinator runs the guarded cleanup:
+## Reconcile one historical delivery effect
 
 ```sh
-./bin/sumctl cleanup TASK_ID                 # inspect: fresh GitHub observation, identity, occupants, artifacts; persists the plan, removes nothing
-./bin/sumctl cleanup TASK_ID --apply         # remove the verified workspace and clean checkout through native Herdr, then archive the record
-./bin/sumctl cleanup TASK_ID --reviewer-only # close only a bound reviewer pane that saved its findings and whose agent exited
-./bin/sumctl sweep                           # every recorded open PR observed once, settled panes closed, then one guarded cleanup apply per pending task
+./bin/sumctl delivery reconcile TASK_ID --delivery DELIVERY_ID
 ```
 
-`sweep` is the batch form: least recently maintained tasks first, each re-read before it acts, no further PR observed in that pass after a `gh` timeout, and no task started after its budget (`--budget SECONDS`, default 60; `0` starts nothing).
-A started task finishes under its helpers' own bounds (each `gh` call up to 120 s), so the budget bounds admission, not wall time; tasks it did not reach are listed under `deferred` with their exact next command.
-The same pass closes only the pane that settled the obligation: the pane recorded on the worker report or reviewer verdict for the current candidate (or a terminal task state), via native `pane close`, after the pane cwd matches the recorded checkout and occupant incarnation is verified.
-A successor pane created by resume stays open until it files a new report or review.
-Unanswered questions do not keep those panes open: `answer` writes the decision, and `execution resume` launches a fresh session at the recorded worktree's current HEAD that reads `context --role worker --section decisions`.
-A closed pane is recorded so later delivery and refresh are `pane-closed`. After `execution resume` starts a worker, use `repair send` with its current attempt ID to send a correction.
-A second sweep with nothing pending does nothing.
+This coordinator-only command resolves one exact historical `in-flight`, `uncertain` or `unknown` delivery effect from existing durable application or consumed-boundary evidence.
+It sends no input and accepts no proof, force, reason or operator-override flags.
+A generic later success, a new notice, native status or an operator assertion is not proof that the old input was applied.
+The receipt must bind the exact original endpoint, obligation and semantic input revision; missing historical proof is an explicit refusal.
+The locked claim rereads current task authority and the matching receipt rather than trusting an earlier snapshot.
 
-`--apply` proceeds only when every check passes, and every failed check is a named blocker in the output and in `show TASK_ID`:
-the exact recorded PR must be observed **merged** with a merge commit and its head must be a recorded candidate, unless the coordinator's `verify --result pass` names that exact merged head after a post-review push (closed is not merged, a mismatch without that verification blocks, a network or auth failure is uncertain and blocks);
-the checkout HEAD must be that merged head or an ancestor of it, so squash and rebase merges pass without the original commits being on the default branch, while an extra local commit blocks;
-all questions must be answered and applied and a structured handoff saved;
-the workspace, pane, checkout, branch, and repository must match the task record by identity (never by label), the workspace must not be the coordinator's, and an unknown extra pane in the task workspace blocks;
-the agent must be gone from the pane (Herdr `idle` or `done` is not exit), the pane must run only its shell, and no process may have a cwd inside the checkout, observed through `agent get`, `pane process-info`, and one bounded `lsof` pass; when that cannot be established the task stays cleanup-pending;
-staged, modified, and non-ignored untracked files block. Every git-ignored path is disposable once the merge, identity, process, and other cleanup checks pass, regardless of its name or location; inspection lists up to 50 ignored entries with the total and omitted count and saves that summary, while the completed cleanup result records the entries removed. No files are removed during inspection, and nothing is ever `git clean`ed, reset, or force-removed.
+The original returns row, effect state and native error remain unchanged.
+A separate `delivery-reconciliations.json` sidecar records the original row digest, copies of the exact resolving receipts, coordinator endpoint and timestamp.
+Success returns `task`, `delivery`, `result:reconciled` and `original_state`; an identical repeat returns `result:repeated` without rewriting the file.
+Cleanup, lifecycle maintenance and activation consult the same strict resolution validator instead of treating every historical uncertain row as permanently unresolved.
+No reconciliation closes a question, applies an answer, verifies a report, releases capacity or approves publication.
+Wake consumption still closes only its presentation episode; reconciling a historical native effect is a separate durable operation.
+Consumed proof for unresolved deliveries is retained per task before rolling wake history can discard it, so a delayed first reconciliation remains possible.
+Retention reads only a successfully committed wake; if retention fails, later wake replacement refuses and preserves that source rather than losing the proof.
+A changed or insufficient receipt does not make replay safe.
 
-The checks run again right before the removal, the removal is one `herdr worktree remove --workspace ID` without `--force`, and the cleanup intent is saved before that call.
-Services the worker launched with `env start` (#17) are judged by identity: when the recorded pane, shell pid, pid, and argv still match, and only evidence-complete resource-state blockers remain, `--apply` stops exactly those first with one `ctrl+c`, a bounded exit wait, and a port check, closes the pane sum created, and re-inspects; a `service-unknown` blocker (restarted or replaced outside sum), a `writing` blocker (an owned log modified within the last seconds), or a survivor after the bound keeps the task cleanup-pending with the reason named. sum never kills by name, port, or cwd, never runs a broad compose down, and never closes a pane it did not create.
-If sum is interrupted between the removal and the archive, the task shows `removing` and the next `cleanup TASK_ID` or `sweep` reconciles from records and observation (a status check does not): verifiably absent resources complete the archive, a still-present workspace returns the task to pending, anything else blocks with the observed state.
-Already-absent resources are accepted only after that identity inspection; nothing is recreated.
-The task branch, `brief.md`, brief revisions, decisions, reports, handoffs, reviewer findings, and PR evidence always stay.
-Cleanup records the released reservation before archiving.
-Once cleanup saves destructive intent, worker, verifier, and service launches are refused until cleanup finishes or conclusively refuses removal.
-An uncertain removal keeps that exclusion until reconciliation.
-Competing cleanup commands for the same task, including the one a `sweep` runs, refuse while one owns the operation.
-`archive --acknowledge` remains records-only, refuses any held reservation, and never removes anything.
-Other workers keep running; there is no global stop, restart, or merge poll daemon.
+## Cleanup
+
+Inspect `cleanup TASK_ID` before `cleanup TASK_ID --apply`.
+It requires exact merged PR/candidate evidence, no unsettled questions, unapplied answers, required evidence or active attempts, and verified Git/native ownership.
+Dirty, untracked or unmerged work and shared, replaced or surviving processes remain named blockers.
+The maintenance barrier prevents cleanup racing new work.
+Owned services receive one interrupt and require actual exit and survivor proof; there is no kill escalation.
+Only exact proven-owned native terminal/history is removed, and Git removes the verified worktree without force.
+Never manually remove a task checkout, terminal or branch.
+
+## State generations and rollback
+
+Normal Open, `init` and `status` do not migrate schema-one state.
+The stable root selects a separate physical writable generation; sealed historical procedures, policy and evidence retain their original bytes.
+An enforceable exclusion lease must prevent every legacy writer and sender before cutover.
+Current legacy APIs do not provide that proof, and `ps` output or an operator boolean cannot replace it.
+Existing-installation activation therefore refuses without this external prerequisite.
+A schema-one runtime cannot reactivate the inactive archive as writable state.
+Rollback requires the actual target binary's compatible capabilities, not merely a compatible-looking manifest.
+No production migration has been established by offline tests.
+
+## Records-only backup and restore
+
+```sh
+./bin/sumctl backup /path/outside/state/sum-records.tar.gz
+./bin/sumctl restore /path/to/sum-records.tar.gz /new/absolute/state-home
+./bin/sumctl --home /new/absolute/state-home show TASK_ID
+./bin/sumctl --home /new/absolute/state-home context TASK_ID --role coordinator
+```
+
+Backup preserves task records, brief/procedure revisions, reports, decisions and its manifest.
+It does not capture worktree code, unpushed commits, dirty files, credentials or live processes.
+Back up code separately and protect archives whose task text may be sensitive.
+Use `restore ARCHIVE NEW_HOME`, not direct extraction followed by opening the extracted source header as writable state.
+`NEW_HOME` must not exist; an existing destination is refused without overwrite.
+The importer accepts the current schema-two records-only archive and validates its manifest, source schema, regular entry paths, uniqueness and complete gzip stream before creating the destination.
+Unknown schemas/scopes, traversal or absolute/backslash paths, links and duplicate entries are refused.
+Import limits are 64 MiB per entry, 512 MiB total expanded archive including trailing data, and 100,000 entries; oversized input is refused rather than read without bound.
+
+Restore creates a fresh instance, a new physical generation and `records_only:true` quarantine.
+Both the root pointer and physical header use schema two with `backend:"records"` and `records_only:true`; ordinary active homes use `backend:"hc"`.
+The reader accepts the records backend only with its quarantine flag, while HC-only helpers that require the HC backend reject it rather than treating an unknown flag as writable authority.
+Imported task and pinned procedure/version files retain their exact archived bytes; settings, findings and other saved records remain historical records rather than live authority.
+The complete archive entries, including the original header and old sessions, are retained under `NEW_HOME/restore-source/` for inspection.
+No live session registrations, coordinator owner, observer or runtime binding is imported.
+Old native addresses and worktree paths inside historical records never establish authority at the new location.
+Saved `show`, `status` and `context` reads are available; `init` may report developer only.
+All writes, coordinator claims, rebindings, capacity adoption, native launch/send and other mutations are blocked.
+There is no automatic promotion or executable schema-one fallback.
+
+The result names the absolute `home`, new `generation`, `records_only:true`, archive `sha256` and a historical/no-authority note.
+If an I/O failure occurs after destination creation, retain that quarantined partial result and the original archive for inspection.
+There is no automatic replay, overwrite or cleanup; use a different fresh destination for a deliberate retry.

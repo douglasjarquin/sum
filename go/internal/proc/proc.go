@@ -358,7 +358,7 @@ func ScrubbedEnv() []string {
 	var env []string
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
-		if strings.HasPrefix(key, "HERDR_") || key == "SUM_HOME" || key == "SUM_SESSION" || key == "SUM_INSTALL_ROOT" {
+		if strings.HasPrefix(key, "HERDR_") || strings.HasPrefix(key, "HC_") || strings.HasPrefix(key, "SUM_") {
 			continue
 		}
 		env = append(env, entry)

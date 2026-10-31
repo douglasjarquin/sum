@@ -5,7 +5,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -40,18 +44,30 @@ func registeredWorker(t *testing.T) (*store.Store, *ordjson.Object, *ordjson.Obj
 	if err != nil {
 		t.Fatal(err)
 	}
-	endpoint := store.Endpoint{Machine: host.ID, Session: "worker-session", Pane: "w-worker:p1"}
-	task.Set("machine", host.ID)
-	task.Set("session", endpoint.Session)
-	task.Set("pane", endpoint.Pane)
-	worker := ordjson.NewObject()
-	worker.Set("terminal", "worker-one")
-	if err := s.SaveTask(task); err != nil {
+	fixture := hctest.New(t)
+	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: fixture.CoreID, Socket: fixture.Socket, Session: "sum-test", Address: "t1", CreatedMS: 1, Role: "worker", Task: "t-aaaaaaaaaaaa", Attempt: "x-aaaaaaaaaaaa", BindingGeneration: 1}
+	pid := uint32(100)
+	terminal := hcclient.Terminal{Address: endpoint.Address, CreatedMS: endpoint.CreatedMS, State: "live", PID: &pid, Foreground: &hcclient.Foreground{PID: 101, Argv: []string{"codex"}}}
+	fixture.SetTerminal(terminal)
+	worker := (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: terminal.Foreground}).Record(store.Now())
+	registration, err := s.Register(endpoint, "worker", endpoint.Task, worker)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Register(endpoint, "worker", "t-aaaaaaaaaaaa", worker); err != nil {
+	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: endpoint.Native(), Kind: "worker-init", Attempt: endpoint.Attempt})
+	registration.Set("native_receipt", receipt)
+	if err := ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(endpoint)+".json"), registration); err != nil {
 		t.Fatal(err)
 	}
+	attempt, err := reservations.NewAttempt("worker", endpoint.Object(), "/tmp/work", store.Now(), "running", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.Set("id", endpoint.Attempt)
+	attempt.Set("native_receipt", receipt)
+	attempt.Set("incarnation", worker)
+	task.Set("execution", reservations.NewExecution(attempt))
+	task.Set("worker_endpoint", endpoint.Object())
 	question := ordjson.NewObject()
 	question.Set("id", "q-one")
 	question.Set("key", "route")
@@ -73,18 +89,36 @@ func registeredWorker(t *testing.T) (*store.Store, *ordjson.Object, *ordjson.Obj
 		}(),
 	})
 	task.Set("questions", []any{question})
-	coord := ordjson.NewObject()
-	coord.Set("machine", host.ID)
-	coord.Set("session", "coord-session")
-	coord.Set("pane", "w-coord:p1")
-	task.Set("parent", coord)
+	coordEndpoint := endpoint
+	coordEndpoint.Address = "t2"
+	coordEndpoint.CreatedMS = 2
+	coordEndpoint.Role = "coordinator"
+	coordEndpoint.Task = ""
+	coordEndpoint.Attempt = "bootstrap"
+	terminal.Address = "t2"
+	terminal.CreatedMS = 2
+	fixture.SetTerminal(terminal)
+	coord := coordEndpoint.Object()
+	coordEvidence := (incarnation.NativeEvidence{Endpoint: coordEndpoint.Native(), PID: pid, Foreground: terminal.Foreground}).Record(store.Now())
+	coordReceipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: coordEndpoint.Native(), Kind: "coordinator-init", Attempt: coordEndpoint.Attempt})
+	coord.Set("incarnation", coordEvidence)
+	coord.Set("native_receipt", coordReceipt)
+	registered, err := s.Register(coordEndpoint, "coordinator", nil, coordEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered.Set("native_receipt", coordReceipt)
+	if err := ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(coordEndpoint)+".json"), registered); err != nil {
+		t.Fatal(err)
+	}
+	if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), coord); err != nil {
+		t.Fatal(err)
+	}
+	task.Set("parent", coordEndpoint.Object())
 	if err := s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	ctx := ordjson.NewObject()
-	ctx.Set("machine", host.ID)
-	ctx.Set("session", "coord-session")
-	ctx.Set("pane", "w-coord:p1")
+	ctx := coordEndpoint.Object()
 	return s, task, ctx
 }
 
@@ -231,10 +265,11 @@ func TestAnswerExpectedRejectsChangedRecipientAndAppliesChoice(t *testing.T) {
 	if err != nil || expected == "" {
 		t.Fatalf("recipient identity = %q, err=%v", expected, err)
 	}
-	host, _ := s.Machine()
+	value, _ := task.Get("worker_endpoint")
+	endpoint := store.EndpointFromContext(value.(*ordjson.Object))
 	worker := ordjson.NewObject()
 	worker.Set("terminal", "worker-two")
-	if _, err := s.Register(store.Endpoint{Machine: host.ID, Session: "worker-session", Pane: "w-worker:p1"}, "worker", "t-aaaaaaaaaaaa", worker); err != nil {
+	if _, err := s.Register(endpoint, "worker", endpoint.Task, worker); err != nil {
 		t.Fatal(err)
 	}
 	pumps := 0
@@ -446,3 +481,105 @@ var errNotification = &notificationError{}
 type notificationError struct{}
 
 func (*notificationError) Error() string { return "notification failed" }
+
+func TestCloseRetainsNativeCoordinatorIdentity(t *testing.T) {
+	s, task, ctx := registeredWorker(t)
+	question := findQuestion(task, "q-one")
+	question.Set("status", "answered")
+	question.Set("answer", "Keep the change")
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, _ := worker.Get("id")
+	if _, err = reservations.Transition(task, attempt.(string), "released", store.Now(), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Close(s, ctx, "t-aaaaaaaaaaaa", "q-one", "worker was stopped"); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := s.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, _ := findQuestion(saved, "q-one").Get("closed_by")
+	by, _ := value.(*ordjson.Object)
+	if !store.EndpointFromContext(by).Native().SameAuthority(store.EndpointFromContext(ctx).Native()) {
+		t.Fatalf("close lost native identity: %#v", by)
+	}
+}
+
+func TestCleanupIntentRefusesNewQuestionAndRetainsExistingHistory(t *testing.T) {
+	s := testStore(t)
+	task, err := s.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := ordjson.NewObject()
+	cleanup.Set("intent", "claimed-cleanup")
+	task.Set("cleanup", cleanup)
+	if err = s.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := ordjson.MarshalCompact(task)
+	notices := 0
+	if _, err = AskStructured(s, "t-aaaaaaaaaaaa", "new", "Keep this user question intact", nil, func() (*ordjson.Object, error) { notices++; return nil, nil }); err == nil {
+		t.Fatal("question admitted during cleanup claim")
+	}
+	saved, err := s.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := ordjson.MarshalCompact(saved)
+	if string(before) != string(after) || notices != 0 {
+		t.Fatal("cleanup refusal changed task or delivered input")
+	}
+	cleanup.Delete("intent")
+	task.Set("cleanup", cleanup)
+	if err = s.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = AskStructured(s, "t-aaaaaaaaaaaa", "new", "Keep this user question intact", nil, func() (*ordjson.Object, error) { return nil, nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTerminalMaintenanceRefusesNewQuestionUntilReconciled(t *testing.T) {
+	for _, state := range []string{"claimed", "uncertain"} {
+		t.Run(state, func(t *testing.T) {
+			s := testStore(t)
+			task, err := s.ReadTask("t-aaaaaaaaaaaa")
+			if err != nil {
+				t.Fatal(err)
+			}
+			maintenance := ordjson.NewObject()
+			maintenance.Set("state", state)
+			task.Set("terminal_maintenance", maintenance)
+			if err = s.SaveTask(task); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := ordjson.MarshalCompact(task)
+			if _, err = AskStructured(s, "t-aaaaaaaaaaaa", "new", "User question is still pending", nil, func() (*ordjson.Object, error) { t.Fatal("notice from refused question"); return nil, nil }); err == nil {
+				t.Fatal("question admitted during native history maintenance")
+			}
+			saved, err := s.ReadTask("t-aaaaaaaaaaaa")
+			if err != nil {
+				t.Fatal(err)
+			}
+			after, _ := ordjson.MarshalCompact(saved)
+			if string(before) != string(after) {
+				t.Fatal("refused user question changed history")
+			}
+			task.Delete("terminal_maintenance")
+			if err = s.SaveTask(task); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = AskStructured(s, "t-aaaaaaaaaaaa", "new", "User question is still pending", nil, func() (*ordjson.Object, error) { return nil, nil }); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

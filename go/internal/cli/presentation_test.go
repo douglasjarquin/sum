@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
@@ -23,15 +22,9 @@ import (
 
 func presentationHome(t *testing.T) string {
 	t.Helper()
-	home := t.TempDir()
+	d := newPolicyLab(t)
+	home := d.home
 	state, err := store.Open(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := state.Init(); err != nil {
-		t.Fatal(err)
-	}
-	host, err := state.Machine()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,21 +37,23 @@ func presentationHome(t *testing.T) string {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
-	worker := store.Endpoint{Machine: host.ID, Session: "worker-session", Pane: "w-worker:p1"}
-	raw, _ := json.Marshal(map[string]any{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo", "machine": worker.Machine, "session": worker.Session, "pane": worker.Pane, "questions": questions, "attention": []any{}, "evidence": []any{}, "report": nil})
-	if err := os.WriteFile(path, raw, 0600); err != nil {
+	raw, _ := json.Marshal(map[string]any{"schema": 2, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo", "questions": questions, "attention": []any{}, "evidence": []any{}, "report": nil, "worktree": home})
+	value, err := ordjson.Decode(raw)
+	if err != nil {
 		t.Fatal(err)
 	}
-	inc := ordjson.NewObject()
-	inc.Set("terminal", "worker-terminal")
-	if _, err := state.Register(worker, "worker", "t-aaaaaaaaaaaa", inc); err != nil {
+	task := value.(*ordjson.Object)
+	owner, err := state.Owner()
+	if err != nil {
 		t.Fatal(err)
 	}
+	task.Set("parent", owner)
+	seedNativeWorker(t, d, state, task)
 	return home
 }
 
 func TestWorkerContextShowsClarificationWithoutActions(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
 	out, err := runCLI(t, home, "--format", "json", "context", "t-aaaaaaaaaaaa", "--role", "worker", "--section", "decisions")
 	if err != nil {
@@ -96,7 +91,7 @@ func compactRead(t *testing.T, home string, args ...string) map[string]any {
 }
 
 func TestCompactDecisionsPagingAndFullDetail(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
 	full := compactRead(t, home, "status")
 	if got := len(full["tasks"].([]any)[0].(map[string]any)["questions"].([]any)); got != 3 {
@@ -161,7 +156,7 @@ func stringArgs(value any) []string {
 }
 
 func TestCompactMalformedNeighborPreservesDecision(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
 	path := filepath.Join(home, "tasks", "t-bbbbbbbbbbbb", "task.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
@@ -189,7 +184,7 @@ func assertFullDecisionDetail(t *testing.T, detail map[string]any) {
 }
 
 func TestCompactDecisionDetailSurvivesMalformedVersionsAndReport(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	for _, fixture := range []struct {
 		name, revisions, report, errorText string
 	}{
@@ -207,7 +202,19 @@ func TestCompactDecisionDetailSurvivesMalformedVersionsAndReport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			raw = bytes.Replace(raw, []byte(`"report":null`), []byte(`"report":`+fixture.report), 1)
+			value, decodeErr := ordjson.Decode(raw)
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			report, decodeErr := ordjson.Decode([]byte(fixture.report))
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			value.(*ordjson.Object).Set("report", report)
+			raw, err = ordjson.MarshalIndent(value)
+			if err != nil {
+				t.Fatal(err)
+			}
 			if err := os.WriteFile(taskPath, raw, 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -234,7 +241,7 @@ func TestCompactDecisionDetailSurvivesMalformedVersionsAndReport(t *testing.T) {
 }
 
 func TestCompactDecisionDetailRejectsVersionsFIFO(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
 	path := filepath.Join(home, "tasks", "t-aaaaaaaaaaaa", "versions.json")
 	if err := syscall.Mkfifo(path, 0600); err != nil {
@@ -270,7 +277,7 @@ func TestCompactDecisionDetailRejectsVersionsFIFO(t *testing.T) {
 }
 
 func TestCompactSidecarDetailRoutesReadSavedContentWithoutWrites(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
 	result := strings.Repeat("saved failure 界 ", 100)
 	laneText := strings.Repeat("saved lane explanation ", 100)
@@ -353,25 +360,29 @@ func snapshotPresentationFiles(t *testing.T, home string) map[string]string {
 }
 
 func TestPresentationReadsArePure(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
 	log := filepath.Join(t.TempDir(), "external.log")
 	bin := t.TempDir()
-	for _, name := range []string{"herdr", "gh"} {
+	for _, name := range []string{"gh"} {
 		script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' '%s' >> '%s'\nexit 99\n", name, log)
 		if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
-	t.Setenv("SUM_HERDR_BIN", filepath.Join(bin, "herdr"))
 	t.Setenv("SUM_GH_BIN", filepath.Join(bin, "gh"))
+	d := nativeLabFor(t, home)
+	nativeBefore := len(d.native.Calls())
 	before := snapshotPresentationFiles(t, home)
 	for i := 0; i < 2; i++ {
 		if i == 1 {
-			t.Setenv("HERDR_ENV", "1")
-			t.Setenv("HERDR_PANE_ID", "sum-test:p1")
-			t.Setenv("HERDR_SESSION", "sum-test-presentation")
+			for _, pair := range d.env {
+				parts := strings.SplitN(pair, "=", 2)
+				if strings.HasPrefix(parts[0], "HC_") || strings.HasPrefix(parts[0], "SUM_") {
+					t.Setenv(parts[0], parts[1])
+				}
+			}
 		}
 		for _, command := range [][]string{{"status"}, {"inbox"}, {"status", "--compact"}, {"inbox", "--compact"}, {"metadata", "inbox"}} {
 			compactRead(t, home, command...)
@@ -379,6 +390,9 @@ func TestPresentationReadsArePure(t *testing.T) {
 	}
 	if after := snapshotPresentationFiles(t, home); !reflect.DeepEqual(before, after) {
 		t.Fatal("read changed source files")
+	}
+	if len(d.native.Calls()) != nativeBefore {
+		t.Fatal("saved reads called the native runtime")
 	}
 	if raw, err := os.ReadFile(log); err == nil {
 		t.Fatalf("read called external helper: %s", raw)
@@ -388,7 +402,7 @@ func TestPresentationReadsArePure(t *testing.T) {
 }
 
 func TestCompactRejectsInvalidBoundsWithoutWrites(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
 	before := snapshotPresentationFiles(t, home)
 	for _, args := range [][]string{
@@ -413,27 +427,15 @@ func TestCompactRejectsInvalidBoundsWithoutWrites(t *testing.T) {
 }
 
 func TestCompactLiveHasExplicitPageScopeAndNoStateWrites(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
-	herdrEnv(t, home)
-	fake := t.TempDir()
-	t.Setenv("FAKE_HERDR_ROOT", fake)
+	d := nativeLabFor(t, home)
 	st, err := store.Open(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	host, err := st.Machine()
 	if err != nil {
 		t.Fatal(err)
 	}
 	task, err := st.ReadTask("t-aaaaaaaaaaaa")
 	if err != nil {
-		t.Fatal(err)
-	}
-	task.Set("machine", host.ID)
-	task.Set("session", "sum-test")
-	task.Set("pane", "w-parent:p1")
-	if err := ordjson.WriteFile(filepath.Join(home, "tasks", "t-aaaaaaaaaaaa", "task.json"), task); err != nil {
 		t.Fatal(err)
 	}
 	other := filepath.Join(home, "tasks", "t-bbbbbbbbbbbb", "task.json")
@@ -445,6 +447,7 @@ func TestCompactLiveHasExplicitPageScopeAndNoStateWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := snapshotPresentationFiles(t, home)
+	callsBefore := len(d.native.Calls())
 	view := compactRead(t, home, "status", "--compact", "--live", "--limit", "1")
 	scope := view["observation_scope"].(map[string]any)
 	if view["live"] != true || scope["tasks"] != float64(1) || scope["omitted_tasks"] != float64(1) || view["counts"].(map[string]any)["decisions"] != float64(4) {
@@ -453,61 +456,40 @@ func TestCompactLiveHasExplicitPageScopeAndNoStateWrites(t *testing.T) {
 	if !reflect.DeepEqual(before, snapshotPresentationFiles(t, home)) {
 		t.Fatal("live read modified records")
 	}
-	calls, err := os.ReadFile(filepath.Join(fake, "calls.jsonl"))
-	if err != nil {
-		t.Fatal(err)
+	count := 0
+	for _, call := range d.native.Calls()[callsBefore:] {
+		if call.Method == "terminal.list" {
+			count++
+		}
 	}
-	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
-	if len(lines) != 1 || !strings.Contains(lines[0], `"args": ["agent", "list"`) {
-		t.Fatalf("expected one bounded observation: %s", calls)
+	if count != 1 {
+		t.Fatalf("expected one bounded native snapshot, got %d", count)
 	}
 }
 
 func TestMetadataProjectionAndCompactAgree(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema":1,"sum_version":"0.1.0","created_at":"2026-01-01T00:00:00Z","instance":"presentation0001"}`), 0600); err != nil {
-		t.Fatal(err)
-	}
-	herdrEnv(t, home)
-	fake := t.TempDir()
-	t.Setenv("FAKE_HERDR_ROOT", fake)
-	st, err := store.Open(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	host, err := st.Machine()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := ordjson.NewObject()
-	ctx.Set("machine", host.ID)
-	ctx.Set("session", "sum-test")
-	ctx.Set("pane", "w-parent:p1")
-	ctx.Set("cwd", home)
-	owner := ordjson.NewObject()
-	for _, key := range ctx.Keys() {
-		value, _ := ctx.Get(key)
-		owner.Set(key, value)
-	}
-	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
-	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil, nil); err != nil {
-		t.Fatal(err)
+	d := nativeLabFor(t, home)
+	for _, pair := range d.env {
+		key, value, ok := strings.Cut(pair, "=")
+		if ok && (strings.HasPrefix(key, "SUM_") || strings.HasPrefix(key, "HC_")) {
+			t.Setenv(key, value)
+		}
 	}
 	view := compactRead(t, home, "inbox", "--compact")
-	counts := view["counts"].(map[string]any)
+	counts := asMap(view["counts"])
 	compactRead(t, home, "metadata", "enable")
-	calls, err := os.ReadFile(filepath.Join(fake, "calls.jsonl"))
-	if err != nil {
-		t.Fatal(err)
+	want := fmt.Sprintf("%.0f decisions; %.0f worker", counts["decisions"], counts["worker"])
+	for _, terminal := range d.native.Terminals() {
+		if terminal.Address == "t1" {
+			if !strings.Contains(terminal.Labels["sum.inbox"], want) {
+				t.Fatalf("metadata label %q differs from compact %v", terminal.Labels["sum.inbox"], counts)
+			}
+			return
+		}
 	}
-	want := fmt.Sprintf("sum_inbox=%.0f decisions; %.0f worker", counts["decisions"], counts["worker"])
-	if !strings.Contains(string(calls), want) {
-		t.Fatalf("metadata differs from compact %v: %s", counts, calls)
-	}
+	t.Fatal("coordinator terminal disappeared")
 }
 
 func TestPresentationHelpMatchesImplementedReadCommands(t *testing.T) {
@@ -572,7 +554,7 @@ func groupKeys(view map[string]any) []string {
 }
 
 func TestGroupedOverviewCommandsGroupByCanonicalIdentity(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := groupedHome(t)
 	before := snapshotPresentationFiles(t, home)
 	for _, command := range [][]string{{"status", "--grouped"}, {"inbox", "--grouped"}, {"metadata", "inbox", "--grouped"}} {
@@ -608,7 +590,7 @@ func TestGroupedOverviewCommandsGroupByCanonicalIdentity(t *testing.T) {
 }
 
 func TestGroupedProjectFocusKeepsGlobalCountsAndNeedsYou(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := groupedHome(t)
 	if err := os.WriteFile(filepath.Join(home, "tasks", "t-bbbbbbbbbbbb", "versions.json"), []byte("{broken"), 0600); err != nil {
 		t.Fatal(err)
@@ -646,7 +628,7 @@ func TestGroupedProjectFocusKeepsGlobalCountsAndNeedsYou(t *testing.T) {
 }
 
 func TestGroupedViewRunsScriptedSessionReadOnly(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := groupedHome(t)
 	t.Setenv("COLUMNS", "100")
 	t.Setenv("LINES", "30")

@@ -1,9 +1,12 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"os"
-	"path/filepath"
+	"time"
 	"unicode/utf8"
 
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -44,6 +47,9 @@ func isBlank(s string) bool {
 }
 
 func RequireCoordinator(s *store.Store, ctx *ordjson.Object) error {
+	if err := s.CheckWritable(); err != nil {
+		return err
+	}
 	endpoint := store.EndpointFromContext(ctx)
 	registration, err := s.Registration(endpoint)
 	if err != nil {
@@ -61,47 +67,57 @@ func RequireCoordinator(s *store.Store, ctx *ordjson.Object) error {
 		}
 	}
 	if registration == nil || role != "coordinator" || !owns {
-		return fmt.Errorf("This pane is not the registered coordinator of this sum instance. Run ./bin/sumctl init in the coordinator pane; a developer session must not dispatch or rebind.")
+		return fmt.Errorf("This terminal is not the registered coordinator of this sum instance. Run the installed helper init in its coordinator terminal; a developer session must not dispatch or rebind.")
 	}
-	// The address matches; the occupant must be the one that holds the role. A restored or reused pane ID with a new
-	// occupant, or one Herdr cannot report, gets no coordinator authority.
-	recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
-	verdict, observed := incarnation.CallerObserved(endpoint.Session, endpoint.Pane, recorded, occupiedAt)
+	_, terminal, err := ObserveNative(endpoint)
+	if err != nil {
+		return err
+	}
+	recorded, _ := owner.Get("incarnation")
+	receipt, err := NativeReceipt(owner)
+	if err != nil {
+		return err
+	}
+	verdict := incarnation.JudgeNative(recorded, endpoint.Native(), terminal, receipt)
 	if !verdict.Verified {
-		return fmt.Errorf("This pane is the recorded coordinator pane, but its occupant is not the recorded coordinator (%s: %s). %s", verdict.Outcome, verdict.Reason, incarnation.Recovery("coordinator", verdict.Outcome))
-	}
-	if verdict.Outcome != incarnation.Same {
-		refreshOwner(s, recorded, observed)
+		return fmt.Errorf("recorded coordinator authority is not current (%s: %s)", verdict.Outcome, verdict.Reason)
 	}
 	return nil
 }
 
-// refreshOwner records the evidence a verified coordinator is judged by next time (a restored or handed-off
-// terminal, a new native session), so a later change in the same terminal is still recognized. It rewrites the owner
-// only while it still holds the record that was judged, and is best effort: a caller that already holds a store lock
-// keeps the old record until its next init.
-func refreshOwner(s *store.Store, judged any, observed incarnation.Evidence) {
-	refreshed, changed := incarnation.Refresh(judged, observed, store.Now())
-	if !changed {
-		return
+func ObserveNative(endpoint store.Endpoint) (incarnation.NativeEvidence, hcclient.Terminal, error) {
+	var evidence incarnation.NativeEvidence
+	if err := endpoint.Validate(); err != nil {
+		return evidence, hcclient.Terminal{}, err
 	}
-	unlock, err := s.Lock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	terminal, err := client.Get(ctx, endpoint.Address)
 	if err != nil {
-		return
+		return evidence, terminal, err
 	}
-	defer unlock()
-	owner, err := s.Owner()
-	if err != nil || owner == nil {
-		return
+	if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.State != "live" || terminal.Keep || terminal.PID == nil || *terminal.PID == 0 || terminal.Foreground == nil || terminal.Foreground.PID <= 0 {
+		return evidence, terminal, fmt.Errorf("current non-kept HC terminal program and foreground cannot be verified")
 	}
-	current, _ := owner.Get("incarnation")
-	a, _ := ordjson.MarshalCompact(current)
-	b, _ := ordjson.MarshalCompact(judged)
-	if string(a) != string(b) {
-		return
+	evidence = incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *terminal.PID, Foreground: terminal.Foreground}
+	return evidence, terminal, nil
+}
+
+func NativeReceipt(record *ordjson.Object) (*incarnation.NativeReceipt, error) {
+	if record == nil {
+		return nil, fmt.Errorf("matching native bootstrap receipt required")
 	}
-	owner.Set("incarnation", refreshed)
-	_ = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner)
+	value, _ := record.Get("native_receipt")
+	raw, err := ordjson.MarshalCompact(value)
+	if err != nil {
+		return nil, err
+	}
+	var receipt incarnation.NativeReceipt
+	if err = json.Unmarshal(raw, &receipt); err != nil || receipt.Endpoint.Validate() != nil {
+		return nil, fmt.Errorf("matching native bootstrap receipt required")
+	}
+	return &receipt, nil
 }
 
 func registrationField(registration *ordjson.Object, key string) (string, bool) {

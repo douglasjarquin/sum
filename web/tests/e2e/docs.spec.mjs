@@ -7,7 +7,7 @@ const pages = [
   { route: "verification/", h1: "Verification" },
   { route: "skills/", h1: "Skills" },
   { route: "configuration/", h1: "Configuration" },
-  { route: "herdr/", h1: "Herdr backend" },
+  { route: "herdr/", h1: "HC terminal runtime" },
   { route: "update/", h1: "Update & rollback" },
 ];
 

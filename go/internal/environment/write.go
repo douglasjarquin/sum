@@ -10,11 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 const (
@@ -26,7 +25,7 @@ type RecordArgs struct {
 	Task        string
 	URL         string
 	Log         string
-	Pane        string
+	Terminal    string
 	Container   string
 	Label       string
 	Ownership   string
@@ -67,27 +66,7 @@ func Discover(s *store.Store, taskID string, endpoint *ordjson.Object, sumctlPat
 	previous := objectField(record, "discovery")
 	changed := stringField(previous, "config_revision") != stringField(discovery, "config_revision")
 	record.Set("discovery", discovery)
-	if pane := stringField(task, "pane"); pane != "" {
-		found := false
-		for _, raw := range listField(record, "resources") {
-			r, _ := raw.(*ordjson.Object)
-			if stringField(r, "kind") == "pane" && stringField(r, "id") == pane {
-				found = true
-				break
-			}
-		}
-		if !found {
-			own := ordjson.NewObject()
-			own.Set("kind", "pane")
-			own.Set("id", pane)
-			own.Set("session", func() any { v, _ := task.Get("session"); return v }())
-			own.Set("ownership", "owned")
-			own.Set("state", "observed")
-			own.Set("note", "the task's own worker pane")
-			own.Set("observed_at", stringField(discovery, "observed_at"))
-			record.Set("resources", append(listField(record, "resources"), own))
-		}
-	}
+
 	role := endpointRole(s, task, endpoint)
 	if role == "" {
 		role = "unattributed"
@@ -556,7 +535,7 @@ func validateLogPath(task *ordjson.Object, text string) (*ordjson.Object, error)
 	}
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "~") {
-		return nil, fmt.Errorf("Give the log path without `~`; it is recorded literally for other panes.")
+		return nil, fmt.Errorf("Give the log path without `~`; it is recorded literally for other terminals.")
 	}
 	worktree, err := requireWorktree(task)
 	if err != nil {
@@ -681,77 +660,44 @@ func upsertLog(record, row *ordjson.Object) error {
 	return nil
 }
 
-func observePane(task *ordjson.Object, paneID, runtimeRoot string) (*ordjson.Object, error) {
-	if !paneIDPattern.MatchString(paneID) {
-		return nil, fmt.Errorf("--pane must be a Herdr pane ID like w1:p2.")
+func observeTerminal(task *ordjson.Object, address, runtimeRoot string) (*ordjson.Object, error) {
+	endpoint := store.EndpointFromContext(objectField(task, "worker_endpoint"))
+	if err := endpoint.Validate(); err != nil {
+		return nil, err
 	}
-	row := ordjson.NewObject()
-	row.Set("kind", "pane")
-	row.Set("id", paneID)
-	row.Set("session", func() any { v, _ := task.Get("session"); return v }())
-	if paneID == stringField(task, "pane") {
-		row.Set("ownership", "owned")
-		row.Set("state", "observed")
-		row.Set("note", "the task's own worker pane")
-		return row, nil
-	}
-	session := stringField(task, "session")
-	if session == "" {
-		row.Set("ownership", "unknown")
-		row.Set("state", "unverified")
-		row.Set("error", "task has no recorded session")
-		return row, nil
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
+	ctx, cancel := nativeCallContext()
+	defer cancel()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	terminal, err := client.Get(ctx, address)
 	if err != nil {
 		return nil, err
 	}
-	info, code, obsErr := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", paneID)
-	if obsErr != nil {
-		return nil, obsErr
-	}
-	if info == nil {
-		row.Set("ownership", "unknown")
-		row.Set("state", "unverified")
-		row.Set("error", code)
-		return row, nil
-	}
-	pane := info
-	if obj, ok := info.(*ordjson.Object); ok {
-		if inner, has := obj.Get("pane"); has {
-			if innerObj, ok := inner.(*ordjson.Object); ok {
-				pane = innerObj
-			}
-		}
-	}
-	paneObj, _ := pane.(*ordjson.Object)
-	cwd := stringField(paneObj, "cwd")
-	if cwd == "" {
-		cwd = stringField(paneObj, "working_directory")
-	}
-	ownership := "unknown"
-	if cwd != "" && inside(cwd, stringField(task, "worktree")) {
-		ownership = "owned"
-	}
-	row.Set("ownership", ownership)
+	row := ordjson.NewObject()
+	row.Set("kind", "terminal")
+	row.Set("id", address)
+	row.Set("core_id", endpoint.CoreID)
+	row.Set("created_ms", json.Number(fmt.Sprint(terminal.CreatedMS)))
+	row.Set("session", endpoint.Session)
 	row.Set("state", "observed")
-	row.Set("cwd", cwd)
-	if paneObj != nil {
-		agent, _ := paneObj.Get("agent")
-		row.Set("agent", agent)
+	row.Set("cwd", terminal.Cwd)
+	row.Set("ownership", "unknown")
+
+	if address == endpoint.Address && terminal.CreatedMS == endpoint.CreatedMS {
+		row.Set("ownership", "owned")
+		row.Set("endpoint", endpoint.Object())
 	}
 	return row, nil
 }
 
 func Record(s *store.Store, args RecordArgs, endpoint *ordjson.Object) (*ordjson.Object, error) {
 	given := 0
-	for _, v := range []string{args.URL, args.Log, args.Pane, args.Container} {
+	for _, v := range []string{args.URL, args.Log, args.Terminal, args.Container} {
 		if v != "" {
 			given++
 		}
 	}
 	if given != 1 {
-		return nil, fmt.Errorf("Give exactly one of --url, --log, --pane, or --container per record call.")
+		return nil, fmt.Errorf("Give exactly one of --url, --log, --terminal, or --container per record call.")
 	}
 	if args.Ownership != "" && !ownershipValues[args.Ownership] {
 		return nil, fmt.Errorf("--ownership must be one of [owned, shared, unknown]")
@@ -798,8 +744,8 @@ func Record(s *store.Store, args RecordArgs, endpoint *ordjson.Object) (*ordjson
 			return nil, fmt.Errorf("Log path %s is %s; only a regular path inside the checkout can be recorded as owned.", stringField(validated, "path"), stringField(validated, "scope"))
 		}
 		observedLog = observeLog(stringField(validated, "path"), worktree, stringField(validated, "relative"))
-	} else if args.Pane != "" {
-		observedPane, err = observePane(task, args.Pane, args.RuntimeRoot)
+	} else if args.Terminal != "" {
+		observedPane, err = observeTerminal(task, args.Terminal, args.RuntimeRoot)
 		if err != nil {
 			return nil, err
 		}
@@ -858,10 +804,10 @@ func Record(s *store.Store, args RecordArgs, endpoint *ordjson.Object) (*ordjson
 		result.Set("log", row)
 	default:
 		var row *ordjson.Object
-		if args.Pane != "" {
+		if args.Terminal != "" {
 			row = observedPane
 			if args.Ownership == "owned" && stringField(row, "ownership") != "owned" {
-				return nil, fmt.Errorf("Pane %s is not the task's pane and its cwd is not inside the checkout; it cannot be recorded as owned.", args.Pane)
+				return nil, fmt.Errorf("Terminal %s has no exact task binding; cwd alone does not confer ownership.", args.Terminal)
 			}
 			if args.Ownership == "shared" && stringField(row, "ownership") == "unknown" {
 				row.Set("ownership", "shared")
@@ -906,7 +852,7 @@ func Record(s *store.Store, args RecordArgs, endpoint *ordjson.Object) (*ordjson
 			}
 		}
 		if !exists && len(resources) >= environmentLimits["resources"] {
-			return nil, fmt.Errorf("At most %d pane/container references per task.", environmentLimits["resources"])
+			return nil, fmt.Errorf("At most %d terminal/container references per task.", environmentLimits["resources"])
 		}
 		if !exists {
 			resources = append(resources, row)

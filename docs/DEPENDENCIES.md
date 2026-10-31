@@ -1,272 +1,64 @@
 # Dependencies and compatibility
 
-The machine-readable inventory in [`dependency-inventory.json`](dependency-inventory.json) is the single record of dependency source, version, checksum or provenance, license, supported platforms, requirements, build/runtime role, owner, and consumed CLI/MCP contracts.
-Release manifests copy that inventory and add the platform-specific SHA-256 of each staged native artifact.
-
-## Installation contract
-
-`mise.toml` pins Go 1.25.0, Python 3.13.5, Node 22.20.0, uv 0.12.13, aube 2.2.4, GitHub CLI 2.100.0, Herdr 0.9.5, quota-axi 0.1.37, codegraph 1.5.0 (`npm:@colbymchenry/codegraph`), Vercel Skills 1.5.25 (`npm:skills`), basedpyright 1.40.1 (`pipx:basedpyright`), and gopls 0.23.0 (`go:golang.org/x/tools/gopls`).
+[`dependency-inventory.json`](dependency-inventory.json) records dependency versions, provenance, license, platforms, requirements and build/runtime ownership.
+The generated inventory and release manifests are authoritative for exact tool pins and platform checksums; do not manually edit them.
 Git and mise are host prerequisites.
-No global Node package installation is required.
-LSP binaries come from those mise pins.
-`mise run setup` links `.local/bin/basedpyright-langserver` and `.local/bin/gopls` once.
-An existing link is never retargeted.
-Project Grok, Cursor, and Codex PostToolUse hooks run `bin/lsp-ensure`.
-Grok expands `$VAR` and `${VAR}` in hook commands before spawn and treats a command without whitespace as a path relative to the JSON file, so `.grok/hooks/lsp-ensure.json` uses `../../bin/lsp-ensure`.
-A Codex-style `$root` shell is refused with `required env var(s) not set: ${root}`.
-Cursor uses `./bin/lsp-ensure` from the repository root.
-Codex keeps the git-toplevel shell in `.codex/hooks.json`.
-`bin/lsp-ensure` fails open with empty stdout when the staged helper is missing (a Herdr worktree) or when a lagging helper prints TOON or help.
-It calls `sumctl lsp ensure` when a staged helper exists.
-That command installs only allowlisted missing binaries the same way.
-Unknown binaries are refused.
 
-The `go/` module pins Cobra v1.9.1, the official Model Context Protocol Go SDK v1.6.1, and `github.com/douglasjarquin/go-toon` `v0.0.0-20260910175100-a2d441264455` in ordinary `go.mod`/`go.sum` files.
-The SDK's reviewed transitive graph remains visible in `go.sum`; no Viper, generator, provider SDK, or configuration framework is installed.
-Agent-facing sumctl stdout is TOON.
-`--format json` emits JSON for jq and CI.
-On-disk records stay JSON.
+## Terminal dependency
 
-`mise-tasks/setup` installs those versions, then `scripts/setup.py` performs the first install:
+The active terminal runtime uses unmodified upstream HC 0.1.14, protocol generation one, through one typed Go client.
+The staged release contains its matched HC manual and namespaced template, not a custom Sum MCP server or scoped bridge.
+The selected source release is commit `29e6d375623de40cb4820e0894aa131ba057b796`.
+The [versioned upstream manifest](https://releases.herdr.dev/core/0.1.14/manifest.json) records distributed artifacts.
+The inspected macOS aarch64 archive SHA256 is `ca524329d2e0630219550055dcc71f42aafd85fba356e0d543d6f51244487970`.
+The binary's discovery schema matches the release source after JSON normalization.
+No upstream patch or fork is required.
 
-1. Creates local runtime symlinks under `.local/bin`, once. An existing link is never retargeted, because a running process may depend on it; setup reports a differing pin instead.
-2. Copies the release-matched Herdr skill from `herdr --skill`.
-3. Builds the cgo-free `go/cmd/sumctl` binary as `.local/bin/sumctl` and the live Mesh server from `go/cmd/herdr-mesh` as `.local/bin/herdr-mesh`. An existing native binary is never rewritten. `bin/sumctl` and `bin/herdr-mesh` exec those staged binaries.
-4. Generates repository-local MCP settings and tests MCP initialization/discovery against the Go Mesh server.
-5. Downloads the pinned Remainder GitHub release archive for this platform, verifies its SHA-256, extracts it into `.deps/remainder/<version>-<platform>/`, and links `.local/bin/remainder` once. An existing dest or link is never rewritten.
+Codex 0.166.0 with its default keymap and `--no-daemon` is the qualified automatic input path.
+The effective command, keymap and configuration are hashed when the namespaced template is qualified.
+Sum's template sets Tab submission; idle is guarded with `if:idle`, while observed Done uses an ordinary send without `if` or `force`.
+A raced working turn queues input for the next Codex turn rather than establishing an atomic Done guard.
+Status, `started` and turn counters remain diagnostic, not application receipts.
+Other harnesses need explicit actual qualification; CLI flag support alone is not delivery qualification.
+See [HC runtime](herdr-backend.md) and [acceptance](ACCEPTANCE.md).
 
-Remainder is not a mise `which` tool.
-The pins are per platform in [`dependency-inventory.json`](dependency-inventory.json): linux-amd64 v0.2.2, darwin-arm64 v0.2.1, linux-arm64 v0.2.1.
-Setup is the only download.
-Release staging links the release's `.local/bin/remainder` to the executable setup verified under `.deps/remainder/<version>-<platform>/` for the bundled pin, and records it in `release.json`; without that directory, or on a platform without a pin, the release stages without Remainder.
-`sumctl quota --provider codex` invokes that binary with `--format toon` unless `--format json` or `--format compact` is set.
-Other providers keep quota-axi.
-A missing Remainder for Codex is a refusal, not a silent fallback.
+## Setup and release artifacts
 
-Re-running setup is therefore safe while a coordinator, workers, or an MCP server are using the checkout; it changes nothing they hold open.
-Newer code or dependencies go into a staged release instead (below).
+Setup stages local tools, the cgo-free `go/cmd/sumctl` binary, exact HC artifacts, matched manual and owned templates.
+It generates no custom Sum MCP configuration on a fresh installation.
+Unrelated MCP integrations and global harness/account settings remain untouched.
+Only explicitly owned legacy Sum configuration may be retired after a controlled cutover; no unproven existing-state activation is implied by setup.
+`release stage --ref SHA` builds an immutable checksummed bundle without selecting it.
+`bin/sumctl` is the stable installation callback entrypoint used by sealed task briefs.
+A release manifest identifies source, bundled file hashes, dependency/native hashes and actual runtime capabilities.
+Staging is not approval or production activation.
 
-The native companions are also built in a release staging directory with `CGO_ENABLED=0`.
-The staged binaries' source, build requirements, runtime requirements, and SHA-256 are recorded in `release.json` under `dependencies.native.sumctl` and `dependencies.native.herdr-mesh`.
-A helper from before the Go Mesh cutover records `herdr-mesh-go` instead.
-That id stays in the inventory until that helper is no longer the default.
-`bin/sumctl` execs `.local/bin/sumctl`, built from `go/cmd/sumctl`.
-It still execs `sumctl-go` when that is the only staged name, so a 04ee293 runtime keeps working.
-Running them requires no Go toolchain, module download, Node, Python, or Cobra generator.
+## Go and helper tools
 
-The source revision and upstream lockfile are pinned. This does not claim bit-for-bit reproducibility of every OS/runtime installation. A mise lockfile has not been invented; generate/review it on a networked machine when updating dependency pins.
+The Go module uses Cobra for commands and the existing TOON encoder for compact structured output.
+There is no custom MCP transport dependency in the terminal runtime.
+The bounded helper runner owns ordinary Git, GitHub, process-inspection and tool invocations; native HC I/O uses the typed protocol client.
+Deadlines, output limits and unknown mutation effects must be preserved.
+Project verification and interactive model lifecycles retain their documented owners.
+LSP tools remain allowlisted and local; `bin/lsp-ensure` fails open with empty stdout when no staged helper is available.
+No unknown binary, global package, model or account is installed to repair a task failure.
 
-## GitHub CLI 2.100.0 and `--attach`
+## Skills and optional integrations
 
-Evidence publication (`.agents/skills/evidence/scripts/evidence_publish.py`, `sumctl pr evidence`) uploads media only through `gh pr edit --attach`, added in GitHub CLI 2.99.0 (2026-09-01); 2.100.0 (2026-09-03) fixes its retry windows and the 50-file batch limit.
-The pin moved from 2.78.0 to 2.100.0 for that reason and nothing else changed in how gh is used.
-The new version reaches an installation the way every dependency does: `release stage` installs the pinned tools of the bundled `mise.toml` and links them into that release's own `.local/bin`, so a staged release carries gh 2.100.0 while the checkout's existing `.local/bin/gh` link stays at whatever it was (setup never retargets a link a running process may hold).
-`update apply` activates it with the usual checks and `update rollback` returns to the previous release; no running tool, harness, or MCP server is retargeted or restarted.
-Until a capable gh is the runtime's, the publisher reads the installed binary (`capabilities`: version and `pr edit --help`), reports `deferred`, and leaves local evidence and the PR body untouched; capture never depends on it.
-Nothing is installed per publication.
+Canonical Sum procedures live under `skills/`; tracked projections point to those sources.
+Portable verification/evidence skills remain usable without Sum or HC.
+Vercel Skills installation uses explicit selected skills and project copy mode, not automatic execution or global configuration mutation.
+Optional codegraph is an on-demand checkout-local exploration aid, never verification or role authority.
+An MCP snippet printed for a person to merge for codegraph is unrelated to the retired Sum terminal transport.
+The separate Grok Bot product and its setup remain outside this refactor.
 
-## Vercel Skills CLI 1.5.25
+## Compatibility and generations
 
-`npm:skills` 1.5.25 is pinned in `mise.toml`, requires Node 22.20.0 or newer, and is linked into each runtime as `.local/bin/skills` by setup or release staging.
-`sumctl skills install` accepts one target Git project, one source, and explicit repeated skill and agent names.
-It invokes only `skills add SOURCE --skill ... --agent ... --copy --yes` with the target as the working directory.
-Project scope is the upstream default; Sum never passes `--global`, and a target that is not the Git project root is refused so non-interactive scope detection cannot choose a user-level install.
-Sum rejects wildcard and option-looking selections plus the reserved `sum-*` namespace before invocation.
-The subprocess disables upstream telemetry with both documented environment variables.
-
-Vercel Skills owns repository discovery, copying, and `skills-lock.json`.
-Its `--yes` path may overwrite an existing same-named third-party skill, so the operator reviews the Git diff after installation.
-Sum's own `skills check` remains limited to its bundled names, projections, and portable imports, and refuses leftover unprefixed aliases; it does not claim third-party content integrity.
-
-## codegraph 1.5.0 per checkout
-
-`npm:@colbymchenry/codegraph` 1.5.0 is pinned in `mise.toml` and reaches an installation like every tool: `mise run setup` and `release stage` install the pinned package and link `.local/bin/codegraph` once (the link is never retargeted; a staged release carries its own).
-Provenance recorded in every `release.json` under `dependencies.codegraph`: package `@colbymchenry/codegraph`, version 1.5.0, MIT license, source https://github.com/colbymchenry/codegraph (release tag v1.5.0, git head `ea72e1b190921232aa7bd02e96bef5bbe4fe0ab6`), registry tarball `codegraph-1.5.0.tgz` with integrity `sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw==`.
-The package is a thin launcher whose per-platform bundle (a vendored Node 24 plus the app) is npm's optional dependency of the same exact version; sum sets `CODEGRAPH_NO_DOWNLOAD=1` so a missing bundle is a reported failure, never a download at task time.
-sum uses only the runtime's own link: a global `codegraph`, `npx`, `codegraph upgrade`, and `codegraph install` are never run, and a link whose `--version` is not the pin is reported `unavailable` rather than used.
-
-sum runs codegraph only on request. `prepare`/`dispatch`, `verify --execute`, and `dev prepare` never start it (not even `--version`), so a missing, slow, or hung codegraph cannot delay checkout creation or verification; a task checkout without an index reads as `not built`. `doctor` observes the tool with one bounded `--version`.
-What `sumctl graph init TASK_ID` runs, in the task checkout after its Git identity is validated:
-
-1. A bounded read of the process table (`ps -ax -ww -o pid=,args=`). A live codegraph `init`, `index`, or `sync` naming that checkout refuses the request, with nothing started or recorded. The real indexer runs behind the pinned launcher as `<bundle>/node ... lib/dist/bin/codegraph.js init <checkout>`, so the match is by argv shape, not by the runtime's tool path. Detecting that indexer, which outlives a stopped launcher, is what keeps a retry from starting a second writer; an unreadable table also refuses. A writer that starts between this read and the next step is not caught.
-2. `codegraph --version`, then `codegraph init <checkout>`.
-3. `codegraph status --json <checkout>`. `ready` is recorded only when it reports `initialized: true`, no `worktreeMismatch`, and `index.state: "complete"`; the index counts (`fileCount`, `nodeCount`, `edgeCount`) come from it. The real 1.5.0 `init` creates `.codegraph/codegraph.db` before it indexes, and a later `init` on that file exits 0 without rebuilding, so after an interrupted build only this check tells a partial index from a complete one. An incomplete index gets one `codegraph index <checkout>` (full rebuild) and one more status check; anything still unconfirmed is a `failed` attempt.
-
-`graph init` does not `sync` a complete-but-stale index or migrate another codegraph version or extraction schema; `graph status TASK_ID` reports staleness, and the worker's brief carries the `sync` command.
-Every call runs with `CODEGRAPH_NO_DAEMON=1` (no shared background server, no watcher outlives the command), `CODEGRAPH_NO_DOWNLOAD=1`, and `NO_COLOR=1`. `init` and `index` run under one timeout each (300 s by default; `SUM_GRAPH_TIMEOUT` is a lab knob, whole seconds). At the bound sum stops only the direct launcher and records the attempt `failed` with a timed-out reason whose effect is unknown. sum sends the launcher's descendants no signal. When one still holds the output (the real indexer behind the pinned launcher), the recorded error names it as not stopped, so it may still be running, and step 1 refuses the next request until it exits. A recorded error keeps at most 4000 bytes of the tool's own detail (its stderr tail, or the head of its stdout when stderr is blank). `status --json` and `--version` run under their own 60 s bound. Status becomes a live status only as complete, in-limit JSON from a command that exited 0; anything else leaves no live status and names the reason.
-The record (`.sum/tasks/<id>/graph.json`, summarized as `graph` in `task.json`) carries:
-- the tool path and version;
-- the checkout identity (top level, HEAD, branch, common Git directory);
-- every attempt with its action and error;
-- the index counts from status;
-- the exact CLI commands the brief prints.
-States: `ready`, `failed` (retry with `sumctl graph init TASK_ID`), `exhausted` (the third failed attempt; later requests are refused and the fallback is source inspection), and `unavailable` (no pinned tool in this runtime, or a version other than the pin; not an attempt, never exhausts). No record at all means `not built`. None of them changes the task, its checkout, its worker, its reservations, or the source-reading route.
-
-Facts taken from the pinned binary in an isolated lab, not from its README:
-
-- `codegraph init` writes `.codegraph/` with its own `.gitignore` (`*` and `!.gitignore`) and does not edit the repository's `.gitignore`; `.codegraph/.gitignore` is therefore an untracked file until something ignores the directory. sum's own `.gitignore` lists `.codegraph/`; for any other repository sum appends `.codegraph/` once, under a marker comment, to the repository-local `.git/info/exclude` (shared by that repository's worktrees, never committed, not a user configuration file) and records the write; a repository that already ignores the directory gets no write. The portable verify runner's dirty check (`--untracked-files=normal`) therefore stays clean.
-- A linked worktree without its own index answers queries from the main worktree's index with a warning that the results come from a different worktree; `status --json` reports `initialized: false` for it. Only an index inside the worktree is that worktree's graph, which is why `graph init` builds one inside the requested checkout and never reuses another's.
-- Indexing honors Git's ignore rules including `info/exclude`: sum's own index (47 files, 2,200 symbols, 10,204 edges at this commit) contains nothing under `projects/`, `.sum/`, `.local/`, `.deps/`, or `.artifacts/`.
-- `pendingChanges` in `status --json` counts only uncommitted edits: after a commit it reads zero while a query for the committed symbol returns nothing, and `status` never syncs on its own. sum therefore also records the HEAD it last built or synced and treats a moved HEAD as stale; the brief tells the worker to sync after commits, checkouts, and rebases, and a worker in CLI mode has no watcher.
-- `CODEGRAPH_DIR` accepts only a plain directory name, so the writable index always sits inside the checkout.
-- `codegraph install --print-config <agent>` prints the per-agent MCP snippet without writing; `sumctl graph config --harness claude|codex|cursor|opencode` prints the same shapes with the pinned binary path instead of a PATH lookup. sum never runs the installer, which by default writes agent configuration, an instructions block, and (for Claude Code) an auto-allow permission list.
-
-Measured on this machine (macOS, Apple Silicon, warm cache, real binary): `init` of sum's checkout 0.69 s wall (234 ms indexing), a repeated `init` on the existing index 0.08 s, `sync` after one edit 0.24 s, `query` 0.15 s, `explore` 0.14 s. Upstream's benchmark figures are not repeated here as local measurements.
-
-Cleanup treats every ignored path as disposable after the merge and identity checks, so a merged task's checkout is removable with its `.codegraph/` index; a records backup carries `graph.json` and rebuild metadata, never an index; a release bundle is refused if it contains `.codegraph`. sum starts no watcher, so it stops none; a harness's own `codegraph serve --mcp` process inside a checkout is that session's and shows up as an ordinary occupant until the session exits.
-
-## Installation identity versus runtime tree
-
-The checkout where setup ran is the **installation**: it owns `.sum/` (records, roles, preferences), the generated MCP configuration, and every absolute path written into worker briefs (`<installation>/bin/sumctl ...`).
-A **runtime** is a code-plus-dependency tree that a process executes from: the installation checkout itself today, or an immutable release staged beside it.
-
-`bin/sumctl` and `bin/herdr-mesh` are small stable entrypoints.
-Each resolves its runtime exactly once per invocation (the checkout, or the tree behind `.local/current` once `sumctl update apply` creates that pointer) and exports `SUM_INSTALL_ROOT=<installation>`.
-`bin/sumctl` executes that runtime's Python helper.
-`bin/herdr-mesh` executes that runtime's `.local/bin/herdr-mesh` Go binary.
-A started Mesh process keeps using the tree it started from.
-Nothing re-reads a pointer mid-call.
-The helper honors `SUM_INSTALL_ROOT` only when it runs from that installation or from one of its releases, so an inherited variable cannot make a development or task checkout adopt another installation's state, and a release run directly refuses to own state.
-
-## Staged releases
-
-```sh
-./bin/sumctl release stage            # HEAD of the installation repository; --ref REF for another commit
-./bin/sumctl release list
-./bin/sumctl release show SHA
-```
-
-`release stage` builds `<installation>/.local/releases/<commit sha>/`:
-
-- the committed tree from `git archive` (no working-tree edits, `.sum`, `.deps`, `.local`, or credentials);
-- `.local/bin/*` links to the mise tool versions pinned by the bundled `mise.toml` (`mise install` may add a version; nothing is pruned);
-- `.local/bin/herdr-mesh` and `.local/bin/sumctl` built with `CGO_ENABLED=0`;
-- `.local/bin/remainder` linked to the installation's pinned Remainder when setup installed it;
-- `.local/skills/herdr/SKILL.md` from the pinned `herdr --skill`;
-- `release.json`: source SHA and tree, a content hash for every bundled file, native artifact hashes, tool pins and resolved paths, the Herdr CLI and MCP tool contract versions, the supported state and brief schema versions, and who staged it.
-
-Everything happens in a private `.staging-*` directory.
-The bundle is validated against its manifest and the MCP smoke test, made read-only, and then renamed to its final name in one step, so a listed release is always complete.
-A failed download, build, or validation removes only that staging directory and reports the reason; existing releases, the checkout's runtime, and `.sum` are untouched.
-Two concurrent requests for one SHA end with a single bundle; each installation has its own `releases` directory.
-Staging never activates anything: no pointer, MCP configuration, or live process changes.
-Old releases are kept until you remove one deliberately; there is no automatic garbage collection.
-A release tree contains no `.sum`, and running its `bin/sumctl` directly is refused; only the installation's entrypoint selects a runtime.
-
-## Activation and rollback
-
-```sh
-./bin/sumctl update check|stage|apply [--ref REF] [--no-fetch]
-./bin/sumctl update status
-./bin/sumctl update rollback [--to SHA|checkout]
-./bin/sumctl update recover --generation GENERATION
-```
-
-`.local/current` is the installation default; `bin/sumctl` and `bin/herdr-mesh` follow it when it exists and otherwise run the checkout.
-`update apply` first refuses a pending activation under `.local/update.lock`, then resolves the source to a SHA merged on `origin/<default branch>` and stages the release outside the lock.
-Only `refs/remotes/origin/*` are fetched; remotes are never rewritten and there is no second fetch.
-Under the lock it validates the manifest, the installation state schema, each non-archived task's brief schema, the installed Herdr CLI version against `release.json`, the pinned tool links, and a read-only run of the candidate helper (`--version`, `status`, `show`) against the records; then it creates the new symlink under a private name and renames it over `.local/current`.
-After that selection succeeds, a clean installation clone is fast-forwarded to the selected SHA when that SHA is already an ancestor of `origin/<default branch>` and the move is a fast-forward.
-HEAD already at the selected SHA is a no-op, not a recovery-history conflict.
-A dirty tree, a conflicting untracked file, or a non-fast-forward is left in place and reported as `deferred: checkout-instructions` with the refuse reason.
-Those cases refuse Git mutation only; the symlink still switches when the candidate is otherwise compatible.
-Development checkouts and task worktrees are not edited.
-`.local/approvals.json` records installation-bound source approval; plain `release stage` does not approve a release.
-Existing approval receipts allow compatible immutable rollback without fetching or retaining historical Git objects.
-`.local/activation.json` records committed known-good selection and any pending generation; `.local/updates.jsonl` is diagnostic history, not the recovery source of truth.
-After a successful apply, known-good is the new default and matches the serving symlink.
-If the serving default already passed its entrypoint check, pending is empty, and known-good is stale, apply records that verified default as known-good and continues; it does not refuse.
-Activation state and the independent recovery record are bound to the exact canonical state-home path as well as the installation and instance.
-Pending state is cleared only after the successful selection or recovery audit write, so a failed audit remains explicitly recoverable.
-Before switching, SUM records `pending.recovery.argv` pointing at the hash-checked prior known-good helper (`<runtime>/.local/bin/sumctl`) and checks that helper with `--version`.
-The stable entrypoint is checked after selection.
-Failure restores that exact previous target under the same activation lock and checks it.
-Candidate failure, restoration failure, and verified restoration are distinct results.
-If recovery fails or the process is interrupted, the pending record remains and another apply or rollback is refused until explicit `update recover --generation GENERATION` resolves it.
-Recovery compares the generation and actual selection with the recorded endpoints, checks the prior target again, and never repeats an update or worker callback.
-When `./bin/sumctl` cannot start because the candidate is selected, run `activation.pending.recovery.argv` from the registered coordinator pane.
-That argv does not follow `.local/current`.
-A candidate needing another Herdr version is refused here.
-A changed MCP contract is applied with `deferred` naming the clients that keep their old tool set until they restart.
-`update rollback` chooses the previous known-good target while holding the activation lock, or accepts an explicit approved target through the same compatibility checks.
-The checkout path must be clean and approved; recovery to a checkout additionally requires its exact recorded revision and path.
-Selection and recovery touch no task records, releases, or worktrees.
-Coexistence is the design: several releases stay staged, each process keeps the tree it started from, and every brief's absolute `<installation>/bin/sumctl` command reaches whichever runtime is the default at call time.
-
-An optional `--install-codex` installs `@openai/codex@0.153.4` into `.deps/harnesses`. It does not authenticate or switch accounts. Other existing harnesses remain usable.
-
-## Managed projects
-
-`sumctl project enroll owner/repo` clones exactly one repository into `<installation>/projects/<owner>/<repo>`; a non-default host gets an explicit level (`projects/<host>/<owner>/<repo>`), so two owners' same-named repositories and two hosts never collide.
-The default host clones through `gh repo clone` (the user's existing authentication); a full URL or `--remote` clones through `git clone` and records that URL as the verified remote.
-The clone lands in a private `.staging-*` directory first and is renamed into place in one step under the store lock; a failed clone removes only its staging directory and any empty parent it created.
-`/projects/` is in sum's `.gitignore`: project code is neither sum source nor runtime state, so `git ls-files`, `git archive`, `release stage` bundles, the source manifest, and the test discovery never contain it. A records backup carries `.sum/projects.json` and explicitly excludes clone and worktree contents.
-
-`.sum/projects.json` is the one registry: `host`, `owner`, `repo`, `name`, `kind` (`managed`, `legacy`, `external`, `installation`), `path`, the verified `remote`, `canonical_path`, and who enrolled when.
-Enrollment is idempotent and never overwrites: an enrolled name returns its record; a checkout already at the canonical path, under the earlier `.sum/projects/<owner>/<repo>` location, or named with `--path` is adopted only when it is a Git top level whose origin is the same repository; a different remote, a non-Git directory, or a symlinked component is a refusal that changes nothing.
-Enrolling the installation's own repository registers the installation itself (`kind: installation`); sum is never cloned under its own `projects/`, and self-development stays in `dev prepare` checkouts.
-`project migrate NAME` is inspect-only by default: it lists non-archived tasks, linked Git worktrees, and processes that reference a legacy or external clone and prints guidance; `--apply` renames the directory to the canonical path only when that list is empty and the process table was readable, keeping `.git`, uncommitted files, and the registration.
-No task is ever pointed at a moved directory: existing tasks keep their recorded worktrees and absolute callbacks.
-
-The clone is a reference checkout for `prepare --project NAME` (or a matching `--repo` path): each task still gets its own Herdr worktree, the per-repository capacity applies to the clone like any repository, and the task record carries the project identity.
-The worker learns nothing from directory nesting. Its brief's `## Delivered runtime` section names the installed helper (`<installation>/bin/sumctl`), and its `## Worker procedure` section names the worker procedure pinned as write-once files in the task record with size and hash; `context --role worker` reports the same `helper` and the pinned `procedure` rows with their integrity (the live runtime copy of the worker skill is not offered beside pinned rows). A Herdr worktree lives outside the installation, some harnesses stop instruction discovery at a Git root, and a project's own `AGENTS.md` and mise tasks remain the project's.
-Conversely a pane whose working directory lies inside a managed clone is a project session: `sumctl init` there refuses to register any role, so a parent directory's instructions never make a project pane the coordinator.
-
-mise resolves configuration up the directory tree, so a clone nested under the installation sees sum's `mise.toml` and `mise-tasks` (`test`, `demo`, ...). `env discover` records `task_origins` from `mise tasks ls --json` (a listing, never a run): each task's source file and whether the checkout owns it, the inherited ones as a named problem, and whether `verify`/`test` are the project's own. An absent or refusing mise is reported as such, never as "no tasks".
-
-## Mesh server
-
-`go/internal/mesh` owns the ten-tool MCP surface.
-
-The server uses:
-
-- `agent start NAME --kind KIND --pane PANE` in an existing shell pane;
-- native `agent prompt`, not separate raw typing plus Enter;
-- bounded `agent wait --until` and `agent prompt --wait`;
-- bounded visible output, with no interpretation of a settled lifecycle as task success;
-- an error on uncertain handoff rather than reading stale output and reporting success.
-
-`bin/herdr-mesh` talks to the pinned Herdr CLI with an explicit `--session`.
-`bin/herdr-scoped` remains the Python session bridge for other callers.
-It does not create its own socket protocol.
-
-MCP clients have different environment policies.
-The Codex config explicitly forwards Herdr context variables.
-The server acts only as the calling pane, which must be registered by `sumctl init` in this instance.
-There is no saved-context fallback, so a client that omits those variables fails locally instead of borrowing another pane's session.
-
-Command-contract tests live in `go/internal/mesh` and `go/cmd/herdr-mesh`.
-
-## Harness matrix
-
-| Harness | Root instructions | Tool path |
-| --- | --- | --- |
-| Codex | `AGENTS.md` | Generated `.codex/config.toml` MCP plus CLI |
-| Claude Code | `CLAUDE.md` alias | Generated `.mcp.json` plus CLI |
-| Cursor Agent | `AGENTS.md` / always-applied local rule | Generated `.cursor/mcp.json` plus CLI |
-| OpenCode | `AGENTS.md` when supported | Generated `opencode.json` plus CLI |
-| Grok | `GROK.md` / `AGENTS.md` when supported | CLI; generic MCP snippet for the installed version |
-| Pi / other shell-capable harness | `AGENTS.md` or an explicit startup prompt | CLI; use native MCP support only when available |
-
-The contract is harness-neutral. The matrix describes installation surfaces, **not live conformance certification**. In particular, this environment did not run an authenticated model in any of those harnesses.
-
-## Sources used when implementing (2026-09-05)
-
-- Herdr 0.9.0 release: https://github.com/herdrdev/herdr/releases/tag/v0.9.0
-- Herdr automation and response shapes: https://herdr.dev/docs/agent-automation/
-- Herdr installation through mise: https://herdr.dev/docs/install/
-- Release-matched skill: https://herdr.dev/docs/agent-skill/
-- Herdr integration installation: https://herdr.dev/docs/integrations/
-- quota-axi package: https://github.com/kunchenguid/quota-axi/blob/main/package.json
-- Remainder releases: https://github.com/douglasjarquin/remainder/releases (darwin-arm64 v0.3.0 with `--format toon`, linux-amd64 v0.2.2, linux-arm64 v0.2.1)
-- GitHub CLI 2.99.0 (`--attach`): https://github.com/cli/cli/releases/tag/v2.99.0 and 2.100.0: https://github.com/cli/cli/releases/tag/v2.100.0 (2026-09-06)
-- before-and-after skill (PR block markup): https://github.com/vercel-labs/before-and-after at 8306d34f459b6704e08e6adb5829fcddb0dc3557
-- codegraph 1.5.0: https://github.com/colbymchenry/codegraph/releases/tag/v1.5.0 and https://www.npmjs.com/package/@colbymchenry/codegraph/v/1.5.0 (2026-09-06)
-- Vercel Skills 1.5.25: https://github.com/vercel-labs/skills and https://www.npmjs.com/package/skills/v/1.5.25 (2026-09-09)
-- Codex release: https://github.com/openai/codex/releases/tag/rust-v0.153.4
-- Codex MCP configuration: https://developers.openai.com/codex/mcp/
-- Claude MCP configuration: https://code.claude.com/docs/en/mcp
-- Cursor MCP configuration: https://cursor.com/docs/mcp
-- mise file tasks: https://mise.jdx.dev/tasks/file-tasks.html
-
-Third-party licenses are retained in installed dependency distributions. No third-party binary or font is bundled in the source archive.
+The stable state root selects a separate physical generation home.
+Normal Open/init/status never migrate schema-one history.
+Sealed policy/procedure/evidence bytes remain unchanged, and old records are not assigned fabricated HC identity.
+Existing-installation cutover requires an enforceable exclusion lease covering every legacy writer and sender.
+Current legacy APIs cannot establish it; process listings or operator assertions do not substitute.
+Cutover must refuse without this external prerequisite.
+Rollback checks the actual target binary's active schema/endpoint/receipt capabilities; an old schema-one runtime cannot reactivate an inactive archive.
+See [update](update.md) and [recovery](recovery.md).

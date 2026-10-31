@@ -17,14 +17,14 @@ import (
 // cleanup, while outstanding maintenance stays listed with its exact command; only the explicit `sweep` observes the
 // PR. The fake gh logs every call it receives.
 func TestFastPathsNeverReconcileOrCleanUp(t *testing.T) {
-	d := newPolicyLabWithNativeEvents(t)
+	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "boundary", map[string]string{"README.md": "A project.\n"})
 	open := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
 	merged := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
 	openID, mergedID := asString(open["id"]), asString(merged["id"])
 	for _, task := range []map[string]any{open, merged} {
-		d.ctlPane(asString(task["pane"]), true, "init")
-		d.ctlPane(asString(task["pane"]), true, "ask", asString(task["id"]), "--key", "k", "--text", "Which way?")
+		d.ctlPane(workerAddress(task), true, "init")
+		d.ctlPane(workerAddress(task), true, "ask", asString(task["id"]), "--key", "k", "--text", "Which way?")
 	}
 	boundaryPR(t, d, openID, "open")
 	boundaryPR(t, d, mergedID, "merged")
@@ -48,11 +48,18 @@ func TestFastPathsNeverReconcileOrCleanUp(t *testing.T) {
 	// Read-only views change nothing under the state home, --live included.
 	before := homeDigest(t, d.home)
 	for _, args := range [][]string{{"status"}, {"inbox"}, {"status", "--live"}, {"inbox", "--live"}} {
+		callsBefore := len(d.native.Calls())
 		view := d.ctl(true, args...)
 		assertMaintenance(t, args, view, openID, mergedID)
 		if len(args) == 2 {
-			if view["live"] != true || asInt(asMap(view["fanout"])["herdr_calls"]) != 1 {
-				t.Fatalf("%v live=%v fanout=%v, want one Herdr call", args, view["live"], view["fanout"])
+			count := 0
+			for _, call := range d.native.Calls()[callsBefore:] {
+				if call.Method == "terminal.list" {
+					count++
+				}
+			}
+			if view["live"] != true || count != 1 {
+				t.Fatalf("%v live=%v fanout=%v, want one native snapshot", args, view["live"], view["fanout"])
 			}
 			for _, row := range asSlice(view["tasks"]) {
 				if asMap(row)["observed"] == nil {
@@ -73,14 +80,12 @@ func TestFastPathsNeverReconcileOrCleanUp(t *testing.T) {
 		t.Fatal("a fast path still reports a lifecycle sweep")
 	}
 	d.ctl(true, "bind", openID, "--parent-only")
-	pluginID := asString(d.ctl(true, "hook", "enable")["plugin_id"])
-	d.setEnv("FAKE_PARENT_STATUS", "idle")
-	d.herdrEvent(pluginID, "w-parent:p1", "idle", "sum-test")
+	startNativeObserver(t, d)
+	d.native.SetStatus("t1", "idle")
 	for _, task := range []map[string]any{open, merged} {
-		settleFakePane(t, d.base, asString(task["pane"]))
-		d.herdrEvent(pluginID, asString(task["pane"]), "idle", "sum-test")
+		settleNativeTerminal(t, d.base, workerAddress(task))
 	}
-	d.setEnv("FAKE_PARENT_STATUS", "working")
+	d.native.SetStatus("t1", "working")
 
 	if n := ghCalls(); n != 0 {
 		raw, _ := os.ReadFile(filepath.Join(ghRoot, "calls.jsonl"))

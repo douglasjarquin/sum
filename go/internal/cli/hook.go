@@ -1,13 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
-	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -96,31 +97,21 @@ func (o *rootOptions) addHookCommands(root *cobra.Command) {
 	disableCmd.Flags().BoolVar(&unlink, "unlink", false, "")
 	hookCmd.AddCommand(disableCmd)
 
-	hookCmd.AddCommand(&cobra.Command{
-		Use:  "event",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			st, err := store.Open(o.home)
-			if err != nil {
-				return err
-			}
-			environ := map[string]string{}
-			for _, e := range os.Environ() {
-				if i := strings.IndexByte(e, '='); i > 0 {
-					environ[e[:i]] = e[i+1:]
-				}
-			}
-			view, err := hookstatus.Event(st, environ, o.runtimeRoot, o.sumctlPath())
-			if err != nil {
-				return err
-			}
-			outcomeValue, _ := view.Get("outcome")
-			if outcome, _ := outcomeValue.(string); outcome != "disabled" && outcome != "ignored" {
-				metadata.After(st, o.runtimeRoot, nil, "hook event")
-			}
-			return emitOrdjson(cmd.OutOrStdout(), view)
-		},
-	})
+	var coreID, session, socket string
+	observeCmd := &cobra.Command{Use: "observe", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		st, err := store.Open(o.home)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		endpoint := store.Endpoint{CoreID: coreID, Session: session, Socket: socket}
+		return hookstatus.Observe(ctx, st, endpoint, o.runtimeRoot, o.sumctlPath())
+	}}
+	observeCmd.Flags().StringVar(&coreID, "core-id", "", "")
+	observeCmd.Flags().StringVar(&session, "session", "", "")
+	observeCmd.Flags().StringVar(&socket, "socket", "", "")
+	hookCmd.AddCommand(observeCmd)
 
 	root.AddCommand(hookCmd)
 }

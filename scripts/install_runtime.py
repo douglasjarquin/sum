@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -17,7 +18,7 @@ import urllib.request
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOLS = ("python3", "node", "herdr", "gh", "quota-axi", "codegraph", "skills", "basedpyright-langserver", "gopls")
+TOOLS = ("python3", "node", "gh", "quota-axi", "codegraph", "skills", "basedpyright-langserver", "gopls")
 REMAINDER_REMOTE = "https://github.com/douglasjarquin/remainder/releases/download"
 
 
@@ -122,7 +123,7 @@ def build_native_artifact(target):
     source = target / "go"
     if not (source / "go.mod").is_file():
         raise InstallError(f"Native Go source is missing from {source}")
-    outputs = {"sumctl": "./cmd/sumctl", "herdr-mesh": "./cmd/herdr-mesh"}
+    outputs = {"sumctl": "./cmd/sumctl"}
     output_dir = target / ".local" / "bin"
     output_dir.mkdir(parents=True, exist_ok=True)
     pending = []
@@ -249,13 +250,134 @@ def install_remainder(target, *, fetch=None, pin=None, platform_name=None):
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def write_herdr_skill(target):
+HC_VERSION = "0.1.14"
+HC_MANIFEST_URL = f"https://releases.herdr.dev/core/{HC_VERSION}/manifest.json"
+HC_TARGETS = {"darwin-arm64": "macos-aarch64", "darwin-amd64": "macos-x86_64",
+              "linux-arm64": "linux-aarch64", "linux-amd64": "linux-x86_64"}
+
+
+def fetch_hc(url, destination):
+    if os.environ.get("SUM_HC_NO_DOWNLOAD"):
+        raise InstallError("HC download is disabled in this environment.")
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": "sum-runtime-installer/0.1"})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = response.read(128 * 1024 * 1024 + 1)
+        if len(data) > 128 * 1024 * 1024:
+            raise InstallError("HC release download exceeds the artifact size bound")
+        Path(destination).write_bytes(data)
+    except (OSError, urllib.error.URLError) as exc:
+        raise InstallError(f"Cannot download {url}: {exc}") from exc
+
+
+def hc_binary(root):
+    matches = [p for p in Path(root).rglob("*") if p.is_file() and p.name in ("hc", "herdr-core")]
+    if len(matches) != 1:
+        raise InstallError("HC archive must contain exactly one hc or herdr-core executable")
+    return matches[0]
+
+
+def install_hc(target, *, fetch=None, manifest=None, platform_name=None):
     target = Path(target)
-    skill = run([target / ".local" / "bin" / "herdr", "--skill"], timeout=30).stdout
-    path = target / ".local" / "skills" / "herdr" / "SKILL.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.is_file() or path.read_text() != skill + "\n":
-        path.write_text(skill + "\n")
-    for parent in (target / ".agents" / "skills", target / ".claude" / "skills"):
-        link_tool(parent / "herdr", "../../.local/skills/herdr")
-    return path
+    platform_name = platform_name or native_platform()
+    key = HC_TARGETS.get(platform_name)
+    if key is None:
+        raise InstallError(f"HC is not qualified on Sum host {platform_name}")
+    locked = manifest or read_json(target / "config/hc-release.json")
+    if locked.get("version") != HC_VERSION or locked.get("generation") != 1:
+        raise InstallError("HC manifest does not match the selected version and protocol generation")
+    pin = locked.get("targets", {}).get(key)
+    expected_url = f"https://releases.herdr.dev/core/{HC_VERSION}/herdr-core-{key}.tar.gz"
+    if not isinstance(pin, dict) or pin.get("url") != expected_url or not re.fullmatch(r"[0-9a-f]{64}", str(pin.get("sha256", ""))):
+        raise InstallError(f"HC manifest has no complete exact artifact pin for {key}")
+    dest = target / ".deps/hc" / f"{HC_VERSION}-{platform_name}"
+    link = target / ".local/bin/hc"
+    if link.exists() and not link.is_symlink():
+        raise InstallError(f"Refusing to replace non-symlink {link}")
+    if not dest.exists():
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".hc-", dir=dest.parent))
+        try:
+            downloaded_manifest = staging / "manifest.json"
+            (fetch or fetch_hc)(HC_MANIFEST_URL, downloaded_manifest)
+            if read_json(downloaded_manifest) != locked:
+                raise InstallError("Published versioned HC manifest differs from the checked release manifest")
+            archive = staging / "hc.tar.gz"
+            (fetch or fetch_hc)(pin["url"], archive)
+            digest = sha256_file(archive)
+            if digest != pin["sha256"]:
+                raise InstallError(f"HC checksum mismatch: got {digest}, want {pin['sha256']}")
+            extract = staging / "extract"
+            extract.mkdir()
+            with tarfile.open(archive, "r:gz") as bundle:
+                bundle.extractall(extract, filter="data")
+            binary = hc_binary(extract)
+            if binary.is_symlink() or not os.access(binary, os.X_OK):
+                raise InstallError("HC archive executable is not an executable regular file")
+            found = run([binary, "--version"]).stdout.strip()
+            if found != f"hc {HC_VERSION}":
+                raise InstallError(f"HC artifact version mismatch: {found!r}")
+            docs = extract / "contract"
+            docs.mkdir()
+            (docs / "manifest.json").write_text(json.dumps(locked, indent=2) + "\n")
+            schema = run([binary, "schema"], timeout=30).stdout
+            schema_value = json.loads(schema)
+            if not isinstance(schema_value, dict) or not isinstance(schema_value.get("methods"), list):
+                raise InstallError("HC binary did not emit its OpenRPC schema")
+            (docs / "openrpc.json").write_text(schema)
+            (docs / "manual.md").write_text(run([binary, "--skill"], timeout=30).stdout)
+            provenance = {"version": HC_VERSION, "generation": 1, "source_commit": "29e6d375623de40cb4820e0894aa131ba057b796",
+                          "platform": platform_name, "archive_sha256": digest,
+                          "binary": str(binary.relative_to(extract)), "binary_sha256": sha256_file(binary),
+                          "schema_sha256": sha256_file(docs / "openrpc.json"), "manual_sha256": sha256_file(docs / "manual.md")}
+            (docs / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
+            os.rename(extract, dest)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    if read_json(dest / "contract/manifest.json") != locked:
+        raise InstallError("Existing HC matched manifest differs from the selected release manifest")
+    provenance = read_json(dest / "contract/provenance.json")
+    if (provenance.get("version") != HC_VERSION or provenance.get("generation") != 1
+            or provenance.get("platform") != platform_name
+            or provenance.get("source_commit") != "29e6d375623de40cb4820e0894aa131ba057b796"):
+        raise InstallError("Existing HC provenance identifies another release or platform")
+    relative = Path(provenance.get("binary", ""))
+    if not str(relative) or str(relative) == "." or relative.is_absolute() or ".." in relative.parts:
+        raise InstallError("Existing HC provenance binary path is invalid")
+    binary = dest / relative
+    if binary.is_symlink() or not os.access(binary, os.X_OK):
+        raise InstallError("Existing HC executable is not an executable regular file")
+    if provenance.get("archive_sha256") != pin["sha256"] or not binary.is_file() or sha256_file(binary) != provenance.get("binary_sha256"):
+        raise InstallError("Existing HC staging does not match its immutable artifact receipt")
+    for name, key_name in (("openrpc.json", "schema_sha256"), ("manual.md", "manual_sha256")):
+        if sha256_file(dest / "contract" / name) != provenance.get(key_name):
+            raise InstallError(f"Existing HC {name} differs from its matched artifact receipt")
+    metadata_link = target / ".local/share/hc"
+    def preview(existing, desired):
+        if existing.is_symlink():
+            return os.readlink(existing) != link_destination(existing, desired)
+        if existing.exists():
+            raise InstallError(f"Refusing to replace non-symlink {existing}")
+        return None
+    binary_differs = preview(link, binary)
+    metadata_differs = preview(metadata_link, dest / "contract")
+    if (binary_differs is True) != (metadata_differs is True):
+        raise InstallError("HC executable and matched contract links do not select the same release; existing links preserved")
+    result = link_tool(link, binary)
+    metadata = link_tool(metadata_link, dest / "contract")
+    if metadata["differs"] != result["differs"]:
+        raise InstallError("HC executable and matched contract links point to different releases")
+    return {**result, "installed": True, "path": str(dest), "provenance": provenance}
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--hc-only", action="store_true", required=True)
+    parser.add_argument("--target", type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        print(json.dumps(install_hc(args.target)))
+    except (InstallError, OSError, ValueError, tarfile.TarError) as exc:
+        print(f"runtime install failed: {exc}", file=sys.stderr)
+        sys.exit(1)

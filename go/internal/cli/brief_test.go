@@ -6,21 +6,54 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func writeTaskFixture(t *testing.T, home, taskID, taskJSON string) {
+func writeTaskFixture(t *testing.T, home, taskID, taskJSON string) string {
 	t.Helper()
-	dir := filepath.Join(home, "tasks", taskID)
+	s, err := store.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	value, err := ordjson.Decode([]byte(taskJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, ok := value.(*ordjson.Object)
+	if !ok {
+		t.Fatal("task fixture must be an object")
+	}
+	if s.Designated() {
+		if parent, exists := task.Get("parent"); exists && parent != nil {
+			owner, err := s.Owner()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if owner != nil {
+				task.Set("parent", owner)
+			}
+		}
+	}
+	data, err := ordjson.MarshalIndent(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(s.Home, "tasks", taskID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "task.json"), []byte(taskJSON), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "task.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return s.Home
 }
 
 func writeRevisionFile(t *testing.T, home, taskID, relPath, content string) string {
@@ -41,13 +74,13 @@ func TestBriefList_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("legacy task, no versions.json", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
 		assertStdoutGolden(t, home, []string{"brief", "list", "t-aaaaaaaaaaaa"}, "brief-list-legacy")
 	})
 
 	t.Run("real versions.json with an intact revision", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
 		sha := writeRevisionFile(t, home, "t-aaaaaaaaaaaa", "contracts/r1.md", "revision content")
 		versionsJSON := fmt.Sprintf(`{"schema": 1, "task": "t-aaaaaaaaaaaa", "legacy": false, "runtime": {"sum_version": "0.1.0"}, "brief_schema": 1,
  "approved": {"sha256": "abc", "base_sha": %q, "repository": "owner/repoA", "kind": "task"},
@@ -61,7 +94,7 @@ func TestBriefList_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("report made under a superseded revision, later one verification-affecting", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fmt.Sprintf(`{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "reported", "repository": "owner/repoB", "questions": [], "evidence": [], "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md", "notice": null,
+		home = writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fmt.Sprintf(`{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "reported", "repository": "owner/repoB", "questions": [], "evidence": [], "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md", "notice": null,
  "report": {"text": "done", "submitted_at": "2026-01-01T00:30:00+00:00", "brief_revision": "r1", "sum_version": "0.1.0"}}`, baseSha))
 		sha1 := writeRevisionFile(t, home, "t-bbbbbbbbbbbb", "contracts/r1.md", "revision r1 content")
 		sha2 := writeRevisionFile(t, home, "t-bbbbbbbbbbbb", "contracts/r2.md", "revision r2 content")
@@ -84,9 +117,7 @@ func TestBriefRegenerate_requiresCoordinator(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home = nativeTestStore(t, home).Home
 	var stdout, stderr bytes.Buffer
 	root := NewRoot("", &stdout, &stderr)
 	root.SetArgs([]string{"--home", home, "brief", "regenerate", "t-aaaaaaaaaaaa"})
@@ -94,7 +125,7 @@ func TestBriefRegenerate_requiresCoordinator(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected coordinator requirement")
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "Herdr pane") {
+	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "HC session") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -167,8 +198,8 @@ func TestBriefCommands(t *testing.T) {
 		{name: "adopt unknown flag", args: []string{"brief", "adopt", "t-aaaaaaaaaaaa", "r2", "--unexpected"}, lab: "adopt", usage: true, unknown: true},
 		{name: "regenerate extra positional", args: []string{"brief", "regenerate", "t-aaaaaaaaaaaa", "extra"}, lab: "regenerate", usage: true},
 		{name: "regenerate unknown flag", args: []string{"brief", "regenerate", "t-aaaaaaaaaaaa", "--unexpected"}, lab: "regenerate", usage: true, unknown: true},
-		{name: "request requires coordinator", args: []string{"brief", "request", "t-aaaaaaaaaaaa", "r2"}, lab: "request-plain", domainErr: "registered coordinator"},
-		{name: "regenerate requires coordinator", args: []string{"brief", "regenerate", "t-aaaaaaaaaaaa"}, lab: "regenerate-plain", domainErr: "registered coordinator"},
+		{name: "request requires coordinator", args: []string{"brief", "request", "t-aaaaaaaaaaaa", "r2"}, lab: "request-plain", domainErr: "registration identity mismatch"},
+		{name: "regenerate requires coordinator", args: []string{"brief", "regenerate", "t-aaaaaaaaaaaa"}, lab: "regenerate-plain", domainErr: "registration identity mismatch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -257,8 +288,8 @@ func briefUsageLab(t *testing.T, lab string) (home, taskID, before string) {
 		writeBriefRevisions(t, home, taskID, "")
 	case "request-plain":
 		home = writeDesignatedHome(t)
-		herdrEnv(t, home)
-		t.Setenv("HERDR_PANE_ID", "w-other:p1")
+		nativeEnv(t, home)
+		t.Setenv("SUM_ROLE", "developer")
 		writeBriefTask(t, home, taskID, "")
 		writeBriefRevisions(t, home, taskID, "")
 	case "adopt":
@@ -270,8 +301,8 @@ func briefUsageLab(t *testing.T, lab string) (home, taskID, before string) {
 		writeBriefFile(t, home, taskID)
 	case "regenerate-plain":
 		home = writeDesignatedHome(t)
-		herdrEnv(t, home)
-		t.Setenv("HERDR_PANE_ID", "w-other:p1")
+		nativeEnv(t, home)
+		t.Setenv("SUM_ROLE", "developer")
 		writeBriefTask(t, home, taskID, "")
 		writeBriefFile(t, home, taskID)
 	case "list":
@@ -303,7 +334,7 @@ func writeBriefTask(t *testing.T, home, taskID, worktree string) {
 	if worktree != "" {
 		body = fmt.Sprintf(`{"schema": 1, "id": %q, "status": "running", "repository": "owner/repoA", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md", "worktree": %q}`, taskID, baseSha, worktree)
 	}
-	writeTaskFixture(t, home, taskID, body)
+	home = writeTaskFixture(t, home, taskID, body)
 }
 
 func writeBriefFile(t *testing.T, home, taskID string) {
@@ -343,7 +374,7 @@ func writeBriefRevisions(t *testing.T, home, taskID, requested string) {
 func briefCoordinatorLab(t *testing.T) (home, worktree, taskID string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("coordinator init: %v", err)
 	}

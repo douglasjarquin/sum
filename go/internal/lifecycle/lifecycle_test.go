@@ -10,13 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/ask"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
-	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/prcmd"
-	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -36,72 +37,62 @@ type sweepLab struct {
 	head     string
 	runtime  string
 	ghRoot   string
-	herdr    string
+	hc       *hctest.Fixture
 }
 
 func newSweepLab(t *testing.T) *sweepLab {
 	t.Helper()
 	t.Setenv("SUM_HOME", "")
-	t.Setenv("SUM_SESSION", "sum-test")
-	t.Setenv("HERDR_SESSION", "sum-test")
-	t.Setenv("HERDR_ENV", "1")
-	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
+	t.Setenv("SUM_SESSION", "")
 	home := t.TempDir()
 	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	herdrRoot := filepath.Join(home, "fake-herdr")
 	lsofRoot := filepath.Join(home, "fake-lsof")
 	ghRoot := filepath.Join(home, "fake-gh")
-	for _, dir := range []string{herdrRoot, lsofRoot, ghRoot} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+	for _, dir := range []string{lsofRoot, ghRoot} {
+		if err = os.MkdirAll(dir, 0700); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("SUM_HERDR_BIN", filepath.Join(root, "tests", "fixtures", "herdr.py"))
 	t.Setenv("SUM_PS_BIN", filepath.Join(root, "tests", "fixtures", "ps.py"))
 	t.Setenv("SUM_LSOF_BIN", filepath.Join(root, "tests", "fixtures", "lsof.py"))
 	t.Setenv("SUM_GH_BIN", filepath.Join(root, "tests", "fixtures", "gh.py"))
-	t.Setenv("FAKE_HERDR_ROOT", herdrRoot)
-	t.Setenv("FAKE_SESSION", "sum-test")
-	t.Setenv("FAKE_PARENT_CWD", home)
-	t.Setenv("FAKE_PARENT_STATUS", "idle")
-	t.Setenv("FAKE_PARENT_KIND", "claude")
 	t.Setenv("FAKE_LSOF_ROOT", lsofRoot)
 	t.Setenv("FAKE_GH_ROOT", ghRoot)
-	if err := os.WriteFile(filepath.Join(lsofRoot, "cwds.json"), []byte(`{"processes":[]}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	host, err := machine.ID()
-	if err != nil {
+	if err = os.WriteFile(filepath.Join(lsofRoot, "cwds.json"), []byte(`{"processes":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	st, err := store.Open(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Init(); err != nil {
+	if err = st.Init(); err != nil {
 		t.Fatal(err)
 	}
-	ctx := ordjson.NewObject()
-	ctx.Set("session", "sum-test")
-	ctx.Set("pane", "w-parent:p1")
-	ctx.Set("machine", host)
-	ctx.Set("cwd", home)
-	owner := ordjson.NewObject()
-	owner.Set("session", "sum-test")
-	owner.Set("pane", "w-parent:p1")
-	owner.Set("machine", host)
-	owner.Set("role", "coordinator")
-	// The occupant the fake Herdr reports for the coordinator pane, as init would have recorded it.
-	owner.Set("incarnation", incarnation.Evidence{Terminal: "term-w-parent:p1"}.Record(store.Now()))
-	if err := ordjson.WriteFile(filepath.Join(home, "context.json"), owner); err != nil {
+	hostInfo, err := st.Machine()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Register(store.EndpointFromContext(ctx), "coordinator", nil, nil); err != nil {
+	host := hostInfo.ID
+	hc := hctest.New(t)
+	ep := store.Endpoint{Schema: 2, Backend: "hc", Machine: host, CoreID: hc.CoreID, Session: "sum-test", Socket: hc.Socket, Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: home}
+	cp := uint32(12000)
+	cf := &hcclient.Foreground{PID: 12001, Name: "codex", Argv: []string{"codex"}, Cwd: home}
+	hc.SetTerminal(hcclient.Terminal{Address: "t1", State: "live", CreatedMS: 1, Cwd: home, PID: &cp, Foreground: cf})
+	bound := incarnation.NativeEvidence{Endpoint: ep.Native(), PID: cp, Foreground: cf}
+	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: ep.Native(), Kind: "coordinator-init", Attempt: ep.Attempt})
+	owner := ep.Object()
+	owner.Set("incarnation", bound.Record(store.Now()))
+	owner.Set("native_receipt", receipt)
+	if _, err = st.Register(ep, "coordinator", nil, bound.Record(store.Now())); err != nil {
 		t.Fatal(err)
 	}
+	if err = ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
+		t.Fatal(err)
+	}
+	ctx := ep.Object()
 	repo := t.TempDir()
 	for _, argv := range [][]string{
 		{"git", "-C", repo, "init", "-b", "main"},
@@ -122,8 +113,7 @@ func newSweepLab(t *testing.T) *sweepLab {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &sweepLab{t: t, store: st, ctx: ctx, host: host, home: home, repo: repo,
-		checkout: checkout, head: strings.TrimSpace(string(head)), runtime: root, ghRoot: ghRoot, herdr: herdrRoot}
+	return &sweepLab{t: t, store: st, ctx: ctx, host: host, home: home, repo: repo, checkout: checkout, head: strings.TrimSpace(string(head)), runtime: root, ghRoot: ghRoot, hc: hc}
 }
 
 // saveTask writes a task whose pane and workspace are already gone: the worker
@@ -165,6 +155,15 @@ func (l *sweepLab) saveTaskAs(pr, candidate, extraEvidence string) {
 		l.t.Fatal(err)
 	}
 	obj, _ := value.(*ordjson.Object)
+	ep := l.endpoint("t2", "worker", sweepWorkerID, 2, l.checkout)
+	obj.Set("schema", json.Number("2"))
+	obj.Set("worker_endpoint", ep.Object())
+	obj.Set("parent", l.ctx)
+	for _, raw := range asList(field(obj, "evidence")) {
+		e := asObject(raw)
+		e.Set("endpoint", ep.Object())
+	}
+	l.register(ep)
 	if err := l.store.SaveTask(obj); err != nil {
 		l.t.Fatal(err)
 	}
@@ -216,57 +215,6 @@ func (l *sweepLab) sweep(opts SweepOpts) (rows, deferred []any) {
 	r, _ := result.Get("rows")
 	d, _ := result.Get("deferred")
 	return r.([]any), d.([]any)
-}
-
-func (l *sweepLab) writeLivePanes(extra map[string]any) {
-	l.t.Helper()
-	panes := map[string]any{
-		"w-parent:p1": map[string]any{
-			"pane_id": "w-parent:p1", "cwd": l.home, "workspace_id": "w-parent",
-			"agent_status": "idle", "agent": "claude", "terminal_id": "term-w-parent:p1",
-		},
-		"w-worker:p1": map[string]any{
-			"pane_id": "w-worker:p1", "cwd": l.checkout, "workspace_id": "w-worker",
-			"agent_status": "idle", "agent": "codex", "name": "worker",
-			"shell_pid": 4242, "created": true, "terminal_id": "term-w-worker:p1",
-			"processes": []any{},
-		},
-	}
-	for id, pane := range extra {
-		panes[id] = pane
-	}
-	state := map[string]any{
-		"panes": panes,
-		"workspaces": map[string]any{
-			"w-parent": map[string]any{"workspace_id": "w-parent", "label": "coordinator", "worktree": nil},
-			"w-worker": map[string]any{
-				"workspace_id": "w-worker", "label": "task",
-				"worktree": map[string]any{"checkout_path": l.checkout, "repo_root": l.repo},
-			},
-		},
-	}
-	raw, err := json.Marshal(state)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), raw, 0o600); err != nil {
-		l.t.Fatal(err)
-	}
-}
-
-func (l *sweepLab) paneExists(id string) bool {
-	l.t.Helper()
-	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
-	if err != nil {
-		return false
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		return false
-	}
-	panes, _ := state["panes"].(map[string]any)
-	_, ok := panes[id]
-	return ok
 }
 
 func (l *sweepLab) ghCalls() int {
@@ -600,7 +548,7 @@ func TestPending_listsMaintenanceFromRecords(t *testing.T) {
 	if next, _ := view.Get("next"); !strings.Contains(fmt.Sprint(next), "sweep") {
 		t.Fatalf("next = %v", next)
 	}
-	listed, _ := view.Get("panes")
+	listed, _ := view.Get("terminals")
 	if n := len(listed.([]any)); n != 2 {
 		t.Fatalf("panes = %v, want both reported tasks", listed)
 	}
@@ -632,6 +580,13 @@ func (l *sweepLab) cloneTask(id, pr, observedAt string) string {
 	src.Set("branch", "sum/"+id)
 	src.Set("pane", "w-"+id+":p1")
 	src.Set("workspace", "w-"+id)
+	ep := l.endpoint("t"+strings.TrimPrefix(id, "t-"), "worker", sweepWorkerID, 4, checkout)
+	ep.Task = id
+	src.Set("worker_endpoint", ep.Object())
+	for _, raw := range asList(field(src, "evidence")) {
+		asObject(raw).Set("endpoint", ep.Object())
+	}
+	l.register(ep)
 	if err := os.MkdirAll(filepath.Join(l.store.Tasks, id), 0o700); err != nil {
 		l.t.Fatal(err)
 	}
@@ -641,602 +596,354 @@ func (l *sweepLab) cloneTask(id, pr, observedAt string) string {
 	return id
 }
 
-func (l *sweepLab) bindPane(pane, role string) {
+func (l *sweepLab) endpoint(address, role, attempt string, created uint64, cwd string) store.Endpoint {
+	return store.Endpoint{Schema: 2, Backend: "hc", Machine: l.host, CoreID: l.hc.CoreID, Session: "sum-test", Socket: l.hc.Socket, Address: address, Role: role, Task: sweepTaskID, Attempt: attempt, BindingGeneration: 1, CreatedMS: created, Cwd: cwd}
+}
+func (l *sweepLab) register(ep store.Endpoint) {
 	l.t.Helper()
-	ep := store.Endpoint{Machine: l.host, Session: "sum-test", Pane: pane, Cwd: l.checkout}
-	inc := incarnation.Evidence{
-		Terminal: "term-" + pane,
-		Shell:    &incarnation.Shell{PID: 4242, Started: "2025-01-01T00:00:00Z"},
-	}.Record(store.Now())
-	if _, err := l.store.Register(ep, role, sweepTaskID, inc); err != nil {
+	pid := uint32(40000001)
+	fg := &hcclient.Foreground{PID: int32(pid), Name: "agent", Argv: []string{"agent"}, Cwd: ep.Cwd}
+	bound := incarnation.NativeEvidence{Endpoint: ep.Native(), PID: pid, Foreground: fg}
+	if _, err := l.store.Register(ep, ep.Role, ep.Task, bound.Record(store.Now())); err != nil {
 		l.t.Fatal(err)
 	}
 }
-
-func (l *sweepLab) setWorkerState(state string) {
+func (l *sweepLab) terminal(ep store.Endpoint, state string) hcclient.Terminal {
+	pid := uint32(40000001)
+	fg := &hcclient.Foreground{PID: int32(pid), Name: "agent", Argv: []string{"agent"}, Cwd: ep.Cwd}
+	finished := uint64(10)
+	code := int32(0)
+	terminal := hcclient.Terminal{Address: ep.Address, CreatedMS: ep.CreatedMS, Cwd: ep.Cwd, State: state, PID: &pid, Foreground: fg, Status: &hcclient.Status{State: "done"}}
+	if state == "finished" {
+		terminal.FinishedMS = &finished
+		terminal.ExitCode = &code
+	}
+	l.hc.SetTerminal(terminal)
+	return terminal
+}
+func (l *sweepLab) task() *ordjson.Object {
 	l.t.Helper()
 	task, err := l.store.ReadTask(sweepTaskID)
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	exec := asObject(field(task, "execution"))
-	worker := asObject(field(exec, "worker"))
-	worker.Set("state", state)
+	return task
+}
+func (l *sweepLab) save(task *ordjson.Object) {
+	l.t.Helper()
 	if err := l.store.SaveTask(task); err != nil {
 		l.t.Fatal(err)
 	}
 }
-
-func (l *sweepLab) clearReport() {
+func (l *sweepLab) assertTerminal(address string, present bool) {
 	l.t.Helper()
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	task.Set("report", nil)
-	var kept []any
-	for _, raw := range asList(field(task, "evidence")) {
-		row := asObject(raw)
-		kind := asString(row, "kind")
-		if kind == "report" || kind == "handoff" {
-			continue
+	exists := false
+	for _, t := range l.hc.Terminals() {
+		if t.Address == address {
+			exists = true
 		}
-		kept = append(kept, raw)
 	}
-	if kept == nil {
-		kept = []any{}
-	}
-	task.Set("evidence", kept)
-	if err := l.store.SaveTask(task); err != nil {
-		l.t.Fatal(err)
+	if exists != present {
+		l.t.Fatalf("terminal %s present=%v want=%v", address, exists, present)
 	}
 }
-
+func (l *sweepLab) closeWorker() *ordjson.Object {
+	task := l.task()
+	endpoint := roleEndpoint(task, "worker")
+	return removeOneTerminal(l.store, l.ctx, l.runtime, sweepTaskID, endpoint.Address, "worker", "report-submitted", endpoint.Cwd)
+}
 func TestSweep_closesReportedWorkerPane(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.writeLivePanes(nil)
-	l.bindPane("w-worker:p1", "worker")
-	l.setWorkerState("running")
-	rows, _ := l.sweep(SweepOpts{})
-	row := sweepRow(rows, "pane-close")
-	if row == nil {
-		t.Fatalf("no pane-close row in %v", rows)
+	ep := roleEndpoint(l.task(), "worker")
+	l.terminal(ep, "finished")
+	row := l.closeWorker()
+	if asString(row, "state") != "closed" {
+		t.Fatalf("%v", row)
 	}
-	if state, _ := row.Get("state"); state != "closed" {
-		t.Fatalf("pane-close state = %v err=%v", state, func() any { v, _ := row.Get("error"); return v }())
-	}
-	if l.paneExists("w-worker:p1") {
-		t.Fatal("reported worker pane is still open")
-	}
-	if l.paneExists("w-parent:p1") == false {
-		t.Fatal("coordinator pane was closed")
-	}
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !panes.WorkerIsClosed(task) {
-		t.Fatalf("closed_panes = %v", field(task, "closed_panes"))
-	}
-	if park, _ := row.Get("park_error"); park != nil {
-		t.Fatalf("park after close: %v", park)
-	}
-	exec := asObject(field(task, "execution"))
-	worker := asObject(field(exec, "worker"))
-	if asString(worker, "state") != "released" {
-		t.Fatalf("worker state after close = %v", asString(worker, "state"))
+	l.assertTerminal(ep.Address, false)
+	l.assertTerminal("t1", true)
+	if !panes.WorkerIsClosed(l.task()) {
+		t.Fatal("missing exact closure")
 	}
 	if _, err := os.Stat(l.checkout); err != nil {
-		t.Fatal("pane close removed the checkout")
+		t.Fatal("maintenance removed checkout")
 	}
 }
-
 func TestSweep_leavesInFlightWorkerPane(t *testing.T) {
-	l := newSweepLab(t)
-	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.writeLivePanes(nil)
-	l.clearReport()
-	l.setWorkerState("running")
-	rows, _ := l.sweep(SweepOpts{})
-	if row := sweepRow(rows, "pane-close"); row != nil {
-		t.Fatalf("in-flight pane was closed: %v", row)
-	}
-	if !l.paneExists("w-worker:p1") {
-		t.Fatal("in-flight worker pane is gone")
+	for _, status := range []string{"idle", "done", "working", "blocked", ""} {
+		t.Run(status, func(t *testing.T) {
+			l := newSweepLab(t)
+			l.saveTask(l.openPR())
+			ep := roleEndpoint(l.task(), "worker")
+			terminal := l.terminal(ep, "live")
+			if status == "" {
+				terminal.Status = nil
+			} else {
+				terminal.Status = &hcclient.Status{State: status}
+			}
+			l.hc.SetTerminal(terminal)
+			row := l.closeWorker()
+			if asString(row, "state") != "skipped" {
+				t.Fatalf("%v", row)
+			}
+			l.assertTerminal(ep.Address, true)
+		})
 	}
 }
-
 func TestSweep_neverClosesCoordinatorPane(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.writeLivePanes(nil)
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
+	task := l.task()
+	task.Set("worker_endpoint", l.ctx)
+	l.save(task)
+	row := l.closeWorker()
+	if asString(row, "state") != "skipped" {
+		t.Fatal(row)
 	}
-	task.Set("pane", "w-parent:p1")
-	task.Set("workspace", "w-parent")
-	for _, raw := range asList(field(task, "evidence")) {
-		row := asObject(raw)
-		if ep := asObject(field(row, "endpoint")); ep != nil {
-			ep.Set("pane", "w-parent:p1")
-		}
-	}
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := l.sweep(SweepOpts{})
-	row := sweepRow(rows, "pane-close")
-	if row == nil {
-		t.Fatalf("expected a skipped pane-close, got %v", rows)
-	}
-	if state, _ := row.Get("state"); state != "skipped" {
-		t.Fatalf("state = %v, want skipped", state)
-	}
-	if !l.paneExists("w-parent:p1") {
-		t.Fatal("coordinator pane was closed")
-	}
+	l.assertTerminal("t1", true)
 }
-
 func TestSweep_closesReviewerPaneAfterVerdict(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.clearReport()
-	l.setWorkerState("running")
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
+	task := l.task()
+	ep := l.endpoint("t3", "reviewer", "review-1", 3, l.checkout)
+	l.register(ep)
+	l.terminal(ep, "finished")
+	task.Set("reviewer", ep.Object())
+	e := ordjson.NewObject()
+	e.Set("kind", "review")
+	e.Set("verdict", "approve")
+	e.Set("candidate", l.head)
+	e.Set("endpoint", ep.Object())
+	task.Set("evidence", []any{e})
+	l.save(task)
+	rows := removeSettledTerminals(l.store, l.ctx, l.runtime, sweepTaskID)
+	if len(rows) != 1 || asString(asObject(rows[0]), "state") != "closed" {
+		t.Fatal(rows)
 	}
-	reviewer := ordjson.NewObject()
-	reviewer.Set("machine", l.host)
-	reviewer.Set("session", "sum-test")
-	reviewer.Set("pane", "w-rev:p1")
-	reviewer.Set("cwd", l.home)
-	task.Set("reviewer", reviewer)
-	review := ordjson.NewObject()
-	review.Set("kind", "review")
-	review.Set("source", "reviewer")
-	review.Set("candidate", l.head)
-	review.Set("verdict", "approve")
-	review.Set("at", "2026-01-01T00:00:00+00:00")
-	endpoint := ordjson.NewObject()
-	endpoint.Set("machine", l.host)
-	endpoint.Set("session", "sum-test")
-	endpoint.Set("pane", "w-rev:p1")
-	review.Set("endpoint", endpoint)
-	task.Set("evidence", []any{review})
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	l.writeLivePanes(map[string]any{
-		"w-rev:p1": map[string]any{
-			"pane_id": "w-rev:p1", "cwd": l.home, "workspace_id": "w-rev",
-			"agent_status": "idle", "agent": "codex", "name": "reviewer",
-			"shell_pid": 5151, "created": true, "terminal_id": "term-w-rev:p1", "processes": []any{},
-		},
-	})
-	l.bindPane("w-rev:p1", "reviewer")
-	rows, _ := l.sweep(SweepOpts{})
-	row := sweepRow(rows, "pane-close")
-	if row == nil {
-		t.Fatalf("no pane-close row in %v", rows)
-	}
-	if pane, _ := row.Get("pane"); pane != "w-rev:p1" {
-		t.Fatalf("closed pane = %v, want reviewer", pane)
-	}
-	if state, _ := row.Get("state"); state != "closed" {
-		t.Fatalf("state = %v err=%v", state, func() any { v, _ := row.Get("error"); return v }())
-	}
-	if l.paneExists("w-rev:p1") {
-		t.Fatal("reviewer pane is still open")
-	}
-	if !l.paneExists("w-worker:p1") {
-		t.Fatal("in-flight worker pane was closed with the reviewer")
+	l.assertTerminal(ep.Address, false)
+	if !panes.ReviewerIsClosed(l.task()) {
+		t.Fatal("reviewer closure missing")
 	}
 }
-
-func TestSweep_closesReportedWorkerWithOpenQuestion(t *testing.T) {
-	l := newSweepLab(t)
-	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.writeLivePanes(nil)
-	l.bindPane("w-worker:p1", "worker")
-	l.setWorkerState("running")
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	q := ordjson.NewObject()
-	q.Set("id", "q-aaaaaaaaaa")
-	q.Set("key", "open")
-	q.Set("status", "open")
-	q.Set("text", "which one?")
-	task.Set("questions", []any{q})
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := l.sweep(SweepOpts{})
-	row := sweepRow(rows, "pane-close")
-	if row == nil {
-		t.Fatal("open question kept a reported pane open")
-	}
-	if state, _ := row.Get("state"); state != "closed" {
-		t.Fatalf("state = %v", state)
+func TestSweep_pendingObligationsRetainFinishedTerminal(t *testing.T) {
+	for _, status := range []string{"open", "answered"} {
+		t.Run(status, func(t *testing.T) {
+			l := newSweepLab(t)
+			l.saveTask(l.openPR())
+			task := l.task()
+			ep := roleEndpoint(task, "worker")
+			l.terminal(ep, "finished")
+			q := ordjson.NewObject()
+			q.Set("id", "q-aaaaaaaaaa")
+			q.Set("status", status)
+			task.Set("questions", []any{q})
+			l.save(task)
+			row := l.closeWorker()
+			if asString(row, "state") != "skipped" {
+				t.Fatal(row)
+			}
+			l.assertTerminal(ep.Address, true)
+			if asString(asObject(asList(field(l.task(), "questions"))[0]), "status") != status {
+				t.Fatal("obligation changed")
+			}
+		})
 	}
 }
-
-func TestSweep_closedPaneRepairRecordsPendingResume(t *testing.T) {
-	l := newSweepLab(t)
-	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.writeLivePanes(nil)
-	l.bindPane("w-worker:p1", "worker")
-	l.setWorkerState("running")
-	rows, _ := l.sweep(SweepOpts{})
-	if row := sweepRow(rows, "pane-close"); row == nil {
-		t.Fatal("worker pane was not closed")
-	}
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	worker := asObject(field(asObject(field(task, "execution")), "worker"))
-	attempt := asString(worker, "id")
-	got, err := repair.Send(l.store, l.ctx, repair.SendArgs{
-		TaskID:      sweepTaskID,
-		Attempt:     attempt,
-		Key:         "after-close",
-		Text:        "re-run the failing gate",
-		Class:       repair.ClassInScope,
-		RuntimeRoot: l.runtime,
-	})
-	if err != nil {
-		t.Fatalf("repair send: %v", err)
-	}
-	if state, _ := got.Get("state"); state != "pane-closed" {
-		t.Fatalf("repair state = %v", got)
-	}
-	if next, _ := got.Get("next"); !strings.Contains(fmt.Sprint(next), "execution resume") {
-		t.Fatalf("repair next = %v", next)
-	}
-	task, err = l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	texts := repair.PendingResumeTexts(task)
-	if len(texts) != 1 || texts[0] != "re-run the failing gate" {
-		t.Fatalf("pending resume texts = %v", texts)
-	}
-}
-
 func TestSweep_successorPaneSurvivesUntilNewReport(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
+	task := l.task()
+	old := roleEndpoint(task, "worker")
+	ep := old
+	ep.Attempt = "new-attempt"
+	ep.BindingGeneration++
+	task.Set("worker_endpoint", ep.Object())
+	l.register(ep)
+	l.terminal(ep, "finished")
+	l.save(task)
+	if reason, _ := workerCloseReason(task); reason != "" {
+		t.Fatal("old evidence authorized new binding")
 	}
-	task.Set("pane", "w-worker:p2")
-	exec := asObject(field(task, "execution"))
-	worker := asObject(field(exec, "worker"))
-	worker.Set("id", "x-dddddddddddd")
-	worker.Set("state", "running")
-	worker.Set("resumes", sweepWorkerID)
-	worker.Set("created_at", "2026-01-02T00:00:00+00:00")
-	owner := asObject(field(worker, "owner"))
-	owner.Set("pane", "w-worker:p2")
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	l.writeLivePanes(map[string]any{
-		"w-worker:p2": map[string]any{
-			"pane_id": "w-worker:p2", "cwd": l.checkout, "workspace_id": "w-worker",
-			"agent_status": "idle", "agent": "codex", "name": "worker",
-			"shell_pid": 4343, "created": true, "terminal_id": "term-w-worker:p2",
-			"processes": []any{},
-		},
-	})
-	l.bindPane("w-worker:p2", "worker")
-	rows, _ := l.sweep(SweepOpts{})
-	if row := sweepRow(rows, "pane-close"); row != nil {
-		t.Fatalf("successor pane was closed: %v", row)
-	}
-	if !l.paneExists("w-worker:p2") {
-		t.Fatal("successor pane is gone")
-	}
-
-	task, err = l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := ordjson.NewObject()
-	endpoint.Set("machine", l.host)
-	endpoint.Set("session", "sum-test")
-	endpoint.Set("pane", "w-worker:p2")
-	fresh := ordjson.NewObject()
-	fresh.Set("kind", "report")
-	fresh.Set("source", "worker")
-	fresh.Set("candidate", l.head)
-	fresh.Set("at", "2026-01-03T00:00:00+00:00")
-	fresh.Set("endpoint", endpoint)
-	task.Set("evidence", append(asList(field(task, "evidence")), fresh))
-	asObject(field(task, "report")).Set("submitted_at", "2026-01-03T00:00:00+00:00")
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ = l.sweep(SweepOpts{})
-	row := sweepRow(rows, "pane-close")
-	if row == nil {
-		t.Fatal("successor pane stayed open after a new report")
-	}
-	if pane, _ := row.Get("pane"); pane != "w-worker:p2" {
-		t.Fatalf("closed pane = %v, want successor", pane)
-	}
-	if l.paneExists("w-worker:p2") {
-		t.Fatal("successor pane is still open after a new report")
+	e := ordjson.NewObject()
+	e.Set("kind", "report")
+	e.Set("candidate", l.head)
+	e.Set("endpoint", ep.Object())
+	task.Set("evidence", append(asList(field(task, "evidence")), e))
+	l.save(task)
+	if reason, _ := workerCloseReason(task); reason == "" {
+		t.Fatal("new exact report not eligible")
 	}
 }
-
-func TestSweep_successorReviewerPaneSurvivesUntilNewVerdict(t *testing.T) {
-	l := newSweepLab(t)
-	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.clearReport()
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reviewer := ordjson.NewObject()
-	reviewer.Set("machine", l.host)
-	reviewer.Set("session", "sum-test")
-	reviewer.Set("pane", "w-rev:p2")
-	reviewer.Set("cwd", l.home)
-	reviewer.Set("bound_at", "2026-01-02T00:00:00+00:00")
-	task.Set("reviewer", reviewer)
-	endpoint := ordjson.NewObject()
-	endpoint.Set("machine", l.host)
-	endpoint.Set("session", "sum-test")
-	endpoint.Set("pane", "w-rev:p1")
-	review := ordjson.NewObject()
-	review.Set("kind", "review")
-	review.Set("source", "reviewer")
-	review.Set("candidate", l.head)
-	review.Set("verdict", "changes-requested")
-	review.Set("at", "2026-01-01T00:00:00+00:00")
-	review.Set("endpoint", endpoint)
-	task.Set("evidence", []any{review})
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	l.writeLivePanes(map[string]any{
-		"w-rev:p2": map[string]any{
-			"pane_id": "w-rev:p2", "cwd": l.home, "workspace_id": "w-rev",
-			"agent_status": "idle", "agent": "codex", "name": "reviewer",
-			"shell_pid": 5252, "created": true, "terminal_id": "term-w-rev:p2", "processes": []any{},
-		},
-	})
-	l.bindPane("w-rev:p2", "reviewer")
-	rows, _ := l.sweep(SweepOpts{})
-	if row := sweepRow(rows, "pane-close"); row != nil {
-		t.Fatalf("successor reviewer pane was closed: %v", row)
-	}
-	if !l.paneExists("w-rev:p2") {
-		t.Fatal("successor reviewer pane is gone")
-	}
-}
-
 func TestSweep_reboundReviewerClosesOnlyAfterItsOwnReview(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.clearReport()
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
+	task := l.task()
+	ep := l.endpoint("t3", "reviewer", "review-new", 3, l.checkout)
+	old := ep
+	old.Attempt = "review-old"
+	old.BindingGeneration = 2
+	task.Set("reviewer", ep.Object())
+	e := ordjson.NewObject()
+	e.Set("kind", "review")
+	e.Set("verdict", "approve")
+	e.Set("candidate", l.head)
+	e.Set("endpoint", old.Object())
+	task.Set("evidence", []any{e})
+	if reason, _ := reviewerCloseReason(task); reason != "" {
+		t.Fatal("prior review adopted new reviewer")
 	}
-	reviewer := ordjson.NewObject()
-	reviewer.Set("machine", l.host)
-	reviewer.Set("session", "sum-test")
-	reviewer.Set("pane", "w-rev:p2")
-	reviewer.Set("cwd", l.home)
-	reviewer.Set("bound_at", "2026-01-02T00:00:00+00:00")
-	task.Set("reviewer", reviewer)
-	oldEndpoint := ordjson.NewObject()
-	oldEndpoint.Set("machine", l.host)
-	oldEndpoint.Set("session", "sum-test")
-	oldEndpoint.Set("pane", "w-rev:p1")
-	oldReview := ordjson.NewObject()
-	oldReview.Set("kind", "review")
-	oldReview.Set("source", "reviewer")
-	oldReview.Set("candidate", l.head)
-	oldReview.Set("verdict", "changes-requested")
-	oldReview.Set("at", "2026-01-01T00:00:00+00:00")
-	oldReview.Set("endpoint", oldEndpoint)
-	task.Set("evidence", []any{oldReview})
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	l.writeLivePanes(map[string]any{
-		"w-rev:p2": map[string]any{
-			"pane_id": "w-rev:p2", "cwd": l.home, "workspace_id": "w-rev",
-			"agent_status": "idle", "agent": "codex", "name": "reviewer",
-			"shell_pid": 5252, "created": true, "terminal_id": "term-w-rev:p2", "processes": []any{},
-		},
-	})
-	l.bindPane("w-rev:p2", "reviewer")
-	rows, _ := l.sweep(SweepOpts{})
-	if row := sweepRow(rows, "pane-close"); row != nil {
-		t.Fatalf("old reviewer verdict closed the rebound pane: %v", row)
-	}
-	if !l.paneExists("w-rev:p2") {
-		t.Fatal("rebound reviewer pane closed before it saved a verdict")
-	}
-	task, err = l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newEndpoint := ordjson.NewObject()
-	newEndpoint.Set("machine", l.host)
-	newEndpoint.Set("session", "sum-test")
-	newEndpoint.Set("pane", "w-rev:p2")
-	newReview := ordjson.NewObject()
-	newReview.Set("kind", "review")
-	newReview.Set("source", "reviewer")
-	newReview.Set("candidate", l.head)
-	newReview.Set("verdict", "approve")
-	newReview.Set("at", "2026-01-03T00:00:00+00:00")
-	newReview.Set("endpoint", newEndpoint)
-	task.Set("evidence", append(asList(field(task, "evidence")), newReview))
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ = l.sweep(SweepOpts{})
-	if row := sweepRow(rows, "pane-close"); row == nil {
-		t.Fatal("new reviewer's verdict did not close its pane")
-	} else if pane, _ := row.Get("pane"); pane != "w-rev:p2" {
-		t.Fatalf("closed pane = %v, want rebound reviewer", pane)
-	}
-	if l.paneExists("w-rev:p2") {
-		t.Fatal("rebound reviewer pane is still open after its verdict")
+	fresh := ordjson.NewObject()
+	fresh.Set("kind", "review")
+	fresh.Set("verdict", "approve")
+	fresh.Set("candidate", l.head)
+	fresh.Set("endpoint", ep.Object())
+	task.Set("evidence", []any{e, fresh})
+	if reason, _ := reviewerCloseReason(task); reason == "" {
+		t.Fatal("matching review not eligible")
 	}
 }
-
 func TestSweep_reviewWithoutVerdictDoesNotClose(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.clearReport()
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	reviewer := ordjson.NewObject()
-	reviewer.Set("machine", l.host)
-	reviewer.Set("session", "sum-test")
-	reviewer.Set("pane", "w-rev:p1")
-	reviewer.Set("cwd", l.home)
-	task.Set("reviewer", reviewer)
-	endpoint := ordjson.NewObject()
-	endpoint.Set("machine", l.host)
-	endpoint.Set("session", "sum-test")
-	endpoint.Set("pane", "w-rev:p1")
-	review := ordjson.NewObject()
-	review.Set("kind", "review")
-	review.Set("source", "reviewer")
-	review.Set("candidate", l.head)
-	review.Set("at", "2026-01-01T00:00:00+00:00")
-	review.Set("endpoint", endpoint)
-	task.Set("evidence", []any{review})
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	l.writeLivePanes(map[string]any{
-		"w-rev:p1": map[string]any{
-			"pane_id": "w-rev:p1", "cwd": l.home, "workspace_id": "w-rev",
-			"agent_status": "idle", "agent": "codex", "name": "reviewer",
-			"shell_pid": 5151, "created": true, "terminal_id": "term-w-rev:p1", "processes": []any{},
-		},
-	})
-	l.bindPane("w-rev:p1", "reviewer")
-	rows, _ := l.sweep(SweepOpts{})
-	if row := sweepRow(rows, "pane-close"); row != nil {
-		t.Fatalf("review without verdict closed a pane: %v", row)
-	}
-	if !l.paneExists("w-rev:p1") {
-		t.Fatal("reviewer pane is gone")
+	task := l.task()
+	ep := l.endpoint("t3", "reviewer", "review", 3, l.checkout)
+	task.Set("reviewer", ep.Object())
+	e := ordjson.NewObject()
+	e.Set("kind", "review")
+	e.Set("candidate", l.head)
+	e.Set("endpoint", ep.Object())
+	task.Set("evidence", []any{e})
+	if reason, _ := reviewerCloseReason(task); reason != "" {
+		t.Fatal(reason)
 	}
 }
-
 func TestSweep_emptyCandidateDoesNotClose(t *testing.T) {
 	l := newSweepLab(t)
-	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	task, err := l.store.ReadTask(sweepTaskID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	asObject(field(task, "report")).Set("candidate", "")
-	for _, raw := range asList(field(task, "evidence")) {
-		asObject(raw).Set("candidate", "")
-	}
-	if err := l.store.SaveTask(task); err != nil {
-		t.Fatal(err)
-	}
-	l.writeLivePanes(nil)
-	l.bindPane("w-worker:p1", "worker")
-	l.setWorkerState("running")
-	rows, _ := l.sweep(SweepOpts{})
-	if row := sweepRow(rows, "pane-close"); row != nil {
-		t.Fatalf("empty candidate closed a live pane: %v", row)
-	}
-	if !l.paneExists("w-worker:p1") {
-		t.Fatal("live pane is gone")
+	l.saveTaskAs(l.openPR(), "", "")
+	if hasRemovableTerminal(l.task()) {
+		t.Fatal("empty candidate eligible")
 	}
 }
-
 func TestSweep_skipsReusedPane(t *testing.T) {
-	l := newSweepLab(t)
-	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.writeLivePanes(nil)
-	l.bindPane("w-worker:p1", "worker")
-	raw, err := os.ReadFile(filepath.Join(l.herdr, "state.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
-		t.Fatal(err)
-	}
-	state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)["terminal_id"] = "term-reused"
-	state["panes"].(map[string]any)["w-worker:p1"].(map[string]any)["shell_pid"] = 9999
-	out, err := json.Marshal(state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(l.herdr, "state.json"), out, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	l.setWorkerState("running")
-	rows, _ := l.sweep(SweepOpts{})
-	row := sweepRow(rows, "pane-close")
-	if row == nil {
-		t.Fatal("expected a skipped close for a reused pane")
-	}
-	if state, _ := row.Get("state"); state != "skipped" {
-		t.Fatalf("state = %v, want skipped", state)
-	}
-	if !l.paneExists("w-worker:p1") {
-		t.Fatal("reused pane was closed")
+	for _, change := range []string{"creation", "kept", "missing-exit"} {
+		t.Run(change, func(t *testing.T) {
+			l := newSweepLab(t)
+			l.saveTask(l.openPR())
+			ep := roleEndpoint(l.task(), "worker")
+			terminal := l.terminal(ep, "finished")
+			switch change {
+			case "creation":
+				terminal.CreatedMS++
+			case "kept":
+				terminal.Keep = true
+			case "missing-exit":
+				terminal.ExitCode = nil
+			}
+			l.hc.SetTerminal(terminal)
+			row := l.closeWorker()
+			if asString(row, "state") != "skipped" {
+				t.Fatal(row)
+			}
+			l.assertTerminal(ep.Address, true)
+			if panes.WorkerIsClosed(l.task()) {
+				t.Fatal("failed close recorded")
+			}
+		})
 	}
 }
-
 func TestSweep_parkFailureDoesNotRecordClosed(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())
-	l.writeGHScenario("OPEN", "")
-	l.writeLivePanes(nil)
-	l.bindPane("w-worker:p1", "worker")
-	l.setWorkerState("starting")
-	rows, _ := l.sweep(SweepOpts{})
-	row := sweepRow(rows, "pane-close")
-	if row == nil {
-		t.Fatal("expected a pane-close attempt")
+	task := l.task()
+	ep := roleEndpoint(task, "worker")
+	l.terminal(ep, "finished")
+	worker := asObject(field(asObject(field(task, "execution")), "worker"))
+	worker.Set("state", "running")
+	l.save(task)
+	if err := os.WriteFile(filepath.Join(l.home, "fake-lsof", "cwds.json"), []byte(fmt.Sprintf(`{"processes":[{"pid":%d,"cwd":%q}]}`, os.Getpid(), l.checkout)), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if state, _ := row.Get("state"); state != "error" {
-		t.Fatalf("state = %v, want error after park failure", state)
+	writer := exec.Command("sleep", "60")
+	writer.Dir = l.checkout
+	if err := writer.Start(); err != nil {
+		t.Fatal(err)
 	}
-	task, err := l.store.ReadTask(sweepTaskID)
+	defer func() { writer.Process.Kill(); writer.Wait() }()
+	if err := os.WriteFile(filepath.Join(l.home, "fake-lsof", "cwds.json"), []byte(fmt.Sprintf(`{"processes":[{"pid":%d,"cwd":%q}]}`, writer.Process.Pid, l.checkout)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	row := l.closeWorker()
+	if asString(row, "state") != "skipped" {
+		t.Fatal(row)
+	}
+	l.assertTerminal(ep.Address, true)
+	if panes.WorkerIsClosed(l.task()) {
+		t.Fatal("writer not stopped but closure recorded")
+	}
+}
+
+func TestSweepLostNativeRemovalReconcilesExactClaimWithoutReplay(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	ep := roleEndpoint(l.task(), "worker")
+	l.terminal(ep, "finished")
+	l.hc.QueueFault("terminal.rm", hctest.Fault{LoseResponse: true})
+	first := l.closeWorker()
+	if asString(first, "state") != "skipped" {
+		t.Fatal(first)
+	}
+	task := l.task()
+	if asString(asObject(field(task, "terminal_maintenance")), "state") != "uncertain" || panes.WorkerIsClosed(task) {
+		t.Fatal("uncertain removal claimed closure")
+	}
+	again := l.closeWorker()
+	if asString(again, "state") != "already-absent" {
+		t.Fatal(again)
+	}
+	task = l.task()
+	if field(task, "terminal_maintenance") != nil || !panes.WorkerIsClosed(task) {
+		t.Fatal("exact removal not reconciled")
+	}
+	count := 0
+	for _, call := range l.hc.Calls() {
+		if call.Method == "terminal.rm" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("native rm replayed %d times", count)
+	}
+}
+func TestSweepNativeRemovalLeavesLedgerAvailableAndRefusesNewQuestion(t *testing.T) {
+	l := newSweepLab(t)
+	l.saveTask(l.openPR())
+	ep := roleEndpoint(l.task(), "worker")
+	l.terminal(ep, "finished")
+	entered, release := l.hc.HoldNext("terminal.rm", ep.Address)
+	defer release()
+	done := make(chan *ordjson.Object, 1)
+	go func() { done <- l.closeWorker() }()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("native rm did not start")
+	}
+	other, err := store.Open(l.store.Root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if panes.WorkerIsClosed(task) {
-		t.Fatal("park failure recorded the pane closed")
+	if _, err = ask.Ask(other, sweepTaskID, "racing-maintenance", "Keep this new question", func() (*ordjson.Object, error) { return nil, nil }); err == nil || !strings.Contains(err.Error(), "maintenance") {
+		t.Fatalf("question not refused by exact native claim: %v", err)
+	}
+	release()
+	select {
+	case row := <-done:
+		if asString(row, "state") != "closed" {
+			t.Fatal(row)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("maintenance failed to finish")
 	}
 }

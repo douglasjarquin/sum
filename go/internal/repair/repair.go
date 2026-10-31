@@ -13,14 +13,13 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ask"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 const Schema = 1
@@ -399,15 +398,7 @@ func RefuseDuringCleanup(task *ordjson.Object, action string) error {
 	if err := RefuseActive(task, action == "Worker start"); err != nil {
 		return err
 	}
-	recordValue, _ := task.Get("cleanup")
-	record := asObject(recordValue)
-	if record != nil {
-		if intent, ok := record.Get("intent"); ok && intent != nil && intent != false {
-			id, _ := task.Get("id")
-			return fmt.Errorf("%s is refused because cleanup intent is active for task %v; no execution side effect occurred.", action, id)
-		}
-	}
-	return nil
+	return maintenance.Refuse(task, action)
 }
 
 func exhaustion(task *ordjson.Object) error {
@@ -700,12 +691,7 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 		unlock()
 		return nil, err
 	}
-	host, err := s.Machine()
-	if err != nil {
-		unlock()
-		return nil, err
-	}
-	if !host.SameEndpoint(returns.ReturnRoute(task, "worker"), lockedRoute) {
+	if !store.EndpointFromContext(returns.ReturnRoute(task, "worker")).Native().SameAuthority(store.EndpointFromContext(lockedRoute).Native()) {
 		unlock()
 		return nil, fmt.Errorf("Worker identity changed before corrective delivery; nothing sent.")
 	}
@@ -867,20 +853,13 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	}
 	unlock()
 
-	herdrPath, err := toolpath.Find(args.RuntimeRoot, "herdr")
-	var sendErr error
+	sendCtx, cancelSend := context.WithTimeout(context.Background(), SendPromptTimeout)
+	state, sendErr := occupant.Send(sendCtx, args.Text)
+	cancelSend()
 	var refuseErr error
-	if err != nil {
-		refuseErr = err
-	} else {
-		session := asString(func() any { v, _ := route.Get("session"); return v }())
-		pane := asString(func() any { v, _ := route.Get("pane"); return v }())
-		var code string
-		_, code, sendErr = herdrclient.Observe(herdrPath, session, SendPromptTimeout, "agent", "prompt", pane, args.Text)
-		if sendErr == nil && code != "" {
-			refuseErr = fmt.Errorf("Herdr refused the prompt: %s", code)
-			sendErr = nil
-		}
+	if state == "not-delivered" {
+		refuseErr = sendErr
+		sendErr = nil
 	}
 
 	unlock, err = s.Lock()
@@ -1021,20 +1000,13 @@ func PendingResumeTexts(task *ordjson.Object) []string {
 	return texts
 }
 
-func routeToCtx(route *ordjson.Object) *ordjson.Object {
-	ctx := ordjson.NewObject()
-	for _, key := range []string{"machine", "session", "pane", "cwd"} {
-		v, _ := route.Get(key)
-		ctx.Set(key, v)
-	}
-	return ctx
-}
+func routeToCtx(route *ordjson.Object) *ordjson.Object { return route }
 
 func sameRoute(a, b *ordjson.Object) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	for _, key := range []string{"machine", "session", "pane", "cwd", "recipient", "role"} {
+	for _, key := range []string{"machine", "core_id", "address", "task", "attempt", "binding_generation", "created_ms", "cwd", "recipient", "role"} {
 		av, _ := a.Get(key)
 		bv, _ := b.Get(key)
 		if fmt.Sprint(av) != fmt.Sprint(bv) {

@@ -66,10 +66,11 @@ func TestNativeUnknownFlagsAreUsageErrorsBeforeMutation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := nativeUsageLab(t)
-			herdrRoot := filepath.Join(home, "fake-herdr")
-			herdrBefore := listRegularFiles(t, herdrRoot)
+			nativeEnv(t, home)
+			runtime := nativeLabFor(t, home).native
+			nativeBefore := len(runtime.Calls())
 			stdout, stderr, err := runNativeCLI(t, home, tc.args...)
 			if err == nil {
 				t.Fatalf("expected usage failure, stdout=%s stderr=%s", stdout, stderr)
@@ -82,8 +83,8 @@ func TestNativeUnknownFlagsAreUsageErrorsBeforeMutation(t *testing.T) {
 				t.Fatalf("usage failure wrote stdout: %s", stdout)
 			}
 			assertNativeTaskUnchanged(t, home, before)
-			if got := listRegularFiles(t, herdrRoot); got != herdrBefore {
-				t.Fatalf("herdr state changed:\nbefore:\n%s\nafter:\n%s", herdrBefore, got)
+			if got := len(runtime.Calls()); got != nativeBefore {
+				t.Fatalf("usage validation made native requests: before=%d after=%d", nativeBefore, got)
 			}
 		})
 	}
@@ -119,43 +120,43 @@ func TestNativeCommands(t *testing.T) {
 		{name: "valid notes --text=", args: []string{"notes", "t-aaaaaaaaaaaa", "--text=-keep"}, ok: true},
 		{name: "notes missing --text and --file", args: []string{"notes", "t-aaaaaaaaaaaa"}, usage: true},
 		{name: "notes unknown flag", args: []string{"notes", "t-aaaaaaaaaaaa", "--text", "hello", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid herdr pane list", args: []string{"herdr", "pane", "list"}, domainErr: "Herdr pane"},
-		{name: "valid herdr after dashdash", args: []string{"herdr", "--", "pane", "list"}, domainErr: "Herdr pane"},
-		{name: "valid herdr with herdr", args: []string{"herdr", "pane", "list"}, herdr: true, domainErr: "not registered"},
+		{name: "valid herdr pane list", args: []string{"herdr", "pane", "list"}, domainErr: "unknown command \"herdr\""},
+		{name: "valid herdr after dashdash", args: []string{"herdr", "--", "pane", "list"}, domainErr: "unknown command \"herdr\""},
+		{name: "valid herdr with herdr", args: []string{"herdr", "pane", "list"}, herdr: true, domainErr: "unknown command \"herdr\""},
 		{name: "herdr unknown flag", args: []string{"herdr", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid archive", args: []string{"archive", "t-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
-		{name: "valid archive --acknowledge", args: []string{"archive", "t-aaaaaaaaaaaa", "--acknowledge"}, domainErr: "Herdr pane"},
-		{name: "valid archive --acknowledge= with herdr", args: []string{"archive", "t-aaaaaaaaaaaa", "--acknowledge=true"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid archive", args: []string{"archive", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
+		{name: "valid archive --acknowledge", args: []string{"archive", "t-aaaaaaaaaaaa", "--acknowledge"}, domainErr: "HC session"},
+		{name: "valid archive --acknowledge= with herdr", args: []string{"archive", "t-aaaaaaaaaaaa", "--acknowledge=true"}, herdr: true, domainErr: "held execution reservation"},
 		{name: "archive unknown flag", args: []string{"archive", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
 		{name: "valid ask --text", args: []string{"ask", "t-aaaaaaaaaaaa", "--text", "Keep going?"}, ok: true},
 		{name: "valid ask --key= --text=", args: []string{"ask", "t-aaaaaaaaaaaa", "--key=k1", "--text=Keep going?"}, ok: true},
 		{name: "ask missing --text and --file", args: []string{"ask", "t-aaaaaaaaaaaa"}, usage: true},
 		{name: "ask unknown flag", args: []string{"ask", "t-aaaaaaaaaaaa", "--text", "Keep going?", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid answer --text", args: []string{"answer", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "--text", "yes"}, domainErr: "Question not found"},
+		{name: "valid answer --text", args: []string{"answer", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "--text", "yes"}, domainErr: "native Sum execution on another machine is unsupported"},
 		{name: "answer missing --text and --file", args: []string{"answer", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa"}, usage: true},
 		{name: "answer unknown flag", args: []string{"answer", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "--text", "yes", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid resolve", args: []string{"resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa"}, domainErr: "Only an answered question"},
+		{name: "valid resolve", args: []string{"resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa"}, domainErr: "native Sum execution on another machine is unsupported"},
 		{name: "resolve extra positional", args: []string{"resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "extra"}, usage: true},
 		{name: "resolve unknown flag", args: []string{"resolve", "t-aaaaaaaaaaaa", "q-aaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
 		{name: "valid notice", args: []string{"notice", "t-aaaaaaaaaaaa"}, ok: true},
 		{name: "valid notice --to=", args: []string{"notice", "t-aaaaaaaaaaaa", "--to=worker"}, ok: true},
 		{name: "notice invalid --to", args: []string{"notice", "t-aaaaaaaaaaaa", "--to", "other"}, usage: true},
 		{name: "notice unknown flag", args: []string{"notice", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid pump", args: []string{"pump"}, domainErr: "Herdr pane"},
-		{name: "valid pump --task= --force", args: []string{"pump", "--task=t-aaaaaaaaaaaa", "--force"}, domainErr: "Herdr pane"},
-		{name: "valid pump with herdr", args: []string{"pump"}, herdr: true, domainErr: "sumctl init"},
+		{name: "valid pump", args: []string{"pump"}, domainErr: "HC session"},
+		{name: "valid pump --task= --force", args: []string{"pump", "--task=t-aaaaaaaaaaaa", "--force"}, domainErr: "HC session"},
+		{name: "valid pump with herdr", args: []string{"pump"}, herdr: true, ok: true},
 		{name: "pump unknown flag", args: []string{"pump", "--unexpected"}, usage: true, unknown: true},
 		{name: "backup extra positional", args: []string{"backup", "state.tar.gz", "extra"}, usage: true},
 		{name: "backup unknown flag", args: []string{"backup", "state.tar.gz", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid attention --seen", args: []string{"attention", "t-aaaaaaaaaaaa", "a-aaaaaaaaaa", "--seen"}, domainErr: "Herdr pane"},
-		{name: "valid attention --seen= with herdr", args: []string{"attention", "t-aaaaaaaaaaaa", "a-aaaaaaaaaa", "--seen=true"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid attention --seen", args: []string{"attention", "t-aaaaaaaaaaaa", "a-aaaaaaaaaa", "--seen"}, domainErr: "HC session"},
+		{name: "valid attention --seen= with herdr", args: []string{"attention", "t-aaaaaaaaaaaa", "a-aaaaaaaaaa", "--seen=true"}, herdr: true, domainErr: "task binding changed after observation"},
 		{name: "attention missing --seen", args: []string{"attention", "t-aaaaaaaaaaaa", "a-aaaaaaaaaa"}, usage: true},
 		{name: "attention unknown flag", args: []string{"attention", "t-aaaaaaaaaaaa", "a-aaaaaaaaaa", "--seen", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid bind", args: []string{"bind", "t-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
-		{name: "valid bind --parent-only --worker-pane=", args: []string{"bind", "t-aaaaaaaaaaaa", "--parent-only", "--worker-pane=w-worker:p2"}, domainErr: "Herdr pane"},
-		{name: "valid bind with herdr", args: []string{"bind", "t-aaaaaaaaaaaa"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid bind", args: []string{"bind", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
+		{name: "valid bind --parent-only --worker-terminal=", args: []string{"bind", "t-aaaaaaaaaaaa", "--parent-only", "--worker-terminal=w-worker:p2"}, domainErr: "HC session"},
+		{name: "valid bind with herdr", args: []string{"bind", "t-aaaaaaaaaaaa"}, herdr: true, domainErr: "choose exactly one of"},
 		{name: "bind unknown flag", args: []string{"bind", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
-		{name: "valid report --text", args: []string{"report", "t-aaaaaaaaaaaa", "--text", "done"}, ok: true},
+		{name: "valid report --text", args: []string{"report", "t-aaaaaaaaaaaa", "--text", "done"}, domainErr: "native Sum execution on another machine is unsupported"},
 		{name: "report missing --text and --file", args: []string{"report", "t-aaaaaaaaaaaa"}, usage: true},
 		{name: "report unknown flag", args: []string{"report", "t-aaaaaaaaaaaa", "--text", "done", "--unexpected"}, usage: true, unknown: true},
 		{name: "valid dev list", args: []string{"dev", "list"}, domainErr: "not a sum installation's state home"},
@@ -169,9 +170,9 @@ func TestNativeCommands(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := nativeUsageLab(t)
 			if tc.herdr {
-				herdrEnv(t, home)
+				nativeEnv(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			stdout, stderr, err := runNativeCLI(t, home, tc.args...)
 			switch {
@@ -199,6 +200,10 @@ func TestNativeCommands(t *testing.T) {
 				if !strings.Contains(err.Error(), tc.domainErr) {
 					t.Fatalf("err = %v, want substring %q", err, tc.domainErr)
 				}
+				if tc.args[0] == "resolve" {
+					assertNativeUsageErrorNot(t, err)
+					assertNativeTaskUnchanged(t, home, before)
+				}
 			}
 		})
 	}
@@ -207,7 +212,7 @@ func TestNativeCommands(t *testing.T) {
 func nativeUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
 	before = readNamedTask(t, home, "t-aaaaaaaaaaaa")
 	return home, before
@@ -271,7 +276,7 @@ func assertNativeTaskUnchanged(t *testing.T, home, before string) {
 }
 
 func TestNativeQuotaFormatDoesNotRedefinePersistentFlag(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home, _ := nativeUsageLab(t)
 	stdout, stderr, err := runNativeCLI(t, home, "quota", "--provider", "codex", "--format", "compact")
 	if err != nil {
@@ -287,7 +292,7 @@ func TestNativeQuotaFormatDoesNotRedefinePersistentFlag(t *testing.T) {
 }
 
 func TestNativeBackupUnknownFlagDoesNotWriteArchive(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home, _ := nativeUsageLab(t)
 	dest := filepath.Join(home, "state.tar.gz")
 	stdout, stderr, err := runNativeCLI(t, home, "backup", dest, "--unexpected")

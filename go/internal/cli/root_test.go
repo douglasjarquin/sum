@@ -65,9 +65,7 @@ func TestUnknownFlagsAreGoErrors(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home = nativeTestStore(t, home).Home
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
 	root.SetArgs([]string{"--home", home, "status", "--arg=-m"})
 	err := root.ExecuteContext(context.Background())
@@ -84,9 +82,7 @@ func TestCleanupUnknownArgsAreGoErrors(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home = nativeTestStore(t, home).Home
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
 	root.SetArgs([]string{"--home", home, "cleanup"})
 	err := root.ExecuteContext(context.Background())

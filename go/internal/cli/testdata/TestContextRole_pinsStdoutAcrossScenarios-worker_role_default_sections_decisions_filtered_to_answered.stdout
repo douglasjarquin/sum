@@ -41,7 +41,7 @@ outline:
         verdict: null
         tool: null
         policy_reviewed: false
-        reviewer_pane: null
+        reviewer_endpoint: null
       note: Worker and coordinator runs are separate executions with their own run ids; neither the worker's run nor a review substitutes for the coordinator's. Records for another SHA are historical.
   verification_policy: null
   report: null
@@ -102,9 +102,18 @@ execution:
     note: "Not built: sum indexes a checkout only when the coordinator runs `graph init`, so this task has no code graph. Read the source."
   endpoints:
     worker:
+      schema: null
+      backend: null
       machine: null
+      core_id: null
       session: null
-      pane: null
+      socket: null
+      address: null
+      task: null
+      role: null
+      attempt: null
+      binding_generation: null
+      created_ms: null
     parent: null
     reviewer: null
 environment:
@@ -125,7 +134,7 @@ environment:
     ok: true
   skills:
     files[1]{skill,path,bytes,sha256}:
-      sum-work,$ROOT/skills/sum-work/SKILL.md,15484,8c0bfac8501224cb
+      sum-work,$ROOT/skills/sum-work/SKILL.md,16248,cc40eedc11cbc2f4
     helper: $ROOT/bin/sumctl
     instruction: "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout."
   runtime:
@@ -139,7 +148,7 @@ environment:
       discover: "$ROOT/bin/sumctl --home $HOME env discover t-1b1b1b1b1b1b"
       record: "$ROOT/bin/sumctl --home $HOME env record t-1b1b1b1b1b1b --url http://127.0.0.1:PORT"
       inspect: "$ROOT/bin/sumctl --home $HOME env inspect t-1b1b1b1b1b1b"
-    note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container."
+    note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, terminal, or container."
   note: Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout. `dev` is the task-local environment record as last observed.
 notes:
   path: "$HOME/tasks/t-1b1b1b1b1b1b/notes.md"

@@ -26,39 +26,39 @@ func TestFactoryStatus_pinsStdoutAcrossScenarios(t *testing.T) {
 
 func TestFactoryEnable_requiresCoordinator(t *testing.T) {
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
-	t.Setenv("HERDR_PANE_ID", "w-other:p1")
+	nativeEnv(t, home)
+	t.Setenv("SUM_ROLE", "developer")
 	_, stderr, err := runFactory(t, home, "factory", "enable", "owner/repo")
 	if err == nil {
 		t.Fatalf("expected coordinator requirement, stderr=%s", stderr)
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") {
+	if !strings.Contains(err.Error(), "registration identity mismatch") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestFactoryClaim_requiresCoordinator(t *testing.T) {
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
-	t.Setenv("HERDR_PANE_ID", "w-other:p1")
+	nativeEnv(t, home)
+	t.Setenv("SUM_ROLE", "developer")
 	_, stderr, err := runFactory(t, home, "factory", "claim", "owner/repo", "--issue", "1")
 	if err == nil {
 		t.Fatalf("expected coordinator requirement, stderr=%s", stderr)
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") {
+	if !strings.Contains(err.Error(), "registration identity mismatch") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestFactoryMerge_requiresCoordinator(t *testing.T) {
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
-	t.Setenv("HERDR_PANE_ID", "w-other:p1")
+	nativeEnv(t, home)
+	t.Setenv("SUM_ROLE", "developer")
 	_, stderr, err := runFactory(t, home, "factory", "merge", "t-aaaaaaaaaaaa")
 	if err == nil {
 		t.Fatalf("expected coordinator requirement, stderr=%s", stderr)
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") {
+	if !strings.Contains(err.Error(), "registration identity mismatch") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -67,7 +67,7 @@ func TestFactoryMergeCommand_rechecksLiveGatesAfterUnknown(t *testing.T) {
 	const taskID = "t-bbbbbbbbbbbb"
 	const repo = "cofactorworks/nicebaas"
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatal(err)
 	}
@@ -262,13 +262,12 @@ func runFactory(t *testing.T, home string, args ...string) (stdout, stderr strin
 
 func digestHome(t *testing.T) string {
 	t.Helper()
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := t.TempDir()
 	if _, err := fixture.WriteStandard(home); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FAKE_GH_ROOT", filepath.Join(home, "fake-gh"))
-	t.Setenv("FAKE_HERDR_ROOT", filepath.Join(home, "fake-herdr"))
 	return home
 }
 
@@ -330,7 +329,7 @@ func TestFactoryStatusDigest_readsSavedFactsOnly(t *testing.T) {
 	if after := snapshotPresentationFiles(t, home); !reflect.DeepEqual(before, after) {
 		t.Fatal("digest reads changed the home")
 	}
-	for _, log := range []string{filepath.Join(home, "fake-gh", "calls.jsonl"), filepath.Join(home, "fake-herdr", "calls.jsonl")} {
+	for _, log := range []string{filepath.Join(home, "fake-gh", "calls.jsonl")} {
 		if _, err := os.Stat(log); !os.IsNotExist(err) {
 			t.Fatalf("a read called a helper: %s", log)
 		}
@@ -416,7 +415,7 @@ func TestGroupedProjectFocusAttachesDigestAndKeepsGlobalDecisions(t *testing.T) 
 // authorized repository list, which must encode. Before this test the command always exited 1 after evaluating the
 // gates, and `factory merge` would have mutated GitHub before failing to report.
 func TestFactoryMergeCheck_emitsHumanGateForAnUnknownTask(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home := presentationHome(t)
 	out, stderr, err := runFactory(t, home, "--format", "json", "factory", "merge-check", "t-aaaaaaaaaaaa")
 	if err != nil {

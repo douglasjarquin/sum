@@ -64,14 +64,14 @@ func TestSkillsCheck_pinsStdout(t *testing.T) {
 
 func TestExecutionShow_pinsStdout(t *testing.T) {
 	home := t.TempDir()
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
 	assertStdoutGolden(t, home, []string{"execution", "show", "t-aaaaaaaaaaaa"}, "execution-show")
 }
 
 func TestSkillsAndExecutionAreOnTheCommandTree(t *testing.T) {
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
-	for _, name := range []string{"skills", "execution", "repair", "reviewer", "help", "quota", "notes", "herdr", "archive"} {
+	for _, name := range []string{"skills", "execution", "repair", "reviewer", "help", "quota", "notes", "coordinator", "release-contract", "archive"} {
 		if root.Commands() == nil {
 			t.Fatal("no commands")
 		}
@@ -90,7 +90,7 @@ func TestSkillsAndExecutionAreOnTheCommandTree(t *testing.T) {
 
 func TestAsk_pinsStdoutWhenTheParentHasNoPane(t *testing.T) {
 	home := t.TempDir()
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "machine": "test-machine", "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing",
 "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md", "parent": null}`)
 	id := regexp.MustCompile(`q-[0-9a-f]{10}`)
@@ -102,7 +102,7 @@ func TestAsk_pinsStdoutWhenTheParentHasNoPane(t *testing.T) {
 
 func TestAskStructuredFlagsPersistTheRecommendedDecision(t *testing.T) {
 	home := t.TempDir()
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema":1,"id":"t-aaaaaaaaaaaa","status":"running","repository":"owner/repo","questions":[],"evidence":[],"report":null,"notice":null,"attention":[],"brief":"do the thing"}`)
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema":1,"id":"t-aaaaaaaaaaaa","status":"running","repository":"owner/repo","questions":[],"evidence":[],"report":null,"notice":null,"attention":[],"brief":"do the thing"}`)
 	out, err := runCLI(t, home, "ask", "t-aaaaaaaaaaaa", "--key", "route", "--text", "Choose a route.", "--choice", "keep=Keep the change", "--choice", "revert=Revert it", "--recommended", "keep", "--rationale", "The evidence supports keeping it.", "--source", "docs/review.md#evidence")
 	if err != nil {
 		t.Fatalf("structured ask: %v\n%s", err, out)
@@ -118,8 +118,8 @@ func TestAskStructuredFlagsPersistTheRecommendedDecision(t *testing.T) {
 
 func TestSettingsSet_requiresCoordinator(t *testing.T) {
 	home := t.TempDir()
-	herdrEnv(t, home)
-	t.Setenv("HERDR_PANE_ID", "w-other:p1")
+	nativeEnv(t, home)
+	t.Setenv("SUM_ROLE", "developer")
 	assertErrorGolden(t, home, []string{"settings", "set", "--global", "3"}, "settings-set-requires-coordinator")
 }
 

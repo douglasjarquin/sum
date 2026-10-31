@@ -2,24 +2,28 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/release"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/updatecmd"
 )
 
 var fleetRoles = []string{
-	"busy-tool-call", "dirty-checkout", "open-question", "answered-unapplied", "pending-report", "old-mcp-client",
+	"busy-tool-call", "dirty-checkout", "open-question", "answered-unapplied", "pending-report", "old-runtime-client",
 	"closed-parent", "unknown-worker", "failed-refresh", "ignores-refresh", "cooperative-a", "cooperative-b",
 }
 
@@ -36,672 +40,356 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	f := newFleetLab(t)
 	settings := f.ctl(true, "settings", "set", "--global", "12", "--per-repository", "1")
 	if settings["previous"] != nil {
-		t.Fatalf("previous = %v, want nil", settings["previous"])
+		t.Fatalf("previous capacity=%v", settings["previous"])
 	}
-	cap := asMap(settings["capacity"])
-	if asInt(cap["global"]) != 12 || asInt(cap["per_repository"]) != 1 {
-		t.Fatalf("capacity = %v", settings["capacity"])
-	}
-
 	tasks := map[string]map[string]any{}
 	byID := map[string]string{}
 	brief := f.brief()
 	for _, role := range fleetRoles {
-		repo := f.project(role)
-		task := f.ctl(true, "dispatch", "--repo", repo, "--brief", brief, "--harness", "codex", "--approved")
+		task := f.ctl(true, "dispatch", "--repo", f.project(role), "--brief", brief, "--harness", "codex", "--approved")
+		address := workerAddress(task)
+		if address == "" {
+			t.Fatalf("%s has no native endpoint", role)
+		}
+		f.ctlPane(address, true, "init")
+		task = f.readTask(asString(task["id"]))
 		if asString(task["status"]) != "running" {
-			t.Fatalf("%s status = %v", role, task["status"])
+			t.Fatalf("%s not receipt-adopted", role)
 		}
 		limits := asMap(asMap(task["admission"])["limits"])
 		if asInt(limits["global"]) != 12 || asInt(limits["per_repository"]) != 1 {
-			t.Fatalf("%s admission.limits = %v", role, task["admission"])
+			t.Fatalf("%s admission=%v", role, task["admission"])
 		}
 		tasks[role] = task
 		byID[asString(task["id"])] = role
 	}
 	if asInt(asMap(f.ctl(true, "settings", "show")["occupied"])["global"]) != 12 {
-		t.Fatalf("occupied.global = %v, want 12", f.ctl(true, "settings", "show")["occupied"])
+		t.Fatal("twelve active attempts not counted")
 	}
-	thirteenth := f.ctl(false, "prepare", "--repo", f.project("thirteenth"), "--brief", brief, "--harness", "codex", "--approved")
-	if !strings.Contains(asString(thirteenth["error"]), "12 of 12 global execution slots") {
-		t.Fatalf("thirteenth = %v", thirteenth)
+	refused := f.ctl(false, "prepare", "--repo", f.project("thirteenth"), "--brief", brief, "--harness", "codex", "--approved")
+	if !strings.Contains(asString(refused["error"]), "12 of 12 global execution slots") {
+		t.Fatalf("thirteenth=%v", refused)
 	}
-
-	for role, task := range tasks {
-		status := "idle"
-		if role == "busy-tool-call" {
-			status = "working"
-		}
-		f.paneState(asString(task["pane"]), map[string]any{"agent_status": status})
+	for _, task := range tasks {
+		f.native.SetStatus(workerAddress(task), "idle")
 	}
-	if err := os.WriteFile(filepath.Join(asString(tasks["dirty-checkout"]["worktree"]), "wip.txt"), []byte("uncommitted work\n"), 0o644); err != nil {
+	f.native.SetStatus("t1", "working")
+	f.native.SetStatus(workerAddress(tasks["busy-tool-call"]), "working")
+	wip := filepath.Join(asString(tasks["dirty-checkout"]["worktree"]), "wip.txt")
+	if err := os.WriteFile(wip, []byte("uncommitted work\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	openQ := asMap(f.ctl(true, "ask", asString(tasks["open-question"]["id"]), "--key", "open", "--text", "Open question?")["question"])
-	answered := asMap(f.ctl(true, "ask", asString(tasks["answered-unapplied"]["id"]), "--key", "answered", "--text", "Answered question?")["question"])
+	openQ := asMap(f.ctlPane(workerAddress(tasks["open-question"]), true, "ask", asString(tasks["open-question"]["id"]), "--key", "open", "--text", "Open question?")["question"])
+	answered := asMap(f.ctlPane(workerAddress(tasks["answered-unapplied"]), true, "ask", asString(tasks["answered-unapplied"]["id"]), "--key", "answered", "--text", "Answered question?")["question"])
 	f.ctl(true, "answer", asString(tasks["answered-unapplied"]["id"]), asString(answered["id"]), "--text", "Yes.")
-	f.paneState(asString(tasks["answered-unapplied"]["pane"]), map[string]any{"agent_status": "idle"})
-	f.ctl(true, "report", asString(tasks["pending-report"]["id"]), "--text", "Candidate ready; not verified.")
-	for role, task := range tasks {
-		id := asString(task["id"])
-		if role == "old-mcp-client" {
-			f.patchRuntimeMCP(id, 9)
-			continue
-		}
-		f.patchRuntimeMCP(id, contract.MCP.Tools)
-	}
+	f.ctlPane(workerAddress(tasks["pending-report"]), true, "report", asString(tasks["pending-report"]["id"]), "--text", "Candidate ready; not verified.")
 	closedID := asString(tasks["closed-parent"]["id"])
 	closed := f.readTask(closedID)
-	parent := asMap(closed["parent"])
-	parent["pane"] = "w-gone:p1"
-	closed["parent"] = parent
+	asMap(closed["parent"])["address"] = "tzz"
 	f.writeTask(closedID, closed)
-	closedQ := f.ctl(true, "ask", closedID, "--key", "orphan", "--text", "Parent gone?")
-	notice := asMap(closedQ["notice"])
-	if asString(notice["status"]) != "pending" {
-		t.Fatalf("closed notice status = %v", notice["status"])
+	orphan := f.ctlPane(workerAddress(tasks["closed-parent"]), true, "ask", closedID, "--key", "orphan", "--text", "Parent gone?")
+	if asString(asMap(orphan["notice"])["status"]) == "submitted" {
+		t.Fatal("absent parent reported submitted")
 	}
-	if !strings.Contains(fmt.Sprint(notice["error"]), "agent_not_found") {
-		t.Fatalf("closed notice error = %v", notice["error"])
+	unknown := workerAddress(tasks["unknown-worker"])
+	stopNativeRecoveryTerminal(t, f.demoLab, unknown)
+	client := f.native.Client()
+	if _, err := client.Remove(context.Background(), unknown); err != nil {
+		t.Fatal(err)
 	}
-	f.removePane(asString(tasks["unknown-worker"]["pane"]))
-	f.setEnv("FAKE_FAIL_PROMPT_PANES", asString(tasks["failed-refresh"]["pane"]))
-
+	var qualifiedFailedRefresh hcclient.Terminal
+	for _, terminal := range f.native.Terminals() {
+		if terminal.Address == workerAddress(tasks["failed-refresh"]) {
+			qualifiedFailedRefresh = terminal
+			bad := "return"
+			terminal.Submit = &bad
+			f.native.SetTerminal(terminal)
+		}
+	}
 	records := map[string][]string{}
 	for role, task := range tasks {
 		records[role] = questionKeys(f.readTask(asString(task["id"])))
 	}
 	checkouts := f.checkouts(tasks)
-	callsBefore := len(f.calls())
-
-	inbox := f.ctl(true, "status", "--live")
-	if inbox["live"] != true {
-		t.Fatalf("status --live live = %v", inbox["live"])
+	callsBefore := len(f.native.Calls())
+	live := f.ctl(true, "status", "--live")
+	if live["live"] != true || len(asSlice(live["tasks"])) != 12 {
+		t.Fatalf("live status=%v", live)
 	}
-	if n := len(asSlice(inbox["tasks"])); n != 12 {
-		t.Fatalf("status --live tasks = %d, want 12", n)
-	}
-	if asInt(asMap(asMap(inbox["capacity"])["occupied"])["global"]) != 12 {
-		t.Fatalf("status occupied = %v", inbox["capacity"])
-	}
-	for _, c := range f.calls()[callsBefore:] {
-		if headsEqual(c, "agent", "start") || (len(c) > 1 && (c[1] == "stop" || c[1] == "kill" || c[1] == "restart")) {
-			t.Fatalf("status lifecycle %v", c)
-		}
-	}
-
+	assertFleetReadOnly(t, f.native.Calls()[callsBefore:])
 	skill, err := os.ReadFile(filepath.Join(f.root, "skills/sum-work/SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sha1 := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nUpdate one: reread decisions before continuing.\n")
-	applied := f.ctl(true, "update", "apply", "--no-fetch")
-	if applied["changed"] != true {
-		t.Fatalf("apply one changed = %v", applied["changed"])
+	f.stageFixture(sha1)
+	selectedBefore := f.currentPath()
+	qualificationCalls := len(f.native.Calls())
+	refusedQualification := f.ctl(false, "update", "apply", "--ref", sha1, "--no-fetch")
+	if !strings.Contains(asString(refusedQualification["error"]), "automatic delivery qualification") || f.currentPath() != selectedBefore {
+		t.Fatalf("unqualified current worker changed runtime selection: %v", refusedQualification)
 	}
-	if asString(asMap(applied["default"])["sha"]) != sha1 {
-		t.Fatalf("apply one sha = %v, want %s", asMap(applied["default"])["sha"], sha1)
-	}
-	id, err := machine.ID()
-	if err != nil {
-		t.Fatal(err)
-	}
-	staged := readJSON(t, filepath.Join(f.root, ".local", "releases", sha1, "release.json"))
-	if by := asMap(staged["staged_by"])["machine"]; by != id {
-		t.Fatalf("staged_by machine = %v, want the stable identity %s", by, id)
-	}
+	assertFleetReadOnly(t, f.native.Calls()[qualificationCalls:])
 
-	first, delta := f.measure(true, "refresh", "request")
+	f.native.SetTerminal(qualifiedFailedRefresh)
+	applied := f.ctl(true, "update", "apply", "--ref", sha1, "--no-fetch")
+	if applied["changed"] != true || asString(asMap(applied["default"])["sha"]) != sha1 {
+		t.Fatalf("apply one=%v", applied)
+	}
+	unqualifiedRefresh := qualifiedFailedRefresh
+	wrongSubmit := "return"
+	unqualifiedRefresh.Submit = &wrongSubmit
+	f.native.SetTerminal(unqualifiedRefresh)
+	start := len(f.native.Calls())
+	first := f.ctl(true, "refresh", "request")
 	rows := f.targetRows(first, byID)
 	if asString(asMap(first["runtime"])["sha"]) != sha1 {
-		t.Fatalf("refresh one runtime = %v", first["runtime"])
-	}
-	if asString(rows["coordinator"]["state"]) != "pending-busy" {
-		t.Fatalf("coordinator state = %v", rows["coordinator"]["state"])
-	}
-	expected := map[string]string{
-		"busy-tool-call": "pending-busy",
-		"unknown-worker": "unreachable",
-		"failed-refresh": "pending-unreachable",
+		t.Fatalf("refresh runtime=%v", first["runtime"])
 	}
 	for _, role := range fleetRoles {
-		want := expected[role]
-		if want == "" {
-			want = "submitted-unconfirmed"
-		}
-		if asString(rows[role]["state"]) != want {
-			t.Fatalf("%s state = %v, want %s", role, rows[role]["state"], want)
+		state := asString(rows[role]["state"])
+		if role == "busy-tool-call" {
+			if state != "pending-busy" {
+				t.Fatalf("busy state=%v", rows[role])
+			}
+		} else if role == "unknown-worker" {
+			if state != "unreachable" {
+				t.Fatalf("gone state=%v", rows[role])
+			}
+		} else if role == "failed-refresh" {
+			if state != "pending-unreachable" {
+				t.Fatalf("qualification refusal=%v", rows[role])
+			}
+		} else if state != "submitted-unconfirmed" {
+			t.Fatalf("%s refresh=%v", role, rows[role])
 		}
 		if asString(rows[role]["revision"]) != "r2" {
-			t.Fatalf("%s revision = %v, want r2", role, rows[role]["revision"])
+			t.Fatalf("%s revision=%v", role, rows[role])
 		}
 	}
-	if !strings.Contains(asString(rows["busy-tool-call"]["reason"]), "working") {
-		t.Fatalf("busy reason = %v", rows["busy-tool-call"]["reason"])
+	if asString(rows["coordinator"]["state"]) != "pending-busy" {
+		t.Fatalf("coordinator refresh=%v", rows["coordinator"])
 	}
-	if !strings.Contains(asString(rows["unknown-worker"]["reason"]), "agent_not_found") {
-		t.Fatalf("unknown reason = %v", rows["unknown-worker"]["reason"])
-	}
-	statusAfter := f.ctl(true, "status")
-	for _, item := range asSlice(statusAfter["tasks"]) {
-		row := asMap(item)
-		if asString(row["id"]) != asString(tasks["unknown-worker"]["id"]) {
-			continue
+	sends := 0
+	for _, call := range f.native.Calls()[start:] {
+		if call.Method == "terminal.run" || call.Method == "terminal.read" || call.Method == "terminal.kill" || call.Method == "terminal.interrupt" {
+			t.Fatalf("refresh lifecycle effect=%v", call)
 		}
-		refresh := asMap(row["refresh"])
-		if asString(refresh["state"]) != "unreachable" {
-			t.Fatalf("unknown-worker status refresh = %v, want unreachable", row["refresh"])
-		}
-		for _, ret := range asSlice(row["returns"]) {
-			r := asMap(ret)
-			if asString(r["kind"]) == "refresh" {
-				t.Fatalf("closed worker still has a refresh obligation: %v", ret)
-			}
-		}
-	}
-	if !strings.Contains(asString(rows["failed-refresh"]["reason"]), "prompt was not accepted") {
-		t.Fatalf("failed-refresh reason = %v", rows["failed-refresh"]["reason"])
-	}
-	var deferredWhat []string
-	for _, item := range asSlice(rows["old-mcp-client"]["deferred"]) {
-		deferredWhat = append(deferredWhat, asString(asMap(item)["what"]))
-	}
-	if strings.Join(deferredWhat, ",") != "mcp" {
-		t.Fatalf("old-mcp deferred = %v", rows["old-mcp-client"]["deferred"])
-	}
-	if asInt(asMap(first["counts"])["submitted-unconfirmed"]) != 9 {
-		t.Fatalf("submitted-unconfirmed = %v", first["counts"])
-	}
-	if asInt(asMap(first["fanout"])["herdr_calls"]) != 1 || asInt(asMap(first["fanout"])["sessions"]) != 1 {
-		t.Fatalf("refresh one fanout = %v", first["fanout"])
-	}
-	prompts := 0
-	for _, c := range delta {
-		if headsEqual(c, "agent", "get") {
-			t.Fatalf("refresh one used agent get: %v", delta)
-		}
-		if headsEqual(c, "agent", "prompt") {
-			prompts++
-			if len(c) < 4 || !strings.HasPrefix(c[3], "sum refresh t-") {
-				t.Fatalf("prompt = %v", c)
-			}
-			for _, prose := range []string{"Open question", "Answered question", "Yes.", "Candidate ready", "Parent gone"} {
-				if strings.Contains(c[3], prose) {
-					t.Fatalf("prompt leaked %q: %s", prose, c[3])
+		if call.Method == "terminal.send" {
+			sends++
+			text := asString(call.Params["text"])
+			for _, private := range []string{"Open question?", "Answered question?", "Yes.", "Candidate ready", "Parent gone?"} {
+				if strings.Contains(text, private) {
+					t.Fatalf("refresh leaked task prose %q", private)
 				}
 			}
 		}
 	}
-	if prompts != 10 {
-		t.Fatalf("prompts = %d, want 10 in %v", prompts, delta)
-	}
-	if len(delta) > 1+1+10 {
-		t.Fatalf("refresh one herdr calls = %d, want <= 12: %v", len(delta), delta)
+	if sends != 9 {
+		t.Fatalf("refresh sends=%d, want nine eligible workers", sends)
 	}
 
+	f.native.SetTerminal(qualifiedFailedRefresh)
+	oldRuntime := f.readVersions(asString(tasks["old-runtime-client"]["id"]))
+	if asString(oldRuntime["active"]) != "r1" || asString(oldRuntime["requested"]) != "r2" {
+		t.Fatalf("native submission adopted old client=%v", oldRuntime)
+	}
 	f.ctl(true, "answer", asString(tasks["open-question"]["id"]), asString(openQ["id"]), "--text", "Answered after update one.")
-	f.ctl(true, "resolve", asString(tasks["answered-unapplied"]["id"]), asString(answered["id"]))
-	f.ctl(true, "report", asString(tasks["cooperative-a"]["id"]), "--text", "Reported during the update.")
-	more := asMap(f.ctl(true, "ask", asString(tasks["busy-tool-call"]["id"]), "--key", "busy", "--text", "Asked while busy?")["question"])
+	f.ctlPane(workerAddress(tasks["answered-unapplied"]), true, "resolve", asString(tasks["answered-unapplied"]["id"]), asString(answered["id"]))
+	f.ctlPane(workerAddress(tasks["cooperative-a"]), true, "report", asString(tasks["cooperative-a"]["id"]), "--text", "Reported during update.")
+	more := asMap(f.ctlPane(workerAddress(tasks["busy-tool-call"]), true, "ask", asString(tasks["busy-tool-call"]["id"]), "--key", "busy", "--text", "Asked while busy?")["question"])
 	for _, role := range []string{"dirty-checkout", "cooperative-a", "cooperative-b"} {
-		f.ctlPane(asString(tasks[role]["pane"]), true, "brief", "adopt", asString(tasks[role]["id"]), "r2")
+		f.ctlPane(workerAddress(tasks[role]), true, "brief", "adopt", asString(tasks[role]["id"]), "r2")
 	}
 	if asInt(asMap(f.ctl(true, "refresh", "status")["counts"])["confirmed"]) != 3 {
-		t.Fatalf("confirmed after adopt = %v", f.ctl(true, "refresh", "status")["counts"])
+		t.Fatal("matching adoption receipts did not confirm exactly three tasks")
 	}
-	for role, task := range tasks {
-		if role == "unknown-worker" {
-			continue
-		}
-		status := "idle"
-		if role == "busy-tool-call" {
-			status = "working"
-		}
-		f.paneState(asString(task["pane"]), map[string]any{"agent_status": status})
-	}
-
 	agents, err := os.ReadFile(filepath.Join(f.root, "AGENTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.commitUpstream("AGENTS.md", string(agents)+"\nUpdate two.\n")
 	sha2 := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nUpdate two: reread decisions before continuing.\n")
-	if asString(asMap(f.ctl(true, "update", "apply", "--no-fetch")["default"])["sha"]) != sha2 {
-		t.Fatalf("apply two sha = %v, want %s", f.ctl(true, "update", "status")["default"], sha2)
-	}
+	f.stageFixture(sha2)
+	f.ctl(true, "update", "apply", "--ref", sha2, "--no-fetch")
 
-	if err := os.Remove(filepath.Join(f.base, "fake", "prompt_count")); err != nil && !os.IsNotExist(err) {
+	target := tasks["cooperative-b"]
+	initialInputs := len(f.native.Inputs(workerAddress(target)))
+	entered, release := f.native.HoldNext("terminal.send", workerAddress(target))
+	command := exec.Command(f.helper, "--format", "json", "--home", f.home, "refresh", "request")
+	command.Env = f.env
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err = command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	f.setEnv("FAKE_INTERRUPT_AFTER_PROMPTS", "5")
-	if _, err := f.ctlRaw("refresh", "request"); err == nil {
-		t.Fatal("interrupted refresh request succeeded")
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		release()
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatalf("refresh never reached native boundary: %s", output.String())
 	}
-	f.setEnv("FAKE_INTERRUPT_AFTER_PROMPTS", "")
+	if err = command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = command.Wait()
+	release()
+	deadline := time.NewTimer(3 * time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer deadline.Stop()
+	defer tick.Stop()
+	for len(f.native.Inputs(workerAddress(target))) == initialInputs {
+		select {
+		case <-deadline.C:
+			t.Fatal("held native send did not finish its observable effect")
+		case <-tick.C:
+		}
+	}
 
-	status := f.ctl(true, "refresh", "status")
-	states := map[string]map[string]any{}
-	for _, item := range asSlice(status["targets"]) {
-		row := asMap(item)
-		if asString(row["target"]) != "task" {
-			continue
-		}
-		states[byID[asString(row["task"])]] = row
-	}
-	var orphaned []string
-	requestedR3 := 0
-	for role, row := range states {
-		if asString(row["requested"]) == "r3" {
-			requestedR3++
-			if asString(row["reason"]) == "requested; no delivery attempt recorded yet" {
-				orphaned = append(orphaned, role)
-			}
-		}
-	}
-	if len(orphaned) != 1 {
-		t.Fatalf("orphaned = %v (want 1) states=%v", orphaned, states)
-	}
-	if requestedR3 < 2 || requestedR3 >= len(fleetRoles) {
-		t.Fatalf("interrupt did not cut fan-out: requested r3 = %d (want a proper subset) states=%v", requestedR3, states)
-	}
-	shownOpen := f.ctl(true, "show", asString(tasks["open-question"]["id"]))
-	if asString(asMap(asSlice(shownOpen["questions"])[0])["status"]) != "answered" {
-		t.Fatalf("open-question after interrupt = %v", shownOpen["questions"])
-	}
 	for role, task := range tasks {
-		keys := questionKeys(f.readTask(asString(task["id"])))
 		want := append([]string{}, records[role]...)
 		if role == "busy-tool-call" {
 			want = append(want, "busy")
 		}
-		if strings.Join(keys, ",") != strings.Join(want, ",") {
-			t.Fatalf("%s question keys = %v, want %v", role, keys, want)
+		if strings.Join(questionKeys(f.readTask(asString(task["id"]))), ",") != strings.Join(want, ",") {
+			t.Fatalf("%s lost questions during interruption", role)
 		}
 	}
-
-	recovered, delta := f.measure(true, "refresh", "request")
+	sentBefore := len(f.native.Inputs(workerAddress(target)))
+	recovered := f.ctl(true, "refresh", "request")
 	rows = f.targetRows(recovered, byID)
-	for role, row := range rows {
-		if role == "coordinator" {
-			continue
-		}
-		if asString(row["revision"]) != "r3" {
-			t.Fatalf("%s recovered revision = %v, want r3", role, row["revision"])
-		}
-	}
-	if asString(rows["coordinator"]["revision"]) != "r2" {
-		t.Fatalf("coordinator recovered revision = %v, want r2", rows["coordinator"]["revision"])
-	}
-	if !strings.Contains(fmt.Sprint(rows["coordinator"]["summary"]), "AGENTS.md changed") {
-		t.Fatalf("coordinator summary = %v", rows["coordinator"]["summary"])
-	}
-	if asInt(asMap(recovered["fanout"])["sessions"]) != 1 {
-		t.Fatalf("recovery fanout = %v", recovered["fanout"])
-	}
-	for _, c := range delta {
-		if headsEqual(c, "agent", "get") {
-			t.Fatalf("recovery used agent get: %v", delta)
-		}
+	if len(f.native.Inputs(workerAddress(target))) != sentBefore {
+		t.Fatal("interrupted native refresh was blindly replayed")
 	}
 	for _, role := range fleetRoles {
-		vers := f.readVersions(asString(tasks[role]["id"]))
-		if asString(vers["requested"]) != "r3" {
-			t.Fatalf("%s requested = %v, want r3", role, vers["requested"])
-		}
-		revs := asSlice(vers["revisions"])
-		if asString(asMap(revs[len(revs)-1])["id"]) != "r3" {
-			t.Fatalf("%s latest revision = %v", role, revs[len(revs)-1])
+		if asString(rows[role]["revision"]) != "r3" {
+			t.Fatalf("%s did not recover r3=%v", role, rows[role])
 		}
 	}
-	stale := f.ctlPane(asString(tasks["cooperative-b"]["pane"]), false, "brief", "adopt", asString(tasks["cooperative-b"]["id"]), "r2")
+	stale := f.ctlPane(workerAddress(target), false, "brief", "adopt", asString(target["id"]), "r2")
 	if !strings.Contains(asString(stale["error"]), "not the requested revision") {
-		t.Fatalf("stale adopt = %v", stale)
+		t.Fatalf("stale adoption=%v", stale)
 	}
-	f.ctlPane(asString(tasks["cooperative-b"]["pane"]), true, "brief", "adopt", asString(tasks["cooperative-b"]["id"]), "r3")
-
+	for _, role := range []string{"dirty-checkout", "cooperative-a", "cooperative-b"} {
+		f.ctlPane(workerAddress(tasks[role]), true, "brief", "adopt", asString(tasks[role]["id"]), "r3")
+	}
 	rolled := f.ctl(true, "update", "rollback")
-	if rolled["changed"] != true || asString(asMap(rolled["default"])["sha"]) != sha1 {
-		t.Fatalf("rollback = %v, want sha %s", rolled, sha1)
+	if asString(asMap(rolled["default"])["sha"]) != sha1 {
+		t.Fatalf("rollback=%v", rolled)
 	}
-	for role, task := range tasks {
-		if role == "busy-tool-call" || role == "unknown-worker" {
-			continue
-		}
-		f.paneState(asString(task["pane"]), map[string]any{"agent_status": "idle"})
-	}
-	third, _ := f.measure(true, "refresh", "request")
+	third := f.ctl(true, "refresh", "request")
 	rows = f.targetRows(third, byID)
-	if asString(asMap(third["runtime"])["sha"]) != sha1 || asString(rows["coordinator"]["revision"]) != "r3" {
-		t.Fatalf("refresh after rollback runtime=%v coordinator=%v", third["runtime"], rows["coordinator"])
-	}
-	for role, row := range rows {
-		if role == "coordinator" {
-			continue
-		}
-		if asString(row["revision"]) != "r4" {
-			t.Fatalf("%s after rollback revision = %v, want r4", role, row["revision"])
+	for _, role := range fleetRoles {
+		if asString(rows[role]["revision"]) != "r4" {
+			t.Fatalf("%s rollback brief=%v", role, rows[role])
 		}
 	}
-	coopPath := asString(rows["cooperative-a"]["path"])
-	body, err := os.ReadFile(coopPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The brief references its pinned procedure instead of copying it. After rollback the revision
-	// pins the update-one procedure again, reusing the file r2 pinned with the same hash, and every
-	// earlier revision's pinned file is still intact.
-	if strings.Contains(string(body), "reread decisions before continuing") {
-		t.Fatalf("rolled-back brief embeds the procedure body: %s", coopPath)
-	}
-	pinned := pinnedProcedure(t, string(body))
-	procedureText, err := os.ReadFile(pinned)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(procedureText), "Update two") || !strings.Contains(string(procedureText), "Update one") {
-		t.Fatalf("rolled-back procedure %s is not update one:\n%s", pinned, procedureText)
-	}
-	coopVersions := f.readVersions(asString(tasks["cooperative-a"]["id"]))
-	pinnedByRevision := map[string]string{}
-	for _, raw := range asSlice(coopVersions["revisions"]) {
-		rev := asMap(raw)
-		for _, row := range asSlice(asMap(rev["policy"])["procedure"]) {
-			if asString(asMap(row)["name"]) == "sum-work" {
-				pinnedByRevision[asString(rev["id"])] = asString(asMap(row)["path"])
+	versions := f.readVersions(asString(tasks["cooperative-a"]["id"]))
+	pins := map[string]string{}
+	for _, raw := range asSlice(versions["revisions"]) {
+		revision := asMap(raw)
+		for _, raw := range asSlice(asMap(revision["policy"])["procedure"]) {
+			procedure := asMap(raw)
+			if asString(procedure["name"]) == "sum-work" {
+				pins[asString(revision["id"])] = asString(procedure["path"])
 			}
 		}
 	}
-	if pinnedByRevision["r4"] == "" || pinnedByRevision["r4"] != pinnedByRevision["r2"] || pinnedByRevision["r3"] == pinnedByRevision["r2"] {
-		t.Fatalf("pinned procedure per revision = %v, want r4 to reuse r2's file and r3 to differ", pinnedByRevision)
+	if pins["r2"] == "" || pins["r4"] != pins["r2"] || pins["r3"] == pins["r2"] {
+		t.Fatalf("immutable procedure pins=%v", pins)
 	}
-	listed := f.ctl(true, "brief", "list", asString(tasks["cooperative-a"]["id"]))
-	for _, raw := range asSlice(listed["revisions"]) {
-		if rev := asMap(raw); rev["ok"] != true {
-			t.Fatalf("revision %v is no longer usable after rollback: %v", rev["id"], rev["error"])
+	rolledBrief, err := os.ReadFile(asString(rows["cooperative-a"]["path"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rolledBrief), "reread decisions before continuing") {
+		t.Fatal("brief copied mutable procedure body instead of pinning it")
+	}
+	procedureText, err := os.ReadFile(pinnedProcedure(t, string(rolledBrief)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(procedureText), "Update one") || strings.Contains(string(procedureText), "Update two") {
+		t.Fatal("rollback did not restore the immutable update-one procedure")
+	}
+
+	for _, raw := range asSlice(f.ctl(true, "brief", "list", asString(tasks["cooperative-a"]["id"]))["revisions"]) {
+		if asMap(raw)["ok"] != true {
+			t.Fatalf("historical brief unusable=%v", raw)
 		}
 	}
 	f.ctl(true, "refresh", "adopt", "--coordinator", "r3")
-	for _, role := range []string{"cooperative-a", "cooperative-b", "dirty-checkout"} {
-		f.ctlPane(asString(tasks[role]["pane"]), true, "brief", "adopt", asString(tasks[role]["id"]), "r4")
+	for _, role := range []string{"dirty-checkout", "cooperative-a", "cooperative-b"} {
+		f.ctlPane(workerAddress(tasks[role]), true, "brief", "adopt", asString(tasks[role]["id"]), "r4")
 	}
-	final := f.ctl(true, "refresh", "status")
-	counts := asMap(final["counts"])
-	if asInt(counts["confirmed"]) != 4 || asInt(counts["pending-busy"]) != 1 || asInt(counts["pending-unreachable"]) != 1 || asInt(counts["unreachable"]) != 1 {
-		var bits []string
-		for _, item := range asSlice(final["targets"]) {
-			row := asMap(item)
-			role := byID[asString(row["task"])]
-			if role == "" {
-				role = asString(row["target"])
-			}
-			bits = append(bits, fmt.Sprintf("%s state=%v requested=%v reason=%v", role, row["state"], row["requested"], row["reason"]))
-		}
-		t.Fatalf("final refresh counts = %v\n%s", counts, strings.Join(bits, "\n"))
-	}
-
-	if err := os.WriteFile(filepath.Join(f.root, "local-only.txt"), []byte("unmerged\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	f.git(f.root, "add", "local-only.txt")
-	f.git(f.root, "commit", "-q", "-m", "unmerged local commit")
-	refused := f.ctl(false, "update", "apply", "--ref", "HEAD", "--no-fetch")
-	if !strings.Contains(asString(refused["error"]), "not merged on origin/main") {
-		t.Fatalf("unmerged apply = %v", refused)
-	}
-	if asString(asMap(f.ctl(true, "update", "status")["default"])["sha"]) != sha1 {
-		t.Fatalf("default after refused apply = %v", f.ctl(true, "update", "status")["default"])
-	}
-
-	st, err := store.Open(f.home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, err := store.Context(f.root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	previousPath := f.currentPath()
-	candidatePath := filepath.Join(f.root, ".local", "releases", sha2)
-	if resolved, err := filepath.EvalSymlinks(previousPath); err == nil {
-		previousPath = resolved
-	}
-	if resolved, err := filepath.EvalSymlinks(candidatePath); err == nil {
-		candidatePath = resolved
-	}
-	if previousPath != filepath.Join(f.root, ".local", "releases", sha1) && filepath.Base(previousPath) != sha1 {
-		t.Fatalf("current before failed activation = %s, want %s", previousPath, sha1)
-	}
-
-	var selections []string
-	updatecmd.TestPostCheck = func(s *store.Store, root string) *ordjson.Object {
-		selected := currentRuntimePath(root)
-		selections = append(selections, selected)
-		if sameFile(selected, candidatePath) {
-			attempt := 0
-			for _, item := range selections {
-				if sameFile(item, candidatePath) {
-					attempt++
-				}
-			}
-			f.ctl(true, "ask", asString(tasks["cooperative-a"]["id"]), "--key", fmt.Sprintf("activation-%d", attempt),
-				"--text", fmt.Sprintf("Question during activation %d?", attempt))
-			f.ctl(true, "report", asString(tasks["failed-refresh"]["id"]),
-				"--text", fmt.Sprintf("Report during activation %d.", attempt))
-			row := ordjson.NewObject()
-			row.Set("ok", false)
-			row.Set("detail", "fleet candidate-only post-check failure")
-			return row
-		}
-		ok := ordjson.NewObject()
-		ok.Set("ok", true)
-		ok.Set("detail", nil)
-		return ok
-	}
-	t.Cleanup(func() {
-		updatecmd.TestPostCheck = nil
-		updatecmd.TestRecoverPending = nil
-	})
-	updatecmd.TestRecoverPending = func(*store.Store, string, string) (*ordjson.Object, error) {
-		return nil, fmt.Errorf("fleet test-only compensation fault")
-	}
-	_, applyErr := updatecmd.Apply(st, ctx, sha2, true, updatecmd.RefusePreIdentity)
-	if applyErr == nil || !strings.Contains(applyErr.Error(), "Recovery also failed: fleet test-only compensation fault") {
-		t.Fatalf("failed compensation: %v", applyErr)
-	}
-	pending := asMap(asMap(f.ctl(true, "update", "status")["activation"])["pending"])
-	if !sameFile(f.currentPath(), candidatePath) {
-		t.Fatalf("current after failed compensation = %s, want %s", f.currentPath(), candidatePath)
-	}
-	if asString(asMap(pending["to"])["sha"]) != sha2 {
-		t.Fatalf("pending.to = %v, want %s", pending["to"], sha2)
-	}
-	updatecmd.TestRecoverPending = nil
-	repaired, recErr := updatecmd.Recover(st, ctx, asString(pending["generation"]), updatecmd.RefusePreIdentity)
-	if recErr != nil {
-		t.Fatalf("recover: %v", recErr)
-	}
-	changed, _ := repaired.Get("changed")
-	def, _ := repaired.Get("default")
-	if changed != true || asString(asMapFromOrd(def)["sha"]) != sha1 {
-		t.Fatalf("repaired = changed %v default %v, want sha %s", changed, def, sha1)
-	}
-	_, applyErr = updatecmd.Apply(st, ctx, sha2, true, updatecmd.RefusePreIdentity)
-	if applyErr == nil || !strings.Contains(applyErr.Error(), "entrypoint check failed") || !strings.Contains(applyErr.Error(), "restored and verified") {
-		t.Fatalf("second candidate failure: %v", applyErr)
-	}
-	candidateHits, previousHits := 0, 0
-	for _, item := range selections {
-		if sameFile(item, candidatePath) {
-			candidateHits++
-		}
-		if sameFile(item, previousPath) {
-			previousHits++
-		}
-	}
-	if candidateHits != 2 {
-		t.Fatalf("candidate post-check hits = %d, want 2 (%v)", candidateHits, selections)
-	}
-	if previousHits < 2 {
-		t.Fatalf("previous post-check hits = %d, want >= 2 (%v)", previousHits, selections)
-	}
-	if !sameFile(f.currentPath(), previousPath) {
-		t.Fatalf("current after recovered activation = %s, want %s", f.currentPath(), previousPath)
-	}
-	if asMap(f.ctl(true, "update", "status")["activation"])["pending"] != nil {
-		t.Fatalf("pending after recovered activation = %v", f.ctl(true, "update", "status")["activation"])
-	}
-	coopQuestions := questionKeys(f.readTask(asString(tasks["cooperative-a"]["id"])))
-	var activationKeys []string
-	for _, key := range coopQuestions {
-		if strings.HasPrefix(key, "activation-") {
-			activationKeys = append(activationKeys, key)
-		}
-	}
-	if strings.Join(activationKeys, ",") != "activation-1,activation-2" {
-		t.Fatalf("activation keys = %v", activationKeys)
-	}
-	failedReport := asMap(f.readTask(asString(tasks["failed-refresh"]["id"]))["report"])
-	if asString(failedReport["text"]) != "Report during activation 2." {
-		t.Fatalf("failed-refresh report = %v", failedReport)
-	}
-
-	callbacksBefore := questionKeys(f.readTask(asString(tasks["cooperative-a"]["id"])))
-	recoveredQuestion := asMap(f.ctl(true, "ask", asString(tasks["cooperative-a"]["id"]), "--key", "post-activation", "--text", "Question after recovered activation?")["question"])
-	f.ctl(true, "report", asString(tasks["failed-refresh"]["id"]), "--text", "Report after recovered activation.")
-	afterKeys := questionKeys(f.readTask(asString(tasks["cooperative-a"]["id"])))
-	wantKeys := append(append([]string{}, callbacksBefore...), asString(recoveredQuestion["key"]))
-	if strings.Join(afterKeys, ",") != strings.Join(wantKeys, ",") {
-		t.Fatalf("post-activation keys = %v, want %v", afterKeys, wantKeys)
-	}
-	if asString(asMap(f.readTask(asString(tasks["failed-refresh"]["id"]))["report"])["text"]) != "Report after recovered activation." {
-		t.Fatalf("report after recovered activation = %v", f.readTask(asString(tasks["failed-refresh"]["id"]))["report"])
-	}
-	f.ctl(true, "answer", asString(tasks["busy-tool-call"]["id"]), asString(more["id"]), "--text", "Answered during the failed update.")
-	f.ctl(true, "report", asString(tasks["cooperative-b"]["id"]), "--text", "Reported during the failed update.")
-	live := f.ctl(true, "inbox", "--live")
-	if live["live"] != true {
-		t.Fatalf("inbox --live live = %v", live["live"])
-	}
-	if asInt(asMap(asMap(live["capacity"])["occupied"])["global"]) != 12 {
-		t.Fatalf("inbox occupied = %v", live["capacity"])
-	}
-
-	lateRepo := f.project("late")
-	refused = f.ctl(false, "prepare", "--repo", lateRepo, "--brief", brief, "--harness", "codex", "--approved")
-	if !strings.Contains(asString(refused["error"]), "12 of 12 global execution slots") {
-		t.Fatalf("late refuse = %v", refused)
-	}
-	pendingTask := f.readTask(asString(tasks["pending-report"]["id"]))
-	f.paneState(asString(tasks["pending-report"]["pane"]), map[string]any{"agent": nil, "agent_status": "done"})
-	attemptID := asString(asMap(asMap(pendingTask["execution"])["worker"])["id"])
-	f.ctl(true, "execution", "park", asString(tasks["pending-report"]["id"]), "--attempt", attemptID)
-	f.ctl(true, "archive", asString(tasks["pending-report"]["id"]), "--acknowledge")
-	late := f.ctl(true, "prepare", "--repo", lateRepo, "--brief", brief, "--harness", "codex", "--approved")
-	if asString(asMap(f.ctl(true, "update", "status")["default"])["sha"]) != sha1 {
-		t.Fatalf("default after late prepare = %v, want %s", f.ctl(true, "update", "status")["default"], sha1)
-	}
-	if filepath.Base(f.currentPath()) != sha1 {
-		t.Fatalf("current after late prepare = %s, want %s", f.currentPath(), sha1)
-	}
+	f.verifyActivationRecovery(tasks, sha1, sha2)
+	f.ctl(true, "answer", asString(tasks["busy-tool-call"]["id"]), asString(more["id"]), "--text", "Answered after recovered activation.")
+	f.ctlPane(workerAddress(tasks["cooperative-b"]), true, "report", asString(tasks["cooperative-b"]["id"]), "--text", "Reported after recovered activation.")
+	pending := tasks["pending-report"]
+	stopNativeRecoveryTerminal(t, f.demoLab, workerAddress(pending))
+	worker := asMap(asMap(f.readTask(asString(pending["id"]))["execution"])["worker"])
+	f.ctl(true, "execution", "park", asString(pending["id"]), "--attempt", asString(worker["id"]))
+	f.ctl(true, "archive", asString(pending["id"]), "--acknowledge")
+	late := f.ctl(true, "prepare", "--repo", f.project("late"), "--brief", brief, "--harness", "codex", "--approved")
 	if asInt(asMap(asMap(late["admission"])["occupied_before"])["global"]) != 11 {
-		t.Fatalf("late occupied_before = %v", late["admission"])
+		t.Fatalf("released reservation not reusable=%v", late["admission"])
 	}
-	briefBody, err := os.ReadFile(asString(late["brief_path"]))
+	lateText, err := os.ReadFile(asString(late["brief_path"]))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(briefBody), filepath.Join(f.root, "bin", "sumctl")) {
-		t.Fatalf("late brief missing helper path: %s", briefBody)
+	if !strings.Contains(string(lateText), filepath.Join(f.root, "bin", "sumctl")) || filepath.Base(f.currentPath()) != sha1 {
+		t.Fatal("late work did not retain the verified default helper")
 	}
 
-	later := f.calls()[callsBefore:]
-	var creates [][]string
-	var forbidden [][]string
-	starts := 0
-	for _, c := range f.calls() {
-		if headsEqual(c, "agent", "start") {
-			starts++
+	if !checkoutEqual(f.checkouts(tasks), checkouts) {
+		t.Fatal("rolling updates altered task checkouts")
+	}
+	if body, err := os.ReadFile(wip); err != nil || string(body) != "uncommitted work\n" {
+		t.Fatal("dirty work was lost", err)
+	}
+	for _, role := range []string{"pending-report", "cooperative-a"} {
+		if asString(asMap(f.readTask(asString(tasks[role]["id"]))["report"])["brief_revision"]) != "r1" {
+			t.Fatal("historical report was rewritten to adopted revision")
 		}
-	}
-	for _, c := range later {
-		if headsEqual(c, "agent", "start") || headsEqual(c, "worktree", "create") || headsEqual(c, "agent", "read") {
-			if headsEqual(c, "worktree", "create") {
-				creates = append(creates, c)
-			} else {
-				forbidden = append(forbidden, c)
-			}
-		}
-	}
-	if len(creates) != 1 || len(forbidden) != 0 {
-		t.Fatalf("later start/create/read = creates %v extra %v", creates, forbidden)
-	}
-	if starts != 12 {
-		t.Fatalf("agent start count = %d, want 12", starts)
-	}
-	for _, c := range f.calls() {
-		if len(c) < 2 {
-			continue
-		}
-		if c[0] != "agent" && c[0] != "pane" && c[0] != "worktree" {
-			continue
-		}
-		switch c[1] {
-		case "stop", "kill", "restart", "remove":
-			t.Fatalf("lifecycle call %v", c)
-		}
-	}
-	if got := f.checkouts(tasks); !checkoutEqual(got, checkouts) {
-		t.Fatalf("checkouts changed: got %v want %v", got, checkouts)
-	}
-	wip, err := os.ReadFile(filepath.Join(asString(tasks["dirty-checkout"]["worktree"]), "wip.txt"))
-	if err != nil || string(wip) != "uncommitted work\n" {
-		t.Fatalf("dirty wip = %q err=%v", wip, err)
 	}
 
-	shown := map[string]map[string]any{}
-	for role, task := range tasks {
-		shown[role] = f.ctl(true, "show", asString(task["id"]))
-	}
-	if asString(asMap(asSlice(shown["open-question"]["questions"])[0])["status"]) != "answered" {
-		t.Fatalf("open-question final = %v", shown["open-question"]["questions"])
-	}
-	if asString(asMap(asSlice(shown["answered-unapplied"]["questions"])[0])["status"]) != "applied" {
-		t.Fatalf("answered-unapplied final = %v", shown["answered-unapplied"]["questions"])
-	}
-	if asString(asMap(asSlice(shown["closed-parent"]["questions"])[0])["status"]) != "open" {
-		t.Fatalf("closed-parent final = %v", shown["closed-parent"]["questions"])
-	}
-	var busyStatuses []string
-	for _, item := range asSlice(shown["busy-tool-call"]["questions"]) {
-		busyStatuses = append(busyStatuses, asString(asMap(item)["status"]))
-	}
-	if strings.Join(busyStatuses, ",") != "answered" {
-		t.Fatalf("busy-tool-call questions = %v", shown["busy-tool-call"]["questions"])
-	}
-	if asString(asMap(shown["pending-report"]["report"])["brief_revision"]) != "r1" {
-		t.Fatalf("pending-report brief_revision = %v", shown["pending-report"]["report"])
-	}
-	if asString(asMap(shown["cooperative-a"]["report"])["brief_revision"]) != "r1" {
-		t.Fatalf("cooperative-a brief_revision = %v", shown["cooperative-a"]["report"])
-	}
-	if asString(asMap(shown["cooperative-b"]["report"])["brief_revision"]) != "r4" {
-		t.Fatalf("cooperative-b brief_revision = %v", shown["cooperative-b"]["report"])
-	}
-	if asString(shown["pending-report"]["status"]) != "archived" {
-		t.Fatalf("pending-report status = %v", shown["pending-report"]["status"])
-	}
-	for _, role := range fleetRoles {
-		if role == "pending-report" {
-			continue
-		}
-		n := len(asSlice(asMap(shown[role]["versions"])["revisions"]))
-		if n != 4 {
-			t.Fatalf("%s revisions = %d, want 4", role, n)
+	for role, want := range map[string]string{"open-question": "answered", "answered-unapplied": "applied", "closed-parent": "open", "busy-tool-call": "answered"} {
+		questions := asSlice(f.readTask(asString(tasks[role]["id"]))["questions"])
+		if len(questions) != 1 || asString(asMap(questions[0])["status"]) != want {
+			t.Fatalf("%s final question state=%v", role, questions)
 		}
 	}
-	oldRevs := asSlice(asMap(shown["old-mcp-client"]["versions"])["revisions"])
-	if asString(asMap(oldRevs[len(oldRevs)-1])["status"]) != "requested" {
-		t.Fatalf("old-mcp latest status = %v", oldRevs[len(oldRevs)-1])
+	if asString(f.readTask(asString(pending["id"]))["status"]) != "archived" {
+		t.Fatal("released reported task was not archived")
+	}
+	if asString(asMap(f.readTask(asString(tasks["cooperative-b"]["id"]))["report"])["brief_revision"]) != "r4" {
+		t.Fatal("new report lost current revision")
+	}
+	runCount := 0
+	for _, call := range f.native.Calls() {
+		if call.Method == "terminal.run" {
+			runCount++
+		}
+		if call.Method == "terminal.kill" || call.Method == "terminal.interrupt" || call.Method == "terminal.read" {
+			t.Fatalf("update stopped unrelated execution=%v", call)
+		}
+	}
+	if runCount != 12 {
+		t.Fatalf("updates relaunched workers=%d native launches", runCount)
+	}
+	f.native.AssertNoForce(t)
+}
+
+func assertFleetReadOnly(t *testing.T, calls []hctest.Call) {
+	t.Helper()
+	for _, call := range calls {
+		if call.Method != "hello" && call.Method != "terminal.get" && call.Method != "terminal.list" && call.Method != "templates.list" {
+			t.Fatalf("observational status caused native effect=%v", call)
+		}
 	}
 }
 
@@ -713,17 +401,48 @@ func newFleetLab(t *testing.T) *fleetLab {
 	if err := os.MkdirAll(install, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	archive := exec.Command("git", "-C", source, "archive", "--format=tar", "HEAD")
-	archiveData, err := archive.Output()
+
+	install, err := filepath.EvalSymlinks(install)
 	if err != nil {
-		t.Fatalf("git archive: %v", err)
+		t.Fatal(err)
 	}
-	extract := exec.Command("tar", "-xf", "-", "-C", install)
-	extract.Stdin = bytes.NewReader(archiveData)
-	var extractErr bytes.Buffer
-	extract.Stderr = &extractErr
-	if err := extract.Run(); err != nil {
-		t.Fatalf("tar extract: %v\n%s", err, extractErr.String())
+	names, err := exec.Command("git", "-C", source, "ls-files", "--cached", "--others", "--exclude-standard").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range strings.Split(strings.TrimSpace(string(names)), "\n") {
+		from := filepath.Join(source, name)
+		info, err := os.Lstat(from)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.IsDir() {
+			continue
+		}
+		to := filepath.Join(install, name)
+		if err = os.MkdirAll(filepath.Dir(to), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(from)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.Symlink(link, to); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			body, err := os.ReadFile(from)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(to, body, info.Mode()); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 
 	git := func(args ...string) {
@@ -753,13 +472,10 @@ func newFleetLab(t *testing.T) *fleetLab {
 	if err := os.MkdirAll(dstBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"sumctl", "herdr-mesh"} {
+	for _, name := range []string{"sumctl"} {
 		src := filepath.Join(srcBin, name)
 		data, err := os.ReadFile(src)
 		if err != nil {
-			if name == "herdr-mesh" {
-				continue
-			}
 			t.Fatalf("plant %s: %v", name, err)
 		}
 		if err := os.WriteFile(filepath.Join(dstBin, name), data, 0o755); err != nil {
@@ -767,19 +483,8 @@ func newFleetLab(t *testing.T) *fleetLab {
 		}
 	}
 
-	home := filepath.Join(install, ".sum")
-	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configureNativeEventsForTest(t, home, false)
-
 	goBin := pinnedGo(t)
-	env := demoEnv(t, source, base)
-	d := &demoLab{t: t, root: install, helper: filepath.Join(install, "bin", "sumctl"), home: home, base: base, env: env}
-	d.setEnv("FAKE_PARENT_CWD", install)
+	d := newNativeDemoLabAt(t, install, filepath.Join(install, "bin", "sumctl"), base, filepath.Join(install, ".sum"))
 	d.setEnv("SUM_GO_BIN", goBin)
 	d.setEnv("SUM_SESSION", "sum-test")
 	d.setEnv("FAKE_SESSION", "sum-test")
@@ -791,11 +496,12 @@ func newFleetLab(t *testing.T) *fleetLab {
 		if !ok {
 			continue
 		}
-		if strings.HasPrefix(key, "SUM_") || strings.HasPrefix(key, "HERDR_") || strings.HasPrefix(key, "FAKE_") || key == "PATH" {
+		if strings.HasPrefix(key, "SUM_") || strings.HasPrefix(key, "HC_") || strings.HasPrefix(key, "HERDR_") || strings.HasPrefix(key, "FAKE_") || key == "PATH" {
 			t.Setenv(key, value)
 		}
 	}
 
+	hctest.InstallRuntime(t, install)
 	f := &fleetLab{demoLab: d, source: source}
 	if asString(f.ctl(true, "init")["role"]) != "coordinator" {
 		t.Fatal("fleet init")
@@ -877,82 +583,6 @@ func (f *fleetLab) commitUpstream(rel, text string) string {
 	return f.git(f.root, "rev-parse", "HEAD")
 }
 
-func (f *fleetLab) fakeStatePath() string {
-	return filepath.Join(f.base, "fake", "state.json")
-}
-
-func (f *fleetLab) readFakeState() map[string]any {
-	f.t.Helper()
-	data, err := os.ReadFile(f.fakeStatePath())
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	var state map[string]any
-	if err := json.Unmarshal(data, &state); err != nil {
-		f.t.Fatal(err)
-	}
-	return state
-}
-
-func (f *fleetLab) writeFakeState(state map[string]any) {
-	f.t.Helper()
-	data, err := json.Marshal(state)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	if err := os.WriteFile(f.fakeStatePath(), data, 0o644); err != nil {
-		f.t.Fatal(err)
-	}
-}
-
-func (f *fleetLab) paneState(pane string, changes map[string]any) {
-	f.t.Helper()
-	state := f.readFakeState()
-	panes := asMap(state["panes"])
-	row := asMap(panes[pane])
-	for k, v := range changes {
-		row[k] = v
-	}
-	panes[pane] = row
-	state["panes"] = panes
-	f.writeFakeState(state)
-}
-
-func (f *fleetLab) removePane(pane string) {
-	f.t.Helper()
-	state := f.readFakeState()
-	panes := asMap(state["panes"])
-	delete(panes, pane)
-	state["panes"] = panes
-	f.writeFakeState(state)
-}
-
-func (f *fleetLab) calls() [][]string {
-	f.t.Helper()
-	path := filepath.Join(f.base, "fake", "calls.jsonl")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		f.t.Fatal(err)
-	}
-	var out [][]string
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
-		if line == "" {
-			continue
-		}
-		var row struct {
-			Args []string `json:"args"`
-		}
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
-			f.t.Fatal(err)
-		}
-		out = append(out, row.Args)
-	}
-	return out
-}
-
 func (f *fleetLab) checkouts(tasks map[string]map[string]any) map[string]checkoutSnap {
 	f.t.Helper()
 	out := map[string]checkoutSnap{}
@@ -1004,51 +634,6 @@ func (f *fleetLab) readVersions(id string) map[string]any {
 	return vers
 }
 
-func (f *fleetLab) patchRuntimeMCP(id string, tools int) {
-	f.t.Helper()
-	vers := f.readVersions(id)
-	runtime := asMap(vers["runtime"])
-	runtime["mcp"] = map[string]any{
-		"server":  contract.MCP.Server,
-		"version": contract.MCP.Version,
-		"tools":   tools,
-	}
-	vers["runtime"] = runtime
-	data, err := json.Marshal(vers)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.home, "tasks", id, "versions.json"), data, 0o600); err != nil {
-		f.t.Fatal(err)
-	}
-}
-
-func (f *fleetLab) measure(check bool, args ...string) (map[string]any, [][]string) {
-	f.t.Helper()
-	before := len(f.calls())
-	value := f.ctl(check, args...)
-	return value, f.calls()[before:]
-}
-
-func (f *fleetLab) ctlRaw(args ...string) (map[string]any, error) {
-	f.t.Helper()
-	cmd := exec.Command(f.helper, append([]string{"--format", "json", "--home", f.home}, args...)...)
-	cmd.Env = f.env
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	raw := stdout.Bytes()
-	if len(bytes.TrimSpace(raw)) == 0 {
-		raw = stderr.Bytes()
-	}
-	var out map[string]any
-	if unmarshalErr := json.Unmarshal(raw, &out); unmarshalErr != nil {
-		return map[string]any{"error": strings.TrimSpace(stderr.String() + stdout.String())}, err
-	}
-	return out, err
-}
-
 func (f *fleetLab) targetRows(view map[string]any, byID map[string]string) map[string]map[string]any {
 	out := map[string]map[string]any{}
 	for _, item := range asSlice(view["targets"]) {
@@ -1092,10 +677,6 @@ func questionKeys(task map[string]any) []string {
 		keys = append(keys, asString(asMap(item)["key"]))
 	}
 	return keys
-}
-
-func headsEqual(c []string, a, b string) bool {
-	return len(c) >= 2 && c[0] == a && c[1] == b
 }
 
 func checkoutEqual(a, b map[string]checkoutSnap) bool {
@@ -1144,18 +725,6 @@ func asInt(v any) int {
 	return 0
 }
 
-func asMapFromOrd(v any) map[string]any {
-	if obj, ok := v.(*ordjson.Object); ok && obj != nil {
-		out := map[string]any{}
-		for _, k := range obj.Keys() {
-			val, _ := obj.Get(k)
-			out[k] = val
-		}
-		return out
-	}
-	return asMap(v)
-}
-
 // pinnedProcedure is the required worker procedure file a brief names.
 func pinnedProcedure(t *testing.T, brief string) string {
 	t.Helper()
@@ -1164,4 +733,159 @@ func pinnedProcedure(t *testing.T, brief string) string {
 		t.Fatalf("brief names no required procedure file:\n%s", brief)
 	}
 	return match[1]
+}
+
+func (f *fleetLab) stageFixture(sha string) {
+	f.t.Helper()
+	dir := filepath.Join(f.root, ".local", "releases", sha)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		f.t.Fatal(err)
+	}
+	archive, err := exec.Command("git", "-C", f.root, "archive", "--format=tar", sha).Output()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	unpack := exec.Command("tar", "-xf", "-", "-C", dir)
+	unpack.Stdin = bytes.NewReader(archive)
+	if out, err := unpack.CombinedOutput(); err != nil {
+		f.t.Fatal(err, string(out))
+	}
+	helper, err := os.ReadFile(filepath.Join(f.source, ".local/bin/sumctl"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	writeReleaseFile(f.t, dir, ".local/bin/sumctl", helper, 0755)
+	hctest.InstallRuntime(f.t, dir)
+	files := map[string]any{}
+	for _, name := range strings.Split(f.git(f.root, "ls-tree", "-r", "--name-only", sha), "\n") {
+		hash, err := release.ContentID(filepath.Join(dir, name))
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		files[name] = hash
+	}
+	paths := map[string]any{}
+	for _, name := range release.CoreTools {
+		link := filepath.Join(dir, ".local/bin", name)
+		if name != "hc" {
+			binary, err := exec.LookPath(name)
+			if err != nil {
+				binary, err = exec.LookPath("python3")
+			}
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			if err = os.Symlink(binary, link); err != nil {
+				f.t.Fatal(err)
+			}
+		}
+		value, err := os.Readlink(link)
+		if err != nil {
+			f.t.Fatal(err)
+		}
+		paths[name] = value
+	}
+	provenance, err := os.ReadFile(filepath.Join(dir, ".local/share/hc/provenance.json"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	var hc map[string]any
+	if err = json.Unmarshal(provenance, &hc); err != nil {
+		f.t.Fatal(err)
+	}
+	offered, err := release.ReadTargetContract(context.Background(), dir)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	s := nativeTestStore(f.t, f.home)
+	state, err := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	instance, _ := state.(*ordjson.Object).Get("instance")
+	host, err := s.Machine()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	platform := runtime.GOOS + "-" + runtime.GOARCH
+	inventory := map[string]any{"schema": 1, "dependencies": []any{map[string]any{"id": "sumctl", "source": "go/cmd/sumctl", "version": offered.SumVersion, "checksum": "unit built artifact", "license": "MIT", "platforms": []string{platform}, "requirements": []any{}, "role": "runtime", "owner": "sum", "contracts": map[string]any{}}}}
+	manifest := map[string]any{"schema": 1, "kind": "sum-release", "sum_version": offered.SumVersion, "source": map[string]any{"sha": sha, "tree": f.git(f.root, "rev-parse", sha+"^{tree}"), "repository": f.root}, "files": files, "contracts": offered.Contracts, "supports": offered.Supports, "dependencies": map[string]any{"tools": map[string]any{"pins": map[string]any{}, "paths": paths}, "inventory": inventory, "native": map[string]any{"sumctl": map[string]any{"path": ".local/bin/sumctl", "sha256": sha256Hex(helper), "platform": platform}}, "hc": hc}, "staged_at": store.Now(), "staged_by": map[string]any{"machine": host.ID, "installation": f.root, "instance": instance}}
+	encoded, err := json.Marshal(manifest)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(dir, "release.json"), encoded, 0600); err != nil {
+		f.t.Fatal(err)
+	}
+	if _, err = release.VerifyRelease(dir, sha); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+func (f *fleetLab) verifyActivationRecovery(tasks map[string]map[string]any, previous, candidate string) {
+	f.t.Helper()
+	writeReleaseFile(f.t, f.root, "local-only.txt", []byte("unmerged\n"), 0644)
+	f.git(f.root, "add", "local-only.txt")
+	f.git(f.root, "commit", "-q", "-m", "unmerged local commit")
+	refused := f.ctl(false, "update", "apply", "--ref", "HEAD", "--no-fetch")
+	if !strings.Contains(asString(refused["error"]), "not merged on origin/main") {
+		f.t.Fatalf("unmerged apply=%v", refused)
+	}
+	s := nativeTestStore(f.t, f.home)
+	ctx, err := store.Context(f.root)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	priorPath := filepath.Join(f.root, ".local/releases", previous)
+	candidatePath := filepath.Join(f.root, ".local/releases", candidate)
+	hits := 0
+	updatecmd.TestPostCheck = func(_ *store.Store, root string) *ordjson.Object {
+		row := ordjson.NewObject()
+		if sameFile(currentRuntimePath(root), candidatePath) {
+			hits++
+			f.ctl(true, "ask", asString(tasks["cooperative-a"]["id"]), "--key", fmt.Sprintf("activation-%d", hits), "--text", "Question during activation?")
+			f.ctlPane(workerAddress(tasks["failed-refresh"]), true, "report", asString(tasks["failed-refresh"]["id"]), "--text", fmt.Sprintf("Report during activation %d.", hits))
+			row.Set("ok", false)
+			row.Set("detail", "fleet candidate-only post-check failure")
+		} else {
+			row.Set("ok", true)
+			row.Set("detail", nil)
+		}
+		return row
+	}
+	defer func() { updatecmd.TestPostCheck = nil; updatecmd.TestRecoverPending = nil }()
+	updatecmd.TestRecoverPending = func(*store.Store, string, string) (*ordjson.Object, error) {
+		return nil, fmt.Errorf("fleet test-only compensation fault")
+	}
+	if _, err = updatecmd.Apply(s, ctx, candidate, true); err == nil || !strings.Contains(err.Error(), "Recovery also failed") {
+		f.t.Fatalf("failed compensation=%v", err)
+	}
+	pending := asMap(asMap(f.ctl(true, "update", "status")["activation"])["pending"])
+	if asString(asMap(pending["to"])["sha"]) != candidate || !sameFile(f.currentPath(), candidatePath) {
+		f.t.Fatalf("failed compensation discarded pending selection=%v", pending)
+	}
+	updatecmd.TestRecoverPending = nil
+	if _, err = updatecmd.Recover(s, ctx, asString(pending["generation"])); err != nil {
+		f.t.Fatal(err)
+	}
+	if !sameFile(f.currentPath(), priorPath) {
+		f.t.Fatal("recovery did not restore prior compatible artifact")
+	}
+	if _, err = updatecmd.Apply(s, ctx, candidate, true); err == nil || !strings.Contains(err.Error(), "restored and verified") {
+		f.t.Fatalf("verified compensation=%v", err)
+	}
+	if hits != 2 {
+		f.t.Fatalf("candidate failure injections=%d", hits)
+	}
+	if asMap(f.ctl(true, "update", "status")["activation"])["pending"] != nil {
+		f.t.Fatal("successful recovery left pending activation")
+	}
+	for _, key := range []string{"activation-1", "activation-2"} {
+		if !strings.Contains(strings.Join(questionKeys(f.readTask(asString(tasks["cooperative-a"]["id"]))), ","), key) {
+			f.t.Fatalf("concurrent callback %s lost", key)
+		}
+	}
+	if asString(asMap(f.readTask(asString(tasks["failed-refresh"]["id"]))["report"])["text"]) != "Report during activation 2." {
+		f.t.Fatal("concurrent report lost during compensation")
+	}
 }

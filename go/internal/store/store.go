@@ -17,46 +17,116 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
-const Schema = 1
+const Schema = 2
 
 const SumVersion = "0.1.0"
 
 var taskIDPattern = regexp.MustCompile(`^t-[a-f0-9]{12}$`)
 
 type Store struct {
-	Home     string
-	Tasks    string
-	Sessions string
+	Root        string
+	Generation  string
+	readOnly    bool
+	recordsOnly bool
+	Home        string
+	Tasks       string
+	Sessions    string
 
 	machine *machine.Identity
 	locks   lockRanks
 }
 
-func Open(home string) (*Store, error) {
+func Open(home string) (*Store, error) { return open(home, false) }
+
+func OpenHistorical(home string) (*Store, error) { return open(home, true) }
+
+func open(home string, historical bool) (*Store, error) {
 	resolved, err := resolveHome(home)
 	if err != nil {
 		return nil, err
 	}
-	s := &Store{Home: resolved, Tasks: filepath.Join(resolved, "tasks"), Sessions: filepath.Join(resolved, "sessions")}
-	statePath := filepath.Join(resolved, "state.json")
-	if info, statErr := os.Stat(statePath); statErr == nil && !info.IsDir() {
-		value, readErr := ordjson.ReadFile(statePath)
-		if readErr != nil {
-			return nil, readErr
+	s := &Store{Root: resolved, Home: resolved, Tasks: filepath.Join(resolved, "tasks"), Sessions: filepath.Join(resolved, "sessions"), readOnly: historical}
+	value, err := ordjson.ReadFile(filepath.Join(resolved, "state.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		if historical {
+			return nil, err
 		}
-		obj, ok := value.(*ordjson.Object)
-		if !ok {
-			return nil, fmt.Errorf("state.json is not a JSON object")
+		return s, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	state, ok := value.(*ordjson.Object)
+	if !ok {
+		return nil, fmt.Errorf("state.json is not a JSON object")
+	}
+	if records, _ := state.Get("records_only"); records == true {
+		s.recordsOnly = true
+		s.readOnly = true
+	}
+	if !schemaMatches(state) {
+		if historical && number(state, "schema") == 1 {
+			return s, nil
 		}
-		if !schemaMatches(obj) {
-			return nil, fmt.Errorf("unsupported state schema. Preserve the original; use the matching sum release. No in-place migration")
+		return nil, fmt.Errorf("unsupported state schema; preserve the original and use explicit migration or a historical reader")
+	}
+	if backend := text(state, "backend"); backend != "hc" && !(backend == "records" && s.recordsOnly) {
+		return nil, fmt.Errorf("unsupported state backend")
+	}
+	generation, _ := state.Get("generation")
+	g, _ := generation.(string)
+	rootValue, _ := state.Get("root")
+	rootPath, _ := rootValue.(string)
+	if rootPath != "" {
+		s.Root = rootPath
+		if !filepath.IsAbs(rootPath) || resolved != filepath.Join(rootPath, "generations", g) {
+			return nil, fmt.Errorf("invalid generation root")
 		}
 	}
+	if !generationPattern.MatchString(g) {
+		return nil, fmt.Errorf("state schema 2 lacks a valid generation")
+	}
+	s.Generation = g
+	s.Home = filepath.Join(s.Root, "generations", g)
+	if actual, err := filepath.EvalSymlinks(s.Home); err != nil || actual != s.Home {
+		return nil, fmt.Errorf("generation path must exist without symlink routing")
+	}
+	s.Tasks = filepath.Join(s.Home, "tasks")
+	s.Sessions = filepath.Join(s.Home, "sessions")
+	if err = s.checkGeneration(); err != nil {
+		return nil, err
+	}
+	headerValue, headerErr := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
+	if headerErr != nil {
+		return nil, fmt.Errorf("generation state unavailable: %w", headerErr)
+	}
+	header, ok := headerValue.(*ordjson.Object)
+	if !ok {
+		return nil, fmt.Errorf("generation state is not an object")
+	}
+	if records, _ := header.Get("records_only"); records == true {
+		s.recordsOnly = true
+		s.readOnly = true
+	}
 	return s, nil
+}
+
+func number(o *ordjson.Object, key string) int64 {
+	v, _ := o.Get(key)
+	n, ok := v.(json.Number)
+	if !ok {
+		return -1
+	}
+	i, err := n.Int64()
+	if err != nil {
+		return -1
+	}
+	return i
 }
 
 func schemaMatches(state *ordjson.Object) bool {
@@ -81,10 +151,31 @@ func resolveHome(home string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
-		return resolved, nil
+	var tail []string
+	ancestor := absolute
+	for {
+		_, err := os.Lstat(ancestor)
+		if err == nil {
+			break
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		tail = append(tail, filepath.Base(ancestor))
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", err
+		}
+		ancestor = parent
 	}
-	return absolute, nil
+	resolved, err := filepath.EvalSymlinks(ancestor)
+	if err != nil {
+		return "", err
+	}
+	for n := len(tail) - 1; n >= 0; n-- {
+		resolved = filepath.Join(resolved, tail[n])
+	}
+	return resolved, nil
 }
 
 func expandUser(path string) (string, error) {
@@ -106,21 +197,13 @@ func hasHomePrefix(path string) bool {
 }
 
 func (s *Store) Init() error {
-	if err := os.MkdirAll(s.Home, 0o700); err != nil {
-		return err
+	if s.readOnly {
+		return ErrHistoricalReadOnly
 	}
-	if err := os.MkdirAll(s.Tasks, 0o700); err != nil {
-		return err
+	if s.Generation != "" {
+		return s.CheckWritable()
 	}
-	statePath := filepath.Join(s.Home, "state.json")
-	if _, err := os.Stat(statePath); os.IsNotExist(err) {
-		state := ordjson.NewObject()
-		state.Set("schema", json.Number(fmt.Sprint(Schema)))
-		state.Set("sum_version", SumVersion)
-		state.Set("created_at", Now())
-		return ordjson.WriteFile(statePath, state)
-	}
-	return nil
+	return s.initializeGeneration(false)
 }
 
 // Lock order. A process takes the delivery compatibility lock, then at most one recipient lock, then the state lock,
@@ -226,7 +309,7 @@ func (s *Store) Lock() (func() error, error) {
 	if err := s.Init(); err != nil {
 		return nil, err
 	}
-	return s.flock(nil, filepath.Join(s.Home, ".lock"), syscall.LOCK_EX, rankState, nil)
+	return s.authorityLock(nil, filepath.Join(s.Home, ".lock"), syscall.LOCK_EX, rankState, nil)
 }
 
 // DeliveryLock takes the delivery compatibility lock exclusively, as releases before recipient-scoped delivery did
@@ -240,7 +323,7 @@ func (s *Store) DeliveryLockContext(ctx context.Context) (func() error, error) {
 	if err := s.Init(); err != nil {
 		return nil, err
 	}
-	return s.flock(ctx, filepath.Join(s.Home, ".deliver.lock"), syscall.LOCK_EX, rankCompat, ErrDeliveryLockBusy)
+	return s.authorityLock(ctx, filepath.Join(s.Home, ".deliver.lock"), syscall.LOCK_EX, rankCompat, ErrDeliveryLockBusy)
 }
 
 // DeliveryShared takes the delivery compatibility lock shared: it coexists with other deliveries of this release and
@@ -249,7 +332,7 @@ func (s *Store) DeliveryShared(ctx context.Context) (func() error, error) {
 	if err := s.Init(); err != nil {
 		return nil, err
 	}
-	return s.flock(ctx, filepath.Join(s.Home, ".deliver.lock"), syscall.LOCK_SH, rankCompat, ErrDeliveryLockBusy)
+	return s.authorityLock(ctx, filepath.Join(s.Home, ".deliver.lock"), syscall.LOCK_SH, rankCompat, ErrDeliveryLockBusy)
 }
 
 // RecipientLockPath is the lock file for one canonical recipient endpoint (machine, session, pane). Callers pass the
@@ -295,11 +378,14 @@ func (s *Store) Instance() (string, error) {
 // RecipientLock takes one recipient's delivery lock exclusively, after the compatibility lock and before the state
 // lock, giving up with ErrRecipientBusy when ctx ends first. Lock files are never removed.
 func (s *Store) RecipientLock(ctx context.Context, endpoint [3]string) (func() error, error) {
+	if err := s.CheckWritable(); err != nil {
+		return nil, err
+	}
 	path := s.RecipientLockPath(endpoint)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	return s.flock(ctx, path, syscall.LOCK_EX, rankRecipient, ErrRecipientBusy)
+	return s.authorityLock(ctx, path, syscall.LOCK_EX, rankRecipient, ErrRecipientBusy)
 }
 
 // Machine is this host's identity as seen from this state home, resolved once
@@ -356,7 +442,7 @@ func (s *Store) ReadTask(taskID string) (*ordjson.Object, error) {
 	schemaOK := isNumber
 	if isNumber {
 		n, convErr := number.Int64()
-		schemaOK = convErr == nil && n == Schema
+		schemaOK = convErr == nil && (n == Schema || n == 1)
 	}
 	if !schemaOK || id != taskID {
 		return nil, fmt.Errorf("task identity/schema mismatch")
@@ -365,6 +451,9 @@ func (s *Store) ReadTask(taskID string) (*ordjson.Object, error) {
 }
 
 func (s *Store) SaveTask(task *ordjson.Object) error {
+	if err := s.CheckWritable(); err != nil {
+		return err
+	}
 	id, ok := task.Get("id")
 	idString, isString := id.(string)
 	if !ok || !isString {
@@ -424,22 +513,41 @@ func Now() string {
 }
 
 type Endpoint struct {
-	Machine string
-	Session string
-	Pane    string
-	Cwd     string
+	Schema            int    `json:"schema"`
+	Backend           string `json:"backend"`
+	Machine           string `json:"machine"`
+	CoreID            string `json:"core_id"`
+	Session           string `json:"session"`
+	Socket            string `json:"socket"`
+	Address           string `json:"address"`
+	Task              string `json:"task"`
+	Role              string `json:"role"`
+	Attempt           string `json:"attempt"`
+	BindingGeneration uint64 `json:"binding_generation"`
+	CreatedMS         uint64 `json:"created_ms"`
+	Cwd               string `json:"cwd"`
+
+	Pane string `json:"pane,omitempty"`
 }
 
+func (e Endpoint) Native() hcclient.Endpoint {
+	return hcclient.Endpoint{Schema: e.Schema, Backend: e.Backend, Machine: e.Machine, CoreID: e.CoreID, Session: e.Session, Socket: e.Socket, Address: e.Address, Task: e.Task, Role: e.Role, Attempt: e.Attempt, BindingGeneration: e.BindingGeneration, CreatedMS: e.CreatedMS}
+}
+func (e Endpoint) Validate() error         { return e.Native().Validate() }
+func (e Endpoint) Object() *ordjson.Object { o, _ := ordjson.FromValue(e); return o }
+
 func RegistrationKey(e Endpoint) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{e.Machine, e.Session, e.Pane}, "\n")))
+	identity := []string{e.Machine, e.CoreID, e.Address}
+	if e.Schema != 2 || e.Backend != "hc" {
+		identity = []string{e.Machine, e.Session, e.Pane}
+	}
+	sum := sha256.Sum256([]byte(strings.Join(identity, "\n")))
 	return hex.EncodeToString(sum[:])[:16]
 }
 
 func identityMatches(host machine.Identity, value *ordjson.Object, e Endpoint) bool {
-	recorded, _ := value.Get("machine")
-	session, _ := value.Get("session")
-	pane, _ := value.Get("pane")
-	return host.Same(recorded, e.Machine) && session == e.Session && pane == e.Pane
+	recorded := EndpointFromContext(value)
+	return e.Schema == 2 && recorded.Schema == 2 && host.Same(recorded.Machine, e.Machine) && recorded.Native().SameAuthority(e.Native())
 }
 
 // Matches reports whether the machine, session, and pane recorded in value
@@ -471,10 +579,13 @@ func (s *Store) registrationPaths(host machine.Identity, endpoint Endpoint) []st
 }
 
 func (s *Store) Designated() bool {
+	if s.recordsOnly {
+		return false
+	}
 	if info, err := os.Stat(filepath.Join(s.Home, "state.json")); err != nil || info.IsDir() {
 		return false
 	}
-	if info, err := os.Stat(filepath.Join(s.Home, "dev.json")); err == nil && !info.IsDir() {
+	if info, err := os.Stat(filepath.Join(s.Root, "dev.json")); err == nil && !info.IsDir() {
 		return false
 	}
 	return true
@@ -532,6 +643,15 @@ func (s *Store) registrationFile(endpoint Endpoint) (string, *ordjson.Object, er
 // incarnation record, see package incarnation), or nil when the caller observed none: a record without one is legacy
 // and proves nothing about who occupies the pane later.
 func (s *Store) Register(endpoint Endpoint, role string, task any, incarnation any) (*ordjson.Object, error) {
+	if err := s.CheckWritable(); err != nil {
+		return nil, err
+	}
+	if err := endpoint.Validate(); err != nil {
+		return nil, err
+	}
+	if endpoint.Role != role || (task != nil && endpoint.Task != fmt.Sprint(task)) {
+		return nil, fmt.Errorf("registration does not match endpoint role or task")
+	}
 	stateValue, err := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
 	if err != nil {
 		return nil, err
@@ -544,7 +664,7 @@ func (s *Store) Register(endpoint Endpoint, role string, task any, incarnation a
 	if err != nil {
 		return nil, err
 	}
-	previous, err := s.Registration(endpoint)
+	previous, err := s.registrationForReplacement(endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -567,16 +687,17 @@ func (s *Store) Register(endpoint Endpoint, role string, task any, incarnation a
 	value.Set("task", task)
 	value.Set("machine", endpoint.Machine)
 	value.Set("session", endpoint.Session)
-	value.Set("pane", endpoint.Pane)
+	value.Set("backend", endpoint.Backend)
+	value.Set("core_id", endpoint.CoreID)
+	value.Set("socket", endpoint.Socket)
+	value.Set("address", endpoint.Address)
+	value.Set("attempt", endpoint.Attempt)
+	value.Set("binding_generation", json.Number(fmt.Sprint(endpoint.BindingGeneration)))
+	value.Set("created_ms", json.Number(fmt.Sprint(endpoint.CreatedMS)))
 	value.Set("cwd", endpointCwd(endpoint))
 	value.Set("instance", instance)
 	value.Set("incarnation", incarnation)
 	value.Set("sum_version", contract.SumVersion)
-	mcp := ordjson.NewObject()
-	mcp.Set("server", contract.MCP.Server)
-	mcp.Set("version", contract.MCP.Version)
-	mcp.Set("tools", json.Number(fmt.Sprint(contract.MCP.Tools)))
-	value.Set("mcp", mcp)
 	value.Set("registered_at", registeredAt)
 	value.Set("updated_at", Now())
 
@@ -597,6 +718,9 @@ func (s *Store) Register(endpoint Endpoint, role string, task any, incarnation a
 // SetIncarnation replaces the incarnation recorded on endpoint's registration and changes nothing else. The caller
 // holds the state lock and has just judged the current occupant verified against the record it replaces.
 func (s *Store) SetIncarnation(endpoint Endpoint, incarnation any) error {
+	if err := s.CheckWritable(); err != nil {
+		return err
+	}
 	path, obj, err := s.registrationFile(endpoint)
 	if err != nil {
 		return err

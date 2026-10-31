@@ -180,7 +180,7 @@ func enrollmentRecord(identity *Identity, kind, path, remote, canonical string, 
 	record.Set("canonical_path", canonical)
 	record.Set("enrolled_at", store.Now())
 	by := ordjson.NewObject()
-	for _, k := range []string{"machine", "session", "pane"} {
+	for _, k := range []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"} {
 		v, _ := ctx.Get(k)
 		by.Set(k, v)
 	}

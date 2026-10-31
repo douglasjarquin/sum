@@ -1,34 +1,24 @@
 package review
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
-	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/panes"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
-	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
-	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
 var (
@@ -56,327 +46,13 @@ func (a LaunchArgs) newReviewerOnly() bool {
 	return a.explicit() || a.PermissionOverride
 }
 
-func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, args LaunchArgs) (*ordjson.Object, error) {
-	taskID := args.Task
-	if ctx == nil {
-		return nil, fmt.Errorf("A registered coordinator pane is required to launch a reviewer.")
-	}
-	session := asString(ctx, "session")
-	coordinatorPane := asString(ctx, "pane")
-	if session == "" || coordinatorPane == "" {
-		return nil, fmt.Errorf("A registered coordinator pane is required to launch a reviewer.")
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return nil, err
-	}
-	task, err := s.ReadTask(taskID)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.CheckMachine(task); err != nil {
-		return nil, err
-	}
-	host, err := s.Machine()
-	if err != nil {
-		return nil, err
-	}
-	parent := objectField(task, "parent")
-	if parent == nil || !host.SameEndpoint(parent, ctx) {
-		return nil, fmt.Errorf("Only the task's recorded coordinator can launch its reviewer.")
-	}
-	workspace := asString(task, "workspace")
-	worktree := asString(task, "worktree")
-	if workspace == "" || worktree == "" {
-		return nil, fmt.Errorf("Task workspace or checkout identity is missing; reviewer launch is refused.")
-	}
-	var rebind *ordjson.Object
-	if recorded, exists := store.RecordedReviewer(task); exists {
-		agent, stop, err := recordedReviewerGone(host, runtimeRoot, herdrPath, session, task, recorded, worktree)
-		if err != nil {
-			return nil, err
-		}
-		if stop == nil {
-			if args.newReviewerOnly() {
-				return nil, fmt.Errorf("Task already has a live reviewer endpoint; --harness/--model/--reasoning/--preset/--permission-override apply only to a new reviewer. Prompt the recorded pane with a plain `reviewer launch`.")
-			}
-			return promptRecordedReviewer(s, herdrPath, session, sumctlPath, task, recorded, agent, worktree)
-		}
-		rebind = ordjson.NewObject()
-		rebind.Set("from", bindcmd.EndpointRecord(recorded))
-		rebind.Set("stop_evidence", stop)
-	}
-	if _, wsCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "workspace", "get", workspace); err != nil {
-		return nil, err
-	} else if wsCode != "" {
-		return nil, fmt.Errorf("Worker workspace %s is gone (%s); reviewer launch never opens a new workspace. Re-register the intact checkout with `herdr worktree open --path %s --no-focus`, then bind the worker with `sumctl bind %s --worker-pane PANE` before launching the reviewer.", workspace, wsCode, worktree, taskID)
-	}
-	harness, argv, preset, permissions, err := reviewerLaunch(s, ctx, runtimeRoot, args)
-	if err != nil {
-		return nil, err
-	}
-	briefPath, err := versions.ActiveBrief(s, task)
-	if err != nil {
-		return nil, err
-	}
-	taskArgs, err := prepare.TaskAccessArgs(s, task, harness, briefPath, worktree)
-	if err != nil {
-		return nil, err
-	}
-	argv = append(append([]string(nil), argv...), taskArgs...)
-	argv = append(argv, prepare.ClaudeReviewerMCPIsolationArgs(harness)...)
-	skillPath, skillSHA, err := pinReviewerSkill(s, task, runtimeRoot)
-	if err != nil {
-		return nil, err
-	}
-	created, err := herdrclient.Call(herdrPath, session, 15*time.Second, "tab", "create", "--workspace", workspace, "--cwd", worktree, "--label", "reviewer", "--no-focus")
-	if err != nil {
-		return nil, fmt.Errorf("Could not create reviewer tab in workspace %s: %w", workspace, err)
-	}
-	createdObj := objectValue(created)
-	rootPane := objectField(createdObj, "root_pane")
-	pane := asString(rootPane, "pane_id")
-	if pane == "" {
-		return nil, fmt.Errorf("Herdr tab create returned no reviewer pane id in workspace %s.", workspace)
-	}
-	observed, err := herdrclient.Call(herdrPath, session, 5*time.Second, "pane", "get", pane)
-	if err != nil {
-		return nil, fmt.Errorf("Could not verify new reviewer pane %s: %w", pane, err)
-	}
-	observedPane := objectField(objectValue(observed), "pane")
-	if observedPane == nil {
-		observedPane = objectValue(observed)
-	}
-	if asString(observedPane, "workspace_id") != workspace || resolvePath(asString(observedPane, "cwd")) != resolvePath(worktree) {
-		return nil, fmt.Errorf("New reviewer pane %s does not match task workspace %s and checkout %s; it was not started.", pane, workspace, worktree)
-	}
-	name := "reviewer-" + taskID
-	startArgs := herdrclient.AgentStartArgs(name, harness, pane)
-	if len(argv) > 0 {
-		startArgs = append(startArgs, "--")
-		startArgs = append(startArgs, argv...)
-	}
-	started, err := herdrclient.Call(herdrPath, session, herdrclient.AgentStartCallTimeout, startArgs...)
-	if err != nil {
-		code := herdrErrorCode(err)
-		if code != "" {
-			return nil, fmt.Errorf("Reviewer start was refused by Herdr (%s); task reviewer state was not changed: %w", code, err)
-		}
-		return nil, fmt.Errorf("Reviewer start is uncertain; task reviewer state was not changed: %w", err)
-	}
-	observedAgent, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", pane)
-	if err != nil {
-		return nil, fmt.Errorf("Reviewer agent %s started but could not be verified; task reviewer state was not changed: %w", name, err)
-	}
-	if code != "" {
-		return nil, fmt.Errorf("Reviewer agent %s started but is not live (%s); task reviewer state was not changed.", name, code)
-	}
-	started = herdrclient.UnwrapAgent(observedAgent)
-	if started == nil {
-		return nil, fmt.Errorf("Reviewer agent %s started but Herdr returned no live agent; task reviewer state was not changed.", name)
-	}
-	bound := observeReviewer(herdrPath, session, pane, started)
-	endpoint := ordjson.NewObject()
-	endpoint.Set("machine", host.ID)
-	endpoint.Set("session", session)
-	endpoint.Set("pane", pane)
-	endpoint.Set("cwd", worktree)
-	endpoint.Set("harness", harness)
-	endpoint.Set("argv", stringList(argv))
-	endpoint.Set("permissions", permissions)
-	endpoint.Set("skill_path", skillPath)
-	endpoint.Set("skill_sha256", skillSHA)
-	endpoint.Set("bound_at", store.Now())
-	unlock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	current, err := s.ReadTask(taskID)
-	if err == nil {
-		existing, _ := store.RecordedReviewer(current)
-		switch {
-		case rebind == nil && existing != nil:
-			err = fmt.Errorf("Task already has a reviewer endpoint; the new tab %s was started but not adopted.", pane)
-		case rebind != nil && !bindcmd.SameEndpoint(existing, objectField(rebind, "from")):
-			err = fmt.Errorf("The recorded reviewer endpoint changed concurrently; the new tab %s was started but not adopted.", pane)
-		default:
-			if rebind != nil {
-				rebind.Set("to", bindcmd.EndpointRecord(endpoint))
-				var record *ordjson.Object
-				record, err = evidence.Append(current, "reviewer-rebind", "coordinator", rebind, nil, ctx)
-				if err == nil {
-					record.Set("brief_revision", evidence.ActiveRevision(s, current))
-				}
-			}
-			if err == nil {
-				current.Set("reviewer", endpoint)
-				err = s.SaveTask(current)
-			}
-		}
-	}
-	unlock()
-	if err != nil {
-		return nil, err
-	}
-	var gate error
-	ready, readyCode, readyErr := herdrclient.Observe(herdrPath, session, herdrclient.AgentReadyCallTimeout, herdrclient.AgentReadyArgs(pane)...)
-	switch {
-	case readyErr != nil:
-		gate = readyErr
-	case readyCode != "":
-		gate = fmt.Errorf("the reviewer agent never reached a state that accepts input (%s)", readyCode)
-	case herdrclient.AgentStatus(herdrclient.UnwrapAgent(ready)) == "blocked":
-		gate = fmt.Errorf("the reviewer agent is waiting at a startup or permission dialog (blocked)")
-	}
-	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, skillPath, worktree, &bound, gate)
-	if err != nil {
-		return nil, err
-	}
-	result := ordjson.NewObject()
-	result.Set("task", taskID)
-	result.Set("workspace", workspace)
-	result.Set("worktree", worktree)
-	result.Set("reviewer", endpoint)
-	result.Set("harness", harness)
-	result.Set("preset", preset)
-	result.Set("placement", "tab")
-	if rebind == nil {
-		result.Set("action", "launched")
-		result.Set("rebind", nil)
-		result.Set("note", "Reviewer launched in its own labeled task tab; findings must be saved with `review` from that pane.")
-	} else {
-		result.Set("action", "relaunched")
-		result.Set("rebind", rebind)
-		result.Set("note", "The recorded reviewer pane was proven gone, so a fresh labeled task tab replaced it and the rebind is recorded; findings must be saved with `review` from the new pane.")
-	}
-	if code := herdrErrorCode(fmt.Errorf("%s", asString(delivery, "detail"))); gate != nil || code == "agent_not_ready" || code == "agent_blocked" || code == "agent_prompt_stalled" {
-		result.Set("action", "needs-attention")
-		result.Set("note", "Reviewer startup needs attention; the kickoff was not confirmed delivered: "+asString(delivery, "detail"))
-	}
-	result.Set("prompt", delivery)
-	return result, nil
-}
-
-func herdrErrorCode(err error) string {
-	if err == nil {
-		return ""
-	}
-	detail := err.Error()
-	start := strings.IndexByte(detail, '{')
-	if start < 0 {
-		return ""
-	}
-	return herdrclient.ErrorCode(detail[start:])
-}
-
-func recordedReviewerGone(host machine.Identity, runtimeRoot, herdrPath, session string, task, recorded *ordjson.Object, worktree string) (*ordjson.Object, *ordjson.Object, error) {
-	pane := asString(recorded, "pane")
-	if !host.Is(asString(recorded, "machine")) || asString(recorded, "session") != session {
-		return nil, nil, fmt.Errorf("Task already has a reviewer endpoint %s on another machine or session; use it from there, or prove it stopped there and use `sumctl bind %s --reviewer-pane PANE`.", pane, asString(task, "id"))
-	}
-	agent, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", pane)
-	if err != nil {
-		return nil, nil, err
-	}
-	if code == "" && !panes.ReviewerIsClosed(task) {
-		return herdrclient.UnwrapAgent(agent), nil, nil
-	}
-	if code != "" && !herdrclient.IsAbsent(code) {
-		return nil, nil, fmt.Errorf("Recorded reviewer pane %s cannot be observed (%s); nothing was prompted or launched.", pane, code)
-	}
-	stop, err := bindcmd.ReviewerStopped(runtimeRoot, session, pane, worktree, asString(task, "pane"), "", 0, nil)
-	if err != nil {
-		return nil, nil, fmt.Errorf("Recorded reviewer pane %s is gone (%s) but its replacement is refused: %w", pane, code, err)
-	}
-	return nil, stop, nil
-}
-
-func promptRecordedReviewer(s *store.Store, herdrPath, session, sumctlPath string, task, recorded, agent *ordjson.Object, worktree string) (*ordjson.Object, error) {
-	taskID := asString(task, "id")
-	pane := asString(recorded, "pane")
-	if got := herdrclient.AgentCwd(agent); got != "" && resolvePath(got) != resolvePath(worktree) {
-		return nil, fmt.Errorf("Recorded reviewer pane %s is live but its cwd %s is not the task checkout %s; close it so Herdr reports pane_not_found, then run `reviewer launch` again.", pane, got, worktree)
-	}
-	var bound *incarnation.Evidence
-	if incarnation.FromInfo(objectField(recorded, "incarnation")).Session == nil {
-		fresh := incarnation.FromInfo(agent)
-		bound = &fresh
-	}
-	delivery, err := deliverKickoff(s, herdrPath, session, sumctlPath, task, pane, asString(recorded, "skill_path"), worktree, bound, nil)
-	if err != nil {
-		return nil, err
-	}
-	result := ordjson.NewObject()
-	result.Set("task", taskID)
-	result.Set("workspace", asString(task, "workspace"))
-	result.Set("worktree", worktree)
-	result.Set("reviewer", recorded)
-	result.Set("harness", asString(recorded, "harness"))
-	result.Set("preset", nil)
-	result.Set("placement", "recorded-pane")
-	result.Set("action", "prompted")
-	result.Set("prompt", delivery)
-	result.Set("note", "The recorded reviewer pane is live and was prompted to review the current candidate; no second tab was opened.")
-	return result, nil
-}
-
-func observeReviewer(herdrPath, session, pane string, fallback any) incarnation.Evidence {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*incarnation.ObserveTimeout)
-	defer cancel()
-	if fresh, code, err := incarnation.Observe(incarnation.SessionCall(ctx, herdrPath, session), pane); err == nil && code == "" && fresh.Terminal != "" {
-		return fresh
-	}
-	return incarnation.FromInfo(fallback)
-}
-
-func deliverKickoff(s *store.Store, herdrPath, session, sumctlPath string, task *ordjson.Object, pane, skillPath, worktree string, bound *incarnation.Evidence, gate error) (*ordjson.Object, error) {
-	taskID := asString(task, "id")
-	candidate := evidenceview.CurrentCandidate(task)
-	text := kickoffPrompt(sumctlPath, taskID, candidate, skillPath, policyCandidate(task, candidate))
-	delivery := ordjson.NewObject()
-	delivery.Set("pane", pane)
-	delivery.Set("candidate", orNil(candidate))
-	delivery.Set("at", store.Now())
-	if gate != nil {
-		delivery.Set("state", "not-delivered")
-		delivery.Set("detail", gate.Error())
-	} else if _, err := herdrclient.Call(herdrPath, session, herdrclient.PromptConfirmCallTimeout, herdrclient.PromptConfirmArgs(pane, text)...); err != nil {
-		delivery.Set("state", "not-delivered")
-		delivery.Set("detail", err.Error())
-	} else {
-		delivery.Set("state", "delivered")
-		delivery.Set("detail", nil)
-	}
-	unlock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	current, err := s.ReadTask(taskID)
-	if err != nil {
-		return nil, err
-	}
-	reviewer, exists := store.RecordedReviewer(current)
-	if !exists || asString(reviewer, "pane") != pane {
-		return nil, fmt.Errorf("Reviewer endpoint changed while prompting pane %s; the prompt outcome was not recorded.", pane)
-	}
-	reviewer.Set("prompt", delivery)
-	if bound != nil {
-		reviewer.Set("incarnation", bound.Record(store.Now()))
-	}
-	if err := s.SaveTask(current); err != nil {
-		return nil, err
-	}
-	return delivery, nil
-}
-
 func kickoffPrompt(sumctlPath, taskID, candidate, skillPath string, policy bool) string {
 	command := shquote.Quote(sumctlPath)
 	target := "the current candidate"
 	if candidate != "" {
 		target = "candidate " + candidate
 	}
-	text := fmt.Sprintf("You are the independent reviewer for %s. Review %s. Read the task contract, candidate, and evidence with `%s context %s --role reviewer`, then follow the reviewer section of the delivery skill at %s. Inspect the candidate read-only in this checkout: do not edit the checkout, commit, push, or record verification. Save your verdict with `%s review %s --verdict approve|changes-requested|blocked|comment --candidate SHA --file findings.md` plus `--focus`, `--finding`, and `--limitation` notes.", taskID, target, command, taskID, shquote.Quote(skillPath), command, taskID)
+	text := fmt.Sprintf("You are the independent reviewer for %s. Review %s. First run `%s init --role reviewer --task %s`. Read the task contract, candidate, and evidence with `%s context %s --role reviewer`, then follow the reviewer section of the delivery skill at %s. Inspect the candidate read-only in this checkout: do not edit the checkout, commit, push, or record verification. Save your verdict with `%s review %s --verdict approve|changes-requested|blocked|comment --candidate SHA --file findings.md` plus `--focus`, `--finding`, and `--limitation` notes.", taskID, target, command, taskID, command, taskID, shquote.Quote(skillPath), command, taskID)
 	if policy {
 		text += fmt.Sprintf(" This candidate changed verification policy files (VERIFY.md, mise.toml, mise-tasks/, the feature maps, or the verify skill); read every changed policy file line by line and record an approving verdict only with `%s review %s --policy-reviewed ...`.", command, taskID)
 	}
@@ -463,6 +139,16 @@ func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string, arg
 		resolve.PresetSet = true
 	}
 	if resolve.PresetSet || args.newReviewerOnly() {
+		if resolve.Harness == "" && !resolve.PresetSet {
+			owner, err := s.Owner()
+			if err != nil {
+				return "", nil, nil, nil, err
+			}
+			resolve.Harness = asString(objectField(objectField(owner, "native_template"), "spec"), "harness")
+			if resolve.Harness == "" {
+				return "", nil, nil, nil, fmt.Errorf("coordinator has no qualified native harness; select a harness explicitly")
+			}
+		}
 		resolved, err := launch.Resolve(s, ctx, resolve)
 		if err != nil {
 			return "", nil, nil, nil, err
@@ -480,10 +166,14 @@ func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string, arg
 		preset, _ := resolved.Get("preset")
 		return asString(resolved, "harness"), argv, preset, objectField(resolved, "permissions"), nil
 	}
-	root := launch.RootLaunch(runtimeRoot, ctx)
+	owner, err := s.Owner()
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	root := objectField(objectField(owner, "native_template"), "spec")
 	harness := asString(root, "harness")
 	if harness == "" {
-		return "", nil, nil, nil, fmt.Errorf("Cannot determine the coordinator's harness (%s); configure `reviewer.preset` or start from the coordinator pane.", asString(root, "error"))
+		return "", nil, nil, nil, fmt.Errorf("Cannot determine the coordinator's harness (%s); configure `reviewer.preset` or start from the coordinator terminal.", asString(root, "error"))
 	}
 	return harness, nil, nil, launch.HarnessDefaultPermissions(harness), nil
 }
@@ -529,18 +219,15 @@ func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string 
 	if endpoint == nil {
 		return ""
 	}
-	if pane, ok := task.Get("pane"); ok && pane != nil && host.SameEndpoint(task, endpoint) {
-		return "worker"
-	}
-	if parent, ok := task.Get("parent"); ok {
-		if p, is := parent.(*ordjson.Object); is && host.SameEndpoint(p, endpoint) {
-			return "coordinator"
+	current := store.EndpointFromContext(endpoint)
+	if current.Schema == 2 {
+		for _, entry := range []struct{ key, role string }{{"worker_endpoint", "worker"}, {"parent", "coordinator"}, {"reviewer", "reviewer"}} {
+			expected := store.EndpointFromContext(objectField(task, entry.key))
+			if current.Native().SameAuthority(expected.Native()) {
+				return entry.role
+			}
 		}
-	}
-	if reviewer, ok := task.Get("reviewer"); ok {
-		if r, is := reviewer.(*ordjson.Object); is && host.SameEndpoint(r, endpoint) {
-			return "reviewer"
-		}
+		return "other"
 	}
 	return "other"
 }
@@ -605,6 +292,9 @@ func Run(s *store.Store, args Args, endpoint *ordjson.Object, pump returns.PumpO
 		}
 		made = report
 	}
+	if err := validateNativeReview(s, taskID, candidate, toolName, endpoint); err != nil {
+		return nil, err
+	}
 	result, task, err := record(s, taskID, verdict, candidate, toolName, text, policyReviewed, notes, made, endpoint)
 	if err != nil {
 		return nil, err
@@ -627,11 +317,20 @@ func Run(s *store.Store, args Args, endpoint *ordjson.Object, pump returns.PumpO
 		}
 	}
 	result.Set("notice", nil)
-	result.Set("note", "Findings saved. The task records no parent pane, so no return was created and no one was notified. They do not verify the candidate or close anything.")
+	result.Set("note", "Findings saved. The task records no parent terminal, so no return was created and no one was notified. They do not verify the candidate or close anything.")
 	return result, nil
 }
 
 func record(s *store.Store, taskID, verdict, candidate, toolName, text string, policyReviewed bool, notes []Note, made, endpoint *ordjson.Object) (*ordjson.Object, *ordjson.Object, error) {
+	priorTask, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, nil, err
+	}
+	candidateSnapshot := reviewerCandidateState(priorTask)
+	observedCandidate := ""
+	if store.EndpointFromContext(endpoint).Role == "reviewer" {
+		observedCandidate = evidenceview.CurrentCandidate(priorTask)
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, nil, err
@@ -663,25 +362,19 @@ func record(s *store.Store, taskID, verdict, candidate, toolName, text string, p
 		return nil, nil, err
 	}
 	role := endpointRole(host, task, endpoint)
+	if role == "reviewer" {
+		if candidate == "" || candidate != observedCandidate || reviewerCandidateState(task) != candidateSnapshot || candidate != asString(objectField(objectField(task, "reviewer"), "prompt"), "candidate") {
+			return nil, nil, fmt.Errorf("review candidate changed or was not assigned to this reviewer")
+		}
+	}
+
 	if role == "worker" {
-		return nil, nil, fmt.Errorf("The worker pane cannot record independent review of its own candidate. Save findings from the reviewer pane, or record `verify` as the coordinator.")
+		return nil, nil, fmt.Errorf("The worker terminal cannot record independent review of its own candidate. Save findings from the reviewer terminal, or record `verify` as the coordinator.")
 	}
 	if endpoint != nil && role == "other" && toolName == "" {
-		if existing, ok := task.Get("reviewer"); ok && existing != nil {
-			rev := existing.(*ordjson.Object)
-			pane, _ := rev.Get("pane")
-			session, _ := rev.Get("session")
-			return nil, nil, fmt.Errorf("Task already has reviewer pane %v in session %v; after proving that endpoint gone, adopt its replacement with `sumctl bind TASK --reviewer-pane PANE`.", pane, session)
-		}
-		bound := ordjson.NewObject()
-		for _, key := range []string{"machine", "session", "pane", "cwd"} {
-			v, _ := endpoint.Get(key)
-			bound.Set(key, v)
-		}
-		bound.Set("bound_at", store.Now())
-		task.Set("reviewer", bound)
-		role = "reviewer"
+		return nil, nil, fmt.Errorf("independent review requires the recorded native reviewer endpoint and matching init receipt; use explicit reviewer binding for replacement")
 	}
+
 	if role == "" {
 		role = "unattributed"
 	}
@@ -712,6 +405,32 @@ func record(s *store.Store, taskID, verdict, candidate, toolName, text string, p
 		return nil, nil, err
 	}
 	record.Set("brief_revision", evidence.ActiveRevision(s, task))
+	if role == "reviewer" {
+		reviewer := objectField(task, "reviewer")
+		prompt := objectField(reviewer, "prompt")
+		if prompt != nil {
+			receipt := ordjson.NewObject()
+			receipt.Set("kind", "review")
+			id, _ := record.Get("id")
+			receipt.Set("evidence_id", id)
+			receipt.Set("candidate", candidate)
+			receipt.Set("endpoint", store.EndpointFromContext(endpoint).Object())
+			receipt.Set("at", store.Now())
+			prompt.Set("state", "applied")
+			prompt.Set("application_receipt", receipt)
+			if kickoff := objectField(reviewer, "kickoff"); validBoundKickoff(kickoff, store.EndpointFromContext(endpoint)) && asString(kickoff, "candidate") == candidate {
+				kickoff.Set("state", "applied")
+				kickoff.Set("application_receipt", receipt)
+			}
+			intent := objectField(reviewer, "native_launch")
+			state := asString(intent, "state")
+			if intent != nil && (state == "in-flight" || state == "uncertain") {
+				intent.Set("reconciled_from", state)
+				intent.Set("state", "created")
+				intent.Set("reconciled_by", receipt)
+			}
+		}
+	}
 	if err := s.SaveTask(task); err != nil {
 		return nil, nil, err
 	}
@@ -722,6 +441,6 @@ func record(s *store.Store, taskID, verdict, candidate, toolName, text string, p
 	result.Set("pipeline_note", note)
 	reviewer, _ := task.Get("reviewer")
 	result.Set("reviewer", reviewer)
-	result.Set("note", "Findings saved as a return to the parent. They do not verify the candidate or close anything; a reviewer pane with saved findings is closable later, one without is not.")
+	result.Set("note", "Findings saved as a return to the parent. They do not verify the candidate or close anything; a reviewer terminal with saved findings is closable later, one without is not.")
 	return result, task, nil
 }

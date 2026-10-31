@@ -1,0 +1,446 @@
+{
+  "schema": 1,
+  "dependencies": [
+    {
+      "id": "go",
+      "source": "https://go.dev/dl/",
+      "version": "1.25.0",
+      "checksum": "mise.toml#tools.go",
+      "license": "BSD-3-Clause",
+      "platforms": [
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64"
+      ],
+      "requirements": [
+        "setup-only",
+        "CGO_ENABLED=0"
+      ],
+      "role": "build",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "go build"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "python",
+      "source": "https://www.python.org/",
+      "version": "3.13.5",
+      "checksum": "mise.toml#tools.python",
+      "license": "PSF-2.0",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "runtime",
+        "setup"
+      ],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "scripts/setup.py",
+          "scripts/demo.py",
+          ".agents/skills/verify",
+          ".agents/skills/evidence"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "node",
+      "source": "https://nodejs.org/",
+      "version": "22.20.0",
+      "checksum": "mise.toml#tools.node",
+      "license": "MIT",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "runtime",
+        "setup"
+      ],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "scripts/relink_runtime_links.mjs",
+          "web/"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "herdr-core",
+      "source": "https://github.com/herdrdev/herdr-core",
+      "version": "0.1.14",
+      "checksum": "config/hc-release.json#targets (versioned upstream manifest archive SHA256)",
+      "license": "Apache-2.0",
+      "platforms": [
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64"
+      ],
+      "requirements": [
+        "existing explicitly selected local HC core",
+        "generation 1 JSON-RPC",
+        "checksum-verified versioned release"
+      ],
+      "role": "runtime",
+      "owner": "Herdr",
+      "contracts": {
+        "cli": [
+          "hc --version",
+          "hc schema",
+          "hc --skill"
+        ],
+        "rpc": [
+          "hello",
+          "terminal.run",
+          "terminal.get",
+          "terminal.list",
+          "terminal.send",
+          "terminal.read",
+          "terminal.wait",
+          "terminal.interrupt",
+          "terminal.kill",
+          "terminal.rm",
+          "terminal.label",
+          "events.subscribe",
+          "templates.list"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "gh",
+      "source": "https://github.com/cli/cli",
+      "version": "2.100.0",
+      "checksum": "mise.toml#tools.github-cli",
+      "license": "MIT",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "setup/release staging",
+        "existing user authentication"
+      ],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "gh pr edit --attach",
+          "gh repo clone"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "quota-axi",
+      "source": "https://github.com/kunchenguid/quota-axi",
+      "version": "0.1.37",
+      "checksum": "mise.toml#tools.npm:quota-axi",
+      "license": "MIT",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "only scopes not migrated to Remainder"
+      ],
+      "role": "runtime",
+      "owner": "quota-axi",
+      "contracts": {
+        "cli": [
+          "quota-axi"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "codegraph",
+      "source": "https://github.com/colbymchenry/codegraph",
+      "version": "1.5.0",
+      "checksum": "sha512-/l1JMVOQ9WGQLrc/IIuAg7Igr944t79/oNCJTcnGkYtIeQx2XFIqI0ho+9Les/Yu4zKfmPU17hIUshD6yP1fKw==",
+      "license": "MIT",
+      "platforms": [
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64"
+      ],
+      "requirements": [
+        "optional per checkout",
+        "CODEGRAPH_NO_DOWNLOAD=1"
+      ],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "status --json",
+          "init",
+          "sync",
+          "query",
+          "explore"
+        ],
+        "mcp": [
+          "stdio optional"
+        ]
+      }
+    },
+    {
+      "id": "aube",
+      "source": "https://github.com/jdx/aube",
+      "version": "2.2.4",
+      "checksum": "mise.toml#tools.aube",
+      "license": "MIT",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "web/ aube-lock.yaml installs and scripts"
+      ],
+      "role": "setup",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "aube -C web install|ci|run|exec",
+          "aubr"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "uv",
+      "source": "https://github.com/astral-sh/uv",
+      "version": "0.12.13",
+      "checksum": "mise.toml#tools.uv",
+      "license": "Apache-2.0 OR MIT",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "pipx backend for basedpyright"
+      ],
+      "role": "setup",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "uv"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "basedpyright",
+      "source": "https://github.com/DetachHead/basedpyright",
+      "version": "1.40.1",
+      "checksum": "mise.toml#tools.pipx:basedpyright",
+      "license": "MIT",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "pipx backend",
+        "python 3.13.5"
+      ],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "basedpyright-langserver"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "gopls",
+      "source": "https://github.com/golang/tools/tree/master/gopls",
+      "version": "0.23.0",
+      "checksum": "mise.toml#tools.go:golang.org/x/tools/gopls",
+      "license": "BSD-3-Clause",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "go backend",
+        "go 1.25.0"
+      ],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "gopls"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "skills",
+      "source": "https://github.com/vercel-labs/skills",
+      "version": "1.5.25",
+      "checksum": "sha512-E4iBTLaeih3uwzajrlvXd55dWw9/ihxxaIPePB5OoN5GOQ0HrDF2CXhwYM+LpJQ/8Zbk/IA69A0B9C27/sMCbw==",
+      "license": "MIT",
+      "platforms": [
+        "darwin",
+        "linux"
+      ],
+      "requirements": [
+        "Node >=22.20.0",
+        "project-local copy mode"
+      ],
+      "role": "runtime",
+      "owner": "Vercel Labs",
+      "contracts": {
+        "cli": [
+          "add",
+          "--skill",
+          "--agent",
+          "--copy",
+          "--yes"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "go-toon",
+      "source": "github.com/douglasjarquin/go-toon",
+      "version": "v0.0.0-20260910175100-a2d441264455",
+      "checksum": "go.sum#github.com/douglasjarquin/go-toon",
+      "license": "MIT",
+      "platforms": [
+        "go-module"
+      ],
+      "requirements": [
+        "go get",
+        "LLM-facing sumctl stdout"
+      ],
+      "role": "build",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "--format toon"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "cobra",
+      "source": "https://github.com/spf13/cobra",
+      "version": "v1.9.1",
+      "checksum": "h1:CXSaggrXdbHK9CF+8ywj8Amf7PBRmPCOJugH954Nnlo=",
+      "license": "Apache-2.0",
+      "platforms": [
+        "all supported Go targets"
+      ],
+      "requirements": [
+        "go/go.mod",
+        "compiled into native artifacts"
+      ],
+      "role": "build",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "Cobra command/flag/help surface"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "sumctl",
+      "source": "go/cmd/sumctl",
+      "version": "sum 0.1.0",
+      "checksum": "release.json#dependencies.native.sumctl.sha256",
+      "license": "MIT",
+      "platforms": [
+        "darwin-arm64",
+        "darwin-amd64",
+        "linux-arm64",
+        "linux-amd64"
+      ],
+      "requirements": [
+        "setup/release staging",
+        "CGO_ENABLED=0",
+        "no runtime toolchain"
+      ],
+      "role": "runtime",
+      "owner": "sum",
+      "contracts": {
+        "cli": [
+          "sumctl native HC domain commands"
+        ],
+        "mcp": []
+      }
+    },
+    {
+      "id": "remainder",
+      "source": "https://github.com/douglasjarquin/remainder",
+      "version": "0.3.0 (darwin-arm64), 0.2.2 (linux-amd64), 0.2.1 (linux-arm64)",
+      "checksum": "per-platform archive SHA-256 in pins",
+      "license": "MIT",
+      "platforms": [
+        "linux-amd64",
+        "darwin-arm64",
+        "linux-arm64"
+      ],
+      "requirements": [
+        "setup/release staging only",
+        "checksum-verified GitHub release tar.gz",
+        "Codex quota; not a mise which tool"
+      ],
+      "role": "runtime",
+      "owner": "Remainder",
+      "contracts": {
+        "cli": [
+          "remainder --provider",
+          "remainder --format toon",
+          "remainder --format json"
+        ],
+        "mcp": []
+      },
+      "pins": {
+        "linux-amd64": {
+          "version": "0.2.2",
+          "sha256": "7828125a2bdb9b99d1a23d27f9ab1ffd1eaf0dce3763724bbf7604fade4346c7",
+          "asset": "remainder_v0.2.2_linux_amd64.tar.gz"
+        },
+        "darwin-arm64": {
+          "version": "0.3.0",
+          "sha256": "b0e263a0f0ac96125d76691cf145836650d777cfd7a85dd8d840ae5c1a898ba2",
+          "asset": "remainder_v0.3.0_darwin_arm64.tar.gz"
+        },
+        "linux-arm64": {
+          "version": "0.2.1",
+          "sha256": "fcd32077532ba917689efda60153a63fcd71a6cf78cd6b6cc76d17c8b309a7e8",
+          "asset": "remainder_v0.2.1_linux_arm64.tar.gz"
+        }
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "id": "pinchos",
+      "source": "https://github.com/douglasjarquin/pinchos",
+      "version": null,
+      "status": "independent-consumer",
+      "owner": "Pinchos",
+      "contracts": {
+        "cli": [],
+        "mcp": []
+      },
+      "note": "Pinchos owns its executable, TOML, scheduler, and cache; Sum does not modify them."
+    }
+  ]
+}

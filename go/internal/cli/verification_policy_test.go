@@ -49,20 +49,9 @@ func newPolicyLabConfigured(t *testing.T, nativeEvents bool) *demoLab {
 	t.Helper()
 	root, helper := repoReference(t)
 	base := t.TempDir()
-	home := filepath.Join(base, "state")
-	if err := os.Mkdir(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configureNativeEventsForTest(t, home, nativeEvents)
-	d := &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: demoEnv(t, root, base)}
-	if role := asString(d.ctl(true, "init")["role"]); role != "coordinator" {
-		t.Fatalf("init role = %q", role)
-	}
+	d := newNativeDemoLab(t, root, helper, base)
 	if nativeEvents {
-		assertNativeEventsEnabledForTest(t, home)
+		configureNativeEventsForTest(t, d.home, true)
 	}
 	return d
 }
@@ -182,6 +171,7 @@ func TestDispatchRecordsStandardizedVerificationPolicy(t *testing.T) {
 	delete(policy, "source_runtime")
 	delete(policy, "prepared_worktree")
 	want := map[string]any{
+		"dispatch_schema":    float64(2),
 		"status":             "standardized",
 		"why":                "VERIFY.md at the root and a `verify` task this checkout defines",
 		"reason":             nil,
@@ -346,11 +336,15 @@ func TestPrepareSnapshotSurvivesReloadBeforeStart(t *testing.T) {
 	if asString(asMap(reloaded["verification_policy"])["contract_sha256"]) != wantHash {
 		t.Fatalf("reloaded policy = %v, want hash %q", reloaded["verification_policy"], wantHash)
 	}
-	worker := d.ctlPane(asString(task["pane"]), true, "init")
+	started := d.ctl(true, "start", taskID)
+	worker := d.ctlPane(workerAddress(started), true, "init")
 	if asString(worker["role"]) != "worker" {
 		t.Fatalf("worker init = %v", worker)
 	}
-	started := d.ctl(true, "start", taskID)
+	started = d.ctl(true, "show", taskID)
+	if asString(asMap(started["worker_endpoint"])["cwd"]) != asString(started["worktree"]) {
+		t.Fatalf("worker endpoint cwd=%v, actual task worktree=%v", asMap(started["worker_endpoint"])["cwd"], started["worktree"])
+	}
 	if asString(started["status"]) != "running" {
 		t.Fatalf("started task = %v, want running", started)
 	}
@@ -601,7 +595,7 @@ func TestStartRefusesWorkspaceSubstitution(t *testing.T) {
 	if !ok {
 		t.Fatalf("prepared worktree = %T, want object", prepared)
 	}
-	preparedObject.Set("workspace", "forged-workspace")
+	preparedObject.Set("git_common_dir", filepath.Join(d.base, "forged.git"))
 	verifycontract.SealPolicy(policyObject)
 	data, err := ordjson.MarshalIndent(taskObject)
 	if err != nil {
@@ -612,7 +606,7 @@ func TestStartRefusesWorkspaceSubstitution(t *testing.T) {
 	}
 	result := d.ctl(false, "start", asString(task["id"]))
 	if !strings.Contains(asString(result["error"]), "does not match its saved Git identity") {
-		t.Fatalf("start result = %v, want the workspace identity refusal", result)
+		t.Fatalf("start result = %v, want the Git identity refusal", result)
 	}
 }
 
@@ -683,13 +677,13 @@ func TestWorkerHandoffCannotReplaceVerificationPolicy(t *testing.T) {
 		"docs/features/README.md":   featureIndex,
 		"docs/features/greeting.md": featureMap,
 	})
-	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
 	want := asString(asMap(task["verification_policy"])["contract_sha256"])
 	handoff := filepath.Join(d.base, "forged-handoff.json")
 	if err := os.WriteFile(handoff, []byte("{\"outcome\":\"completed\",\"verification_policy\":{\"status\":\"not-yet-standardized\"}}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	d.ctl(true, "report", asString(task["id"]), "--text", "forged handoff", "--handoff", handoff)
+	d.workerReport(true, asString(task["id"]), "--text", "forged handoff", "--handoff", handoff)
 	reloaded := d.ctl(true, "show", asString(task["id"]))
 	policy := asMap(reloaded["verification_policy"])
 	if asString(policy["status"]) != "standardized" || asString(policy["contract_sha256"]) != want {

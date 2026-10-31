@@ -1,50 +1,49 @@
 {
   "": {
     "commands": {
-      "doctor": "Observe setup, Herdr context, and this pane's registered role; writes nothing",
+      "doctor": "Observe staged setup, exact HC context and registered role; writes nothing and never starts a core",
       "quota": "Advisory provider quota. Codex uses Remainder. Other providers use quota-axi. Never switches accounts",
       "release-contract": "Print this runtime's release contract; writes nothing",
-      "init": "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, a recorded role holds only for the occupant Herdr shows in the pane (its incarnation), then one budgeted delivery pass (no PR observation or cleanup)",
+      "init": "Initialize the exact HC task role/attempt with matching native process and receipt evidence; without qualified HC context default to developer; coordinator initialization ensures the scoped observer unless explicitly disabled",
       "status": "All recorded tasks from saved records, with outstanding maintenance and its commands; reads only, never delivers, calls GitHub, or cleans up",
       "inbox": "Only tasks that need attention: questions, reports, errors, cleanup; reads only, like status",
       "skills": "Check Sum-owned skill projections or copy explicit third-party skills into one project",
       "prepare": "Coordinator only: record an approved task and create its isolated worktree (no launch)",
       "dispatch": "Coordinator only: record an approved task and create its isolated worktree; then launch the worker",
-      "start": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch",
+      "start": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch; a recorded launch whose argv carries a permission/trust override the record did not authorize is refused before a terminal is created",
       "execution": "Show, park, resume, or recover task-local execution reservations",
       "repair": "Coordinator-controlled corrective worker instructions",
       "help": "Concise command discovery: every command with one line, or `help TOPIC` (e.g. brief, brief-adopt) for its arguments",
       "context": "Bounded selective read of one task: outline by default, --section for parts including saved GitHub review threads, --role for a role view, --since CURSOR for changes",
       "notes": "Append one timestamped entry to the task's optional notes.md (a claim, backed up with the records; credentials refused)",
-      "finding": "Record and follow optional findings with explicit coordinator dispositions and linked work",
-      "env": "Task-local environment record: declared dev commands, observed URLs/ports, log paths, pane/container references; observes and records only",
+      "finding": "Record and follow optional findings; only the registered coordinator may defer, dismiss, reopen, resolve, or link work",
+      "env": "Task-local environment record: declared dev commands, observed URLs/ports, log paths, terminal/container references; observes and records only",
       "show": "Full task record plus versions, evidence_view, and returns (unchanged shape; use `context` for a bounded read)",
       "notice": "Explicit single retry of the pending notice toward one recipient",
       "archive": "Coordinator only: archive a task after every execution reservation was separately released",
-      "ask": "Worker: save a question before waiting; the parent is notified only after it is saved",
-      "answer": "Coordinator: record the user's actual decision for one question, or --close an answer no worker can apply any longer",
-      "explain": "Coordinator: request context and tradeoffs for an open question without recording an answer",
+      "ask": "Worker: save a question before waiting; structured choices require one recommendation and rationale; human actions can include ordered steps, references, expected result, user report, and worker check; the parent is notified only after it is saved",
+      "answer": "Coordinator: record a listed or custom human decision, or --close an answer no worker can apply any longer",
+      "explain": "Coordinator: record a distinct clarification request for an open question and notify its worker; does not answer or close the question",
       "report": "Worker: submit the report (and --handoff) as a claim for the coordinator to verify",
       "resolve": "Worker: mark an answered question applied",
-      "review": "Reviewer pane: append independent findings for one candidate, owed to the parent as a return until the coordinator acts on it; never replaces the worker report",
-      "reviewer": "Coordinator: launch the independent reviewer in a labeled tab in the task workspace; never split the worker pane",
+      "review": "Reviewer terminal: append independent findings for one candidate, owed to the parent as a return until the coordinator acts on it; never replaces the worker report",
+      "reviewer": "Launch or recover an independent candidate-bound HC reviewer at the Git checkout",
       "verify": "Coordinator only: append the coordinator's own verification result for one exact candidate (prose, --run run.json, or --execute)",
-      "pr": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names",
-      "pipeline": "The delivery gates one task has passed, and the status table sum owns in its PR body",
-      "cleanup": "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay",
+      "pr": "Exact PR identity from an authenticated GitHub observation; never parsed from prose or guessed from branch names. The read is retried once, within the same bound, only for a positively transient gh failure (HTTP 5xx, 429, secondary rate limit, connection error); auth, 404, GraphQL, malformed output, and timeouts are never retried, and no write ever is",
+      "pipeline": "The delivery gates one task has passed, derived from its own records; the table states what has run at the instant it was observed, never that a change may merge",
+      "cleanup": "Inspect or apply guarded removal of exact owned native terminal/history and the verified merged Git worktree; preserve dirty/unmerged work, obligations, active attempts and unknown survivors",
       "pump": "One budgeted delivery pass over saved pending returns: at most one coalesced notice per recipient, deferred recipients named; never calls GitHub or cleans up",
-      "sweep": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
-      "hook": "Default-on native Herdr event delivery: coordinator init and update apply enable the bounded pump plugin unless explicitly disabled; never a daemon",
-      "metadata": "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle",
+      "sweep": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer terminals, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
+      "hook": "Scoped non-agent HC event observer; coordinator init ensures a real startup/readiness receipt unless explicitly disabled; failure is fail-open and degraded",
+      "metadata": "Optional display-only owned HC labels on verified recorded terminals; never role, lifecycle or approval authority",
       "attention": "Coordinator only: mark one native attention record seen after inspecting the pane; the record stays",
       "wake": "Coordinator wake episodes (#240a) and decision priority (#240b): show every wake sidecar, the exact boundary of the outstanding work, and the decisions already prompted; consume one boundary after reading it; reconcile a prepared, interrupted, or replaced-occupant episode; never resends",
-      "bind": "Coordinator only: rebind this pane as a task's parent, worker pane, or stopped reviewer pane; never launches",
-      "backup": "Records-only tar.gz of the state directory (briefs, revisions, notes, findings, settings); never worktree code",
-      "settings": "Show or set validated optional admission settings in .sum/settings.json; absent capacity is unlimited",
+      "bind": "Explicitly bind inspected HC parent/worker/reviewer identity and receipt evidence; never launches or grants authority from a label/address alone",
+      "backup": "Records-only tar.gz preserving task/procedure history and manifest; no worktree code or runtime authority. Import with restore ARCHIVE NEW_HOME into write-blocked quarantine",
+      "settings": "Show or set validated optional settings in .sum/settings.json; absent capacity is unlimited and absent evidence publishes into the PR",
       "preset": "Named launch presets in .sum/settings.json: validated harness/model/argv shortcuts expanded at dispatch, not agents or roles",
       "project": "Managed project clones: enroll exactly one repository under <installation>/projects/<owner>/<repo>, list, show, or inspect a migration; never a shared task checkout",
       "factory": "Per-project software factory: enable a lane, tick for the next ready issue, claim it, and merge only at high confidence; never a daemon",
-      "herdr": "Session-scoped native CLI bridge for Mesh; no protocol reimplementation",
       "graph": "Per-checkout code graph (pinned codegraph), built only on request: index one task's checkout, observe its freshness, or print an MCP snippet; never installs or configures globally",
       "lsp": "Install allowlisted LSP binaries through mise into .local/bin; unknown binaries are refused; an existing link is never retargeted",
       "dev": "Prepare, list, or remove isolated self-development checkouts of this installation",
@@ -52,7 +51,10 @@
       "refresh": "Rolling refresh of running sessions: stage and request each target's next revision, attempt one bounded delivery, report status",
       "release": "Stage, list, or inspect immutable runtime releases under .local/releases; staging never activates",
       "update": "Check, stage, atomically apply, inspect, or roll back the installation default runtime; existing work keeps running",
-      "usage": "Opt-in per-task agent usage: `usage show TASK` reads the private ledger (counts, tokens, coverage); `usage collect TASK` folds the task's Claude Code transcripts into it (coordinator only, never when accounting is off)"
+      "usage": "Opt-in per-task agent usage accounting over the Claude Code transcripts of the terminals Sum bound to one task; reports counts and coverage, never a bill, and never changes delivery or cleanup",
+      "coordinator": "Start a bound coordinator with exact HC identity, recorded launch environment and matching initialization receipt",
+      "restore": "Import records into a fresh schema-two backend:records quarantine; preserve task/procedure bytes, transfer no live authority and block all mutations",
+      "delivery": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error"
     },
     "read_only": [
       "brief-list",
@@ -91,11 +93,11 @@
     ],
     "usage": "sumctl help TOPIC for one command's arguments and subcommands",
     "context": "sumctl context TASK_ID [--section NAME ...] [--role worker|reviewer|coordinator] [--since CURSOR]",
-    "note": "Generated from the CLI definition; no manual to page through. Herdr CLI facts come from `herdr --skill`."
+    "note": "Bounded help from the source catalog; native HC facts come from the staged release-matched manual. Status and send success are never application receipts."
   },
   "doctor": {
     "topic": "doctor",
-    "help": "Observe setup, Herdr context, and this pane's registered role; writes nothing",
+    "help": "Observe staged setup, exact HC context and registered role; writes nothing and never starts a core",
     "arguments": [],
     "subcommands": null,
     "read_only": true,
@@ -126,24 +128,31 @@
   },
   "init": {
     "topic": "init",
-    "help": "Explicitly register this pane's role in this instance; the first eligible pane claims coordinator, a recorded role holds only for the occupant Herdr shows in the pane (its incarnation), then one budgeted delivery pass (no PR observation or cleanup)",
+    "help": "Initialize the exact HC task role/attempt with matching native process and receipt evidence; without qualified HC context default to developer; coordinator initialization ensures the scoped observer unless explicitly disabled",
     "arguments": [
       {
         "name": "--role",
-        "help": "Requested role; omitted means coordinator if unowned, worker if dispatched, else developer",
-        "choices": [
-          "coordinator",
-          "worker",
-          "developer"
-        ]
+        "help": "Explicit requested role; no implicit coordinator claim"
       },
       {
         "name": "--task",
-        "help": "Task ID when explicitly registering as its dispatched worker"
+        "help": "Saved task ID for a dispatched worker or reviewer"
       },
       {
         "name": "--reclaim",
-        "help": "Deliberate, identity-checked takeover of a coordinator pane that is absent or held by a different occupant (replaced); never rebinds tasks"
+        "help": "Only a user-requested takeover after exact previous coordinator stop/replacement proof"
+      },
+      {
+        "name": "--hc-config-home",
+        "help": "Qualified namespaced template config directory"
+      },
+      {
+        "name": "--harness",
+        "help": "Known existing launch harness; default codex"
+      },
+      {
+        "name": "--arg",
+        "help": "Repeatable exact known launch argument, never guessed model/account/permission values"
       }
     ],
     "subcommands": null,
@@ -156,7 +165,7 @@
     "arguments": [
       {
         "name": "--live",
-        "help": "Add one bounded Herdr agent list per session; compact observes only rendered page tasks; writes nothing"
+        "help": "Add one bounded HC terminal snapshot per session; compact observes only rendered page tasks; writes nothing"
       },
       {
         "name": "--compact",
@@ -209,7 +218,7 @@
     "arguments": [
       {
         "name": "--live",
-        "help": "Add one bounded Herdr agent list per session; compact observes only rendered page tasks; writes nothing"
+        "help": "Add one bounded HC terminal snapshot per session; compact observes only rendered page tasks; writes nothing"
       },
       {
         "name": "--compact",
@@ -283,12 +292,11 @@
       },
       {
         "name": "--brief",
-        "help": null,
-        "required": true
+        "help": "Approved brief path for new preparation; required unless --reconcile"
       },
       {
         "name": "--harness",
-        "help": "Explicit Herdr integration kind; omitted means the saved worker default, else the coordinator's own harness"
+        "help": "Explicit harness kind; omitted means the saved worker default, else the coordinator's own harness"
       },
       {
         "name": "--model",
@@ -300,7 +308,7 @@
       },
       {
         "name": "--same-as-you",
-        "help": "Explicit request for the coordinator's own harness with its native model, ignoring a saved worker default"
+        "help": "Use the recorded coordinator launch selection; never infer an exact model from native status"
       },
       {
         "name": "--preset",
@@ -335,6 +343,10 @@
       {
         "name": "--permission-override",
         "help": "Explicit user authorization for a permission/trust flag carried by --arg or the preset; without it such a flag is refused, with it the override is recorded with its source as requested, never runtime-verified"
+      },
+      {
+        "name": "--reconcile",
+        "help": "Reconcile one interrupted saved approved task preparation; no new launch inputs"
       }
     ],
     "subcommands": null,
@@ -360,7 +372,7 @@
       },
       {
         "name": "--harness",
-        "help": "Explicit Herdr integration kind; omitted means the saved worker default, else the coordinator's own harness"
+        "help": "Explicit harness kind; omitted means the saved worker default, else the coordinator's own harness"
       },
       {
         "name": "--model",
@@ -415,7 +427,7 @@
   },
   "start": {
     "topic": "start",
-    "help": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch; a recorded launch whose argv carries a permission/trust override the record did not authorize is refused before a pane is allocated",
+    "help": "Coordinator only: launch the worker for a prepared task once; never retries an uncertain launch; a recorded launch whose argv carries a permission/trust override the record did not authorize is refused before a terminal is created",
     "arguments": [
       {
         "name": "task",
@@ -437,10 +449,10 @@
     "arguments": [],
     "subcommands": {
       "show": "Show worker and independent verifier attempts without observing or launching anything",
-      "park": "Release one exact worker or verifier attempt only after verified stop evidence; missing identity stays reserved",
+      "park": "Release one exact worker or verifier attempt only after verified stop evidence for that attempt, instance, occupant, terminal, process, and checkout; missing, stale, or unobservable identity stays reserved and stops nothing",
       "resume": "Reserve capacity for a successor to one exact released worker attempt, then launch it; a recorded launch carrying an unauthorized permission/trust override is refused before the successor is recorded",
-      "confirm": "Record an uncertain launch's worker as running only from a worker-side receipt plus a fresh Herdr observation of the exact pane; sends nothing",
-      "redeliver": "Resend the recorded worker brief to the exact pane of an uncertain launch with the same delivery confirmation as start; records running only when Herdr confirms delivery"
+      "confirm": "Record running only from matching worker receipt plus fresh exact native/process identity; never from started/status/turn counters",
+      "redeliver": "Explicitly submit one proven-unsent saved opening message for the exact attempt; never automatically replay uncertainty"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -577,19 +589,22 @@
       "settle": "Coordinator only: record the outcome of linked work and settle its handoff"
     },
     "read_only": false,
-    "read_only_subcommands": ["list", "show"]
+    "read_only_subcommands": [
+      "list",
+      "show"
+    ]
   },
   "env": {
     "topic": "env",
-    "help": "Task-local environment record: declared dev commands, observed URLs/ports, log paths, pane/container references; observes and records only",
+    "help": "Task-local environment record: declared dev commands, observed URLs/ports, log paths, terminal/container references; observes and records only",
     "arguments": [],
     "subcommands": {
       "discover": "Read the checkout's declared configuration (mise, package scripts, Makefile, justfile, Procfile, compose, Dockerfile, devcontainer) into command references; runs nothing",
       "record": "Record one observed fact: --url (port observed via lsof now), --log (lstat, never read), --pane, or --container; never binds or reserves anything",
       "inspect": "Re-observe every recorded fact once (configuration drift, listeners, logs) and mark stale ones; starts and stops nothing",
       "show": "The compact redacted environment record from the sidecar; observes nothing",
-      "start": "Launch one command the repository declares (an `env discover` row) in a pane split under the worker pane; intent, pane, and process identity are recorded, readiness is bounded",
-      "stop": "Stop this task's sum-launched services whose pane, shell, pid, and argv still match the record: one interrupt, bounded exit wait, verified port release, then the sum-created pane closes"
+      "start": "Launch one declared repository command in an owned HC terminal at its Git checkout; record intent, process and bounded readiness",
+      "stop": "Stop only matching owned native/process service instances with one interrupt; require actual exit and survivor/port proof, never kill escalation or idle-as-exit"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -838,7 +853,7 @@
   },
   "review": {
     "topic": "review",
-    "help": "Reviewer pane: append independent findings for one candidate, owed to the parent as a return until the coordinator acts on it; never replaces the worker report",
+    "help": "Reviewer terminal: append independent findings for one candidate, owed to the parent as a return until the coordinator acts on it; never replaces the worker report",
     "arguments": [
       {
         "name": "task",
@@ -862,7 +877,7 @@
       },
       {
         "name": "--tool",
-        "help": "Name of the configured review facility that produced the findings (for example `made`); binds no reviewer pane"
+        "help": "Name of the configured review facility that produced the findings (for example `made`); binds no reviewer terminal"
       },
       {
         "name": "--policy-reviewed",
@@ -899,26 +914,27 @@
   },
   "reviewer": {
     "topic": "reviewer",
-    "help": "Coordinator: launch an independent reviewer in the task workspace, using a labeled tab and the task checkout",
+    "help": "Launch or recover an independent candidate-bound HC reviewer at the Git checkout",
     "arguments": [],
     "subcommands": {
-      "launch": "Create a `reviewer` tab, start the reviewer with explicit flags, its saved preset, or the coordinator's harness under the stable name `reviewer-TASK_ID`, record its endpoint only after Herdr confirms it is live, and prompt it once to review the current candidate; a live recorded reviewer pane is prompted again instead"
+      "launch": "Create a uniquely named native reviewer terminal or use its verified live endpoint; creation and opening-message effects are separate",
+      "redeliver": "Explicitly recover one proven-unsent opening message for the exact reviewer attempt; never replay uncertainty"
     },
     "read_only": false,
     "read_only_subcommands": []
   },
   "reviewer-launch": {
     "topic": "reviewer-launch",
-    "help": "Create a `reviewer` tab in one task workspace and start its independent reviewer under the stable name `reviewer-TASK_ID`; a refused start names the Herdr error code and leaves the task's reviewer state unchanged. Claude reviewers use an explicit empty MCP configuration, so project and user MCP servers are not loaded or approved; a startup block is reported as needs-attention with its reason. Record the live reviewer endpoint and prompt it once; with a live recorded reviewer pane, prompt that pane for the current candidate instead of opening a second tab; with a recorded reviewer proven gone, open a fresh tab, record the rebind, and prompt it",
+    "help": "Launch an independent reviewer at the task Git checkout through HC with a unique bounded native name; record terminal creation, candidate and opening-message effects separately; never accept a trust dialog or replay an uncertain kickoff",
     "arguments": [
       {
         "name": "task",
-        "help": "Task ID whose workspace and checkout the reviewer will use",
+        "help": "Task ID whose verified Git checkout the reviewer uses",
         "required": true
       },
       {
         "name": "--harness",
-        "help": "Herdr integration kind for a new reviewer; overrides the saved `reviewer.preset`",
+        "help": "harness kind for a new reviewer; overrides the saved `reviewer.preset`",
         "required": false
       },
       {
@@ -1015,7 +1031,7 @@
     "subcommands": {
       "show": "Print the recorded gates and the table; writes nothing",
       "refresh": "Coordinator only: re-derive every gate from the task record",
-      "run": "Coordinator only: run the gates this pane owns in order (rebase, test, lint, document, push, PR) and stop at the first failure or a blocked Test; --no-pr stops after push",
+      "run": "Coordinator only: run the gates this terminal owns in order (rebase, test, lint, document, push, PR) and stop at the first failure or a blocked Test; --no-pr stops after push",
       "rebase": "Coordinator only: observe the candidate against its base branch in a throwaway worktree; never rewrites the branch",
       "lint": "Coordinator only: run the lint task the project itself declares against the candidate; a project that declares none is not-declared",
       "push": "Coordinator only: fast-forward push the recorded branch to origin once the worker has reported, Rebase passes against a base fetched just now, and no required before/after evidence is missing; --allow-behind never waives a conflict; never forces",
@@ -1031,7 +1047,7 @@
   },
   "cleanup": {
     "topic": "cleanup",
-    "help": "Coordinator only: inspect (default) or --apply the guarded removal of one merged task's workspace and clean checkout via native Herdr, then archive; the branch and records stay",
+    "help": "Inspect or apply guarded removal of exact owned native terminal/history and the verified merged Git worktree; preserve dirty/unmerged work, obligations, active attempts and unknown survivors",
     "arguments": [
       {
         "name": "task",
@@ -1040,11 +1056,11 @@
       },
       {
         "name": "--apply",
-        "help": "Remove the verified workspace/checkout without force and archive the record; without it, only inspect and persist the plan"
+        "help": "Remove the verified Git checkout without force and archive the record; without it, only inspect and persist the plan"
       },
       {
         "name": "--reviewer-only",
-        "help": "Inspect or close only the bound reviewer pane (needs saved findings and an exited occupant); the checkout is untouched"
+        "help": "Inspect or close only the bound reviewer terminal (needs saved findings and an exited occupant); the checkout is untouched"
       },
       {
         "name": "--number",
@@ -1078,7 +1094,7 @@
   },
   "sweep": {
     "topic": "sweep",
-    "help": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer panes, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
+    "help": "Coordinator only: explicit maintenance: one GitHub observation per recorded open PR, close of settled worker and reviewer terminals, and one guarded cleanup apply per pending task, least recently maintained first; starts nothing after its budget and names deferred tasks",
     "arguments": [
       {
         "name": "--task",
@@ -1095,13 +1111,13 @@
   },
   "hook": {
     "topic": "hook",
-    "help": "Default-on native Herdr event delivery: coordinator init and update apply enable the bounded pump plugin unless explicitly disabled; never a daemon",
+    "help": "Scoped non-agent HC event observer; coordinator init ensures a real startup/readiness receipt unless explicitly disabled; failure is fail-open and degraded",
     "arguments": [],
     "subcommands": {
-      "enable": "Coordinator only: explicitly enable or retry this instance's plugin, then reconcile once",
-      "disable": "Coordinator only: record the opt-out and disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live",
-      "status": "Hook health from records plus one bounded registry observation: last event, errors, pending count/age, enabled",
-      "event": "Internal: the handler Herdr runs for one event (reads HERDR_PLUGIN_* from the environment)"
+      "enable": "Ensure one proven owned observer and bounded reconciliation",
+      "disable": "Preserve explicit opt-out and stop only the proven owned observer; explicit pump remains available",
+      "status": "Saved scope, startup/readiness evidence, events, pending work and degraded errors",
+      "observe": "Internal: subscribe on the exact existing core/session scope and reconcile fresh snapshots; no payload queue"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1110,15 +1126,15 @@
   },
   "metadata": {
     "topic": "metadata",
-    "help": "Optional native visibility: project saved sum presentation into Herdr `sum_*` tokens; display only, never the agent lifecycle",
+    "help": "Optional display-only owned HC labels on verified recorded terminals; never role, lifecycle or approval authority",
     "arguments": [],
     "subcommands": {
-      "enable": "Coordinator only: probe the installed Herdr's schema, record the instance-derived source, and project changed tokens to verified recorded endpoints",
+      "enable": "Validate HC capabilities and project owned labels to verified recorded terminals",
       "disable": "Coordinator only: clear exactly the recorded owned keys per endpoint (failed clears stay diagnostic) and stop projecting",
-      "status": "Recorded projection summary, saved capabilities, applied tokens, ambiguous sources, error log, and native_open; writes nothing and calls no Herdr",
-      "sync": "Coordinator only: re-probe capabilities and project one full pass writing only differences; --force rewrites every recorded endpoint",
-      "snippet": "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum",
-      "inbox": "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the linked default-on hook plugin and falls back to the overview; never syncs or writes"
+      "status": "Saved label projection health and diagnostics; no mutation",
+      "sync": "Project one bounded pass of owned label differences to verified endpoints",
+      "snippet": "Print optional visibility guidance without modifying configuration",
+      "inbox": "Print saved bounded compact/grouped task overview; no legacy plugin-pane API"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1158,7 +1174,7 @@
     "subcommands": {
       "show": "Every wake sidecar with its episode, phase, generation, coverage and receipts, the boundary token over the current open obligations to that coordinator (with explicit omissions), the decisions already prompted (priority_prompts, with their deliveries), and uncoalesced legacy prompts; writes nothing",
       "consume": "Coordinator only: record the exact consume receipt for one boundary after reading its included work; closes only that episode, answers/applies/verifies/approves nothing, changes no reservation",
-      "reconcile": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file"
+      "reconcile": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file; wake recovery never resolves returns history by itself: use delivery reconcile for separately proven historical native effects"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1194,11 +1210,11 @@
   },
   "wake-reconcile": {
     "topic": "wake-reconcile",
-    "help": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file",
+    "help": "Coordinator only: settle a prepared, interrupted (claimed/intent), or replaced-occupant episode conservatively; never resends, never clears an episode because a process vanished or time passed, never rewrites an unreadable file; wake recovery never resolves returns history by itself: use delivery reconcile for separately proven historical native effects",
     "arguments": [
       {
         "name": "--recipient",
-        "help": "Reconcile the sidecar with this key (as `wake show` lists it) instead of this pane's own"
+        "help": "Reconcile the sidecar with this key (as `wake show` lists it) instead of this terminal's own"
       }
     ],
     "subcommands": null,
@@ -1207,7 +1223,7 @@
   },
   "bind": {
     "topic": "bind",
-    "help": "Coordinator only: rebind this pane as a task's parent, worker pane, or stopped reviewer pane; never launches",
+    "help": "Explicitly bind inspected HC parent/worker/reviewer identity and receipt evidence; never launches or grants authority from a label/address alone",
     "arguments": [
       {
         "name": "task",
@@ -1215,12 +1231,12 @@
         "required": true
       },
       {
-        "name": "--worker-pane",
+        "name": "--worker-terminal",
         "help": "Explicitly adopt an existing worker and record its occupant; never launch a replacement"
       },
       {
-        "name": "--reviewer-pane",
-        "help": "Adopt a reviewer pane after the recorded reviewer is proved stopped"
+        "name": "--reviewer-terminal",
+        "help": "Adopt a reviewer terminal after the recorded reviewer is proved stopped"
       },
       {
         "name": "--parent-only",
@@ -1233,7 +1249,7 @@
   },
   "backup": {
     "topic": "backup",
-    "help": "Records-only tar.gz of the state directory (briefs, revisions, notes, settings); never worktree code",
+    "help": "Records-only tar.gz preserving task/procedure history and manifest; no worktree code or runtime authority. Import with restore ARCHIVE NEW_HOME into write-blocked quarantine",
     "arguments": [
       {
         "name": "destination",
@@ -1290,19 +1306,6 @@
       "show"
     ]
   },
-  "herdr": {
-    "topic": "herdr",
-    "help": "Session-scoped native CLI bridge for Mesh; no protocol reimplementation",
-    "arguments": [
-      {
-        "name": "args",
-        "help": null
-      }
-    ],
-    "subcommands": null,
-    "read_only": false,
-    "read_only_subcommands": []
-  },
   "graph": {
     "topic": "graph",
     "help": "Per-checkout code graph (pinned codegraph), built only on request: index one task's checkout, observe its freshness, or print an MCP snippet; never installs or configures globally",
@@ -1333,7 +1336,7 @@
     "help": "Prepare, list, or remove isolated self-development checkouts of this installation",
     "arguments": [],
     "subcommands": {
-      "prepare": "Create or reopen .sum/dev/NAME on branch sum-dev/NAME; optionally open an ordinary Herdr pane there",
+      "prepare": "Create or reopen .sum/dev/NAME on branch sum-dev/NAME; optionally open an ordinary HC terminal there",
       "list": null,
       "remove": "Remove a clean development checkout with plain git worktree remove; dirty work is preserved"
     },
@@ -1392,10 +1395,10 @@
     "subcommands": {
       "check": "Fetch origin, resolve the merged revision, and report compatibility; changes no selection",
       "stage": "Check plus build the release bundle; the default is unchanged",
-      "apply": "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only)",
+      "apply": "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only); requires actual target binary compatibility; no schema-one archive reactivation or cutover without enforceable legacy writer/sender exclusion",
       "status": "Default and active runtime, checkout state, staged releases, recent selections; writes nothing",
-      "rollback": "Select the recorded previous approved runtime. Staging is not approval. Missing history is a refusal (No recorded previous known-good), not a checkout fallback. --to SHA or --to checkout needs exact approved identity (coordinator only)",
-      "recover": "Reconcile one pending activation generation from the journal without repeating the update (coordinator only)"
+      "rollback": "Select the recorded previous approved runtime. Staging is not approval. Missing history is a refusal (No recorded previous known-good), not a checkout fallback. --to SHA or --to checkout needs exact approved identity (coordinator only); requires actual target binary compatibility; no schema-one archive reactivation or cutover without enforceable legacy writer/sender exclusion",
+      "recover": "Reconcile one pending activation generation from the journal without repeating the update (coordinator only); requires actual target binary compatibility; no schema-one archive reactivation or cutover without enforceable legacy writer/sender exclusion"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -1461,7 +1464,7 @@
   },
   "execution-park": {
     "topic": "execution-park",
-    "help": "Release one exact worker or verifier attempt only after verified stop evidence for that attempt, instance, occupant, pane, process, and checkout; missing, stale, or unobservable identity stays reserved and stops nothing",
+    "help": "Release one exact worker or verifier attempt only after verified stop evidence for that attempt, instance, occupant, terminal, process, and checkout; missing, stale, or unobservable identity stays reserved and stops nothing",
     "arguments": [
       {
         "name": "task",
@@ -1499,7 +1502,7 @@
   },
   "execution-confirm": {
     "topic": "execution-confirm",
-    "help": "Record an uncertain launch's worker as running only from a worker-side receipt plus a fresh Herdr observation of the exact pane; sends nothing",
+    "help": "Record running only from matching worker receipt plus fresh exact native/process identity; never from started/status/turn counters",
     "arguments": [
       {
         "name": "task",
@@ -1518,7 +1521,7 @@
   },
   "execution-redeliver": {
     "topic": "execution-redeliver",
-    "help": "Resend the recorded worker brief to the exact pane of an uncertain launch with the same delivery confirmation as start; records running only when Herdr confirms delivery",
+    "help": "Explicitly submit one proven-unsent saved opening message for the exact attempt; never automatically replay uncertainty",
     "arguments": [
       {
         "name": "task",
@@ -1648,7 +1651,7 @@
       },
       {
         "name": "--pane",
-        "help": "A related Herdr pane ID (observed with `pane get` in the task session)"
+        "help": "A related HC terminal ID (observed with `terminal.get` in the task session)"
       },
       {
         "name": "--container",
@@ -1707,7 +1710,7 @@
   },
   "env-start": {
     "topic": "env-start",
-    "help": "Launch one command the repository declares (an `env discover` row) in a pane split under the worker pane; intent, pane, and process identity are recorded, readiness is bounded",
+    "help": "Launch one declared repository command in an owned HC terminal at its Git checkout; record intent, process and bounded readiness",
     "arguments": [
       {
         "name": "task",
@@ -1750,7 +1753,7 @@
   },
   "env-stop": {
     "topic": "env-stop",
-    "help": "Stop this task's sum-launched services whose pane, shell, pid, and argv still match the record: one interrupt, bounded exit wait, verified port release, then the sum-created pane closes",
+    "help": "Stop only matching owned native/process service instances with one interrupt; require actual exit and survivor/port proof, never kill escalation or idle-as-exit",
     "arguments": [
       {
         "name": "task",
@@ -1805,17 +1808,64 @@
     "topic": "pr-thread-action",
     "help": "Coordinator only: revalidate the saved PR binding, head, and exact GitHub thread revisions before recording Address, Discuss, Draft reply, or Open comment. Address stores one request naming every included thread and revision, then uses the existing repair delivery checks. Discuss and Draft reply stay local; no action posts a GitHub reply or resolves a thread.",
     "arguments": [
-      {"name": "task", "help": null, "required": true},
-      {"name": "--action", "help": "address, discuss, draft-reply, or open-comment", "choices": ["address", "discuss", "draft-reply", "open-comment"], "required": true},
-      {"name": "--head", "help": "observed PR head SHA shown on the saved row", "required": true},
-      {"name": "--pr-url", "help": "recorded GitHub PR URL shown on the saved row", "required": true},
-      {"name": "--thread", "help": "exact GitHub thread ID; repeat with matching --revision to address selected threads"},
-      {"name": "--revision", "help": "exact latest GitHub comment ID paired with each --thread"},
-      {"name": "--all", "help": "address every currently actionable thread from a complete saved observation"},
-      {"name": "--text", "help": "corrective instruction, discussion note, or draft reply text"},
-      {"name": "--attempt", "help": "exact running worker attempt required for Address"},
-      {"name": "--class", "help": "repair scope: in-scope or expansion", "choices": ["in-scope", "expansion"]},
-      {"name": "--reason", "help": "required explanation for expansion work"}
+      {
+        "name": "task",
+        "help": null,
+        "required": true
+      },
+      {
+        "name": "--action",
+        "help": "address, discuss, draft-reply, or open-comment",
+        "choices": [
+          "address",
+          "discuss",
+          "draft-reply",
+          "open-comment"
+        ],
+        "required": true
+      },
+      {
+        "name": "--head",
+        "help": "observed PR head SHA shown on the saved row",
+        "required": true
+      },
+      {
+        "name": "--pr-url",
+        "help": "recorded GitHub PR URL shown on the saved row",
+        "required": true
+      },
+      {
+        "name": "--thread",
+        "help": "exact GitHub thread ID; repeat with matching --revision to address selected threads"
+      },
+      {
+        "name": "--revision",
+        "help": "exact latest GitHub comment ID paired with each --thread"
+      },
+      {
+        "name": "--all",
+        "help": "address every currently actionable thread from a complete saved observation"
+      },
+      {
+        "name": "--text",
+        "help": "corrective instruction, discussion note, or draft reply text"
+      },
+      {
+        "name": "--attempt",
+        "help": "exact running worker attempt required for Address"
+      },
+      {
+        "name": "--class",
+        "help": "repair scope: in-scope or expansion",
+        "choices": [
+          "in-scope",
+          "expansion"
+        ]
+      },
+      {
+        "name": "--reason",
+        "help": "required explanation for expansion work"
+      }
     ],
     "subcommands": null,
     "read_only": false,
@@ -1879,7 +1929,7 @@
   },
   "hook-enable": {
     "topic": "hook-enable",
-    "help": "Coordinator only: explicitly enable or retry this instance's plugin, then reconcile once",
+    "help": "Ensure one proven owned observer and bounded reconciliation",
     "arguments": [],
     "subcommands": null,
     "read_only": false,
@@ -1887,11 +1937,11 @@
   },
   "hook-disable": {
     "topic": "hook-disable",
-    "help": "Coordinator only: record the opt-out and disable (or --unlink) this instance's plugin; saved returns keep flowing through inbox --live",
+    "help": "Preserve explicit opt-out and stop only the proven owned observer; explicit pump remains available",
     "arguments": [
       {
         "name": "--unlink",
-        "help": "Remove the registration instead of disabling it"
+        "help": "Retire the proven owned observer registration after disabling"
       }
     ],
     "subcommands": null,
@@ -1900,23 +1950,15 @@
   },
   "hook-status": {
     "topic": "hook-status",
-    "help": "Hook health from records plus one bounded registry observation: last event, failures and errors, pending count/age, enabled/degraded",
+    "help": "Saved scope, startup/readiness evidence, events, pending work and degraded errors",
     "arguments": [],
     "subcommands": null,
     "read_only": true,
     "read_only_subcommands": null
   },
-  "hook-event": {
-    "topic": "hook-event",
-    "help": "Internal: the handler Herdr runs for one event (reads HERDR_PLUGIN_* from the environment)",
-    "arguments": [],
-    "subcommands": null,
-    "read_only": false,
-    "read_only_subcommands": null
-  },
   "metadata-enable": {
     "topic": "metadata-enable",
-    "help": "Coordinator only: probe the installed Herdr's schema, record the instance-derived source, and project changed tokens to verified recorded endpoints",
+    "help": "Validate HC capabilities and project owned labels to verified recorded terminals",
     "arguments": [
       {
         "name": "--notify",
@@ -1937,7 +1979,7 @@
   },
   "metadata-status": {
     "topic": "metadata-status",
-    "help": "Recorded projection summary, saved capabilities, applied tokens, ambiguous sources, error log, and native_open; writes nothing and calls no Herdr",
+    "help": "Saved label projection health and diagnostics; no mutation",
     "arguments": [],
     "subcommands": null,
     "read_only": true,
@@ -1945,11 +1987,11 @@
   },
   "metadata-sync": {
     "topic": "metadata-sync",
-    "help": "Coordinator only: re-probe capabilities and project one full pass writing only differences; --force rewrites every recorded endpoint",
+    "help": "Project one bounded pass of owned label differences to verified endpoints",
     "arguments": [
       {
         "name": "--force",
-        "help": "Treat recorded tokens as unknown and rewrite every recorded endpoint (after a Herdr restart)"
+        "help": "Reconcile recorded owned labels explicitly after native state changed; never force terminal input"
       }
     ],
     "subcommands": null,
@@ -1958,7 +2000,7 @@
   },
   "metadata-snippet": {
     "topic": "metadata-snippet",
-    "help": "The optional config.toml rows that render the tokens; printed for the user to merge, never written by sum",
+    "help": "Print optional visibility guidance without modifying configuration",
     "arguments": [
       {
         "name": "--raw",
@@ -1971,7 +2013,7 @@
   },
   "metadata-inbox": {
     "topic": "metadata-inbox",
-    "help": "Print the bounded saved compact inbox, or with --grouped the project-grouped overview; --open opens that view natively through the linked default-on hook plugin and falls back to the overview; never syncs or writes",
+    "help": "Print saved bounded compact/grouped task overview; no legacy plugin-pane API",
     "arguments": [
       {
         "name": "--after",
@@ -1992,14 +2034,6 @@
       {
         "name": "--project",
         "help": "Focus one project key (requires --grouped); global counts stay"
-      },
-      {
-        "name": "--open",
-        "help": "Open the grouped view through the linked plugin's inbox entrypoint (needs enabled hook delivery and a saved plugin_pane_open capability); any failure falls back to the grouped overview with open.outcome fallback"
-      },
-      {
-        "name": "--placement",
-        "help": "With --open: split, overlay, tab, or zoomed; default is the manifest's popup"
       }
     ],
     "subcommands": null,
@@ -2120,7 +2154,7 @@
       },
       {
         "name": "--harness",
-        "help": "Herdr integration kind (required when creating; changing it drops the old harness's model/reasoning/args)"
+        "help": "harness kind (required when creating; changing it drops the old harness's model/reasoning/args)"
       },
       {
         "name": "--model",
@@ -2293,7 +2327,7 @@
   },
   "dev-prepare": {
     "topic": "dev-prepare",
-    "help": "Create or reopen .sum/dev/NAME on branch sum-dev/NAME; optionally open an ordinary Herdr pane there",
+    "help": "Create or reopen .sum/dev/NAME on branch sum-dev/NAME; optionally open an ordinary HC terminal",
     "arguments": [
       {
         "name": "--name",
@@ -2307,7 +2341,7 @@
       },
       {
         "name": "--pane",
-        "help": "Also create a Herdr workspace whose root pane starts in the checkout"
+        "help": "Also create an ordinary HC terminal at the checkout; no agent or coordinator identity"
       }
     ],
     "subcommands": null,
@@ -2523,7 +2557,7 @@
   },
   "update-apply": {
     "topic": "update-apply",
-    "help": "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only)",
+    "help": "Stage if needed, validate coexistence under the activation lock, then switch the default in one rename (coordinator only); requires actual target binary compatibility; no schema-one archive reactivation or cutover without enforceable legacy writer/sender exclusion",
     "arguments": [
       {
         "name": "--ref",
@@ -2532,10 +2566,6 @@
       {
         "name": "--no-fetch",
         "help": "Use the already fetched origin refs (offline host)"
-      },
-      {
-        "name": "--allow-pre-machine-identity",
-        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; pass it only when the user decides to select such a release. The override is recorded in the update history."
       }
     ],
     "subcommands": null,
@@ -2552,15 +2582,11 @@
   },
   "update-rollback": {
     "topic": "update-rollback",
-    "help": "Select the recorded previous approved runtime. Staging is not approval. Missing history is a refusal (No recorded previous known-good), not a checkout fallback. --to SHA or --to checkout needs exact approved identity (coordinator only)",
+    "help": "Select the recorded previous approved runtime. Staging is not approval. Missing history is a refusal (No recorded previous known-good), not a checkout fallback. --to SHA or --to checkout needs exact approved identity (coordinator only); requires actual target binary compatibility; no schema-one archive reactivation or cutover without enforceable legacy writer/sender exclusion",
     "arguments": [
       {
         "name": "--to",
         "help": "SHA of a staged approved release, or checkout. Omitted means the recorded previous known-good runtime. Dirty or unapproved --to checkout is refused."
-      },
-      {
-        "name": "--allow-pre-machine-identity",
-        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; pass it only when the user decides to select such a release. The override is recorded in the update history."
       }
     ],
     "subcommands": null,
@@ -2569,16 +2595,12 @@
   },
   "update-recover": {
     "topic": "update-recover",
-    "help": "Reconcile one pending activation generation from the journal without repeating the update (coordinator only)",
+    "help": "Reconcile one pending activation generation from the journal without repeating the update (coordinator only); requires actual target binary compatibility; no schema-one archive reactivation or cutover without enforceable legacy writer/sender exclusion",
     "arguments": [
       {
         "name": "--generation",
         "help": null,
         "required": true
-      },
-      {
-        "name": "--allow-pre-machine-identity",
-        "help": "Select a release that predates the stable machine identity although records already carry it. That release sees every record as another machine and demotes the coordinator; pass it only when the user decides to select such a release. The override is recorded in the update history."
       }
     ],
     "subcommands": null,
@@ -2800,7 +2822,7 @@
   },
   "usage": {
     "topic": "usage",
-    "help": "Opt-in per-task agent usage accounting over the Claude Code transcripts of the panes sum bound to one task; reports counts and coverage, never a bill, and never changes delivery or cleanup",
+    "help": "Opt-in per-task agent usage accounting over the Claude Code transcripts of the terminals Sum bound to one task; reports counts and coverage, never a bill, and never changes delivery or cleanup",
     "arguments": [],
     "subcommands": {
       "show": "Print the task's usage ledger: configuration state, per-session rows, totals by category (implementation, review, repair, unknown) and task-wide, and coverage complete|partial|unavailable with reasons; reads only",
@@ -2832,6 +2854,155 @@
       {
         "name": "task",
         "help": "Task id",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "coordinator": {
+    "topic": "coordinator",
+    "help": "Start a bound coordinator with exact HC identity, recorded launch environment and matching initialization receipt",
+    "arguments": [],
+    "subcommands": {
+      "start": "Launch on a selected existing HC core; observation never starts a core"
+    },
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "coordinator-start": {
+    "topic": "coordinator-start",
+    "help": "Launch a coordinator with explicit native scope and matching initialization receipt",
+    "arguments": [
+      {
+        "name": "--socket",
+        "help": "Existing local HC Unix socket",
+        "required": true
+      },
+      {
+        "name": "--session",
+        "help": "Explicit selected local HC session",
+        "required": true
+      },
+      {
+        "name": "--hc-config-home",
+        "help": "Config home containing the namespaced qualified template",
+        "required": true
+      },
+      {
+        "name": "--harness",
+        "help": "Explicit harness; automatic input currently qualified for Codex 0.166.0 default keymap"
+      },
+      {
+        "name": "--model",
+        "help": "Explicit model requested for this launch"
+      },
+      {
+        "name": "--reasoning",
+        "help": "Explicit reasoning requested for this launch"
+      },
+      {
+        "name": "--arg",
+        "help": "Repeatable exact native argument"
+      },
+      {
+        "name": "--preset",
+        "help": "Saved compatible launch preset"
+      },
+      {
+        "name": "--permission-override",
+        "help": "Only explicit user authorization for a disclosed permission/trust argument"
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "reviewer-redeliver": {
+    "topic": "reviewer-redeliver",
+    "help": "Explicit single recovery of a proven-unsent reviewer opening message; uncertainty is preserved",
+    "arguments": [
+      {
+        "name": "task",
+        "help": "Saved task",
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": "Exact reviewer attempt",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "hook-observe": {
+    "topic": "hook-observe",
+    "help": "Internal: subscribe on the exact existing core/session scope and reconcile fresh snapshots; no payload queue",
+    "arguments": [
+      {
+        "name": "--core-id",
+        "help": "Permanent expected core ID",
+        "required": true
+      },
+      {
+        "name": "--session",
+        "help": "Selected local session",
+        "required": true
+      },
+      {
+        "name": "--socket",
+        "help": "Existing Unix socket",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "restore": {
+    "topic": "restore",
+    "help": "Import records into a fresh schema-two backend:records quarantine; preserve task/procedure bytes, transfer no live authority and block all mutations",
+    "arguments": [
+      {
+        "name": "archive",
+        "help": "Current schema-two records-only tar.gz; safe unique regular entries, schema/scope and gzip trailer validated before creation. Limits: 64 MiB/entry, 512 MiB expanded, 100000 entries",
+        "required": true
+      },
+      {
+        "name": "new_home",
+        "help": "Nonexistent destination; never overwrite. Partial quarantined imports are retained after I/O failure; use another fresh destination for explicit retry",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "delivery": {
+    "topic": "delivery",
+    "help": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error",
+    "arguments": [],
+    "subcommands": {
+      "reconcile": "Resolve an exact saved delivery ID from durable receipt proof; no force/proof/reason override and no task-obligation or capacity changes"
+    },
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "delivery-reconcile": {
+    "topic": "delivery-reconcile",
+    "help": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error; missing endpoint or semantic input revision proof refuses. Identical repeats are no-ops",
+    "arguments": [
+      {
+        "name": "task",
+        "help": "Saved task owning the historical delivery",
+        "required": true
+      },
+      {
+        "name": "--delivery",
+        "help": "Exact delivery ID; validation binds original row digest, native endpoint and obligation/input revision to its existing receipt",
         "required": true
       }
     ],

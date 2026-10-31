@@ -117,6 +117,9 @@ func evidenceRowCopy(record *ordjson.Object, head string) *ordjson.Object {
 		v, _ := record.Get(k)
 		row.Set(k, v)
 	}
+	if endpoint := asObject(getField(record, "endpoint")); endpoint != nil && store.EndpointFromContext(endpoint).Validate() != nil {
+		row.Set("endpoint_authority", "historical")
+	}
 	candidateValue := getField(record, "candidate")
 	var current any
 	if !truthy(candidateValue) || head == "" {
@@ -331,7 +334,7 @@ func View(task *ordjson.Object) *ordjson.Object {
 	review.Set("verdict", getField(latestReview, "verdict"))
 	review.Set("tool", getField(latestReview, "tool"))
 	review.Set("policy_reviewed", latestReview != nil && truthy(getField(latestReview, "policy_reviewed")))
-	review.Set("reviewer_pane", getField(asObject(getField(task, "reviewer")), "pane"))
+	review.Set("reviewer_endpoint", getField(task, "reviewer"))
 	verification.Set("review", review)
 	verification.Set("note", "Worker and coordinator runs are separate executions with their own run ids; neither the worker's run nor a review substitutes for the coordinator's. Records for another SHA are historical.")
 

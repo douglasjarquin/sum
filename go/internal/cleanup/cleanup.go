@@ -2,6 +2,8 @@ package cleanup
 
 import (
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/store"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
@@ -53,4 +55,12 @@ func Pending(task *ordjson.Object) *ordjson.Object {
 		}
 	}
 	return nil
+}
+
+func RefusePendingEffects(s *store.Store, taskID string) error {
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return err
+	}
+	return returns.PendingDeliveryEffects(s, task)
 }

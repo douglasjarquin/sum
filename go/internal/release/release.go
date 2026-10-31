@@ -1,16 +1,19 @@
 package release
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/skills"
@@ -26,9 +29,9 @@ const (
 )
 
 var (
-	CoreTools = []string{"python3", "node", "herdr", "gh"}
+	CoreTools = []string{"python3", "node", "hc", "gh"}
 
-	requiredFiles = []string{"bin/sumctl", "bin/herdr-mesh", "bin/herdr-scoped", "go/cmd/sumctl/main.go"}
+	requiredFiles = []string{"bin/sumctl", "go/cmd/sumctl/main.go", "config/hc-release.json"}
 
 	// workerSkillCurrent is the current name of the worker-skill group in skills.canonicalSkills.
 	workerSkillCurrent = "sum-work"
@@ -216,10 +219,10 @@ func resolvePath(path string) (string, error) {
 // InstallationRoot ports `installation_root`: `dev` and `release` commands act on the installation that owns the
 // given state home, never on a development checkout.
 func InstallationRoot(s *store.Store) (string, error) {
-	if filepath.Base(s.Home) != ".sum" || !s.Designated() {
+	if filepath.Base(s.Root) != ".sum" || !s.Designated() {
 		return "", fmt.Errorf("%s is not a sum installation's state home; run dev and release commands with the installation's ./bin/sumctl.", s.Home)
 	}
-	root := filepath.Dir(s.Home)
+	root := filepath.Dir(s.Root)
 	out, err := proc.Run([]string{"git", "-C", root, "rev-parse", "--show-toplevel"}, "", 0, true, nil)
 	if err != nil {
 		return "", err
@@ -367,17 +370,13 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 			return nil, err
 		}
 	}
+	if native == nil || native.Len() != 1 {
+		return nil, verifyErrorf("%s: release must contain only its native sumctl artifact", path)
+	}
+	if _, ok := native.Get("sumctl"); !ok {
+		return nil, verifyErrorf("%s: release lacks its native sumctl artifact", path)
+	}
 	if truthy(native) {
-		_, hasSumctl := native.Get("sumctl")
-		_, hasSumctlGo := native.Get("sumctl-go")
-		if !hasSumctl && !hasSumctlGo {
-			return nil, verifyErrorf("%s: native dependency metadata is incomplete", path)
-		}
-		_, hasMesh := native.Get("herdr-mesh")
-		_, hasMeshGo := native.Get("herdr-mesh-go")
-		if !hasMesh && !hasMeshGo {
-			return nil, verifyErrorf("%s: native dependency metadata is incomplete", path)
-		}
 		for _, name := range native.Keys() {
 			artifactValue, _ := native.Get(name)
 			artifact := asObject(artifactValue)
@@ -388,6 +387,9 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 			}
 			if relative == "" || filepath.IsAbs(relative) || containsDotDot(relative) {
 				return nil, verifyErrorf("%s: native artifact %s has an invalid path", path, name)
+			}
+			if relative != filepath.ToSlash(filepath.Join(".local", "bin", "sumctl")) {
+				return nil, verifyErrorf("%s: native sumctl metadata must name the staged helper artifact", path)
 			}
 			member := filepath.Join(path, relative)
 			if isSymlink(member) || !isExecutable(member) {
@@ -421,7 +423,51 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 			}
 		}
 	}
+	if err := verifyManifestCapabilities(path, manifest); err != nil {
+		return nil, verifyErrorf("%s: %v", path, err)
+	}
+	hc := asObject(getPath(manifest, "dependencies", "hc"))
+	if !offlineRuntimeReceipt(hc) {
+		if err := VerifyHCRuntime(context.Background(), path); err != nil {
+			return nil, verifyErrorf("%s: %v", path, err)
+		}
+	}
 	return manifest, nil
+}
+
+func offlineRuntimeReceipt(receipt *ordjson.Object) bool {
+	if receipt == nil || receipt.Len() != 2 {
+		return false
+	}
+	qualified, _ := receipt.Get("qualified")
+	reason, _ := receipt.Get("reason")
+	return qualified == false && reason == "offline test fixture"
+}
+
+func verifyManifestCapabilities(path string, manifest *ordjson.Object) error {
+	for _, field := range []string{"mcp", "herdr_cli"} {
+		if c := asObject(getPath(manifest, "contracts")); c != nil {
+			if _, exists := c.Get(field); exists {
+				return fmt.Errorf("legacy transport contract %s is not supported", field)
+			}
+		}
+	}
+	offered, err := ReadTargetContract(context.Background(), path)
+	if err != nil {
+		return err
+	}
+	var recorded contract.Release
+	raw, err := ordjson.MarshalCompact(manifest)
+	if err != nil {
+		return err
+	}
+	if err = json.Unmarshal(raw, &recorded); err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(offered, recorded) {
+		return fmt.Errorf("staged helper capability report differs from release manifest")
+	}
+	return nil
 }
 
 func containsDotDot(relative string) bool {

@@ -35,7 +35,7 @@ import (
 // ContextSections mirrors CONTEXT_SECTIONS: the section names `--section` accepts, and what `outline.read.sections` reports.
 var ContextSections = []string{"outline", "brief", "decisions", "handoff", "evidence", "execution", "environment", "update", "returns", "notes", "findings", "pipeline", "review_threads"}
 
-var stateFields = []string{"status", "pane", "session", "machine", "parent", "reviewer", "worktree", "branch", "cleanup", "pr", "error"}
+var stateFields = []string{"status", "worker_endpoint", "parent", "reviewer", "worktree", "branch", "cleanup", "pr", "error"}
 var cursorFields = []string{"questions", "evidence", "answered", "applied", "notes", "refresh", "attention"}
 var outlineTaskKeys = []string{"id", "status", "kind", "repository", "branch", "worktree", "harness", "error"}
 
@@ -891,7 +891,7 @@ func sectionBrief(s *store.Store, task *ordjson.Object, versionsObj *ordjson.Obj
 var (
 	executionTaskKeys     = []string{"repository", "worktree", "branch", "base_sha", "kind", "harness", "status", "created_at", "started_at"}
 	executionLaunchKeys   = []string{"harness", "model", "reasoning", "preset", "argv", "observed"}
-	executionEndpointKeys = []string{"machine", "session", "pane"}
+	executionEndpointKeys = []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"}
 )
 
 // sectionExecution ports `section_execution`.
@@ -907,7 +907,7 @@ func sectionExecution(s *store.Store, task *ordjson.Object) (*ordjson.Object, er
 	result.Set("graph", graphV)
 
 	endpoints := ordjson.NewObject()
-	worker := pick(task, executionEndpointKeys)
+	worker := pick(asObject(getField(task, "worker_endpoint")), executionEndpointKeys)
 	if panes.WorkerIsClosed(task) {
 		if worker == nil {
 			worker = ordjson.NewObject()
@@ -915,6 +915,13 @@ func sectionExecution(s *store.Store, task *ordjson.Object) (*ordjson.Object, er
 		worker.Set("closed", true)
 		id, _ := task.Get("id")
 		worker.Set("note", panes.ResumeNote(fmt.Sprint(id)))
+	}
+	if store.EndpointFromContext(worker).Validate() != nil {
+		legacy := pick(task, []string{"machine", "session", "pane"})
+		if getField(legacy, "pane") != nil {
+			legacy.Set("authority", "historical")
+			endpoints.Set("historical_worker", legacy)
+		}
 	}
 	endpoints.Set("worker", worker)
 	if parentValue := getField(task, "parent"); truthy(parentValue) {

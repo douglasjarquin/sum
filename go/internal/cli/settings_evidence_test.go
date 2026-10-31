@@ -21,7 +21,7 @@ func TestSettingsShowReadsTheEvidenceBlock(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home := writeDesignatedHome(t)
 			writeSettingsFile(t, home, tc.file)
 			stdout, stderr, err := runSettings(t, home, "settings", "show")
@@ -39,7 +39,7 @@ func TestSettingsShowReadsTheEvidenceBlock(t *testing.T) {
 
 func TestSettingsSetWritesAndClearsTheEvidenceBlock(t *testing.T) {
 	home := writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	writeSettingsFile(t, home, `{"schema": 1, "capacity": {"global": 2, "per_repository": 1}}`)
 	configureNativeEventsForTest(t, home, false)
 	if _, err := runCLI(t, home, "init"); err != nil {

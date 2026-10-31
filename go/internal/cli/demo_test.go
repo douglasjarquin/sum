@@ -3,177 +3,126 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 )
 
 func TestOfflineDemo(t *testing.T) {
-	root, helper := repoReference(t)
-	base := t.TempDir()
-	repo := filepath.Join(base, "project")
-	if err := os.Mkdir(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "demo", map[string]string{"README.md": "A disposable demo project.\n"})
 	git := func(cwd string, args ...string) string {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", cwd}, args...)...)
-		out, err := cmd.CombinedOutput()
+		out, err := exec.Command("git", append([]string{"-C", cwd}, args...)...).CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 		return strings.TrimSpace(string(out))
 	}
-	git(repo, "init", "-b", "main")
-	git(repo, "config", "user.name", "sum demo")
-	git(repo, "config", "user.email", "demo@example.invalid")
-	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("A disposable demo project.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	git(repo, "add", ".")
-	git(repo, "commit", "-m", "Initial fixture")
 	mainSHA := git(repo, "rev-parse", "HEAD")
-	origin := filepath.Join(base, "origin.git")
-	git(base, "init", "-q", "--bare", "-b", "main", origin)
-	git(repo, "remote", "add", "origin", origin)
-	git(repo, "push", "-q", "-u", "origin", "main")
-	git(repo, "remote", "set-head", "origin", "main")
-	brief := filepath.Join(base, "brief.md")
-	if err := os.WriteFile(brief, []byte("Add greeting.py with greet(name) returning 'Hello, <name>!' and verify it. Ask whether to preserve punctuation. Do not publish."), 0o644); err != nil {
+	coordinator := nativeCoordinatorTerminal(t, d)
+	stranger := coordinator
+	stranger.Address = "t9"
+	stranger.CreatedMS = 9
+	pid := uint32(300000)
+	stranger.PID = &pid
+	foreground := *stranger.Foreground
+	foreground.PID = 300001
+	stranger.Foreground = &foreground
+	d.native.SetTerminal(stranger)
+	if view := d.ctlPane("t9", true, "init"); view["role"] != "developer" {
+		t.Fatalf("unregistered native terminal inherited authority: %v", view)
+	}
+	beforeOwner := readFileString(t, filepath.Join(d.home, "context.json"))
+	if view := d.ctlPane("t9", false, "init", "--role", "coordinator"); asString(view["error"]) == "" {
+		t.Fatalf("second live terminal took over: %v", view)
+	}
+	if readFileString(t, filepath.Join(d.home, "context.json")) != beforeOwner {
+		t.Fatal("failed takeover rewrote owner")
+	}
+	codegraphCalls := filepath.Join(d.base, "fake-codegraph", "calls.jsonl")
+	beforeCalls := countLines(t, codegraphCalls)
+	brief := filepath.Join(d.base, "brief.md")
+	if err := os.WriteFile(brief, []byte("Add greeting.py returning Hello, <name>! Ask before changing punctuation.\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	home := filepath.Join(base, "state")
-	if err := os.Mkdir(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte("{\"schema\": 1, \"sum_version\": \"0.1.0\", \"created_at\": \"2026-09-05T00:00:00+00:00\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	configureNativeEventsForTest(t, home, true)
-	d := &demoLab{t: t, root: root, helper: helper, home: home, base: base, env: demoEnv(t, root, base)}
-	d.ctl(false, "doctor")
-	if _, err := os.Stat(filepath.Join(home, "context.json")); err == nil {
-		t.Fatal("doctor must not bind")
-	}
-	if asString(d.ctl(true, "init")["role"]) != "coordinator" {
-		t.Fatal("first init")
-	}
-	assertNativeEventsEnabledForTest(t, home)
-	if asString(d.ctl(true, "init")["role"]) != "coordinator" {
-		t.Fatal("repeat init")
-	}
-	second := d.ctlPane("w-second:p1", true, "init")
-	if asString(second["role"]) != "developer" {
-		t.Fatalf("second role %v", second["role"])
-	}
-	owned := d.ctlPane("w-second:p1", false, "init", "--role", "coordinator")
-	if !strings.HasPrefix(asString(owned["error"]), "Coordinator is owned by pane w-parent:p1") {
-		t.Fatalf("owned %v", owned)
-	}
-	codegraphCalls := filepath.Join(base, "fake-codegraph", "calls.jsonl")
-	callsBefore := countLines(t, codegraphCalls)
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", brief, "--approved")
-	if added := countLines(t, codegraphCalls) - callsBefore; added != 0 {
-		t.Fatalf("dispatch invoked codegraph %d times; checkout creation must not index", added)
+	id, address, checkout := asString(task["id"]), workerAddress(task), asString(task["worktree"])
+	if countLines(t, codegraphCalls) != beforeCalls {
+		t.Fatal("dispatch indexed a checkout without request")
 	}
 	if asString(asMap(asMap(task["launch"])["source"])["harness"]) != "root" {
-		t.Fatalf("launch %v", task["launch"])
+		t.Fatalf("coordinator harness resolution: %v", task["launch"])
 	}
-	if !strings.Contains(asString(task["confirmation"]), "model native default") {
-		t.Fatalf("confirmation %v", task["confirmation"])
+	if launch := asMap(task["launch"]); launch["model"] != nil || asString(asMap(launch["source"])["model"]) != "native-default" {
+		t.Fatalf("native default model provenance: %v", launch)
 	}
-	taskID := asString(task["id"])
-	if "Unknown preset 'deep'" != "" {
-		err := asString(d.ctl(false, "prepare", "--repo", repo, "--brief", brief, "--approved", "--preset", "deep")["error"])
-		if !strings.Contains(err, "Unknown preset 'deep'") {
-			t.Fatalf("preset %q", err)
-		}
+	if value := d.ctl(false, "prepare", "--repo", repo, "--brief", brief, "--approved", "--preset", "deep"); !strings.Contains(asString(value["error"]), "Unknown preset 'deep'") {
+		t.Fatalf("unknown preset accepted: %v", value)
 	}
 	d.ctl(true, "preset", "set", "deep", "--harness", "codex", "--model", "gpt-5-codex", "--reasoning", "high")
 	d.ctl(true, "settings", "set", "--global", "2", "--per-repository", "1")
-	refused := d.ctl(false, "prepare", "--repo", repo, "--brief", brief, "--harness", "codex", "--approved")
-	if !strings.Contains(asString(refused["error"]), "1 of 1 slots for") {
-		t.Fatalf("admission %v", refused)
+	if refused := d.ctl(false, "prepare", "--repo", repo, "--brief", brief, "--approved"); !strings.Contains(asString(refused["error"]), "1 of 1 slots for") {
+		t.Fatalf("capacity admission: %v", refused)
 	}
-	if graph, ok := task["graph"]; ok {
-		t.Fatalf("dispatch recorded graph %v; no index was requested", graph)
+	if git(checkout, "status", "--porcelain", "--untracked-files=all") != "" {
+		t.Fatal("new task checkout is dirty")
 	}
-	worktree := asString(task["worktree"])
-	if git(worktree, "status", "--porcelain", "--untracked-files=all") != "" {
-		t.Fatal("dirty worktree")
+	if _, err := os.Stat(filepath.Join(checkout, ".codegraph")); !os.IsNotExist(err) {
+		t.Fatalf("unsolicited codegraph: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(worktree, ".codegraph")); !os.IsNotExist(err) {
-		t.Fatalf("dispatch created an index: %v", err)
-	}
-	briefText, err := os.ReadFile(asString(task["brief_path"]))
+	body, err := os.ReadFile(asString(task["brief_path"]))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(briefText), "not built") || !strings.Contains(string(briefText), "graph init "+taskID) {
-		t.Fatalf("brief does not say the graph is not built with the graph init command:\n%s", briefText)
+	if !strings.Contains(string(body), "not built") || !strings.Contains(string(body), "graph init "+id) {
+		t.Fatal("brief did not expose unbuilt graph and explicit action")
 	}
-	worker := d.ctlPane(asString(task["pane"]), true, "init")
-	if asString(worker["role"]) != "worker" || asString(worker["task"]) != taskID {
-		t.Fatalf("worker %v", worker)
+	if worker := d.ctlPane(address, true, "init"); worker["role"] != "worker" || worker["task"] != id {
+		t.Fatalf("native worker receipt: %v", worker)
 	}
-	hook := d.ctl(true, "hook", "enable")
-	pluginID := asString(hook["plugin_id"])
-	d.ctl(true, "ask", taskID, "--key", "punctuation", "--text", "Keep the exclamation mark?")
-	d.ctl(true, "ask", taskID, "--key", "second", "--text", "Second question while busy?")
-	ignored := d.herdrEvent(pluginID, "w-stranger:p7", "idle", "sum-test")
-	if asString(ignored["outcome"]) != "ignored" {
-		t.Fatalf("stranger %v", ignored)
+	startNativeObserver(t, d)
+	d.native.SetStatus("t1", "working")
+	first := d.ctlPane(address, true, "ask", id, "--key", "punctuation", "--text", "Keep the exclamation mark?")
+	second := d.ctlPane(address, true, "ask", id, "--key", "second", "--text", "Make another change?")
+	firstID, secondID := asString(asMap(first["question"])["id"]), asString(asMap(second["question"])["id"])
+	if firstID == "" || secondID == "" || firstID == secondID {
+		t.Fatal("two durable decisions were not preserved")
 	}
-	d.setEnv("FAKE_PARENT_STATUS", "idle")
-	edge := d.herdrEvent(pluginID, "w-parent:p1", "idle", "sum-test")
-	if asString(edge["outcome"]) != "handled" && asString(edge["outcome"]) != "reconciled" && edge["prompts"] == nil {
-		t.Fatalf("idle edge %v", edge)
+	d.native.SetStatus("t1", "done")
+	waitNativeCondition(t, func() bool { return len(d.native.Inputs("t1")) > 0 })
+	shown := d.ctl(true, "show", id)
+	if len(asSlice(shown["questions"])) != 2 {
+		t.Fatal("native wake closed decisions without answers")
 	}
-	d.setEnv("FAKE_PARENT_STATUS", "working")
-	q := asMap(d.ctl(true, "inbox")["tasks"])
-	if q == nil && len(asSlice(d.ctl(true, "inbox")["tasks"])) == 0 {
-		t.Fatal("inbox empty")
+	for _, decision := range []struct{ id, text string }{{secondID, "No second change."}, {firstID, "Yes, keep it."}} {
+		d.ctl(true, "answer", id, decision.id, "--text", decision.text)
+		d.ctlPane(address, true, "resolve", id, decision.id)
 	}
-	shown := d.ctl(true, "show", taskID)
-	var ids []string
-	for _, item := range asSlice(shown["questions"]) {
-		row := asMap(item)
-		if asString(row["id"]) != "" {
-			ids = append(ids, asString(row["id"]))
-		}
-	}
-	if len(ids) < 2 {
-		t.Fatalf("want two questions, got %v from %v", ids, shown["questions"])
-	}
-	qid, secondID := ids[0], ids[1]
-	d.ctl(true, "answer", taskID, secondID, "--text", "No second change.")
-	d.ctl(true, "resolve", taskID, secondID)
-	d.ctl(true, "answer", taskID, qid, "--text", "Yes, keep it.")
-	d.ctl(true, "resolve", taskID, qid)
-	if err := os.WriteFile(filepath.Join(worktree, "greeting.py"), []byte("def greet(name):\n    return f\"Hello, {name}!\"\n"), 0o644); err != nil {
+	if err = os.WriteFile(filepath.Join(checkout, "greeting.py"), []byte("def greet(name):\n    return f'Hello, {name}!'\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	git(worktree, "add", "greeting.py")
-	git(worktree, "commit", "-m", "Add greeting")
-	candidate := git(worktree, "rev-parse", "HEAD")
-	handoff := filepath.Join(base, "handoff.json")
-	if err := os.WriteFile(handoff, []byte(`{"outcome":"completed","candidate":"`+candidate+`","files":["greeting.py"]}`), 0o644); err != nil {
+	git(checkout, "add", "greeting.py")
+	git(checkout, "commit", "-m", "Add greeting")
+	candidate := git(checkout, "rev-parse", "HEAD")
+	handoff := filepath.Join(d.base, "handoff.json")
+	if err = os.WriteFile(handoff, []byte(`{"outcome":"completed","candidate":"`+candidate+`","files":["greeting.py"]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	d.ctl(true, "report", taskID, "--text", "Scripted worker added greeting.py. Candidate "+candidate+".", "--handoff", handoff)
-	d.ctlPane("w-review:p1", true, "review", taskID, "--verdict", "comment", "--candidate", candidate, "--text", "Reviewer: greeting lacks a docstring; not blocking.")
-	d.ctl(true, "verify", taskID, "--candidate", candidate, "--result", "pass", "--text", "Coordinator re-ran the assertion in the task checkout.")
+	d.workerReport(true, id, "--text", "Scripted worker added greeting.py.", "--handoff", handoff)
+	d.independentReview(true, id, "--verdict", "comment", "--candidate", candidate, "--text", "Independent reviewer: greeting lacks a docstring; not blocking.")
+	d.ctl(true, "verify", id, "--candidate", candidate, "--result", "pass", "--text", "Coordinator re-ran the assertion in the task checkout.")
 	if git(repo, "rev-parse", "HEAD") != mainSHA {
 		t.Fatal("primary checkout moved")
 	}
-	if _, err := os.Stat(filepath.Join(repo, "greeting.py")); err == nil {
-		t.Fatal("primary gained greeting.py")
+	if _, err = os.Stat(filepath.Join(repo, "greeting.py")); !os.IsNotExist(err) {
+		t.Fatalf("primary checkout gained worker changes: %v", err)
 	}
-	_ = io.Discard
-	t.Log("offline demo covered init, dispatch, remainder-free quota path skipped, hook event, ask/answer, report, review, verify")
+	t.Log("native offline demo proved explicit roles, isolated dispatch, capacity, real observer startup, durable decisions, worker report, independent review and coordinator verification")
 }
 
 // countLines counts newline-terminated records in a fake's call log; a missing log counts zero.
@@ -194,24 +143,26 @@ type demoLab struct {
 	root, helper string
 	home, base   string
 	env          []string
+	native       *hctest.Fixture
+	config       string
 }
 
 func demoEnv(t *testing.T, root, base string) []string {
 	t.Helper()
 	var env []string
 	for _, e := range os.Environ() {
-		if strings.HasPrefix(e, "SUM_") || strings.HasPrefix(e, "HERDR_") {
+		if strings.HasPrefix(e, "SUM_") || strings.HasPrefix(e, "HERDR_") || strings.HasPrefix(e, "HC_") || strings.HasPrefix(e, "PATH=") {
 			continue
 		}
 		env = append(env, e)
 	}
+	path := filepath.Dir(pinnedFixturePython(t)) + string(os.PathListSeparator) + os.Getenv("PATH")
 	if goroot := os.Getenv("GOROOT"); goroot != "" {
-		env = append(env, "PATH="+filepath.Join(goroot, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+		path = filepath.Join(goroot, "bin") + string(os.PathListSeparator) + path
 	}
+	env = append(env, "PATH="+path)
 	env = append(env,
 		"SUM_STAGE_OFFLINE=1",
-		"SUM_HERDR_BIN="+filepath.Join(root, "tests/fixtures/herdr.py"),
-		"SUM_PS_BIN="+filepath.Join(root, "tests/fixtures/ps.py"),
 		"SUM_GH_BIN="+filepath.Join(root, "tests/fixtures/gh.py"),
 		"FAKE_GH_ROOT="+filepath.Join(base, "fake-gh"),
 		"SUM_CODEGRAPH_BIN="+filepath.Join(root, "tests/fixtures/codegraph.py"),
@@ -220,12 +171,6 @@ func demoEnv(t *testing.T, root, base string) []string {
 		"FAKE_MISE_STOP="+base,
 		"SUM_LSOF_BIN="+filepath.Join(root, "tests/fixtures/lsof.py"),
 		"FAKE_LSOF_ROOT="+filepath.Join(base, "fake-lsof"),
-		"FAKE_HERDR_ROOT="+filepath.Join(base, "fake"),
-		"FAKE_PARENT_CWD="+root,
-		"HERDR_ENV=1",
-		"HERDR_PANE_ID=w-parent:p1",
-		"HERDR_SESSION=sum-test",
-		"FAKE_PARENT_STATUS=working",
 	)
 	return env
 }
@@ -250,7 +195,14 @@ func (d *demoLab) ctlPane(pane string, check bool, args ...string) map[string]an
 	cmd := exec.Command(d.helper, append([]string{"--format", "json", "--home", d.home}, args...)...)
 	env := d.env
 	if pane != "" {
-		env = append(append([]string{}, d.env...), "HERDR_PANE_ID="+pane)
+		env = append([]string{}, d.env...)
+		if d.native != nil {
+			for key, value := range d.callerEnv(pane, args) {
+				env = append(env, key+"="+value)
+			}
+		} else {
+			env = append(env, "HC_TERMINAL_ID="+pane)
+		}
 	}
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
@@ -270,35 +222,6 @@ func (d *demoLab) ctlPane(pane string, check bool, args ...string) map[string]an
 			d.t.Fatalf("json %v: %v\n%s", args, unmarshalErr, raw)
 		}
 		return map[string]any{"error": strings.TrimSpace(stderr.String() + stdout.String())}
-	}
-	return out
-}
-
-func (d *demoLab) herdrEvent(pluginID, pane, status, session string) map[string]any {
-	d.t.Helper()
-	ws := strings.Split(pane, ":")[0]
-	payload, _ := json.Marshal(map[string]any{
-		"event": "pane_agent_status_changed",
-		"data": map[string]any{
-			"type": "pane_agent_status_changed", "pane_id": pane, "workspace_id": ws, "agent_status": status, "agent": "claude",
-		},
-	})
-	cmd := exec.Command(d.helper, "--format", "json", "--home", d.home, "hook", "event")
-	cmd.Env = append(append([]string{}, d.env...),
-		"HERDR_PLUGIN_ID="+pluginID,
-		"HERDR_PLUGIN_EVENT=pane.agent_status_changed",
-		"HERDR_PLUGIN_EVENT_JSON="+string(payload),
-		"HERDR_SESSION="+session,
-	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		d.t.Fatalf("hook event: %v\n%s%s", err, stdout.String(), stderr.String())
-	}
-	var out map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		d.t.Fatalf("hook event json: %v\n%s", err, stdout.String())
 	}
 	return out
 }

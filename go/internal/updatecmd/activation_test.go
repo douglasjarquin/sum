@@ -38,7 +38,7 @@ func TestApply_interruptBeforeSelection_recordsPendingWithoutSelecting(t *testin
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
 	afterPendingWrite = func() error { return errTestInterrupt }
 
-	_, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	_, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
 	if !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestApply_interruptAfterSelection_independentRecoverRestoresOnce(t *testing
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 	afterSelect = func() error { return errTestInterrupt }
 
-	_, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity)
+	_, err := Apply(lab.store, lab.ctx, next, true)
 	if !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestApply_candidatePostCheckFailure_restoresAndChecksPrevious(t *testing.T)
 	lab := newActivationLab(t)
 	priorLog := filepath.Join(lab.home, "prior-helper.log")
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(priorLog))
-	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); err != nil {
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true); err != nil {
 		t.Fatalf("setup apply: %v", err)
 	}
 	previous := currentSHA(t, lab.root)
@@ -128,8 +128,9 @@ func TestApply_candidatePostCheckFailure_restoresAndChecksPrevious(t *testing.T)
 		t.Fatal(err)
 	}
 	next := stageNextRelease(t, lab)
+	plantNativeHelper(t, filepath.Join(lab.root, ".local/releases", next), failingStatusHelper("broken-candidate"))
 
-	_, applyErr := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity)
+	_, applyErr := Apply(lab.store, lab.ctx, next, true)
 	if applyErr == nil {
 		t.Fatal("apply of a candidate without a native helper succeeded")
 	}
@@ -160,10 +161,11 @@ func TestApply_failedCompensation_isExplicitFailure(t *testing.T) {
 	lab := newActivationLab(t)
 	selectWorkingRelease(t, lab, lab.newSHA)
 	previous := currentSHA(t, lab.root)
-	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", previous), "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\necho broken-prior >&2\nexit 1\n")
+	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", previous), failingStatusHelper("broken-prior"))
 	next := stageNextRelease(t, lab)
+	plantNativeHelper(t, filepath.Join(lab.root, ".local/releases", next), failingStatusHelper("broken-candidate"))
 
-	_, applyErr := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity)
+	_, applyErr := Apply(lab.store, lab.ctx, next, true)
 	if applyErr == nil {
 		t.Fatal("apply succeeded after both candidate and prior helpers failed")
 	}
@@ -190,7 +192,7 @@ func TestRecover_nonStartingCandidateEntrypoint(t *testing.T) {
 	next := stageNextRelease(t, lab)
 	afterSelect = func() error { return errTestInterrupt }
 
-	_, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity)
+	_, err := Apply(lab.store, lab.ctx, next, true)
 	if !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
@@ -218,7 +220,7 @@ func TestRecover_wrongCoordinatorPreservesEvidence(t *testing.T) {
 	next := stageNextRelease(t, lab)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 	afterSelect = func() error { return errTestInterrupt }
-	if _, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity); !errors.Is(err, errTestInterrupt) {
+	if _, err := Apply(lab.store, lab.ctx, next, true); !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
 	generation := pendingGeneration(t, lab.root)
@@ -230,7 +232,7 @@ func TestRecover_wrongCoordinatorPreservesEvidence(t *testing.T) {
 	other.Set("pane", "w-other:p9")
 	other.Set("machine", strField(lab.ctx, "machine"))
 	other.Set("cwd", lab.root)
-	_, err := Recover(lab.store, other, generation, RefusePreIdentity)
+	_, err := Recover(lab.store, other, generation)
 	if err == nil {
 		t.Fatal("recover from a non-coordinator pane succeeded")
 	}
@@ -250,7 +252,7 @@ func TestRecover_staleGenerationPreservesEvidence(t *testing.T) {
 	next := stageNextRelease(t, lab)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 	afterSelect = func() error { return errTestInterrupt }
-	if _, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity); !errors.Is(err, errTestInterrupt) {
+	if _, err := Apply(lab.store, lab.ctx, next, true); !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
 	journal := readActivationBytes(t, lab.root)
@@ -276,7 +278,7 @@ func TestRecover_conflictingSelectionPreservesEvidence(t *testing.T) {
 	next := stageNextRelease(t, lab)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 	afterSelect = func() error { return errTestInterrupt }
-	if _, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity); !errors.Is(err, errTestInterrupt) {
+	if _, err := Apply(lab.store, lab.ctx, next, true); !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
 	generation := pendingGeneration(t, lab.root)
@@ -305,7 +307,7 @@ func TestRecover_missingEvidencePreservesHistory(t *testing.T) {
 	next := stageNextRelease(t, lab)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 	afterSelect = func() error { return errTestInterrupt }
-	if _, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity); !errors.Is(err, errTestInterrupt) {
+	if _, err := Apply(lab.store, lab.ctx, next, true); !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
 	generation := pendingGeneration(t, lab.root)
@@ -342,7 +344,7 @@ func TestApply_refusesWhileActivationPending(t *testing.T) {
 	lab := newActivationLab(t)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), workingHelper(""))
 	afterPendingWrite = func() error { return errTestInterrupt }
-	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity); !errors.Is(err, errTestInterrupt) {
+	if _, err := Apply(lab.store, lab.ctx, lab.newSHA, true); !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
 	generation := pendingGeneration(t, lab.root)
@@ -350,7 +352,7 @@ func TestApply_refusesWhileActivationPending(t *testing.T) {
 		t.Fatal("pending activation was not recorded")
 	}
 
-	_, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	_, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
 	if err == nil {
 		t.Fatal("apply succeeded while activation is pending")
 	}
@@ -372,7 +374,7 @@ func TestApply_reconcilesStaleKnownGoodWhenHeadAlreadyAtOrigin(t *testing.T) {
 	serving := currentSHA(t, lab.root)
 	plantStaleKnownGood(t, lab, lab.oldSHA)
 
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
 	assertNoRecoveryHistoryRefusal(t, err)
 	if err != nil {
 		t.Fatalf("apply after a clean pull with stale known-good: %v", err)
@@ -408,7 +410,7 @@ func TestApply_reconcilesStaleKnownGoodThenActivatesPulledSHA(t *testing.T) {
 		t.Fatalf("runtime moved before apply: %s, want %s", got, lab.newSHA)
 	}
 
-	view, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity)
+	view, err := Apply(lab.store, lab.ctx, next, true)
 	assertNoRecoveryHistoryRefusal(t, err)
 	if err != nil {
 		t.Fatalf("apply of pulled SHA with stale known-good: %v", err)
@@ -439,7 +441,7 @@ func TestApply_staleKnownGoodDirtyCheckoutStillActivatesRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	view, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity)
+	view, err := Apply(lab.store, lab.ctx, next, true)
 	assertNoRecoveryHistoryRefusal(t, err)
 	if err != nil {
 		t.Fatalf("dirty apply with stale known-good: %v", err)
@@ -475,7 +477,7 @@ func TestApply_staleKnownGoodInterruptRecoversServingDefaultNotStale(t *testing.
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 	afterSelect = func() error { return errTestInterrupt }
 
-	_, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity)
+	_, err := Apply(lab.store, lab.ctx, next, true)
 	assertNoRecoveryHistoryRefusal(t, err)
 	if !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
@@ -506,7 +508,7 @@ func TestRecover_wrongInstancePreservesEvidence(t *testing.T) {
 	next := stageNextRelease(t, lab)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 	afterSelect = func() error { return errTestInterrupt }
-	if _, err := Apply(lab.store, lab.ctx, next, true, RefusePreIdentity); !errors.Is(err, errTestInterrupt) {
+	if _, err := Apply(lab.store, lab.ctx, next, true); !errors.Is(err, errTestInterrupt) {
 		t.Fatalf("apply interrupt: %v", err)
 	}
 	generation := pendingGeneration(t, lab.root)
@@ -548,7 +550,7 @@ func newActivationLab(t *testing.T) *applyLab {
 func selectWorkingRelease(t *testing.T, lab *applyLab, sha string) {
 	t.Helper()
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", sha), workingHelper(""))
-	if _, err := Apply(lab.store, lab.ctx, sha, true, RefusePreIdentity); err != nil {
+	if _, err := Apply(lab.store, lab.ctx, sha, true); err != nil {
 		t.Fatalf("setup apply %s: %v", sha, err)
 	}
 }
@@ -614,12 +616,24 @@ func plantNativeHelper(t *testing.T, runtimeRoot, body string) {
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if raw, err := ordjson.ReadFile(filepath.Join(runtimeRoot, "release.json")); err == nil {
+		manifest := asObject(raw)
+		dependencies, _ := manifest.Get("dependencies")
+		native, _ := asObject(dependencies).Get("native")
+		entry, _ := asObject(native).Get("sumctl")
+		if entry != nil {
+			asObject(entry).Set("sha256", sha256Hex([]byte(body)))
+			if err = ordjson.WriteFile(filepath.Join(runtimeRoot, "release.json"), manifest); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 }
 
-const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"herdr_cli":"0.9.5","mcp":{"server":"herdr-mesh-sum","version":"0.1.0","tools":10}},"supports":{"state_schema":[1],"brief_schema":[1],"machine_identity":[1]}}`
+const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"hc_core":"0.1.14","hc_generation":1,"endpoint_schema":2,"notification_protocol":2},"supports":{"state_schema":[2],"brief_schema":[1],"machine_identity":[1],"wake_protocol":[1],"endpoint_schema":[2],"notification_protocol":[2],"observer_protocol":[1]}}`
 
 func workingHelper(logPath string) string {
-	prefix := "#!/bin/sh\nif [ \"$1\" = \"release-contract\" ]; then echo '" + releaseContractJSON + "'; exit 0; fi\n"
+	prefix := "#!/bin/sh\nif [ \"$1\" = \"--format\" ]; then echo '" + releaseContractJSON + "'; exit 0; fi\n"
 	if logPath == "" {
 		return prefix + "exit 0\n"
 	}
@@ -647,7 +661,7 @@ func independentRecover(t *testing.T, lab *applyLab, generation string) (*ordjso
 	if err != nil {
 		t.Fatal(err)
 	}
-	return Recover(st, lab.ctx, generation, RefusePreIdentity)
+	return Recover(st, lab.ctx, generation)
 }
 
 func hasCurrent(t *testing.T, root string) bool {
@@ -733,4 +747,8 @@ func assertTaskBrief(t *testing.T, lab *applyLab, want string) {
 	if len(list) != 1 {
 		t.Fatalf("task questions mutated: %s", dump(questions))
 	}
+}
+
+func failingStatusHelper(detail string) string {
+	return "#!/bin/sh\nif [ \"$1\" = --format ]; then printf '%s\\n' '" + releaseContractJSON + "'; exit 0; fi\nif [ \"$1\" = --version ]; then exit 0; fi\necho '" + detail + "' >&2\nexit 1\n"
 }

@@ -23,10 +23,10 @@ environment:
     ok: true
   skills:
     files[4]{skill,path,bytes,sha256}:
-      sum-work,$ROOT/skills/sum-work/SKILL.md,15484,8c0bfac8501224cb
-      sum-deliver,$ROOT/skills/sum-deliver/SKILL.md,36872,ce3e088954ee3aff
-      sum-status,$ROOT/skills/sum-status/SKILL.md,27551,8ebfa74b8aa31d94
-      sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,19340,c7a65ae919deb61e
+      sum-work,$ROOT/skills/sum-work/SKILL.md,16248,cc40eedc11cbc2f4
+      sum-deliver,$ROOT/skills/sum-deliver/SKILL.md,36755,0ad11cfb98834e5a
+      sum-status,$ROOT/skills/sum-status/SKILL.md,25960,f0aad56a58317242
+      sum-dispatch,$ROOT/skills/sum-dispatch/SKILL.md,19888,2add0328b8d9c02e
     helper: $ROOT/bin/sumctl
     instruction: "Read a referenced file with your file tool only when its topic is needed. These are plain Markdown files, not a promise that your harness implements a skill standard. Paths are absolute installed paths, never relative to a checkout."
   runtime:
@@ -40,5 +40,5 @@ environment:
       discover: $ROOT/bin/sumctl --home $HOME env discover t-0e0e0e0e0e0e
       record: "$ROOT/bin/sumctl --home $HOME env record t-0e0e0e0e0e0e --url http://127.0.0.1:PORT"
       inspect: $ROOT/bin/sumctl --home $HOME env inspect t-0e0e0e0e0e0e
-    note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, pane, or container."
+    note: "No environment record. The task continues normally; `env discover` records the repository's declared commands, `env record` an observed URL, log, terminal, or container."
   note: Paths refer to this installation's records and runtime; nothing here is read from the worker's checkout. `dev` is the task-local environment record as last observed.

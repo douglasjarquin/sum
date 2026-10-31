@@ -12,15 +12,15 @@ import (
 )
 
 type DispatchMetadata struct {
-	Repository  string
-	Project     *ordjson.Object
-	Launch      *ordjson.Object
-	RuntimeRoot string
-	Worktree    string
-	GitRoot     string
-	Head        string
-	Branch      string
-	Workspace   string
+	Repository   string
+	Project      *ordjson.Object
+	Launch       *ordjson.Object
+	RuntimeRoot  string
+	Worktree     string
+	GitRoot      string
+	Head         string
+	Branch       string
+	GitCommonDir string
 }
 
 func AddDispatchMetadata(policy *ordjson.Object, metadata DispatchMetadata) {
@@ -33,7 +33,8 @@ func AddDispatchMetadata(policy *ordjson.Object, metadata DispatchMetadata) {
 	worktree.Set("git_root", metadata.GitRoot)
 	worktree.Set("head", metadata.Head)
 	worktree.Set("branch", metadata.Branch)
-	worktree.Set("workspace", metadata.Workspace)
+	policy.Set("dispatch_schema", json.Number("2"))
+	worktree.Set("git_common_dir", metadata.GitCommonDir)
 	policy.Set("prepared_worktree", worktree)
 }
 
@@ -69,7 +70,7 @@ func sourceRuntime(root string) *ordjson.Object {
 
 func delivery(launch *ordjson.Object) *ordjson.Object {
 	result := ordjson.NewObject()
-	result.Set("mode", "herdr-agent")
+	result.Set("mode", "hc-template")
 	tool := ordjson.NewObject()
 	if launch != nil {
 		for _, key := range []string{"harness", "model", "reasoning", "same_as_root", "preset"} {

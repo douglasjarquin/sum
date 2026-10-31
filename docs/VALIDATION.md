@@ -1,4 +1,8 @@
-# MVP validation
+# Historical MVP validation
+
+These are dated pre-HC results, preserved as historical evidence.
+They do not certify the current HC runtime, current harness qualification, schema-generation migration or production activation.
+Use [current acceptance](ACCEPTANCE.md) and candidate-specific verification artifacts for the HC contract.
 
 Validation date: **2026-09-05**. This report distinguishes executed checks from supplied but unexecuted acceptance tests.
 

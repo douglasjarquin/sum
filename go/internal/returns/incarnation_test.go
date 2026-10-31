@@ -32,7 +32,7 @@ func (l *passLab) restarted(cwd string) map[string]any {
 
 func workerRecord(t *testing.T, l *passLab, pane string) *ordjson.Object {
 	t.Helper()
-	reg, err := l.s.Registration(store.Endpoint{Machine: l.host, Session: "lab", Pane: pane})
+	reg, err := l.s.Registration(l.nativeEndpoint("lab", pane))
 	if err != nil || reg == nil {
 		t.Fatalf("registration %v: %v", reg, err)
 	}
@@ -60,7 +60,7 @@ func TestPassReplacedWorkerIsNotPromptedAndItsReturnStaysPending(t *testing.T) {
 	}
 	rows, _ := result.Get("recipients")
 	reason, _ := rows.([]any)[0].(*ordjson.Object).Get("reason")
-	if !strings.Contains(reason.(string), incarnation.Replaced) || !strings.Contains(reason.(string), "bind TASK --worker-pane") {
+	if !strings.Contains(reason.(string), incarnation.Replaced) || !strings.Contains(reason.(string), "rebind") {
 		t.Fatalf("reason = %v, want the replaced outcome and the rebind recovery", reason)
 	}
 }
@@ -88,8 +88,8 @@ func TestIncarnationRecordedDuringObservationIsJudgedAtTheClaim(t *testing.T) {
 	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "get"}, "panes": map[string]any{"w1:p1": l.pane("idle", l.worktree(a))}})
 	h := l.startHelper("a", []string{a}, "worker")
 	l.awaitHeld(h, "get", "w1:p1")
-	other := incarnation.Evidence{Terminal: "term-someone-else", Shell: &incarnation.Shell{PID: 9999, Started: "2025-01-01T00:00:00Z"}}.Record(store.Now())
-	if err := l.s.SetIncarnation(store.Endpoint{Machine: l.host, Session: "lab", Pane: "w1:p1"}, other); err != nil {
+	other := incarnation.NativeEvidence{Endpoint: l.nativeEndpoint("lab", "w1:p1").Native(), PID: 9999}.Record(store.Now())
+	if err := l.s.SetIncarnation(l.nativeEndpoint("lab", "w1:p1"), other); err != nil {
 		t.Fatal(err)
 	}
 	l.release("w1:p1")
@@ -119,54 +119,53 @@ func TestPassUncertainDeliveryStaysUncertainAfterTheAddressIsRecycled(t *testing
 	}
 }
 
-// A live handoff (new terminal, same shell) is the same worker and is prompted once.
-func TestPassHandoffRecipientIsPromptedOnce(t *testing.T) {
-	psFixture(t, `{"4242": "2025-01-01T00:00:00Z"}`)
+func TestPassHandoffRequiresExplicitNativeBindingThenPromptsOnce(t *testing.T) {
 	l := newPassLab(t)
-	a := l.worker("lab", "w1:p1")
-	pane := l.pane("idle", l.worktree(a))
-	pane["terminal_id"] = "term-after-handoff"
-	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": pane}})
+	id := l.worker("lab", "w1:p1")
+	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": l.restarted(l.worktree(id))}})
 	result, _ := l.pump(0)
-	if got := states(result)["w1:p1"]; got != "submitted" || countCalls(l.calls(), "prompt") != 1 {
-		t.Fatalf("state = %s with %d prompts, want one submission", got, countCalls(l.calls(), "prompt"))
+	if states(result)["w1:p1"] != "refused" || countCalls(l.calls(), "prompt") != 0 {
+		t.Fatal("replacement inherited worker authority")
 	}
-	if inc := workerRecord(t, l, "w1:p1"); inc == nil || func() any { v, _ := inc.Get("terminal"); return v }() != "term-after-handoff" {
-		t.Fatalf("worker record = %v, want the handoff terminal recorded", inc)
+	endpoint := l.nativeEndpoint("lab", "w1:p9")
+	endpoint.Task = id
+	endpoint.Cwd = l.worktree(id)
+	endpoint.BindingGeneration = 2
+	l.endpoints["lab/w1:p9"] = endpoint
+	l.bind(endpoint)
+	l.mutate(id, func(task *ordjson.Object) { task.Set("worker_endpoint", endpoint.Object()) })
+	result, _ = l.pump(0)
+	if states(result)["w1:p9"] != "submitted" || countCalls(l.calls(), "prompt") != 1 {
+		t.Fatalf("explicitly rebound answer %v", states(result))
 	}
 }
 
-// A worker whose native session is reported after launch has it recorded at the claim, so a later native restore
-// is recognized and prompted instead of refused.
-func TestPassRecordsALateNativeSessionSoARestoreIsRecognized(t *testing.T) {
-	psFixture(t, `{"5151": "2030-01-01T00:00:00Z"}`)
+func TestPassLateConversationMetadataNeverAdoptsANativeReplacement(t *testing.T) {
 	l := newPassLab(t)
-	a := l.worker("lab", "w1:p1")
-	pane := l.pane("idle", l.worktree(a))
-	pane["agent_session"] = map[string]any{"agent": "claude", "kind": "id", "source": "herdr:claude", "value": "conv-W"}
+	id := l.worker("lab", "w1:p1")
+	pane := l.pane("idle", l.worktree(id))
+	pane["agent_session"] = map[string]any{"agent": "claude", "kind": "id", "value": "historical-conversation"}
 	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": pane}})
 	if result, _ := l.pump(0); states(result)["w1:p1"] != "submitted" {
-		t.Fatalf("first pass = %v", states(result))
+		t.Fatal("current receipt-bound worker was not notified")
 	}
-	session, _ := workerRecord(t, l, "w1:p1").Get("agent_session")
-	if value, _ := session.(*ordjson.Object).Get("value"); value != "conv-W" {
-		t.Fatalf("recorded session = %v, want conv-W", session)
+	if _, has := workerRecord(t, l, "w1:p1").Get("agent_session"); has {
+		t.Fatal("native observation fabricated a conversation identifier")
 	}
-	// The worker applies nothing; a second answer is owed after Herdr restores the conversation.
-	l.mutate(a, func(task *ordjson.Object) {
-		questions, _ := task.Get("questions")
+	l.mutate(id, func(task *ordjson.Object) {
+		raw, _ := task.Get("questions")
 		q := ordjson.NewObject()
 		q.Set("id", "q2")
 		q.Set("status", "answered")
-		q.Set("created_at", "2026-09-24T00:02:00+00:00")
-		q.Set("answered_at", "2026-09-24T00:03:00+00:00")
-		task.Set("questions", append(questions.([]any), q))
+		q.Set("created_at", store.Now())
+		q.Set("answered_at", store.Now())
+		task.Set("questions", append(raw.([]any), q))
 	})
-	restored := l.restarted(l.worktree(a))
-	restored["agent_session"] = pane["agent_session"]
-	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": restored}})
-	if result, _ := l.pump(0); states(result)["w1:p1"] != "submitted" || countCalls(l.calls(), "prompt") != 2 {
-		t.Fatalf("after restore = %v with %d prompts, want the restored worker prompted", states(result), countCalls(l.calls(), "prompt"))
+	replacement := l.restarted(l.worktree(id))
+	replacement["agent_session"] = pane["agent_session"]
+	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": replacement}})
+	if result, _ := l.pump(0); states(result)["w1:p1"] != "refused" || countCalls(l.calls(), "prompt") != 1 {
+		t.Fatal("conversation metadata adopted a replacement")
 	}
 }
 

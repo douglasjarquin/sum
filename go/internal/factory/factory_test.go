@@ -67,11 +67,7 @@ func enroll(t *testing.T, st *store.Store, name string) {
 }
 
 func ctx() *ordjson.Object {
-	o := ordjson.NewObject()
-	o.Set("machine", "testhost")
-	o.Set("session", "sum-test")
-	o.Set("pane", "w1:p1")
-	return o
+	return store.Endpoint{Schema: 2, Backend: "hc", Machine: "testhost", Session: "sum-test", Socket: "/tmp/hc.sock", CoreID: "factory-core", Address: "t1", CreatedMS: 1, Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1}.Object()
 }
 
 func fakeGh(t *testing.T, issues []map[string]any, bodies map[string]string) string {

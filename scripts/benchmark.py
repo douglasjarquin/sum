@@ -1,191 +1,181 @@
 #!/usr/bin/env python3
+"""Benchmark current native helper behavior and isolated HC transport."""
 from __future__ import annotations
 
 import argparse
 import concurrent.futures
 import json
+import hashlib
 from pathlib import Path
 import platform
 import random
-import shutil
+import resource
 import subprocess
 import sys
 import tempfile
 import time
-import uuid
 
-from benchmark_fixture import BenchmarkError, add_tasks, clone_case, fixture, git_repo, invoke_checked, measured_case, run_plain, sample, tool_version
+from benchmark_fixture import (BenchmarkError, SUMCTL, actor_env, add_tasks, clone_case, fixture, git_repo,
+                               invoke_checked, measured_case, measured_process, rpc, run_plain, tool_version)
+from benchmark_real import run_real, transport_sample
 from benchmark_report import INVENTORY, decide, frequency_rows, weighted_opportunities, write_report
-from benchmark_real import run_real
-
 
 ROOT = Path(__file__).resolve().parents[1]
-SUMCTL = ROOT / "bin" / "sumctl"
 ALL_SCENARIOS = (
     "startup.version.cold", "startup.help.warm-fs", "read.settings", "read.status.empty",
     "read.status.12-workers", "read.status.archived-25", "read.status.archived-100", "read.inbox",
     "read.show", "read.context", "write.ask", "write.report", "role.init", "brief.regenerate",
-    "dispatch.prepare", "herdr.fake.agent-list", "herdr.real.workspace-list", "mcp.real.agent-list",
-    "contention.concurrent-writes", "failure.show-missing", "timeout.herdr-prompt", "question.worker-to-inbox",
+    "dispatch.prepare", "hc.fixture.terminal-list", "hc.real.terminal-list",
+    "contention.concurrent-writes", "failure.show-missing", "timeout.hc-response", "question.worker-to-inbox",
 )
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--output", type=Path, default=ROOT / "benchmarks" / "issue-37")
+def command(case, *args):
+    return [SUMCTL, "--format", "json", "--home", case["root"], *args]
+
+
+def process_group(case, calls, parallel=False):
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    started = time.perf_counter_ns()
+    def invoke(item):
+        role, args = item
+        return subprocess.run([str(part) for part in command(case, *args)], env=actor_env(case, role), text=True, capture_output=True, timeout=60)
+    if parallel:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(invoke, calls))
+    else:
+        results = [invoke(item) for item in calls]
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    if any(result.returncode for result in results):
+        raise BenchmarkError("\n".join(result.stderr for result in results if result.returncode))
+    if not parallel and case["task"]["id"] not in results[-1].stdout:
+        raise BenchmarkError("durable worker question did not reach the inbox view")
+    return dict(wall_ms=round((time.perf_counter_ns() - started) / 1_000_000, 3),
+                cpu_ms=round(1000 * (after.ru_utime - before.ru_utime + after.ru_stime - before.ru_stime), 3),
+                peak_rss_kb=None, stdout_bytes=sum(len(row.stdout.encode()) for row in results),
+                stderr_bytes=sum(len(row.stderr.encode()) for row in results), helper_invocations=len(calls),
+                exit_codes=[row.returncode for row in results], measurement="process-group",
+                cpu_scope="all measured helper children; parallel CPU counted once", internal_phases=None, subprocess_count=None)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=ROOT / "benchmarks/current")
     parser.add_argument("--samples", type=int, default=15)
-    parser.add_argument("--skip-real-herdr", action="store_true")
-    parser.add_argument("--skip-mcp", action="store_true")
+    parser.add_argument("--skip-real-hc", action="store_true")
+    parser.add_argument("--hc-binary", type=Path)
     parser.add_argument("--skip-timeout", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.samples <= 200:
         parser.error("--samples must be between 1 and 200")
-    source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    source_dirty = bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
+    args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="sum-benchmark-", dir="/tmp") as tmp:
-        base = Path(tmp).resolve()
-        source = fixture(base / "source")
-        homes = {"active": source}
-        empty = clone_case(base, source, "empty")
-        shutil.rmtree(empty["home"] / "tasks")
-        (empty["home"] / "tasks").mkdir()
-        homes["empty"] = empty
-        for label, count, status in (("workers", 11, "running"), ("archived25", 25, "archived"), ("archived100", 100, "archived")):
-            row = clone_case(base, source, label)
-            add_tasks(row["home"], source["task"]["id"], count, status)
-            homes[label] = row
-        task_id = source["task"]["id"]
-        specs = [
-            ("startup.version.cold", [SUMCTL, "--version"], "empty", "w-parent:p1", 0),
-            ("startup.help.warm-fs", [SUMCTL, "--help"], "empty", "w-parent:p1", 1),
-            ("read.settings", [SUMCTL, "--home", homes["active"]["home"], "settings", "show"], "active", "w-parent:p1", 1),
-            ("read.status.empty", [SUMCTL, "--home", homes["empty"]["home"], "status"], "empty", "w-parent:p1", 1),
-            ("read.status.12-workers", [SUMCTL, "--home", homes["workers"]["home"], "status"], "workers", "w-parent:p1", 1),
-            ("read.status.archived-25", [SUMCTL, "--home", homes["archived25"]["home"], "status"], "archived25", "w-parent:p1", 1),
-            ("read.status.archived-100", [SUMCTL, "--home", homes["archived100"]["home"], "status"], "archived100", "w-parent:p1", 1),
-            ("read.inbox", [SUMCTL, "--home", homes["active"]["home"], "inbox"], "active", "w-parent:p1", 1),
-            ("read.show", [SUMCTL, "--home", homes["active"]["home"], "show", task_id], "active", "w-parent:p1", 1),
-            ("read.context", [SUMCTL, "--home", homes["active"]["home"], "context", task_id, "--role", "worker"], "active", "w-parent:p1", 1),
-            ("herdr.fake.agent-list", [SUMCTL, "--home", homes["active"]["home"], "herdr", "--", "agent", "list"], "active", "w-parent:p1", 1),
-            ("failure.show-missing", [SUMCTL, "--home", homes["active"]["home"], "show", "t-000000000000"], "active", "w-parent:p1", 1),
-        ]
-        random.Random(37).shuffle(specs)
-        scenarios = []
-        for case_id, command, home_key, pane, warmups in specs:
-            env = {**homes[home_key]["env"], "HERDR_PANE_ID": pane}
-            expected = 1 if case_id == "failure.show-missing" else 0
-            scenarios.append(measured_case(case_id, args.samples, lambda tag, c=command, e=env, i=case_id, x=expected: invoke_checked(c, e, base / "traces" / f"{i}-{tag}.jsonl", x), warmups))
-        fresh_cases = {
-            "write.ask": lambda case: [SUMCTL, "--home", case["home"], "ask", task_id, "--key", uuid.uuid4().hex[:8], "--text", "Benchmark question?"],
-            "write.report": lambda case: [SUMCTL, "--home", case["home"], "report", task_id, "--text", "Benchmark report."],
-            "role.init": lambda case: [SUMCTL, "--home", case["home"], "init"],
-            "brief.regenerate": lambda case: [SUMCTL, "--home", case["home"], "brief", "regenerate", task_id],
-        }
-        for case_id, command_builder in fresh_cases.items():
-            def operation(tag, current=case_id, builder=command_builder):
-                case = clone_case(base, source, f"{current}-{tag}")
-                pane = "w-dev:p1" if current == "role.init" else (source["task"]["pane"] if current in {"write.ask", "write.report"} else "w-parent:p1")
-                if current == "brief.regenerate":
-                    worker_env = {**case["env"], "HERDR_PANE_ID": source["task"]["pane"]}
-                    question = run_plain([SUMCTL, "--home", case["home"], "ask", task_id, "--key", tag[-8:], "--text", "Regenerate benchmark brief?"], worker_env)["question"]
-                    run_plain([SUMCTL, "--home", case["home"], "answer", task_id, question["id"], "--text", "Yes."], case["env"])
-                command = builder(case)
-                return invoke_checked(command, {**case["env"], "HERDR_PANE_ID": pane}, base / "traces" / f"{current}-{tag}.jsonl")
-            scenarios.append(measured_case(case_id, args.samples, operation))
-        def prepare_operation(tag):
-            case = clone_case(base, source, f"dispatch-{tag}")
-            repo = base / f"dispatch-repo-{tag}"
-            git_repo(repo)
-            command = [SUMCTL, "--home", case["home"], "prepare", "--repo", repo, "--brief", source["brief"], "--harness", "codex", "--approved"]
-            return invoke_checked(command, case["env"], base / "traces" / f"dispatch-{tag}.jsonl", timeout=120)
-        scenarios.append(measured_case("dispatch.prepare", min(args.samples, 5), prepare_operation, 0))
-        def question_operation(tag):
-            case = clone_case(base, source, f"question-{tag}")
-            trace = base / "traces" / f"question-{tag}.jsonl"
-            trace.parent.mkdir(parents=True, exist_ok=True)
-            started = time.perf_counter_ns()
-            first_env = {**case["env"], "HERDR_PANE_ID": source["task"]["pane"], "SUM_MEASURE_FILE": str(trace), "SUM_MEASURE_PARENT_NS": str(started)}
-            ask = subprocess.run([str(SUMCTL), "--home", str(case["home"]), "ask", task_id, "--key", tag[-8:], "--text", "Benchmark question?"], env=first_env, text=True, capture_output=True, timeout=60)
-            inbox_env = {**case["env"], "HERDR_PANE_ID": "w-parent:p1", "SUM_MEASURE_FILE": str(trace), "SUM_MEASURE_PARENT_NS": str(time.perf_counter_ns())}
-            inbox = subprocess.run([str(SUMCTL), "--home", str(case["home"]), "inbox"], env=inbox_env, text=True, capture_output=True, timeout=60)
-            if ask.returncode or inbox.returncode or task_id not in inbox.stdout:
-                raise BenchmarkError(ask.stderr + inbox.stderr)
-            records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
-            return sample(records, (time.perf_counter_ns() - started) / 1_000_000)
-        scenarios.append(measured_case("question.worker-to-inbox", args.samples, question_operation))
-        def concurrent_operation(tag):
-            case = clone_case(base, source, f"concurrent-{tag}")
-            trace = base / "traces" / f"concurrent-{tag}.jsonl"
-            started = time.perf_counter_ns()
-            def ask(index):
-                env = {**case["env"], "HERDR_PANE_ID": source["task"]["pane"], "SUM_MEASURE_FILE": str(trace), "SUM_MEASURE_PARENT_NS": str(time.perf_counter_ns())}
-                return subprocess.run([str(SUMCTL), "--home", str(case["home"]), "ask", task_id, "--key", f"{tag}-{index}", "--text", f"Concurrent benchmark {index}?"], env=env, text=True, capture_output=True, timeout=60)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-                results = list(pool.map(ask, range(4)))
-            if any(result.returncode for result in results):
-                raise BenchmarkError("\n".join(result.stderr for result in results))
-            records = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
-            return sample(records, (time.perf_counter_ns() - started) / 1_000_000)
-        scenarios.append(measured_case("contention.concurrent-writes", min(args.samples, 5), concurrent_operation, 0))
-        if args.skip_timeout:
-            scenarios.append({"id": "timeout.herdr-prompt", "status": "not-run", "reason": "disabled by --skip-timeout"})
-        else:
-            def timeout_operation(tag):
-                case = clone_case(base, source, f"timeout-{tag}")
-                env = {**case["env"], "HERDR_PANE_ID": source["task"]["pane"], "FAKE_PROMPT_HANG": "6"}
-                command = [SUMCTL, "--home", case["home"], "ask", task_id, "--key", tag[-8:], "--text", "Bounded timeout benchmark?"]
-                return invoke_checked(command, env, base / "traces" / f"timeout-{tag}.jsonl", timeout=15)
-            scenarios.append(measured_case("timeout.herdr-prompt", 1, timeout_operation, 0))
-        if args.skip_real_herdr:
-            real = [
-                {"id": "herdr.real.workspace-list", "status": "not-run", "reason": "disabled by --skip-real-herdr"},
-                {"id": "mcp.real.agent-list", "status": "not-run", "reason": "disabled because the real-Herdr lab is off"},
+    source = dict(sha=subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+                  dirty=bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True).strip()))
+    with tempfile.TemporaryDirectory(prefix="sum-benchmark-", dir="/tmp") as temporary:
+        base = Path(temporary)
+        with fixture(base / "source") as active:
+            homes = dict(active=active)
+            empty = clone_case(base, active, "empty")
+            (empty["home"] / "tasks").rename(empty["home"] / "retained-source-tasks")
+            (empty["home"] / "tasks").mkdir()
+            homes["empty"] = empty
+            for label, count, status in (("workers", 11, "running"), ("archived25", 25, "archived"), ("archived100", 100, "archived")):
+                row = clone_case(base, active, label)
+                add_tasks(row["home"], active["task"]["id"], count, status)
+                homes[label] = row
+            task_id = active["task"]["id"]
+            specs = [
+                ("startup.version.cold", "empty", ["--version"], 0),
+                ("startup.help.warm-fs", "empty", ["--help"], 1),
+                ("read.settings", "active", ["settings", "show"], 1),
+                *[(name, home, ["status"], 1) for name, home in (("read.status.empty", "empty"), ("read.status.12-workers", "workers"), ("read.status.archived-25", "archived25"), ("read.status.archived-100", "archived100"))],
+                ("read.inbox", "active", ["inbox"], 1),
+                ("read.show", "active", ["show", task_id], 1),
+                ("read.context", "active", ["context", task_id, "--role", "worker"], 1),
+                ("failure.show-missing", "active", ["show", "t-000000000000"], 1),
             ]
-            cleanup = {"real_lab": "not-started", "reason": "disabled by --skip-real-herdr"}
-        else:
-            real, cleanup = run_real(base, args.samples, not args.skip_mcp)
-            real_log = Path(cleanup.get("log", ""))
-            if real_log.is_file():
-                retained_log = args.output / "real-herdr.log"
-                shutil.copy2(real_log, retained_log)
-                cleanup["log"] = str(retained_log)
-        scenarios.extend(real)
-        scenarios.sort(key=lambda row: ALL_SCENARIOS.index(row["id"]))
-        overhead = []
-        for _ in range(args.samples):
-            started = time.perf_counter_ns()
-            subprocess.run([sys.executable, "-c", "pass"], check=True)
-            overhead.append((time.perf_counter_ns() - started) / 1_000_000)
-        frequency = frequency_rows()
-        opportunities = weighted_opportunities(scenarios, frequency)
-        raw = {
-            "schema": 1,
-            "source": {"sha": source_sha, "dirty": source_dirty},
-            "environment": {"machine": platform.node(), "platform": platform.platform(), "python": platform.python_version(), "git": tool_version("git", "--version"), "runner_node": tool_version("node", "--version"), "runner_herdr": tool_version("herdr", "--version"), "real_lab_tools": cleanup.get("tools")},
-            "methodology": {"warmups": 1, "randomization_seed": 37, "outliers": "retained", "harness_overhead_ms": round(sorted(overhead)[len(overhead) // 2], 3), "cache_conditions": {"cold": "new process; first filesystem sample retained", "warm-fs": "unrecorded warmup before new-process samples"}},
-            "inventory": INVENTORY,
-            "scenarios": scenarios,
-            "frequency": frequency,
-            "weighted_opportunities": opportunities,
-            "cleanup": cleanup,
-            "alternatives": [
-                {"name": "avoid repeated full task scans", "basis": "compare empty, 12-worker, and archived-task status scenarios", "mixed_into_language_claim": False},
-                {"name": "prefer bounded context reads over full show", "basis": "compare read.context and read.show", "mixed_into_language_claim": False},
-                {"name": "batch only reads the native APIs already support", "basis": "one agent-list snapshot already replaces per-worker observation", "mixed_into_language_claim": False},
-                {"name": "remove redundant subprocess hops before porting", "basis": "subprocess counts and external phase time in raw samples", "mixed_into_language_claim": False},
-            ],
-            "limitations": [
-                "Read-call frequency was not retained before this opt-in instrumentation, so coordinator read counts are simulated and labelled.",
-                "Python-owned time is an upper bound after subtracting measured subprocess, state-I/O, and lock-wait phases; it includes shell and harness overhead.",
-                "No model, network provider, live production state, default Herdr session, or provider quota was exercised.",
-                "No benchmark number is described as end-to-end product improvement.",
-            ],
-        }
-        raw["decision"] = decide(scenarios, opportunities)
-        (args.output / "raw.json").write_text(json.dumps(raw, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        write_report(raw, args.output / "report.md")
-        print(json.dumps({"outcome": raw["decision"]["outcome"], "raw": str(args.output / "raw.json"), "report": str(args.output / "report.md"), "scenarios": len(scenarios)}))
+            random.Random(37).shuffle(specs)
+            scenarios = []
+            for case_id, home_key, argv, warmups in specs:
+                case = homes[home_key]
+                scenarios.append(measured_case(case_id, args.samples,
+                    lambda tag, c=case, a=argv, current=case_id: invoke_checked(command(c, *a), actor_env(c), base / f"{current}-{tag}.json", expected=1 if current == "failure.show-missing" else 0), warmups))
+            fresh = {"write.ask": ("worker", lambda _: ["ask", task_id, "--key", "question", "--text", "Benchmark question?"]),
+                     "write.report": ("worker", lambda _: ["report", task_id, "--text", "Benchmark report."]),
+                     "role.init": ("coordinator", lambda _: ["init", "--role", "developer"]),
+                     "brief.regenerate": ("coordinator", lambda _: ["brief", "regenerate", task_id])}
+            for case_id, (role, builder) in fresh.items():
+                def operation(tag, current=case_id, actor=role, build=builder):
+                    case = clone_case(base, active, f"{current}-{tag}")
+                    if current == "brief.regenerate":
+                        question = run_plain(command(case, "ask", task_id, "--key", "brief", "--text", "Regenerate benchmark brief?"), actor_env(case, "worker"))["question"]
+                        run_plain(command(case, "answer", task_id, question["id"], "--text", "Yes."), actor_env(case))
+                    argv=command(case, *build(case))
+                    if current=="role.init":argv=[SUMCTL,"--format","json","--home",base/"uninitialized-developer-state",*build(case)]
+                    return invoke_checked(argv, actor_env(case, actor), base / f"{current}-{tag}.json")
+                scenarios.append(measured_case(case_id, args.samples, operation))
+            def prepare_operation(tag):
+                case = clone_case(base, active, f"dispatch-{tag}")
+                repo = base / f"dispatch-repo-{tag}"
+                git_repo(repo)
+                return invoke_checked(command(case, "prepare", "--repo", repo, "--base", "main", "--brief", active["brief"], "--harness", "codex", "--approved"), actor_env(case), base / f"dispatch-{tag}.json", timeout=120)
+            scenarios.append(measured_case("dispatch.prepare", min(args.samples, 5), prepare_operation, 0))
+            scenarios.append(measured_case("hc.fixture.terminal-list", args.samples,
+                lambda _: transport_sample(lambda: rpc(active["core"], "terminal.list"), cpu_scope="Python client and in-process native fixture threads")))
+            def question_operation(tag):
+                case = clone_case(base, active, f"question-{tag}")
+                return process_group(case, [("worker", ["ask", task_id, "--key", tag, "--text", "Benchmark question?"]), ("coordinator", ["inbox"])])
+            scenarios.append(measured_case("question.worker-to-inbox", args.samples, question_operation))
+            def concurrent_operation(tag):
+                case = clone_case(base, active, f"concurrent-{tag}")
+                return process_group(case, [("worker", ["ask", task_id, "--key", f"{tag}-{index}", "--text", f"Concurrent benchmark {index}?"]) for index in range(4)], parallel=True)
+            scenarios.append(measured_case("contention.concurrent-writes", min(args.samples, 5), concurrent_operation, 0))
+            if args.skip_timeout:
+                scenarios.append(dict(id="timeout.hc-response", status="not-run", reason="disabled by --skip-timeout"))
+            else:
+                def timeout_operation(_):
+                    active["core"].queue_fault("terminal.get", delay_seconds=.2)
+                    def expected_timeout():
+                        try:
+                            rpc(active["core"], "terminal.get", timeout=.05, terminal=active["actors"]["worker"]["address"])
+                        except TimeoutError:
+                            return
+                        raise BenchmarkError("native fixture failed to exercise the declared response timeout")
+                    sample = transport_sample(expected_timeout, cpu_scope="Python client and in-process native fixture threads")
+                    sample["expected_outcome"] = "response-timeout"
+                    return sample
+                scenarios.append(measured_case("timeout.hc-response", 1, timeout_operation, 0))
+            if args.skip_real_hc:
+                real, cleanup = [dict(id="hc.real.terminal-list", status="not-run", reason="disabled by --skip-real-hc")], dict(real_lab="not-started", reason="disabled by --skip-real-hc")
+            else:
+                real, cleanup = run_real(args.output, args.samples, args.hc_binary)
+            scenarios.extend(real)
+            scenarios.sort(key=lambda row: ALL_SCENARIOS.index(row["id"]))
+            overhead = [measured_process([sys.executable, "-c", "pass"], active["env"])[1]["wall_ms"] for _ in range(args.samples)]
+            frequency = frequency_rows()
+            opportunities = weighted_opportunities(scenarios, frequency)
+            raw = dict(schema=2, source=source, environment=dict(platform=platform.platform(), python=platform.python_version(), git=tool_version("git", "--version"), helper_binary=str(SUMCTL), helper_sha256=hashlib.sha256(SUMCTL.read_bytes()).hexdigest(), real_lab_tools=cleanup.get("tools")),
+                       methodology=dict(warmups=1, randomization_seed=37, outliers="retained", harness_overhead_ms=sorted(overhead)[len(overhead) // 2],
+                                        fixture="schema2 native Unix-socket HC model; seeded public processes and receipts, no harness execution",
+                                        measurement="external process wall/child CPU and time-reported helper RSS; native RPC client CPU separately scoped",
+                                        cache_conditions=dict(cold="new process; first filesystem sample retained", **{"warm-fs": "unrecorded warmup; no privileged cache eviction"})),
+                       inventory=INVENTORY, scenarios=scenarios, frequency=frequency, weighted_opportunities=opportunities, cleanup=cleanup,
+                       alternatives=[dict(name=name, mixed_into_language_claim=False) for name in ("bounded task reads", "avoid redundant helper invocations", "use published HC list snapshots")],
+                       limitations=["No model, provider, production state, installation runtime path or default HC session is used.",
+                                    "Saved workload task counts are ledger fixtures; additional rows are not claimed live native workers.",
+                                    "Helper callback cases measure durable local work with notifications pending on unqualified fixture recipients; automatic harness input is not measured.",
+                                    "Internal startup/phase timings and total descendant subprocess counts are unavailable in the native CLI.",
+                                    "No Python-owned avoidable time or end-to-end product improvement is inferred from wall time.",
+                                    "Direct RPC CPU covers the Python client only, and its memory excludes the HC server.",
+                                    "Parallel process CPU is counted once across children; parallel wall waits are never added as serial user delay.",
+                                    "Cold denotes a new process; operating system caches are not flushed.",
+                                    "The shared development host load is uncontrolled; these samples are descriptive, not latency regression guarantees.",
+                                    "Historical Python/Go language baselines are not comparable to this changed runtime and workload."])
+            raw["decision"] = decide(scenarios, opportunities)
+            (args.output / "raw.json").write_text(json.dumps(raw, indent=2) + "\n")
+            write_report(raw, args.output / "report.md")
+            print(json.dumps(dict(outcome=raw["decision"]["outcome"], raw=str(args.output / "raw.json"), report=str(args.output / "report.md"), scenarios=len(scenarios))))
     return 0
 
 

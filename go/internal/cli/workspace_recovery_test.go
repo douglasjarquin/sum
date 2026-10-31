@@ -8,249 +8,267 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/douglasjarquin/sum/go/internal/shquote"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-func TestBindWorkerPaneRecoversGoneWorkspace(t *testing.T) {
-	d, task, worktree, pane := workspaceRecoveryFixture(t, false)
-	id := asString(task["id"])
-	oldWorkspace := asString(task["workspace"])
-	reopenedWorkspace := "w-reopened"
-
-	bound := d.ctl(true, "bind", id, "--worker-pane", pane)
-	if asString(bound["workspace"]) != reopenedWorkspace {
-		t.Fatalf("bind workspace = %v, want %s", bound["workspace"], reopenedWorkspace)
-	}
-	saved := readTaskObject(t, d.home, id)
-	if asString(saved["workspace"]) != reopenedWorkspace {
-		t.Fatalf("saved task workspace = %v, want %s", saved["workspace"], reopenedWorkspace)
-	}
-	var rebind map[string]any
-	for _, row := range asSlice(saved["evidence"]) {
-		if asString(asMap(row)["kind"]) == "worker-workspace-rebind" {
-			rebind = asMap(row)
-		}
-	}
-	if asString(rebind["from_workspace"]) != oldWorkspace || asString(rebind["to_workspace"]) != reopenedWorkspace || asString(rebind["old_workspace_code"]) != "workspace_not_found" {
-		t.Fatalf("workspace rebind evidence = %v", rebind)
-	}
-	cleanup := d.ctl(true, "cleanup", id)
-	if got := asString(asMap(cleanup["resources"])["workspace"]); got != "present" {
-		t.Fatalf("cleanup workspace resource after rebind = %v, want present", got)
-	}
-	attempt := asString(asMap(asMap(task["execution"])["worker"])["id"])
-	setReviewerPane(t, d.base, pane, worktree, nil, 7101)
-	parked := d.ctl(true, "execution", "park", id, "--attempt", attempt)
-	if parked["released"] != true {
-		t.Fatalf("park after workspace rebind = %v", parked)
-	}
-	setReviewerPane(t, d.base, pane, worktree, nil, 7101)
-	editFakePane(t, d, pane, func(row map[string]any) { delete(row, "processes") })
-	resumed := d.ctl(true, "execution", "resume", id, "--attempt", attempt)
-	if asString(resumed["status"]) != "running" {
-		t.Fatalf("resume after workspace rebind = %v", resumed)
-	}
-}
-
-func TestReportedClosedWorkspaceRecoversThroughRebindAndResume(t *testing.T) {
-	d := newPolicyLab(t)
-	d.setEnv("FAKE_CLOSE_LAST_WORKSPACE", "1")
-	d.setEnv("FAKE_AGENT_CHILDREN", "2")
-	repo := policyProject(t, d.base, "reported-workspace-recovery", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--approved")
+func TestBindWorkerTerminalRecoversGoneTerminal(t *testing.T) {
+	d, task, replacement := nativeRecoveryFixture(t, false)
 	id := asString(task["id"])
 	worktree := asString(task["worktree"])
-	oldPane := asString(task["pane"])
-	oldAttempt := asString(asMap(asMap(task["execution"])["worker"])["id"])
-	handoff, err := json.Marshal(map[string]any{"outcome": "completed", "candidate": task["base_sha"]})
-	if err != nil {
+	before := nativeGitSnapshot(t, worktree)
+	old := asMap(task["worker_endpoint"])
+	bound := d.ctl(true, "bind", id, "--worker-terminal", replacement.Address)
+	endpoint := asMap(bound["worker_endpoint"])
+	if asString(endpoint["address"]) != replacement.Address || asInt(endpoint["binding_generation"]) != 2 {
+		t.Fatalf("native binding=%v", endpoint)
+	}
+	if nativeGitSnapshot(t, worktree) != before {
+		t.Fatal("rebind changed Git worktree identity or contents")
+	}
+	var rebind map[string]any
+	for _, raw := range asSlice(bound["evidence"]) {
+		row := asMap(raw)
+		if asString(row["kind"]) == "native-rebind" {
+			rebind = row
+		}
+	}
+	if rebind == nil || asString(asMap(rebind["from"])["address"]) != asString(old["address"]) || asString(asMap(rebind["to"])["address"]) != replacement.Address {
+		t.Fatalf("rebind evidence=%v", rebind)
+	}
+	stopNativeRecoveryTerminal(t, d, replacement.Address)
+	attempt := asString(asMap(asMap(bound["execution"])["worker"])["id"])
+	parked := d.ctl(true, "execution", "park", id, "--attempt", attempt)
+	if parked["released"] != true {
+		t.Fatalf("park after rebind=%v", parked)
+	}
+	resumed := d.ctl(true, "execution", "resume", id, "--attempt", attempt)
+	if asString(resumed["worktree"]) != worktree {
+		t.Fatalf("resume=%v", resumed)
+	}
+	d.ctlPane(workerAddress(resumed), true, "init")
+	if asString(d.taskRecord(id)["status"]) != "running" {
+		t.Fatal("new receipt did not resume task")
+	}
+	if workerAddress(resumed) == replacement.Address {
+		t.Fatal("new attempt reused predecessor process authority")
+	}
+	if nativeGitSnapshot(t, worktree) != before {
+		t.Fatal("resume changed preserved checkout")
+	}
+}
+
+func TestReportedClosedTerminalRecoversThroughResume(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "reported-terminal-recovery", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	id := asString(task["id"])
+	address := workerAddress(task)
+	worktree := asString(task["worktree"])
+	d.ctlPane(address, true, "init")
+	handoff := filepath.Join(d.base, "handoff.json")
+	body, _ := json.Marshal(map[string]any{"outcome": "completed", "candidate": task["base_sha"]})
+	if err := os.WriteFile(handoff, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	handoffPath := filepath.Join(d.base, "handoff.json")
-	if err := os.WriteFile(handoffPath, handoff, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	d.ctlPane(oldPane, true, "report", id, "--text", "Candidate ready.", "--handoff", handoffPath)
-	settleFakeWorker(t, d.base, oldPane)
+	d.ctlPane(address, true, "report", id, "--text", "Candidate ready.", "--handoff", handoff)
+	stopNativeRecoveryTerminal(t, d, address)
+	before := nativeGitSnapshot(t, worktree)
 	swept := d.ctl(true, "sweep")
-	var closed bool
+	removed := false
 	for _, raw := range asSlice(swept["rows"]) {
 		row := asMap(raw)
-		if asString(row["action"]) == "pane-close" && asString(row["pane"]) == oldPane && asString(row["state"]) == "closed" {
-			closed = true
+		if asString(row["action"]) == "terminal-remove" && asString(row["state"]) == "closed" {
+			removed = true
 		}
 	}
-	if !closed {
-		t.Fatalf("sweep did not close the reported worker pane: %v", swept)
+	if !removed {
+		t.Fatalf("reported terminal not removed: %v", swept)
 	}
-	state := readFakeHerdrState(t, filepath.Join(d.base, "fake", "state.json"))
-	oldWorkspace := asString(task["workspace"])
-	if asMap(state["workspaces"])[oldWorkspace] != nil || asMap(state["panes"])[oldPane] != nil {
-		t.Fatal("closing the last reported worker pane did not remove its workspace")
+	if nativeGitSnapshot(t, worktree) != before {
+		t.Fatal("terminal removal changed the preserved Git checkout")
 	}
+	saved := d.taskRecord(id)
+	attempt := asString(asMap(asMap(saved["execution"])["worker"])["id"])
+	resumed := d.ctl(true, "execution", "resume", id, "--attempt", attempt)
+	if asString(resumed["worktree"]) != worktree || workerAddress(resumed) == address {
+		t.Fatalf("resume did not retain checkout and replace attempt=%v", resumed)
+	}
+	d.ctlPane(workerAddress(resumed), true, "init")
+	current := asString(asMap(asMap(resumed["execution"])["worker"])["id"])
+	sent := d.ctl(true, "repair", "send", id, "--attempt", current, "--key", "after-resume", "--text", "Apply the correction.")
+	if asString(sent["error"]) != "" {
+		t.Fatalf("repair after resume=%v", sent)
+	}
+	d.ctlPane(workerAddress(resumed), true, "report", id, "--text", "Corrected candidate ready.", "--handoff", handoff)
+	stopNativeRecoveryTerminal(t, d, workerAddress(resumed))
+	d.ctl(true, "sweep")
+	if nativeGitSnapshot(t, worktree) != before {
+		t.Fatal("repeated lifecycle changed checkout")
+	}
+}
 
-	failedResume := d.ctl(false, "execution", "resume", id, "--attempt", oldAttempt)
-	openCommand := shquote.Join([]string{"herdr", "worktree", "open", "--cwd", asString(task["repository"]), "--path", worktree, "--label", "sum-" + id, "--no-focus"})
-	if !strings.Contains(asString(failedResume["error"]), openCommand) {
-		t.Fatalf("resume with removed workspace = %v", failedResume)
-	}
-	failedTask := readTaskObject(t, d.home, id)
-	uncertainAttempt := asMap(asMap(failedTask["execution"])["worker"])
-	uncertainID := asString(uncertainAttempt["id"])
-	if asString(uncertainAttempt["state"]) != "uncertain" {
-		t.Fatalf("attempt after failed resume = %v, want uncertain", uncertainAttempt)
-	}
-
-	const reboundWorkspace = "w-reopened"
-	const reboundPane = reboundWorkspace + ":p1"
-	writeReopenedWorkspace(t, d, worktree, reboundWorkspace, repo)
-	bound := d.ctl(true, "bind", id, "--worker-pane", reboundPane)
-	if asString(bound["workspace"]) != reboundWorkspace {
-		t.Fatalf("rebind result = %v", bound)
-	}
-	state = readFakeHerdrState(t, filepath.Join(d.base, "fake", "state.json"))
-	rebound := asMap(asMap(state["panes"])[reboundPane])
-	rebound["agent"] = nil
-	delete(rebound, "processes")
-	writeFakeHerdrState(t, filepath.Join(d.base, "fake", "state.json"), state)
-	parked := d.ctl(true, "execution", "park", id, "--attempt", uncertainID)
-	if parked["released"] != true {
-		t.Fatalf("park uncertain attempt after rebind = %v", parked)
-	}
-	refused := d.ctl(false, "repair", "send", id, "--attempt", uncertainID, "--key", "before-resume", "--text", "Apply the correction.")
-	if errText := asString(refused["error"]); !strings.Contains(errText, "exact running worker attempt") {
-		t.Fatalf("repair send to released attempt = %v", refused)
-	}
-	resumed := d.ctl(true, "execution", "resume", id, "--attempt", uncertainID)
-	resumedAttempt := asMap(asMap(readTaskObject(t, d.home, id)["execution"])["worker"])
-	resumedID := asString(resumedAttempt["id"])
-	if asString(resumedAttempt["state"]) != "running" || resumedID == uncertainID {
-		t.Fatalf("attempt after successful resume = %v; command result %v", resumedAttempt, resumed)
-	}
-	settleFakeWorker(t, d.base, reboundPane)
-	sent := d.ctl(false, "repair", "send", id, "--attempt", resumedID, "--key", "after-resume", "--text", "Apply the correction.")
-	if errText := asString(sent["error"]); errText != "" {
-		t.Fatalf("repair send after resume = %v", sent)
-	}
-
-	d.ctlPane(reboundPane, true, "report", id, "--text", "Corrected candidate ready.", "--handoff", handoffPath)
-	settleFakeWorker(t, d.base, reboundPane)
-	finalSweep := d.ctl(true, "sweep")
-	closed = false
-	for _, raw := range asSlice(finalSweep["rows"]) {
-		row := asMap(raw)
-		if asString(row["action"]) == "pane-close" && asString(row["pane"]) == reboundPane && asString(row["state"]) == "closed" {
-			closed = true
+func TestBindWorkerTerminalRefusesReplacementWithoutCheckoutIdentity(t *testing.T) {
+	d, task, replacement := nativeRecoveryFixture(t, false)
+	for _, terminal := range d.native.Terminals() {
+		if terminal.Address == replacement.Address {
+			terminal.Cwd = filepath.Join(d.base, "unrelated-repository")
+			d.native.SetTerminal(terminal)
 		}
 	}
-	if !closed {
-		t.Fatalf("sweep after rebind did not close the rebound worker pane: %v", finalSweep)
+	before := workerAddress(task)
+	refused := d.ctl(false, "bind", asString(task["id"]), "--worker-terminal", replacement.Address)
+	if !strings.Contains(asString(refused["error"]), "checkout") {
+		t.Fatalf("wrong-checkout replacement=%v", refused)
 	}
-	state = readFakeHerdrState(t, filepath.Join(d.base, "fake", "state.json"))
-	if asMap(state["workspaces"])[reboundWorkspace] != nil {
-		t.Fatal("sweep did not remove the rebound workspace after closing its last pane")
-	}
-}
-
-func TestBindWorkerPaneRefusesWorkspaceRebindWithoutIdentity(t *testing.T) {
-	d, task, worktree, pane := workspaceRecoveryFixture(t, false)
-	workspace := "w-reopened"
-	writeReopenedWorkspace(t, d, worktree, workspace, filepath.Join(d.base, "other-repository"))
-	out := d.ctl(false, "bind", asString(task["id"]), "--worker-pane", pane)
-	if errText := asString(out["error"]); errText == "" || !strings.Contains(errText, "does not match the recorded checkout identity") {
-		t.Fatalf("bind with mismatched replacement identity = %v", out)
-	}
-	if got := asString(readTaskObject(t, d.home, asString(task["id"]))["workspace"]); got != asString(task["workspace"]) {
-		t.Fatalf("refused bind changed task workspace to %s", got)
+	if workerAddress(d.taskRecord(asString(task["id"]))) != before {
+		t.Fatal("refused rebind changed task endpoint")
 	}
 }
 
-func TestBindWorkerPaneRefusesWorkspaceRebindWhenOldWorkspaceExists(t *testing.T) {
-	d, task, _, pane := workspaceRecoveryFixture(t, true)
-	out := d.ctl(false, "bind", asString(task["id"]), "--worker-pane", pane)
-	if errText := asString(out["error"]); errText == "" || !strings.Contains(errText, "not proven gone") {
-		t.Fatalf("bind with live recorded workspace = %v", out)
+func TestBindWorkerTerminalRefusesWhileOldProgramExists(t *testing.T) {
+	d, task, replacement := nativeRecoveryFixture(t, true)
+	refused := d.ctl(false, "bind", asString(task["id"]), "--worker-terminal", replacement.Address)
+	if !strings.Contains(asString(refused["error"]), "live") {
+		t.Fatalf("old live program=%v", refused)
+	}
+	if workerAddress(d.taskRecord(asString(task["id"]))) != workerAddress(task) {
+		t.Fatal("live predecessor was replaced")
 	}
 }
 
-func workspaceRecoveryFixture(t *testing.T, keepOld bool) (*demoLab, map[string]any, string, string) {
+func TestBindWorkerTerminalRefusesMissingReceiptAndReusedProcess(t *testing.T) {
+	for _, kind := range []string{"missing receipt", "reused process"} {
+		t.Run(kind, func(t *testing.T) {
+			d, task, replacement := nativeRecoveryFixture(t, false)
+			if kind == "missing receipt" {
+				s := nativeTestStore(t, d.home)
+				path := filepath.Join(s.Sessions, store.RegistrationKey(replacement)+".json")
+				raw, err := ordjson.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				reg := raw.(*ordjson.Object)
+				reg.Set("native_receipt", nil)
+				if err = ordjson.WriteFile(path, reg); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				for _, terminal := range d.native.Terminals() {
+					if terminal.Address == replacement.Address {
+						terminal.CreatedMS++
+						d.native.SetTerminal(terminal)
+					}
+				}
+			}
+			refused := d.ctl(false, "bind", asString(task["id"]), "--worker-terminal", replacement.Address)
+			if asString(refused["error"]) == "" {
+				t.Fatalf("unproven replacement granted authority=%v", refused)
+			}
+			if workerAddress(d.taskRecord(asString(task["id"]))) != workerAddress(task) {
+				t.Fatal("unproven replacement changed endpoint")
+			}
+		})
+	}
+}
+
+func nativeRecoveryFixture(t *testing.T, keepOld bool) (*demoLab, map[string]any, store.Endpoint) {
 	t.Helper()
 	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "workspace-recovery", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "claude", "--approved")
-	statePath := filepath.Join(d.base, "fake", "state.json")
-	state := readFakeHerdrState(t, statePath)
+	repo := policyProject(t, d.base, "terminal-recovery", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	d.ctlPane(workerAddress(task), true, "init")
 	if !keepOld {
-		pane := asString(task["pane"])
-		d.setEnv("FAKE_CLOSE_LAST_WORKSPACE", "1")
-		closeFakePane(t, d, pane)
-		state = readFakeHerdrState(t, statePath)
-		if asMap(state["workspaces"])[asString(task["workspace"])] != nil || asMap(state["panes"])[pane] != nil {
-			t.Fatal("closing the last worker pane did not remove its Herdr workspace")
+		stopNativeRecoveryTerminal(t, d, workerAddress(task))
+	}
+	raw, _ := json.Marshal(task["worker_endpoint"])
+	var endpoint store.Endpoint
+	if err := json.Unmarshal(raw, &endpoint); err != nil {
+		t.Fatal(err)
+	}
+	endpoint.Address = "t99"
+	endpoint.CreatedMS = 99
+	endpoint.BindingGeneration++
+	pid := uint32(800001)
+	fg := &hcclient.Foreground{PID: 800002, Name: "codex", Argv: []string{"codex", "--no-daemon"}, Cwd: asString(task["worktree"])}
+	d.native.SetTerminal(hcclient.Terminal{Address: endpoint.Address, CreatedMS: endpoint.CreatedMS, Cwd: fg.Cwd, State: "live", PID: &pid, Foreground: fg, Argv: fg.Argv})
+	s := nativeTestStore(t, d.home)
+	evidence := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: fg}.Record(store.Now())
+	registration, err := s.Register(endpoint, "worker", endpoint.Task, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: endpoint.Native(), Kind: "worker-init", Attempt: endpoint.Attempt})
+	registration.Set("native_receipt", receipt)
+	original, err := s.Registration(store.EndpointFromContext(mustOrdjson(t, task["worker_endpoint"])))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if original != nil {
+		provenance, _ := original.Get("native_template")
+		registration.Set("native_template", provenance)
+	}
+	if err = ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(endpoint)+".json"), registration); err != nil {
+		t.Fatal(err)
+	}
+	return d, task, endpoint
+}
+
+func mustOrdjson(t *testing.T, v any) *ordjson.Object {
+	t.Helper()
+	o, err := ordjson.FromValue(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return o
+}
+func stopNativeRecoveryTerminal(t *testing.T, d *demoLab, address string) {
+	t.Helper()
+	d.native.Exit(address, 0)
+	for _, terminal := range d.native.Terminals() {
+		if terminal.Address == address {
+			stamp := uint64(1000)
+			terminal.FinishedMS = &stamp
+			d.native.SetTerminal(terminal)
+			return
 		}
 	}
-	const workspace = "w-reopened"
-	writeState := state
-	writeState["workspaces"].(map[string]any)[workspace] = map[string]any{
-		"workspace_id": workspace,
-		"worktree":     map[string]any{"checkout_path": task["worktree"], "repo_root": repo, "is_linked_worktree": true},
+	t.Fatal("native terminal absent before stop fixture")
+}
+func nativeGitSnapshot(t *testing.T, path string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", path, "status", "--porcelain=v2", "--branch", "--untracked-files=all").CombinedOutput()
+	if err != nil {
+		t.Fatal(err, string(out))
 	}
-	pane := workspace + ":p1"
-	writeState["panes"].(map[string]any)[pane] = map[string]any{
-		"pane_id": pane, "cwd": task["worktree"], "workspace_id": workspace,
-		"agent_status": "idle", "agent": "claude", "agent_pid": 7100, "shell_pid": 7101,
-		"processes": []any{}, "created": true, "terminal_id": "term-reopened",
-	}
-	writeFakeHerdrState(t, statePath, writeState)
-	return d, task, asString(task["worktree"]), pane
+	return string(out)
 }
 
-func closeFakePane(t *testing.T, d *demoLab, pane string) {
-	t.Helper()
-	cmd := exec.Command(filepath.Join(d.root, "tests", "fixtures", "herdr.py"), "--session", "sum-test", "pane", "close", pane)
-	cmd.Env = d.env
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fake Herdr pane close: %v\n%s", err, out)
-	}
-}
-
-func writeReopenedWorkspace(t *testing.T, d *demoLab, worktree, workspace, replacementRepo string) {
-	t.Helper()
-	statePath := filepath.Join(d.base, "fake", "state.json")
-	state := readFakeHerdrState(t, statePath)
-	state["workspaces"].(map[string]any)[workspace] = map[string]any{
-		"workspace_id": workspace,
-		"worktree":     map[string]any{"checkout_path": worktree, "repo_root": replacementRepo, "is_linked_worktree": true},
-	}
-	pane := workspace + ":p1"
-	state["panes"].(map[string]any)[pane] = map[string]any{
-		"pane_id": pane, "cwd": worktree, "workspace_id": workspace,
-		"agent_status": "idle", "agent": "claude", "agent_pid": 7100, "shell_pid": 7101,
-		"processes": []any{}, "created": true, "terminal_id": "term-reopened",
-	}
-	writeFakeHerdrState(t, statePath, state)
-}
-
-func readFakeHerdrState(t *testing.T, path string) map[string]any {
-	t.Helper()
-	raw, err := os.ReadFile(path)
+func TestBindWorkerTerminalRefusesMismatchedGitRegistration(t *testing.T) {
+	d, task, replacement := nativeRecoveryFixture(t, false)
+	other := policyProject(t, d.base, "unrelated-registered-checkout", map[string]string{"README.md": "other\n"})
+	gitFile := filepath.Join(asString(task["worktree"]), ".git")
+	saved, err := os.ReadFile(gitFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var state map[string]any
-	if err := json.Unmarshal(raw, &state); err != nil {
+	if err = os.Rename(gitFile, gitFile+".recorded"); err != nil {
 		t.Fatal(err)
 	}
-	return state
-}
-
-func writeFakeHerdrState(t *testing.T, path string, state map[string]any) {
-	t.Helper()
-	raw, err := json.Marshal(state)
-	if err != nil {
+	if err = os.WriteFile(gitFile, []byte("gitdir: "+filepath.Join(other, ".git")+"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
+	refused := d.ctl(false, "bind", asString(task["id"]), "--worker-terminal", replacement.Address)
+	if asString(refused["error"]) == "" {
+		t.Fatal("replacement inherited mismatched Git checkout identity")
+	}
+	if workerAddress(d.taskRecord(asString(task["id"]))) != workerAddress(task) {
+		t.Fatal("invalid Git registration changed worker binding")
+	}
+	preserved, err := os.ReadFile(gitFile + ".recorded")
+	if err != nil || string(preserved) != string(saved) {
+		t.Fatal("refusal destroyed original Git registration", err)
 	}
 }

@@ -18,7 +18,7 @@ func TestApply_preRenamePreviousVerifiesPostRenameCandidate(t *testing.T) {
 		t.Fatalf("previous target = %s, want pre-rename release %s", got, lab.oldSHA)
 	}
 
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true, RefusePreIdentity)
+	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
 	if err != nil {
 		t.Fatalf("apply post-rename candidate over pre-rename previous: %v", err)
 	}
@@ -33,7 +33,7 @@ func TestRollback_releaseMissingWorkerSkillRefused(t *testing.T) {
 	selected := currentSHA(t, lab.root)
 	replaceReleaseSkills(t, lab, lab.oldSHA, nil)
 
-	_, err := Rollback(lab.store, lab.ctx, lab.oldSHA, RefusePreIdentity)
+	_, err := Rollback(lab.store, lab.ctx, lab.oldSHA)
 	if err == nil || !strings.Contains(err.Error(), "release lacks a Sum worker skill resource") {
 		t.Fatalf("rollback = %v, want the missing worker-skill refusal", err)
 	}
@@ -72,7 +72,7 @@ func TestRecover_priorReleaseMissingWorkerSkillRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = Recover(lab.store, lab.ctx, generation, RefusePreIdentity)
+	_, err = Recover(lab.store, lab.ctx, generation)
 	if err == nil || !strings.Contains(err.Error(), "release lacks a Sum worker skill resource") {
 		t.Fatalf("recover = %v, want the missing worker-skill refusal", err)
 	}

@@ -14,10 +14,11 @@ import (
 func standardHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
-	if _, err := fixture.WriteStandard(home); err != nil {
+	layout, err := fixture.WriteStandard(home)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return home
+	return layout.Home
 }
 
 func snapshotOf(t *testing.T, home string) (inboxview.Snapshot, string) {

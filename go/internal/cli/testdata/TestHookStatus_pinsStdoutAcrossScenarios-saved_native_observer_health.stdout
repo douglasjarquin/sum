@@ -1,0 +1,18 @@
+schema: 2
+enabled: true
+core_id: test-core
+session: sum-test
+address: t3
+events: 5
+errors: []
+pending:
+  count: 0
+  oldest_at: ""
+backend: hc
+note: Native observations trigger bounded reconciliation. Only matching application receipts close durable obligations.
+observer_observed:
+  enabled: false
+  compatible: true
+  reason: native events explicitly disabled
+degraded: true
+reason: no current observer startup receipt and process is confirmed

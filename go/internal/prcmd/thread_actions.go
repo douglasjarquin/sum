@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/repair"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -119,6 +120,11 @@ func ThreadAction(s *store.Store, ctx *ordjson.Object, args ThreadActionArgs) (*
 		unlock()
 		return nil, err
 	}
+	if err := maintenance.Refuse(current, "PR thread instruction"); err != nil {
+		unlock()
+		return nil, err
+	}
+
 	_, currentObservation, _, _, currentURL, err := threadActionBinding(current)
 	if err != nil || currentURL != url || asString(currentObservation, "observed_head_sha") != args.Head || !sameThreadSelection(currentObservation, selected) {
 		unlock()

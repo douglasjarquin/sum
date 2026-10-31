@@ -27,8 +27,9 @@ func TestGraphInit_unknownFlagOrExtraPositionalIsUsageError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			herdrRoot := filepath.Join(home, "fake-herdr")
-			herdrBefore := listRegularFiles(t, herdrRoot)
+			nativeEnv(t, home)
+			runtime := nativeLabFor(t, home).native
+			nativeBefore := len(runtime.Calls())
 			excludePath := filepath.Join(worktree, ".git", "info", "exclude")
 			excludeBefore, _ := os.ReadFile(excludePath)
 
@@ -59,8 +60,8 @@ func TestGraphInit_unknownFlagOrExtraPositionalIsUsageError(t *testing.T) {
 			if string(excludeAfter) != string(excludeBefore) {
 				t.Fatalf("git exclude changed:\n%s", excludeAfter)
 			}
-			if got := listRegularFiles(t, herdrRoot); got != herdrBefore {
-				t.Fatalf("herdr state changed:\nbefore:\n%s\nafter:\n%s", herdrBefore, got)
+			if got := len(runtime.Calls()); got != nativeBefore {
+				t.Fatalf("usage validation made native requests: before=%d after=%d", nativeBefore, got)
 			}
 			assertGraphUsageError(t, err)
 		})
@@ -96,7 +97,7 @@ func TestGraphCommands(t *testing.T) {
 		{name: "config extra positional", args: []string{"graph", "config", "--harness", "claude", "extra"}, usage: true},
 		{name: "config unknown flag", args: []string{"graph", "config", "--harness", "claude", "--unexpected"}, usage: true},
 		{name: "config invalid harness", args: []string{"graph", "config", "--harness", "bogus"}, usage: true},
-		{name: "init requires coordinator", args: []string{"graph", "init", "t-aaaaaaaaaaaa"}, task: true, herdr: true, domainErr: "registered coordinator"},
+		{name: "init requires coordinator", args: []string{"graph", "init", "t-aaaaaaaaaaaa"}, task: true, herdr: true, domainErr: "registration identity mismatch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -108,7 +109,8 @@ func TestGraphCommands(t *testing.T) {
 				home, worktree, taskID = graphInitLab(t)
 			case tc.task:
 				if tc.herdr {
-					herdrEnv(t, home)
+					nativeEnv(t, home)
+					t.Setenv("SUM_ROLE", "developer")
 				}
 				worktree = t.TempDir()
 				initGitRepoWithCommit(t, worktree)
@@ -206,7 +208,7 @@ func assertGraphUsageError(t *testing.T, err error) {
 
 func writeGraphTask(t *testing.T, home, taskID, worktree string) {
 	t.Helper()
-	writeTaskFixture(t, home, taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, taskID, fmt.Sprintf(`{"schema": 1, "id": %q, "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing",
 "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "task", "brief_path": "brief.md", "worktree": %q}`, taskID, worktree))
 }
@@ -214,7 +216,7 @@ func writeGraphTask(t *testing.T, home, taskID, worktree string) {
 func graphInitLab(t *testing.T) (home, worktree, taskID string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	herdrEnv(t, home)
+	nativeEnv(t, home)
 	t.Setenv("SUM_CODEGRAPH_BIN", filepath.Join(home, "no-such-codegraph"))
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("coordinator init: %v", err)

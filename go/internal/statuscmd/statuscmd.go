@@ -7,7 +7,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -15,7 +15,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
@@ -113,64 +112,65 @@ func Status(s *store.Store, opts Options) (*ordjson.Object, error) {
 // agent state Herdr reports now, and a worker missing from its session's list reads as absent without its own lookup.
 // It writes nothing.
 func observe(s *store.Store, opts Options, rows, tasks []*ordjson.Object, result *ordjson.Object) {
-	if opts.Ctx == nil {
-		result.Set("live_reason", "this pane has no Herdr context; the saved-record view is shown and nothing was observed")
-		return
-	}
 	host, err := s.Machine()
 	if err != nil {
 		result.Set("live_reason", err.Error())
 		return
 	}
-	budget := returns.DefaultPassBudget
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	ctx, cancel := context.WithTimeout(context.Background(), returns.DefaultPassBudget)
 	defer cancel()
-	sn := herdrclient.NewSnapshot(ctx, func() (string, error) { return toolpath.Find(opts.RuntimeRoot, "herdr") }, returns.ObserveTimeout)
+	snapshots := map[string]hcclient.ListResult{}
+	failures := map[string]error{}
 	for i, row := range rows {
-		task := tasks[i]
-		status, _ := task.Get("status")
-		machineValue, _ := task.Get("machine")
-		session, _ := task.Get("session")
-		pane, _ := task.Get("pane")
-		sessionStr, _ := session.(string)
-		paneStr, _ := pane.(string)
-		if status == "archived" || sessionStr == "" || paneStr == "" {
+		endpoint := store.EndpointFromContext(returns.ReturnRoute(tasks[i], "worker"))
+		observed := ordjson.NewObject()
+		if endpoint.Validate() != nil || !host.Is(endpoint.Machine) {
+			observed.Set("state", "unobserved")
+			observed.Set("reason", "no supported local native endpoint")
+			row.Set("observed", observed)
 			continue
 		}
-		observed := ordjson.NewObject()
-		switch {
-		case !host.Is(machineValue):
+		key := endpoint.CoreID + "/" + endpoint.Socket
+		snapshot, ok := snapshots[key]
+		if !ok && failures[key] == nil {
+			client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID, Timeout: returns.ObserveTimeout}
+			snapshot, err = client.List(ctx, hcclient.ListParams{All: true})
+			if err != nil {
+				failures[key] = err
+			} else {
+				snapshots[key] = snapshot
+			}
+		}
+		if failures[key] != nil {
 			observed.Set("state", "unobserved")
-			observed.Set("reason", "task belongs to another machine")
-		case !sn.Listed(sessionStr) && sn.Remaining() < returns.ObserveTimeout:
-			observed.Set("state", "unobserved")
-			observed.Set("reason", "the observation budget ran out before this session was listed")
-		default:
-			agent, err := sn.Agent(sessionStr, paneStr)
-			switch {
-			case err == nil:
-				observed.Set("state", herdrclient.AgentStatus(agent))
-				observed.Set("cwd", herdrclient.AgentCwd(agent))
-			case herdrclient.ErrorIsAbsent(err):
-				observed.Set("state", "absent")
-				observed.Set("reason", "not in the session's agent list; inspect before assuming anything")
-			default:
-				observed.Set("state", "unobserved")
-				observed.Set("reason", err.Error())
+			observed.Set("reason", failures[key].Error())
+		} else {
+			observed.Set("state", "absent")
+			for _, terminal := range snapshot.Terminals {
+				if terminal.Address == endpoint.Address {
+					observed.Set("native", func() any { o, _ := ordjson.FromValue(terminal); return o }())
+					state := "unknown"
+					if terminal.Status != nil {
+						state = terminal.Status.State
+					}
+					observed.Set("state", state)
+					observed.Set("cwd", terminal.Cwd)
+					if terminal.CreatedMS != endpoint.CreatedMS {
+						observed.Set("state", "replaced")
+					}
+					break
+				}
 			}
 		}
 		row.Set("observed", observed)
 	}
-	fanout := sn.Fanout()
-	fanout.Set("budget_ms", jsonInt(int(budget.Milliseconds())))
 	result.Set("live", true)
-	result.Set("fanout", fanout)
-	result.Set("guarantee", "Saved records plus one bounded Herdr agent list per session, observed now. Nothing is written, delivered, observed on GitHub, or cleaned up by this view; `sumctl pump` delivers and `sumctl sweep` maintains. No background monitoring.")
+	result.Set("guarantee", "Saved records plus bounded read-only native HC snapshots. Native status, exits and turns are observational; they supply no task, review, verification or approval receipt.")
 }
 
 func buildRow(s *store.Store, task *ordjson.Object) *ordjson.Object {
 	row := ordjson.NewObject()
-	for _, key := range []string{"id", "status", "repository", "harness", "pane", "session", "worktree", "error"} {
+	for _, key := range []string{"id", "status", "repository", "harness", "worker_endpoint", "worktree", "error"} {
 		v, _ := task.Get(key)
 		row.Set(key, v)
 	}

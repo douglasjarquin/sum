@@ -74,7 +74,7 @@ func Pending(s *store.Store, sumctlPath string, tasks []*ordjson.Object) *ordjso
 			row.Set("next", shquote.CommandFor(sumctlPath, s.Home, "cleanup", id))
 			cleanups = append(cleanups, row)
 		}
-		if hasClosablePane(task) {
+		if hasRemovableTerminal(task) {
 			row := ordjson.NewObject()
 			row.Set("task", id)
 			row.Set("state", "closable")
@@ -84,7 +84,7 @@ func Pending(s *store.Store, sumctlPath string, tasks []*ordjson.Object) *ordjso
 	}
 	view.Set("open_prs", prs)
 	view.Set("cleanup", cleanups)
-	view.Set("panes", closable)
+	view.Set("terminals", closable)
 	if len(prs)+len(cleanups)+len(closable) > 0 {
 		view.Set("next", shquote.CommandFor(sumctlPath, s.Home, "sweep"))
 	} else {
@@ -108,7 +108,7 @@ type SweepOpts struct {
 // and never abort the rest.
 func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOpts) (*ordjson.Object, error) {
 	if ctx == nil {
-		return nil, fmt.Errorf("sweep needs this pane's Herdr context; run it from the coordinator pane.")
+		return nil, fmt.Errorf("sweep requires the current coordinator's HC terminal context.")
 	}
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
@@ -142,7 +142,7 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 		if !candidate(host.Is, task) || (len(filter) > 0 && !filter[id]) {
 			continue
 		}
-		if openPRNumber(task) == 0 && cleanup.Pending(task) == nil && !hasClosablePane(task) {
+		if openPRNumber(task) == 0 && cleanup.Pending(task) == nil && !hasRemovableTerminal(task) {
 			continue
 		}
 		queue = append(queue, work{id: id, last: lastMaintained(task)})
@@ -201,8 +201,8 @@ func Sweep(s *store.Store, ctx *ordjson.Object, runtimeRoot string, opts SweepOp
 		if fresh, err := s.ReadTask(item.id); err == nil {
 			task = fresh
 		}
-		if hasClosablePane(task) {
-			rows = append(rows, closeSettledPanes(s, ctx, runtimeRoot, item.id)...)
+		if hasRemovableTerminal(task) {
+			rows = append(rows, removeSettledTerminals(s, ctx, runtimeRoot, item.id)...)
 			if fresh, err := s.ReadTask(item.id); err == nil {
 				task = fresh
 			}

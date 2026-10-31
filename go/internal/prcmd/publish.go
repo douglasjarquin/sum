@@ -157,7 +157,13 @@ func precondition(dest Destination, task *ordjson.Object, args PublishArgs) *blo
 }
 
 func destination(task *ordjson.Object) (Destination, error) {
+	if task == nil {
+		return Destination{}, fmt.Errorf("pr evidence requires an existing task with a reconciled PR")
+	}
 	pr := asObject(func() any { v, _ := task.Get("pr"); return v }())
+	if pr == nil {
+		return Destination{}, fmt.Errorf("pr evidence requires a reconciled PR; record the PR with `pr reconcile` first")
+	}
 	identity := asObject(func() any { v, _ := pr.Get("identity"); return v }())
 	if identity == nil {
 		return Destination{}, fmt.Errorf("pr evidence requires a reconciled PR and a captured evidence run; record the PR with `pr reconcile` first.")

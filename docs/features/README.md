@@ -1,6 +1,6 @@
 # Feature maps
 
-Each map lists the user-facing journeys of one area and, per scenario, whether `mise run verify` exercises it (`automated`) or a person with a real Herdr session or authenticated harness must (`manual`).
+Each map lists the user-facing journeys of one area and, per scenario, whether `mise run verify` exercises it (`automated`) or a person with a real HC session or authenticated harness must (`manual`).
 The runner in `.agents/skills/verify/` reads the scenario tables from the files linked here; a scenario id must be unique across maps.
 
 - [Coordination and delegation](coordination.md)

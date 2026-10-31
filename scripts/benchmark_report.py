@@ -1,233 +1,93 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 import statistics
 
-
 INVENTORY = [
-    {"entrypoint": "bin/sumctl", "call_sites": "operator shell, generated worker briefs, tests, demo", "frequency_class": "interactive", "role": "stable CLI for status/inbox/context/show and ask/report"},
-    {"entrypoint": "bin/herdr-scoped", "call_sites": "HERDR_BIN used by the Mesh server", "frequency_class": "interactive", "role": "one scoped native process per herdr-scoped invocation"},
-    {"entrypoint": "bin/herdr-mesh", "call_sites": "MCP client configuration", "frequency_class": "interactive", "role": "long-lived Go MCP server; calls the pinned Herdr CLI"},
-    {"entrypoint": "bin/sumctl hook event", "call_sites": "generated Herdr plugin event handler", "frequency_class": "interactive", "role": "bounded native event reconciliation"},
-    {"entrypoint": "bin/sumctl prepare/dispatch/brief", "call_sites": "coordinator task lifecycle", "frequency_class": "lifecycle", "role": "real Git, Herdr worktree, brief, and graph preparation"},
-    {"entrypoint": "go/internal/cli/demo_test.go and scripts/live_smoke.py", "call_sites": "mise demo/test-live and verification", "frequency_class": "lifecycle", "role": "isolated end-to-end fixtures"},
-    {"entrypoint": "scripts/setup.py and release/update commands", "call_sites": "mise setup and operator upgrades", "frequency_class": "rare", "role": "installation and immutable release paths"},
-    {"entrypoint": "mise-tasks/test, verify, demo, doctor, test-live", "call_sites": "development and release checks", "frequency_class": "rare", "role": "repository-owned command surface"},
+    dict(entrypoint="bin/sumctl", call_sites="shell, generated briefs, tests", frequency_class="interactive", role="native Go helper and durable task ledger"),
+    dict(entrypoint="HC plain JSON-RPC", call_sites="typed Go HC client", frequency_class="interactive", role="existing-core native terminal requests; no broker"),
+    dict(entrypoint="bin/sumctl hook observer", call_sites="installation-scoped HC event subscription", frequency_class="interactive", role="bounded reconciliation and delivery"),
+    dict(entrypoint="bin/sumctl prepare/start/brief", call_sites="coordinator lifecycle", frequency_class="lifecycle", role="Git worktrees, native role receipts and sealed procedures"),
+    dict(entrypoint="scripts/hc_lab.py", call_sites="explicit private benchmark/test scope", frequency_class="lifecycle", role="published HC transport without a model or installation state"),
+    dict(entrypoint="scripts/setup.py and release/update commands", call_sites="operator upgrades", frequency_class="rare", role="immutable runtime packaging and explicit activation"),
 ]
 
 
 def percentile(values, quantile):
     ordered = sorted(values)
     position = (len(ordered) - 1) * quantile
-    lower = math.floor(position)
-    upper = math.ceil(position)
-    if lower == upper:
-        return ordered[lower]
-    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+    lower, upper = math.floor(position), math.ceil(position)
+    return ordered[lower] if lower == upper else ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
 def distribution(values):
+    if not values:
+        return None
     center = statistics.median(values)
-    row = {
-        "p50": round(center, 3),
-        "p95": round(percentile(values, 0.95), 3),
-        "mad": round(statistics.median(abs(value - center) for value in values), 3),
-        "min": round(min(values), 3),
-        "max": round(max(values), 3),
-    }
+    row = dict(p50=round(center, 3), p95=round(percentile(values, .95), 3),
+               mad=round(statistics.median(abs(value - center) for value in values), 3),
+               min=round(min(values), 3), max=round(max(values), 3))
     if len(values) >= 100:
-        row["p99"] = round(percentile(values, 0.99), 3)
+        row["p99"] = round(percentile(values, .99), 3)
     return row
 
 
 def summarize(samples):
-    fields = (
-        "wall_ms",
-        "startup_ms",
-        "cpu_ms",
-        "peak_rss_kb",
-        "subprocess_count",
-        "state_lock_wait_ms",
-        "python_owned_ms",
-        "external_ms",
-        "state_io_ms",
-    )
-    return {
-        "samples": len(samples),
-        **{field: distribution([sample[field] for sample in samples]) for field in fields},
-    }
+    fields = ("wall_ms", "cpu_ms", "peak_rss_kb", "stdout_bytes", "stderr_bytes", "helper_invocations")
+    return dict(samples=len(samples), **{field: distribution([sample[field] for sample in samples if sample.get(field) is not None]) for field in fields})
 
 
 def frequency_rows():
     return [
-        {"command": "ask", "calls_per_task": 1, "busy_session_calls": 1, "basis": "observed-lab", "source": "worker question-to-inbox scenario"},
-        {"command": "report", "calls_per_task": 1, "busy_session_calls": 1, "basis": "observed-lab", "source": "durable worker callback scenario"},
-        {"command": "inbox", "calls_per_task": 1, "busy_session_calls": 4, "basis": "simulated-fixture", "source": "representative coordinator status check"},
-        {"command": "status", "calls_per_task": 1, "busy_session_calls": 4, "basis": "simulated-fixture", "source": "representative coordinator checks; no background poll"},
-        {"command": "context", "calls_per_task": 2, "busy_session_calls": 4, "basis": "simulated-fixture", "source": "bounded worker/coordinator reads"},
-        {"command": "show", "calls_per_task": 1, "busy_session_calls": 2, "basis": "simulated-fixture", "source": "full-record fallback"},
-        {"command": "prepare", "calls_per_task": 1, "busy_session_calls": 1, "basis": "observed-lab", "source": "task lifecycle scenario"},
-        {"command": "herdr/MCP", "calls_per_task": 1, "busy_session_calls": 4, "basis": "simulated-fixture", "source": "interactive tool-call estimate; model/network time excluded"},
+        dict(command="ask", busy_session_calls=1, basis="observed-lab", source="question-to-inbox case"),
+        dict(command="report", busy_session_calls=1, basis="observed-lab", source="durable worker callback case"),
+        dict(command="prepare", busy_session_calls=1, basis="observed-lab", source="actual Git preparation case"),
+        *[dict(command=name, busy_session_calls=count, basis="simulated-fixture", source="explicit serial coordinator workload estimate; no retained read telemetry")
+          for name, count in (("inbox", 4), ("status", 4), ("context", 4), ("show", 2))],
     ]
 
 
 def weighted_opportunities(scenarios, frequency):
-    by_command = {
-        "ask": "write.ask",
-        "report": "write.report",
-        "inbox": "read.inbox",
-        "status": "read.status.12-workers",
-        "context": "read.context",
-        "show": "read.show",
-        "prepare": "dispatch.prepare",
-        "herdr/MCP": "mcp.real.agent-list",
-    }
+    mapping = dict(ask="write.ask", report="write.report", prepare="dispatch.prepare", inbox="read.inbox",
+                   status="read.status.12-workers", context="read.context", show="read.show")
     indexed = {row["id"]: row for row in scenarios}
-    rows = []
-    for item in frequency:
-        scenario = indexed[by_command[item["command"]]]
-        if scenario["status"] != "measured":
-            continue
-        avoidable = scenario["statistics"]["python_owned_ms"]["p50"]
-        calls = item["busy_session_calls"]
-        rows.append({
-            "command": item["command"],
-            "basis": item["basis"],
-            "serial_calls": calls,
-            "avoidable_ms_each_upper_bound": avoidable,
-            "weighted_ms_upper_bound": round(calls * avoidable, 3),
-            "parallel_waits_added": False,
-        })
-    return rows
+    return [dict(command=row["command"], basis=row["basis"], serial_calls=row["busy_session_calls"],
+                 observed_serial_wall_ms=round(indexed[mapping[row["command"]]]["statistics"]["wall_ms"]["p50"] * row["busy_session_calls"], 3),
+                 avoidable_ms_upper_bound=None, parallel_waits_added=False)
+            for row in frequency if indexed[mapping[row["command"]]]["status"] == "measured"]
 
 
 def decide(scenarios, opportunities):
-    envelope = {
-        "absolute_ms": 50,
-        "relative_percent": 35,
-        "frequency_weighted_ms_per_busy_session": 500,
-        "peak_memory_regression_percent": 10,
-        "behavior_regressions": 0,
-    }
-    indexed = {row["id"]: row for row in scenarios}
-    interactive = [indexed[name] for name in ("read.inbox", "read.status.12-workers", "read.context", "read.show")]
-    measured = [row for row in interactive if row["status"] == "measured"]
-    best_absolute = max((row["statistics"]["python_owned_ms"]["p50"] for row in measured), default=0)
-    best_relative = max(
-        (
-            100 * row["statistics"]["python_owned_ms"]["p50"] / row["statistics"]["wall_ms"]["p50"]
-            for row in measured
-            if row["statistics"]["wall_ms"]["p50"]
-        ),
-        default=0,
-    )
-    weighted = sum(row["weighted_ms_upper_bound"] for row in opportunities if row["command"] != "herdr/MCP")
-    proceed = best_absolute >= envelope["absolute_ms"] and best_relative >= envelope["relative_percent"] and weighted >= envelope["frequency_weighted_ms_per_busy_session"]
-    return {
-        "outcome": "proceed" if proceed else "defer",
-        "next_issue": 38 if proceed else None,
-        "minimum_meaningful_improvement": envelope,
-        "observed_upper_bound": {
-            "best_interactive_python_owned_ms": round(best_absolute, 3),
-            "best_interactive_python_owned_percent": round(best_relative, 1),
-            "frequency_weighted_ms_per_busy_session": round(weighted, 3),
-        },
-        "reason": "The gate is crossed; a bounded replacement prototype may be justified." if proceed else "The measured Python-owned upper bound does not cross every gate; keep Python and avoid a language rewrite.",
-    }
+    return dict(outcome="defer", status="not-comparable", reason="Current native wall-time measurements do not identify avoidable helper time or establish a language-rewrite saving.",
+                minimum_meaningful_improvement=dict(absolute_ms=50, relative_percent=35, frequency_weighted_ms_per_busy_session=500,
+                                                    peak_memory_regression_percent=10, behavior_regressions=0),
+                avoided_time_proven=False, historical_gate_applied=False)
 
 
 def render(raw):
-    real_tools = raw["environment"]["real_lab_tools"]
-    tool_summary = (
-        f"Runner Python {raw['environment']['python']}; the real lab used runtime `{real_tools['runtime']}`, Node {real_tools['node']}, and {real_tools['herdr']}."
-        if real_tools
-        else f"Runner Python {raw['environment']['python']}; the real-lab toolchain was not run."
-    )
-    lines = [
-        "# Sum helper latency and call-frequency decision",
-        "",
-        f"Measured source: `{raw['source']['sha']}` on {raw['environment']['platform']}.",
-        tool_summary,
-        f"Decision: **{raw['decision']['outcome'].upper()}** to a bounded #38 prototype; do not commit to a rewrite yet.",
-        raw["decision"]["reason"],
-        "",
-        "## Decision gate",
-        "",
-        "The gate was fixed before any Go prototype: at least 50 ms and 35% on a measured interactive hot path, at least 500 ms of serial frequency-weighted opportunity in a busy session, no behavior regression, and at most 10% peak-memory regression.",
-        "No Go code was built in this issue.",
-        "",
-        "## Results",
-        "",
-        "| Scenario | Samples | p50 wall ms | p95 wall ms | MAD ms | Python-owned p50 ms | External p50 ms | Peak RSS p50 KiB | Subprocesses p50 |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-    ]
+    lines = ["# Sum helper and HC transport benchmark", "", f"Measured source: `{raw['source']['sha']}` on {raw['environment']['platform']}.",
+             "Current measurements use the native Go helper and HC plain JSON-RPC.",
+             raw["decision"]["reason"], "", "| Scenario | Samples | p50 wall ms | p95 wall ms | MAD ms | CPU p50 ms | RSS p50 KiB |", "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for row in raw["scenarios"]:
         if row["status"] != "measured":
-            lines.append(f"| `{row['id']}` | {row['status']} | - | - | - | - | - | - | - |")
+            lines.append(f"| `{row['id']}` | not-run | - | - | - | - | - |")
             continue
         stats = row["statistics"]
-        lines.append(f"| `{row['id']}` | {stats['samples']} | {stats['wall_ms']['p50']} | {stats['wall_ms']['p95']} | {stats['wall_ms']['mad']} | {stats['python_owned_ms']['p50']} | {stats['external_ms']['p50']} | {stats['peak_rss_kb']['p50']} | {stats['subprocess_count']['p50']} |")
-    lines.extend([
-        "",
-        "p99 is omitted unless a scenario has at least 100 samples.",
-        "All samples are retained; MAD, min, and max remain in `raw.json` so outliers are visible rather than deleted.",
-        "",
-        "## Frequency-weighted upper bounds",
-        "",
-        "| Command | Basis | Serial calls in busy session | Avoidable upper bound each ms | Weighted upper bound ms |",
-        "| --- | --- | ---: | ---: | ---: |",
-    ])
+        rss = stats["peak_rss_kb"]["p50"] if stats["peak_rss_kb"] else "unavailable"
+        lines.append(f"| `{row['id']}` | {stats['samples']} | {stats['wall_ms']['p50']} | {stats['wall_ms']['p95']} | {stats['wall_ms']['mad']} | {stats['cpu_ms']['p50']} | {rss} |")
+    lines += ["", "All samples and outliers are retained; p99 is available only with at least 100 samples.",
+              "CPU and RSS scopes are identified on every sample; published transport CPU covers the Python client, while fixture transport includes its in-process fixture threads.",
+              "Internal helper phases and total descendant subprocess counts are unavailable; no zero or Python-owned saving is invented.",
+              "", "## Workload estimates", "", "| Command | Basis | Serial calls | Observed serial wall ms |", "| --- | --- | ---: | ---: |"]
     for row in raw["weighted_opportunities"]:
-        lines.append(f"| `{row['command']}` | {row['basis']} | {row['serial_calls']} | {row['avoidable_ms_each_upper_bound']} | {row['weighted_ms_upper_bound']} |")
-    lines.extend([
-        "",
-        "Parallel waits are excluded rather than added as serial user delay.",
-        "Observed-lab counts are actual calls made by the named scenarios; coordinator read counts and busy-session MCP counts are explicitly simulated estimates because Sum did not previously retain read telemetry.",
-        "Model, network, and provider latency are excluded.",
-        "",
-        "## Phase attribution and simpler alternatives",
-        "",
-        "`raw.json` retains each sample's Python-owned upper bound, subprocess time and count, state JSON read/write time, lock-wait time, CPU, and peak RSS.",
-        "The Python-owned figure subtracts measured external subprocess, state-I/O, and lock-wait phases but still includes shell and harness overhead, so it is an upper bound rather than a promised rewrite saving.",
-        "No simpler optimization was mixed into this language baseline.",
-        "",
-    ])
-    for alternative in raw["alternatives"]:
-        lines.append(f"- **{alternative['name']}**: {alternative['basis']}.")
-    lines.extend([
-        "",
-        "## Limitations",
-        "",
-    ])
-    for limitation in raw["limitations"]:
-        lines.append(f"- {limitation}")
-    lines.extend([
-        "",
-        "## Inventory",
-        "",
-        "| Production entrypoint | Call sites | Frequency | Role |",
-        "| --- | --- | --- | --- |",
-    ])
-    for row in raw["inventory"]:
-        lines.append(f"| `{row['entrypoint']}` | {row['call_sites']} | {row['frequency_class']} | {row['role']} |")
-    lines.extend([
-        "",
-        "## Method",
-        "",
-        f"Warmup count was {raw['methodology']['warmups']} and measured scenario order used deterministic seed {raw['methodology']['randomization_seed']}.",
-        f"Median no-op process harness overhead was {raw['methodology']['harness_overhead_ms']} ms and is reported separately, not subtracted from raw samples.",
-        "Cold means a new Python process; warm-fs means the same fixture was read after an unrecorded warmup without attempting privileged OS cache eviction.",
-        "The trace separates Python-owned time from state JSON/fsync/locking and Git/Herdr/Node subprocess time; network and model work are absent.",
-        "",
-        "## Reproduce",
-        "",
-        "```sh",
-        "mise run benchmark",
-        "```",
-        "",
-        "Raw samples and environment/tool metadata are in `raw.json` beside this report.",
-    ])
+        lines.append(f"| `{row['command']}` | {row['basis']} | {row['serial_calls']} | {row['observed_serial_wall_ms']} |")
+    lines += ["", "These are explicit serial workload estimates, not avoidable time; parallel waits are not added.",
+              "", "## Method and limitations", ""]
+    lines += [f"- {item}" for item in raw["limitations"]]
+    lines += ["", f"No-op process harness p50: {raw['methodology']['harness_overhead_ms']} ms, reported separately without subtraction.",
+              f"Private HC lab teardown: `{raw['cleanup']['real_lab']}`.", "", "## Inventory", "", "| Entrypoint | Call sites | Frequency | Role |", "| --- | --- | --- | --- |"]
+    lines += [f"| `{item['entrypoint']}` | {item['call_sites']} | {item['frequency_class']} | {item['role']} |" for item in raw["inventory"]]
+    lines += ["", "## Reproduce", "", "```sh", "mise run benchmark", "```", "", "Raw samples, scope metadata and missing-measurement reasons are retained in `raw.json`."]
     return "\n".join(lines) + "\n"
 
 

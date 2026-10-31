@@ -1,17 +1,21 @@
 package execution
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
+	"github.com/douglasjarquin/sum/go/internal/taskcheckout"
 	"os"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/environment"
-	"github.com/douglasjarquin/sum/go/internal/herdrclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
 
 const (
@@ -23,12 +27,7 @@ type StopProof struct {
 	Outcome     string
 	Reason      string
 	Observation *ordjson.Object
-	// Orphans lists surviving processes provably bound to the task checkout
-	// (cwd inside it or argv naming it, as with a detached
-	// `serve --mcp --path <checkout>` daemon), populated only when the worker
-	// pane is verified absent (pane_not_found or agent_not_found). The attempt
-	// outcome stays unknown for callers like park; cleanup may stop orphans
-	// once pane death is proven.
+
 	Orphans []proc.BoundProcess
 }
 
@@ -91,123 +90,66 @@ func observeVerifier(s *store.Store, attempt *ordjson.Object) StopProof {
 }
 
 func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Object) StopProof {
-	session := stringField(task, "session")
-	envSession, err := store.SessionFromEnv()
-	if err != nil {
+	endpoint := workerEndpoint(task)
+	if err := endpoint.Validate(); err != nil {
+		native := asObject(field(attempt, "native_launch"))
+		noEffect := native == nil && field(task, "status") == "prepared"
+		if native != nil && field(native, "effect") == string(hcclient.NotSubmitted) {
+			noEffect = true
+		}
+		if !noEffect {
+			return unknown("Worker native endpoint is missing; reservation remains held.")
+		}
+		var intent taskcheckout.Intent
+		if e := decodeNative(field(task, "checkout_intent"), &intent); e != nil {
+			return unknown("Unlaunched worker has no saved Git intent")
+		}
+		if _, e := taskcheckout.Verify(context.Background(), intent, false); e != nil {
+			return unknown(e.Error())
+		}
+		inside, e := proc.ProcessesBoundTo(intent.Path, nil)
+		if e != nil {
+			return unknown(e.Error())
+		}
+		if len(inside) > 0 {
+			return unknown("Unlaunched worker checkout has bound processes")
+		}
+		return stoppedServices(s, task, func(obs *ordjson.Object) {
+			obs.Set("checkout", intent.Path)
+			obs.Set("reason", "saved prepared attempt has no native launch intent")
+		})
+	}
+	worktree := stringField(task, "worktree")
+	if worktree == "" {
+		return unknown("Worker checkout is missing")
+	}
+	if err := s.CheckMachine(task); err != nil {
 		return unknown(err.Error())
 	}
-	if session != envSession {
-		return unknown(fmt.Sprintf("Task lives in Herdr session %s; observation from another session cannot release it.", session))
-	}
-	paneID := stringField(task, "pane")
-	workspace := stringField(task, "workspace")
-	worktree := stringField(task, "worktree")
-	if paneID == "" || workspace == "" || worktree == "" {
-		return unknown("Worker pane, workspace, or checkout identity is missing; reservation remains held.")
+	if proof := NativeProgramStopped(s, endpoint); proof.Outcome != OutcomeStopped {
+		return proof
 	}
 	host, err := s.Machine()
 	if err != nil {
-		return unknown("Worker instance cannot be inspected; reservation remains held.")
-	}
-	if !host.Is(stringField(task, "machine")) {
-		return unknown("Worker instance does not match this machine; reservation remains held.")
-	}
-	occupant := asObject(func() any { v, _ := attempt.Get("occupant"); return v }())
-	if occupant != nil {
-		occCheckout := stringField(occupant, "checkout")
-		if occCheckout != "" && resolve(occCheckout) != resolve(worktree) {
-			return unknown("Worker occupant checkout does not match the task checkout; reservation remains held.")
-		}
-		if recorded := stringField(occupant, "machine"); recorded != "" && !host.Is(recorded) {
-			return unknown("Worker occupant instance does not match this machine; reservation remains held.")
-		}
-	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
 		return unknown(err.Error())
 	}
-	pane, code, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", paneID)
+	inside, err := proc.ProcessesBoundTo(worktree, EndpointShells(host, runtimeRoot, task))
 	if err != nil {
-		return unknown(err.Error())
+		return unknown("Worker checkout processes cannot be inspected: " + err.Error())
 	}
-	if pane == nil {
-		if !herdrclient.IsAbsent(code) {
-			return unknown(fmt.Sprintf("Worker pane cannot prove exit (%s); an unobservable pane does not release capacity.", code))
-		}
-	} else {
-		paneObj := asObject(pane)
-		if nested, ok := paneObj.Get("pane"); ok {
-			if inner := asObject(nested); inner != nil {
-				paneObj = inner
-			}
-		}
-		ws, _ := paneObj.Get("workspace_id")
-		cwd, _ := paneObj.Get("cwd")
-		if fmt.Sprint(ws) != workspace || resolve(asString(cwd)) != resolve(worktree) {
-			return unknown("Worker pane identity changed; reservation remains held.")
-		}
-		agent, agentCode, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "agent", "get", paneID)
-		if err != nil {
-			return unknown(err.Error())
-		}
-		if agent != nil {
-			agentObj := asObject(agent)
-			if nested, ok := agentObj.Get("agent"); ok {
-				if inner := asObject(nested); inner != nil {
-					agentObj = inner
-				}
-			}
-			status, _ := agentObj.Get("agent_status")
-			return unknown(fmt.Sprintf("Worker is still observable (%v); idle or done status is not exit proof.", status))
-		}
-		if agentCode != "agent_not_found" {
-			return unknown(fmt.Sprintf("Worker agent cannot be observed conclusively (%s); reservation remains held.", agentCode))
-		}
-		info, procCode, procErr := environment.PaneProcesses(runtimeRoot, session, paneID)
-		if procErr != nil {
-			return unknown(procErr.Error())
-		}
-		if info == nil {
-			return unknown(fmt.Sprintf("Worker pane processes cannot be observed conclusively (%s); reservation remains held.", procCode))
-		}
-		processes, _ := info.Get("processes")
-		list, _ := processes.([]any)
-		if len(list) > 0 {
-			return unknown("Worker pane still has foreground processes besides its shell; reservation remains held.")
-		}
-		exclude := EndpointShells(host, runtimeRoot, task)
-		if n, ok := pidField(info, "shell_pid"); ok {
-			exclude[n] = true
-		}
-		if occupant != nil {
-			if n, ok := pidField(occupant, "shell_pid"); ok {
-				exclude[n] = true
-			}
-			if n, has := pidField(occupant, "pid"); has && n != 0 {
-				if proof := inspectRecordedPIDs([]int{n}, occupant, n); proof.Outcome != OutcomeStopped {
-					return proof
-				}
-			}
-		}
-		inside, cwdErr := proc.ProcessesBoundTo(worktree, exclude)
-		if cwdErr != nil {
-			return unknown("Worker checkout processes cannot be inspected; reservation remains held. " + cwdErr.Error())
-		}
-		if len(inside) > 0 {
-			return unknown(fmt.Sprintf("Worker still has an owned process bound to its checkout (pid %d); reservation remains held.", inside[0].PID))
-		}
+	if len(inside) > 0 {
+		proof := unknown(fmt.Sprintf("Worker still has an owned process bound to its checkout (pid %d); reservation remains held.", inside[0].PID))
+		proof.Orphans = inside
+		return proof
 	}
-	if pane == nil {
-		inside, cwdErr := proc.ProcessesBoundTo(worktree, EndpointShells(host, runtimeRoot, task))
-		if cwdErr != nil {
-			return unknown("Worker checkout processes cannot be inspected; reservation remains held. " + cwdErr.Error())
-		}
-		if len(inside) > 0 {
-			proof := unknown(fmt.Sprintf("Worker still has an owned process bound to its checkout (pid %d); reservation remains held.", inside[0].PID))
-			proof.Orphans = inside
-			return proof
-		}
-	}
+	return stoppedServices(s, task, func(obs *ordjson.Object) {
+		obs.Set("address", endpoint.Address)
+		obs.Set("core_id", endpoint.CoreID)
+		obs.Set("checkout", worktree)
+	})
+}
+
+func stoppedServices(s *store.Store, task *ordjson.Object, extra func(*ordjson.Object)) StopProof {
 	env, err := environment.Read(s, stringField(task, "id"))
 	if err != nil {
 		return unknown(err.Error())
@@ -230,69 +172,22 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 			return unknown(fmt.Sprintf("Owned service reservations remain unresolved: %v; stop or reconcile them before parking the worker.", active))
 		}
 	}
-	return stopped(func(obs *ordjson.Object) {
-		obs.Set("pane", paneID)
-		obs.Set("workspace", workspace)
-		obs.Set("checkout", worktree)
-	})
+	return stopped(extra)
 }
 
-// EndpointShells returns the shell pid Herdr currently reports for each other
-// pane the task records as its own endpoint (the reviewer pane). That shell
-// is accounted for by the endpoint's own close path, so it is neither a
-// worker occupant nor an orphan. Only the exact observed shell pid qualifies,
-// and only while it sits in the pane's foreground as a known shell and the
-// live pane's cwd is the task checkout: anything it runs is a separate pid and
-// still binds the checkout. The reviewer's recorded cwd is the installation
-// root the review command ran from, not the pane's, so it is not compared. An
-// endpoint on another machine or session, one Herdr cannot report, or one
-// whose identity changed yields nothing, so its processes keep blocking.
 func EndpointShells(host machine.Identity, runtimeRoot string, task *ordjson.Object) map[int]bool {
-	shells := map[int]bool{}
-	reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
-	paneID := stringField(reviewer, "pane")
-	session := stringField(task, "session")
-	worktree := stringField(task, "worktree")
-	if paneID == "" || paneID == stringField(task, "pane") || stringField(reviewer, "session") != session || worktree == "" {
-		return shells
+	return map[int]bool{}
+}
+
+func nativeAbsent(err error) bool {
+	var rpc *hcclient.RPCError
+	if !errors.As(err, &rpc) {
+		return false
 	}
-	if !host.Is(stringField(reviewer, "machine")) {
-		return shells
+	var data struct {
+		Kind string `json:"kind"`
 	}
-	herdrPath, err := toolpath.Find(runtimeRoot, "herdr")
-	if err != nil {
-		return shells
-	}
-	pane, _, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "get", paneID)
-	if err != nil || pane == nil {
-		return shells
-	}
-	paneObj := unwrapField(asObject(pane), "pane")
-	if resolve(stringField(paneObj, "cwd")) != resolve(worktree) {
-		return shells
-	}
-	info, _, err := herdrclient.Observe(herdrPath, session, 5*time.Second, "pane", "process-info", "--pane", paneID)
-	if err != nil || info == nil {
-		return shells
-	}
-	infoObj := unwrapField(asObject(info), "process_info")
-	shellPID, ok := pidField(infoObj, "shell_pid")
-	if !ok {
-		return shells
-	}
-	fg, _ := infoObj.Get("foreground_processes")
-	list, _ := fg.([]any)
-	for _, raw := range list {
-		p := asObject(raw)
-		argv0 := stringField(p, "argv0")
-		if argv0 == "" {
-			argv0 = stringField(p, "name")
-		}
-		if n, has := pidField(p, "pid"); has && n == shellPID && environment.IsShell(argv0) {
-			shells[shellPID] = true
-		}
-	}
-	return shells
+	return json.Unmarshal(rpc.Data, &data) == nil && data.Kind == "not_found"
 }
 
 func unwrapField(o *ordjson.Object, key string) *ordjson.Object {
@@ -398,4 +293,57 @@ func normalizeRecordedArgv(argv any) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+func NativeProgramStopped(s *store.Store, endpoint store.Endpoint) StopProof {
+	if err := endpoint.Validate(); err != nil {
+		return unknown(err.Error())
+	}
+	host, err := s.Machine()
+	if err != nil {
+		return unknown(err.Error())
+	}
+	if !host.Is(endpoint.Machine) {
+		return unknown("Native program belongs to another machine; death cannot be proved locally.")
+	}
+	registration, err := s.Registration(endpoint)
+	if err != nil {
+		return unknown(err.Error())
+	}
+	var recorded incarnation.NativeEvidence
+	if err = decodeNative(field(registration, "incarnation"), &recorded); err != nil || !recorded.Endpoint.SameAuthority(endpoint.Native()) || recorded.PID == 0 || recorded.Foreground == nil || recorded.Foreground.PID <= 0 || len(recorded.Foreground.Argv) == 0 {
+		return unknown("Saved native program identity is missing or differs from this binding.")
+	}
+	observe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	terminal, err := client.Get(observe, endpoint.Address)
+	if err != nil && !nativeAbsent(err) {
+		return unknown("Native terminal cannot prove exit: " + err.Error())
+	}
+	if err == nil {
+		if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep {
+			return unknown("Native terminal creation changed or is kept; program death is not proved.")
+		}
+		if terminal.State != "finished" || terminal.FinishedMS == nil || *terminal.FinishedMS == 0 || (terminal.ExitCode == nil && terminal.Signal == nil) {
+			return unknown("Native terminal has no conclusive finished program exit metadata.")
+		}
+		if endpoint.Cwd != "" && (terminal.Cwd == "" || resolve(endpoint.Cwd) != resolve(terminal.Cwd)) {
+			return unknown("Native terminal checkout identity differs from the saved binding.")
+		}
+	}
+	occupant := ordjson.NewObject()
+	argv := make([]any, len(recorded.Foreground.Argv))
+	for i, arg := range recorded.Foreground.Argv {
+		argv[i] = arg
+	}
+	occupant.Set("argv", argv)
+	if proof := inspectRecordedPIDs([]int{int(recorded.PID), int(recorded.Foreground.PID)}, occupant, int(recorded.Foreground.PID)); proof.Outcome != OutcomeStopped {
+		return proof
+	}
+	return stopped(func(observation *ordjson.Object) {
+		observation.Set("endpoint", endpoint.Object())
+		observation.Set("pid", jsonNumber(int(recorded.PID)))
+		observation.Set("reason", "exact saved native terminal and program have exited")
+	})
 }

@@ -32,7 +32,7 @@ func TestPolicyToPRDogfoodFromDispatch(t *testing.T) {
 		t.Fatalf("coordinator run_id %q worker %q, want two distinct runs", coordID, workerID)
 	}
 
-	review := v.ctlPane("w-review:p1", true, "review", v.taskID, "--verdict", "approve", "--candidate", sha, "--policy-reviewed", "--text", "independent review of the candidate")
+	review := v.independentReview(true, v.taskID, "--verdict", "approve", "--candidate", sha, "--policy-reviewed", "--text", "independent review of the candidate")
 	if asString(asMap(review["evidence"])["source"]) == "worker" {
 		t.Fatalf("review source = %v, want a non-worker reviewer", review["evidence"])
 	}

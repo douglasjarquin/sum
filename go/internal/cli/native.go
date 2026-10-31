@@ -16,7 +16,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/devcmd"
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/helpview"
-	"github.com/douglasjarquin/sum/go/internal/herdrbridge"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/notes"
@@ -33,6 +32,9 @@ func (o *rootOptions) openStore(command string) (*store.Store, error) {
 	st, err := store.Open(o.home)
 	if err != nil {
 		return nil, err
+	}
+	if st.RecordsOnly() && !guard.ReadOnlyCommands[command] {
+		return nil, store.ErrHistoricalReadOnly
 	}
 	if err := guard.Candidate(o.installRoot, st, command); err != nil {
 		return nil, err
@@ -197,22 +199,6 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	notesCmd.MarkFlagsOneRequired("text", "file")
 	notesCmd.MarkFlagsMutuallyExclusive("text", "file")
 	root.AddCommand(notesCmd)
-
-	root.AddCommand(&cobra.Command{
-		Use:  "herdr",
-		Args: cobra.ArbitraryArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			st, err := o.openStore("herdr")
-			if err != nil {
-				return err
-			}
-			ctx, ctxErr := store.Context(o.installRoot)
-			if ctxErr != nil {
-				return fmt.Errorf("%s The bridge never borrows a saved coordinator context.", capitalizeHerdrContext(ctxErr.Error()))
-			}
-			return herdrbridge.Run(o.runtimeRoot, st, ctx, args, cmd.OutOrStdout())
-		},
-	})
 
 	var acknowledge bool
 	archiveCmd := &cobra.Command{
@@ -441,7 +427,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := ask.Resolve(st, args[0], args[1])
+			view, err := ask.Resolve(st, args[0], args[1], app.OptionalContext(o.installRoot))
 			if err != nil {
 				return err
 			}
@@ -628,8 +614,8 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},
 	}
-	bindCmd.Flags().StringVar(&workerPane, "worker-pane", "", "")
-	bindCmd.Flags().StringVar(&reviewerPane, "reviewer-pane", "", "")
+	bindCmd.Flags().StringVar(&workerPane, "worker-terminal", "", "")
+	bindCmd.Flags().StringVar(&reviewerPane, "reviewer-terminal", "", "")
 	bindCmd.Flags().BoolVar(&parentOnly, "parent-only", false, "")
 	root.AddCommand(bindCmd)
 
@@ -764,8 +750,16 @@ func capitalizeHerdrContext(msg string) string {
 // verified, and the delivery pass then checks the pane itself before presenting its inline listing.
 func callerVerified(st *store.Store, ctx *ordjson.Object, reg *ordjson.Object) bool {
 	endpoint := store.EndpointFromContext(ctx)
-	recorded, occupiedAt, ok, err := incarnation.RoleRecord(st, reg, endpoint)
-	return err == nil && ok && incarnation.Caller(endpoint.Session, endpoint.Pane, recorded, occupiedAt).Verified
+	_, terminal, err := app.ObserveNative(endpoint)
+	if err != nil {
+		return false
+	}
+	receipt, err := app.NativeReceipt(reg)
+	if err != nil {
+		return false
+	}
+	recorded, _ := reg.Get("incarnation")
+	return incarnation.JudgeNative(recorded, endpoint.Native(), terminal, receipt).Verified
 }
 
 func registrationString(reg *ordjson.Object, key string) (string, bool) {

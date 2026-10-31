@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Install pinned dependencies and generate repository-local MCP/skill configuration"
+#MISE description="Install pinned dependencies and stage repository-local HC runtime and skills"
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mise install

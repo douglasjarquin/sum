@@ -5,6 +5,7 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
+| `verify.fixture-git-isolation` | Offline Go and Python test processes use a private retained Git configuration with explicit fixture identity and unsigned fixture commits/tags; inherited signing requirements cannot invoke a desktop signer, parent configuration is unchanged, and child failures retain their exit status. Builds and web checks keep their existing environment. | automated: `tests/test_git_env.py` | Offline poisoned-signer red/green regression; implementation: `scripts/fixture_git_env.py`, `mise-tasks/test`, `mise-tasks/verify`. |
 | `verify.contract-check` | `--check` validates the contract, maps, task ownership, and requirements without running anything | automated: `go/internal/skilltest/verify_test.go` | offline suite |
 | `verify.clean-pass` | A clean committed tree passing `mise run verify` yields a record that certifies the exact SHA | automated: `go/internal/skilltest/verify_test.go` | offline suite |
 | `verify.dirty-provisional` | A dirty tree yields a provisional record that certifies nothing | automated: `go/internal/skilltest/verify_test.go` | offline suite |
@@ -15,7 +16,7 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 | `verify.intentional-failure` | A failing check yields `fail` and retains the log | automated: `go/internal/skilltest/verify_test.go` | offline suite |
 | `verify.skipped-scenario` | Manual scenarios are `not-run` unless reported; `not-applicable` needs a reason | automated: `go/internal/skilltest/verify_test.go` | offline suite |
 | `verify.policy-change` | Edits to the contract, tasks, or maps since `--base` flag the run for root review | automated: `go/internal/skilltest/verify_test.go` | offline suite |
-| `verify.three-checkouts` | The same fixture verifies from a managed clone, an external clone with sum and Herdr absent, and a linked worktree | automated: `go/internal/skilltest/verify_test.go` | offline suite |
+| `verify.three-checkouts` | The same fixture verifies from a managed clone, an external clone with Sum and HC absent, and a linked worktree | automated: `go/internal/skilltest/verify_test.go` | offline suite |
 | `verify.create-bootstrap` | The create-verification scaffold inspects CLI, web, and HTTP-service fixtures, reuses their existing tasks, seeds at most five features labelled incomplete, and vendors the skills with thin aliases | automated: `go/internal/skilltest/verify_test.go` | offline suite |
 | `verify.create-inspect-architecture` | Inspect lists existing AGENTS.md, CODEOWNERS, and CI workflow directories and writes nothing; a `verify` task that runs `mise run verify` is reported as a cycle | automated: `go/internal/skilltest/packaging_test.go` | offline suite |
 | `verify.create-readme-map` | Inspect emits a task-owner-example-check map with observed rows and explicit gaps, and writes nothing | automated: `go/internal/skilltest/packaging_test.go` | offline suite |

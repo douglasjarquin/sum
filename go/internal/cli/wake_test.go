@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/pflag"
 )
 
@@ -21,7 +21,7 @@ func TestWakeCommandsUsageAndAuthority(t *testing.T) {
 	cases := []struct {
 		name      string
 		args      []string
-		herdr     bool
+		native    bool
 		usage     bool
 		unknown   bool
 		domainErr string
@@ -35,19 +35,19 @@ func TestWakeCommandsUsageAndAuthority(t *testing.T) {
 		{name: "consume unknown flag", args: []string{"wake", "consume", "--boundary", "x", "--unexpected"}, usage: true, unknown: true},
 		{name: "reconcile extra positional", args: []string{"wake", "reconcile", "extra"}, usage: true},
 		{name: "reconcile unknown flag", args: []string{"wake", "reconcile", "--unexpected"}, usage: true, unknown: true},
-		{name: "consume needs a Herdr pane", args: []string{"wake", "consume", "--boundary", "x"}, domainErr: "Herdr pane"},
-		{name: "reconcile needs a Herdr pane", args: []string{"wake", "reconcile"}, domainErr: "Herdr pane"},
-		{name: "consume from a non-coordinator pane", args: []string{"wake", "consume", "--boundary", "x"}, herdr: true, domainErr: "boundary token is not verifiable"},
-		{name: "reconcile from a non-coordinator pane", args: []string{"wake", "reconcile"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "consume needs a HC terminal", args: []string{"wake", "consume", "--boundary", "x"}, domainErr: "explicit HC session required"},
+		{name: "reconcile needs a HC terminal", args: []string{"wake", "reconcile"}, domainErr: "explicit HC session required"},
+		{name: "consume from a non-coordinator terminal", args: []string{"wake", "consume", "--boundary", "x"}, native: true, domainErr: "boundary token is not verifiable"},
+		{name: "reconcile from a non-coordinator terminal", args: []string{"wake", "reconcile"}, native: true, domainErr: "registration identity mismatch"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			home := writeDesignatedHome(t)
-			if tc.herdr {
-				herdrEnv(t, home)
-				t.Setenv("HERDR_PANE_ID", "w-other:p1")
+			if tc.native {
+				nativeEnv(t, home)
+				t.Setenv("SUM_ROLE", "developer")
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			before := snapshotHome(t, home)
 			stdout, err := runCLI(t, home, tc.args...)
@@ -115,23 +115,22 @@ func TestWakeHelpMatchesImplementedCommands(t *testing.T) {
 // idempotently, and reconcile then has nothing to do.
 func TestWakeCommandsEndToEndWithTheHookDisabled(t *testing.T) {
 	home := writeDesignatedHome(t)
-	configureNativeEventsForTest(t, home, true)
-	herdrEnv(t, home)
+	configureNativeEventsForTest(t, home, false)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	assertNativeEventsEnabledForTest(t, home)
 	owner := readJSON(t, filepath.Join(home, "context.json"))
 	if fmt.Sprint(owner["wake_protocol"]) != "1" {
 		t.Fatalf("init did not adopt the wake protocol: %v", owner)
 	}
-	writeHookHealth(t, home, `{"schema": 1, "enabled": false, "plugin_id": null, "events": 0, "handled": 0, "ignored": 0, "errors": [], "last_event": null, "last_error": null}`)
+	mustCLI(t, home, "hook", "disable")
 	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The arrival: a worker's open question, saved with no hook event to carry it.
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", host, host, home))
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", host, host, home))
 
 	empty := decodeObject(t, mustCLI(t, home, "wake", "show"))
 	if rows := asSlice(empty["recipients"]); len(rows) != 0 {
@@ -142,18 +141,18 @@ func TestWakeCommandsEndToEndWithTheHookDisabled(t *testing.T) {
 		t.Fatalf("inbox does not list the arrival: %v", inbox)
 	}
 	hook := decodeObject(t, mustCLI(t, home, "hook", "status"))
-	if fmt.Sprint(hook["enabled"]) != "false" || hook["degraded"] != true {
+	if fmt.Sprint(hook["enabled"]) != "false" {
 		t.Fatalf("hook status = %v, want disabled", hook)
 	}
 
 	// The explicit route from the worker's side: one bounded pass that opens the episode. No timer ran.
-	t.Setenv("HERDR_PANE_ID", "w-worker:p1")
+	useNativeTaskWorker(t, home, "t-aaaaaaaaaaaa")
 	notice := decodeObject(t, mustCLI(t, home, "notice", "t-aaaaaaaaaaaa", "--to", "parent"))
 	rows := asSlice(asMap(notice["returns"])["recipients"])
 	if len(rows) != 1 || asString(asMap(rows[0])["state"]) != "submitted" {
 		t.Fatalf("notice = %v, want one submitted prompt", notice)
 	}
-	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
+	useNativeCoordinator(t, home)
 
 	before := snapshotHome(t, home)
 	shown := decodeObject(t, mustCLI(t, home, "wake", "show"))
@@ -222,18 +221,17 @@ func TestWakeCommandsEndToEndWithTheHookDisabled(t *testing.T) {
 // priority_prompts.
 func TestWakePriorityDecisionEndToEnd(t *testing.T) {
 	home := writeDesignatedHome(t)
-	configureNativeEventsForTest(t, home, true)
-	herdrEnv(t, home)
+	configureNativeEventsForTest(t, home, false)
+	nativeEnv(t, home)
 	if _, err := runCLI(t, home, "init"); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	assertNativeEventsEnabledForTest(t, home)
 	host, err := machine.ID()
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", host, host, home))
-	t.Setenv("HERDR_PANE_ID", "w-worker:p1")
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", host, host, home))
+	useNativeTaskWorker(t, home, "t-aaaaaaaaaaaa")
 	routine := decodeObject(t, mustCLI(t, home, "notice", "t-aaaaaaaaaaaa", "--to", "parent"))
 	rows := asSlice(asMap(routine["returns"])["recipients"])
 	if len(rows) != 1 || asString(asMap(rows[0])["state"]) != "submitted" || asMap(rows[0])["priority"] != nil {
@@ -241,7 +239,7 @@ func TestWakePriorityDecisionEndToEnd(t *testing.T) {
 	}
 	// The fake marks a prompted pane working; the coordinator finishes its turn before the next arrival. The
 	// worker's next question is saved and its own routine (not forced) pass finds the episode outstanding.
-	setFakePaneStatus(t, home, "w-parent:p1", "idle")
+	nativeLabFor(t, home).native.SetStatus("t1", "idle")
 	asked := decodeObject(t, mustCLI(t, home, "ask", "t-aaaaaaaaaaaa", "--key", "second", "--text", "Which branch?"))
 	qid := asString(asMap(asked["question"])["id"])
 	rows = asSlice(asMap(asMap(asked["notice"])["returns"])["recipients"])
@@ -259,11 +257,11 @@ func TestWakePriorityDecisionEndToEnd(t *testing.T) {
 	if coalesced := asSlice(entry["coalesced_obligations"]); len(coalesced) != 1 || asString(asMap(coalesced[0])["id"]) != "question:q-aaaa" {
 		t.Fatalf("coalesced_obligations = %v", entry["coalesced_obligations"])
 	}
-	last := fakeLastPrompt(t, home, "w-parent:p1")
+	last := nativeLastInput(t, home, "t1")
 	if sent := fakePrompts(t, home); len(sent) != 2 || !strings.Contains(last, "Decision(s) need you") || strings.Contains(last, "q-aaaa") {
 		t.Fatalf("prompts = %v, last = %q; want one priority prompt naming only the new question", sent, last)
 	}
-	t.Setenv("HERDR_PANE_ID", "w-parent:p1")
+	useNativeCoordinator(t, home)
 	shown := decodeObject(t, mustCLI(t, home, "wake", "show"))
 	wake := asMap(asSlice(shown["recipients"])[0])
 	if asString(asMap(wake["episode"])["phase"]) != "submitted" || fmt.Sprint(wake["generation"]) != "1" {
@@ -286,36 +284,37 @@ func TestWakePriorityDecisionEndToEnd(t *testing.T) {
 	}
 }
 
-// fakeLastPrompt is the text the fake Herdr last accepted for pane.
-func fakeLastPrompt(t *testing.T, home, pane string) string {
+func nativeLastInput(t *testing.T, home, address string) string {
 	t.Helper()
-	var state map[string]any
-	data, err := os.ReadFile(filepath.Join(home, "fake-herdr", "state.json"))
-	if err != nil {
-		t.Fatal(err)
+	inputs := nativeLabFor(t, home).native.Inputs(address)
+	if len(inputs) == 0 {
+		return ""
 	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		t.Fatal(err)
-	}
-	return asString(asMap(asMap(state["panes"])[pane])["last_prompt"])
+	return inputs[len(inputs)-1]
 }
-
-// setFakePaneStatus edits the fake Herdr's store as a settled or busy occupant would appear.
-func setFakePaneStatus(t *testing.T, home, pane, status string) {
+func useNativeCoordinator(t *testing.T, home string) {
 	t.Helper()
-	path := filepath.Join(home, "fake-herdr", "state.json")
-	var state map[string]any
-	data, err := os.ReadFile(path)
+	owner := readJSON(t, filepath.Join(home, "context.json"))
+	for key, value := range endpointEnv(owner) {
+		t.Setenv(key, value)
+	}
+}
+func useNativeTaskWorker(t *testing.T, home, taskID string) {
+	t.Helper()
+	s := nativeTestStore(t, home)
+	task, err := s.ReadTask(taskID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(data, &state); err != nil {
-		t.Fatal(err)
+	var endpoint store.Endpoint
+	if value, ok := task.Get("worker_endpoint"); ok {
+		object, _ := value.(*ordjson.Object)
+		endpoint = store.EndpointFromContext(object)
+	} else {
+		endpoint = seedNativeWorker(t, nativeLabFor(t, home), s, task)
 	}
-	asMap(asMap(state["panes"])[pane])["agent_status"] = status
-	out, _ := json.Marshal(state)
-	if err := os.WriteFile(path, out, 0o644); err != nil {
-		t.Fatal(err)
+	for key, value := range endpointEnv(endpoint) {
+		t.Setenv(key, value)
 	}
 }
 

@@ -1,41 +1,20 @@
 package environment
 
 import (
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"testing"
-
-	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
-func TestForegroundLeaderBindsOnlyAProvableGroupLeader(t *testing.T) {
-	cases := []struct {
-		name string
-		info string
-		want int
-	}{
-		{name: "agent alone", info: `{"shell_pid": 10, "foreground_process_group_id": 20, "processes": [{"pid": 20, "argv": ["claude"]}]}`, want: 20},
-		{name: "agent with children in its group", info: `{"shell_pid": 10, "foreground_process_group_id": 20, "processes": [{"pid": 20, "argv": ["claude"]}, {"pid": 21, "argv": ["node", "mcp"]}, {"pid": 22, "argv": ["node", "mcp"]}]}`, want: 20},
-		{name: "leader exited, children remain", info: `{"shell_pid": 10, "foreground_process_group_id": 20, "processes": [{"pid": 21, "argv": ["node", "mcp"]}]}`},
-		{name: "shell holds the foreground", info: `{"shell_pid": 10, "foreground_process_group_id": 10, "processes": [{"pid": 11, "argv": ["sleep", "1"]}]}`},
-		{name: "leader observed twice", info: `{"shell_pid": 10, "foreground_process_group_id": 20, "processes": [{"pid": 20, "argv": ["claude"]}, {"pid": 20, "argv": ["other"]}]}`},
-		{name: "leader without argv", info: `{"shell_pid": 10, "foreground_process_group_id": 20, "processes": [{"pid": 20, "argv": []}]}`},
-		{name: "no group id", info: `{"shell_pid": 10, "foreground_process_group_id": null, "processes": [{"pid": 20, "argv": ["claude"]}]}`},
+func TestNativeProcessPreservesProgramAndForegroundBinding(t *testing.T) {
+	pid := uint32(100)
+	terminal := hcclient.Terminal{PID: &pid, Argv: []string{"npm", "run", "dev"}, Cwd: "/tmp/project", Foreground: &hcclient.Foreground{PID: 101, Name: "node", Argv: []string{"node", "server.js"}, Cwd: "/tmp/project"}}
+	record := nativeProcess(terminal)
+	if intField(record, "pid") != 100 || intField(record, "foreground_pid") != 101 || len(listField(record, "argv")) != 3 || len(listField(record, "foreground_argv")) != 2 {
+		t.Fatal("native process binding lost", record)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			decoded, err := ordjson.Decode([]byte(tc.info))
-			if err != nil {
-				t.Fatal(err)
-			}
-			leader := ForegroundLeader(decoded.(*ordjson.Object))
-			if tc.want == 0 {
-				if leader != nil {
-					t.Fatalf("leader = %v, want none", leader)
-				}
-				return
-			}
-			if got := intField(leader, "pid"); got != tc.want {
-				t.Fatalf("leader pid = %d, want %d", got, tc.want)
-			}
-		})
+	terminal.Foreground = nil
+	record = nativeProcess(terminal)
+	if intField(record, "foreground_pid") != 0 {
+		t.Fatal("missing foreground fabricated")
 	}
 }

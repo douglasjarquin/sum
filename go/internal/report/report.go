@@ -3,9 +3,11 @@ package report
 import (
 	"fmt"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/returns"
@@ -14,12 +16,25 @@ import (
 )
 
 func Run(s *store.Store, taskID, text string, handoff *ordjson.Object, endpoint *ordjson.Object, pump returns.PumpOpts) (*ordjson.Object, error) {
+	actor, err := app.ObserveTaskActor(s, endpoint)
+	if err != nil {
+		return nil, err
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
 	}
 	task, err := s.ReadTask(taskID)
 	if err != nil {
+		unlock()
+		return nil, err
+	}
+	if err := maintenance.Refuse(task, "Worker report"); err != nil {
+		unlock()
+		return nil, err
+	}
+
+	if err := app.CheckTaskRole(s, task, actor, "worker"); err != nil {
 		unlock()
 		return nil, err
 	}

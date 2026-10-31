@@ -14,43 +14,22 @@ import { sitePath } from "../../lib/site-path.mjs";
     </p>
     <div class="sec">
       <h2>Install and launch</h2>
-      <p>The shortest start is a clone and then a Herdr pane:</p>
+      <p>Stage the runtime, explicitly start your selected HC core, then launch the coordinator:</p>
       <div class="codeblock">
         <div>git clone https://github.com/douglasjarquin/sum.git</div>
-        <div>herdr</div>
-        <div class="c"># In a Herdr pane:</div>
+        <div class="c"># Start the selected HC core explicitly using its matched manual.</div>
+        <div class="c"># In the clone:</div>
         <div>cd /path/to/sum</div>
         <div>mise trust</div>
         <div>mise run setup</div>
-        <div>codex                         <span class="c"># or claude, grok, cursor-agent, pi, opencode, devin, ...</span></div>
+        <div>./bin/sumctl coordinator start --socket /absolute/path/to/hc.sock --session sum --hc-config-home /absolute/path/to/hc-config --harness codex</div>
       </div>
-      <p>
-        If Herdr is not installed yet, run <code
-          >mise trust &amp;&amp; mise run setup</code
-        > in the clone first, then <code>mise exec -- herdr</code>. If mise is
-        not activated in your shell, launch the harness with <code
-          >mise exec -- codex</code
-        > instead of bare <code>codex</code>.
-      </p>
-      <p style="margin:14px 0 0">
-        A harness that does not auto-load AGENTS.md needs this first prompt:
-        <em class="serif"
-          >"Read AGENTS.md in this directory, initialize sum, and act as my
-          coordinator."</em
-        >
-      </p>
+      <p>Setup stages exact HC 0.1.14 and its matched manual/template. Observation never starts a core. <code>coordinator start</code> records the bound launch environment and matching initialization receipt; without qualified HC context, <code>init</code> defaults to developer.</p>
+      <p style="margin:14px 0 0">Read the exact procedure path returned by <code>init</code>. An existing qualified terminal needs explicit coordinator initialization and records a known launch or explicitly unknown model; never guess an exact model through <code>--same-as-you</code>.</p>
     </div>
     <div class="sec">
       <h2>Recommended harnesses</h2>
-      <p>
-        <code>codex</code> can be <code>claude</code>, <code>grok</code>,
-        <code>cursor-agent</code>, <code>pi</code>, <code>opencode</code>, or
-        <code>devin</code>. Accept the harness's normal project/MCP trust
-        prompt. Do not bypass permissions. Codex, Claude, and Cursor receive
-        repository-local MCP configuration; OpenCode receives
-        <code>opencode.json</code>. Other shell-capable harnesses can use the
-        same native Herdr CLI skill without MCP.
-      </p>
+      <p>Automatic input is qualified for Codex 0.166.0 with its default keymap and Sum’s namespaced HC Tab-submit template. Other harnesses require actual qualification evidence. Keep normal trust and permission gates; fresh setup generates no custom Sum MCP server and preserves unrelated integrations.</p>
       <p>
         Harness choice, model flags, and presets are in <a
           href={sitePath("configuration")}>Configuration</a
@@ -63,14 +42,7 @@ import { sitePath } from "../../lib/site-path.mjs";
         <div>mise run setup -- --install-codex</div>
         <div>mise exec -- codex             <span class="c"># authenticate using the normal provider flow</span></div>
       </div>
-      <p>
-        This optional path installs a pinned Codex CLI inside <code
-          >.deps/harnesses</code
-        >, not globally. Other harnesses are deliberately bring-your-own: no
-        subscription, API key, or account is created or switched by setup.
-        Herdr's optional native integrations can be installed separately, for
-        example <code>herdr integration install codex</code>.
-      </p>
+      <p>An explicitly requested optional Codex install is local to <code>.deps/harnesses</code>. No account, subscription or global configuration is created or switched. Setup alone does not qualify an authenticated harness.</p>
     </div>
     <div class="sec">
       <h2>Talk to it</h2>
@@ -83,7 +55,7 @@ import { sitePath } from "../../lib/site-path.mjs";
         public API.
       </blockquote>
       <p>
-        The coordinator creates a task brief, prepares a separate Herdr
+        The coordinator creates a task brief, prepares a separate Git
         worktree, launches the selected worker, submits its brief, and returns
         control to you. Every session starts with <code>./bin/sumctl init</code>
         and follows the role it returns.

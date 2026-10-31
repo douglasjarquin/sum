@@ -32,7 +32,7 @@ func TestVerifyUnknownFlagsAreUsageErrorsBeforeRun(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := verifyUsageLab(t)
 			stdout, stderr, err := runVerifyCLI(t, home, tc.args...)
 			if err == nil {
@@ -59,15 +59,15 @@ func TestVerifyCommands(t *testing.T) {
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid --execute", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--execute"}, domainErr: "Herdr pane"},
-		{name: "valid --execute after dashdash", args: []string{"verify", "--candidate", verifyCandidate, "--execute", "--", "t-aaaaaaaaaaaa"}, domainErr: "Herdr pane"},
-		{name: "valid --execute=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate=" + verifyCandidate, "--execute=true"}, domainErr: "Herdr pane"},
-		{name: "valid --result --text", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--result", "pass", "--text", "ok"}, domainErr: "Herdr pane"},
-		{name: "valid --result= --text=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate=" + verifyCandidate, "--result=pass", "--text=ok"}, domainErr: "Herdr pane"},
-		{name: "valid --run", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run", "/tmp/run.json"}, domainErr: "Herdr pane"},
-		{name: "valid --run=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run=/tmp/run.json"}, domainErr: "Herdr pane"},
-		{name: "valid --base --file", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--base", "HEAD", "--file", "notes.md", "--result", "pass"}, domainErr: "Herdr pane"},
-		{name: "valid --execute with herdr", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--execute"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid --execute", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--execute"}, domainErr: "HC session"},
+		{name: "valid --execute after dashdash", args: []string{"verify", "--candidate", verifyCandidate, "--execute", "--", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
+		{name: "valid --execute=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate=" + verifyCandidate, "--execute=true"}, domainErr: "HC session"},
+		{name: "valid --result --text", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--result", "pass", "--text", "ok"}, domainErr: "HC session"},
+		{name: "valid --result= --text=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate=" + verifyCandidate, "--result=pass", "--text=ok"}, domainErr: "HC session"},
+		{name: "valid --run", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run", "/tmp/run.json"}, domainErr: "HC session"},
+		{name: "valid --run=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run=/tmp/run.json"}, domainErr: "HC session"},
+		{name: "valid --base --file", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--base", "HEAD", "--file", "notes.md", "--result", "pass"}, domainErr: "HC session"},
+		{name: "valid --execute with herdr", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--execute"}, herdr: true, domainErr: "task checkout is gone"},
 		{name: "valid --run --execute conflict with herdr", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run", "/tmp/run.json", "--execute"}, herdr: true, domainErr: "Pass either --run PATH"},
 		{name: "unknown flag", args: []string{"verify", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
 		{name: "unknown flag before task", args: []string{"verify", "--unexpected", "t-aaaaaaaaaaaa"}, usage: true, unknown: true},
@@ -83,9 +83,9 @@ func TestVerifyCommands(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home, before := verifyUsageLab(t)
 			if tc.herdr {
-				herdrEnv(t, home)
+				nativeEnv(t, home)
 			} else {
-				clearHerdrEnv(t)
+				clearNativeEnv(t)
 			}
 			stdout, stderr, err := runVerifyCLI(t, home, tc.args...)
 			switch {
@@ -114,7 +114,7 @@ func TestVerifyCommands(t *testing.T) {
 func verifyUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship", "brief_path": "brief.md"}`)
 	before = readVerifyTask(t, home)
 	return home, before

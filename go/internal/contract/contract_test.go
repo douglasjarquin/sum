@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestBuildRelease_matchesThePythonReferenceShape(t *testing.T) {
+func TestBuildRelease_reportsNativeBinaryCapabilities(t *testing.T) {
 	release := BuildRelease()
 	encoded, err := json.MarshalIndent(release, "", "  ")
 	if err != nil {
@@ -14,16 +14,23 @@ func TestBuildRelease_matchesThePythonReferenceShape(t *testing.T) {
 	want := `{
   "sum_version": "0.1.0",
   "contracts": {
-    "herdr_cli": "0.9.5",
-    "mcp": {
-      "server": "herdr-mesh-sum",
-      "version": "0.1.0",
-      "tools": 10
-    }
+    "hc_core": "0.1.14",
+    "hc_generation": 1,
+    "endpoint_schema": 2,
+    "notification_protocol": 2
   },
   "supports": {
-    "state_schema": [
+    "endpoint_schema": [
+      2
+    ],
+    "notification_protocol": [
+      2
+    ],
+    "observer_protocol": [
       1
+    ],
+    "state_schema": [
+      2
     ],
     "brief_schema": [
       1

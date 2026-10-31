@@ -23,62 +23,35 @@ func TestRegistrationKey_matchesThePythonReferenceHash(t *testing.T) {
 	}
 }
 
-func TestRegistration_findsASessionFileKeyedByALegacyHostnameAndRekeysIt(t *testing.T) {
-	home := t.TempDir()
-	s, err := Open(home)
+func TestRegistration_keepsLegacyRecordsHistorical(t *testing.T) {
+	s, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Init(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(machine.Pin("0123456789abcdef0123456789abcdef", "dev"))
-	if err := machine.Record(home); err != nil {
+	if err = s.Init(); err != nil {
 		t.Fatal(err)
 	}
 	legacy := Endpoint{Machine: "dev", Session: "s1", Pane: "w-worker:p1"}
-	legacyPath := filepath.Join(home, "sessions", RegistrationKey(legacy)+".json")
-	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+	path := filepath.Join(s.Sessions, RegistrationKey(legacy)+".json")
+	original := []byte(`{"schema":1,"role":"worker","machine":"dev","session":"s1","pane":"w-worker:p1"}`)
+	if err = os.WriteFile(path, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(legacyPath, []byte(`{"schema": 1, "role": "worker", "task": "t-aaaaaaaaaaaa", "machine": "dev", "session": "s1", "pane": "w-worker:p1", "registered_at": "2026-01-01T00:00:00+00:00"}`), 0o600); err != nil {
-		t.Fatal(err)
+	if _, err = s.Register(legacy, "worker", "task", nil); err == nil {
+		t.Fatal("legacy pane granted HC authority")
 	}
-
-	t.Cleanup(machine.Pin("0123456789abcdef0123456789abcdef", "renamed"))
-	s, err = Open(home)
-	if err != nil {
-		t.Fatal(err)
+	current := nativeEndpoint("dev", "t7", "worker")
+	found, err := s.Registration(current)
+	if err != nil || found != nil {
+		t.Fatalf("legacy registration adopted: %v %v", found, err)
 	}
-	host, err := s.Machine()
-	if err != nil {
-		t.Fatal(err)
+	got, _ := os.ReadFile(path)
+	if string(got) != string(original) {
+		t.Fatal("historical registration was rewritten")
 	}
-	endpoint := Endpoint{Machine: host.ID, Session: "s1", Pane: "w-worker:p1"}
-	found, err := s.Registration(endpoint)
-	if err != nil || found == nil {
-		t.Fatalf("Registration after rename = %v, %v; want the legacy worker registration", found, err)
-	}
-	if role, _ := found.Get("role"); role != "worker" {
-		t.Fatalf("role = %v, want worker", role)
-	}
-
-	rekeyed, err := s.Register(endpoint, "worker", "t-aaaaaaaaaaaa", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if at, _ := rekeyed.Get("registered_at"); at != "2026-01-01T00:00:00+00:00" {
-		t.Fatalf("registered_at = %v, want the legacy registration's", at)
-	}
-	if m, _ := rekeyed.Get("machine"); m != host.ID {
-		t.Fatalf("re-registered machine = %v, want %s", m, host.ID)
-	}
-	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
-		t.Fatalf("legacy session file still present: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(home, "sessions", RegistrationKey(endpoint)+".json")); err != nil {
-		t.Fatalf("re-keyed session file: %v", err)
-	}
+}
+func nativeEndpoint(machine, address, role string) Endpoint {
+	return Endpoint{Schema: 2, Backend: "hc", Machine: machine, CoreID: "core-a", Session: "s1", Socket: "/tmp/scratch.sock", Address: address, Role: role, Attempt: "attempt-one", BindingGeneration: 1, CreatedMS: 100, Cwd: "/tmp/x"}
 }
 
 func TestRegistration_ignoresASessionFileKeyedByAnotherHostsName(t *testing.T) {
@@ -154,7 +127,7 @@ func TestRegisterThenRegistration_roundTripsAndPreservesRegisteredAt(t *testing.
 	if err := s.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	endpoint := Endpoint{Machine: "m1", Session: "s1", Pane: "p1", Cwd: "/tmp/x"}
+	endpoint := nativeEndpoint("m1", "t1", "developer")
 
 	first, err := s.Register(endpoint, "developer", nil, nil)
 	if err != nil {
@@ -174,7 +147,7 @@ func TestRegisterThenRegistration_roundTripsAndPreservesRegisteredAt(t *testing.
 		t.Fatal("registration = nil, want the record just written")
 	}
 
-	second, err := s.Register(endpoint, "worker", "t-0123456789ab", nil)
+	second, err := s.Register(endpoint, "developer", nil, nil)
 	if err != nil {
 		t.Fatalf("re-register: %v", err)
 	}
@@ -183,8 +156,8 @@ func TestRegisterThenRegistration_roundTripsAndPreservesRegisteredAt(t *testing.
 		t.Fatalf("registered_at changed on re-registration: %v -> %v", firstRegisteredAt, secondRegisteredAt)
 	}
 	role, _ = second.Get("role")
-	if role != "worker" {
-		t.Fatalf("role after re-register = %v, want worker", role)
+	if role != "developer" {
+		t.Fatalf("role after re-register = %v, want developer", role)
 	}
 }
 
@@ -196,7 +169,7 @@ func TestRegistration_rejectsIdentityMismatch(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	endpoint := Endpoint{Machine: "m1", Session: "s1", Pane: "p1"}
+	endpoint := nativeEndpoint("m1", "t1", "developer")
 	if _, err := s.Register(endpoint, "developer", nil, nil); err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -219,10 +192,10 @@ func TestRegistrations_returnsAllSortedByFilename(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	if _, err := s.Register(Endpoint{Machine: "m1", Session: "s1", Pane: "p1"}, "developer", nil, nil); err != nil {
+	if _, err := s.Register(nativeEndpoint("m1", "t1", "developer"), "developer", nil, nil); err != nil {
 		t.Fatalf("register 1: %v", err)
 	}
-	if _, err := s.Register(Endpoint{Machine: "m2", Session: "s2", Pane: "p2"}, "worker", nil, nil); err != nil {
+	if _, err := s.Register(nativeEndpoint("m2", "t2", "worker"), "worker", nil, nil); err != nil {
 		t.Fatalf("register 2: %v", err)
 	}
 	all, err := s.Registrations()
@@ -231,5 +204,38 @@ func TestRegistrations_returnsAllSortedByFilename(t *testing.T) {
 	}
 	if len(all) != 2 {
 		t.Fatalf("len(registrations) = %d, want 2", len(all))
+	}
+}
+
+func TestNativeRegistrationRequiresCurrentBinding(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := nativeEndpoint("m1", "t7", "worker")
+	endpoint.Task = "t-0123456789ab"
+	if _, err = s.Register(endpoint, "worker", endpoint.Task, nil); err != nil {
+		t.Fatal(err)
+	}
+	next := endpoint
+	next.Attempt = "attempt-two"
+	next.BindingGeneration = 2
+	if _, err = s.Registration(next); err == nil {
+		t.Fatal("passive lookup inherited old authority")
+	}
+	if _, err = s.Register(next, "worker", next.Task, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Registration(endpoint); err == nil {
+		t.Fatal("old attempt inherited replacement binding")
+	}
+	other := next
+	other.CoreID = "core-b"
+	found, err := s.Registration(other)
+	if err != nil || found != nil {
+		t.Fatalf("same address on other core resolved %v %v", found, err)
 	}
 }

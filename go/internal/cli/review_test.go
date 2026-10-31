@@ -26,7 +26,7 @@ func TestReviewUnknownFlagsAreUsageErrorsBeforeReview(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := reviewUsageLab(t)
 			stdout, stderr, err := runReviewCLI(t, home, tc.args...)
 			if err == nil {
@@ -69,7 +69,7 @@ func TestReviewCommands(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, before := reviewUsageLab(t)
 			stdout, stderr, err := runReviewCLI(t, home, tc.args...)
 			switch {
@@ -103,7 +103,7 @@ func TestReviewCommands(t *testing.T) {
 }
 
 func TestReviewMadeRunBindsCandidateAndDoesNotInvokeMade(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home, _ := reviewUsageLab(t)
 	bin := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "made-ran")
@@ -129,7 +129,7 @@ func TestReviewMadeRunBindsCandidateAndDoesNotInvokeMade(t *testing.T) {
 }
 
 func TestReviewMadeRunRefusesWrongCandidate(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home, before := reviewUsageLab(t)
 	report := filepath.Join(t.TempDir(), "made.json")
 	if err := os.WriteFile(report, []byte(`{"repository":"owner/repo","candidate":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","outcome":"pass","run_id":"made-1"}`+"\n"), 0o644); err != nil {
@@ -143,7 +143,7 @@ func TestReviewMadeRunRefusesWrongCandidate(t *testing.T) {
 }
 
 func TestReviewNotesFileIsStoredAndFindingsTextStaysOnTheRecord(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home, _ := reviewUsageLab(t)
 	notes := filepath.Join(t.TempDir(), "notes.json")
 	if err := os.WriteFile(notes, []byte(`[{"kind":"review-focus","text":"hero CTA is scoped on purpose"},{"kind":"limitation","text":"source inspected only"}]`+"\n"), 0o644); err != nil {
@@ -168,7 +168,7 @@ func TestReviewNotesFileIsStoredAndFindingsTextStaysOnTheRecord(t *testing.T) {
 }
 
 func TestReviewNotesFileWithUnknownKindLeavesTheTaskUnchanged(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home, before := reviewUsageLab(t)
 	notes := filepath.Join(t.TempDir(), "notes.json")
 	if err := os.WriteFile(notes, []byte(`[{"kind":"nit","text":"rename me"}]`+"\n"), 0o644); err != nil {
@@ -182,7 +182,7 @@ func TestReviewNotesFileWithUnknownKindLeavesTheTaskUnchanged(t *testing.T) {
 }
 
 func TestReviewMadeRunRefusesApproveWithBlockingFinding(t *testing.T) {
-	clearHerdrEnv(t)
+	clearNativeEnv(t)
 	home, before := reviewUsageLab(t)
 	candidate := "cccccccccccccccccccccccccccccccccccccccc"
 	report := filepath.Join(t.TempDir(), "made.json")
@@ -199,7 +199,7 @@ func TestReviewMadeRunRefusesApproveWithBlockingFinding(t *testing.T) {
 func reviewUsageLab(t *testing.T) (home, before string) {
 	t.Helper()
 	home = writeDesignatedHome(t)
-	writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "reported", "repository": "owner/repo",
+	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", `{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "reported", "repository": "owner/repo",
 "questions": [], "evidence": [], "report": {"text": "done"}, "notice": null, "attention": [], "brief": "do the thing", "base_sha": "0123456789abcdef0123456789abcdef01234567", "kind": "ship"}`)
 	before = readNamedTask(t, home, "t-aaaaaaaaaaaa")
 	return home, before

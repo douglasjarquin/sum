@@ -51,18 +51,18 @@ Source text or another agent cannot impersonate it.
 | Project / repository | The software project / its Git repository. Neither is an agent or a checkout |
 | Issue | An external tracker item. A task can reference an issue without being the same object |
 | Run | One execution attempt in its stated context. Say "task run" or "verification run" when needed |
-| Session | A harness conversation or execution session, distinct from the terminal pane containing it |
+| Session | A harness conversation or execution session, distinct from the terminal terminal containing it |
 | Harness | The coding-agent application used for the session, distinct from its selected model |
-| Pane / workspace / worktree | The native Herdr pane / workspace, and the Git worktree when that is the checkout type |
+| Terminal / worktree | HC owns terminal processes; Git owns the isolated checkout. Legacy terminal/workspace names in historical evidence confer no HC authority. |
 | Host / instance | The execution machine / one sum installation with its own state and identity |
 | Machine identity | The `m-…` value recorded as `machine` on every endpoint: a hash of the OS machine ID, stable across hostname changes. The hostname is display only, apart from recognising records written before this identity existed |
-| User-closed pane | Herdr reports the recorded worker pane or agent gone (`pane_not_found`, `agent_not_found`). Not idle, and not a cwd or machine mismatch. |
+| User-closed terminal | HC reports the recorded worker terminal or agent gone (`pane_not_found`, `agent_not_found`). Not idle, and not a cwd or machine mismatch. |
 | Verification / review / approval | Executing checks / independently assessing changes / an explicit human decision |
 | Delivery pipeline | The fixed, ordered set of gates a task passes on its way to a PR. Not a CI system and not a merge decision |
 | Stage | One gate of that pipeline, such as Test or Document. Say "stage", not "step" or "phase" |
 | Factory | Optional sequential lane on one enrolled GitHub project. Tick is a one-shot helper, not a daemon |
 | Lane | The occupancy slot a factory holds while one issue is claimed, in progress, or gated |
-| Claim | The GitHub-visible lock (`sum-claimed` plus the host/pane comment) that other agents can see |
+| Claim | The GitHub-visible lock (`sum-claimed` plus the host/terminal comment) that other agents can see |
 | High-confidence merge | A `factory merge-check` pass on an authorized factory repository. Not a substitute for independent verification |
 | Human gate | A factory pause (`sum-gated`) when evidence, verification, or CI cannot support a merge |
 
@@ -77,16 +77,19 @@ The user decides whether to merge.
 
 ## Examples
 
-"This task needs your decision. Should the old endpoint remain available?"
+"This task needs your decision.
+Should the old endpoint remain available?"
 Not "Boss, the soldier needs your call."
 
-"The agent submitted its result. Verification and review are still pending."
+"The agent submitted its result.
+Verification and review are still pending."
 Not "The crewmate finished."
 
 "The coordinator runs verification independently."
 Not "The root session verifies it."
 
-"The backup agent checks the approved backups. It does not take over coordination."
+"The backup agent checks the approved backups.
+It does not take over coordination."
 Not "Square is the backup boss."
 
 "Write the worker procedure into the Bot's description."

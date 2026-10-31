@@ -41,14 +41,14 @@ func TestShow_pinsStdoutAcrossScenarios(t *testing.T) {
 
 	t.Run("minimal task: no worktree, evidence, pr, or reviewer", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",
+		home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fmt.Sprintf(`{"schema": 1, "id": "t-aaaaaaaaaaaa", "status": "running", "repository": "owner/repoA",
 "questions": [], "evidence": [], "report": null, "notice": null, "attention": [], "brief": "do the thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md"}`, baseSha))
 		assertShowMatches(t, home, "t-aaaaaaaaaaaa")
 	})
 
 	t.Run("legacy report with no structured evidence synthesizes a report row", func(t *testing.T) {
 		home := t.TempDir()
-		writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fmt.Sprintf(`{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "reported", "repository": "owner/repoB",
+		home = writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fmt.Sprintf(`{"schema": 1, "id": "t-bbbbbbbbbbbb", "status": "reported", "repository": "owner/repoB",
 "questions": [], "evidence": [], "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "report": {"text": "done", "submitted_at": "2026-01-01T00:30:00+00:00", "brief_revision": "legacy", "sum_version": "0.1.0"}}`, baseSha))
 		assertShowMatches(t, home, "t-bbbbbbbbbbbb")
@@ -58,7 +58,7 @@ func TestShow_pinsStdoutAcrossScenarios(t *testing.T) {
 		home := t.TempDir()
 		root := t.TempDir()
 		head := initGitRepoWithCommit(t, filepath.Join(root, "checkout"))
-		writeTaskFixture(t, home, "t-cccccccccccc", fmt.Sprintf(`{"schema": 1, "id": "t-cccccccccccc", "status": "running", "repository": "owner/repoC",
+		home = writeTaskFixture(t, home, "t-cccccccccccc", fmt.Sprintf(`{"schema": 1, "id": "t-cccccccccccc", "status": "running", "repository": "owner/repoC",
 "questions": [], "notice": null, "attention": [], "brief": "do thing", "base_sha": %q, "kind": "task", "brief_path": "brief.md",
 "report": null, "worktree": %q,
 "evidence": [
@@ -87,7 +87,7 @@ func TestShow_pinsStdoutAcrossScenarios(t *testing.T) {
   {"schema": 1, "id": "e-0000000004", "kind": "review", "source": "reviewer", "at": "2026-01-01T00:12:00+00:00",
    "candidate": %q, "brief_revision": null, "sum_version": "0.1.0", "endpoint": null, "verdict": "approve", "tool": "made", "policy_reviewed": true}
 ]}`, baseSha, filepath.Join(root, "checkout"), head, head, head, head, head)
-		writeTaskFixture(t, home, "t-dddddddddddd", taskJSON)
+		home = writeTaskFixture(t, home, "t-dddddddddddd", taskJSON)
 		assertShowMatches(t, home, "t-dddddddddddd")
 	})
 }
@@ -102,9 +102,7 @@ func TestShow_extraArgsAreGoErrors(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(home, "tasks"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "state.json"), []byte(`{"schema": 1, "sum_version": "0.1.0", "created_at": "2026-01-01T00:00:00+00:00"}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	home = nativeTestStore(t, home).Home
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
 	root.SetArgs([]string{"--home", home, "show", "t-aaaaaaaaaaaa", "--extra"})
 	err := root.ExecuteContext(context.Background())
@@ -133,7 +131,7 @@ func TestShowCommands(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearHerdrEnv(t)
+			clearNativeEnv(t)
 			home, taskPath, before := contextUsageLab(t)
 			stdout, stderr, err := runShow(t, home, tc.args...)
 			switch {

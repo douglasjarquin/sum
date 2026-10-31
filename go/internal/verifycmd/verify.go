@@ -414,8 +414,9 @@ func presentScenarios(evidenceObj *ordjson.Object) []any {
 
 func endpoint(ctx *ordjson.Object) *ordjson.Object {
 	row := ordjson.NewObject()
-	for _, key := range []string{"machine", "session", "pane"} {
-		row.Set(key, asString(ctx, key))
+	for _, key := range []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"} {
+		value, _ := ctx.Get(key)
+		row.Set(key, value)
 	}
 	return row
 }

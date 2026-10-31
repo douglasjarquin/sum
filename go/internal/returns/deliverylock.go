@@ -161,6 +161,12 @@ func stampDeliveryLocked(s *store.Store, items [][2]*ordjson.Object, delivery *o
 		} else {
 			entry := cloneObject(delivery)
 			entry.Set("obligations", ids)
+			coverage := []any{}
+			for _, id := range ids {
+				c, _ := ordjson.FromValue(deliveryCoverage{ID: fmt.Sprint(id), Revision: ObligationRevision(pair[0], fmt.Sprint(id))})
+				coverage = append(coverage, c)
+			}
+			entry.Set("coverage", coverage)
 			for k, v := range changes {
 				entry.Set(k, v)
 			}
