@@ -80,6 +80,7 @@ Use `--harness grok`, `--harness claude` or `--harness devin` for the supported 
 A refused launch is retained; `coordinator recover --attempt ATTEMPT` archives only a proven uncreated attempt before another explicit start.
 Every agent follows the exact procedure path returned by `init`.
 Without a qualified HC context, `init` defaults to developer.
+A bare init in this installation ensures the local HC core and its holder.
 A manually launched qualified existing terminal requires explicit coordinator initialization; model values stay unknown unless established by its launch record.
 Never infer an exact model through `--same-as-you`.
 See [architecture](docs/architecture.md#session-roles) and [configuration](docs/configuration.md).

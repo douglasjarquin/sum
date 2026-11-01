@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/cleanup"
+	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/metadata"
@@ -47,7 +48,7 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 			explicitAuthority := role != "" && role != "developer" || task != "" || reclaim
 			developmentOnly := marker != nil && !st.Designated()
 			inheritedTaskIdentity := !developmentOnly && (os.Getenv("SUM_TASK") != "" || ((os.Getenv("SUM_ROLE") == "worker" || os.Getenv("SUM_ROLE") == "reviewer") && os.Getenv("SUM_ATTEMPT") != ""))
-			emitDeveloper := func() error {
+			emitDeveloper := func(ensure bool) error {
 				var view *ordjson.Object
 				var initErr error
 				if st.Designated() {
@@ -58,6 +59,11 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 				if initErr != nil {
 					return initErr
 				}
+				if ensure {
+					if services := hcboot.Ensure(o.runtimeRoot); services != nil {
+						view.Set("services", services)
+					}
+				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
 			if role == "developer" && (task != "" || reclaim || inheritedTaskIdentity) {
@@ -65,14 +71,14 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 			}
 			if !explicitAuthority && !inheritedTaskIdentity {
 				if role == "developer" || developmentOnly {
-					return emitDeveloper()
+					return emitDeveloper(false)
 				}
 				bound, bindingErr := recordedCoordinatorContext(st)
 				if bindingErr != nil {
 					return bindingErr
 				}
 				if !bound {
-					return emitDeveloper()
+					return emitDeveloper(st.Designated())
 				}
 			}
 
@@ -88,7 +94,7 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 			}
 			if ctxErr != nil {
 				if !explicitAuthority && !inheritedTaskIdentity {
-					return emitDeveloper()
+					return emitDeveloper(false)
 				}
 				return fmt.Errorf("%s", capitalizeHerdrContext(ctxErr.Error()))
 			}
