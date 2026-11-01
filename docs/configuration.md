@@ -201,13 +201,15 @@ Sum appends `herdr-core/templates` and writes a namespaced template without chan
 | Harness | Supported version | Submit key |
 | --- | --- | --- |
 | `codex` | 0.166.0 with `--no-daemon` | Tab |
-| `grok` | 1.0.67 stable | Enter |
+| `grok` | 1.0.67 or newer, stable | Enter |
 | `claude` | 2.1.316 | Enter |
 | `devin` | 3000.11.234, local interactive CLI | Enter |
 
 Each profile binds the executable hash, exact argv, effective input configuration, template bytes and submit key.
 The hashed template command sets the inspected home/config roots explicitly, so HC cannot substitute the core process's different configuration environment.
-Custom keymaps, composer modes that change submission, alternate CLI settings/config files, inline Grok config overlays, noninteractive launch modes and version drift are refused.
+Custom keymaps, composer modes that change submission, alternate CLI settings/config files, inline Grok config overlays, and noninteractive launch modes are refused.
+Codex, Claude, and Devin require their pinned versions.
+Grok accepts a stable build at 1.0.67 or any newer version that prints the same version line. Older Grok builds are refused.
 Grok checks its managed, user, requirements, pager and system configuration layers; modal prompt editing (`ui.simple_mode=false`) and multiline submission are unqualified.
 Defer observed working/blocked/unknown, guard idle with `if:idle`, and submit observed Done without `if` or `force`.
 HC 0.1.14 has no atomic Done guard: a raced busy transition uses the harness's native queue or steering behavior, never a cancellation chord or extra Enter.

@@ -100,7 +100,7 @@ CI is an additional gate, not a replacement for worker verification, a fresh roo
 
 The aggregate is offline evidence, not actual harness qualification or production migration proof.
 The native lab uses a unique `HC_SESSION` and scratch XDG state/config/runtime paths with inherited terminal identity removed.
-Supported native input profiles require unmodified published HC 0.1.14 and default input configurations: Codex 0.166.0 with Sum's namespaced Tab template, or Grok Build 1.0.67 stable, Claude Code 2.1.316 and local Devin CLI 3000.11.234 with namespaced Enter templates.
+Supported native input profiles require unmodified published HC 0.1.14 and default input configurations: Codex 0.166.0 with Sum's namespaced Tab template, or Grok Build stable 1.0.67 or newer, Claude Code 2.1.316 and local Devin CLI 3000.11.234 with namespaced Enter templates.
 Idle uses `if:idle`; observed Done sends without `if` or `force`, so a raced working turn uses the harness's native queue or steering behavior rather than providing an atomic Done guard.
 Native `started`, status, turn counts and completed waits are never application receipts or proof of exit.
 Authenticated turns for the new profiles, other harnesses and every unrun manual scenario remain gaps in [acceptance](docs/ACCEPTANCE.md).

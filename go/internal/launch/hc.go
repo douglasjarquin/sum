@@ -84,7 +84,7 @@ func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []strin
 		return result, err
 	}
 	if !profile.matchesVersion(strings.TrimSpace(version.Stdout)) {
-		return result, fmt.Errorf("%s native input is supported only for %s; found %q", harness, profile.version, strings.TrimSpace(version.Stdout))
+		return result, fmt.Errorf("%s native input is supported only for %s; found %q", harness, profile.supportedVersion(), strings.TrimSpace(version.Stdout))
 	}
 	binaryHash, err := binaryDigest(binary)
 	if err != nil {
