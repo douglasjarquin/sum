@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -15,17 +16,55 @@ import (
 
 type nativeProfile struct {
 	label, version, versionPattern, submit string
+	minimum                                bool
 }
 
 var nativeProfiles = map[string]nativeProfile{
-	"codex":  {"Codex", "0.166.0", `^codex-cli 0\.166\.0$`, "tab"},
-	"grok":   {"Grok Build", "1.0.67", `^grok 1\.0\.67 \([0-9a-f]+\) \[stable\]$`, "enter"},
-	"claude": {"Claude Code", "2.1.316", `^2\.1\.316 \(Claude Code\)$`, "enter"},
-	"devin":  {"Devin", "3000.11.234", `^devin 3000\.11\.234 \([0-9a-f]+\)$`, "enter"},
+	"codex":  {"Codex", "0.166.0", `^codex-cli 0\.166\.0$`, "tab", false},
+	"grok":   {"Grok Build", "1.0.67", `^grok (\d+\.\d+\.\d+) \([0-9a-f]+\) \[stable\]$`, "enter", true},
+	"claude": {"Claude Code", "2.1.316", `^2\.1\.316 \(Claude Code\)$`, "enter", false},
+	"devin":  {"Devin", "3000.11.234", `^devin 3000\.11\.234 \([0-9a-f]+\)$`, "enter", false},
+}
+
+func (p nativeProfile) supportedVersion() string {
+	if p.minimum {
+		return p.version + " or newer"
+	}
+	return p.version
 }
 
 func (p nativeProfile) matchesVersion(text string) bool {
-	return regexp.MustCompile(p.versionPattern).MatchString(text)
+	pattern := regexp.MustCompile(p.versionPattern)
+	if !p.minimum {
+		return pattern.MatchString(text)
+	}
+	match := pattern.FindStringSubmatch(text)
+	return match != nil && versionAtLeast(match[1], p.version)
+}
+
+func versionAtLeast(got, minimum string) bool {
+	parsed := func(text string) [3]int {
+		pieces := strings.Split(text, ".")
+		if len(pieces) != 3 {
+			return [3]int{-1, -1, -1}
+		}
+		var parts [3]int
+		for i, piece := range pieces {
+			n, err := strconv.Atoi(piece)
+			if err != nil || n < 0 {
+				return [3]int{-1, -1, -1}
+			}
+			parts[i] = n
+		}
+		return parts
+	}
+	left, right := parsed(got), parsed(minimum)
+	for i := range left {
+		if left[i] != right[i] {
+			return left[i] > right[i]
+		}
+	}
+	return true
 }
 
 func nativeInputConfig(harness string, argv []string, options HCTemplateOptions) (map[string]string, string, error) {
