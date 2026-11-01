@@ -194,7 +194,9 @@ Totals are counts, not a bill: no dollar estimate, quota, enforcement, daemon, a
 Prefer `coordinator start --socket PATH --session NAME --hc-config-home PATH --harness codex` for a bound launch and matching receipt.
 Use explicit `--model`, `--reasoning`, repeatable `--arg` or `--preset` only for the user's selection.
 A manually initialized qualified existing terminal records a known launch or explicitly unknown model; `--same-as-you` cannot guess an exact model.
-`init` defaults to developer without qualified HC context and never starts a core through observation.
+`init` defaults to developer without qualified HC context.
+A bare init in the designated installation ensures the local HC core and its holder, and still does not claim coordination.
+Observation commands never start a core.
 The HC config home is the XDG root, usually `~/.config`, rather than `~/.config/herdr-core`.
 Sum appends `herdr-core/templates` and writes a namespaced template without changing the user's harness configuration.
 
