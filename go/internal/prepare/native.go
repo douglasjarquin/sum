@@ -73,8 +73,9 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		unlock()
 		return nil, err
 	}
-	params := hcclient.RunParams{Argv: template.RunArgv(WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)), Cwd: checkout, Name: NativeName(instance, taskID, "worker", attemptID), Parent: parent.Address, Caller: parent.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false,
-		Labels: map[string]string{"sum.installation": instance, "sum.task": taskID, "sum.role": "worker", "sum.attempt": attemptID},
+	prompt := WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)
+	params := hcclient.RunParams{Argv: template.RunArgv(prompt), Cwd: checkout, Name: NativeName(instance, taskID, "worker", attemptID), Parent: parent.Address, Caller: parent.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false,
+		Labels: workerLabels(instance, taskID, attemptID),
 		Env:    map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": parent.Session, "SUM_CORE_ID": parent.CoreID, "HC_SOCKET": parent.Socket, "SUM_TASK": taskID, "SUM_ROLE": "worker", "SUM_ATTEMPT": attemptID, "SUM_BINDING_GENERATION": "1"}}
 	template.BindInputEnvironment(params.Env)
 	intent, _ := ordjson.FromValue(params)
@@ -112,6 +113,11 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		result, runErr = client.Run(runCtx, params)
 	}
 	if runErr != nil {
+		if hcclient.AgentPromptStalledError(runErr) {
+			if task, handled, err := settleStalled(s, &client, parent, instance, taskID, attemptID, checkout, prompt, "", "uncertain", nil); handled || err != nil {
+				return task, err
+			}
+		}
 		effect := "uncertain"
 		var nativeError *hcclient.Error
 		if errors.As(runErr, &nativeError) {
@@ -128,7 +134,12 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		}
 		return FailStart(s, taskID, runErr)
 	}
-	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: parent.Machine, CoreID: parent.CoreID, Session: parent.Session, Socket: parent.Socket, Address: result.Address, CreatedMS: result.CreatedMS, Task: taskID, Role: "worker", Attempt: attemptID, BindingGeneration: 1, Cwd: checkout}
+	if result.FirstMessage != nil && result.FirstMessage.Sent && hcclient.AgentPromptStalledReason(result.FirstMessage.Reason) {
+		if task, handled, err := settleStalled(s, &client, parent, instance, taskID, attemptID, checkout, prompt, result.Address, "created", result.FirstMessage); handled || err != nil {
+			return task, err
+		}
+	}
+	endpoint := openingEndpoint(parent, taskID, attemptID, checkout, result.Terminal)
 	if err = endpoint.Validate(); err != nil {
 		return FailStart(s, taskID, err)
 	}
