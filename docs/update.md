@@ -61,6 +61,33 @@ A startup failure is fail-open; explicit `pump`, binding and task-write delivery
 Only a proven owned observer in the supported installation/core/session scope may be replaced or stopped.
 A second same-host scope and remote Sum execution remain unsupported and are refused before binding.
 
+## Repair an omitted release template contract
+
+An older stager can produce a release whose checksum-verified helper reports HC template schemas but whose manifest omits `supports.hc_template_schema`.
+The newer helper refuses to use that bundle as a known-good baseline, so apply can stop before selecting an otherwise compatible candidate.
+Normal staging, inspection and activation never rewrite the old manifest or waive verification.
+
+After the user approves the repair, stage the merged repair release and verify its exact SHA and path.
+From the installation root, run its helper against the full SHA of the affected baseline:
+
+```sh
+./bin/sumctl update stage
+repair_sha=REPLACE_WITH_THE_VERIFIED_STAGED_SHA
+baseline_sha=REPLACE_WITH_THE_FULL_BASELINE_SHA
+SUM_INSTALL_ROOT="$PWD" "$PWD/.local/releases/$repair_sha/bin/sumctl" --home "$PWD/.sum" release repair-template-contract "$baseline_sha"
+./bin/sumctl release show "$baseline_sha"
+./bin/sumctl update check
+```
+
+The explicit repair verifies source files, the native helper checksum, dependency inventory and matched HC artifacts before reading capabilities from that helper.
+It accepts only an absent template-schema field with every other recorded contract unchanged.
+An existing conflicting template field, changed artifact, malformed manifest, pending activation or held update lock refuses the repair.
+The original manifest bytes are preserved as `original_manifest` in a JSON archive under `.local/release-contract-repairs/` before the repaired manifest is atomically written and verified again.
+A repeat on a verified bundle changes nothing.
+Release directories and manifests must be direct paths, and development helpers cannot target the installation's logical state root or its selected physical generation.
+The command changes metadata only; it never moves runtime selection, edits task records or operates terminals.
+After verification succeeds, the coordinator can perform the separately authorized update.
+
 ## Recovery before activation
 
 An older serving helper can refuse activation because it cannot reconcile a lost worker-creation reply or the observer's launcher-to-native executable transition.

@@ -42,7 +42,7 @@ func Candidate(installRoot string, s *store.Store, command string) error {
 			}
 		}
 	}
-	if protected[resolve(s.Home)] && !ReadOnlyCommands[command] {
+	if (protected[resolve(s.Home)] || protected[resolve(s.Root)]) && !ReadOnlyCommands[command] {
 		installed := filepath.Join(filepath.Dir(firstKey(protected)), "bin", "sumctl")
 		return fmt.Errorf("Refusing `%s`: this helper runs from a development or task checkout (%s) but targets the installation's state %s. Candidate code operates only on lab state (--home under a temporary directory). Parent-task callbacks and installation changes use the installed trusted helper %s.", command, installRoot, s.Home, installed)
 	}
