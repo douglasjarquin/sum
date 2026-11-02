@@ -84,6 +84,11 @@ func ensureObserver(s *store.Store, e store.Endpoint, runtimeRoot, sumctlPath st
 			return nil, fmt.Errorf("this installation observes one HC core/session (%s/%s); bind the recipient in that scope, or explicitly disable automatic native events and use manual pump before binding another scope", old.CoreID, old.Session)
 		}
 		terminal, getErr := client.Get(context.Background(), old.Address)
+		if getErr == nil && observerProof(health, old, terminal) != nil {
+			if reconciled, reconcileErr := reconcileObserverExec(context.Background(), s, health, old, terminal); reconcileErr == nil {
+				health = reconciled
+			}
+		}
 		if getErr == nil && observerProof(health, old, terminal) == nil && reflect.DeepEqual(terminal.Argv, args) {
 			changes := ordjson.NewObject()
 			changes.Set("enabled", true)

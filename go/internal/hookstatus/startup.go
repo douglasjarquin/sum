@@ -10,7 +10,7 @@ import (
 )
 
 func awaitObserverForeground(parent context.Context, client *hcclient.Client, initial hcclient.Terminal) (hcclient.Terminal, error) {
-	if initial.Foreground != nil {
+	if initial.Foreground != nil && !observerLauncher(initial.Foreground, initial.Argv) {
 		return initial, nil
 	}
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
@@ -55,7 +55,7 @@ func observerForegroundSnapshot(ctx context.Context, client *hcclient.Client, in
 		if terminal.State != "live" || terminal.Address != initial.Address || terminal.CreatedMS != initial.CreatedMS || !reflect.DeepEqual(terminal.PID, initial.PID) || !reflect.DeepEqual(terminal.Argv, initial.Argv) || !reflect.DeepEqual(terminal.Labels, initial.Labels) || terminal.Cwd != initial.Cwd {
 			return terminal, false, fmt.Errorf("observer program identity changed before foreground proof; startup was not adopted")
 		}
-		if terminal.Foreground != nil {
+		if terminal.Foreground != nil && !observerLauncher(terminal.Foreground, terminal.Argv) {
 			return terminal, false, nil
 		}
 		event, err := subscription.Next()

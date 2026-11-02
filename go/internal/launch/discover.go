@@ -11,9 +11,26 @@ import (
 )
 
 func DiscoverOriginal(ctx context.Context, client *hcclient.Client, intent hcclient.RunParams, spec HCTemplate, claimedAt string) (hcclient.Terminal, error) {
+	if spec.Schema != 2 || len(intent.Argv) != 1 {
+		return hcclient.Terminal{}, fmt.Errorf("historical or incomplete creation intent cannot prove an unsent split opening; inspect without replay")
+	}
+	return discoverCreation(ctx, client, intent, spec, claimedAt)
+}
+
+func DiscoverWorkerCreation(ctx context.Context, client *hcclient.Client, intent hcclient.RunParams, spec HCTemplate, claimedAt string) (hcclient.Terminal, error) {
+	if spec.Schema == 2 {
+		return DiscoverOriginal(ctx, client, intent, spec, claimedAt)
+	}
+	if spec.Schema != 0 || len(intent.Argv) != 2 || intent.Argv[1] == "" || intent.Labels["sum.role"] != "worker" {
+		return hcclient.Terminal{}, fmt.Errorf("historical worker creation intent is incomplete; inspect without replay")
+	}
+	return discoverCreation(ctx, client, intent, spec, claimedAt)
+}
+
+func discoverCreation(ctx context.Context, client *hcclient.Client, intent hcclient.RunParams, spec HCTemplate, claimedAt string) (hcclient.Terminal, error) {
 	var empty hcclient.Terminal
-	if spec.Schema != 2 || len(intent.Argv) != 1 || intent.Argv[0] != spec.Name || intent.Name == "" || intent.Keep || intent.Labels["sum.attempt"] == "" {
-		return empty, fmt.Errorf("historical or incomplete creation intent cannot prove an unsent split opening; inspect without replay")
+	if intent.Argv[0] != spec.Name || intent.Name == "" || intent.Keep || intent.Labels["sum.attempt"] == "" {
+		return empty, fmt.Errorf("incomplete creation intent cannot identify the original program; inspect without replay")
 	}
 	claimed, err := time.Parse(time.RFC3339Nano, claimedAt)
 	if err != nil {

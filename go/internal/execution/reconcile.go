@@ -13,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -57,11 +58,18 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if err = decodeNative(field(native, "native_template"), &template); err != nil {
 		return nil, err
 	}
+	instance, err := s.Instance()
+	if err != nil {
+		return nil, err
+	}
+	if params.Labels["sum.installation"] != instance || params.Labels["sum.task"] != taskID || params.Labels["sum.attempt"] != attempt || params.Labels["sum.role"] != "worker" || params.Cwd != field(task, "worktree") {
+		return nil, fmt.Errorf("creation intent does not belong to this worker attempt and checkout")
+	}
 	before, _ := ordjson.MarshalCompact(native)
 	client := hcclient.Client{Socket: parent.Socket, CoreID: parent.CoreID}
 	observe, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	terminal, err := launch.DiscoverOriginal(observe, &client, params, template.Spec, asString(field(native, "claimed_at")))
+	terminal, err := launch.DiscoverWorkerCreation(observe, &client, params, template.Spec, asString(field(native, "claimed_at")))
 	if err != nil {
 		return nil, err
 	}
@@ -95,9 +103,14 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	}
 	n.Set("effect", "created")
 	n.Set("endpoint", endpoint.Object())
-	first := ordjson.NewObject()
-	first.Set("sent", false)
-	n.Set("first_message", first)
+	if template.Spec.Schema == 2 {
+		first := ordjson.NewObject()
+		first.Set("sent", false)
+		n.Set("first_message", first)
+	} else {
+		current.Set("status", "needs-attention")
+		current.Set("error", prepare.LaunchUncertainPrefix+": original terminal reconciled; historical opening delivery remains unknown. Inspect the existing terminal without replay. Confirm only after its worker-init receipt, or park only after proven original-process exit.")
+	}
 	evidence := (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *terminal.PID, Foreground: terminal.Foreground}).Record(store.Now())
 	n.Set("incarnation", evidence)
 	registration, err := s.Register(endpoint, "worker", taskID, evidence)
