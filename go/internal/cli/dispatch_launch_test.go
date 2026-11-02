@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -278,6 +279,41 @@ func TestDispatchGrokColdStartPreservesUnsentOpening(t *testing.T) {
 	d.ctl(false, "start", asString(created["id"]))
 	if len(nativeCalls(d, "terminal.run")) != 1 {
 		t.Fatal("cold Grok was relaunched instead of preserving the original opening")
+	}
+}
+
+func TestDispatchGrokTrustsTheRepositoryItWillAskAbout(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "grok-trust", map[string]string{"README.md": "x\n"})
+	grokHome := filepath.Join(d.base, "grok-home")
+	kept := "[folders.\"/already/trusted\"]\ntrusted = true\ndecided_at = 10\n"
+	if err := os.WriteFile(filepath.Join(grokHome, "trusted_folders.toml"), []byte(kept), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	created := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "grok", "--approved")
+	worktree := asString(created["worktree"])
+	if worktree == "" {
+		worktree = asString(d.taskRecord(asString(created["id"]))["worktree"])
+	}
+	common := strings.TrimSpace(gitIn(t, worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"))
+	if filepath.Base(common) != ".git" {
+		t.Fatalf("common dir = %s", common)
+	}
+	asked := filepath.Dir(common)
+	data, err := os.ReadFile(filepath.Join(grokHome, "trusted_folders.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte(kept)) || !strings.Contains(string(data), "[folders.\""+asked+"\"]") {
+		t.Fatalf("grok launch left the repository untrusted, so the worker stops on a hidden trust prompt: %s", data)
+	}
+	resolved, err := filepath.EvalSymlinks(worktree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "[folders.\""+worktree+"\"]") || strings.Contains(text, "[folders.\""+resolved+"\"]") {
+		t.Fatalf("trusted the task worktree instead of the repository grok asks about: %s", text)
 	}
 }
 

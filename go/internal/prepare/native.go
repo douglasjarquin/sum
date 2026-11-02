@@ -103,6 +103,9 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	if runErr == nil {
 		runErr = launchStillAuthorized(s, taskID, attemptID, parent)
 	}
+	if runErr == nil && template.Harness == "grok" {
+		runErr = launch.TrustGrokRepository(runCtx, template.InputEnv["GROK_HOME"], checkout)
+	}
 	if runErr != nil {
 		runErr = &hcclient.Error{Method: "terminal.run", Effect: hcclient.NotSubmitted, Cause: runErr}
 	} else {
