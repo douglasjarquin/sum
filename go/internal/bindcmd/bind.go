@@ -68,7 +68,7 @@ func ReviewerNativeStopped(ctx context.Context, s *store.Store, task, old *ordjs
 	if err != nil && !absent(err) {
 		return nil, err
 	}
-	if err == nil && (terminal.State != "finished" || terminal.Keep || terminal.CreatedMS != endpoint.CreatedMS) {
+	if err == nil && (terminal.State != "finished" || terminal.CreatedMS != endpoint.CreatedMS) {
 		return nil, fmt.Errorf("recorded reviewer is live or replaced")
 	}
 	registration, err := s.Registration(endpoint)
@@ -76,10 +76,24 @@ func ReviewerNativeStopped(ctx context.Context, s *store.Store, task, old *ordjs
 		return nil, err
 	}
 	var bound incarnation.NativeEvidence
-	if err = decode(field(registration, "incarnation"), &bound); err != nil || !bound.Endpoint.SameAuthority(endpoint.Native()) || bound.PID == 0 || bound.Foreground == nil {
+	if registration == nil && field(old, "native_receipt") == nil {
+		registration = old
+		if terminal.State != "finished" || terminal.FinishedMS == nil || *terminal.FinishedMS == 0 || (terminal.ExitCode == nil && terminal.Signal == nil) || filepath.Clean(terminal.Cwd) != filepath.Clean(endpoint.Cwd) {
+			return nil, fmt.Errorf("uninitialized reviewer needs conclusive original native exit metadata")
+		}
+	}
+	if err = decode(field(registration, "incarnation"), &bound); err != nil || !bound.Endpoint.SameAuthority(endpoint.Native()) || bound.PID == 0 {
 		return nil, fmt.Errorf("reviewer process identity missing")
 	}
-	for _, pid := range []int{int(bound.PID), int(bound.Foreground.PID)} {
+	host, err := s.Machine()
+	if err != nil || !host.Is(endpoint.Machine) {
+		return nil, fmt.Errorf("reviewer process is not provably local")
+	}
+	pids := []int{int(bound.PID)}
+	if bound.Foreground != nil {
+		pids = append(pids, int(bound.Foreground.PID))
+	}
+	for _, pid := range pids {
 		alive, e := proc.PIDRunning(pid)
 		if e != nil || alive {
 			return nil, fmt.Errorf("recorded reviewer process remains live or unobservable")

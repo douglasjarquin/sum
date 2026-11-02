@@ -73,7 +73,7 @@ func Stage(s *store.Store, ref string) (*ordjson.Object, error) {
 	if _, err := os.Stat(filepath.Join(staging, ".sum")); err == nil {
 		return nil, fmt.Errorf("The committed tree must not contain .sum or a release manifest.")
 	}
-	if err := installRuntime(staging); err != nil {
+	if err := installRuntime(staging, sha); err != nil {
 		return nil, fmt.Errorf("Staging %s failed and its partial bundle was removed; existing releases and the current setup are unchanged. %s", sha, err)
 	}
 	if err := linkRemainder(root, staging); err != nil {
@@ -106,9 +106,9 @@ func Stage(s *store.Store, ref string) (*ordjson.Object, error) {
 	return ReleaseSummary(final, verified, true)
 }
 
-func installRuntime(target string) error {
+func installRuntime(target string, sourceSHA ...string) error {
 	if os.Getenv("SUM_STAGE_OFFLINE") != "" {
-		return installOffline(target)
+		return installOffline(target, sourceSHA...)
 	}
 	miseEnv := append(os.Environ(), "MISE_TRUSTED_CONFIG_PATHS="+filepath.Join(target, "mise.toml"))
 	if _, err := proc.Run([]string{"mise", "install"}, target, 900*time.Second, true, miseEnv); err != nil {
@@ -131,7 +131,7 @@ func installRuntime(target string) error {
 			return err
 		}
 	}
-	if err := buildNative(target); err != nil {
+	if err := buildNative(target, sourceSHA...); err != nil {
 		return err
 	}
 	if err := installHC(target); err != nil {
@@ -147,7 +147,7 @@ func lookPathOr(name, fallback string) string {
 	return fallback
 }
 
-func installOffline(target string) error {
+func installOffline(target string, sourceSHA ...string) error {
 	localBin := filepath.Join(target, ".local", "bin")
 	if err := os.MkdirAll(localBin, 0o755); err != nil {
 		return err
@@ -182,7 +182,7 @@ func installOffline(target string) error {
 			return err
 		}
 	}
-	if err := buildNative(target); err != nil {
+	if err := buildNative(target, sourceSHA...); err != nil {
 		return err
 	}
 	skillDir := filepath.Join(target, ".local", "skills", "herdr")
@@ -266,7 +266,7 @@ func nativePlatform() string {
 	return system + "-" + machine
 }
 
-func buildNative(target string) error {
+func buildNative(target string, sourceSHA ...string) error {
 	source := filepath.Join(target, "go")
 	if _, err := os.Stat(filepath.Join(source, "go.mod")); err != nil {
 		return fmt.Errorf("Native Go source is missing from %s", source)
@@ -299,7 +299,11 @@ func buildNative(target string) error {
 		if info, err := os.Stat(dest); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
 			continue
 		}
-		if _, err := proc.Run([]string{goBin, "build", "-trimpath", "-buildvcs=false", "-o", dest, item.pkg}, source, 900*time.Second, true, env); err != nil {
+		revision := ""
+		if len(sourceSHA) > 0 {
+			revision = sourceSHA[0]
+		}
+		if _, err := proc.Run([]string{goBin, "build", "-trimpath", "-buildvcs=false", "-ldflags", "-X github.com/douglasjarquin/sum/go/internal/runtime.BuildSourceRevision=" + revision, "-o", dest, item.pkg}, source, 900*time.Second, true, env); err != nil {
 			return err
 		}
 	}

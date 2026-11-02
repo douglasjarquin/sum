@@ -24,17 +24,19 @@ type HCTemplateOptions struct {
 	InputEnv    map[string]string
 }
 type HCTemplate struct {
-	Name          string            `json:"name"`
-	Harness       string            `json:"harness"`
-	Binary        string            `json:"binary"`
-	Version       string            `json:"version"`
-	Argv          []string          `json:"argv"`
-	SHA256        string            `json:"sha256"`
-	CommandSHA256 string            `json:"command_sha256"`
-	KeymapSHA256  string            `json:"keymap_sha256"`
-	ConfigSHA256  map[string]string `json:"config_sha256"`
-	Submit        string            `json:"submit"`
-	InputEnv      map[string]string `json:"input_env"`
+	Schema               int               `json:"schema,omitempty"`
+	Name                 string            `json:"name"`
+	Harness              string            `json:"harness"`
+	Binary               string            `json:"binary"`
+	Version              string            `json:"version"`
+	Argv                 []string          `json:"argv"`
+	SHA256               string            `json:"sha256"`
+	CommandSHA256        string            `json:"command_sha256"`
+	EffectiveInputSHA256 string            `json:"effective_input_sha256,omitempty"`
+	KeymapSHA256         string            `json:"keymap_sha256"`
+	ConfigSHA256         map[string]string `json:"config_sha256"`
+	Submit               string            `json:"submit"`
+	InputEnv             map[string]string `json:"input_env"`
 }
 
 func (t HCTemplate) RunArgv(taskPointer string) []string { return []string{t.Name, taskPointer} }
@@ -99,6 +101,10 @@ func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []strin
 	if err != nil {
 		return result, err
 	}
+	effectiveHash, err := effectiveInputDigest(configs)
+	if err != nil {
+		return result, err
+	}
 	args := append([]string{}, argv...)
 	if harness == "codex" && !slices.Contains(args, "--no-daemon") {
 		args = append([]string{"--no-daemon"}, args...)
@@ -118,9 +124,9 @@ func PrepareHCTemplate(runtimeRoot, coreConfigHome, harness string, argv []strin
 		InputEnv     map[string]string
 	}{command, binaryHash, keymapHash, configs, inputEnv})
 	commandHash := digest(provenance)
-	name := "sum-" + harness + "-" + commandHash[:20]
-	text := "---\ndescription: Sum qualified " + profile.label + " " + profile.version + "\ncommand: " + commandText + "\nsubmit: " + profile.submit + "\n---\nRead the assigned Sum task pointer and follow its installed helper and procedure.\n"
-	result = HCTemplate{Name: name, Harness: harness, Binary: binary, Version: profile.version, Argv: command, SHA256: digest([]byte(text)), CommandSHA256: commandHash, KeymapSHA256: keymapHash, ConfigSHA256: configs, Submit: profile.submit, InputEnv: inputEnv}
+	name := "sum-" + harness + "-v2-" + commandHash[:20]
+	text := "---\ndescription: Sum qualified " + profile.label + " " + profile.version + "\ncommand: " + commandText + "\nsubmit: " + profile.submit + "\n---\n"
+	result = HCTemplate{Schema: 2, Name: name, Harness: harness, Binary: binary, Version: profile.version, Argv: command, SHA256: digest([]byte(text)), CommandSHA256: commandHash, KeymapSHA256: keymapHash, EffectiveInputSHA256: effectiveHash, ConfigSHA256: configs, Submit: profile.submit, InputEnv: inputEnv}
 	coreConfigHome, err = filepath.EvalSymlinks(coreConfigHome)
 	if err != nil {
 		return HCTemplate{}, fmt.Errorf("resolve explicitly selected HC config home: %w", err)
@@ -244,6 +250,9 @@ func codexDefaultKeymap(argv []string, options HCTemplateOptions) (map[string]st
 		if containsKeymap(config) {
 			return nil, "", fmt.Errorf("Codex keymap in %s is not qualified for Tab queue submission; configuration preserved", path)
 		}
+		if err = checkNativeInputSettings("codex", config); err != nil {
+			return nil, "", fmt.Errorf("%s: %w", path, err)
+		}
 		hashes[path] = digest(data)
 	}
 
@@ -275,10 +284,7 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 	if !ok || spec.Version != profile.version || spec.Submit != profile.submit || len(spec.CommandSHA256) != 64 || len(spec.Argv) == 0 || spec.Argv[0] != spec.Binary {
 		return fmt.Errorf("unqualified HC template record")
 	}
-	binaryHash, err := binaryDigest(spec.Binary)
-	if err != nil {
-		return err
-	}
+
 	if len(spec.InputEnv) == 0 {
 		return fmt.Errorf("HC input environment is not bound")
 	}
@@ -287,15 +293,27 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 	if err != nil {
 		return err
 	}
-	provenance, _ := json.Marshal(struct {
-		Command      []string
-		BinarySHA256 string
-		KeymapSHA256 string
-		ConfigSHA256 map[string]string
-		InputEnv     map[string]string
-	}{spec.Argv, binaryHash, keymapHash, configs, spec.InputEnv})
-	if digest(provenance) != spec.CommandSHA256 || keymapHash != spec.KeymapSHA256 || spec.Name != "sum-"+spec.Harness+"-"+spec.CommandSHA256[:20] {
-		return fmt.Errorf("HC command or effective keymap configuration changed after qualification")
+	if spec.Schema == 2 {
+		effectiveHash, err := effectiveInputDigest(configs)
+		if err != nil {
+			return err
+		}
+		if spec.EffectiveInputSHA256 == "" || effectiveHash != spec.EffectiveInputSHA256 {
+			return fmt.Errorf("effective input, permissions or identity configuration changed; inspect and explicitly requalify a new launch without rewriting historical provenance")
+		}
+	} else {
+		previous, _ := json.Marshal(spec.ConfigSHA256)
+		current, _ := json.Marshal(configs)
+		if string(previous) != string(current) {
+			return fmt.Errorf("historical raw-config provenance changed and cannot prove unchanged permission semantics; preserve this agent, inspect it, and use its original launch configuration or an explicit qualified handoff")
+		}
+	}
+	expectedName := "sum-" + spec.Harness + "-" + spec.CommandSHA256[:20]
+	if spec.Schema == 2 {
+		expectedName = "sum-" + spec.Harness + "-v2-" + spec.CommandSHA256[:20]
+	}
+	if keymapHash != spec.KeymapSHA256 || spec.Name != expectedName {
+		return fmt.Errorf("effective native input contract changed; requalification required")
 	}
 	path := filepath.Join(coreConfigHome, "herdr-core/templates", spec.Name+".md")
 	info, err := os.Lstat(path)
@@ -309,7 +327,7 @@ func ValidateHCTemplate(coreConfigHome string, spec HCTemplate, options HCTempla
 	if err != nil {
 		return err
 	}
-	if digest(template) != spec.SHA256 {
+	if digest(template) != spec.SHA256 || !strings.Contains(string(template), "\ncommand: "+spec.Command()+"\n") {
 		return fmt.Errorf("HC template changed after qualification")
 	}
 	return nil

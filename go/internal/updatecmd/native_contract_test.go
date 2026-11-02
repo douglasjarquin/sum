@@ -31,10 +31,12 @@ func TestNativeTargetContractUsesExecutableEvidence(t *testing.T) {
 	if _, err := nativeTargetContract(root); err == nil {
 		t.Fatal("schema-1 executable accepted from source markers")
 	}
-	for _, missing := range []string{"state", "endpoint", "notification", "observer", "wake"} {
+	for _, missing := range []string{"template", "state", "endpoint", "notification", "observer", "wake"} {
 		t.Run(missing, func(t *testing.T) {
 			c := contract.BuildRelease()
 			switch missing {
+			case "template":
+				c.Supports.HCTemplateSchema = nil
 			case "state":
 				c.Supports.StateSchema = nil
 			case "endpoint":

@@ -63,6 +63,7 @@ func (o *rootOptions) addExecutionCommands(root *cobra.Command) {
 	addAttempt("park", execution.Park)
 	addAttempt("resume", execution.Resume)
 	addAttempt("confirm", execution.Confirm)
+	addAttempt("reconcile", execution.Reconcile)
 	addAttempt("redeliver", execution.Redeliver)
 
 	root.AddCommand(executionCmd)

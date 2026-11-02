@@ -104,6 +104,14 @@ func (l *serviceLab) start() (*ordjson.Object, error) {
 }
 func TestNativeServiceLaunchKeepsIntentAndIndependentReadiness(t *testing.T) {
 	l := newServiceLab(t)
+	process := exec.Command("sleep", "60")
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Process.Kill(); _ = process.Wait() })
+	pid := uint32(process.Process.Pid)
+	l.hc.QueueFault("terminal.run", hctest.Fault{RunPID: &pid})
 	out, err := l.start()
 	if err != nil {
 		t.Fatal(err)
@@ -207,7 +215,7 @@ func (l *serviceLab) savedService(t *testing.T, live bool) (*ordjson.Object, hcc
 	return service, terminal
 }
 func TestNativeServiceOwnershipRefusesReplacementsAndLiveExitClaims(t *testing.T) {
-	for _, change := range []string{"core", "creation", "pid", "foreground", "argv", "kept", "cwd", "finished-live-pid"} {
+	for _, change := range []string{"core", "creation", "pid", "foreground", "argv", "kept-shell", "cwd", "finished-live-pid"} {
 		t.Run(change, func(t *testing.T) {
 			l := newServiceLab(t)
 			service, terminal := l.savedService(t, true)
@@ -225,8 +233,9 @@ func TestNativeServiceOwnershipRefusesReplacementsAndLiveExitClaims(t *testing.T
 				terminal.Foreground.PID++
 			case "argv":
 				terminal.Argv = []string{"other"}
-			case "kept":
+			case "kept-shell":
 				terminal.Keep = true
+				terminal.Foreground = &hcclient.Foreground{PID: 999, Argv: []string{"sh"}}
 			case "cwd":
 				terminal.Cwd = t.TempDir()
 			case "finished-live-pid":

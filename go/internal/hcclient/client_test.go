@@ -273,3 +273,15 @@ func TestMalformedFirstMessageCannotBecomeKnownUnsent(t *testing.T) {
 		})
 	}
 }
+
+func TestCallerLaunchBudgetSurvivesDefaultTransportTimeout(t *testing.T) {
+	socket := serve(t, func(c net.Conn, r *bufio.Reader) {
+		time.Sleep(21 * time.Second)
+		hello(c, r, "core-a")
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	if _, err := (&Client{Socket: socket, CoreID: "core-a"}).Hello(ctx); err != nil {
+		t.Fatalf("caller deadline shortened by default transport: %v", err)
+	}
+}

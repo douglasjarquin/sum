@@ -73,8 +73,8 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		unlock()
 		return nil, err
 	}
-	prompt := WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)
-	params := hcclient.RunParams{Argv: template.RunArgv(prompt), Cwd: checkout, Name: NativeName(instance, taskID, "worker", attemptID), Parent: parent.Address, Caller: parent.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false,
+	opening := WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)
+	params := hcclient.RunParams{Argv: []string{template.Name}, Cwd: checkout, Name: NativeName(instance, taskID, "worker", attemptID), Parent: parent.Address, Caller: parent.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false,
 		Labels: workerLabels(instance, taskID, attemptID),
 		Env:    map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": parent.Session, "SUM_CORE_ID": parent.CoreID, "HC_SOCKET": parent.Socket, "SUM_TASK": taskID, "SUM_ROLE": "worker", "SUM_ATTEMPT": attemptID, "SUM_BINDING_GENERATION": "1"}}
 	template.BindInputEnvironment(params.Env)
@@ -82,6 +82,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	qualified, _ := ordjson.FromValue(NativeTemplate{template, provenance.ConfigHome, options})
 	native := ordjson.NewObject()
 	native.Set("intent", intent)
+	native.Set("opening", opening)
 	native.Set("native_template", qualified)
 	native.Set("effect", "claimed")
 	native.Set("claimed_at", store.Now())
@@ -113,11 +114,6 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		result, runErr = client.Run(runCtx, params)
 	}
 	if runErr != nil {
-		if hcclient.AgentPromptStalledError(runErr) {
-			if task, handled, err := settleStalled(s, &client, parent, instance, taskID, attemptID, checkout, prompt, "", "uncertain", nil); handled || err != nil {
-				return task, err
-			}
-		}
 		effect := "uncertain"
 		var nativeError *hcclient.Error
 		if errors.As(runErr, &nativeError) {
@@ -126,91 +122,111 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		if lock, e := s.Lock(); e == nil {
 			if current, e := s.ReadTask(taskID); e == nil {
 				if w, e := reservations.Worker(current); e == nil && asString(policyField(w, "id")) == attemptID {
-					asObject(policyField(w, "native_launch")).Set("effect", effect)
+					n := asObject(policyField(w, "native_launch"))
+					if store.EndpointFromContext(asObject(policyField(current, "worker_endpoint"))).Attempt == attemptID || policyField(w, "native_receipt") != nil {
+						n.Set("late_creation_error", runErr.Error())
+					} else {
+						n.Set("effect", effect)
+					}
 					_ = s.SaveTask(current)
 				}
 			}
 			lock()
 		}
+		if current, readErr := s.ReadTask(taskID); readErr == nil && store.EndpointFromContext(asObject(policyField(current, "worker_endpoint"))).Attempt == attemptID {
+			return current, nil
+		}
 		return FailStart(s, taskID, runErr)
 	}
-	if result.FirstMessage != nil && result.FirstMessage.Sent && hcclient.AgentPromptStalledReason(result.FirstMessage.Reason) {
-		if task, handled, err := settleStalled(s, &client, parent, instance, taskID, attemptID, checkout, prompt, result.Address, "created", result.FirstMessage); handled || err != nil {
-			return task, err
+	created, err := func() (*ordjson.Object, error) {
+		endpoint := openingEndpoint(parent, taskID, attemptID, checkout, result.Terminal)
+		if err = endpoint.Validate(); err != nil {
+			return FailStart(s, taskID, err)
 		}
-	}
-	endpoint := openingEndpoint(parent, taskID, attemptID, checkout, result.Terminal)
-	if err = endpoint.Validate(); err != nil {
-		return FailStart(s, taskID, err)
-	}
-	attested := result.Template != nil && *result.Template == template.Name && result.Submit != nil && *result.Submit == template.Submit
-	lock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	defer lock()
-	current, err := s.ReadTask(taskID)
-	if err != nil {
-		return nil, err
-	}
-	currentWorker, err := reservations.Worker(current)
-	if err != nil {
-		return nil, err
-	}
-	if asString(policyField(currentWorker, "id")) != attemptID || (asString(policyField(currentWorker, "state")) != "starting" && asString(policyField(currentWorker, "state")) != "running") {
-		return nil, fmt.Errorf("worker attempt changed during creation; inspect terminal %s", result.Address)
-	}
-	native = asObject(policyField(currentWorker, "native_launch"))
-	native.Set("endpoint", endpoint.Object())
-	var first any
-	if result.FirstMessage != nil {
-		first, _ = ordjson.FromValue(result.FirstMessage)
-	}
-	native.Set("first_message", first)
-	native.Set("effect", "created")
-	current.Set("worker_endpoint", endpoint.Object())
-	evidence := incarnation.NativeEvidence{Endpoint: endpoint.Native(), Foreground: result.Foreground}
-	if result.PID != nil {
-		evidence.PID = *result.PID
-	}
-	native.Set("incarnation", evidence.Record(store.Now()))
-	if !attested {
-		current.Set("status", "needs-attention")
-		current.Set("error", "Created terminal does not attest the qualified template and submit key; inspect without relaunching.")
-		obs := ordjson.NewObject()
-		obs.Set("at", store.Now())
-		obs.Set("outcome", "launch-uncertain")
-		obs.Set("reason", "template attestation mismatch")
-		if _, err = reservations.Transition(current, attemptID, "uncertain", store.Now(), obs, nil); err != nil {
+		attested := result.Template != nil && *result.Template == template.Name && result.Submit != nil && *result.Submit == template.Submit
+		lock, err := s.Lock()
+		if err != nil {
 			return nil, err
+		}
+		defer lock()
+		current, err := s.ReadTask(taskID)
+		if err != nil {
+			return nil, err
+		}
+		currentWorker, err := reservations.Worker(current)
+		if err != nil {
+			return nil, err
+		}
+		if asString(policyField(currentWorker, "id")) != attemptID || (asString(policyField(currentWorker, "state")) != "starting" && asString(policyField(currentWorker, "state")) != "running") {
+			return nil, fmt.Errorf("worker attempt changed during creation; inspect terminal %s", result.Address)
+		}
+		native = asObject(policyField(currentWorker, "native_launch"))
+		if existing := asObject(policyField(current, "worker_endpoint")); existing != nil && store.EndpointFromContext(existing).Attempt == attemptID {
+			if !store.EndpointFromContext(existing).Native().SameAuthority(endpoint.Native()) {
+				return nil, fmt.Errorf("late creation identity conflicts with reconciled endpoint")
+			}
+			return current, nil
+		}
+		native.Set("endpoint", endpoint.Object())
+		var first any
+		if result.FirstMessage == nil && template.Schema == 2 {
+			result.FirstMessage = &hcclient.FirstMessage{Sent: false}
+		}
+		if result.FirstMessage != nil {
+			first, _ = ordjson.FromValue(result.FirstMessage)
+		}
+		native.Set("first_message", first)
+		native.Set("effect", "created")
+		current.Set("worker_endpoint", endpoint.Object())
+		evidence := incarnation.NativeEvidence{Endpoint: endpoint.Native(), Foreground: result.Foreground}
+		if result.PID != nil {
+			evidence.PID = *result.PID
+		}
+		if policyField(currentWorker, "native_receipt") == nil {
+			native.Set("incarnation", evidence.Record(store.Now()))
+		}
+		if !attested {
+			current.Set("status", "needs-attention")
+			current.Set("error", "Created terminal does not attest the qualified template and submit key; inspect without relaunching.")
+			obs := ordjson.NewObject()
+			obs.Set("at", store.Now())
+			obs.Set("outcome", "launch-uncertain")
+			obs.Set("reason", "template attestation mismatch")
+			if _, err = reservations.Transition(current, attemptID, "uncertain", store.Now(), obs, nil); err != nil {
+				return nil, err
+			}
+			if err = s.SaveTask(current); err != nil {
+				return nil, err
+			}
+			return current, nil
+		}
+		registration, err := s.Registration(endpoint)
+		if err != nil {
+			return nil, err
+		}
+		if registration == nil {
+			registration, err = s.Register(endpoint, "worker", taskID, evidence.Record(store.Now()))
+			if err != nil {
+				return nil, err
+			}
+		}
+		registration.Set("native_template", qualified)
+		if err = ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(endpoint)+".json"), registration); err != nil {
+			return nil, err
+		}
+		if asString(policyField(currentWorker, "state")) != "running" && (result.FirstMessage == nil || !result.FirstMessage.Sent) {
+			current.Set("status", "needs-attention")
+			current.Set("error", "Native terminal created without a submitted first message; inspect and explicitly redeliver this attempt. Do not launch again.")
 		}
 		if err = s.SaveTask(current); err != nil {
 			return nil, err
 		}
 		return current, nil
+	}()
+	if err != nil || created == nil {
+		return created, err
 	}
-	registration, err := s.Registration(endpoint)
-	if err != nil {
-		return nil, err
-	}
-	if registration == nil {
-		registration, err = s.Register(endpoint, "worker", taskID, evidence.Record(store.Now()))
-		if err != nil {
-			return nil, err
-		}
-	}
-	registration.Set("native_template", qualified)
-	if err = ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(endpoint)+".json"), registration); err != nil {
-		return nil, err
-	}
-	if asString(policyField(currentWorker, "state")) != "running" && (result.FirstMessage == nil || !result.FirstMessage.Sent) {
-		current.Set("status", "needs-attention")
-		current.Set("error", "Native terminal created without a submitted first message; inspect and explicitly redeliver this attempt. Do not launch again.")
-	}
-	if err = s.SaveTask(current); err != nil {
-		return nil, err
-	}
-	return current, nil
+	return deliverWorkerOpening(s, created, template, result.Terminal, opening)
 }
 
 func verifyCoreTemplate(ctx context.Context, client *hcclient.Client, config string, spec launch.HCTemplate) error {
@@ -263,4 +279,72 @@ func launchStillAuthorized(s *store.Store, taskID, attemptID string, parent stor
 		return fmt.Errorf("worker attempt changed before native launch")
 	}
 	return nil
+}
+
+func deliverWorkerOpening(s *store.Store, task *ordjson.Object, spec launch.HCTemplate, initial hcclient.Terminal, opening string) (*ordjson.Object, error) {
+	ep := store.EndpointFromContext(asObject(policyField(task, "worker_endpoint")))
+	client := hcclient.Client{Socket: ep.Socket, CoreID: ep.CoreID}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+	defer cancel()
+	release, err := s.RecipientLock(ctx, [3]string{ep.Machine, ep.CoreID, ep.Address})
+	if err != nil {
+		return task, err
+	}
+	defer release()
+	current, err := s.ReadTask(ep.Task)
+	if err != nil {
+		return nil, err
+	}
+	w, err := reservations.Worker(current)
+	if err != nil {
+		return nil, err
+	}
+	n := asObject(policyField(w, "native_launch"))
+	if policyField(w, "native_receipt") != nil || policyField(n, "opening_delivery") != nil || policyField(n, "redelivery") != nil {
+		return current, nil
+	}
+	launch.DeliverOpening(ctx, &client, initial, spec, opening, func(progress launch.OpeningProgress) error {
+		unlock, err := s.Lock()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		current, err := s.ReadTask(ep.Task)
+		if err != nil {
+			return err
+		}
+		w, err := reservations.Worker(current)
+		if err != nil {
+			return err
+		}
+		if policyField(w, "id") != ep.Attempt {
+			return fmt.Errorf("worker attempt changed before opening")
+		}
+		n := asObject(policyField(w, "native_launch"))
+		if n == nil {
+			return fmt.Errorf("worker launch intent missing")
+		}
+		if policyField(w, "native_receipt") != nil {
+			return fmt.Errorf("worker already initialized; no opening input sent")
+		}
+		value, _ := ordjson.FromValue(progress)
+		n.Set("opening_delivery", value)
+		n.Set("first_message", func() any { v, _ := ordjson.FromValue(progress.First); return v }())
+		if progress.Terminal.PID != nil && progress.Terminal.Foreground != nil && launch.OriginalProgram(initial, progress.Terminal, spec) == nil {
+			evidence := incarnation.NativeEvidence{Endpoint: ep.Native(), PID: *progress.Terminal.PID, Foreground: progress.Terminal.Foreground}.Record(store.Now())
+			n.Set("incarnation", evidence)
+			if err = s.SetIncarnation(ep, evidence); err != nil {
+				return err
+			}
+		}
+		if progress.State == "submitted" {
+			current.Set("status", "starting")
+			current.Set("error", nil)
+		} else if progress.State != "in-flight" {
+			current.Set("status", "needs-attention")
+			current.Set("error", LaunchUncertainPrefix+": "+progress.Detail)
+		}
+		return s.SaveTask(current)
+	})
+	return s.ReadTask(ep.Task)
 }

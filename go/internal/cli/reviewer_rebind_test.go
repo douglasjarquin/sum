@@ -205,7 +205,7 @@ func TestBindReviewerTerminalRefusals(t *testing.T) {
 		}, "process/receipt authority"},
 		{"another core", func(t *testing.T, d *demoLab, id string, e store.Endpoint) {
 			editTaskObject(t, d.home, id, func(task map[string]any) { asMap(task["reviewer"])["core_id"] = "another-core" })
-		}, "core identity"},
+		}, "compatibility mismatch"},
 		{"recorded terminal unknown", func(t *testing.T, d *demoLab, id string, e store.Endpoint) {
 			old := asMap(d.taskRecord(id)["reviewer"])
 			terminal := nativeReviewerTerminal(t, d, asString(old["address"]))

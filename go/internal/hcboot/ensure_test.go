@@ -1,6 +1,8 @@
 package hcboot
 
 import (
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,6 +77,12 @@ func TestEnsureDoesNotRestartWhileTerminalsAreLive(t *testing.T) {
 
 func writeHC(t *testing.T, root, log, mode string) {
 	t.Helper()
+	for _, key := range []string{"HC_SOCKET", "SUM_SESSION", "SUM_CORE_ID", "SUM_HOME", "SUM_ROLE", "SUM_ATTEMPT", "SUM_TASK", "SUM_BINDING_GENERATION"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	path := filepath.Join(root, ".local", "bin", "hc")
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
@@ -128,4 +136,69 @@ func reportValue(t *testing.T, report interface{ Get(string) (any, bool) }, key 
 		t.Fatalf("missing %s", key)
 	}
 	return value
+}
+
+func TestSelectedRoutePreservesNamedScope(t *testing.T) {
+	root := t.TempDir()
+	log := filepath.Join(root, "hc.log")
+	writeHC(t, root, log, "ready")
+	route := Route{Socket: filepath.Join(root, "named.sock"), Session: "sum-test-selected", ConfigHome: root, StateHome: root}
+	env := route.environment()
+	for _, want := range []string{"HC_SOCKET=" + route.Socket, "HC_SESSION=sum-test-selected", "XDG_CONFIG_HOME=" + root} {
+		found := false
+		for _, entry := range env {
+			if entry == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("selected route lost %s", want)
+		}
+	}
+	if report := EnsureRoute(root, route); reportValue(t, report, "ok") != true {
+		t.Fatal(report)
+	}
+}
+
+func TestEnsureRetainsNativeStartFailureAndStopsSequence(t *testing.T) {
+	root := t.TempDir()
+	log := filepath.Join(root, "hc.log")
+	writeHC(t, root, log, "ready")
+	binary := filepath.Join(root, ".local/bin/hc")
+	script := "#!/bin/sh\nprintf '%s\n' \"$*\" >> \"$HCBOOT_LOG\"\ncase \"$*\" in\n'--json server status') exit 1;;\n'--json server start') echo selected-core-start-failed >&2; exit 7;;\nesac\n"
+	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	report := Ensure(root)
+	if reportValue(t, report, "ok") != false || !strings.Contains(reportValue(t, report, "error").(string), "selected-core-start-failed") {
+		t.Fatal(report)
+	}
+	calls := readLog(t, log)
+	if strings.Count(calls, "server status") != 1 || strings.Contains(calls, "restart") {
+		t.Fatal(calls)
+	}
+}
+
+func TestEnsureStartsAfterStaleSocketWithoutListener(t *testing.T) {
+	root := t.TempDir()
+	log := filepath.Join(root, "hc.log")
+	writeHC(t, root, log, "down")
+	route, err := Select("", "sum-test-stale", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := hctest.New(t)
+	route.Socket = filepath.Join(filepath.Dir(fixture.Socket), "stale.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: route.Socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err = listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report := EnsureRoute(root, route)
+	if reportValue(t, report, "ok") != true || !strings.Contains(readLog(t, log), "server start") {
+		t.Fatalf("stale socket blocked start: %v", report)
+	}
 }

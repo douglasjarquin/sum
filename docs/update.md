@@ -27,11 +27,11 @@ No update restarts a core, agent or service or changes a model, account, permiss
 The stable state root and selected physical generation home are distinct.
 Schema-one history stays sealed and byte-preserved, including old policy/procedure snapshots and evidence.
 Normal Open, `init` and `status` never migrate it.
-An explicit cutover requires a real enforceable exclusion lease over all legacy writers and senders, including a helper paused after opening old state.
-Existing legacy APIs cannot prove that lease.
-Process-list inspection, an operator assertion, a schema bump or a symlink switch cannot supply it.
-Existing-installation cutover must refuse without proof; no working production lease or automatic hot adoption is claimed.
-This external prerequisite is not waived by local HC canaries.
+Live legacy-to-HC migration is unavailable and is not required for a fresh start.
+Preserve the old installation, processes, task worktrees and records; inspect its records with `sumctl history` and prepare an independent fresh clone following [HC startup and recovery](hc-workflow.md).
+Historical records never become active endpoints or receipts merely by being read or restored.
+HC-to-HC updates continue through staged compatible releases and their explicit observer/session handoff.
+A shared-core version change requires separate qualification; no silent downgrade or global restart is implied.
 
 Rollback must verify the actual target binary's capabilities against the active schema, endpoint/receipt contracts and pending obligations.
 An older schema-one runtime cannot reactivate the inactive archive as writable state.

@@ -48,6 +48,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, required=True, help="development source snapshot to stage read-only")
     parser.add_argument("--hc", required=True)
+    parser.add_argument("--ready-delay", type=float, default=0, help="Delay synthetic native status for every initial role launch")
     parser.add_argument("--artifact", type=Path, required=True)
     args = parser.parse_args()
     source = args.source.resolve()
@@ -93,6 +94,8 @@ def execute_canary(args, source, lab):
                    SUM_GH_BIN=str(runtime / "tests/fixtures/gh_attach.py"), FAKE_GH_ROOT=str(gh_root),
                    SUM_INSTALL_ROOT=str(runtime), GIT_AUTHOR_NAME="Sum canary", GIT_AUTHOR_EMAIL="canary@example.invalid",
                    GIT_COMMITTER_NAME="Sum canary", GIT_COMMITTER_EMAIL="canary@example.invalid", SUM_STAGE_OFFLINE="1")
+    lab.env["SUM_CANARY_READY_DELAY"] = str(args.ready_delay)
+    lab.summary["ready_delay_seconds"] = args.ready_delay
     lab.summary["fixture_python"] = sys.executable
     lab.summary.update(kind="full-sum-application-composition", authenticated_harness=False,
                        github_backend="local strict fake", source=str(source), helper=str(helper), checkpoints=[])
@@ -126,8 +129,36 @@ def execute_canary(args, source, lab):
     with lab:
         def cli(*command):
             return json.loads(run([helper, "--format", "json", *command], cwd=runtime, env=lab.env))
-        started = cli("coordinator", "start", "--socket", str(lab.socket), "--session", lab.session,
-                      "--hc-config-home", lab.env["XDG_CONFIG_HOME"], "--harness", "codex")
+        startup = ["coordinator", "start", "--socket", str(lab.socket), "--session", lab.session,
+                   "--hc-config-home", lab.env["XDG_CONFIG_HOME"], "--harness", "codex"]
+        if args.ready_delay > 0:
+            process = subprocess.Popen([str(helper), "--format", "json", *startup], cwd=runtime, env=lab.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                state = json.loads((runtime / ".sum/state.json").read_text())
+                record_path = runtime / ".sum/generations" / state["generation"] / "coordinator-launch.json"
+                deadline = time.monotonic() + min(args.ready_delay, 15)
+                while time.monotonic() < deadline:
+                    if record_path.exists():
+                        launch_record = json.loads(record_path.read_text())
+                        if launch_record.get("endpoint", {}).get("address"):
+                            break
+                    time.sleep(0.02)
+                else:
+                    raise RuntimeError("creation identity was not durable before synthetic readiness")
+                inspected = cli("inspect", "--role", "coordinator", "--attempt", launch_record["endpoint"]["attempt"])
+                assert inspected["endpoint"]["address"] == launch_record["endpoint"]["address"]
+                assert process.poll() is None and not inspected["terminal"].get("status")
+                lab.summary["inspect_before_readiness"] = {"address": inspected["endpoint"]["address"], "attempt": inspected["endpoint"]["attempt"], "launch_pending": True, "native_status_absent": True}
+                stdout, stderr = process.communicate(timeout=120)
+                if process.returncode:
+                    raise RuntimeError(stderr[-3000:])
+                started = json.loads(stdout)
+            finally:
+                if process.poll() is None:
+                    process.terminate()
+                    process.communicate(timeout=10)
+        else:
+            started = cli(*startup)
         coordinator = started["endpoint"]["address"]
         init = wait_record(output, coordinator, "init")
         assert init["result"]["role"] == "coordinator", init

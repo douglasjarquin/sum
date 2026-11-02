@@ -43,8 +43,8 @@ func JudgeNative(recorded any, current hcclient.Endpoint, observed hcclient.Term
 	if !rec.Endpoint.SameAuthority(current) {
 		return refused(Replaced, "core, terminal, task, role, attempt or binding generation differs from the recorded authority")
 	}
-	if observed.Address != current.Address || observed.CreatedMS != rec.Endpoint.CreatedMS || observed.State != "live" || observed.Keep {
-		return refused(Replaced, "the recorded non-kept terminal is absent, finished or replaced")
+	if observed.Address != current.Address || observed.CreatedMS != rec.Endpoint.CreatedMS || observed.State != "live" {
+		return refused(Replaced, "the recorded terminal is absent, finished or replaced")
 	}
 	if observed.PID == nil || rec.PID == 0 || *observed.PID != rec.PID || observed.Foreground == nil || rec.Foreground == nil {
 		return refused(Unobservable, "the recorded terminal program and foreground cannot be verified")

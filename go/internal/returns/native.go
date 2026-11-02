@@ -63,11 +63,11 @@ func observeNativeIdentity(ctx context.Context, endpoint store.Endpoint, expecte
 	return checkNativeIdentity(endpoint, terminal, expectedCwd)
 }
 func checkNativeIdentity(endpoint store.Endpoint, terminal hcclient.Terminal, expectedCwd string) (*NativeRecipient, error) {
-	if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep {
-		return nil, &unreachableError{state: "recipient-replaced", msg: "Recipient native terminal creation or non-kept identity was replaced; explicit rebind is required."}
+	if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS {
+		return nil, &unreachableError{state: "recipient-replaced", msg: "Recipient native terminal creation or identity was replaced; explicit rebind is required."}
 	}
 	if terminal.State != "live" {
-		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient non-kept HC terminal is absent, finished or replaced; explicit recovery is required."}
+		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient HC terminal is absent, finished or replaced; explicit recovery is required."}
 	}
 	if expectedCwd != "" && (terminal.Cwd == "" || resolve(terminal.Cwd) != resolve(expectedCwd)) {
 		return nil, &unreachableError{state: "pending-unreachable", msg: "Recipient cwd cannot be verified."}

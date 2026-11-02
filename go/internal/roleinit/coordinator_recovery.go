@@ -12,6 +12,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -38,7 +39,7 @@ func RecoverCoordinator(s *store.Store, attempt string) (*ordjson.Object, error)
 			return nil, fmt.Errorf("no pending or recovered coordinator attempt %s", attempt)
 		}
 		record, ok := value.(*ordjson.Object)
-		if !ok || asString(record, "effect") != "not-created" {
+		if !ok || asString(record, "effect") != "not-created" && asString(record, "effect") != "stopped" {
 			return nil, fmt.Errorf("invalid recovered coordinator attempt")
 		}
 		return record, nil
@@ -61,22 +62,59 @@ func RecoverCoordinator(s *store.Store, attempt string) (*ordjson.Object, error)
 	if err != nil {
 		return nil, err
 	}
-	if endpoint.Attempt != attempt || endpoint.Role != "coordinator" || endpoint.Backend != "hc" || endpoint.Schema != 2 || !host.Is(endpoint.Machine) || endpoint.CoreID == "" || !filepath.IsAbs(endpoint.Socket) || endpoint.Address != "" || endpoint.CreatedMS != 0 {
-		return nil, fmt.Errorf("recovery requires the exact local uncreated coordinator attempt; recorded identity differs")
+	if endpoint.Attempt != attempt || endpoint.Role != "coordinator" || endpoint.Backend != "hc" || endpoint.Schema != 2 || !host.Is(endpoint.Machine) || endpoint.CoreID == "" || !filepath.IsAbs(endpoint.Socket) {
+		return nil, fmt.Errorf("recovery requires the exact local uninitialized coordinator attempt; recorded identity differs")
 	}
-	if !uncreatedCoordinator(record) {
+	if endpoint.Address == "" && !uncreatedCoordinator(record) {
 		return nil, fmt.Errorf("coordinator launch is ambiguous or created; absence alone cannot prove it was never started; no retry authorized")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
-	list, err := client.List(ctx, hcclient.ListParams{All: true})
-	if err != nil {
-		return nil, fmt.Errorf("observe recorded HC core before recovery: %w", err)
-	}
-	for _, terminal := range list.Terminals {
-		if terminal.Labels["sum.attempt"] == attempt || (terminal.Name != nil && *terminal.Name == "sum-"+attempt[:min(28, len(attempt))]) {
-			return nil, fmt.Errorf("coordinator attempt has native terminal %s (%s); inspect it without relaunching", terminal.Address, terminal.State)
+	reason := "proven pre-creation refusal and no matching native terminal"
+	effect := "not-created"
+	if endpoint.Address != "" {
+		var original hcclient.RunResult
+		raw, _ := record.Get("result")
+		if decode(raw, &original) != nil || original.Address != endpoint.Address || original.CreatedMS != endpoint.CreatedMS || original.PID == nil || *original.PID == 0 {
+			return nil, fmt.Errorf("original coordinator process identity is missing")
+		}
+		if receipt, _ := record.Get("native_receipt"); receipt != nil {
+			return nil, fmt.Errorf("initialized coordinator cannot be recovered")
+		}
+		terminal, e := client.Get(ctx, endpoint.Address)
+		if e != nil || terminal.CreatedMS != endpoint.CreatedMS || terminal.State != "finished" || terminal.FinishedMS == nil || *terminal.FinishedMS == 0 || (terminal.ExitCode == nil && terminal.Signal == nil) || terminal.Cwd != original.Cwd {
+			return nil, fmt.Errorf("coordinator original exit is not conclusive")
+		}
+		pids := []int{int(*original.PID)}
+		if original.Foreground != nil {
+			pids = append(pids, int(original.Foreground.PID))
+		}
+		for _, pid := range pids {
+			alive, e := proc.PIDRunning(pid)
+			if e != nil || alive {
+				return nil, fmt.Errorf("coordinator process remains live or unobservable")
+			}
+			children, e := proc.Descendants(pid)
+			if e != nil || len(children) > 0 {
+				return nil, fmt.Errorf("coordinator descendants remain live or unobservable")
+			}
+		}
+		survivors, e := proc.ProcessesBoundTo(original.Cwd, nil)
+		if e != nil || len(survivors) > 0 {
+			return nil, fmt.Errorf("coordinator checkout has surviving processes or cannot be inspected")
+		}
+		reason = "original coordinator exited before init; native exit, PID death and checkout survivor evidence verified"
+		effect = "stopped"
+	} else {
+		list, e := client.List(ctx, hcclient.ListParams{All: true})
+		if e != nil {
+			return nil, e
+		}
+		for _, terminal := range list.Terminals {
+			if terminal.Labels["sum.attempt"] == attempt || (terminal.Name != nil && *terminal.Name == "sum-"+attempt[:min(28, len(attempt))]) {
+				return nil, fmt.Errorf("coordinator attempt has native terminal %s (%s); inspect it without relaunching", terminal.Address, terminal.State)
+			}
 		}
 	}
 	unlock, err := s.Lock()
@@ -101,8 +139,8 @@ func RecoverCoordinator(s *store.Store, attempt string) (*ordjson.Object, error)
 	if _, err = os.Lstat(archive); !os.IsNotExist(err) {
 		return nil, fmt.Errorf("coordinator recovery archive already exists; preserved")
 	}
-	record.Set("effect", "not-created")
-	record.Set("recovery", mustObject(map[string]any{"attempt": attempt, "at": store.Now(), "core_id": endpoint.CoreID, "reason": "proven pre-creation refusal and no matching native terminal"}))
+	record.Set("effect", effect)
+	record.Set("recovery", mustObject(map[string]any{"attempt": attempt, "at": store.Now(), "core_id": endpoint.CoreID, "reason": reason}))
 	if err = os.MkdirAll(filepath.Dir(archive), 0700); err != nil {
 		return nil, err
 	}

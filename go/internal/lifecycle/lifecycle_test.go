@@ -827,7 +827,7 @@ func TestSweep_emptyCandidateDoesNotClose(t *testing.T) {
 	}
 }
 func TestSweep_skipsReusedPane(t *testing.T) {
-	for _, change := range []string{"creation", "kept", "missing-exit"} {
+	for _, change := range []string{"creation", "kept-shell", "missing-exit"} {
 		t.Run(change, func(t *testing.T) {
 			l := newSweepLab(t)
 			l.saveTask(l.openPR())
@@ -836,8 +836,9 @@ func TestSweep_skipsReusedPane(t *testing.T) {
 			switch change {
 			case "creation":
 				terminal.CreatedMS++
-			case "kept":
+			case "kept-shell":
 				terminal.Keep = true
+				terminal.Cwd = t.TempDir()
 			case "missing-exit":
 				terminal.ExitCode = nil
 			}

@@ -366,7 +366,7 @@ func observeService(task, service *ordjson.Object, runtimeRoot string) (*ordjson
 		return refuse("native terminal observation failed: " + err.Error())
 	}
 	view.Set("terminal_state", terminal.State)
-	if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep || !samePathNative(terminal.Cwd, stringField(task, "worktree")) {
+	if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || !samePathNative(terminal.Cwd, stringField(task, "worktree")) {
 		return refuse("native terminal creation, lifetime, or checkout binding changed")
 	}
 	if process == nil || intField(process, "pid") <= 0 {
@@ -763,7 +763,7 @@ func captureServiceForeground(client hcclient.Client, created hcclient.Terminal)
 		if err != nil {
 			return created, err
 		}
-		if observed.Address != created.Address || observed.CreatedMS != created.CreatedMS || observed.Keep || observed.PID == nil || *observed.PID != *created.PID || observed.Cwd != created.Cwd || !reflect.DeepEqual(observed.Argv, created.Argv) {
+		if observed.Address != created.Address || observed.CreatedMS != created.CreatedMS || observed.PID == nil || *observed.PID != *created.PID || observed.Cwd != created.Cwd || !reflect.DeepEqual(observed.Argv, created.Argv) {
 			return created, fmt.Errorf("service program binding changed before foreground capture")
 		}
 		if observed.Foreground != nil || terminalFinished(observed) {

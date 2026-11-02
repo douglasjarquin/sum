@@ -189,11 +189,28 @@ func TestCoordinatorStartRecoverAndRestartCLI(t *testing.T) {
 					t.Fatalf("recovery: %v %v", recovered, err)
 				}
 			}
+			exited, err := run(start...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exitedEndpoint := asMap(exited["endpoint"])
+			exitedAttempt := asString(exitedEndpoint["attempt"])
+			if _, err = run("recover", "--attempt", exitedAttempt); err == nil {
+				t.Fatal("live uninitialized coordinator released")
+			}
+			f.Exit(asString(exitedEndpoint["address"]), 0)
+			stopped, err := run("recover", "--attempt", exitedAttempt)
+			if err != nil || stopped["effect"] != "stopped" {
+				t.Fatalf("created pre-init exit recovery: %v %v", stopped, err)
+			}
+			if _, err = os.Stat(filepath.Join(st.Home, "coordinator-launches", exitedAttempt+".json")); err != nil {
+				t.Fatal("created failed attempt lost", err)
+			}
 			created, err := run(start...)
 			if err != nil || created["effect"] != "created" {
 				t.Fatalf("new start: %v %v", created, err)
 			}
-			if len(f.Terminals()) != 2 {
+			if len(f.Terminals()) != 3 {
 				t.Fatalf("unexpected terminals: %v", f.Terminals())
 			}
 			if owner, err := st.Owner(); err != nil || owner != nil {
@@ -206,9 +223,6 @@ func TestCoordinatorStartRecoverAndRestartCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pid := uint32(201)
-			terminal.PID = &pid
-			terminal.Foreground = &hcclient.Foreground{PID: 202, Name: harness, Argv: spec.Argv, Cwd: root}
 			f.SetTerminal(terminal)
 			for key, value := range endpointEnv(endpointValue) {
 				t.Setenv(key, value)
@@ -257,8 +271,8 @@ func TestCoordinatorStartRecoverAndRestartCLI(t *testing.T) {
 			if err = os.WriteFile(inputConfig, []byte(drift), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err = recipient.Qualify(owner); err == nil {
-				t.Fatal("configuration drift retained input qualification")
+			if err = recipient.Qualify(owner); err != nil {
+				t.Fatalf("irrelevant config drift stranded recipient: %v", err)
 			}
 			if err = os.Rename(inputConfig, filepath.Join(t.TempDir(), "preserved-drift-config")); err != nil {
 				t.Fatal(err)
@@ -266,8 +280,8 @@ func TestCoordinatorStartRecoverAndRestartCLI(t *testing.T) {
 			if err = os.WriteFile(binary, []byte("changed binary"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			if err = recipient.Qualify(owner); err == nil {
-				t.Fatal("binary drift retained input qualification")
+			if err = recipient.Qualify(owner); err != nil {
+				t.Fatalf("on-disk binary drift stranded original recipient: %v", err)
 			}
 		})
 	}

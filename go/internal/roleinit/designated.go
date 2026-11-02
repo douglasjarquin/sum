@@ -233,6 +233,20 @@ func InitDesignated(opts DesignatedOpts) (*ordjson.Object, error) {
 			if !nativeProgramMatches(terminal, provenance.Spec) {
 				return nil, fmt.Errorf("coordinator program differs from persisted template")
 			}
+			var original hcclient.RunResult
+			if value, _ := pending.Get("result"); value != nil && decode(value, &original) == nil {
+				if progress := asObjectCoordinator(pending, "opening_delivery"); progress != nil {
+					var observed hcclient.Terminal
+					if value, _ := progress.Get("terminal"); decode(value, &observed) == nil && launch.OriginalProgram(original.Terminal, observed, provenance.Spec) == nil {
+						original.Terminal = observed
+					}
+				}
+				if err = launch.OriginalProgram(original.Terminal, terminal, provenance.Spec); err != nil {
+					return nil, err
+				}
+			} else if terminal.Keep {
+				return nil, fmt.Errorf("kept coordinator lacks original-process evidence; inspect without adopting the replacement")
+			}
 			var intent hcclient.RunParams
 			intentValue, _ := pending.Get("intent")
 			if err = decode(intentValue, &intent); err != nil {
@@ -560,7 +574,7 @@ func qualifyTask(s *store.Store, task *ordjson.Object, e store.Endpoint, t hccli
 	if err = decode(intentValue, &intent); err != nil {
 		return nil, nil, err
 	}
-	if !intent.OutliveParent || !intent.NoNotify || intent.Keep || intent.RM || t.Keep || t.RM || t.DieWithParent || t.Notify {
+	if !intent.OutliveParent || !intent.NoNotify || intent.Keep || intent.RM || t.RM || t.DieWithParent || t.Notify {
 		return nil, nil, fmt.Errorf("native task lifecycle differs from managed launch contract")
 	}
 	instance, err := s.Instance()
@@ -591,17 +605,23 @@ func qualifyTask(s *store.Store, task *ordjson.Object, e store.Endpoint, t hccli
 	if !nativeProgramMatches(t, provenance.Spec) || intent.Cwd != t.Cwd {
 		return nil, nil, fmt.Errorf("native program differs from sealed launch template")
 	}
+	pointer := ""
+	if len(intent.Argv) == 2 {
+		pointer = intent.Argv[1]
+	} else if len(intent.Argv) == 1 && provenance.Spec.Schema == 2 {
+		pointer = asString(launchRecord, "opening")
+	}
 	if e.Role == "worker" {
 		brief, err := versions.ActiveBrief(s, task)
 		if err != nil {
 			return nil, nil, err
 		}
-		if len(intent.Argv) != 2 || intent.Argv[0] != provenance.Spec.Name || !strings.Contains(intent.Argv[1], brief) {
+		if len(intent.Argv) == 0 || intent.Argv[0] != provenance.Spec.Name || !strings.Contains(pointer, brief) {
 			return nil, nil, fmt.Errorf("launch pointer does not name the current sealed brief")
 		}
 	}
 	if e.Role == "reviewer" {
-		if len(intent.Argv) != 2 || intent.Argv[0] != provenance.Spec.Name || asString(attempt, "candidate") == "" || !strings.Contains(intent.Argv[1], asString(attempt, "candidate")) || !strings.Contains(intent.Argv[1], asString(attempt, "skill_path")) {
+		if len(intent.Argv) == 0 || intent.Argv[0] != provenance.Spec.Name || asString(attempt, "candidate") == "" || !strings.Contains(pointer, asString(attempt, "candidate")) || !strings.Contains(pointer, asString(attempt, "skill_path")) {
 			return nil, nil, fmt.Errorf("reviewer launch pointer differs from the pinned procedure and candidate")
 		}
 	}
@@ -617,6 +637,9 @@ func qualifyTask(s *store.Store, task *ordjson.Object, e store.Endpoint, t hccli
 				var baseline incarnation.NativeEvidence
 				if err = decode(recorded, &baseline); err != nil {
 					return nil, nil, err
+				}
+				if baseline.Foreground == nil && t.Keep {
+					return nil, nil, fmt.Errorf("promotion preceded original foreground evidence; inspect without granting replacement authority")
 				}
 				if !baseline.Endpoint.SameAuthority(e.Native()) || (baseline.PID != 0 && (t.PID == nil || baseline.PID != *t.PID)) || (baseline.Foreground != nil && !reflect.DeepEqual(baseline.Foreground, t.Foreground)) {
 					return nil, nil, fmt.Errorf("unreceipted launch registration process differs from the current terminal")

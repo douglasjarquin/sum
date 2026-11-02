@@ -54,7 +54,10 @@
       "usage": "Opt-in per-task agent usage accounting over the Claude Code transcripts of the terminals Sum bound to one task; reports counts and coverage, never a bill, and never changes delivery or cleanup",
       "coordinator": "Start a bound coordinator with exact HC identity, recorded launch environment and matching initialization receipt",
       "restore": "Import records into a fresh schema-two backend:records quarantine; preserve task/procedure bytes, transfer no live authority and block all mutations",
-      "delivery": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error"
+      "delivery": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error",
+      "build-info": "Identify the executing binary, embedded build provenance and checksum independently of checkout HEAD",
+      "history": "Read preserved current or schema-one task records; never grants live authority",
+      "inspect": "Read the exact saved launch and native output from an ordinary shell, including before init or readiness"
     },
     "read_only": [
       "brief-list",
@@ -452,7 +455,8 @@
       "park": "Release one exact worker or verifier attempt only after verified stop evidence for that attempt, instance, occupant, terminal, process, and checkout; missing, stale, or unobservable identity stays reserved and stops nothing",
       "resume": "Reserve capacity for a successor to one exact released worker attempt, then launch it; a recorded launch carrying an unauthorized permission/trust override is refused before the successor is recorded",
       "confirm": "Record running only from matching worker receipt plus fresh exact native/process identity; never from started/status/turn counters",
-      "redeliver": "Explicitly submit one proven-unsent saved opening message for the exact attempt; never automatically replay uncertainty"
+      "redeliver": "Explicitly submit one proven-unsent saved opening message for the exact attempt; never automatically replay uncertainty",
+      "reconcile": "Corroborate a lost worker creation reply; preserve ambiguity on zero/conflicting or unprovable candidates"
     },
     "read_only": false,
     "read_only_subcommands": [
@@ -918,7 +922,9 @@
     "arguments": [],
     "subcommands": {
       "launch": "Create a uniquely named native reviewer terminal or use its verified live endpoint; creation and opening-message effects are separate",
-      "redeliver": "Explicitly recover one proven-unsent opening message for the exact reviewer attempt; never replay uncertainty"
+      "redeliver": "Explicitly recover one proven-unsent opening message for the exact reviewer attempt; never replay uncertainty",
+      "reconcile": "Corroborate a lost reviewer creation reply without relaunching or sending",
+      "recover": "Retain a proven no-effect or stopped-before-init reviewer attempt for explicit successor launch; native exit, original PID death and checkout survivors remain guarded"
     },
     "read_only": false,
     "read_only_subcommands": []
@@ -2866,8 +2872,10 @@
     "help": "Start a bound coordinator with exact HC identity, recorded launch environment and matching initialization receipt",
     "arguments": [],
     "subcommands": {
-      "start": "Launch on a selected existing HC core; observation never starts a core",
-      "recover": "Archive one proven uncreated coordinator attempt; never replay an uncertain launch"
+      "start": "Prepare the selected compatible HC route, save creation identity, then deliver the recorded opening",
+      "recover": "Archive one proven uncreated coordinator attempt; never replay an uncertain launch",
+      "redeliver": "Deliver a proven-unsent opening to the exact original coordinator",
+      "reconcile": "Corroborate a lost creation reply without relaunching or sending"
     },
     "read_only": false,
     "read_only_subcommands": []
@@ -2878,18 +2886,18 @@
     "arguments": [
       {
         "name": "--socket",
-        "help": "Existing local HC Unix socket",
-        "required": true
+        "help": "Explicit override; otherwise use the saved route or native HC environment/configuration",
+        "required": false
       },
       {
         "name": "--session",
-        "help": "Explicit selected local HC session",
-        "required": true
+        "help": "Explicit override; otherwise use the saved route or native HC environment/configuration",
+        "required": false
       },
       {
         "name": "--hc-config-home",
-        "help": "XDG config root (usually ~/.config); Sum appends herdr-core/templates",
-        "required": true
+        "help": "Explicit override; otherwise use the saved route or native HC environment/configuration",
+        "required": false
       },
       {
         "name": "--harness",
@@ -2914,6 +2922,10 @@
       {
         "name": "--permission-override",
         "help": "Only explicit user authorization for a disclosed permission/trust argument"
+      },
+      {
+        "name": "--space",
+        "help": "Existing associated desktop space ID; request placement after original process evidence is retained"
       }
     ],
     "subcommands": null,
@@ -3013,11 +3025,130 @@
   },
   "coordinator-recover": {
     "topic": "coordinator-recover",
-    "help": "Archive one exact coordinator attempt only after proven pre-creation refusal and an identity-bound HC observation finds no matching terminal; never launch, resend or claim authority",
+    "help": "Archive one exact uninitialized coordinator attempt after proven no creation or conclusive native exit, original PID death and checkout survivor checks; never launch, resend or claim authority",
     "arguments": [
       {
         "name": "--attempt",
         "help": "Exact attempt from coordinator start output",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "build-info": {
+    "topic": "build-info",
+    "help": "Identify the executing binary, embedded build provenance and checksum independently of checkout HEAD",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "history": {
+    "topic": "history",
+    "help": "Read preserved current or schema-one task records; never grants live authority",
+    "arguments": [],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "inspect": {
+    "topic": "inspect",
+    "help": "Read the exact saved launch and native output from an ordinary shell, including before init or readiness",
+    "arguments": [
+      {
+        "name": "task",
+        "help": "Omit for coordinator; provide task for worker/reviewer"
+      },
+      {
+        "name": "--role",
+        "help": "coordinator (default), worker or reviewer"
+      },
+      {
+        "name": "--attempt",
+        "help": "Optional exact saved attempt guard"
+      }
+    ],
+    "subcommands": null,
+    "read_only": true,
+    "read_only_subcommands": []
+  },
+  "coordinator-redeliver": {
+    "topic": "coordinator-redeliver",
+    "help": "Deliver a proven-unsent opening to the exact original coordinator",
+    "arguments": [
+      {
+        "name": "--attempt",
+        "help": "Exact saved attempt",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "coordinator-reconcile": {
+    "topic": "coordinator-reconcile",
+    "help": "Corroborate a lost creation reply without relaunching or sending",
+    "arguments": [
+      {
+        "name": "--attempt",
+        "help": "Exact saved attempt",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "execution-reconcile": {
+    "topic": "execution-reconcile",
+    "help": "Corroborate a lost worker creation reply; preserve ambiguity on zero/conflicting or unprovable candidates",
+    "arguments": [
+      {
+        "name": "task",
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": "Exact saved attempt",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "reviewer-reconcile": {
+    "topic": "reviewer-reconcile",
+    "help": "Corroborate a lost reviewer creation reply without relaunching or sending",
+    "arguments": [
+      {
+        "name": "task",
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": "Exact saved attempt",
+        "required": true
+      }
+    ],
+    "subcommands": null,
+    "read_only": false,
+    "read_only_subcommands": []
+  },
+  "reviewer-recover": {
+    "topic": "reviewer-recover",
+    "help": "Retain a proven no-effect or stopped-before-init reviewer attempt for explicit successor launch; native exit, original PID death and checkout survivors remain guarded",
+    "arguments": [
+      {
+        "name": "task",
+        "required": true
+      },
+      {
+        "name": "--attempt",
+        "help": "Exact saved attempt",
         "required": true
       }
     ],

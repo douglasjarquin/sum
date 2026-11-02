@@ -52,7 +52,7 @@ func observerForegroundSnapshot(ctx context.Context, client *hcclient.Client, in
 		if err != nil {
 			return terminal, false, fmt.Errorf("observe startup program: %w", err)
 		}
-		if terminal.State != "live" || terminal.Keep || terminal.Address != initial.Address || terminal.CreatedMS != initial.CreatedMS || !reflect.DeepEqual(terminal.PID, initial.PID) || !reflect.DeepEqual(terminal.Argv, initial.Argv) || !reflect.DeepEqual(terminal.Labels, initial.Labels) || terminal.Cwd != initial.Cwd {
+		if terminal.State != "live" || terminal.Address != initial.Address || terminal.CreatedMS != initial.CreatedMS || !reflect.DeepEqual(terminal.PID, initial.PID) || !reflect.DeepEqual(terminal.Argv, initial.Argv) || !reflect.DeepEqual(terminal.Labels, initial.Labels) || terminal.Cwd != initial.Cwd {
 			return terminal, false, fmt.Errorf("observer program identity changed before foreground proof; startup was not adopted")
 		}
 		if terminal.Foreground != nil {

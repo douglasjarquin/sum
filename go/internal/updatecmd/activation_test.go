@@ -630,7 +630,7 @@ func plantNativeHelper(t *testing.T, runtimeRoot, body string) {
 	}
 }
 
-const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"hc_core":"0.1.14","hc_generation":1,"endpoint_schema":2,"notification_protocol":2},"supports":{"state_schema":[2],"brief_schema":[1],"machine_identity":[1],"wake_protocol":[1],"endpoint_schema":[2],"notification_protocol":[2],"observer_protocol":[1]}}`
+const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"hc_core":"0.1.14","hc_generation":1,"endpoint_schema":2,"notification_protocol":2},"supports":{"hc_template_schema":[0,2],"state_schema":[2],"brief_schema":[1],"machine_identity":[1],"wake_protocol":[1],"endpoint_schema":[2],"notification_protocol":[2],"observer_protocol":[1]}}`
 
 func workingHelper(logPath string) string {
 	prefix := "#!/bin/sh\nif [ \"$1\" = \"--format\" ]; then echo '" + releaseContractJSON + "'; exit 0; fi\n"

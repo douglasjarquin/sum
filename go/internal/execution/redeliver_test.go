@@ -26,6 +26,7 @@ type redeliveryLab struct {
 	endpoint      store.Endpoint
 	fixture       *hctest.Fixture
 	runtime, path string
+	initialSends  int
 }
 
 func newRedeliveryLab(t *testing.T) redeliveryLab {
@@ -111,7 +112,7 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 	if err = os.WriteFile(brief, []byte("Only the approved task."), 0600); err != nil {
 		t.Fatal(err)
 	}
-	fixture.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: false}})
+	fixture.QueueFault("terminal.send", hctest.Fault{RefuseKind: "blocked"})
 	task, err := prepare.Dispatch(s, coordinator.Object(), prepare.Args{Repo: repo, Base: "main", Brief: brief, Harness: "codex", Approved: true, RuntimeRoot: runtime, SumctlPath: filepath.Join(runtime, "bin/sumctl")})
 	if err != nil {
 		t.Fatal(err)
@@ -121,24 +122,13 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 		t.Fatal(err)
 	}
 
-	for _, terminal := range fixture.Terminals() {
-		if terminal.Address == endpoint.Address {
-			program := uint32(200000)
-			terminal.PID = &program
-			terminal.Foreground = &hcclient.Foreground{PID: 200001, Name: "codex", Argv: []string{codex, "--no-daemon"}, Cwd: terminal.Cwd}
-			fixture.SetTerminal(terminal)
-			fixture.SetStatus(endpoint.Address, "idle")
-			bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: program, Foreground: terminal.Foreground}
-			if err = s.SetIncarnation(endpoint, bound.Record(store.Now())); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
+	fixture.SetStatus(endpoint.Address, "idle")
+
 	path, err := s.TaskPath(endpoint.Task)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return redeliveryLab{s, coordinator.Object(), endpoint, fixture, runtime, filepath.Join(path, "task.json")}
+	return redeliveryLab{s, coordinator.Object(), endpoint, fixture, runtime, filepath.Join(path, "task.json"), 1}
 }
 func redeliveryTaskBytes(t *testing.T, l redeliveryLab) []byte {
 	t.Helper()
@@ -154,6 +144,9 @@ func redeliveryCalls(l redeliveryLab, method string) int {
 		if call.Method == method {
 			n++
 		}
+	}
+	if method == "terminal.send" {
+		n -= l.initialSends
 	}
 	return n
 }

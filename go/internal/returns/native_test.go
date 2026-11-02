@@ -289,6 +289,13 @@ func TestNativeQualifiedDoneUsesOrdinarySendAndRejectsChangedProvenance(t *testi
 	if err = os.WriteFile(template.Spec.Binary, []byte("changed binary"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	if err = recipient.Qualify(record); err != nil {
+		t.Fatalf("unchanged running process rejected after on-disk binary update: %v", err)
+	}
+	path := filepath.Join(template.ConfigHome, "herdr-core/templates", template.Spec.Name+".md")
+	if err = os.WriteFile(path, []byte("changed qualified template"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err = recipient.Qualify(record); err == nil {
 		t.Fatal("changed command provenance accepted")
 	}

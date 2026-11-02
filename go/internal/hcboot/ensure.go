@@ -30,6 +30,19 @@ type statusDoc struct {
 // Ensure brings up the pinned local HC core and a current holder.
 // A runtime without .local/bin/hc returns nil. The result is a report, not a role.
 func Ensure(runtimeRoot string) *ordjson.Object {
+	route, err := Select("", "", "")
+	if err != nil {
+		report := ordjson.NewObject()
+		report.Set("ok", false)
+		report.Set("error", err.Error())
+		return report
+	}
+	return EnsureRoute(runtimeRoot, route)
+}
+
+func EnsureRoute(runtimeRoot string, route Route) *ordjson.Object {
+	run := route.run
+	readStatus := route.readStatus
 	hc := filepath.Join(runtimeRoot, ".local", "bin", "hc")
 	info, err := os.Stat(hc)
 	if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
@@ -37,6 +50,15 @@ func Ensure(runtimeRoot string) *ordjson.Object {
 	}
 	report := ordjson.NewObject()
 	report.Set("ok", false)
+	if err := route.Validate(); err != nil {
+		report.Set("error", err.Error())
+		return report
+	}
+	if err := route.compatibility(); err != nil {
+		report.Set("action", "compatibility-refused")
+		report.Set("error", err.Error())
+		return report
+	}
 	status, err := readStatus(hc, runtimeRoot)
 	if err != nil {
 		if _, startErr := run(hc, runtimeRoot, "--json", "server", "start"); startErr != nil {
@@ -87,7 +109,11 @@ func Ensure(runtimeRoot string) *ordjson.Object {
 		Address string `json:"address"`
 	}
 	if json.Unmarshal([]byte(started.Stdout), &launched) == nil && addressPattern.MatchString(launched.Address) {
-		_, _ = run(hc, runtimeRoot, "rm", launched.Address)
+		if _, err = run(hc, runtimeRoot, "rm", launched.Address); err != nil {
+			report.Set("action", "remove-probe")
+			report.Set("error", err.Error())
+			return report
+		}
 	}
 	status, err = readStatus(hc, runtimeRoot)
 	if err != nil {
@@ -116,9 +142,9 @@ func readyReport(action string, status statusDoc) *ordjson.Object {
 	return report
 }
 
-func readStatus(hc, runtimeRoot string) (statusDoc, error) {
+func (route Route) readStatus(hc, runtimeRoot string) (statusDoc, error) {
 	var status statusDoc
-	result, err := run(hc, runtimeRoot, "--json", "server", "status")
+	result, err := route.run(hc, runtimeRoot, "--json", "server", "status")
 	if err != nil {
 		return status, err
 	}
@@ -131,8 +157,8 @@ func readStatus(hc, runtimeRoot string) (statusDoc, error) {
 	return status, nil
 }
 
-func run(hc, runtimeRoot string, args ...string) (proc.Result, error) {
-	return proc.Run(append([]string{hc}, args...), runtimeRoot, stepTimeout, false, childEnv())
+func (route Route) run(hc, runtimeRoot string, args ...string) (proc.Result, error) {
+	return proc.Run(append([]string{hc}, args...), runtimeRoot, stepTimeout, true, route.environment())
 }
 
 func childEnv() []string {
@@ -140,7 +166,7 @@ func childEnv() []string {
 	for _, entry := range os.Environ() {
 		key, _, _ := strings.Cut(entry, "=")
 		switch key {
-		case "HC_SESSION", "HC_SOCKET", "SUM_SESSION", "SUM_CORE_ID", "SUM_HOME", "SUM_ROLE", "SUM_ATTEMPT", "SUM_TASK", "SUM_BINDING_GENERATION":
+		case "SUM_SESSION", "SUM_CORE_ID", "SUM_HOME", "SUM_ROLE", "SUM_ATTEMPT", "SUM_TASK", "SUM_BINDING_GENERATION":
 			continue
 		default:
 			env = append(env, entry)

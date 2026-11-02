@@ -118,7 +118,7 @@ func create(s *store.Store, ctx *ordjson.Object, gh, runtimeRoot, repoDir, remot
 	bodyFile := args.BodyFile
 	if bodyFile == "" {
 		var err error
-		if bodyFile, err = writeBody(s, args.Task, stampedBody(RenderBody(task), sumruntime.Marker(runtimeRoot))); err != nil {
+		if bodyFile, err = writeBody(s, args.Task, stampedBody(RenderBody(task), sumruntime.Marker())); err != nil {
 			return nil, err
 		}
 	}

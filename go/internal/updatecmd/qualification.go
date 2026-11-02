@@ -41,7 +41,7 @@ func deliveryQualification(s *store.Store, tasks []*ordjson.Object) []any {
 		if optional && terminal.State == "finished" {
 			return
 		}
-		if terminal.State != "live" || terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep {
+		if terminal.State != "live" || terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS {
 			blocked = append(blocked, label+" automatic delivery qualification: native terminal identity changed")
 			return
 		}

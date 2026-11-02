@@ -11,7 +11,6 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
-	"github.com/douglasjarquin/sum/go/internal/launch"
 )
 
 func launchNativeReviewer(t *testing.T, d *demoLab, taskID string, flags ...string) map[string]any {
@@ -91,8 +90,7 @@ func TestReviewerLaunchUsesTaskCheckoutAndRecordsNativeEndpoint(t *testing.T) {
 			if terminal.Keep || terminal.RM || terminal.Notify || terminal.DieWithParent || terminal.Labels["sum.installation"] != instance || terminal.Labels["sum.task"] != taskID || terminal.Labels["sum.role"] != "reviewer" || terminal.Labels["sum.attempt"] != reviewer["attempt"] {
 				t.Fatalf("managed reviewer lifecycle/labels: %+v", terminal)
 			}
-			params := asMap(asMap(reviewer["native_launch"])["params"])
-			pointer := asString(asSlice(params["argv"])[1])
+			pointer := asString(asMap(reviewer["native_launch"])["opening"])
 			for _, want := range []string{"init --role reviewer", "context " + taskID + " --role reviewer", "do not edit the checkout", reviewCandidateFor(d, taskID), pinned, "review " + taskID + " --verdict"} {
 				if !strings.Contains(pointer, want) {
 					t.Fatalf("reviewer pointer lacks %q: %s", want, pointer)
@@ -220,15 +218,14 @@ func TestReviewerLaunchPolicyPointerAndKnownUnsentOpeningAreDurable(t *testing.T
 		t.Fatal(err)
 	}
 	d.workerReport(true, taskID, "--text", "policy candidate ready", "--handoff", handoff)
-	no := false
-	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: false, Started: &no}})
+	d.native.QueueFault("terminal.send", hctest.Fault{RefuseKind: "blocked"})
 	out := d.ctl(true, "reviewer", "launch", taskID)
 	reviewer := asMap(out["reviewer"])
 	address := workerAddress(reviewer)
 	if asMap(reviewer["prompt"])["state"] != "not-delivered" || address == "" {
 		t.Fatalf("unsent kickoff lost created terminal: %v", out)
 	}
-	pointer := asString(asSlice(asMap(asMap(reviewer["native_launch"])["params"])["argv"])[1])
+	pointer := asString(asMap(reviewer["native_launch"])["opening"])
 	for _, want := range []string{"--policy-reviewed", "line by line", candidate} {
 		if !strings.Contains(pointer, want) {
 			t.Fatalf("policy pointer lacks %q", want)
@@ -241,14 +238,9 @@ func TestReviewerLaunchPolicyPointerAndKnownUnsentOpeningAreDurable(t *testing.T
 	}
 
 	terminal := nativeReviewerTerminal(t, d, address)
-	var spec launch.HCTemplate
-	raw, _ := json.Marshal(asMap(asMap(reviewer["native_template"])["spec"]))
-	if err = json.Unmarshal(raw, &spec); err != nil {
-		t.Fatal(err)
+	if terminal.Cwd != asString(task["worktree"]) {
+		t.Fatal("reviewer checkout changed")
 	}
-	pid := uint32(310000)
-	terminal.PID = &pid
-	terminal.Foreground = &hcclient.Foreground{PID: 310001, Name: "codex", Argv: spec.Argv, Cwd: asString(task["worktree"])}
 	terminal.Status = &hcclient.Status{State: "idle"}
 	d.native.SetTerminal(terminal)
 	redelivered := d.ctl(true, "reviewer", "redeliver", taskID, "--attempt", asString(reviewer["attempt"]))

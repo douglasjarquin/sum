@@ -20,6 +20,10 @@ func TestBuildRelease_reportsNativeBinaryCapabilities(t *testing.T) {
     "notification_protocol": 2
   },
   "supports": {
+    "hc_template_schema": [
+      0,
+      2
+    ],
     "endpoint_schema": [
       2
     ],

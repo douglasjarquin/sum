@@ -14,17 +14,20 @@ const stampTestSHA = "0123456789abcdef0123456789abcdef01234567"
 
 func TestSourceSHA_releaseManifestWins(t *testing.T) {
 	root := t.TempDir()
+	previous := BuildSourceRevision
+	BuildSourceRevision = stampTestSHA
+	t.Cleanup(func() { BuildSourceRevision = previous })
 	manifest := `{"schema": 1, "source": {"sha": "` + stampTestSHA + `"}}`
 	if err := os.WriteFile(filepath.Join(root, "release.json"), []byte(manifest), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := SourceSHA(root); got != stampTestSHA {
+	if got := SelectedSourceSHA(root); got != stampTestSHA {
 		t.Fatalf("SourceSHA = %q, want the manifest source sha %q", got, stampTestSHA)
 	}
-	if got := Identity(root); got != contract.SumVersion+"@"+stampTestSHA {
+	if got := Identity(); got != contract.SumVersion+"@"+stampTestSHA {
 		t.Fatalf("Identity = %q", got)
 	}
-	if got := Marker(root); got != "<!-- sum:"+contract.SumVersion+"@"+stampTestSHA+" -->" {
+	if got := Marker(); got != "<!-- sum:"+contract.SumVersion+"@"+stampTestSHA+" -->" {
 		t.Fatalf("Marker = %q", got)
 	}
 }
@@ -49,17 +52,32 @@ func TestSourceSHA_developmentCheckoutReadsHEAD(t *testing.T) {
 	git("add", "README")
 	git("commit", "--quiet", "-m", "init")
 	head := git("rev-parse", "HEAD")
-	if got := SourceSHA(root); got != head {
+	if got := SelectedSourceSHA(root); got != head {
 		t.Fatalf("SourceSHA = %q, want HEAD %q", got, head)
 	}
 }
 
 func TestMarker_noManifestNoGitIsTheBareVersion(t *testing.T) {
 	root := t.TempDir()
-	if got := SourceSHA(root); got != "" {
+	if got := SelectedSourceSHA(root); got != "" {
 		t.Fatalf("SourceSHA = %q, want empty", got)
 	}
-	if got := Marker(root); got != "<!-- sum:"+contract.SumVersion+" -->" {
+	if got := Marker(); got != "<!-- sum:"+contract.SumVersion+"@unverified -->" {
 		t.Fatalf("Marker = %q, want the bare version stamp", got)
+	}
+}
+
+func TestBuildIdentityMarksModifiedEmbeddedSource(t *testing.T) {
+	oldRevision, oldDigest, oldModified := BuildSourceRevision, BuildSourceDigest, BuildSourceModified
+	t.Cleanup(func() {
+		BuildSourceRevision, BuildSourceDigest, BuildSourceModified = oldRevision, oldDigest, oldModified
+	})
+	BuildSourceRevision, BuildSourceDigest, BuildSourceModified = stampTestSHA, "content-digest", "true"
+	if !strings.HasSuffix(Identity(), "+dirty") {
+		t.Fatalf("modified build claims clean identity: %s", Identity())
+	}
+	identity := BuildIdentity()
+	if identity["source_modified"] != true || identity["source_digest"] != "content-digest" {
+		t.Fatalf("modified provenance absent: %v", identity)
 	}
 }

@@ -305,19 +305,10 @@ func seedNativeWorker(t *testing.T, d *demoLab, s *store.Store, task *ordjson.Ob
 
 func (d *demoLab) launchPointers(address string) []string {
 	d.t.Helper()
-	name := ""
-	for _, terminal := range d.native.Terminals() {
-		if terminal.Address == address && terminal.Name != nil {
-			name = *terminal.Name
-		}
-	}
 	var pointers []string
 	for _, call := range d.native.Calls() {
-		if call.Method == "terminal.run" && call.Params["name"] == name {
-			argv := asSlice(call.Params["argv"])
-			if len(argv) == 2 {
-				pointers = append(pointers, asString(argv[1]))
-			}
+		if call.Method == "terminal.send" && call.Params["terminal"] == address {
+			pointers = append(pointers, asString(call.Params["text"]))
 		}
 	}
 	return pointers

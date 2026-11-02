@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
@@ -23,7 +24,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/taskcheckout"
 	"github.com/douglasjarquin/sum/go/internal/versions"
-	"reflect"
 )
 
 func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, args LaunchArgs) (*ordjson.Object, error) {
@@ -159,8 +159,9 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	}
 	prompt := kickoffPrompt(sumctlPath, args.Task, candidate, skill, policyCandidate(task, candidate))
 	labels := map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "reviewer", "sum.attempt": attempt}
-	params := hcclient.RunParams{Argv: spec.RunArgv(prompt), Cwd: worktree, Name: "sum-r-" + strings.TrimPrefix(args.Task, "t-") + "-" + attempt[:12], Parent: coordinator.Address, Caller: coordinator.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: labels, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "reviewer", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(ep.BindingGeneration, 10), "SUM_CORE_ID": ep.CoreID, "SUM_SESSION": ep.Session, "HC_SOCKET": ep.Socket}}
+	params := hcclient.RunParams{Argv: []string{spec.Name}, Cwd: worktree, Name: "sum-r-" + strings.TrimPrefix(args.Task, "t-") + "-" + attempt[:12], Parent: coordinator.Address, Caller: coordinator.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: labels, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "reviewer", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(ep.BindingGeneration, 10), "SUM_CORE_ID": ep.CoreID, "SUM_SESSION": ep.Session, "HC_SOCKET": ep.Socket}}
 	spec.BindInputEnvironment(params.Env)
+	reviewer.Set("opening", prompt)
 	result, err := launchPreparedNative(context.Background(), s, task, ep, reviewer, params)
 	if result != nil {
 		result.Set("preset", preset)
@@ -215,6 +216,7 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 	intent.Set("at", store.Now())
 	value, _ := ordjson.FromValue(params)
 	intent.Set("params", value)
+	intent.Set("opening", asString(reviewer, "opening"))
 	reviewer.Set("native_launch", intent)
 
 	current.Set("reviewer", reviewer)
@@ -224,103 +226,142 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 		return nil, err
 	}
 	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
-	run, runErr := client.Run(ctx, params)
-	unlock, err = s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	current, err = s.ReadTask(endpoint.Task)
-	if err != nil {
-		return nil, err
-	}
-	saved := objectField(current, "reviewer")
-	if asString(objectField(saved, "native_launch"), "attempt") != endpoint.Attempt {
-		return nil, fmt.Errorf("reviewer attempt changed during launch; effect requires reconciliation")
-	}
-	intent = objectField(saved, "native_launch")
-	intent.Set("completed_at", store.Now())
-	if runErr != nil {
-		state := "uncertain"
-		var e *hcclient.Error
-		if errors.As(runErr, &e) && e.Effect == hcclient.NotSubmitted {
-			state = "not-submitted"
+	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	run, runErr := client.Run(runCtx, params)
+	created, err := func() (*ordjson.Object, error) {
+		unlock, err = s.Lock()
+		if err != nil {
+			return nil, err
 		}
-		intent.Set("state", state)
-		intent.Set("detail", runErr.Error())
+		defer unlock()
+		current, err = s.ReadTask(endpoint.Task)
+		if err != nil {
+			return nil, err
+		}
+		saved := objectField(current, "reviewer")
+		if asString(objectField(saved, "native_launch"), "attempt") != endpoint.Attempt {
+			return nil, fmt.Errorf("reviewer attempt changed during launch; effect requires reconciliation")
+		}
+		intent = objectField(saved, "native_launch")
+		if objectField(saved, "native_receipt") != nil {
+			out := ordjson.NewObject()
+			out.Set("task", endpoint.Task)
+			out.Set("reviewer", saved)
+			out.Set("action", "receipt-confirmed")
+			return out, nil
+		}
+		if prior := objectField(intent, "result"); prior != nil {
+			var priorRun hcclient.RunResult
+			if decodeObject(prior, &priorRun) == nil && priorRun.Address != "" {
+				if runErr == nil && (priorRun.Address != run.Address || priorRun.CreatedMS != run.CreatedMS) {
+					return nil, fmt.Errorf("late creation identity conflicts with reconciled reviewer")
+				}
+				if runErr != nil {
+					intent.Set("late_creation_error", runErr.Error())
+					if err = s.SaveTask(current); err != nil {
+						return nil, err
+					}
+				}
+				out := ordjson.NewObject()
+				out.Set("task", endpoint.Task)
+				out.Set("reviewer", saved)
+				return out, nil
+			}
+		}
+		intent.Set("completed_at", store.Now())
+		if runErr != nil {
+			state := "uncertain"
+			var e *hcclient.Error
+			if errors.As(runErr, &e) {
+				state = string(e.Effect)
+			}
+			intent.Set("state", state)
+			intent.Set("detail", runErr.Error())
+			prompt := ordjson.NewObject()
+			promptState := "uncertain"
+			if state == "not-submitted" {
+				promptState = "not-delivered"
+			}
+			prompt.Set("state", promptState)
+			prompt.Set("candidate", orNil(candidate))
+			saved.Set("prompt", prompt)
+			if err = s.SaveTask(current); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("reviewer launch %s; attempt retained without replay: %w", state, runErr)
+		}
+		if run.Address == "" {
+			intent.Set("state", "uncertain")
+			intent.Set("detail", "HC returned no terminal address")
+			if err = s.SaveTask(current); err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("reviewer launch has no recoverable terminal address; intent retained")
+		}
+		endpoint.Address = run.Address
+		endpoint.CreatedMS = run.CreatedMS
+		for _, key := range endpoint.Object().Keys() {
+			v, _ := endpoint.Object().Get(key)
+			saved.Set(key, v)
+		}
+
+		var template returns.NativeTemplate
+		templateErr := decodeObject(objectField(saved, "native_template"), &template)
+		templateValid := templateErr == nil && template.Spec.Name != "" && run.Template != nil && *run.Template == template.Spec.Name && run.Submit != nil && *run.Submit == template.Spec.Submit
+
+		if run.FirstMessage == nil && template.Spec.Schema == 2 {
+			run.FirstMessage = &hcclient.FirstMessage{Sent: false}
+		}
+		intent.Set("state", "created")
+		result, _ := ordjson.FromValue(run)
+		intent.Set("result", result)
+		first, _ := ordjson.FromValue(run.FirstMessage)
+		intent.Set("first_message", first)
 		prompt := ordjson.NewObject()
-		promptState := "uncertain"
-		if state == "not-submitted" {
-			promptState = "not-delivered"
+		prompt.Set("state", "uncertain")
+		if run.FirstMessage != nil {
+			if run.FirstMessage.Sent {
+				prompt.Set("state", "submitted")
+			} else {
+				prompt.Set("state", "not-delivered")
+			}
 		}
-		prompt.Set("state", promptState)
 		prompt.Set("candidate", orNil(candidate))
 		saved.Set("prompt", prompt)
+		if run.PID != nil && objectField(saved, "native_receipt") == nil {
+			saved.Set("incarnation", (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *run.PID, Foreground: run.Foreground}).Record(store.Now()))
+		}
+		if objectField(saved, "native_template") != nil && !templateValid {
+			intent.Set("qualification_error", "returned terminal does not attest the qualified template and submit key")
+			prompt.Set("state", "uncertain")
+		}
+		if rebind := objectField(saved, "rebind"); rebind != nil {
+			rebind.Set("to", endpoint.Object())
+			record, appendErr := evidence.Append(current, "reviewer-rebind", "coordinator", rebind, nil, objectField(current, "parent"))
+			if appendErr != nil {
+				return nil, appendErr
+			}
+			record.Set("brief_revision", evidence.ActiveRevision(s, current))
+		}
 		if err = s.SaveTask(current); err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("reviewer launch %s; attempt retained without replay: %w", state, runErr)
+		out := ordjson.NewObject()
+		out.Set("task", endpoint.Task)
+		out.Set("reviewer", saved)
+		out.Set("native_launch", intent)
+		out.Set("action", "created")
+		out.Set("note", "Native reviewer terminal created; first-message outcome is separate and a matching reviewer-init receipt is required for authority.")
+		return out, nil
+	}()
+	if err != nil || runErr != nil {
+		return created, err
 	}
-	if run.Address == "" {
-		intent.Set("state", "uncertain")
-		intent.Set("detail", "HC returned no terminal address")
-		if err = s.SaveTask(current); err != nil {
-			return nil, err
-		}
-		return nil, fmt.Errorf("reviewer launch has no recoverable terminal address; intent retained")
+	if asString(reviewer, "opening") == "" {
+		return created, nil
 	}
-	endpoint.Address = run.Address
-	endpoint.CreatedMS = run.CreatedMS
-	for _, key := range endpoint.Object().Keys() {
-		v, _ := endpoint.Object().Get(key)
-		saved.Set(key, v)
-	}
-
-	var template returns.NativeTemplate
-	templateErr := decodeObject(objectField(saved, "native_template"), &template)
-	templateValid := templateErr == nil && template.Spec.Name != "" && run.Template != nil && *run.Template == template.Spec.Name && run.Submit != nil && *run.Submit == template.Spec.Submit
-
-	intent.Set("state", "created")
-	result, _ := ordjson.FromValue(run)
-	intent.Set("result", result)
-	first, _ := ordjson.FromValue(run.FirstMessage)
-	intent.Set("first_message", first)
-	prompt := ordjson.NewObject()
-	prompt.Set("state", "uncertain")
-	if run.FirstMessage != nil {
-		if run.FirstMessage.Sent {
-			prompt.Set("state", "submitted")
-		} else {
-			prompt.Set("state", "not-delivered")
-		}
-	}
-	prompt.Set("candidate", orNil(candidate))
-	saved.Set("prompt", prompt)
-	if run.PID != nil && run.Foreground != nil {
-		saved.Set("incarnation", (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *run.PID, Foreground: run.Foreground}).Record(store.Now()))
-	}
-	if objectField(saved, "native_template") != nil && !templateValid {
-		intent.Set("qualification_error", "returned terminal does not attest the qualified template and submit key")
-		prompt.Set("state", "uncertain")
-	}
-	if rebind := objectField(saved, "rebind"); rebind != nil {
-		rebind.Set("to", endpoint.Object())
-		record, appendErr := evidence.Append(current, "reviewer-rebind", "coordinator", rebind, nil, objectField(current, "parent"))
-		if appendErr != nil {
-			return nil, appendErr
-		}
-		record.Set("brief_revision", evidence.ActiveRevision(s, current))
-	}
-	if err = s.SaveTask(current); err != nil {
-		return nil, err
-	}
-	out := ordjson.NewObject()
-	out.Set("task", endpoint.Task)
-	out.Set("reviewer", saved)
-	out.Set("native_launch", intent)
-	out.Set("action", "created")
-	out.Set("note", "Native reviewer terminal created; first-message outcome is separate and a matching reviewer-init receipt is required for authority.")
-	return out, nil
+	return deliverReviewerOpening(s, endpoint.Task, endpoint.Attempt, run.Terminal)
 }
 
 func promptNativeReviewer(ctx context.Context, s *store.Store, task, recorded *ordjson.Object, sumctlPath string) (*ordjson.Object, error) {
@@ -570,7 +611,7 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 		return nil, err
 	}
 	observed := recipient.Terminal
-	if len(params.Argv) != 2 || params.Argv[0] != template.Spec.Name || observed.PID == nil || *observed.PID == 0 || observed.Foreground == nil || !reflect.DeepEqual(observed.Foreground.Argv, template.Spec.Argv) || resolvePath(observed.Foreground.Cwd) != resolvePath(ep.Cwd) {
+	if (len(params.Argv) != 2 && (len(params.Argv) != 1 || asString(intent, "opening") == "")) || params.Argv[0] != template.Spec.Name || observed.PID == nil || *observed.PID == 0 || observed.Foreground == nil || !launch.LaunchProgramMatches(template.Spec, observed.Foreground.Argv) || resolvePath(observed.Foreground.Cwd) != resolvePath(ep.Cwd) {
 		return nil, fmt.Errorf("reviewer opening process and qualified command cannot be proven")
 	}
 	for key, want := range map[string]string{"sum.installation": instance, "sum.task": taskID, "sum.role": "reviewer", "sum.attempt": attempt} {
@@ -580,6 +621,17 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	}
 	if params.Env["SUM_ATTEMPT"] != attempt || params.Env["SUM_CORE_ID"] != ep.CoreID || params.Env["HC_SOCKET"] != ep.Socket || params.Env["SUM_TASK"] != taskID || params.Env["SUM_ROLE"] != "reviewer" {
 		return nil, fmt.Errorf("reviewer launch environment does not match exact authority")
+	}
+	var original hcclient.RunResult
+	if err = decodeObject(objectField(intent, "result"), &original); err != nil {
+		return nil, err
+	}
+	var baseline incarnation.NativeEvidence
+	if err = decodeObject(objectField(reviewer, "incarnation"), &baseline); err == nil && baseline.Endpoint.SameAuthority(ep.Native()) {
+		original.Terminal = hcclient.Terminal{Address: ep.Address, CreatedMS: ep.CreatedMS, PID: &baseline.PID, Foreground: baseline.Foreground, Cwd: ep.Cwd, Labels: params.Labels}
+	}
+	if err = launch.OriginalProgram(original.Terminal, observed, template.Spec); err != nil {
+		return nil, err
 	}
 	candidate := asString(reviewer, "candidate")
 	if candidate == "" || candidate != evidenceview.CurrentCandidate(task) {
@@ -610,7 +662,11 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	if err != nil {
 		return nil, err
 	}
-	result, sendErr := recipient.Send(context.Background(), params.Argv[1])
+	opening := asString(intent, "opening")
+	if opening == "" && len(params.Argv) == 2 {
+		opening = params.Argv[1]
+	}
+	result, sendErr := recipient.Send(context.Background(), opening)
 	state, detail := returns.DeliveryFailure(sendErr)
 	unlock, err = s.Lock()
 	if err != nil {

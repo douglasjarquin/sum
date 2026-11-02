@@ -91,10 +91,40 @@ func TestHCTemplateValidationDetectsChanges(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(home, "config.toml"), []byte("model='changed'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err = ValidateHCTemplate(config, spec, options); err != nil {
+		t.Fatalf("unrelated config stranded a live recipient: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(home, "config.toml"), []byte("model='changed'\nsandbox_mode='danger-full-access'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err = ValidateHCTemplate(config, spec, options); err == nil {
-		t.Fatal("config changed without invalidating recorded qualification")
+		t.Fatal("meaningful permission drift retained input qualification")
 	}
 	if _, err = PrepareHCTemplate(root, config, "codex", []string{"-c", `"tui" . "keymap" = {}`}, HCTemplateOptions{Cwd: root, CodexHome: t.TempDir()}); err == nil {
 		t.Fatal("quoted keymap override accepted")
+	}
+}
+
+func TestHCTemplateRefusesPermissionSelectorAndTrustDrift(t *testing.T) {
+	for _, changed := range []string{"profile = 'other'\n", "profile = 'default'\n[projects.working]\ntrust_level = 'trusted'\n"} {
+		t.Run(changed, func(t *testing.T) {
+			root, home, config := t.TempDir(), t.TempDir(), t.TempDir()
+			codexBinary(t, root, "0.166.0")
+			path := filepath.Join(home, "config.toml")
+			if err := os.WriteFile(path, []byte("profile = 'default'\n[projects.working]\ntrust_level = 'untrusted'\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			options := HCTemplateOptions{Cwd: root, CodexHome: home}
+			spec, err := PrepareHCTemplate(root, config, "codex", nil, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, []byte(changed), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = ValidateHCTemplate(config, spec, options); err == nil {
+				t.Fatal("permission selector drift accepted")
+			}
+		})
 	}
 }

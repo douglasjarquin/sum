@@ -97,8 +97,8 @@ func ObserveNative(endpoint store.Endpoint) (incarnation.NativeEvidence, hcclien
 	if err != nil {
 		return evidence, terminal, err
 	}
-	if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.State != "live" || terminal.Keep || terminal.PID == nil || *terminal.PID == 0 || terminal.Foreground == nil || terminal.Foreground.PID <= 0 {
-		return evidence, terminal, fmt.Errorf("current non-kept HC terminal program and foreground cannot be verified")
+	if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.State != "live" || terminal.PID == nil || *terminal.PID == 0 || terminal.Foreground == nil || terminal.Foreground.PID <= 0 {
+		return evidence, terminal, fmt.Errorf("current HC terminal program and foreground cannot be verified")
 	}
 	evidence = incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *terminal.PID, Foreground: terminal.Foreground}
 	return evidence, terminal, nil

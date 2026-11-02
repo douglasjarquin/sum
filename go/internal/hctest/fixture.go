@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -22,12 +23,15 @@ type Call struct {
 }
 
 type Fault struct {
-	RPCError     *hcclient.RPCError
-	Delay        time.Duration
-	LoseResponse bool
-	RefuseKind   string
-	FirstMessage *hcclient.FirstMessage
-	SendResult   *hcclient.SendResult
+	RPCError      *hcclient.RPCError
+	Delay         time.Duration
+	LoseResponse  bool
+	RefuseKind    string
+	RunPID        *uint32
+	RunRealtime   bool
+	RunForeground *hcclient.Foreground
+	FirstMessage  *hcclient.FirstMessage
+	SendResult    *hcclient.SendResult
 }
 type subscriber struct {
 	params   hcclient.SubscribeParams
@@ -482,7 +486,37 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 			}
 			value.Name = &args.Name
 		}
-		f.terminals[address] = &terminal{Terminal: value, outlive: args.OutliveParent}
+		pid := uint32(200000 + f.next)
+		if fault.RunPID != nil {
+			pid = *fault.RunPID
+		}
+		value.PID = &pid
+		if fault.RunRealtime {
+			value.CreatedMS = uint64(time.Now().UnixMilli())
+		}
+		saved := value
+		if value.Template != nil {
+			parts := regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(value.Argv[2], -1)
+			var program []string
+			for _, part := range parts {
+				program = append(program, part[1])
+			}
+			if len(program) > 0 && program[0] == "/usr/bin/env" {
+				program = program[1:]
+				for len(program) > 0 && strings.Contains(program[0], "=") {
+					program = program[1:]
+				}
+			}
+			saved.Foreground = &hcclient.Foreground{PID: int32(pid), Name: "fixture-program", Argv: program, Cwd: value.Cwd}
+			saved.Status = &hcclient.Status{State: "idle"}
+		}
+		if value.Template == nil && len(args.Argv) > 0 {
+			saved.Foreground = &hcclient.Foreground{PID: int32(pid), Name: args.Argv[0], Argv: args.Argv, Cwd: value.Cwd}
+		}
+		if fault.RunForeground != nil {
+			saved.Foreground = fault.RunForeground
+		}
+		f.terminals[address] = &terminal{Terminal: saved, outlive: args.OutliveParent}
 		f.eventLocked(address, "created", value)
 		return hcclient.RunResult{Terminal: value, FirstMessage: fault.FirstMessage}, "", nil
 	case "terminal.list":

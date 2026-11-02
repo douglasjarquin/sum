@@ -121,9 +121,10 @@ A raced busy turn queues the Tab submission for the next turn; this deliberately
 A successful send is submitted, not acknowledged.
 Native idle or done is not task completion, and a worker's report is not verified success.
 
-Existing schema-one installations cannot cut over without enforceable legacy writer/sender exclusion; current legacy APIs cannot prove that prerequisite.
+Legacy schema-one installations stay intact.
+Live legacy migration is unavailable; create an independent fresh clone and use `sumctl history` to inspect preserved records.
 Normal initialization and status never migrate state.
-No production migration or automatic hot adoption is claimed.
+See [HC startup and recovery](docs/hc-workflow.md) for the selected runtime, exact-attempt inspection and recovery commands.
 See [update](docs/update.md).
 
 State files, returns, and manual dispatch are in [docs/architecture.md](docs/architecture.md).

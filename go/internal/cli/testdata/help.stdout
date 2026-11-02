@@ -53,6 +53,9 @@ commands:
   coordinator: "Start a bound coordinator with exact HC identity, recorded launch environment and matching initialization receipt"
   restore: "Import records into a fresh schema-two backend:records quarantine; preserve task/procedure bytes, transfer no live authority and block all mutations"
   delivery: "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error"
+  "build-info": "Identify the executing binary, embedded build provenance and checksum independently of checkout HEAD"
+  history: Read preserved current or schema-one task records; never grants live authority
+  inspect: "Read the exact saved launch and native output from an ordinary shell, including before init or readiness"
 read_only[33]: brief-list,context,doctor,env-show,execution-show,factory-merge-check,factory-status,graph-config,graph-status,help,hook-status,inbox,finding-list,finding-show,metadata-inbox,metadata-snippet,metadata-status,preset-list,preset-show,project-list,project-show,quota,refresh-status,release-contract,release-list,release-show,settings-show,show,skills-check,status,update-status,usage-show,wake-show
 usage: sumctl help TOPIC for one command's arguments and subcommands
 context: "sumctl context TASK_ID [--section NAME ...] [--role worker|reviewer|coordinator] [--since CURSOR]"

@@ -885,7 +885,7 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	if host == "" {
 		host, _ = os.Hostname()
 	}
-	body := claimBody(host, endpoint.CoreID+"/"+endpoint.Address, args.Task, sumruntime.Marker(runtimeRoot))
+	body := claimBody(host, endpoint.CoreID+"/"+endpoint.Address, args.Task, sumruntime.Marker())
 	undoLabel := func() error {
 		_, err := runGh(runtimeRoot, "issue", "edit", fmt.Sprint(args.Issue), "--repo", name, "--remove-label", ClaimLabel)
 		return err

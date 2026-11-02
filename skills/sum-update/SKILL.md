@@ -45,12 +45,11 @@ An explicit checkout target needs its exact approved identity.
 
 The stable state root and selected physical generation home are separate.
 Normal Open, `init` and `status` never migrate schema-one records.
-Sealed old procedure/policy/evidence files retain their bytes; migration never fabricates native endpoints or receipts.
-Cutover requires an enforceable lease excluding every legacy writer and sender, including a helper paused after opening its old Store.
-Current legacy APIs cannot prove this external prerequisite.
-`ps`, operator confirmation, a new schema or a symlink switch cannot replace it.
-Existing-installation cutover must refuse without proof; do not claim a working production lease, automatic hot adoption or production migration test.
-Only explicitly owned legacy Sum configuration may be retired after controlled cutover.
+Sealed old procedure/policy/evidence files retain their bytes.
+Live legacy-to-HC migration is unavailable and is not an update prerequisite.
+For schema-one state, preserve the old installation, running processes and worktrees, inspect records with `sumctl history`, and prepare an independent fresh clone as `docs/hc-workflow.md` describes.
+Never convert or adopt historical records as live authority.
+HC-to-HC updates use the existing compatible staged release and observer handoff contracts; a different shared HC core version requires separate qualification, never a silent restart or downgrade.
 
 A rollback target must expose compatible capabilities through its actual binary, not merely its manifest.
 A schema-one runtime cannot reactivate the inactive archive as writable state.

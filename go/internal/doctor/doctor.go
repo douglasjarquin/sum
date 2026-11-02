@@ -16,6 +16,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
 )
@@ -65,12 +66,30 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 		endpoint = store.EndpointFromContext(ctx)
 		source = "caller-context"
 	}
+	if endpoint.Socket == "" {
+		if raw, err := ordjson.ReadFile(filepath.Join(s.Root, "runtime-route.json")); err == nil {
+			if route, ok := raw.(*ordjson.Object); ok {
+				socket, _ := route.Get("socket")
+				endpoint.Socket, _ = socket.(string)
+				core, _ := route.Get("core_id")
+				endpoint.CoreID, _ = core.(string)
+				source = "selected-route"
+			}
+		}
+	}
 	rows = append(rows, hcCoreCheck(endpoint, source))
 	rows = append(rows, hcArtifactCheck(runtimeRoot))
 
 	rows = append(rows, ghAttachCheck(runtimeRoot))
 
 	rows = append(rows, runtimeRevisionCheck(runtimeRoot, installRoot))
+	build := sumruntime.BuildIdentity()
+	buildRow := ordjson.NewObject()
+	buildRow.Set("tool", "helper-build")
+	buildRow.Set("ok", build["verified_source"])
+	buildInfo, _ := ordjson.FromValue(build)
+	buildRow.Set("detail", buildInfo)
+	rows = append(rows, buildRow)
 
 	rows = append(rows, clockPinCheck())
 
@@ -240,6 +259,8 @@ func isExecutable(path string) bool {
 func runtimeRevisionCheck(runtimeRoot, installRoot string) *ordjson.Object {
 	row := ordjson.NewObject()
 	row.Set("tool", "runtime-revision")
+	helper, _ := ordjson.FromValue(sumruntime.BuildIdentity())
+	row.Set("helper", helper)
 	// Claim the key order every branch below reports in; Set keeps a key's
 	// position when it is overwritten, and an unreached branch stays not-ok.
 	row.Set("ok", false)
@@ -347,7 +368,7 @@ func hcCoreCheck(endpoint store.Endpoint, source string) *ordjson.Object {
 	row.Set("tool", "hc-core")
 	row.Set("ok", false)
 	row.Set("available", false)
-	if endpoint.CoreID == "" || endpoint.Socket == "" {
+	if endpoint.Socket == "" {
 		row.Set("detail", "No recorded local HC endpoint or attested caller context; doctor never starts or binds a core.")
 		return row
 	}
@@ -356,6 +377,9 @@ func hcCoreCheck(endpoint store.Endpoint, source string) *ordjson.Object {
 	defer cancel()
 	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
 	hello, err := client.Hello(ctx)
+	if endpoint.CoreID == "" {
+		hello, err = hcclient.Inspect(ctx, endpoint.Socket)
+	}
 	if err != nil {
 		row.Set("detail", err.Error())
 		return row

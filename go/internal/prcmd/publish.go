@@ -127,7 +127,7 @@ func Publish(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Publi
 	if err != nil {
 		return nil, err
 	}
-	marker := sumruntime.Marker(runtimeRoot)
+	marker := sumruntime.Marker()
 	for _, run := range runs {
 		publications = append(publications, publishRun(python, publisher, gh, taskDir, task, dest, run, visibility, marker, args))
 	}

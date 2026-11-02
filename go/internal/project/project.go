@@ -305,8 +305,8 @@ func ResolvePathOrSelf(path string) string {
 }
 
 func InstallationOf(s *store.Store, runtimeRoot string) string {
-	if filepath.Base(s.Home) == ".sum" && s.Designated() {
-		return filepath.Dir(s.Home)
+	if filepath.Base(s.Root) == ".sum" && s.Designated() {
+		return filepath.Dir(s.Root)
 	}
 	return runtimeRoot
 }
@@ -464,7 +464,13 @@ func List(s *store.Store, runtimeRoot string) (*ordjson.Object, error) {
 	rows := make([]any, 0, len(names))
 	for _, name := range names {
 		record := asObject(getPath(projectsObj, name))
-		rows = append(rows, ProjectSummary(record, ObserveProject(record)))
+		row := ProjectSummary(record, ObserveProject(record))
+		pathValue, _ := record.Get("path")
+		pathText, _ := pathValue.(string)
+		if rel, err := filepath.Rel(filepath.Join(InstallationOf(s, runtimeRoot), ".local/releases"), pathText); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			row.Set("preserved_work_warning", "Project is enrolled under an immutable release. Preserve its checkout and pending work; inspect project migration explicitly before any move or release removal.")
+		}
+		rows = append(rows, row)
 	}
 	result := ordjson.NewObject()
 	result.Set("projects", rows)
