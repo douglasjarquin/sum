@@ -75,7 +75,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	}
 	opening := WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)
 	params := hcclient.RunParams{Argv: []string{template.Name}, Cwd: checkout, Name: NativeName(instance, taskID, "worker", attemptID), Parent: parent.Address, Caller: parent.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false,
-		Labels: map[string]string{"sum.installation": instance, "sum.task": taskID, "sum.role": "worker", "sum.attempt": attemptID},
+		Labels: workerLabels(instance, taskID, attemptID),
 		Env:    map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": parent.Session, "SUM_CORE_ID": parent.CoreID, "HC_SOCKET": parent.Socket, "SUM_TASK": taskID, "SUM_ROLE": "worker", "SUM_ATTEMPT": attemptID, "SUM_BINDING_GENERATION": "1"}}
 	template.BindInputEnvironment(params.Env)
 	intent, _ := ordjson.FromValue(params)
@@ -104,6 +104,9 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	runErr := verifyCoreTemplate(runCtx, &client, provenance.ConfigHome, template)
 	if runErr == nil {
 		runErr = launchStillAuthorized(s, taskID, attemptID, parent)
+	}
+	if runErr == nil && template.Harness == "grok" {
+		runErr = launch.TrustGrokRepository(runCtx, template.InputEnv["GROK_HOME"], checkout)
 	}
 	if runErr != nil {
 		runErr = &hcclient.Error{Method: "terminal.run", Effect: hcclient.NotSubmitted, Cause: runErr}
@@ -136,7 +139,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		return FailStart(s, taskID, runErr)
 	}
 	created, err := func() (*ordjson.Object, error) {
-		endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: parent.Machine, CoreID: parent.CoreID, Session: parent.Session, Socket: parent.Socket, Address: result.Address, CreatedMS: result.CreatedMS, Task: taskID, Role: "worker", Attempt: attemptID, BindingGeneration: 1, Cwd: checkout}
+		endpoint := openingEndpoint(parent, taskID, attemptID, checkout, result.Terminal)
 		if err = endpoint.Validate(); err != nil {
 			return FailStart(s, taskID, err)
 		}

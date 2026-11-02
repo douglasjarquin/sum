@@ -153,10 +153,19 @@ Do not copy the coordinator's instructions into the target repository.
 Skills reach the worker explicitly: its brief names the installed helper (`<installation>/bin/sumctl`) in a `## Delivered runtime` section and, under `## Worker procedure`, the worker procedure pinned as write-once, content-addressed files in the task record: the required core `<state>/tasks/TASK_ID/procedure/sum-work-<sha>.md` and on-demand files (evidence, environment, graph, refresh) each listed with its size, hash, and the condition for reading it; `context --role worker` reports the same files with their integrity.
 Dispatch refuses before any HC call when the runtime's procedure is missing or does not match its release manifest, and `start` refuses a brief whose pinned procedure is missing or altered.
 Directory nesting under `projects/` delivers nothing to a harness; a Git worktree lives elsewhere and some harnesses stop instruction discovery at a Git root.
-A trust/auth prompt can make startup uncertain while leaving a real agent alive.
-Inspect the saved terminal, and have the user answer any trust/auth dialog in it; the coordinator never answers one itself or types into the terminal.
-Only after the opening message is proven unsent, recover once with the recorded attempt: `./bin/sumctl execution redeliver TASK --attempt X` submits the recorded brief to the exact qualified terminal for a proven-unsent opening message, and `./bin/sumctl execution confirm TASK --attempt X` records the worker running once it has a receipt (it ran `init` from its brief or filed a report).
-Never type the brief into the terminal and never call dispatch/start again for that task; once the attempt is `running`, `repair send` accepts it.
+A trust/auth prompt stays the user's to answer.
+The coordinator never answers one or types into the terminal.
+A submitted brief that stays uncertain because no working or blocked activity followed, such as `agent_prompt_stalled` while that worker pane is still alive, is retried by sum on that same pane.
+The original approved brief stays in force.
+Do not ask the user for permission to resend it.
+`start TASK` retries that stalled brief on the live pane and does not allocate another terminal.
+It is not refused forever only because the first launch was uncertain.
+`repair send` of that recorded opening is accepted while the attempt is still uncertain.
+Any other instruction still waits until the attempt is `running`.
+A proven-unsent opening still has one `execution redeliver TASK --attempt X`.
+`execution confirm TASK --attempt X` records a running attempt from the worker's own receipt.
+A lost or malformed launch response is not replayed and is not a new terminal.
+Never type the brief into the terminal.
 
 ## Return control
 
