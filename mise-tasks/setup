@@ -2,5 +2,4 @@
 #MISE description="Install pinned dependencies and stage repository-local HC runtime and skills"
 set -euo pipefail
 cd "$(dirname "$0")/.."
-mise install
 python scripts/setup.py "$@"

@@ -36,7 +36,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <div>./bin/sumctl release stage            <span class="c"># builds .local/releases/&lt;sha&gt; for HEAD; nothing is activated</span></div>
         <div>./bin/sumctl release list</div>
       </div>
-      <p>A release holds the committed Sum tree, native helper, exact published HC 0.1.14, matched manual/template and checksummed manifest. Rollback checks actual target binary capabilities. Existing-installation cutover refuses without enforceable legacy writer/sender exclusion that current legacy APIs cannot prove; an old schema-one runtime cannot reactivate an inactive archive. No production migration is claimed.</p>
+      <p>A release holds the committed Sum tree, native helper, exact published HC 0.1.14, matched manual/template and checksummed manifest. Rollback checks actual target binary capabilities. Legacy schema-one installations remain preserved; live migration is unavailable. Start independently in a fresh clone and use sumctl history for read-only records. An old runtime cannot reactivate an inactive archive. Compatible HC-to-HC updates remain separate from shared-core upgrades.</p>
     </div>
   </div>
 </DocsLayout>

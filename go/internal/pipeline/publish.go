@@ -115,7 +115,7 @@ func Publish(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args Publi
 	if err != nil {
 		return Publication{}, err
 	}
-	publication := publish(gh, taskDir, task, dest, args, sumruntime.Marker(runtimeRoot))
+	publication := publish(gh, taskDir, task, dest, args, sumruntime.Marker())
 	return record(s, ctx, args, dest, publication)
 }
 

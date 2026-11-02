@@ -94,7 +94,7 @@ func observeWorker(s *store.Store, runtimeRoot string, task, attempt *ordjson.Ob
 	if err := endpoint.Validate(); err != nil {
 		native := asObject(field(attempt, "native_launch"))
 		noEffect := native == nil && field(task, "status") == "prepared"
-		if native != nil && field(native, "effect") == string(hcclient.NotSubmitted) {
+		if native != nil && (field(native, "effect") == string(hcclient.NotSubmitted) || field(native, "effect") == string(hcclient.Refused)) {
 			noEffect = true
 		}
 		if !noEffect {
@@ -311,7 +311,7 @@ func NativeProgramStopped(s *store.Store, endpoint store.Endpoint) StopProof {
 		return unknown(err.Error())
 	}
 	var recorded incarnation.NativeEvidence
-	if err = decodeNative(field(registration, "incarnation"), &recorded); err != nil || !recorded.Endpoint.SameAuthority(endpoint.Native()) || recorded.PID == 0 || recorded.Foreground == nil || recorded.Foreground.PID <= 0 || len(recorded.Foreground.Argv) == 0 {
+	if err = decodeNative(field(registration, "incarnation"), &recorded); err != nil || !recorded.Endpoint.SameAuthority(endpoint.Native()) || recorded.PID == 0 {
 		return unknown("Saved native program identity is missing or differs from this binding.")
 	}
 	observe, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -322,7 +322,7 @@ func NativeProgramStopped(s *store.Store, endpoint store.Endpoint) StopProof {
 		return unknown("Native terminal cannot prove exit: " + err.Error())
 	}
 	if err == nil {
-		if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep {
+		if terminal.Address != endpoint.Address || terminal.CreatedMS != endpoint.CreatedMS {
 			return unknown("Native terminal creation changed or is kept; program death is not proved.")
 		}
 		if terminal.State != "finished" || terminal.FinishedMS == nil || *terminal.FinishedMS == 0 || (terminal.ExitCode == nil && terminal.Signal == nil) {
@@ -331,6 +331,23 @@ func NativeProgramStopped(s *store.Store, endpoint store.Endpoint) StopProof {
 		if endpoint.Cwd != "" && (terminal.Cwd == "" || resolve(endpoint.Cwd) != resolve(terminal.Cwd)) {
 			return unknown("Native terminal checkout identity differs from the saved binding.")
 		}
+	}
+	if recorded.Foreground == nil {
+		if err != nil {
+			return unknown("Uninitialized launch needs its conclusive native exit metadata; absence alone is insufficient")
+		}
+		if proof := inspectRecordedPIDs([]int{int(recorded.PID)}, nil, 0); proof.Outcome != OutcomeStopped {
+			return proof
+		}
+		inside, inspectErr := proc.ProcessesBoundTo(endpoint.Cwd, nil)
+		if inspectErr != nil || len(inside) > 0 {
+			return unknown("Uninitialized launch checkout still has processes or cannot be inspected")
+		}
+		return stopped(func(obs *ordjson.Object) {
+			obs.Set("endpoint", endpoint.Object())
+			obs.Set("pid", jsonNumber(int(recorded.PID)))
+			obs.Set("reason", "original created PID exited before initialization; native exit and checkout survivor evidence verified")
+		})
 	}
 	occupant := ordjson.NewObject()
 	argv := make([]any, len(recorded.Foreground.Argv))

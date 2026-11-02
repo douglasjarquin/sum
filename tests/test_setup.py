@@ -36,7 +36,7 @@ class SetupTest(unittest.TestCase):
         self.assertTrue(json.loads((physical / 'state.json').read_text())['instance'])
         self.assertFalse((self.root / '.sum/context.json').exists())
         (self.root / '.sum/state.json').write_text('{"schema": 1, "sum_version": "0.1.0", "created_at": "x"}')
-        with self.assertRaisesRegex(RuntimeError, 'explicit HC migration'):
+        with self.assertRaisesRegex(RuntimeError, 'Live migration is unavailable'):
             setup.configure(self.root)
         self.assertEqual(json.loads((self.root / '.sum/state.json').read_text())['schema'], 1)
 

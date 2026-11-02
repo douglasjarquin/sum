@@ -73,7 +73,7 @@ func open(home string, historical bool) (*Store, error) {
 		if historical && number(state, "schema") == 1 {
 			return s, nil
 		}
-		return nil, fmt.Errorf("unsupported state schema; preserve the original and use explicit migration or a historical reader")
+		return nil, fmt.Errorf("unsupported state schema; preserve this installation, use sumctl history for read-only records, and set up an independent fresh clone. Live legacy migration is unavailable")
 	}
 	if backend := text(state, "backend"); backend != "hc" && !(backend == "records" && s.recordsOnly) {
 		return nil, fmt.Errorf("unsupported state backend")

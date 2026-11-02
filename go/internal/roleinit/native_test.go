@@ -155,9 +155,6 @@ func TestNativeCoordinatorLaunchAndReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pid := uint32(101)
-	terminal.PID = &pid
-	terminal.Foreground = &hcclient.Foreground{PID: 102, Name: "codex", Argv: spec.Argv, Cwd: root}
 	f.SetTerminal(terminal)
 	view, err := InitDesignated(DesignatedOpts{RuntimeRoot: root, Store: s, Ctx: e.Object()})
 	if err != nil {

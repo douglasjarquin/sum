@@ -108,8 +108,8 @@ func TestDispatchOtherHarnessHasNoDevinArgv(t *testing.T) {
 			t.Fatal("Devin-only flags reached Codex")
 		}
 	}
-	if len(nativeCalls(d, "terminal.send")) != 0 {
-		t.Fatal("first message was sent separately")
+	if len(nativeCalls(d, "terminal.send")) != 1 {
+		t.Fatal("split opening was not submitted exactly once")
 	}
 
 }
@@ -270,9 +270,10 @@ func flagAfter(call []string, name string) (string, bool) {
 func TestDispatchGrokColdStartPreservesUnsentOpening(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "grok-cold-start", map[string]string{"README.md": "x\n"})
-	d.native.QueueFault("terminal.run", hctest.Fault{Delay: 100 * time.Millisecond, FirstMessage: &hcclient.FirstMessage{Sent: false}})
+	d.native.QueueFault("terminal.run", hctest.Fault{Delay: 100 * time.Millisecond})
+	d.native.QueueFault("terminal.send", hctest.Fault{RefuseKind: "blocked"})
 	created := d.ctl(false, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "grok", "--approved")
-	if !strings.Contains(asString(created["error"]), "without a submitted first message") || workerAddress(created) == "" || created["status"] != "needs-attention" {
+	if !strings.Contains(asString(created["error"]), "blocked") || workerAddress(created) == "" || created["status"] != "needs-attention" {
 		t.Fatalf("cold Grok lost its recoverable unsent opening: %v", created)
 	}
 	d.ctl(false, "start", asString(created["id"]))
@@ -307,14 +308,13 @@ func TestDispatchSwallowedBriefRecordsLaunchUncertain(t *testing.T) {
 func TestDispatchBlockedStartupNeverSubmitsTheBrief(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "blocked-worker", map[string]string{"README.md": "x\n"})
-	reason := "blocked"
-	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: false, Reason: &reason}})
+	d.native.QueueFault("terminal.send", hctest.Fault{RefuseKind: "blocked"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
 	if task["status"] != "needs-attention" {
 		t.Fatalf("blocked initial message adopted: %v", task)
 	}
-	if len(nativeCalls(d, "terminal.send")) != 0 || len(nativeCalls(d, "terminal.run")) != 1 {
-		t.Fatal("blocked startup received blind input or another process")
+	if len(d.native.Inputs(workerAddress(task))) != 0 || len(nativeCalls(d, "terminal.run")) != 1 {
+		t.Fatal("blocked startup accepted input or another process")
 	}
 	worker, _ := launchedWorker(task)
 	if asMap(asMap(worker["native_launch"])["first_message"])["sent"] != false {
@@ -622,8 +622,8 @@ func TestRedeliverRecordsSwallowedBriefRunning(t *testing.T) {
 	if w["state"] == "running" {
 		t.Fatal("native send result supplied an application receipt")
 	}
-	if len(nativeCalls(d, "terminal.run")) != 1 || len(nativeCalls(d, "terminal.send")) != 1 {
-		t.Fatal("explicit redelivery duplicated launch or input")
+	if len(nativeCalls(d, "terminal.run")) != 1 || len(nativeCalls(d, "terminal.send")) != 2 || len(d.native.Inputs(address)) != 1 {
+		t.Fatal("explicit redelivery duplicated launch or accepted input")
 	}
 	d.ctlPane(address, true, "init")
 	confirmed := d.ctl(true, "execution", "confirm", id, "--attempt", attemptID)
@@ -739,7 +739,7 @@ func nativeUnsentTask(t *testing.T, name string) (*demoLab, map[string]any) {
 	t.Helper()
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, name, map[string]string{"README.md": "x\n"})
-	d.native.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: false}})
+	d.native.QueueFault("terminal.send", hctest.Fault{RefuseKind: "blocked"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
 	if task["status"] != "needs-attention" {
 		t.Fatalf("known unsent launch %v", task)
@@ -749,21 +749,7 @@ func nativeUnsentTask(t *testing.T, name string) (*demoLab, map[string]any) {
 
 func seedBootstrapProgram(t *testing.T, d *demoLab, task map[string]any) {
 	t.Helper()
-	endpoint := store.EndpointFromContext(mapObject(t, asMap(task["worker_endpoint"])))
-	st := nativeTestStore(t, d.home)
-	for _, terminal := range d.native.Terminals() {
-		if terminal.Address == endpoint.Address {
-			pid := uint32(200000)
-			terminal.PID = &pid
-			terminal.Foreground = &hcclient.Foreground{PID: 200001, Name: "codex", Argv: []string{"codex", "--no-daemon"}, Cwd: terminal.Cwd}
-			d.native.SetTerminal(terminal)
-			d.native.SetStatus(terminal.Address, "idle")
-			bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: terminal.Foreground}
-			if err := st.SetIncarnation(endpoint, bound.Record(store.Now())); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
+	d.native.SetStatus(workerAddress(task), "idle")
 }
 
 func assertPrimaryCheckoutsOnly(t *testing.T, d *demoLab) {

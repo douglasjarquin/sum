@@ -82,8 +82,25 @@ def remove_codex_mcp(path, command):
         path.write_text(result)
 
 
+def check_state(root):
+    pointer = Path(root) / ".sum/state.json"
+    if pointer.exists():
+        state = json.loads(pointer.read_text())
+        if state.get("schema") != 2 or state.get("backend") != "hc":
+            raise RuntimeError(
+                f"Legacy/unsupported Sum state (schema {state.get('schema')!r}) at {pointer}; preserved unchanged. "
+                "Live migration is unavailable. Keep this installation and its processes/worktrees intact. "
+                "Clone https://github.com/douglasjarquin/sum.git into a separate directory, then run "
+                "env -u SUM_HOME -u SUM_ROLE -u SUM_TASK -u SUM_ATTEMPT -u SUM_SESSION "
+                "-u SUM_CORE_ID -u SUM_BINDING_GENERATION -u SUM_INSTALL_ROOT "
+                "-u HC_SOCKET -u HC_SESSION -u HC_TERMINAL_ID mise run setup there. "
+                "Use the old runtime for old work; sumctl history reads preserved records without adopting authority."
+            )
+
+
 def designate(root):
     """Mark this checkout as the sum installation: only a home with state.json may host a coordinator."""
+    check_state(root)
     home = root / ".sum"
     if (home / "dev.json").is_file():
         print(f"{root} is a sum development checkout; it stays undesignated (no coordinator can claim it).", file=sys.stderr)
@@ -93,7 +110,7 @@ def designate(root):
     if pointer.exists():
         current = json.loads(pointer.read_text())
         if current.get("schema") != 2 or current.get("backend") != "hc":
-            raise RuntimeError("Existing Sum state requires explicit HC migration; setup never converts live state")
+            check_state(root)
         return
     generation = "g-" + uuid.uuid4().hex[:24]
     data = home / "generations" / generation
@@ -108,6 +125,7 @@ def designate(root):
 
 
 def configure(root=ROOT, *, retire_legacy=False):
+    check_state(root)
     command = str(root / "bin/herdr-mesh")
     entry = {"command": command, "args": []}
     changes = []
@@ -137,6 +155,7 @@ def main():
     ap.add_argument("--install-codex", action="store_true", help="Also install the pinned Codex CLI locally; never authenticate automatically")
     ap.add_argument("--retire-legacy-config", action="store_true", help="After explicit HC cutover, remove only exactly owned legacy MCP entries")
     args = ap.parse_args()
+    check_state(ROOT)
     notes = []
     if not args.configure_only:
         links = runtime_install.resolve_tools(ROOT)
@@ -164,9 +183,9 @@ def main():
     for note in notes:
         print("note: " + note, file=sys.stderr)
     print("\n" + ("Local configuration generated; dependencies were not installed." if args.configure_only else "Setup complete.") + " No global harness configs, credentials, or HC settings were changed.")
-    print("Automatic terminal launches currently require Codex 0.166.0 and its qualified default Tab queue keymap; other harnesses and custom keymaps are refused until qualified.")
-    print("Select an existing HC core explicitly, then run: ./bin/sumctl coordinator start --socket <existing-socket> --session <name> --hc-config-home <that-core-config-home> --harness codex")
-    print("Use that core's existing XDG config home. Sum publishes namespaced, content-bound templates with Tab submission there; it preserves unrelated templates and global harness settings.")
+    print("Terminal profiles: Codex 0.166.0 (Tab), Grok Build stable >=1.0.67, Claude Code 2.1.316 and Devin 3000.11.234 (Enter). Non-Codex authenticated workflow qualification remains open; no harness is substituted automatically. Unsupported versions and custom input profiles are refused before launch.")
+    print("Start with ./bin/sumctl coordinator start --harness codex (or your selected terminal profile). It persists the selected HC_SESSION/HC_SOCKET/XDG route; --socket, --session and --hc-config-home are explicit overrides.")
+    print("Use that core's existing XDG config home. Sum publishes namespaced, content-bound templates with the selected profile submit key there; it preserves unrelated templates and global harness settings.")
     print("./bin/sumctl doctor observes the staged runtime and existing core without starting, binding, or changing either.")
     print("Handle Codex trust and authentication prompts yourself. No installed qualified Codex? Re-run mise run setup -- --install-codex, then authenticate normally.")
 

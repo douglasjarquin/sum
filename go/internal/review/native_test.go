@@ -176,7 +176,7 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 		t.Fatalf("invalid test installation identity: %q %v", instance, err)
 	}
 	labels := map[string]string{"sum.installation": instance, "sum.task": ep.Task, "sum.role": "reviewer", "sum.attempt": ep.Attempt}
-	params := hcclient.RunParams{Argv: []string{spec.Name, "sealed opening pointer"}, Labels: labels, Env: map[string]string{"SUM_ATTEMPT": ep.Attempt, "SUM_TASK": ep.Task, "SUM_ROLE": "reviewer", "SUM_CORE_ID": ep.CoreID, "HC_SOCKET": ep.Socket}}
+	params := hcclient.RunParams{Argv: []string{spec.Name, "sealed opening pointer"}, Cwd: ep.Cwd, Labels: labels, Env: map[string]string{"SUM_ATTEMPT": ep.Attempt, "SUM_TASK": ep.Task, "SUM_ROLE": "reviewer", "SUM_CORE_ID": ep.CoreID, "HC_SOCKET": ep.Socket}}
 	intent := ordjson.NewObject()
 	intent.Set("state", "created")
 	intent.Set("attempt", ep.Attempt)
@@ -195,7 +195,15 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 	}
 	pid := uint32(800001)
 	submit := "tab"
-	f.SetTerminal(hcclient.Terminal{Address: ep.Address, CreatedMS: ep.CreatedMS, Cwd: ep.Cwd, State: "live", Template: &spec.Name, Submit: &submit, Labels: labels, PID: &pid, Foreground: &hcclient.Foreground{PID: 800002, Argv: spec.Argv, Cwd: ep.Cwd}, Status: &hcclient.Status{State: "idle"}})
+	terminal := hcclient.Terminal{Address: ep.Address, CreatedMS: ep.CreatedMS, Cwd: ep.Cwd, State: "live", Template: &spec.Name, Submit: &submit, Labels: labels, PID: &pid, Argv: []string{"sh", "-c", spec.Command()}, Foreground: &hcclient.Foreground{PID: 800002, Argv: spec.Argv, Cwd: ep.Cwd}, Status: &hcclient.Status{State: "idle"}}
+	f.SetTerminal(terminal)
+	original := terminal
+	original.Foreground = nil
+	value, _ = ordjson.FromValue(hcclient.RunResult{Terminal: original, FirstMessage: &hcclient.FirstMessage{Sent: false}})
+	intent.Set("result", value)
+	if err = s.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
 	return s, coordinator.Object(), ep, f
 }
 func TestReviewerExplicitUnsentRedeliveryUsesNativeGuardAndNoLaunch(t *testing.T) {
@@ -337,9 +345,6 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 			oldTerminal = terminal
 		}
 	}
-	pid := uint32(800011)
-	oldTerminal.PID = &pid
-	oldTerminal.Foreground = &hcclient.Foreground{PID: 800012, Argv: template.Spec.Argv, Cwd: intent.Path}
 	f.SetTerminal(oldTerminal)
 	initialized, err := roleinit.InitDesignated(roleinit.DesignatedOpts{RuntimeRoot: runtime, SumctlPath: "/tmp/sumctl", Store: s, Ctx: oldEndpoint.Object(), Role: "reviewer", Task: oldEndpoint.Task})
 	if err != nil {
@@ -391,8 +396,12 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 				t.Fatal("native name exceeds limit")
 			}
 			args := call.Params["argv"].([]any)
-			if !strings.Contains(args[1].(string), "init --role reviewer") || !strings.Contains(args[1].(string), base) {
-				t.Fatal("opening pointer not candidate/init-bound")
+			if len(args) != 1 {
+				t.Fatal("creation contained an implicit opening")
+			}
+			opening := asString(objectField(out, "reviewer"), "opening")
+			if !strings.Contains(opening, "init --role reviewer") || !strings.Contains(opening, base) {
+				t.Fatal("durable opening not candidate/init-bound")
 			}
 		}
 	}

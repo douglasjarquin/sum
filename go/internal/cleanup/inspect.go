@@ -426,7 +426,7 @@ func nativeTerminal(endpoint store.Endpoint) (hcclient.Terminal, error) {
 	defer cancel()
 	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
 	t, err := client.Get(ctx, endpoint.Address)
-	if err == nil && (t.Address != endpoint.Address || t.CreatedMS != endpoint.CreatedMS || t.Keep) {
+	if err == nil && (t.Address != endpoint.Address || t.CreatedMS != endpoint.CreatedMS) {
 		return t, fmt.Errorf("native terminal creation or lifetime changed")
 	}
 	return t, err

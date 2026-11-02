@@ -22,6 +22,7 @@ type CoordinatorStartOpts struct {
 	Socket         string
 	Session        string
 	CoreConfigHome string
+	DesktopSpace   string
 	Launch         launch.ResolveArgs
 }
 
@@ -60,7 +61,9 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 	if err != nil {
 		return nil, err
 	}
-	if err = verifyLoadedTemplate(ctx, client, spec); err != nil {
+	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer verifyCancel()
+	if err = verifyLoadedTemplate(verifyCtx, client, spec); err != nil {
 		return nil, err
 	}
 	attempt, err := newInstanceID()
@@ -78,12 +81,15 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 	if instance == "" {
 		return nil, fmt.Errorf("installation identity required before coordinator start")
 	}
-	intent := hcclient.RunParams{Argv: spec.RunArgv("First run `" + shquote.CommandFor(opts.SumctlPath, s.Root, "init") + "`, then read the verified coordinator procedure named by init and follow it."), Cwd: opts.RuntimeRoot, NoParent: true, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Name: "sum-" + attempt[:28], Labels: map[string]string{"sum.installation": instance, "sum.role": "coordinator", "sum.attempt": attempt}, Env: map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": opts.Session, "SUM_CORE_ID": hello.Core.ID, "HC_SOCKET": opts.Socket, "SUM_ROLE": "coordinator", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": "1"}}
+	opening := "First run `" + shquote.CommandFor(opts.SumctlPath, s.Root, "init") + "`, then read the verified coordinator procedure named by init and follow it."
+	intent := hcclient.RunParams{Argv: []string{spec.Name}, Cwd: opts.RuntimeRoot, NoParent: true, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Name: "sum-" + attempt[:28], Labels: map[string]string{"sum.installation": instance, "sum.role": "coordinator", "sum.attempt": attempt}, Env: map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": opts.Session, "SUM_CORE_ID": hello.Core.ID, "HC_SOCKET": opts.Socket, "SUM_ROLE": "coordinator", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": "1"}}
 	spec.BindInputEnvironment(intent.Env)
 	expected := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: hello.Core.ID, Socket: opts.Socket, Session: opts.Session, Role: "coordinator", Attempt: attempt, BindingGeneration: 1, Cwd: opts.RuntimeRoot}
 	record := ordjson.NewObject()
 	record.Set("endpoint", expected.Object())
 	record.Set("intent", mustObject(intent))
+	record.Set("opening", opening)
+	record.Set("desktop_space", opts.DesktopSpace)
 	record.Set("native_template", mustObject(nativeTemplate{Spec: spec, ConfigHome: opts.CoreConfigHome, Options: options}))
 	record.Set("effect", "claimed")
 	record.Set("claimed_at", store.Now())
@@ -116,47 +122,59 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 	if err = unlock(); err != nil {
 		return nil, err
 	}
-	result, runErr := client.Run(ctx, intent)
-	unlock, err = s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
+	runCtx, runCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer runCancel()
+	result, runErr := client.Run(runCtx, intent)
+	created, err := func() (*ordjson.Object, error) {
+		unlock, err = s.Lock()
+		if err != nil {
+			return nil, err
+		}
+		defer unlock()
 
-	value, err := ordjson.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	record, _ = value.(*ordjson.Object)
-	if record == nil {
-		return nil, fmt.Errorf("coordinator launch intent unreadable")
-	}
-	if runErr != nil {
-		record.Set("effect", "uncertain")
-		record.Set("error", runErr.Error())
-		var nativeErr *hcclient.Error
-		if errors.As(runErr, &nativeErr) {
-			record.Set("effect", string(nativeErr.Effect))
-			if nativeErr.RPC != nil {
-				record.Set("native_error", mustObject(nativeErr.RPC))
+		value, err := ordjson.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		record, _ = value.(*ordjson.Object)
+		if record == nil {
+			return nil, fmt.Errorf("coordinator launch intent unreadable")
+		}
+		if runErr != nil {
+			record.Set("effect", "uncertain")
+			record.Set("error", runErr.Error())
+			var nativeErr *hcclient.Error
+			if errors.As(runErr, &nativeErr) {
+				record.Set("effect", string(nativeErr.Effect))
+				if nativeErr.RPC != nil {
+					record.Set("native_error", mustObject(nativeErr.RPC))
+				}
+			}
+		} else {
+			record.Set("effect", "created")
+			record.Set("result", mustObject(result))
+			record.Set("first_message", mustObject(result.FirstMessage))
+			if result.Address != "" {
+				expected.Address = result.Address
+				expected.CreatedMS = result.CreatedMS
+				record.Set("endpoint", expected.Object())
 			}
 		}
-	} else {
-		record.Set("effect", "created")
-		record.Set("result", mustObject(result))
-		record.Set("first_message", mustObject(result.FirstMessage))
-		if result.Address != "" {
-			expected.Address = result.Address
-			expected.CreatedMS = result.CreatedMS
-			record.Set("endpoint", expected.Object())
+		reconcileCoordinatorReceipt(record, expected)
+		if err = ordjson.WriteFile(path, record); err != nil {
+			return nil, err
 		}
+		record.Set("note", "Native launch is recorded; coordinator authority requires its exact init receipt. Native status and first-message started are diagnostic only.")
+		return record, nil
+	}()
+	if err != nil || runErr != nil {
+		return created, err
 	}
-	reconcileCoordinatorReceipt(record, expected)
-	if err = ordjson.WriteFile(path, record); err != nil {
-		return nil, err
+	opened, err := deliverCoordinatorOpening(s, attempt, true)
+	if err != nil || opts.DesktopSpace == "" {
+		return opened, err
 	}
-	record.Set("note", "Native launch is recorded; coordinator authority requires its exact init receipt. Native status and first-message started are diagnostic only.")
-	return record, nil
+	return presentCoordinator(s, opened, opts.DesktopSpace)
 }
 func mustObject(value any) any { o, _ := ordjson.FromValue(value); return o }
 func templateCommand(spec launch.HCTemplate) string {

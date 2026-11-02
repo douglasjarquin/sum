@@ -49,7 +49,7 @@ func jsonNumber(n int) json.Number {
 }
 
 func runtimeSHA(runtimeRoot string) string {
-	return sumruntime.SourceSHA(runtimeRoot)
+	return sumruntime.SelectedSourceSHA(runtimeRoot)
 }
 
 func deferredCapabilities(recorded *ordjson.Object) []any { return []any{} }

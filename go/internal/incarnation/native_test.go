@@ -38,6 +38,10 @@ func TestNativeAuthorityNeedsMatchingReceiptAndForeground(t *testing.T) {
 	if JudgeNative(renewedRecord, other, renewed, &receipt).Verified {
 		t.Fatal("stale creation receipt authorized renewed evidence")
 	}
+	terminal.Keep = true
+	if verdict := JudgeNative(recorded, e, terminal, &receipt); !verdict.Verified {
+		t.Fatalf("desktop promotion revoked unchanged process: %v", verdict)
+	}
 	terminal.Foreground = &hcclient.Foreground{PID: 99, Name: "zsh", Cwd: "/task", Argv: []string{"zsh"}}
 	if JudgeNative(recorded, e, terminal, &receipt).Verified {
 		t.Fatal("kept replacement shell authorized")

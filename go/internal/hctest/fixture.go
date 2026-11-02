@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +27,7 @@ type Fault struct {
 	Delay        time.Duration
 	LoseResponse bool
 	RefuseKind   string
+	RunPID       *uint32
 	FirstMessage *hcclient.FirstMessage
 	SendResult   *hcclient.SendResult
 }
@@ -482,7 +484,28 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 			}
 			value.Name = &args.Name
 		}
-		f.terminals[address] = &terminal{Terminal: value, outlive: args.OutliveParent}
+		pid := uint32(200000 + f.next)
+		if fault.RunPID != nil {
+			pid = *fault.RunPID
+		}
+		value.PID = &pid
+		saved := value
+		if value.Template != nil {
+			parts := regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(value.Argv[2], -1)
+			var program []string
+			for _, part := range parts {
+				program = append(program, part[1])
+			}
+			if len(program) > 0 && program[0] == "/usr/bin/env" {
+				program = program[1:]
+				for len(program) > 0 && strings.Contains(program[0], "=") {
+					program = program[1:]
+				}
+			}
+			saved.Foreground = &hcclient.Foreground{PID: int32(pid), Name: "fixture-program", Argv: program, Cwd: value.Cwd}
+			saved.Status = &hcclient.Status{State: "idle"}
+		}
+		f.terminals[address] = &terminal{Terminal: saved, outlive: args.OutliveParent}
 		f.eventLocked(address, "created", value)
 		return hcclient.RunResult{Terminal: value, FirstMessage: fault.FirstMessage}, "", nil
 	case "terminal.list":

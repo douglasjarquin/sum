@@ -274,7 +274,7 @@ func removeOneTerminal(s *store.Store, caller *ordjson.Object, runtimeRoot, task
 	if err != nil && !absent {
 		return fail(err)
 	}
-	if !absent && (terminal.CreatedMS != endpoint.CreatedMS || terminal.Keep || terminal.State != "finished" || terminal.FinishedMS == nil || (terminal.ExitCode == nil && terminal.Signal == nil) || resolvePath(terminal.Cwd) != resolvePath(expectedCwd)) {
+	if !absent && (terminal.CreatedMS != endpoint.CreatedMS || terminal.State != "finished" || terminal.FinishedMS == nil || (terminal.ExitCode == nil && terminal.Signal == nil) || resolvePath(terminal.Cwd) != resolvePath(expectedCwd)) {
 		return fail(fmt.Errorf("native terminal is live, replaced, kept, or lacks finished exit evidence"))
 	}
 

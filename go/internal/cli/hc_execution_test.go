@@ -173,16 +173,16 @@ func TestHCPrepareReconcileAndStartThroughCLI(t *testing.T) {
 	if _, err = run("start", id); err == nil {
 		t.Fatal("repeated start replayed the native launch")
 	}
-	runs := 0
+	runs, sends := 0, 0
 	for _, call := range fixture.Calls() {
 		if call.Method == "terminal.run" {
 			runs++
 		}
 		if call.Method == "terminal.send" {
-			t.Fatal("CLI blindly resent first message")
+			sends++
 		}
 	}
-	if runs != 1 {
-		t.Fatalf("native launches=%d", runs)
+	if runs != 1 || sends != 1 {
+		t.Fatalf("native launches=%d openings=%d", runs, sends)
 	}
 }

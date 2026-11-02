@@ -66,7 +66,7 @@ func TestNativeProgramStoppedIgnoresReleasedAttemptAndRequiresExitAndOriginalPID
 	}{
 		{"Done live terminal", func(v *hcclient.Terminal) { v.State = "live"; v.Status = &hcclient.Status{State: "done"} }},
 		{"reused creation", func(v *hcclient.Terminal) { v.CreatedMS++ }},
-		{"kept terminal", func(v *hcclient.Terminal) { v.Keep = true }},
+		{"recovered kept shell", func(v *hcclient.Terminal) { v.Keep = true; v.State = "live" }},
 		{"missing exit", func(v *hcclient.Terminal) { v.ExitCode = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

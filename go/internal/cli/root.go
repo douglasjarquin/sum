@@ -125,6 +125,11 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addRestoreCommand(root)
 	opts.addContextCommand(root)
 	opts.addDoctorCommand(root)
+	root.AddCommand(&cobra.Command{Use: "build-info", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return emitJSON(cmd.OutOrStdout(), sumruntime.BuildIdentity())
+	}})
+	opts.addHistoryCommand(root)
+	opts.addInspectCommand(root)
 	opts.addInitCommand(root)
 	opts.addPrepareCommands(root)
 	opts.addVerifyCommand(root)

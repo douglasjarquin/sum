@@ -1,0 +1,98 @@
+package execution
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"time"
+
+	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/incarnation"
+	"github.com/douglasjarquin/sum/go/internal/launch"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/store"
+)
+
+func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt string) (*ordjson.Object, error) {
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		return nil, err
+	}
+	if field(worker, "id") != attempt {
+		return nil, fmt.Errorf("exact current worker attempt required")
+	}
+	if endpoint := workerEndpoint(task); endpoint.Validate() == nil {
+		return task, nil
+	}
+	native := asObject(field(worker, "native_launch"))
+	if native == nil || field(native, "opening_delivery") != nil {
+		return nil, fmt.Errorf("split creation has no unreconciled original intent")
+	}
+	var params hcclient.RunParams
+	var template returnsTemplateForReconcile
+	if err = decodeNative(field(native, "intent"), &params); err != nil {
+		return nil, err
+	}
+	if err = decodeNative(field(native, "native_template"), &template); err != nil {
+		return nil, err
+	}
+	parent := store.EndpointFromContext(asObject(field(task, "parent")))
+	client := hcclient.Client{Socket: parent.Socket, CoreID: parent.CoreID}
+	observe, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	terminal, err := launch.DiscoverOriginal(observe, &client, params, template.Spec, asString(field(native, "claimed_at")))
+	if err != nil {
+		return nil, err
+	}
+	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: parent.Machine, Socket: parent.Socket, CoreID: parent.CoreID, Session: parent.Session, Address: terminal.Address, CreatedMS: terminal.CreatedMS, Task: taskID, Role: "worker", Attempt: attempt, BindingGeneration: 1, Cwd: params.Cwd}
+	unlock, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	current, err := s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	w, err := reservations.Worker(current)
+	if err != nil {
+		return nil, err
+	}
+	if field(w, "id") != attempt || field(asObject(field(w, "native_launch")), "opening_delivery") != nil || field(current, "worker_endpoint") != nil {
+		return nil, fmt.Errorf("creation intent changed during reconciliation")
+	}
+	n := asObject(field(w, "native_launch"))
+	n.Set("effect", "created")
+	n.Set("endpoint", endpoint.Object())
+	first := ordjson.NewObject()
+	first.Set("sent", false)
+	n.Set("first_message", first)
+	evidence := (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *terminal.PID, Foreground: terminal.Foreground}).Record(store.Now())
+	n.Set("incarnation", evidence)
+	registration, err := s.Register(endpoint, "worker", taskID, evidence)
+	if err != nil {
+		return nil, err
+	}
+	registration.Set("native_template", field(n, "native_template"))
+	if err = ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(endpoint)+".json"), registration); err != nil {
+		return nil, err
+	}
+	current.Set("worker_endpoint", endpoint.Object())
+	if err = s.SaveTask(current); err != nil {
+		return nil, err
+	}
+	return current, nil
+}
+
+type returnsTemplateForReconcile struct {
+	Spec launch.HCTemplate `json:"spec"`
+}

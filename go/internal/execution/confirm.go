@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
@@ -188,8 +187,21 @@ func Redeliver(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if err = decodeNative(field(registration, "incarnation"), &recorded); err != nil {
 		return nil, err
 	}
-	if !recorded.Endpoint.SameAuthority(endpoint.Native()) || recipient.Terminal.PID == nil || *recipient.Terminal.PID != recorded.PID || !reflect.DeepEqual(recipient.Terminal.Foreground, recorded.Foreground) {
-		return nil, fmt.Errorf("recorded launch process changed; redelivery refused")
+
+	var template returns.NativeTemplate
+	if err = decodeNative(field(registration, "native_template"), &template); err != nil {
+		return nil, err
+	}
+	var intent hcclient.RunParams
+	if err = decodeNative(field(asObject(field(worker, "native_launch")), "intent"), &intent); err != nil {
+		return nil, err
+	}
+	initial := hcclient.Terminal{Address: endpoint.Address, CreatedMS: endpoint.CreatedMS, PID: &recorded.PID, Foreground: recorded.Foreground, Cwd: intent.Cwd, Labels: intent.Labels}
+	if !recorded.Endpoint.SameAuthority(endpoint.Native()) {
+		return nil, fmt.Errorf("launch endpoint changed")
+	}
+	if err = launch.OriginalProgram(initial, recipient.Terminal, template.Spec); err != nil {
+		return nil, err
 	}
 	if err = recipient.Qualify(registration); err != nil {
 		return nil, err
@@ -248,6 +260,12 @@ func Redeliver(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 		unlock()
 		return nil, fmt.Errorf("redelivery already claimed; inspect its outcome and record a receipt before further recovery")
 	}
+	observedEvidence := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: recorded.PID, Foreground: recipient.Terminal.Foreground}.Record(store.Now())
+	if err = s.SetIncarnation(endpoint, observedEvidence); err != nil {
+		unlock()
+		return nil, err
+	}
+	native.Set("incarnation", observedEvidence)
 	claim := ordjson.NewObject()
 	claim.Set("effect", "claimed")
 	claim.Set("at", store.Now())
@@ -257,7 +275,11 @@ func Redeliver(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 		return nil, err
 	}
 	unlock()
-	result, sendErr := recipient.Send(deliveryCtx, prepare.WorkerPrompt(s, runtimeRoot, taskID, brief, current))
+	opening := asString(field(native, "opening"))
+	if opening == "" {
+		opening = prepare.WorkerPrompt(s, runtimeRoot, taskID, brief, current)
+	}
+	result, sendErr := recipient.Send(deliveryCtx, opening)
 	effect, detail := returns.DeliveryFailure(sendErr)
 	unlock, err = s.Lock()
 	if err != nil {

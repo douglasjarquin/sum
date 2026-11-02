@@ -91,8 +91,14 @@ func TestHCTemplateValidationDetectsChanges(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(home, "config.toml"), []byte("model='changed'\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err = ValidateHCTemplate(config, spec, options); err != nil {
+		t.Fatalf("unrelated config stranded a live recipient: %v", err)
+	}
+	if err = os.WriteFile(filepath.Join(home, "config.toml"), []byte("model='changed'\nsandbox_mode='danger-full-access'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err = ValidateHCTemplate(config, spec, options); err == nil {
-		t.Fatal("config changed without invalidating recorded qualification")
+		t.Fatal("meaningful permission drift retained input qualification")
 	}
 	if _, err = PrepareHCTemplate(root, config, "codex", []string{"-c", `"tui" . "keymap" = {}`}, HCTemplateOptions{Cwd: root, CodexHome: t.TempDir()}); err == nil {
 		t.Fatal("quoted keymap override accepted")

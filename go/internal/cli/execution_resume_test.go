@@ -7,15 +7,16 @@ import (
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/hctest"
 )
 
 func TestResumeLaunchesAtCurrentHEADAfterReportedCommit(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "resume-head", map[string]string{"README.md": "x\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--model", "pinned-model", "--reasoning", "high", "--approved")
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--model", "pinned-model", "--reasoning", "high", "--approved")
 	id, checkout, address := asString(task["id"]), asString(task["worktree"]), workerAddress(task)
 	attempt := asString(asMap(asMap(task["execution"])["worker"])["id"])
-	if id == "" || checkout == "" || address == "" || attempt == "" {
+	if id == "" || checkout == "" || attempt == "" {
 		t.Fatalf("dispatch %v", task)
 	}
 
@@ -31,14 +32,14 @@ func TestResumeLaunchesAtCurrentHEADAfterReportedCommit(t *testing.T) {
 			process.Wait()
 		}
 	}()
+	pid := uint32(process.Process.Pid)
+	d.native.QueueFault("terminal.run", hctest.Fault{RunPID: &pid})
+	task = d.ctl(true, "start", id)
+	address = workerAddress(task)
 	var original hcclient.Terminal
 	for _, terminal := range d.native.Terminals() {
 		if terminal.Address == address {
-			pid := uint32(process.Process.Pid)
-			terminal.PID = &pid
-			terminal.Foreground = &hcclient.Foreground{PID: int32(pid), Name: "codex", Argv: []string{"codex", "--no-daemon"}, Cwd: checkout}
 			original = terminal
-			d.native.SetTerminal(terminal)
 		}
 	}
 	d.ctlPane(address, true, "init")

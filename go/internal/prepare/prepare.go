@@ -998,7 +998,12 @@ func FailStart(s *store.Store, taskID string, cause error) (*ordjson.Object, err
 				task.Set("status", "needs-attention")
 			}
 			if worker, werr := reservations.Worker(task); werr == nil {
-
+				if state, _ := worker.Get("state"); state == "running" {
+					return task, nil
+				}
+				if id, _ := worker.Get("id"); id != nil {
+					errorText = strings.ReplaceAll(errorText, "--attempt X", "--attempt "+fmt.Sprint(id))
+				}
 				if state, _ := worker.Get("state"); state == "starting" {
 					id, _ := worker.Get("id")
 					obs := ordjson.NewObject()

@@ -39,7 +39,7 @@ func labelCoordinator(ctx context.Context, s *store.Store, client hcclient.Clien
 	if err != nil {
 		return observed, t, fmt.Errorf("coordinator discovery labels not confirmed; no role recorded: %w", err)
 	}
-	if updated.Address != e.Address || updated.CreatedMS != e.CreatedMS || updated.State != "live" || updated.Keep || updated.PID == nil || *updated.PID != observed.PID || !reflect.DeepEqual(updated.Foreground, observed.Foreground) || updated.Cwd != t.Cwd || !reflect.DeepEqual(updated.Argv, t.Argv) {
+	if updated.Address != e.Address || updated.CreatedMS != e.CreatedMS || updated.State != "live" || updated.PID == nil || *updated.PID != observed.PID || !reflect.DeepEqual(updated.Foreground, observed.Foreground) || updated.Cwd != t.Cwd || !reflect.DeepEqual(updated.Argv, t.Argv) {
 		return observed, t, fmt.Errorf("coordinator terminal process changed while discovery labels were applied; no role recorded")
 	}
 	for key, want := range labels {

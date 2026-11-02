@@ -60,7 +60,11 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 					return initErr
 				}
 				if ensure {
-					if services := hcboot.Ensure(o.runtimeRoot); services != nil {
+					route, err := selectedHCRoute(st, "", "", "")
+					if err != nil {
+						return err
+					}
+					if services := hcboot.EnsureRoute(o.runtimeRoot, route); services != nil {
 						view.Set("services", services)
 					}
 				}

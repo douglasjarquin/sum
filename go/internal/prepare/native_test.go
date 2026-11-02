@@ -75,7 +75,12 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 				t.Fatal(err)
 			}
 			started := true
-			fixture.QueueFault("terminal.run", hctest.Fault{LoseResponse: scenario.lost, FirstMessage: &hcclient.FirstMessage{Sent: sent, Started: &started}})
+			fixture.QueueFault("terminal.run", hctest.Fault{LoseResponse: scenario.lost})
+			if sent {
+				fixture.QueueFault("terminal.send", hctest.Fault{SendResult: &hcclient.SendResult{Turn: 1, Started: &started}})
+			} else {
+				fixture.QueueFault("terminal.send", hctest.Fault{RefuseKind: "blocked"})
+			}
 			unlock, err := st.Lock()
 			if err != nil {
 				t.Fatal(err)
@@ -157,11 +162,17 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			if len(*terminal.Name) > 32 {
 				t.Fatal("name exceeds bound")
 			}
-			calls := fixture.Calls()
-			for _, call := range calls {
-				if call.Method == "terminal.send" {
-					t.Fatal("blind separate first-message send")
+			sends := 0
+			for _, call := range fixture.Calls() {
+				if call.Method == "terminal.run" && len(call.Params["argv"].([]any)) != 1 {
+					t.Fatal("creation included an implicit opening")
 				}
+				if call.Method == "terminal.send" {
+					sends++
+				}
+			}
+			if sends != 1 {
+				t.Fatalf("opening sends=%d", sends)
 			}
 		})
 	}

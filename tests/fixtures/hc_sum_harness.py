@@ -131,6 +131,7 @@ fd = sys.stdin.fileno()
 previous = termios.tcgetattr(fd)
 tty.setraw(fd)
 os.write(1, b"\x1b[?2004h")
+time.sleep(float(os.environ.get("SUM_CANARY_READY_DELAY", "0")))
 status("idle")
 pending = bytearray()
 try:

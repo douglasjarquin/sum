@@ -71,9 +71,16 @@ func (c *Client) connect(ctx context.Context) (*connection, error) {
 	}
 	timeout := c.Timeout
 	if timeout <= 0 {
-		timeout = 20 * time.Second
+		if _, bounded := ctx.Deadline(); !bounded {
+			timeout = 20 * time.Second
+		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 	n, err := (&net.Dialer{}).DialContext(ctx, "unix", c.Socket)
 	if err != nil {
 		cancel()
@@ -163,7 +170,7 @@ func (c *Client) open(ctx context.Context, method string) (*connection, HelloRes
 	}
 	if h.Generation != contract.HCGeneration || h.Core.ID != c.CoreID || h.Version != contract.HCVersion || (method != "hello" && !slices.Contains(h.Methods, method)) {
 		n.close()
-		return nil, h, fmt.Errorf("core identity, pinned version or method mismatch")
+		return nil, h, fmt.Errorf("HC compatibility mismatch: expected core=%s version=%s generation=%d method=%s; observed core=%s version=%s generation=%d methods=%v", c.CoreID, contract.HCVersion, contract.HCGeneration, method, h.Core.ID, h.Version, h.Generation, h.Methods)
 	}
 	if (method == "terminal.send" || method == "terminal.get") && !slices.Contains(h.Features, "status") {
 		n.close()
@@ -331,7 +338,7 @@ func Inspect(ctx context.Context, socket string) (HelloResult, error) {
 		return h, err
 	}
 	if h.Generation != contract.HCGeneration || h.Version != contract.HCVersion || h.Core.ID == "" {
-		return h, fmt.Errorf("unsupported or unidentified HC core")
+		return h, fmt.Errorf("HC compatibility mismatch: expected version=%s generation=%d; observed core=%s version=%s generation=%d", contract.HCVersion, contract.HCGeneration, h.Core.ID, h.Version, h.Generation)
 	}
 	return h, nil
 }

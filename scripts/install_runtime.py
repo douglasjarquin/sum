@@ -118,6 +118,16 @@ def native_platform():
     return f"{system}-{machine}"
 
 
+def native_source_digest(target):
+    source = Path(target) / "go"
+    digest = hashlib.sha256()
+    paths = sorted(path for path in source.rglob("*") if path.is_file() and
+                   (path.suffix == ".go" or path.name in ("go.mod", "go.sum")))
+    for path in paths:
+        digest.update(str(path.relative_to(source)).encode() + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
 def build_native_artifact(target):
     target = Path(target)
     source = target / "go"
@@ -127,11 +137,19 @@ def build_native_artifact(target):
     output_dir = target / ".local" / "bin"
     output_dir.mkdir(parents=True, exist_ok=True)
     pending = []
+    source_digest = native_source_digest(target)
+    receipt_path = output_dir / "sumctl.build.json"
     for name, package in outputs.items():
         output = output_dir / name
         if output.exists() or output.is_symlink():
             if not output.is_file() or not os.access(output, os.X_OK):
                 raise InstallError(f"Existing native artifact {output} is not executable")
+            try:
+                receipt = read_json(receipt_path)
+            except InstallError:
+                receipt = {}
+            if receipt.get("source_digest") != source_digest or receipt.get("binary_sha256") != sha256_file(output):
+                raise InstallError(f"Existing helper {output} has stale or unverifiable build provenance; it was preserved. Run the installation bin/sumctl release stage HEAD, inspect the staged identity, then explicitly update. Setup never replaces a serving helper.")
         else:
             pending.append((name, package))
     if not pending:
@@ -151,20 +169,24 @@ def build_native_artifact(target):
     build_env = {**os.environ, "CGO_ENABLED": "0", "GOENV": "off", "GOOS": goos, "GOARCH": goarch}
     for variable in ("GOROOT", "GOTOOLDIR", "GOTOOLCHAIN"):
         build_env.pop(variable, None)
+    revision_result = run(["git", "-C", target, "rev-parse", "HEAD"], check=False)
+    revision = revision_result.stdout.strip() if revision_result.returncode == 0 else ""
+    flags = f"-X github.com/douglasjarquin/sum/go/internal/runtime.BuildSourceRevision={revision} -X github.com/douglasjarquin/sum/go/internal/runtime.BuildSourceDigest={source_digest}"
     for name, package in outputs.items():
         if (name, package) not in pending:
             continue
         output = output_dir / name
         temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
         try:
-            run([go, "build", "-trimpath", "-buildvcs=false", "-o", temporary, package], cwd=source,
+            run([go, "build", "-trimpath", "-buildvcs=false", "-ldflags", flags, "-o", temporary, package], cwd=source,
                 env=build_env, timeout=900)
             if not temporary.is_file() or not os.access(temporary, os.X_OK):
                 raise InstallError(f"Go build did not produce an executable at {temporary}")
             try:
                 os.link(temporary, output)
             except FileExistsError:
-                pass
+                raise InstallError(f"Native artifact {output} appeared during build; preserved without claiming it")
+            receipt_path.write_text(json.dumps({"source_digest": source_digest, "source_sha": revision, "binary_sha256": sha256_file(output)}, sort_keys=True) + "\n")
         finally:
             if temporary.exists():
                 temporary.unlink()

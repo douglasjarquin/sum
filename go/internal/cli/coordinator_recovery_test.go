@@ -206,9 +206,6 @@ func TestCoordinatorStartRecoverAndRestartCLI(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			pid := uint32(201)
-			terminal.PID = &pid
-			terminal.Foreground = &hcclient.Foreground{PID: 202, Name: harness, Argv: spec.Argv, Cwd: root}
 			f.SetTerminal(terminal)
 			for key, value := range endpointEnv(endpointValue) {
 				t.Setenv(key, value)
@@ -257,8 +254,8 @@ func TestCoordinatorStartRecoverAndRestartCLI(t *testing.T) {
 			if err = os.WriteFile(inputConfig, []byte(drift), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err = recipient.Qualify(owner); err == nil {
-				t.Fatal("configuration drift retained input qualification")
+			if err = recipient.Qualify(owner); err != nil {
+				t.Fatalf("irrelevant config drift stranded recipient: %v", err)
 			}
 			if err = os.Rename(inputConfig, filepath.Join(t.TempDir(), "preserved-drift-config")); err != nil {
 				t.Fatal(err)
@@ -266,8 +263,8 @@ func TestCoordinatorStartRecoverAndRestartCLI(t *testing.T) {
 			if err = os.WriteFile(binary, []byte("changed binary"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			if err = recipient.Qualify(owner); err == nil {
-				t.Fatal("binary drift retained input qualification")
+			if err = recipient.Qualify(owner); err != nil {
+				t.Fatalf("on-disk binary drift stranded original recipient: %v", err)
 			}
 		})
 	}

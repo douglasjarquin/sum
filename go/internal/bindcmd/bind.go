@@ -68,7 +68,7 @@ func ReviewerNativeStopped(ctx context.Context, s *store.Store, task, old *ordjs
 	if err != nil && !absent(err) {
 		return nil, err
 	}
-	if err == nil && (terminal.State != "finished" || terminal.Keep || terminal.CreatedMS != endpoint.CreatedMS) {
+	if err == nil && (terminal.State != "finished" || terminal.CreatedMS != endpoint.CreatedMS) {
 		return nil, fmt.Errorf("recorded reviewer is live or replaced")
 	}
 	registration, err := s.Registration(endpoint)

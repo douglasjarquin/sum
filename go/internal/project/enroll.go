@@ -262,8 +262,8 @@ func finishEnrollment(s *store.Store, record *ordjson.Object, reason string) (*o
 }
 
 func InstallationRootLike(s *store.Store, runtimeRoot string) (string, error) {
-	if filepath.Base(s.Home) == ".sum" && s.Designated() {
-		root := filepath.Dir(s.Home)
+	if filepath.Base(s.Root) == ".sum" && s.Designated() {
+		root := filepath.Dir(s.Root)
 		top, ok := gitToplevel(root)
 		resolved, _ := resolvePath(root)
 		if !ok || top != resolved {

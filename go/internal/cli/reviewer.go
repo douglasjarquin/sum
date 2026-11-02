@@ -2,6 +2,7 @@ package cli
 
 import (
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/review"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -72,5 +73,31 @@ func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 	redeliver.Flags().StringVar(&attempt, "attempt", "", "")
 	_ = redeliver.MarkFlagRequired("attempt")
 	cmd.AddCommand(redeliver)
+	for _, name := range []string{"reconcile", "recover"} {
+		name := name
+		var selectedAttempt string
+		action := &cobra.Command{Use: name + " TASK", Args: cobra.ExactArgs(1), RunE: func(command *cobra.Command, args []string) error {
+			st, err := o.openStore("reviewer " + name)
+			if err != nil {
+				return err
+			}
+			ctx, err := store.Context(o.installRoot)
+			if err != nil {
+				return err
+			}
+			var view *ordjson.Object
+			if name == "reconcile" {
+				view, err = review.Reconcile(st, ctx, args[0], selectedAttempt)
+			} else {
+				view, err = review.Recover(st, ctx, args[0], selectedAttempt)
+			}
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(command.OutOrStdout(), view)
+		}}
+		action.Flags().StringVar(&selectedAttempt, "attempt", "", "exact saved reviewer attempt")
+		cmd.AddCommand(action)
+	}
 	root.AddCommand(cmd)
 }
