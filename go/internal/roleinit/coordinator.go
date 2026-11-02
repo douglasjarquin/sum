@@ -140,6 +140,19 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 		if record == nil {
 			return nil, fmt.Errorf("coordinator launch intent unreadable")
 		}
+		savedEndpoint := store.EndpointFromContext(asObjectCoordinator(record, "endpoint"))
+		if savedEndpoint.Validate() == nil {
+			if runErr == nil && (savedEndpoint.Address != result.Address || savedEndpoint.CreatedMS != result.CreatedMS) {
+				return nil, fmt.Errorf("late coordinator creation identity conflicts with reconciled endpoint")
+			}
+			if runErr != nil {
+				record.Set("late_creation_error", runErr.Error())
+				if err = ordjson.WriteFile(path, record); err != nil {
+					return nil, err
+				}
+			}
+			return record, nil
+		}
 		if runErr != nil {
 			record.Set("effect", "uncertain")
 			record.Set("error", runErr.Error())
@@ -152,6 +165,9 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 			}
 		} else {
 			record.Set("effect", "created")
+			if result.FirstMessage == nil && spec.Schema == 2 {
+				result.FirstMessage = &hcclient.FirstMessage{Sent: false}
+			}
 			record.Set("result", mustObject(result))
 			record.Set("first_message", mustObject(result.FirstMessage))
 			if result.Address != "" {

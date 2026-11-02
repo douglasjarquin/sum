@@ -50,6 +50,10 @@ func EnsureRoute(runtimeRoot string, route Route) *ordjson.Object {
 	}
 	report := ordjson.NewObject()
 	report.Set("ok", false)
+	if err := route.Validate(); err != nil {
+		report.Set("error", err.Error())
+		return report
+	}
 	if err := route.compatibility(); err != nil {
 		report.Set("action", "compatibility-refused")
 		report.Set("error", err.Error())

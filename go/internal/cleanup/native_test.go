@@ -21,7 +21,7 @@ import (
 )
 
 func TestCleanupNativeEndpointIdentityAndUnknownLaunchBlock(t *testing.T) {
-	for _, change := range []string{"core", "creation", "kept", "unrecorded"} {
+	for _, change := range []string{"core", "creation", "kept-shell", "unrecorded"} {
 		t.Run(change, func(t *testing.T) {
 			l := newLab(t)
 			head := l.makeWorktreeCheckout()
@@ -36,7 +36,7 @@ func TestCleanupNativeEndpointIdentityAndUnknownLaunchBlock(t *testing.T) {
 				if err := l.store.SaveTask(task); err != nil {
 					t.Fatal(err)
 				}
-			case "creation", "kept":
+			case "creation", "kept-shell":
 				term := l.hc.Terminals()
 				for _, terminal := range term {
 					if terminal.Address != "t2" {
@@ -46,6 +46,7 @@ func TestCleanupNativeEndpointIdentityAndUnknownLaunchBlock(t *testing.T) {
 						terminal.CreatedMS++
 					} else {
 						terminal.Keep = true
+						terminal.Cwd = t.TempDir()
 					}
 					l.hc.SetTerminal(terminal)
 				}

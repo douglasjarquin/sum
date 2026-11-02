@@ -104,3 +104,27 @@ func TestHCTemplateValidationDetectsChanges(t *testing.T) {
 		t.Fatal("quoted keymap override accepted")
 	}
 }
+
+func TestHCTemplateRefusesPermissionSelectorAndTrustDrift(t *testing.T) {
+	for _, changed := range []string{"profile = 'other'\n", "profile = 'default'\n[projects.working]\ntrust_level = 'trusted'\n"} {
+		t.Run(changed, func(t *testing.T) {
+			root, home, config := t.TempDir(), t.TempDir(), t.TempDir()
+			codexBinary(t, root, "0.166.0")
+			path := filepath.Join(home, "config.toml")
+			if err := os.WriteFile(path, []byte("profile = 'default'\n[projects.working]\ntrust_level = 'untrusted'\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			options := HCTemplateOptions{Cwd: root, CodexHome: home}
+			spec, err := PrepareHCTemplate(root, config, "codex", nil, options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, []byte(changed), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err = ValidateHCTemplate(config, spec, options); err == nil {
+				t.Fatal("permission selector drift accepted")
+			}
+		})
+	}
+}

@@ -92,3 +92,78 @@ func TestNativeProgramStoppedIgnoresReleasedAttemptAndRequiresExitAndOriginalPID
 		t.Fatal("other machine endpoint was accepted")
 	}
 }
+
+func TestUninitializedNativeProgramRequiresExitAndNoCheckoutSurvivors(t *testing.T) {
+	fixture := hctest.New(t)
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	host, err := s.Machine()
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: fixture.CoreID, Socket: fixture.Socket, Session: "sum-test", Address: "t2", CreatedMS: 2, Task: "t-abcdef123456", Role: "worker", Attempt: "x-abcdef123456", BindingGeneration: 1, Cwd: t.TempDir()}
+	process := exec.Command("sleep", "60")
+	if err = process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	alive := true
+	defer func() {
+		if alive {
+			_ = process.Process.Kill()
+			_ = process.Wait()
+		}
+	}()
+	pid := uint32(process.Process.Pid)
+	if _, err = s.Register(endpoint, "worker", endpoint.Task, (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid}).Record(store.Now())); err != nil {
+		t.Fatal(err)
+	}
+	finished, exit := uint64(3), int32(0)
+	terminal := hcclient.Terminal{Address: endpoint.Address, CreatedMS: 2, Cwd: endpoint.Cwd, State: "finished", FinishedMS: &finished, ExitCode: &exit}
+	fixture.SetTerminal(terminal)
+	if proof := NativeProgramStopped(s, endpoint); proof.Outcome == OutcomeStopped {
+		t.Fatal("surviving original PID released")
+	}
+	_ = process.Process.Kill()
+	_ = process.Wait()
+	alive = false
+	survivor := exec.Command("sleep", "60")
+	survivor.Dir = endpoint.Cwd
+	if err = survivor.Start(); err != nil {
+		t.Fatal(err)
+	}
+	survivorAlive := true
+	defer func() {
+		if survivorAlive {
+			_ = survivor.Process.Kill()
+			_ = survivor.Wait()
+		}
+	}()
+	if proof := NativeProgramStopped(s, endpoint); proof.Outcome == OutcomeStopped {
+		t.Fatal("surviving checkout process released")
+	}
+	_ = survivor.Process.Kill()
+	_ = survivor.Wait()
+	survivorAlive = false
+	if proof := NativeProgramStopped(s, endpoint); proof.Outcome != OutcomeStopped {
+		t.Fatal(proof.Reason)
+	}
+	terminal.ExitCode = nil
+	fixture.SetTerminal(terminal)
+	if proof := NativeProgramStopped(s, endpoint); proof.Outcome == OutcomeStopped {
+		t.Fatal("missing native exit metadata released")
+	}
+	terminal.ExitCode = &exit
+	fixture.SetTerminal(terminal)
+	client := fixture.Client()
+	if _, err = client.Remove(context.Background(), endpoint.Address); err != nil {
+		t.Fatal(err)
+	}
+	if proof := NativeProgramStopped(s, endpoint); proof.Outcome == OutcomeStopped {
+		t.Fatal("native absence proved uninitialized exit")
+	}
+}

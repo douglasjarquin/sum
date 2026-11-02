@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
+	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -22,6 +24,16 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
+	}
+	if err = s.CheckMachine(task); err != nil {
+		return nil, err
+	}
+	if err = maintenance.Refuse(task, "Execution reconcile"); err != nil {
+		return nil, err
+	}
+	parent := store.EndpointFromContext(asObject(field(task, "parent")))
+	if !parent.Native().SameAuthority(store.EndpointFromContext(ctx).Native()) {
+		return nil, fmt.Errorf("task belongs to another coordinator")
 	}
 	worker, err := reservations.Worker(task)
 	if err != nil {
@@ -45,7 +57,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if err = decodeNative(field(native, "native_template"), &template); err != nil {
 		return nil, err
 	}
-	parent := store.EndpointFromContext(asObject(field(task, "parent")))
+	before, _ := ordjson.MarshalCompact(native)
 	client := hcclient.Client{Socket: parent.Socket, CoreID: parent.CoreID}
 	observe, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -70,7 +82,17 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if field(w, "id") != attempt || field(asObject(field(w, "native_launch")), "opening_delivery") != nil || field(current, "worker_endpoint") != nil {
 		return nil, fmt.Errorf("creation intent changed during reconciliation")
 	}
+	if err = maintenance.Refuse(current, "Execution reconcile"); err != nil {
+		return nil, err
+	}
+	if !parent.Native().SameAuthority(store.EndpointFromContext(asObject(field(current, "parent"))).Native()) {
+		return nil, fmt.Errorf("task parent changed during discovery")
+	}
 	n := asObject(field(w, "native_launch"))
+	after, _ := ordjson.MarshalCompact(n)
+	if !bytes.Equal(before, after) {
+		return nil, fmt.Errorf("creation intent changed during discovery")
+	}
 	n.Set("effect", "created")
 	n.Set("endpoint", endpoint.Object())
 	first := ordjson.NewObject()

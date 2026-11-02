@@ -189,11 +189,28 @@ func TestCoordinatorStartRecoverAndRestartCLI(t *testing.T) {
 					t.Fatalf("recovery: %v %v", recovered, err)
 				}
 			}
+			exited, err := run(start...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			exitedEndpoint := asMap(exited["endpoint"])
+			exitedAttempt := asString(exitedEndpoint["attempt"])
+			if _, err = run("recover", "--attempt", exitedAttempt); err == nil {
+				t.Fatal("live uninitialized coordinator released")
+			}
+			f.Exit(asString(exitedEndpoint["address"]), 0)
+			stopped, err := run("recover", "--attempt", exitedAttempt)
+			if err != nil || stopped["effect"] != "stopped" {
+				t.Fatalf("created pre-init exit recovery: %v %v", stopped, err)
+			}
+			if _, err = os.Stat(filepath.Join(st.Home, "coordinator-launches", exitedAttempt+".json")); err != nil {
+				t.Fatal("created failed attempt lost", err)
+			}
 			created, err := run(start...)
 			if err != nil || created["effect"] != "created" {
 				t.Fatalf("new start: %v %v", created, err)
 			}
-			if len(f.Terminals()) != 2 {
+			if len(f.Terminals()) != 3 {
 				t.Fatalf("unexpected terminals: %v", f.Terminals())
 			}
 			if owner, err := st.Owner(); err != nil || owner != nil {

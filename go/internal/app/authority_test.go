@@ -154,7 +154,7 @@ func TestTaskActorRequiresLiveProcessReceiptAndCurrentBinding(t *testing.T) {
 			}
 		})
 	}
-	for _, change := range []string{"core", "attempt", "generation", "creation", "foreground", "program", "kept", "finished", "historical"} {
+	for _, change := range []string{"core", "attempt", "generation", "creation", "foreground", "program", "kept-shell", "finished", "historical"} {
 		t.Run(change, func(t *testing.T) {
 			l := taskActorLab(t, "worker")
 			endpoint := l.endpoint
@@ -174,8 +174,9 @@ func TestTaskActorRequiresLiveProcessReceiptAndCurrentBinding(t *testing.T) {
 				pid := uint32(102)
 				l.terminal.PID = &pid
 				l.fixture.SetTerminal(l.terminal)
-			case "kept":
+			case "kept-shell":
 				l.terminal.Keep = true
+				l.terminal.Foreground = &hcclient.Foreground{PID: 999, Argv: []string{"sh"}}
 				l.fixture.SetTerminal(l.terminal)
 			case "finished":
 				l.fixture.Exit(endpoint.Address, 0)

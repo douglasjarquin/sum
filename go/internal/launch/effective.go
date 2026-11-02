@@ -43,7 +43,7 @@ func inputSettings(config map[string]any) map[string]any {
 	result := map[string]any{}
 	for key, value := range config {
 		switch key {
-		case "keymap", "keybindings", "vimMode", "multiline", "multiline_mode", "simple_mode", "program_status", "sandbox", "sandbox_mode", "sandbox_workspace_write", "approval_policy", "approval_mode", "permissions", "permission_mode", "permissionMode", "defaultMode", "allowed_tools", "allowedTools", "disallowedTools", "trust", "disableBypassPermissionsMode", "skipDangerousModePermissionPrompt", "env":
+		case "profile", "trust_level", "keymap", "keybindings", "vimMode", "multiline", "multiline_mode", "simple_mode", "program_status", "sandbox", "sandbox_mode", "sandbox_workspace_write", "approval_policy", "approval_mode", "permissions", "permission_mode", "permissionMode", "defaultMode", "allowed_tools", "allowedTools", "disallowedTools", "trust", "disableBypassPermissionsMode", "skipDangerousModePermissionPrompt", "env":
 			result[key] = value
 		default:
 			if child, ok := value.(map[string]any); ok {

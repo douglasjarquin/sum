@@ -119,11 +119,19 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		if lock, e := s.Lock(); e == nil {
 			if current, e := s.ReadTask(taskID); e == nil {
 				if w, e := reservations.Worker(current); e == nil && asString(policyField(w, "id")) == attemptID {
-					asObject(policyField(w, "native_launch")).Set("effect", effect)
+					n := asObject(policyField(w, "native_launch"))
+					if policyField(current, "worker_endpoint") != nil || policyField(w, "native_receipt") != nil {
+						n.Set("late_creation_error", runErr.Error())
+					} else {
+						n.Set("effect", effect)
+					}
 					_ = s.SaveTask(current)
 				}
 			}
 			lock()
+		}
+		if current, readErr := s.ReadTask(taskID); readErr == nil && policyField(current, "worker_endpoint") != nil {
+			return current, nil
 		}
 		return FailStart(s, taskID, runErr)
 	}
@@ -150,8 +158,17 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 			return nil, fmt.Errorf("worker attempt changed during creation; inspect terminal %s", result.Address)
 		}
 		native = asObject(policyField(currentWorker, "native_launch"))
+		if existing := asObject(policyField(current, "worker_endpoint")); existing != nil {
+			if !store.EndpointFromContext(existing).Native().SameAuthority(endpoint.Native()) {
+				return nil, fmt.Errorf("late creation identity conflicts with reconciled endpoint")
+			}
+			return current, nil
+		}
 		native.Set("endpoint", endpoint.Object())
 		var first any
+		if result.FirstMessage == nil && template.Schema == 2 {
+			result.FirstMessage = &hcclient.FirstMessage{Sent: false}
+		}
 		if result.FirstMessage != nil {
 			first, _ = ordjson.FromValue(result.FirstMessage)
 		}
@@ -271,6 +288,18 @@ func deliverWorkerOpening(s *store.Store, task *ordjson.Object, spec launch.HCTe
 		return task, err
 	}
 	defer release()
+	current, err := s.ReadTask(ep.Task)
+	if err != nil {
+		return nil, err
+	}
+	w, err := reservations.Worker(current)
+	if err != nil {
+		return nil, err
+	}
+	n := asObject(policyField(w, "native_launch"))
+	if policyField(w, "native_receipt") != nil || policyField(n, "opening_delivery") != nil || policyField(n, "redelivery") != nil {
+		return current, nil
+	}
 	launch.DeliverOpening(ctx, &client, initial, spec, opening, func(progress launch.OpeningProgress) error {
 		unlock, err := s.Lock()
 		if err != nil {

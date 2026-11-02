@@ -251,6 +251,24 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 			out.Set("action", "receipt-confirmed")
 			return out, nil
 		}
+		if prior := objectField(intent, "result"); prior != nil {
+			var priorRun hcclient.RunResult
+			if decodeObject(prior, &priorRun) == nil && priorRun.Address != "" {
+				if runErr == nil && (priorRun.Address != run.Address || priorRun.CreatedMS != run.CreatedMS) {
+					return nil, fmt.Errorf("late creation identity conflicts with reconciled reviewer")
+				}
+				if runErr != nil {
+					intent.Set("late_creation_error", runErr.Error())
+					if err = s.SaveTask(current); err != nil {
+						return nil, err
+					}
+				}
+				out := ordjson.NewObject()
+				out.Set("task", endpoint.Task)
+				out.Set("reviewer", saved)
+				return out, nil
+			}
+		}
 		intent.Set("completed_at", store.Now())
 		if runErr != nil {
 			state := "uncertain"
@@ -292,6 +310,9 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 		templateErr := decodeObject(objectField(saved, "native_template"), &template)
 		templateValid := templateErr == nil && template.Spec.Name != "" && run.Template != nil && *run.Template == template.Spec.Name && run.Submit != nil && *run.Submit == template.Spec.Submit
 
+		if run.FirstMessage == nil && template.Spec.Schema == 2 {
+			run.FirstMessage = &hcclient.FirstMessage{Sent: false}
+		}
 		intent.Set("state", "created")
 		result, _ := ordjson.FromValue(run)
 		intent.Set("result", result)

@@ -34,6 +34,18 @@ func deliverReviewerOpening(s *store.Store, taskID, attempt string, initial hccl
 		return nil, err
 	}
 	defer release()
+	task, err = s.ReadTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+	reviewer = objectField(task, "reviewer")
+	intent := objectField(reviewer, "native_launch")
+	if objectField(reviewer, "native_receipt") != nil || objectField(intent, "opening_delivery") != nil || asString(objectField(reviewer, "prompt"), "redeliver_attempt") != "" {
+		out := ordjson.NewObject()
+		out.Set("task", taskID)
+		out.Set("reviewer", reviewer)
+		return out, nil
+	}
 	client := hcclient.Client{Socket: ep.Socket, CoreID: ep.CoreID}
 	launch.DeliverOpening(ctx, &client, initial, template.Spec, asString(reviewer, "opening"), func(progress launch.OpeningProgress) error {
 		unlock, err := s.Lock()

@@ -134,8 +134,8 @@ func selectedHCRoute(s *store.Store, socket, session, config string) (hcboot.Rou
 			if err = json.Unmarshal(data, &route); err != nil {
 				return route, err
 			}
-			if route.Socket == "" || route.Session == "" || route.ConfigHome == "" {
-				return route, fmt.Errorf("saved HC route is incomplete")
+			if err = route.Validate(); err != nil {
+				return route, err
 			}
 			return route, nil
 		}

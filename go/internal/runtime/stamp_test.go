@@ -66,3 +66,18 @@ func TestMarker_noManifestNoGitIsTheBareVersion(t *testing.T) {
 		t.Fatalf("Marker = %q, want the bare version stamp", got)
 	}
 }
+
+func TestBuildIdentityMarksModifiedEmbeddedSource(t *testing.T) {
+	oldRevision, oldDigest, oldModified := BuildSourceRevision, BuildSourceDigest, BuildSourceModified
+	t.Cleanup(func() {
+		BuildSourceRevision, BuildSourceDigest, BuildSourceModified = oldRevision, oldDigest, oldModified
+	})
+	BuildSourceRevision, BuildSourceDigest, BuildSourceModified = stampTestSHA, "content-digest", "true"
+	if !strings.HasSuffix(Identity(), "+dirty") {
+		t.Fatalf("modified build claims clean identity: %s", Identity())
+	}
+	identity := BuildIdentity()
+	if identity["source_modified"] != true || identity["source_digest"] != "content-digest" {
+		t.Fatalf("modified provenance absent: %v", identity)
+	}
+}

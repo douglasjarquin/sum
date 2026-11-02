@@ -171,7 +171,9 @@ def build_native_artifact(target):
         build_env.pop(variable, None)
     revision_result = run(["git", "-C", target, "rev-parse", "HEAD"], check=False)
     revision = revision_result.stdout.strip() if revision_result.returncode == 0 else ""
-    flags = f"-X github.com/douglasjarquin/sum/go/internal/runtime.BuildSourceRevision={revision} -X github.com/douglasjarquin/sum/go/internal/runtime.BuildSourceDigest={source_digest}"
+    modified_result = run(["git", "-C", target, "status", "--porcelain", "--untracked-files=normal", "--", "go"], check=False)
+    modified = "true" if modified_result.returncode != 0 or modified_result.stdout.strip() else "false"
+    flags = f"-X github.com/douglasjarquin/sum/go/internal/runtime.BuildSourceRevision={revision} -X github.com/douglasjarquin/sum/go/internal/runtime.BuildSourceDigest={source_digest} -X github.com/douglasjarquin/sum/go/internal/runtime.BuildSourceModified={modified}"
     for name, package in outputs.items():
         if (name, package) not in pending:
             continue
@@ -186,7 +188,7 @@ def build_native_artifact(target):
                 os.link(temporary, output)
             except FileExistsError:
                 raise InstallError(f"Native artifact {output} appeared during build; preserved without claiming it")
-            receipt_path.write_text(json.dumps({"source_digest": source_digest, "source_sha": revision, "binary_sha256": sha256_file(output)}, sort_keys=True) + "\n")
+            receipt_path.write_text(json.dumps({"source_digest": source_digest, "source_sha": revision, "source_modified": modified == "true", "binary_sha256": sha256_file(output)}, sort_keys=True) + "\n")
         finally:
             if temporary.exists():
                 temporary.unlink()

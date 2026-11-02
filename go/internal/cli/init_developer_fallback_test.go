@@ -195,14 +195,10 @@ func TestInitRecognizesPendingExplicitCoordinatorLaunch(t *testing.T) {
 	endpointValue := asMap(launchRecord["endpoint"])
 	address := asString(endpointValue["address"])
 	client := f.Client()
-	terminal, err := client.Get(context.Background(), address)
+	_, err = client.Get(context.Background(), address)
 	if err != nil {
 		t.Fatal(err)
 	}
-	pid := uint32(201)
-	terminal.PID = &pid
-	terminal.Foreground = &hcclient.Foreground{PID: 202, Name: "codex", Argv: spec.Argv, Cwd: runtimeRoot}
-	f.SetTerminal(terminal)
 	for key, value := range endpointEnv(endpointValue) {
 		t.Setenv(key, value)
 	}

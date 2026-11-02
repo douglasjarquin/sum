@@ -1,6 +1,8 @@
 package hcboot
 
 import (
+	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,5 +176,29 @@ func TestEnsureRetainsNativeStartFailureAndStopsSequence(t *testing.T) {
 	calls := readLog(t, log)
 	if strings.Count(calls, "server status") != 1 || strings.Contains(calls, "restart") {
 		t.Fatal(calls)
+	}
+}
+
+func TestEnsureStartsAfterStaleSocketWithoutListener(t *testing.T) {
+	root := t.TempDir()
+	log := filepath.Join(root, "hc.log")
+	writeHC(t, root, log, "down")
+	route, err := Select("", "sum-test-stale", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := hctest.New(t)
+	route.Socket = filepath.Join(filepath.Dir(fixture.Socket), "stale.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: route.Socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err = listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	report := EnsureRoute(root, route)
+	if reportValue(t, report, "ok") != true || !strings.Contains(readLog(t, log), "server start") {
+		t.Fatalf("stale socket blocked start: %v", report)
 	}
 }

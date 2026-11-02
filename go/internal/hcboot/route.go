@@ -2,10 +2,12 @@ package hcboot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
@@ -114,10 +116,23 @@ func (r Route) compatibility() error {
 	defer cancel()
 	hello, err := hcclient.Inspect(ctx, r.Socket)
 	if err != nil {
+		if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
 	if r.CoreID != "" && hello.Core.ID != r.CoreID {
 		return fmt.Errorf("selected core changed: expected %s observed %s", r.CoreID, hello.Core.ID)
+	}
+	return nil
+}
+
+func (r Route) Validate() error {
+	if r.Session == "" || filepath.Base(r.Session) != r.Session || r.Session == "." || r.Session == ".." {
+		return fmt.Errorf("invalid HC session")
+	}
+	if !filepath.IsAbs(r.Socket) || !filepath.IsAbs(r.ConfigHome) || !filepath.IsAbs(r.StateHome) || (r.RuntimeDir != "" && !filepath.IsAbs(r.RuntimeDir)) {
+		return fmt.Errorf("HC route requires absolute socket and XDG paths")
 	}
 	return nil
 }

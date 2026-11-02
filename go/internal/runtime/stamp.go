@@ -52,6 +52,7 @@ func Marker() string { return "<!-- sum:" + Identity() + " -->" }
 
 var BuildSourceRevision string
 var BuildSourceDigest string
+var BuildSourceModified string
 
 func buildMetadata() map[string]any {
 	result := map[string]any{"verified_source": false}
@@ -61,6 +62,9 @@ func buildMetadata() map[string]any {
 	}
 	if BuildSourceDigest != "" {
 		result["source_digest"] = BuildSourceDigest
+	}
+	if BuildSourceModified != "" {
+		result["source_modified"] = BuildSourceModified == "true"
 	}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		result["go_version"] = info.GoVersion

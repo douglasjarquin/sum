@@ -39,7 +39,7 @@ Sum never answers them or changes permissions to make a launch pass.
 | Created, opening proven unsent | `execution redeliver TASK --attempt ID`, `coordinator redeliver --attempt ID`, or `reviewer redeliver TASK --attempt ID` |
 | Worker init receipt pending | Inspect, then `execution confirm TASK --attempt ID` after the matching init |
 | Proven no-effect refusal | Correct the prerequisite; `execution park TASK --attempt ID` then resume the worker, `coordinator recover --attempt ID`, or `reviewer recover TASK --attempt ID` then explicitly launch |
-| Original process exited before init | Inspect exit/output, then park only when native exit, original PID death and checkout survivor evidence prove stop |
+| Original process exited before init | Inspect exit/output, then `execution park TASK --attempt ID`, `coordinator recover --attempt ID`, or `reviewer recover TASK --attempt ID`; native exit, original PID death and checkout survivor evidence must prove stop |
 | Send submitted or ambiguous | Inspect and reconcile the application receipt; never blindly replay |
 | Program replaced by a recovery shell | Stop using old authority; inspect and perform an explicit new bootstrap or verified rebind |
 

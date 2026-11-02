@@ -49,7 +49,7 @@ func ValidateNativeContract(offered contract.Release) error {
 		values  []int
 		version int
 	}{
-		{"state", s.StateSchema, contract.StateSchema}, {"brief", s.BriefSchema, contract.BriefSchema}, {"endpoint", s.EndpointSchema, contract.EndpointSchema}, {"notification", s.NotificationProtocol, contract.NotificationProtocol}, {"observer", s.ObserverProtocol, contract.ObserverProtocol}, {"machine identity", s.MachineIdentity, contract.MachineIdentity}, {"wake", s.WakeProtocol, contract.WakeProtocol},
+		{"HC template", s.HCTemplateSchema, contract.HCTemplateSchema}, {"state", s.StateSchema, contract.StateSchema}, {"brief", s.BriefSchema, contract.BriefSchema}, {"endpoint", s.EndpointSchema, contract.EndpointSchema}, {"notification", s.NotificationProtocol, contract.NotificationProtocol}, {"observer", s.ObserverProtocol, contract.ObserverProtocol}, {"machine identity", s.MachineIdentity, contract.MachineIdentity}, {"wake", s.WakeProtocol, contract.WakeProtocol},
 	} {
 		if !slices.Contains(required.values, required.version) {
 			return fmt.Errorf("target lacks HC %s capability %d", required.name, required.version)

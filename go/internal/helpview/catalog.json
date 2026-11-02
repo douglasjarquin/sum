@@ -924,7 +924,7 @@
       "launch": "Create a uniquely named native reviewer terminal or use its verified live endpoint; creation and opening-message effects are separate",
       "redeliver": "Explicitly recover one proven-unsent opening message for the exact reviewer attempt; never replay uncertainty",
       "reconcile": "Corroborate a lost reviewer creation reply without relaunching or sending",
-      "recover": "Retain and release a proven no-effect reviewer attempt for explicit corrected launch"
+      "recover": "Retain a proven no-effect or stopped-before-init reviewer attempt for explicit successor launch; native exit, original PID death and checkout survivors remain guarded"
     },
     "read_only": false,
     "read_only_subcommands": []
@@ -3025,7 +3025,7 @@
   },
   "coordinator-recover": {
     "topic": "coordinator-recover",
-    "help": "Archive one exact coordinator attempt only after proven pre-creation refusal and an identity-bound HC observation finds no matching terminal; never launch, resend or claim authority",
+    "help": "Archive one exact uninitialized coordinator attempt after proven no creation or conclusive native exit, original PID death and checkout survivor checks; never launch, resend or claim authority",
     "arguments": [
       {
         "name": "--attempt",
@@ -3140,7 +3140,7 @@
   },
   "reviewer-recover": {
     "topic": "reviewer-recover",
-    "help": "Retain and release a proven no-effect reviewer attempt for explicit corrected launch",
+    "help": "Retain a proven no-effect or stopped-before-init reviewer attempt for explicit successor launch; native exit, original PID death and checkout survivors remain guarded",
     "arguments": [
       {
         "name": "task",

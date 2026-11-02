@@ -47,6 +47,14 @@ func (o *rootOptions) addInspectCommand(root *cobra.Command) {
 				}
 				ep = store.EndpointFromContext(inspectObject(task, "worker_endpoint"))
 				launchRecord = inspectObject(record, "native_launch")
+				if ep.Address == "" {
+					ep = store.EndpointFromContext(inspectObject(task, "parent"))
+					ep.Address = ""
+					ep.CreatedMS = 0
+					ep.Task = args[0]
+					ep.Role = "worker"
+					ep.Attempt = inspectString(record, "id")
+				}
 			case "reviewer":
 				record = inspectObject(task, "reviewer")
 				ep = store.EndpointFromContext(record)
@@ -62,6 +70,30 @@ func (o *rootOptions) addInspectCommand(root *cobra.Command) {
 		out.Set("endpoint", ep.Object())
 		out.Set("launch", launchRecord)
 		out.Set("read_only", true)
+		group := "coordinator"
+		if role == "worker" {
+			group = "execution"
+		} else if role == "reviewer" {
+			group = "reviewer"
+		}
+		action := func(verb string) any {
+			args := []string{filepath.Join(o.runtimeRoot, "bin/sumctl"), "--home", s.Root, group, verb}
+			if ep.Task != "" {
+				args = append(args, ep.Task)
+			}
+			value, _ := ordjson.FromValue(append(args, "--attempt", ep.Attempt))
+			return value
+		}
+		if ep.Attempt != "" {
+			out.Set("reconcile", action("reconcile"))
+			out.Set("redeliver_if_proven_unsent", action("redeliver"))
+			if role != "worker" {
+				out.Set("recover_if_proven_stopped_or_uncreated", action("recover"))
+			} else {
+				out.Set("park_if_proven_stopped", action("park"))
+			}
+		}
+
 		if ep.Address == "" || ep.CoreID == "" {
 			out.Set("note", "No returned endpoint; creation remains ambiguous. Saved intent is preserved; no launch or input was replayed.")
 			return emitOrdjson(cmd.OutOrStdout(), out)
@@ -99,4 +131,13 @@ func inspectObject(o *ordjson.Object, key string) *ordjson.Object {
 	v, _ := o.Get(key)
 	out, _ := v.(*ordjson.Object)
 	return out
+}
+
+func inspectString(o *ordjson.Object, key string) string {
+	if o == nil {
+		return ""
+	}
+	v, _ := o.Get(key)
+	s, _ := v.(string)
+	return s
 }

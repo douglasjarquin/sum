@@ -20,6 +20,7 @@ const (
 	EndpointSchema       = 2
 	NotificationProtocol = 2
 	ObserverProtocol     = 1
+	HCTemplateSchema     = 2
 )
 
 type Contracts struct {
@@ -30,6 +31,7 @@ type Contracts struct {
 }
 
 type Supports struct {
+	HCTemplateSchema     []int `json:"hc_template_schema"`
 	EndpointSchema       []int `json:"endpoint_schema"`
 	NotificationProtocol []int `json:"notification_protocol"`
 	ObserverProtocol     []int `json:"observer_protocol"`
@@ -49,6 +51,6 @@ func BuildRelease() Release {
 	return Release{
 		SumVersion: SumVersion,
 		Contracts:  Contracts{HCCore: HCVersion, HCGeneration: HCGeneration, EndpointSchema: EndpointSchema, NotificationProtocol: NotificationProtocol},
-		Supports:   Supports{EndpointSchema: []int{EndpointSchema}, NotificationProtocol: []int{NotificationProtocol}, ObserverProtocol: []int{ObserverProtocol}, StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}},
+		Supports:   Supports{HCTemplateSchema: []int{0, HCTemplateSchema}, EndpointSchema: []int{EndpointSchema}, NotificationProtocol: []int{NotificationProtocol}, ObserverProtocol: []int{ObserverProtocol}, StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}},
 	}
 }

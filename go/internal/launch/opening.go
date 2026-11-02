@@ -60,7 +60,7 @@ func DeliverOpening(ctx context.Context, client *hcclient.Client, initial hcclie
 			break
 		}
 		if observed.State != "live" {
-			progress.Detail = "program exited before opening; inspect its output and park with stop evidence"
+			progress.Detail = "program exited before opening; inspect its output, then use exact-attempt recovery with stop evidence"
 			break
 		}
 		originalErr := OriginalProgram(initial, observed, spec)
@@ -109,6 +109,9 @@ func DeliverOpening(ctx context.Context, client *hcclient.Client, initial hcclie
 		}
 	}
 complete:
+	if progress.State == "readiness-pending" {
+		progress.State = "not-delivered"
+	}
 	if err := persist(progress); err != nil {
 		progress.State, progress.Detail = "uncertain", err.Error()
 	}

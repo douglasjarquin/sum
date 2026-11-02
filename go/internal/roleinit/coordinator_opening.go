@@ -60,6 +60,9 @@ func deliverCoordinatorOpening(s *store.Store, attempt string, initial bool) (*o
 	}
 	delivery := asObjectCoordinator(record, "opening_delivery")
 	if state := asString(delivery, "state"); state == "in-flight" || state == "uncertain" || state == "submitted" {
+		if initial {
+			return record, nil
+		}
 		return nil, fmt.Errorf("coordinator opening already claimed/submitted or ambiguous; inspect without replay")
 	}
 	if !initial {

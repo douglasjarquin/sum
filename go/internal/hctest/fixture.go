@@ -23,13 +23,15 @@ type Call struct {
 }
 
 type Fault struct {
-	RPCError     *hcclient.RPCError
-	Delay        time.Duration
-	LoseResponse bool
-	RefuseKind   string
-	RunPID       *uint32
-	FirstMessage *hcclient.FirstMessage
-	SendResult   *hcclient.SendResult
+	RPCError      *hcclient.RPCError
+	Delay         time.Duration
+	LoseResponse  bool
+	RefuseKind    string
+	RunPID        *uint32
+	RunRealtime   bool
+	RunForeground *hcclient.Foreground
+	FirstMessage  *hcclient.FirstMessage
+	SendResult    *hcclient.SendResult
 }
 type subscriber struct {
 	params   hcclient.SubscribeParams
@@ -489,6 +491,9 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 			pid = *fault.RunPID
 		}
 		value.PID = &pid
+		if fault.RunRealtime {
+			value.CreatedMS = uint64(time.Now().UnixMilli())
+		}
 		saved := value
 		if value.Template != nil {
 			parts := regexp.MustCompile(`'([^']*)'`).FindAllStringSubmatch(value.Argv[2], -1)
@@ -504,6 +509,12 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 			}
 			saved.Foreground = &hcclient.Foreground{PID: int32(pid), Name: "fixture-program", Argv: program, Cwd: value.Cwd}
 			saved.Status = &hcclient.Status{State: "idle"}
+		}
+		if value.Template == nil && len(args.Argv) > 0 {
+			saved.Foreground = &hcclient.Foreground{PID: int32(pid), Name: args.Argv[0], Argv: args.Argv, Cwd: value.Cwd}
+		}
+		if fault.RunForeground != nil {
+			saved.Foreground = fault.RunForeground
 		}
 		f.terminals[address] = &terminal{Terminal: saved, outlive: args.OutliveParent}
 		f.eventLocked(address, "created", value)
