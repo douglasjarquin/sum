@@ -28,8 +28,13 @@ Creation and opening delivery are separate.
 New namespaced templates have an empty body; the approved installed-helper/procedure/brief pointer is saved in the launch record before creation.
 The endpoint is saved before readiness is awaited.
 Native submission is diagnostic; only the matching role init receipt establishes authority.
-Trust and authentication screens remain human actions.
-Sum never answers them or changes permissions to make a launch pass.
+Before creating a Grok worker, reviewer or coordinator terminal, Sum records trust for its workspace in the selected `GROK_HOME/trusted_folders.toml`.
+Git worktrees share the common repository's trust entry; a workspace outside Git uses its own resolved directory.
+Concurrent Sum launches serialize trust writes so they cannot append duplicate entries.
+An explicit `trusted = false`, invalid trust file or failed write refuses creation and records a not-submitted attempt.
+This grants workspace trust for repository configuration, MCP, LSP and hooks; it does not enable Grok's tool auto-approval or bypass permission mode.
+Authentication remains a human action.
+Existing terminals launched by an older release keep their original process and pending prompt; installing this change does not answer or relaunch them.
 
 | Saved outcome | Explicit next action |
 | --- | --- |

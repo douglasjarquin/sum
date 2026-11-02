@@ -124,7 +124,16 @@ func StartCoordinator(s *store.Store, opts CoordinatorStartOpts) (*ordjson.Objec
 	}
 	runCtx, runCancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer runCancel()
-	result, runErr := client.Run(runCtx, intent)
+	var result hcclient.RunResult
+	var runErr error
+	if spec.Harness == "grok" {
+		runErr = launch.TrustGrokRepository(runCtx, spec.InputEnv["GROK_HOME"], intent.Cwd)
+	}
+	if runErr != nil {
+		runErr = &hcclient.Error{Method: "terminal.run", Effect: hcclient.NotSubmitted, Cause: runErr}
+	} else {
+		result, runErr = client.Run(runCtx, intent)
+	}
 	created, err := func() (*ordjson.Object, error) {
 		unlock, err = s.Lock()
 		if err != nil {
