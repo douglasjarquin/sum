@@ -6,6 +6,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/store"
+	"github.com/douglasjarquin/sum/go/internal/updatecmd"
 	"github.com/spf13/cobra"
 )
 
@@ -81,6 +82,24 @@ func (o *rootOptions) addReleaseCommands(root *cobra.Command) {
 	}
 	stageCmd.Flags().StringVar(&ref, "ref", "", "")
 	releaseCmd.AddCommand(stageCmd)
+	releaseCmd.AddCommand(&cobra.Command{
+		Use:  "repair-template-contract SHA",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			st, err := store.Open(o.home)
+			if err != nil {
+				return err
+			}
+			if err = guard.Candidate(o.installRoot, st, "release-repair-template-contract"); err != nil {
+				return err
+			}
+			view, err := updatecmd.RepairReleaseTemplateContract(st, args[0])
+			if err != nil {
+				return err
+			}
+			return emitOrdjson(cmd.OutOrStdout(), view)
+		},
+	})
 
 	root.AddCommand(releaseCmd)
 }

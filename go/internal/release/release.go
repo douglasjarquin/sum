@@ -274,6 +274,17 @@ func manifestHasSkill(files *ordjson.Object, current string) bool {
 // agree. Returns a *VerifyError for every expected validation failure (mirroring `raise SumError`); any other
 // error is an unexpected filesystem failure and is not meant to be caught the same way.
 func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
+	manifest, err := verifyReleaseContents(path, expectedSHA)
+	if err != nil {
+		return nil, err
+	}
+	if err = verifyManifestCapabilities(path, manifest); err != nil {
+		return nil, verifyErrorf("%s: %v", path, err)
+	}
+	return manifest, nil
+}
+
+func verifyReleaseContents(path, expectedSHA string) (*ordjson.Object, error) {
 	manifestPath := filepath.Join(path, Manifest)
 	if !isRegularFileOrSymlinkedFile(manifestPath) {
 		return nil, verifyErrorf("%s: no %s", path, Manifest)
@@ -423,9 +434,6 @@ func VerifyRelease(path, expectedSHA string) (*ordjson.Object, error) {
 			}
 		}
 	}
-	if err := verifyManifestCapabilities(path, manifest); err != nil {
-		return nil, verifyErrorf("%s: %v", path, err)
-	}
 	hc := asObject(getPath(manifest, "dependencies", "hc"))
 	if !offlineRuntimeReceipt(hc) {
 		if err := VerifyHCRuntime(context.Background(), path); err != nil {
@@ -465,6 +473,14 @@ func verifyManifestCapabilities(path string, manifest *ordjson.Object) error {
 		return err
 	}
 	if !reflect.DeepEqual(offered, recorded) {
+		if supports := asObject(getPath(manifest, "supports")); supports != nil {
+			if _, exists := supports.Get("hc_template_schema"); !exists {
+				recorded.Supports.HCTemplateSchema = offered.Supports.HCTemplateSchema
+				if reflect.DeepEqual(offered, recorded) {
+					return fmt.Errorf("staged helper capability report differs from release manifest: HC template schemas were omitted; use a verified merged helper with `release repair-template-contract %s` before retrying activation", asString(getPath(manifest, "source", "sha")))
+				}
+			}
+		}
 		return fmt.Errorf("staged helper capability report differs from release manifest")
 	}
 	return nil
