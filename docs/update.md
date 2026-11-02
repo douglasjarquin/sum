@@ -61,6 +61,36 @@ A startup failure is fail-open; explicit `pump`, binding and task-write delivery
 Only a proven owned observer in the supported installation/core/session scope may be replaced or stopped.
 A second same-host scope and remote Sum execution remain unsupported and are refused before binding.
 
+## Recovery before activation
+
+An older serving helper can refuse activation because it cannot reconcile a lost worker-creation reply or the observer's launcher-to-native executable transition.
+Stage the merged repair with the installed helper and inspect the returned release SHA, path and successful verification before proceeding.
+From the registered coordinator terminal at the installation root, the staged helper can perform recovery without moving `.local/current`:
+
+```sh
+./bin/sumctl update stage
+repair_sha=REPLACE_WITH_THE_VERIFIED_STAGED_SHA
+SUM_INSTALL_ROOT="$PWD" "$PWD/.local/releases/$repair_sha/bin/sumctl" --home "$PWD/.sum" hook enable
+SUM_INSTALL_ROOT="$PWD" "$PWD/.local/releases/$repair_sha/bin/sumctl" --home "$PWD/.sum" execution reconcile TASK --attempt ATTEMPT
+```
+
+Use only the exact merged release returned by successful staging, never a development checkout or an unverified executable.
+The ordinary coordinator, instance, core and attempt checks still apply.
+These recovery commands do not activate the staged release, answer trust prompts, send worker input or release reservations.
+
+`hook enable` can repair the saved Bash-launcher proof only when the original endpoint, creation, PID, scope, receipt, command arguments and checkout still match, and a local process observation corroborates the expected native executable.
+It preserves the launcher evidence and records the native foreground without starting a replacement observer.
+Future observer startup waits through the Bash launcher instead of recording it as the final foreground.
+
+Worker reconciliation can bind a historical creation intent to its one corroborated original live terminal.
+It does not infer that the historical opening was unsent: delivery stays unknown, redelivery stays refused and the attempt remains reserved.
+Inspect that terminal and let the user decide any trust or authentication prompt.
+Only the exact worker-init receipt permits `execution confirm`; only proven original-process exit and survivor checks permit `execution park`.
+Use the verified staged helper for these commands too if the serving helper lacks them.
+Activation remains blocked until those attempts are actually settled.
+Then retry the authorized `update apply` through the installation's helper.
+An uncertain send is never replayed merely to clear an activation blocker.
+
 ## Verification boundary
 
 Local offline checks, isolated real-HC tests, actual harness qualification, hosted CI and production cutover are separate evidence.
