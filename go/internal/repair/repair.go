@@ -13,6 +13,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ask"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/panes"
@@ -742,16 +743,16 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	workerID, _ := worker.Get("id")
 	workerState, _ := worker.Get("state")
 	closed := panes.WorkerIsClosed(task)
+	_, stalled := stalledOriginal(worker, args.Text)
 	if workerID != args.Attempt {
 		unlock()
 		return nil, fmt.Errorf("Repair requires the exact running worker attempt.")
 	}
-	if closed {
-		if workerState != "running" && workerState != "released" {
-			unlock()
-			return nil, fmt.Errorf("Repair requires the exact running worker attempt.")
-		}
-	} else if workerState != "running" {
+	if !stalled && closed && workerState != "running" && workerState != "released" {
+		unlock()
+		return nil, fmt.Errorf("Repair requires the exact running worker attempt.")
+	}
+	if !stalled && !closed && workerState != "running" {
 		unlock()
 		return nil, fmt.Errorf("Repair requires the exact running worker attempt.")
 	}
@@ -761,13 +762,16 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	worktreeStr, _ := worktree.(string)
 	unlock()
 
-	if closed {
+	if closed && !stalled {
 		return recordPendingResume(s, args)
 	}
 
-	occupant, err := returns.ObserveWorker(s, args.RuntimeRoot, task, route, worktreeStr)
-	if err != nil {
-		return nil, err
+	var occupant *returns.Occupant
+	if !stalled {
+		occupant, err = returns.ObserveWorker(s, args.RuntimeRoot, task, route, worktreeStr)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	unlock, err = s.Lock()
@@ -810,13 +814,21 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 		}
 		return registration.Get("task")
 	}()
-	if workerID != args.Attempt || genNow != generation || workerState != "running" || !sameRoute(currentRoute, route) || registration == nil || role != "worker" || regTask != args.TaskID {
+	if stalled {
+		again, still := stalledOriginal(worker, args.Text)
+		if workerID != args.Attempt || genNow != generation || !still || again != args.Text || !sameRoute(currentRoute, route) {
+			unlock()
+			return nil, fmt.Errorf("Worker identity changed before corrective delivery; nothing sent.")
+		}
+	} else if workerID != args.Attempt || genNow != generation || workerState != "running" || !sameRoute(currentRoute, route) || registration == nil || role != "worker" || regTask != args.TaskID {
 		unlock()
 		return nil, fmt.Errorf("Worker identity changed before corrective delivery; nothing sent.")
 	}
-	if msg := occupant.Check(s, route); msg != "" {
-		unlock()
-		return nil, fmt.Errorf("%s", msg)
+	if !stalled {
+		if msg := occupant.Check(s, route); msg != "" {
+			unlock()
+			return nil, fmt.Errorf("%s", msg)
+		}
 	}
 	value, err = Ledger(current)
 	if err != nil {
@@ -854,7 +866,13 @@ func Send(s *store.Store, ctx *ordjson.Object, args SendArgs) (*ordjson.Object, 
 	unlock()
 
 	sendCtx, cancelSend := context.WithTimeout(context.Background(), SendPromptTimeout)
-	state, sendErr := occupant.Send(sendCtx, args.Text)
+	var state string
+	var sendErr error
+	if stalled {
+		state, sendErr = sendStalledOpening(sendCtx, store.EndpointFromContext(route), args.Text)
+	} else {
+		state, sendErr = occupant.Send(sendCtx, args.Text)
+	}
 	cancelSend()
 	var refuseErr error
 	if state == "not-delivered" {
@@ -998,6 +1016,62 @@ func PendingResumeTexts(task *ordjson.Object) []string {
 		}
 	}
 	return texts
+}
+
+func stalledOriginal(worker *ordjson.Object, text string) (string, bool) {
+	if worker == nil || text == "" {
+		return "", false
+	}
+	native := asObject(func() any { v, _ := worker.Get("native_launch"); return v }())
+	if native == nil {
+		return "", false
+	}
+	opening := asString(func() any { v, _ := native.Get("opening"); return v }())
+	if opening == "" || opening != text || !observationStalled(worker) {
+		return "", false
+	}
+	return opening, true
+}
+
+func observationStalled(worker *ordjson.Object) bool {
+	outcome, _, ok := reservations.UncertainLaunch(worker)
+	if !ok || outcome != "launch-uncertain" {
+		return false
+	}
+	list := asList(func() any { v, _ := worker.Get("observations"); return v }())
+	last := asObject(list[len(list)-1])
+	reason := asString(func() any { v, _ := last.Get("reason"); return v }())
+	return hcclient.AgentPromptStalledReason(&reason)
+}
+
+func sendStalledOpening(ctx context.Context, endpoint store.Endpoint, text string) (string, error) {
+	if err := endpoint.Validate(); err != nil {
+		return "not-delivered", err
+	}
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID, Timeout: SendPromptTimeout}
+	term, err := client.Get(ctx, endpoint.Address)
+	if err != nil {
+		return "not-delivered", err
+	}
+	if term.State != "live" {
+		return "not-delivered", fmt.Errorf("stalled worker pane is not live")
+	}
+	params := hcclient.SendParams{Terminal: endpoint.Address, Text: text}
+	if term.Status != nil {
+		switch term.Status.State {
+		case "working", "blocked":
+			return "not-delivered", fmt.Errorf("recorded brief already reached the worker pane")
+		case "done":
+			return "not-delivered", fmt.Errorf("stalled worker pane is done")
+		case "idle":
+			params.If = "idle"
+		default:
+			return "not-delivered", fmt.Errorf("stalled worker pane status %s is not a resend", term.Status.State)
+		}
+	}
+	_, err = client.Send(ctx, params)
+	state, _ := returns.DeliveryFailure(err)
+	return state, err
 }
 
 func routeToCtx(route *ordjson.Object) *ordjson.Object { return route }

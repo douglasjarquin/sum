@@ -701,6 +701,12 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	}
 	status, _ := task.Get("status")
 	if status != "prepared" {
+		if prompt, attemptID, saved, ok := stalledOpening(task); ok {
+			parent := store.EndpointFromContext(ctx)
+			checkout := asString(policyField(task, "worktree"))
+			unlock()
+			return resumeStalledOpening(s, parent, taskID, attemptID, prompt, saved, checkout)
+		}
 		unlock()
 		return nil, fmt.Errorf("Only a prepared task can be started. sum never retries an uncertain launch automatically.")
 	}
