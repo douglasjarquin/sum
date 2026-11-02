@@ -228,7 +228,16 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
 	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	run, runErr := client.Run(runCtx, params)
+	var run hcclient.RunResult
+	var runErr error
+	if asString(reviewer, "harness") == "grok" {
+		runErr = launch.TrustGrokRepository(runCtx, params.Env["GROK_HOME"], params.Cwd)
+	}
+	if runErr != nil {
+		runErr = &hcclient.Error{Method: "terminal.run", Effect: hcclient.NotSubmitted, Cause: runErr}
+	} else {
+		run, runErr = client.Run(runCtx, params)
+	}
 	created, err := func() (*ordjson.Object, error) {
 		unlock, err = s.Lock()
 		if err != nil {
