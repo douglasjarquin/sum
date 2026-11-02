@@ -120,7 +120,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 			if current, e := s.ReadTask(taskID); e == nil {
 				if w, e := reservations.Worker(current); e == nil && asString(policyField(w, "id")) == attemptID {
 					n := asObject(policyField(w, "native_launch"))
-					if policyField(current, "worker_endpoint") != nil || policyField(w, "native_receipt") != nil {
+					if store.EndpointFromContext(asObject(policyField(current, "worker_endpoint"))).Attempt == attemptID || policyField(w, "native_receipt") != nil {
 						n.Set("late_creation_error", runErr.Error())
 					} else {
 						n.Set("effect", effect)
@@ -130,7 +130,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 			}
 			lock()
 		}
-		if current, readErr := s.ReadTask(taskID); readErr == nil && policyField(current, "worker_endpoint") != nil {
+		if current, readErr := s.ReadTask(taskID); readErr == nil && store.EndpointFromContext(asObject(policyField(current, "worker_endpoint"))).Attempt == attemptID {
 			return current, nil
 		}
 		return FailStart(s, taskID, runErr)
@@ -158,7 +158,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 			return nil, fmt.Errorf("worker attempt changed during creation; inspect terminal %s", result.Address)
 		}
 		native = asObject(policyField(currentWorker, "native_launch"))
-		if existing := asObject(policyField(current, "worker_endpoint")); existing != nil {
+		if existing := asObject(policyField(current, "worker_endpoint")); existing != nil && store.EndpointFromContext(existing).Attempt == attemptID {
 			if !store.EndpointFromContext(existing).Native().SameAuthority(endpoint.Native()) {
 				return nil, fmt.Errorf("late creation identity conflicts with reconciled endpoint")
 			}
