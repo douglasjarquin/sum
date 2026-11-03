@@ -111,7 +111,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if err != nil {
 		return nil, err
 	}
-	route, err := hcboot.SelectedRoute(s, "", "", "")
+	route, err := hcboot.PrepareWorkspaceRoute(s)
 	if err != nil {
 		return nil, err
 	}
@@ -189,6 +189,17 @@ func decodeObject(obj *ordjson.Object, out any) error {
 }
 
 func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Object, endpoint store.Endpoint, reviewer *ordjson.Object, params hcclient.RunParams) (*ordjson.Object, error) {
+	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	releaseEffects, err := s.DeliveryShared(runCtx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if releaseEffects != nil {
+			releaseEffects()
+		}
+	}()
 	candidate := evidenceview.CurrentCandidate(task)
 	snapshot := reviewerCandidateState(task)
 	if assigned := asString(reviewer, "candidate"); assigned != "" && assigned != candidate {
@@ -235,8 +246,6 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 		return nil, err
 	}
 	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
-	runCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
-	defer cancel()
 	var run hcclient.RunResult
 	var runErr error
 	if asString(reviewer, "harness") == "grok" {
@@ -395,6 +404,11 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 	}
 	if asString(reviewer, "opening") == "" {
 		return created, nil
+	}
+	releaseErr := releaseEffects()
+	releaseEffects = nil
+	if releaseErr != nil {
+		return created, releaseErr
 	}
 	return deliverReviewerOpening(s, endpoint.Task, endpoint.Attempt, run.Terminal)
 }

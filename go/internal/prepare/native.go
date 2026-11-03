@@ -46,7 +46,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		unlock()
 		return nil, err
 	}
-	route, err := hcboot.SelectedRoute(s, "", "", "")
+	route, err := hcboot.PrepareWorkspaceRoute(s)
 	if err != nil {
 		unlock()
 		return nil, err
@@ -64,6 +64,16 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		return nil, err
 	}
 	unlock()
+	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	releaseEffects, err := s.DeliveryShared(runCtx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseEffects()
+	if _, err = s.CheckClaim(token); err != nil {
+		return nil, err
+	}
 	route, err = hcboot.EnsureWorkspaceRoute(s, runtimeRoot)
 	if err != nil {
 		return nil, err
@@ -126,15 +136,13 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		return nil, err
 	}
 	unlock()
-	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
 	var result hcclient.RunResult
 	runErr := verifyCoreTemplate(runCtx, &client, route.ConfigHome, template)
-	if runErr == nil {
-		runErr = launchStillAuthorized(s, taskID, attemptID, token)
-	}
 	if runErr == nil && template.Harness == "grok" {
 		runErr = launch.TrustGrokRepository(runCtx, template.InputEnv["GROK_HOME"], checkout)
+	}
+	if runErr == nil {
+		runErr = launchStillAuthorized(s, taskID, attemptID, token)
 	}
 	if runErr != nil {
 		runErr = &hcclient.Error{Method: "terminal.run", Effect: hcclient.NotSubmitted, Cause: runErr}

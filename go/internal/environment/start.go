@@ -389,6 +389,13 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	if err := s.CheckWritable(); err != nil {
 		return nil, err
 	}
+	leaseCtx, cancelLease := nativeCallContext()
+	defer cancelLease()
+	releaseEffects, err := s.DeliveryShared(leaseCtx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseEffects()
 	task, err := s.ReadTask(args.Task)
 	if err != nil {
 		return nil, err

@@ -61,9 +61,10 @@ func SelectedRoute(s *store.Store, socket, session, config string) (Route, error
 	return route, route.Validate()
 }
 
-// EnsureWorkspaceRoute is used only when launching work. The observed permanent
-// core identity is saved before a task launch can use the route.
-func EnsureWorkspaceRoute(s *store.Store, runtimeRoot string) (Route, error) {
+func PrepareWorkspaceRoute(s *store.Store) (Route, error) {
+	if err := s.CheckWritable(); err != nil {
+		return Route{}, err
+	}
 	route, err := SelectedRoute(s, "", "", "")
 	if err != nil {
 		return Route{}, err
@@ -85,6 +86,14 @@ func EnsureWorkspaceRoute(s *store.Store, runtimeRoot string) (Route, error) {
 				return Route{}, fmt.Errorf("worker runtime directory is not private to this user: %s", directory)
 			}
 		}
+	}
+	return route, nil
+}
+
+func EnsureWorkspaceRoute(s *store.Store, runtimeRoot string) (Route, error) {
+	route, err := PrepareWorkspaceRoute(s)
+	if err != nil {
+		return Route{}, err
 	}
 	if err := route.compatibility(); err != nil {
 		return Route{}, err
