@@ -1,6 +1,8 @@
 # HC benchmark evidence
 
-`mise run benchmark` measures the current terminal runtime with schema-two records.
+`mise run benchmark` measures ordinary coordination and the current terminal runtime.
+The fixture obtains its coordinator claim through ordinary `init`, carries that captured claim with explicit `--home` on coordinator commands, and retains receipt-bound schema-two native worker endpoints.
+Worker callbacks carry their native task identity without the coordinator claim.
 The default output is `benchmarks/current/`, with exact commands, dependency/candidate identity, availability and limitations in the retained artifacts.
 A benchmark is performance evidence for its measured operation, never end-to-end acceptance, task completion or production readiness.
 

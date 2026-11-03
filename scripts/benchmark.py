@@ -15,7 +15,7 @@ import sys
 import tempfile
 import time
 
-from benchmark_fixture import (BenchmarkError, SUMCTL, actor_env, add_tasks, clone_case, fixture, git_repo,
+from benchmark_fixture import (BenchmarkError, SUMCTL, actor_env, add_tasks, clone_case, command, fixture, git_repo,
                                invoke_checked, measured_case, measured_process, rpc, run_plain, tool_version)
 from benchmark_real import run_real, transport_sample
 from benchmark_report import INVENTORY, decide, frequency_rows, weighted_opportunities, write_report
@@ -30,16 +30,12 @@ ALL_SCENARIOS = (
 )
 
 
-def command(case, *args):
-    return [SUMCTL, "--format", "json", "--home", case["root"], *args]
-
-
 def process_group(case, calls, parallel=False):
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
     started = time.perf_counter_ns()
     def invoke(item):
         role, args = item
-        return subprocess.run([str(part) for part in command(case, *args)], env=actor_env(case, role), text=True, capture_output=True, timeout=60)
+        return subprocess.run([str(part) for part in command(case, *args, role=role)], env=actor_env(case, role), text=True, capture_output=True, timeout=60)
     if parallel:
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             results = list(pool.map(invoke, calls))
@@ -103,16 +99,17 @@ def main():
                     lambda tag, c=case, a=argv, current=case_id: invoke_checked(command(c, *a), actor_env(c), base / f"{current}-{tag}.json", expected=1 if current == "failure.show-missing" else 0), warmups))
             fresh = {"write.ask": ("worker", lambda _: ["ask", task_id, "--key", "question", "--text", "Benchmark question?"]),
                      "write.report": ("worker", lambda _: ["report", task_id, "--text", "Benchmark report."]),
-                     "role.init": ("coordinator", lambda _: ["init", "--role", "developer"]),
+                     "role.init": ("coordinator", lambda _: ["init"]),
                      "brief.regenerate": ("coordinator", lambda _: ["brief", "regenerate", task_id])}
             for case_id, (role, builder) in fresh.items():
                 def operation(tag, current=case_id, actor=role, build=builder):
                     case = clone_case(base, active, f"{current}-{tag}")
                     if current == "brief.regenerate":
-                        question = run_plain(command(case, "ask", task_id, "--key", "brief", "--text", "Regenerate benchmark brief?"), actor_env(case, "worker"))["question"]
+                        question = run_plain(command(case, "ask", task_id, "--key", "brief", "--text", "Regenerate benchmark brief?", role="worker"), actor_env(case, "worker"))["question"]
                         run_plain(command(case, "answer", task_id, question["id"], "--text", "Yes."), actor_env(case))
-                    argv=command(case, *build(case))
-                    if current=="role.init":argv=[SUMCTL,"--format","json","--home",base/"uninitialized-developer-state",*build(case)]
+                    argv=command(case, *build(case), role=actor)
+                    if current == "role.init":
+                        argv[0] = case["entry"]
                     return invoke_checked(argv, actor_env(case, actor), base / f"{current}-{tag}.json")
                 scenarios.append(measured_case(case_id, args.samples, operation))
             def prepare_operation(tag):
@@ -157,7 +154,7 @@ def main():
             opportunities = weighted_opportunities(scenarios, frequency)
             raw = dict(schema=2, source=source, environment=dict(platform=platform.platform(), python=platform.python_version(), git=tool_version("git", "--version"), helper_binary=str(SUMCTL), helper_sha256=hashlib.sha256(SUMCTL.read_bytes()).hexdigest(), real_lab_tools=cleanup.get("tools")),
                        methodology=dict(warmups=1, randomization_seed=37, outliers="retained", harness_overhead_ms=sorted(overhead)[len(overhead) // 2],
-                                        fixture="schema2 native Unix-socket HC model; seeded public processes and receipts, no harness execution",
+                                        fixture="ordinary coordinator init with a captured claim; schema2 native worker HC processes and receipts, no harness execution",
                                         measurement="external process wall/child CPU and time-reported helper RSS; native RPC client CPU separately scoped",
                                         cache_conditions=dict(cold="new process; first filesystem sample retained", **{"warm-fs": "unrecorded warmup; no privileged cache eviction"})),
                        inventory=INVENTORY, scenarios=scenarios, frequency=frequency, weighted_opportunities=opportunities, cleanup=cleanup,
