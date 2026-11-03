@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -39,7 +40,7 @@ type deliveryResolution struct {
 	Delivery    string          `json:"delivery"`
 	Digest      string          `json:"digest"`
 	At          string          `json:"at"`
-	Coordinator store.Endpoint  `json:"coordinator"`
+	Coordinator json.RawMessage `json:"coordinator"`
 	Proofs      []deliveryProof `json:"proofs"`
 }
 type resolutionLedger struct {
@@ -361,7 +362,11 @@ func DeliveryResolved(s *store.Store, task *ordjson.Object, row *ordjson.Object)
 	if found == nil {
 		return false, nil
 	}
-	if found.Digest != digest(row) || !validStamp(found.At) || found.Coordinator.Validate() != nil || found.Coordinator.Role != "coordinator" {
+	actorValue, actorErr := ordjson.Decode(found.Coordinator)
+	actor, _ := actorValue.(*ordjson.Object)
+	native := store.EndpointFromContext(actor)
+	validActor := store.ValidateLogicalOwner(actor) == nil || native.Validate() == nil && native.Role == "coordinator"
+	if found.Digest != digest(row) || !validStamp(found.At) || actorErr != nil || !validActor {
 		return false, fmt.Errorf("invalid or stale delivery reconciliation")
 	}
 	if err = validateProofs(s, task, row, found.Proofs); err != nil {
@@ -514,7 +519,11 @@ func ReconcileDelivery(s *store.Store, ctx *ordjson.Object, taskID, deliveryID s
 	if err != nil {
 		return nil, err
 	}
-	ledger.Resolutions = append(ledger.Resolutions, deliveryResolution{Delivery: deliveryID, Digest: digest(row), At: store.Now(), Coordinator: store.EndpointFromContext(ctx), Proofs: proofs})
+	coordinator, err := ordjson.MarshalCompact(evidence.Endpoint(ctx))
+	if err != nil {
+		return nil, err
+	}
+	ledger.Resolutions = append(ledger.Resolutions, deliveryResolution{Delivery: deliveryID, Digest: digest(row), At: store.Now(), Coordinator: coordinator, Proofs: proofs})
 	dir, _ := s.TaskPath(taskID)
 	object, _ := ordjson.FromValue(ledger)
 	if err = ordjson.WriteFile(filepath.Join(dir, ResolutionFile), object); err != nil {

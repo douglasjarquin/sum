@@ -179,6 +179,9 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 				}
 			}
 			route := ReturnRoute(task, opts.Recipient)
+			if route == nil {
+				continue
+			}
 			scope[identity(host, route)] = true
 		}
 	}
@@ -205,6 +208,9 @@ func Pump(s *store.Store, opts PumpOpts) (*ordjson.Object, error) {
 				continue
 			}
 			route := ReturnRoute(task, recipStr)
+			if route == nil {
+				continue
+			}
 			if (opts.CoreID != "" && routeValue(route, "core_id") != opts.CoreID) || (opts.Session != "" && routeValue(route, "session") != opts.Session) {
 				continue
 			}

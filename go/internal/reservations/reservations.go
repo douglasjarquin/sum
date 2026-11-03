@@ -210,12 +210,14 @@ func attempt(value any, expectedKind string) (*ordjson.Object, error) {
 	owner, ownerOK := ownerValue.(*ordjson.Object)
 	validOwner := false
 	nativeOwner := false
+	logicalOwner := false
 	if ownerOK {
 		endpoint := store.EndpointFromContext(owner)
 		nativeOwner = endpoint.Validate() == nil
-		validOwner = nativeOwner || sameKeySet(owner, []string{"machine", "session", "pane"})
+		logicalOwner = store.ValidateLogicalOwner(owner) == nil
+		validOwner = nativeOwner || logicalOwner || sameKeySet(owner, []string{"machine", "session", "pane"})
 	}
-	if validOwner && !nativeOwner {
+	if validOwner && !nativeOwner && !logicalOwner {
 		machine, _ := owner.Get("machine")
 		session, _ := owner.Get("session")
 		pane, _ := owner.Get("pane")

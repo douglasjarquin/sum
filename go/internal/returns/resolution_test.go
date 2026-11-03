@@ -2,6 +2,7 @@ package returns
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -352,7 +353,15 @@ func TestDeliveryReconciliationRejectsCorruptSavedResolution(t *testing.T) {
 			case "proof revision":
 				r.Proofs[0].Application.Revision = strings.Repeat("e", 64)
 			case "actor":
-				r.Coordinator.Role = "worker"
+				var actor store.Endpoint
+				if err := json.Unmarshal(r.Coordinator, &actor); err != nil {
+					t.Fatal(err)
+				}
+				actor.Role = "worker"
+				r.Coordinator, err = json.Marshal(actor)
+				if err != nil {
+					t.Fatal(err)
+				}
 			case "duplicate":
 				ledger.Resolutions = append(ledger.Resolutions, *r)
 			}

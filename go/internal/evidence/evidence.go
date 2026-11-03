@@ -26,6 +26,14 @@ func Endpoint(endpoint *ordjson.Object) *ordjson.Object {
 	if endpoint == nil {
 		return nil
 	}
+	if store.ValidateLogicalOwner(endpoint) == nil {
+		actor := ordjson.NewObject()
+		for _, key := range []string{"schema", "kind", "machine", "session_id"} {
+			value, _ := endpoint.Get(key)
+			actor.Set(key, value)
+		}
+		return actor
+	}
 	return store.EndpointFromContext(endpoint).Object()
 }
 

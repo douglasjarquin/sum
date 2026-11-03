@@ -27,3 +27,29 @@ func TestAppendPreservesNativeEndpointAndSealedHistory(t *testing.T) {
 		t.Fatal("sealed history changed")
 	}
 }
+
+func TestAppendPreservesLogicalActorWithoutClaimToken(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.ClaimCoordinator("", "conversation", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := session.Owner()
+	actor.Set("claim", session.Token())
+	task := ordjson.NewObject()
+	row, err := Append(task, "verification", "coordinator", nil, nil, actor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := row.Get("endpoint")
+	got, _ := raw.(*ordjson.Object)
+	if !store.LogicalOwnersMatch(got, session.Owner()) {
+		t.Fatalf("logical actor lost: %v", raw)
+	}
+	if _, exists := got.Get("claim"); exists {
+		t.Fatal("conversation claim leaked into historical evidence")
+	}
+}

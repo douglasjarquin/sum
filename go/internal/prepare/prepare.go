@@ -312,7 +312,18 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		return nil, err
 	}
 	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
-	owner := store.EndpointFromContext(ctx).Object()
+	var owner *ordjson.Object
+	logicalOwner := store.ValidateLogicalOwner(ctx) == nil
+	if logicalOwner {
+		current, err := s.CheckClaim(asString(func() any { value, _ := ctx.Get("claim"); return value }()))
+		if err != nil {
+			unlock()
+			return nil, err
+		}
+		owner = current.Owner()
+	} else {
+		owner = store.EndpointFromContext(ctx).Object()
+	}
 	attempt, err := reservations.NewAttempt("worker", owner, nil, store.Now(), "", nil)
 	if err != nil {
 		unlock()
@@ -335,7 +346,12 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	task.Set("launch", launchSpec)
 	task.Set("kind", args.Kind)
 	task.Set("brief", string(briefText))
-	task.Set("parent", ctx)
+	if logicalOwner {
+		task.Set("owner", owner)
+		task.Set("parent", nil)
+	} else {
+		task.Set("parent", ctx)
+	}
 	task.Set("session", session)
 	task.Set("worktree", nil)
 	task.Set("questions", []any{})
