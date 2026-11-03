@@ -15,6 +15,7 @@ import (
 )
 
 type TaskActor struct {
+	claim        string
 	endpoint     store.Endpoint
 	terminal     hcclient.Terminal
 	registration []byte
@@ -24,6 +25,9 @@ type TaskActor struct {
 }
 
 func ObserveTaskActor(s *store.Store, ctx *ordjson.Object) (*TaskActor, error) {
+	if logicalContext(ctx) {
+		return observeLogicalActor(s, ctx)
+	}
 	endpoint := store.EndpointFromContext(ctx)
 	host, err := s.Machine()
 	if err != nil {
@@ -97,6 +101,9 @@ func ObserveTaskActor(s *store.Store, ctx *ordjson.Object) (*TaskActor, error) {
 func CheckTaskRole(s *store.Store, task *ordjson.Object, actor *TaskActor, roles ...string) error {
 	if actor == nil || task == nil {
 		return fmt.Errorf("current native task actor required")
+	}
+	if actor.claim != "" {
+		return checkLogicalTaskRole(s, task, actor, roles...)
 	}
 	endpoint := actor.endpoint
 	if !slices.Contains(roles, endpoint.Role) {
