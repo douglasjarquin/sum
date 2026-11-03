@@ -3,7 +3,6 @@ import argparse
 import os
 from pathlib import Path
 import subprocess
-import tarfile
 import tempfile
 
 
@@ -46,8 +45,7 @@ def main():
         archive = Path(scratch) / "source.tar"
         with archive.open("wb") as output:
             subprocess.check_call(git + ["archive", "--format=tar", sha], stdout=output)
-        with tarfile.open(archive) as source:
-            source.extractall(scratch, filter="data")
+        subprocess.check_call(["tar", "-xf", str(archive), "-C", scratch])
         helper = Path(scratch) / ".local/bin/sumctl"
         helper.parent.mkdir(parents=True, exist_ok=True)
         env = dict(os.environ, CGO_ENABLED="0", GOENV="off", SUM_INSTALL_ROOT=str(root))
