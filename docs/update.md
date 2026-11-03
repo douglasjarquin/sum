@@ -2,7 +2,8 @@
 
 Only the user authorizes update or rollback.
 The logical coordinator uses the installation's trusted helper with its captured claim.
-Developers and task checkouts cannot activate the installation.
+Marked development and task checkouts cannot activate the installation.
+An ordinary conversation whose old helper reports `developer` may use the explicitly authorized bootstrap operation below.
 Staging a candidate, passing local tests or opening a PR grants no activation authority.
 
 ## Inspect and stage
