@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -215,33 +214,20 @@ func updateService(s *store.Store, taskID, serviceID, event string, changes *ord
 	return row, nil
 }
 
-func requireServiceCaller(s *store.Store, task, caller *ordjson.Object) error {
-	role := endpointRole(s, task, caller)
-	if store.EndpointFromContext(caller).Role == "coordinator" {
-		return app.RequireCoordinator(s, caller)
+func serviceCaller(s *store.Store, task, caller *ordjson.Object) (*app.TaskActor, error) {
+	if store.ValidateLogicalOwner(caller) == nil {
+		if err := app.RequireCoordinator(s, caller); err != nil {
+			return nil, err
+		}
 	}
-	if role != "worker" && role != "reviewer" {
-		return fmt.Errorf("service effect requires current task worker, reviewer, or coordinator")
-	}
-	endpoint := store.EndpointFromContext(caller)
-	reg, err := s.Registration(endpoint)
+	actor, err := app.ObserveTaskActor(s, caller)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	_, terminal, err := app.ObserveNative(endpoint)
-	if err != nil {
-		return err
+	if err = app.CheckTaskRole(s, task, actor, "coordinator", "worker", "reviewer"); err != nil {
+		return nil, err
 	}
-	receipt, err := app.NativeReceipt(reg)
-	if err != nil {
-		return err
-	}
-	v, _ := reg.Get("incarnation")
-	verdict := incarnation.JudgeNative(v, endpoint.Native(), terminal, receipt)
-	if !verdict.Verified {
-		return fmt.Errorf("service caller process is not receipt-current: %s", verdict.Reason)
-	}
-	return nil
+	return actor, nil
 }
 func serviceEndpoint(service *ordjson.Object) store.Endpoint {
 	return store.EndpointFromContext(objectField(service, "endpoint"))
@@ -410,7 +396,8 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	if err = s.CheckMachine(task); err != nil {
 		return nil, err
 	}
-	if err = requireServiceCaller(s, task, caller); err != nil {
+	actor, err := serviceCaller(s, task, caller)
+	if err != nil {
 		return nil, err
 	}
 	worker, err := reservations.Worker(task)
@@ -424,16 +411,22 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	if err != nil {
 		return nil, err
 	}
-	parent := store.EndpointFromContext(caller)
-	if err = parent.Validate(); err != nil {
-		return nil, fmt.Errorf("service launch requires actual native caller: %w", err)
-	}
 	workerEndpoint := store.EndpointFromContext(objectField(task, "worker_endpoint"))
 	if err = workerEndpoint.Validate(); err != nil {
 		return nil, err
 	}
-	if parent.Machine != workerEndpoint.Machine || parent.CoreID != workerEndpoint.CoreID || parent.Socket != workerEndpoint.Socket {
-		return nil, fmt.Errorf("service caller must use task's local native core")
+	if workerEndpoint.Task != args.Task || workerEndpoint.Role != "worker" || workerEndpoint.Attempt != stringField(worker, "id") {
+		return nil, fmt.Errorf("service route must match the current task worker attempt")
+	}
+	logical := store.ValidateLogicalOwner(caller) == nil
+	parent := store.EndpointFromContext(caller)
+	if !logical {
+		if err = parent.Validate(); err != nil {
+			return nil, fmt.Errorf("service launch requires actual native caller: %w", err)
+		}
+		if parent.Machine != workerEndpoint.Machine || parent.CoreID != workerEndpoint.CoreID || parent.Socket != workerEndpoint.Socket {
+			return nil, fmt.Errorf("service caller must use task's local native core")
+		}
 	}
 	record, err := Read(s, args.Task)
 	if err != nil {
@@ -505,7 +498,10 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 		return nil, err
 	}
 	argv := serviceArgv(row, launch, command)
-	params := hcclient.RunParams{Argv: argv, Cwd: worktree, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "service", "SUM_ATTEMPT": id}, Labels: map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "service", "sum.attempt": id}, Name: args.Task + "-" + id, Parent: parent.Address, Caller: parent.Address, OutliveParent: true, Keep: false, RM: false, NoNotify: true}
+	params := hcclient.RunParams{Argv: argv, Cwd: worktree, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "service", "SUM_ATTEMPT": id}, Labels: map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "service", "sum.attempt": id}, Name: args.Task + "-" + id, OutliveParent: true, Keep: false, RM: false, NoNotify: true}
+	if !logical {
+		params.Parent, params.Caller = parent.Address, parent.Address
+	}
 	launch.Set("intent", nativeObject(params))
 	service := ordjson.NewObject()
 	for _, key := range []string{"name", "source", "kind"} {
@@ -517,7 +513,7 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	service.Set("launch", launch)
 	service.Set("state", "intended")
 	service.Set("intent_at", store.Now())
-	service.Set("by", parent.Role)
+	service.Set("by", stringField(caller, "role"))
 	service.Set("ownership", "owned")
 	service.Set("label", args.Label)
 	service.Set("history", []any{})
@@ -533,6 +529,9 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	}
 	currentTask, err := s.ReadTask(args.Task)
 	if err == nil {
+		err = app.CheckTaskRole(s, currentTask, actor, "coordinator", "worker", "reviewer")
+	}
+	if err == nil {
 		err = repair.RefuseDuringCleanup(currentTask, "Service start")
 	}
 	if err != nil {
@@ -540,7 +539,7 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 		return nil, err
 	}
 	currentWorker, err := reservations.Worker(currentTask)
-	if err != nil || stringField(currentWorker, "id") != stringField(worker, "id") || stringField(currentWorker, "state") == "released" {
+	if err != nil || stringField(currentWorker, "id") != stringField(worker, "id") || stringField(currentWorker, "state") == "released" || !workerEndpoint.Native().SameAuthority(store.EndpointFromContext(objectField(currentTask, "worker_endpoint")).Native()) {
 		unlock()
 		return nil, fmt.Errorf("worker reservation changed before launch")
 	}
@@ -590,10 +589,29 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 	if err = s.CheckWritable(); err != nil {
 		return nil, err
 	}
-	if err = requireServiceCaller(s, currentTask, caller); err != nil {
+	actor, err = serviceCaller(s, currentTask, caller)
+	if err != nil {
 		return nil, err
 	}
-	client := hcclient.Client{Socket: parent.Socket, CoreID: parent.CoreID}
+	unlock, err = s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	currentTask, err = s.ReadTask(args.Task)
+	if err == nil {
+		err = app.CheckTaskRole(s, currentTask, actor, "coordinator", "worker", "reviewer")
+	}
+	if err == nil {
+		err = repair.RefuseDuringCleanup(currentTask, "Service start")
+	}
+	if err == nil && !workerEndpoint.Native().SameAuthority(store.EndpointFromContext(objectField(currentTask, "worker_endpoint")).Native()) {
+		err = fmt.Errorf("worker endpoint changed before service launch")
+	}
+	unlock()
+	if err != nil {
+		return nil, err
+	}
+	client := hcclient.Client{Socket: workerEndpoint.Socket, CoreID: workerEndpoint.CoreID}
 	ctx, cancel := nativeCallContext()
 	defer cancel()
 	launched, err := client.Run(ctx, params)
@@ -607,7 +625,7 @@ func Start(s *store.Store, args StartArgs, caller *ordjson.Object) (*ordjson.Obj
 		}
 		return nil, fmt.Errorf("service intent %s retained; launch outcome must be reconciled without retry: %w", id, err)
 	}
-	endpoint := parent
+	endpoint := workerEndpoint
 	endpoint.Task = args.Task
 	endpoint.Role = "service"
 	endpoint.Attempt = id
@@ -891,7 +909,7 @@ func Stop(s *store.Store, args StopArgs) (*ordjson.Object, error) {
 	if caller == nil {
 		caller = app.OptionalContext(s, args.RuntimeRoot, "")
 	}
-	if err = requireServiceCaller(s, task, caller); err != nil {
+	if _, err = serviceCaller(s, task, caller); err != nil {
 		return nil, err
 	}
 	timeout := StopTimeout

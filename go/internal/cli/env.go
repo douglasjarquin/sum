@@ -151,6 +151,7 @@ func (o *rootOptions) addEnvCommands(root *cobra.Command) {
 				return err
 			}
 			view, err := environment.Stop(st, environment.StopArgs{
+				Caller:      app.OptionalContext(st, o.installRoot, o.claim),
 				Task:        args[0],
 				Service:     service,
 				Timeout:     timeout,
