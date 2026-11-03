@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-
-
 import argparse
 import os
 from pathlib import Path
@@ -40,6 +38,9 @@ def main():
     sha = run(git + ["rev-parse", "--verify", args.ref + "^{commit}", "--"])
     subprocess.check_call(git + ["merge-base", "--is-ancestor", sha, branch])
     releases = root / ".local/releases"
+    for member in (root / ".local", releases):
+        if member.is_symlink():
+            raise SystemExit(f"bootstrap path must not be a symlink: {member}")
     releases.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".bootstrap-", dir=releases) as scratch:
         archive = Path(scratch) / "source.tar"

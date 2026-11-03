@@ -11,6 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -29,6 +30,13 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 	root, err := release.InstallationRoot(s)
 	if err != nil {
 		return nil, err
+	}
+	for _, member := range []string{filepath.Join(root, ".local"), filepath.Join(root, ".local", "releases"), filepath.Join(root, ".local", "update.lock")} {
+		if info, e := os.Lstat(member); e == nil && info.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("bootstrap path must not be a symlink: %s", member)
+		} else if e != nil && !errors.Is(e, os.ErrNotExist) {
+			return nil, e
+		}
 	}
 	unlock, err := activationLock(root)
 	if err != nil {
@@ -73,6 +81,11 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 			return nil, fmt.Errorf("bootstrap journal exists; inspect it and resume its exact --operation %s --ref %s", effectField(journal, "operation"), effectField(journal, "sha"))
 		}
 		owner = asObject(func() any { v, _ := journal.Get("owner"); return v }())
+		before := asObject(func() any { v, _ := journal.Get("old_runtime"); return v }())
+		selected := selectionDescriptor(current)
+		if !descriptorsEqual(before, selected) && !(effectField(selected, "kind") == "release" && effectField(selected, "sha") == sha && effectField(selected, "path") == filepath.Join(root, ".local/releases", sha)) {
+			return nil, fmt.Errorf("bootstrap selection changed outside this operation; recovery refused")
+		}
 	} else {
 		if operation != "" {
 			return nil, fmt.Errorf("no bootstrap operation %s exists", operation)
@@ -154,6 +167,16 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 	if err = bootstrapStep("owned"); err != nil {
 		return nil, resumeError(err)
 	}
+	if effectField(journal, "phase") == "complete" {
+		if effectField(current, "sha") != sha || effectField(current, "kind") != "release" {
+			return nil, fmt.Errorf("completed bootstrap selection no longer matches its target")
+		}
+		check := postCheck(s, root)
+		if ok, _ := check.Get("ok"); ok != true {
+			return nil, fmt.Errorf("completed bootstrap entrypoint changed")
+		}
+		return bootstrapResult(root, journal, session, check), nil
+	}
 	if err = retireBootstrapPreferences(s, session.Token()); err != nil {
 		return nil, resumeError(err)
 	}
@@ -185,6 +208,10 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 	if err = ordjson.WriteFile(path, journal); err != nil {
 		return nil, resumeError(err)
 	}
+	return bootstrapResult(root, journal, session, check), nil
+}
+
+func bootstrapResult(root string, journal *ordjson.Object, session *store.CoordinatorSession, check *ordjson.Object) *ordjson.Object {
 	result := ordjson.NewObject()
 	result.Set("action", "bootstrap")
 	result.Set("operation", effectField(journal, "operation"))
@@ -193,7 +220,7 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 	result.Set("default", selectionDescriptor(DefaultRuntime(root)))
 	result.Set("post_check", check)
 	result.Set("next", "Continue in this conversation: run the installation's bin/sumctl init --claim TOKEN and read its validated coordinator procedure.")
-	return result, nil
+	return result
 }
 
 func hasInt(values []int, n int) bool {
@@ -248,12 +275,25 @@ func bootstrapInspect(s *store.Store, owner *ordjson.Object) (*ordjson.Object, e
 			blocked = append(blocked, label+": "+err.Error())
 			return
 		}
+		if observer && e.Role != "observer" {
+			blocked = append(blocked, label+": endpoint is not an observer")
+			return
+		}
 		if !observer {
 			proof := execution.NativeProgramStopped(s, e)
 			row.Set("state", proof.Outcome)
 			row.Set("stop_evidence", proof.Observation)
 			if proof.Outcome != execution.OutcomeStopped {
 				blocked = append(blocked, label+": "+proof.Reason)
+			}
+			if e.Role != "coordinator" {
+				if e.Cwd == "" || filepath.Clean(e.Cwd) == filepath.Dir(s.Root) {
+					blocked = append(blocked, label+": isolated task checkout identity is missing")
+				} else if inside, err := proc.ProcessesBoundTo(e.Cwd, nil); err != nil {
+					blocked = append(blocked, label+": "+err.Error())
+				} else if len(inside) != 0 {
+					blocked = append(blocked, fmt.Sprintf("%s: checkout still has process %d", label, inside[0].PID))
+				}
 			}
 			return
 		}
@@ -288,6 +328,9 @@ func bootstrapInspect(s *store.Store, owner *ordjson.Object) (*ordjson.Object, e
 		}
 	}
 	for _, task := range tasks {
+		if proof := execution.ServicesStopped(s, task); proof.Outcome != execution.OutcomeStopped {
+			blocked = append(blocked, "task "+effectField(task, "id")+": "+proof.Reason)
+		}
 		for _, field := range []string{"worker_endpoint", "reviewer"} {
 			observe(asObject(func() any { v, _ := task.Get(field); return v }()), "task "+effectField(task, "id")+" "+field, false)
 		}
@@ -301,7 +344,7 @@ func bootstrapInspect(s *store.Store, owner *ordjson.Object) (*ordjson.Object, e
 		} else {
 			observer := asObject(func() any { v, _ := health.Get("observer"); return v }())
 			effect := effectField(health, "launch_effect")
-			if effect == "in-flight" || effect == "uncertain" || effect == "claimed" || (effect == "submitted" && observer == nil) {
+			if (effect != "" && effect != "submitted" && effect != "refused" && effect != "not-submitted") || (effect == "submitted" && observer == nil) || (observer != nil && effect != "submitted") || (effect == "" && effectField(health, "launch_attempt") != "") {
 				blocked = append(blocked, "unresolved observer launch")
 			}
 			observe(observer, "observer (writer and sender fenced at retirement)", true)

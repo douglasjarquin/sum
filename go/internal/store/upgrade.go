@@ -31,7 +31,7 @@ func (s *Store) RetireForUpgrade(id string, owner *ordjson.Object, validate func
 		return nil, err
 	}
 	if current != nil {
-		if current.SessionID != id || !host.Is(current.Machine) {
+		if current.SessionID != id || current.Generation != 1 || !host.Is(current.Machine) {
 			return nil, ErrClaimConflict
 		}
 		return current, nil

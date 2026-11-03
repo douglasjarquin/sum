@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/guard"
@@ -23,6 +24,9 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 	var bootstrapRef, operation string
 	var bootstrapNoFetch, approve bool
 	bootstrap := &cobra.Command{Use: "bootstrap", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if os.Getenv("SUM_TASK") != "" || os.Getenv("SUM_ROLE") == "worker" || os.Getenv("SUM_ROLE") == "reviewer" {
+			return fmt.Errorf("bootstrap cannot run from a task identity")
+		}
 		if o.homeSet {
 			return fmt.Errorf("bootstrap uses only the installation's own state home")
 		}
