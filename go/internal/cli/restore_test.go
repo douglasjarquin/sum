@@ -179,7 +179,7 @@ func TestBackupArchiveRestoresRecordsAtAnotherRootWithoutAuthority(t *testing.T)
 			if err = restored.CheckWritable(); !errors.Is(err, store.ErrHistoricalReadOnly) {
 				t.Fatalf("saved reads adopted restored authority: %v", err)
 			}
-			if _, err = runCLI(t, target, "coordinator", "start", "--socket", "/tmp/never-connect-old.sock", "--session", "scratch", "--hc-config-home", t.TempDir()); !errors.Is(err, store.ErrHistoricalReadOnly) {
+			if _, err = runCLI(t, target, "start", "t-0123456789ab"); !errors.Is(err, store.ErrHistoricalReadOnly) {
 				t.Fatal("restored records allowed a native launch")
 			}
 			if _, err = runCLI(t, target, "settings", "set", "--global", "3"); !errors.Is(err, store.ErrHistoricalReadOnly) {

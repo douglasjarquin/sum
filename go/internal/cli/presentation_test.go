@@ -468,29 +468,28 @@ func TestCompactLiveHasExplicitPageScopeAndNoStateWrites(t *testing.T) {
 	}
 }
 
-func TestMetadataProjectionAndCompactAgree(t *testing.T) {
+func TestMetadataProjectionKeepsGlobalCountsInCompact(t *testing.T) {
 	clearNativeEnv(t)
 	home := presentationHome(t)
 	d := nativeLabFor(t, home)
-	for _, pair := range d.env {
-		key, value, ok := strings.Cut(pair, "=")
-		if ok && (strings.HasPrefix(key, "SUM_") || strings.HasPrefix(key, "HC_")) {
-			t.Setenv(key, value)
-		}
+	before := asMap(compactRead(t, home, "inbox", "--compact")["counts"])
+	d.ctl(true, "metadata", "enable")
+	after := asMap(compactRead(t, home, "inbox", "--compact")["counts"])
+	if !reflect.DeepEqual(before, after) {
+		t.Fatalf("projection changed ledger counts: %v -> %v", before, after)
 	}
-	view := compactRead(t, home, "inbox", "--compact")
-	counts := asMap(view["counts"])
-	compactRead(t, home, "metadata", "enable")
-	want := fmt.Sprintf("%.0f decisions; %.0f worker", counts["decisions"], counts["worker"])
+	workerProjected := false
 	for _, terminal := range d.native.Terminals() {
-		if terminal.Address == "t1" {
-			if !strings.Contains(terminal.Labels["sum.inbox"], want) {
-				t.Fatalf("metadata label %q differs from compact %v", terminal.Labels["sum.inbox"], counts)
-			}
-			return
+		if terminal.Labels["sum.inbox"] != "" || terminal.Labels["sum.tasks"] != "" {
+			t.Fatal("projection created coordinator terminal labels")
+		}
+		if terminal.Address == "t2" {
+			workerProjected = terminal.Labels["sum.state"] == "needs-decision"
 		}
 	}
-	t.Fatal("coordinator terminal disappeared")
+	if !workerProjected {
+		t.Fatal("readable decision task did not receive its native worker label")
+	}
 }
 
 func TestPresentationHelpMatchesImplementedReadCommands(t *testing.T) {

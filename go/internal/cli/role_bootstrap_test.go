@@ -149,54 +149,41 @@ func TestCoordinatorInitRefusesARuntimeWithoutItsCore(t *testing.T) {
 	}
 }
 
-func TestContractRevisionEmbedsTheCoordinatorCore(t *testing.T) {
+func TestOrdinaryInitReadsCurrentCoreWithoutContractRevisions(t *testing.T) {
+	clearFallbackIdentity(t)
 	runtime := roleRuntime(t)
-	home := writeDesignatedHome(t)
-	nativeEnv(t, home)
-	if _, errText, err := runCLIFrom(t, runtime, home, "init"); err != nil {
-		t.Fatalf("init: %s", errText)
+	first, errText, err := runCLIFrom(t, runtime, filepath.Join(runtime, ".sum"), "init")
+	if err != nil {
+		t.Fatalf("init: %v %s", err, errText)
+	}
+	home, token := asString(first["home"]), asString(first["claim"])
+	sessionPath := filepath.Join(home, "coordinator.json")
+	before, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 	core := filepath.Join(runtime, "COORDINATOR.md")
-	body, _ := os.ReadFile(core)
-	contract := func(id string) string {
-		t.Helper()
-		data, err := os.ReadFile(filepath.Join(home, "coordinator", "contracts", id+".md"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
-	}
-
-	if _, errText, err := runCLIFrom(t, runtime, home, "refresh", "request"); err != nil {
-		t.Fatalf("refresh request: %s", errText)
-	}
-	r1 := contract("r1")
-	agents, _ := os.ReadFile(filepath.Join(runtime, "AGENTS.md"))
-	if !strings.Contains(r1, string(agents)) || !strings.Contains(r1, "## Coordinator core (COORDINATOR.md at this revision)\n\n"+string(body)) {
-		t.Fatalf("contract r1 does not carry the bootstrap and the core:\n%s", r1)
-	}
-
-	// Changing only the core stages a new revision that says so.
-	if err := os.WriteFile(core, append(append([]byte{}, body...), []byte("\nOne more coordinator rule.\n")...), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	result, errText, err := runCLIFrom(t, runtime, home, "refresh", "request")
+	body, err := os.ReadFile(core)
 	if err != nil {
-		t.Fatalf("second refresh request: %s", errText)
-	}
-	if !strings.Contains(contract("r2"), "One more coordinator rule.") || !strings.Contains(asString(result["coordinator"])+stringsOf(result), "COORDINATOR.md changed") {
-		t.Fatalf("second refresh = %v", result)
-	}
-
-	// A runtime without the core stages nothing.
-	if err := os.Remove(core); err != nil {
 		t.Fatal(err)
 	}
-	if _, errText, err := runCLIFrom(t, runtime, home, "refresh", "request"); err == nil || !strings.Contains(errText, "COORDINATOR.md is missing") || !strings.Contains(errText, "no coordinator contract revision was staged") {
-		t.Fatalf("refresh without the core = %v %s", err, errText)
+	body = append(body, []byte("\nUpdated ordinary coordinator procedure.\n")...)
+	if err = os.WriteFile(core, body, 0600); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(home, "coordinator", "contracts", "r3.md")); err == nil {
-		t.Fatal("a revision was staged without the core")
+	resumed, errText, err := runCLIFrom(t, runtime, home, "init", "--claim", token)
+	if err != nil {
+		t.Fatalf("resume: %v %s", err, errText)
+	}
+	if asString(resumed["claim"]) != token || !strings.Contains(stringsOf(resumed["procedure"]), core) {
+		t.Fatalf("current core not returned: %v", resumed)
+	}
+	after, err := os.ReadFile(sessionPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("procedure read changed claim: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "coordinator", "contracts")); !os.IsNotExist(err) {
+		t.Fatalf("ordinary entry staged a contract revision: %v", err)
 	}
 }
 
