@@ -57,7 +57,8 @@
       "delivery": "Coordinator-only: durably resolve one exact historical delivery effect using existing matching application/consumed-boundary proof; sends nothing and preserves original effect/error",
       "build-info": "Identify the executing binary, embedded build provenance and checksum independently of checkout HEAD",
       "history": "Read preserved current or schema-one task records; never grants live authority",
-      "inspect": "Read the exact saved launch and native output from an ordinary shell, including before init or readiness"
+      "inspect": "Read the exact saved launch and native output from an ordinary shell, including before init or readiness",
+      "collect": "Collect actionable ledger items, deliver queued worker answers, and wait on recorded native workers within one bounded deadline"
     },
     "read_only": [
       "brief-list",
@@ -3155,5 +3156,33 @@
     "subcommands": null,
     "read_only": false,
     "read_only_subcommands": []
+  },
+  "collect": {
+    "usage": "collect --claim TOKEN [--budget 20s] [--task TASK]",
+    "budget": "Defaults to 20s; accepts a positive duration up to 60s. All observation, delivery and waits share this deadline.",
+    "output": [
+      "items",
+      "delivered",
+      "deadline_hit",
+      "next"
+    ],
+    "topic": "collect",
+    "help": "Requires the current logical session claim. Returns actionable questions, reports, reviews, blocked input, launch uncertainty, and native failures with detail and next commands. Delivers only queued worker answers. Reading settles nothing; never starts HC.",
+    "arguments": [
+      {
+        "name": "--claim",
+        "help": "Current logical session claim",
+        "required": true
+      },
+      {
+        "name": "--budget",
+        "help": "Shared duration budget, default 20s, maximum 60s",
+        "default": "20s"
+      },
+      {
+        "name": "--task",
+        "help": "Collect one recorded task"
+      }
+    ]
   }
 }

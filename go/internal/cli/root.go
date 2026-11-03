@@ -140,6 +140,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	}})
 	opts.addHistoryCommand(root)
 	opts.addInspectCommand(root)
+	opts.addCollectCommand(root)
 	opts.addInitCommand(root)
 	opts.addPrepareCommands(root)
 	opts.addVerifyCommand(root)

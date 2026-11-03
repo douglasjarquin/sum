@@ -310,18 +310,10 @@ func reviewObligations(task *ordjson.Object) []*ordjson.Object {
 }
 
 func ReturnRoute(task *ordjson.Object, recipient string) *ordjson.Object {
-	var endpoint *ordjson.Object
-	if recipient == "parent" {
-		owner, _ := routeValue(task, "owner").(*ordjson.Object)
-		if store.ValidateLogicalOwner(owner) == nil {
-			return nil
-		}
-		endpoint, _ = routeValue(task, "parent").(*ordjson.Object)
-	} else if recipient == "worker" {
-		endpoint, _ = routeValue(task, "worker_endpoint").(*ordjson.Object)
-	} else {
+	if recipient != "worker" {
 		return nil
 	}
+	endpoint, _ := routeValue(task, "worker_endpoint").(*ordjson.Object)
 	route := ordjson.NewObject()
 	if endpoint != nil {
 		for _, key := range endpoint.Keys() {
@@ -330,13 +322,9 @@ func ReturnRoute(task *ordjson.Object, recipient string) *ordjson.Object {
 		}
 	}
 	route.Set("recipient", recipient)
-	if recipient == "parent" {
-		route.Set("role", "coordinator")
-	} else {
-		route.Set("role", "worker")
-		cwd, _ := task.Get("worktree")
-		route.Set("cwd", cwd)
-	}
+	route.Set("role", "worker")
+	cwd, _ := task.Get("worktree")
+	route.Set("cwd", cwd)
 	return route
 }
 func RouteKey(route *ordjson.Object) any {
