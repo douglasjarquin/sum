@@ -5,12 +5,12 @@ HC owns processes and Git owns worktrees.
 
 ## Recovery and backup
 
-Run `./bin/sumctl init` and read the procedure path it returns.
-A qualified terminal with no explicit coordinator launch defaults to developer rather than taking over.
-Use `coordinator start` for a new bound launch, or explicit initialization for an inspected existing qualified terminal.
-Pass `--reclaim` only when the user requested takeover and the recorded coordinator is verifiably gone or replaced.
-An unobservable core, idle status or an exited wait is insufficient proof.
-The coordinator's exit does not stop outliving workers, services or observer terminals.
+Resume this conversation with `./bin/sumctl init --claim TOKEN`, reread the validated procedure and collect saved results before claiming progress.
+A missing or stale claim conflicts with the recorded logical owner.
+Under the user's explicit takeover instruction, `init --transfer` advances the claim generation; ask first when another conversation may still be coordinating.
+Task ownership, worker endpoints and native receipts survive transfer unchanged.
+The conversation ending does not stop outliving workers or services.
+Pass the retained `--claim TOKEN` on coordinator mutations below.
 
 ```sh
 ./bin/sumctl bind TASK_ID --parent-only
@@ -56,28 +56,16 @@ A lost non-kept agent becoming a shell cannot receive automatic task prompts as 
 Follow the helper's explicit recovery reason; preserve pending answers, uncertainty and prior evidence.
 Do not manufacture a receipt, endpoint or model observation.
 
-## Observer and wake recovery
+## Collection and unreachable routes
 
-`hook status` reports preference, startup/readiness receipt, owned scope and health.
-Coordinator `init` ensures startup unless explicitly disabled; enabled preference without a real observer receipt is degraded, not active.
-A failed observer startup does not fail the saved task operation.
-Use `pump` for one bounded explicit pass while degraded.
-Reconnect uses fresh snapshots and ledger reconciliation; an event sequence is never a delivery acknowledgement.
-The observer contains no independent payload queue and never automatically replays a submitted or uncertain mutation.
-After proving a prior observer finished, replacement retires its old endpoint/receipt proof and persists a distinct `launch_attempt` before native creation.
-An early child may record its exact matching startup receipt before `terminal.run` replies; the parent merges only that same launch intent and never overwrites a newer receipt or changed launch.
-Transient read-only HC transport/observation failures reconnect to the existing core with bounded backoff and a fresh subscription snapshot.
-Cancellation or explicit disablement stops the observer; wrong core, incompatible config/protocol and invalid durable records are hard failures rather than reconnect permission.
-No reconnect replays a submitted or uncertain mutation.
-
-Routine wake episodes preserve prepared, claimed, intent, submitted, uncertain and closed states.
-`wake show` reads them and provides the exact included/omitted boundary.
-`wake consume --boundary TOKEN` records only the work presented, not its approval, application or verification.
-`wake reconcile` resolves an interrupted episode from its phase without sending again.
-New questions retain priority behind a routine wake; they do not interrupt a working terminal.
-Inspect exact durable receipts for an uncertain return and use `delivery reconcile` when they prove its historical application.
-An explicitly requested `notice TASK_ID --to parent|worker` is a separate delivery attempt; its success does not resolve or erase the earlier uncertain effect.
-Do not loop or use another key to evade an uncertain attempt.
+`collect --claim TOKEN --budget 20s` lists actionable questions, reports and reviews, delivers eligible already-recorded worker answers and waits within one shared deadline.
+It never starts HC and records no read receipt.
+A busy worker's answer remains pending; a submitted or uncertain effect is never automatically replayed.
+An unreachable saved core yields an item with its explicit next command.
+Lost worker/reviewer creation replies use `execution reconcile` or `reviewer reconcile` against the saved launch intent route, independently of current workspace configuration.
+A stale claim refuses before native effects.
+Native blocked status requires inspection, not approval of a dialog.
+There is no background prompt to this coordinating conversation.
 
 ## Reconcile one historical delivery effect
 
@@ -92,13 +80,12 @@ The receipt must bind the exact original endpoint, obligation and semantic input
 The locked claim rereads current task authority and the matching receipt rather than trusting an earlier snapshot.
 
 The original returns row, effect state and native error remain unchanged.
-A separate `delivery-reconciliations.json` sidecar records the original row digest, copies of the exact resolving receipts, coordinator endpoint and timestamp.
+A separate `delivery-reconciliations.json` sidecar records the original row digest, copies of the exact resolving receipts, logical coordinator actor and timestamp.
 Success returns `task`, `delivery`, `result:reconciled` and `original_state`; an identical repeat returns `result:repeated` without rewriting the file.
 Cleanup, lifecycle maintenance and activation consult the same strict resolution validator instead of treating every historical uncertain row as permanently unresolved.
 No reconciliation closes a question, applies an answer, verifies a report, releases capacity or approves publication.
-Wake consumption still closes only its presentation episode; reconciling a historical native effect is a separate durable operation.
-Consumed proof for unresolved deliveries is retained per task before rolling wake history can discard it, so a delayed first reconciliation remains possible.
-Retention reads only a successfully committed wake; if retention fails, later wake replacement refuses and preserves that source rather than losing the proof.
+Historical retained consumed-boundary evidence remains available for exact old delivery reconciliation.
+Existing sidecars are preserved without creating new presentation episodes.
 A changed or insufficient receipt does not make replay safe.
 
 ## Cleanup
@@ -115,12 +102,13 @@ Never manually remove a task checkout, terminal or branch.
 
 Normal Open, `init` and `status` do not migrate schema-one state.
 The stable root selects a separate physical writable generation; sealed historical procedures, policy and evidence retain their original bytes.
-An enforceable exclusion lease must prevent every legacy writer and sender before cutover.
-Current legacy APIs do not provide that proof, and `ps` output or an operator boolean cannot replace it.
-Existing-installation activation therefore refuses without this external prerequisite.
-A schema-one runtime cannot reactivate the inactive archive as writable state.
-Rollback requires the actual target binary's compatible capabilities, not merely a compatible-looking manifest.
-No production migration has been established by offline tests.
+Supported native retirement requires its explicit quiescent gate, then raises the root state pointer to format 3 before publishing the logical session.
+Generation headers, task records, native owner and sealed procedures retain their bytes.
+Old helpers reject root and physical generation access before ledger writes or native sends, including a paused authorization's final locked recheck.
+This is not universal exclusion of preauthorized process or Git I/O.
+Rollback below logical owner schema 2/root format 3 is refused by actual target capabilities, even if retirement stopped after the root fence and before session publication.
+Schema-one state still requires an independent fresh workspace; no conversion or production cutover is established by offline tests.
+See [update](update.md).
 
 ## Records-only backup and restore
 
@@ -145,7 +133,7 @@ Both the root pointer and physical header use schema two with `backend:"records"
 The reader accepts the records backend only with its quarantine flag, while HC-only helpers that require the HC backend reject it rather than treating an unknown flag as writable authority.
 Imported task and pinned procedure/version files retain their exact archived bytes; settings, findings and other saved records remain historical records rather than live authority.
 The complete archive entries, including the original header and old sessions, are retained under `NEW_HOME/restore-source/` for inspection.
-No live session registrations, coordinator owner, observer or runtime binding is imported.
+No live session registrations, coordinator owner or runtime binding is imported.
 Old native addresses and worktree paths inside historical records never establish authority at the new location.
 Saved `show`, `status` and `context` reads are available; `init` may report developer only.
 All writes, coordinator claims, rebindings, capacity adoption, native launch/send and other mutations are blocked.

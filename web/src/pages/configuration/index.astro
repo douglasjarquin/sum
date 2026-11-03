@@ -14,19 +14,13 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     <div class="sec">
       <h2>Worker harness and model</h2>
       <p>
-        <code>--harness</code> is optional. The precedence is fixed: an explicit
-        instruction (<code>--harness</code>, <code>--model</code>, <code
-          >--reasoning</code
-        >, or <code>--same-as-you</code>), then the saved worker default in
-        .sum/settings.json, then the reliably known root harness, then the
-        disclosed native default.
+        Worker selection comes from an explicit instruction or the saved worker default in <code>.sum/settings.json</code>. With neither, launch refuses and names the settings command. Your conversation's harness and exact model are never inferred. Coordinator mutations use the retained <code>--claim TOKEN</code>.
       </p>
       <div class="codeblock">
         <div>./bin/sumctl settings set --worker-harness codex --worker-model gpt-5-codex --worker-reasoning high</div>
         <div>./bin/sumctl settings set --worker-harness claude        <span class="c"># switching harness drops the old harness's model</span></div>
-        <div>./bin/sumctl settings set --clear-worker                 <span class="c"># back to the coordinator's harness</span></div>
+        <div>./bin/sumctl settings set --clear-worker                 <span class="c"># explicit selection required when no default exists</span></div>
         <div>./bin/sumctl dispatch --repo R --brief B --approved --model o4-mini      <span class="c"># this task only</span></div>
-        <div>./bin/sumctl dispatch --repo R --brief B --approved --same-as-you        <span class="c"># coordinator's harness and native model</span></div>
       </div>
       <p>
         A model or reasoning value is translated only through a flag verified

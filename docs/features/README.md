@@ -14,3 +14,6 @@ The runner in `.agents/skills/verify/` reads the scenario tables from the files 
 
 A row's driver column starts with `automated` or `manual`; anything after that is free text naming the test or the procedure.
 Keep maps truthful: describe what is exercised today, not what a future slice will cover.
+
+Ordinary-entry, logical-claim, parentless-launch and bounded-collection rows describe the current coordination model.
+Retired native-coordinator and background-delivery scenarios do not certify this candidate.

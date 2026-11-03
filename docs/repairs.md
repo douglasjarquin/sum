@@ -38,7 +38,7 @@ Read the `repairs` field in `sumctl show TASK_ID` for classified operations, the
 
 Expansion exhaustion refuses another expansion send - in-scope sends are never blocked - and saves one budget decision in the task's questions.
 It stops no worker, frees no slot, and preserves other obligations.
-Only after the user approves an additional allowance, record that decision from the coordinator terminal:
+Only after the user approves an additional allowance, record that decision from the coordinating conversation with its captured claim:
 
 ```sh
 ./bin/sumctl repair extend TASK_ID --question QUESTION_ID --additional 1 --approved --file /absolute/path/to/user-decision.md

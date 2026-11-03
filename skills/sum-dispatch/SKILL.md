@@ -4,12 +4,14 @@ description: Delegate explicitly approved work into an isolated Git task checkou
 ---
 # Dispatch
 
-Use this only from the terminal registered as coordinator by `sumctl init`; the helper refuses dispatch from any other terminal.
-Workers do not dispatch other workers.
-The coordinator does not do the requested work.
-Research, planning, investigation, and implementation are dispatched.
-Write the brief from the user's words; do not investigate first.
-Stay available for inbox notices and further dispatches.
+Use this conversation's captured `--claim TOKEN` on every coordinator mutation shown below.
+HC worker/reviewer creation uses the saved workspace route, without a coordinator parent or caller.
+
+Use this from the ordinary conversation holding the current logical claim returned by `sumctl init`.
+Workers never dispatch other workers.
+Investigate and plan within the user's authorized scope, then dispatch approved implementation to its isolated checkout.
+Write the brief from the user's request and completed investigation.
+Collect saved results during active work and bring human decisions back to the user.
 
 ## Capacity
 
@@ -45,7 +47,7 @@ A free slot is never a reason to dispatch; work starts only from an explicit app
 
 Identify the repository, outcome, scope/non-goals, acceptance criteria, and verification commands from the user's words.
 A direct user request can be the approval; an unapproved issue cannot.
-Do not research, plan, or implement in this terminal to fill those fields.
+Resolve scope through authorized investigation or a concise question; implementation still belongs in the task checkout.
 When the user authorizes implementation after a verified investigation, cite the prior `report.md` / task id in the brief and forbid redoing the investigation.
 Use `templates/task.md` as a checklist, not an excuse to make the user rewrite a clear request.
 For a missing local clone, enroll the exact user-named repository: `./bin/sumctl project enroll owner/repo` clones exactly it under the Git-ignored `<installation>/projects/<owner>/<repo>` (a non-default host gets its own level: `--host gitlab.example.com` gives `projects/gitlab.example.com/owner/repo`), records host/owner/repo, the verified remote, and the path in `.sum/projects.json`, and is idempotent; never guess a similarly named project, and never clone everything an account can reach.
@@ -58,14 +60,14 @@ If the main checkout has uncommitted changes, explain that dispatch starts from 
 ## Select execution
 
 Translate the user's natural-language choice into an explicit launch specification before the worktree exists; the helper resolves, validates, and persists it at `prepare`, and `start` uses exactly that record even if the defaults change in between.
-Precedence is fixed and the helper enforces it: an explicit instruction in the task, then the saved worker default from `settings show` (`worker` block of `.sum/settings.json`), then the coordinator's own harness as HC observes it, then the harness's native model, disclosed as such.
+Precedence is explicit task selection, then the saved worker default from `settings show` (`worker` in `.sum/settings.json`).
+With neither, launch refuses and names `settings set --worker-harness`; never infer a worker harness or exact model from this conversation.
 
 | The user says | Pass |
 |---|---|
-| nothing about harness or model | no flags: saved default, else your own harness with its native model |
+| nothing about harness or model | no flags: saved default; if absent, ask for an explicit choice or default |
 | "use codex" / "run this on claude" | `--harness codex` (a harness-only override never carries a saved model from another harness) |
 | "use gpt-5-codex" / "fable at low effort" | `--model gpt-5-codex` / `--model fable --reasoning low`, on the saved or explicit harness |
-| "same as you" / "use what you're running" | `--same-as-you` (your recorded harness, known launch model or explicitly unknown native model; never guesses an exact model) |
 | "make codex with gpt-5 my default" | `./bin/sumctl settings set --worker-harness codex --worker-model gpt-5` first; future dispatches only |
 | "use my deep preset" / "use review for this" | `--preset deep` (see `./bin/sumctl preset list`); an unknown name is refused before anything is created |
 | "use deep but with o4-mini" | `--preset deep --model o4-mini`; explicit fields refine a compatible preset, a different `--harness` is refused |
@@ -79,7 +81,7 @@ Presets are not agents, roles, or defaults, and none ship built in: create only 
 Model and reasoning values are passed only through flags verified from the installed CLI's help (codex, claude, grok, copilot, cursor, pi, omp).
 A refusal names the harness without a verified flag; then pass the native argument with `--arg` or choose another harness.
 Do not guess a flag or invent a provider/model equivalence.
-Ask once only for genuine authority/account ambiguity or a requested combination the helper refuses as unusable; a saved default or `--same-as-you` is never a reason to ask.
+Ask once only for genuine authority/account ambiguity or a requested combination the helper refuses as unusable; a saved default is never a reason to ask.
 Honor the user's chosen harness and authorized account.
 Coordinator and worker may differ; a worker default never switches your own harness, model, account, or billing route.
 For Codex, run `sumctl quota --provider codex` (Remainder `--format toon`).
@@ -108,7 +110,7 @@ Then run:
 
 `--project owner/repo` (an enrolled name) replaces `--repo` for a managed clone; the task records the project identity and its brief names it.
 A `--repo` path that matches a registration is attached the same way; an unregistered path stays usable.
-`--harness codex` is the explicit form; omit it to use the saved worker default or your own harness.
+`--harness codex` is the explicit form; omit it only when a saved worker default exists.
 Add `--preset NAME` to expand a saved preset, and `--model`/`--reasoning` for this task only.
 Extra approved native arguments stay separate `--arg` values, e.g.
 `--arg=-m --arg=MODEL`; an `--arg` that sets the same flag as `--model` is refused as a conflict before anything is created.
@@ -176,8 +178,7 @@ Those commands save data first and attempt a short notice only to a provably idl
 If a notice remains pending, saved work still exists, but automatic delivery is NOT guaranteed.
 Every open question and report stays listed under `returns` until a record closes it, and a later write to the same recipient coalesces them into one notice.
 Check status on the next interaction.
-With the proven owned observer active, native events and snapshot catch-up run bounded reconciliation; enabled preference alone is not proof it is running.
-Qualified Codex 0.166.0 uses Tab submission: observed working/blocked/unknown is deferred, idle uses `if:idle`, and observed Done uses ordinary send without `if` or `force`.
-A raced working turn queues it for the next turn; this is not an atomic Done guard.
-Status, `started` and turn counters never replace a matching application receipt.
-The user can opt out with `sumctl hook disable`.
+Run `collect --claim TOKEN` during active work to list questions, reports and review verdicts and deliver already-recorded worker answers.
+It waits within a shared budget, never starts HC and never records a read receipt.
+A busy worker's answer remains pending until an eligible delivery pass.
+No unattended prompt to the coordinating conversation is promised.

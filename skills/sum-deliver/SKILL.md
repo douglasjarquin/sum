@@ -4,6 +4,9 @@ description: Independently inspect worker results, use existing verification too
 ---
 # Deliver
 
+Use this conversation's captured `--claim TOKEN` on every coordinator mutation shown below.
+Never obtain current authority by rereading a shared token after a conflict.
+
 A worker report is a claim.
 Read the saved task, its report, relevant changes, and outstanding decisions.
 `sumctl show TASK_ID` carries `evidence_view`: every report, handoff, reviewer finding, verification, and PR observation, each bound to a candidate SHA and marked `current` against the checkout HEAD, plus `closure.missing`, the prerequisites still absent.
@@ -252,7 +255,7 @@ It is not verification, not review, and not a merge decision; only the user merg
 ## Clean up after the merge
 
 Only the user merges, except a factory lane explicitly governed by its authorized high-confidence merge contract.
-`init`, `pump`, observer events and status never observe GitHub merges.
+`init`, `collect`, `pump` and status never observe GitHub merges.
 After the user reports a merge, inspect `cleanup TASK_ID`, or run bounded `sweep` for saved PRs and pending cleanup.
 Cleanup requires the exact merged PR/candidate, settled questions, applied answers, required evidence and stopped attempts.
 It re-observes that exact PR through `gh`, requires `merged` with a merge commit (closed is not merged), and compares the checkout HEAD with the merged head; squash and rebase merges pass, while an extra local commit blocks.

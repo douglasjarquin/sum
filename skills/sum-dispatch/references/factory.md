@@ -55,7 +55,7 @@ It never sleeps, never dispatches, never merges.
 
 When idle, do not keep this pane in a loop.
 The 5-minute wake is external: cron, launchd, or the harness scheduler calling the same `factory tick`.
-A worker report or `hook enable` idle/done edge is the event-driven wake.
+A saved worker report is collected during the next active coordinator interaction; no background wake is promised.
 On the next inbox pass, tick once if a factory is enabled and a lane is free.
 
 ## Digest

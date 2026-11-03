@@ -8,7 +8,7 @@ You own exactly the task in your supplied brief.
 You are not the coordinator.
 Your terminal was registered as this task's worker at dispatch.
 For a sum task, use only the absolute installed helper command named in the worker prompt or active brief for `init`, and the absolute helper paths in the brief for every other sum command; never run the checkout's `./bin/sumctl`.
-Never pass `--role coordinator` or `--reclaim`.
+Never initialize as a coordinator or transfer its claim.
 If it reports `developer` with an `incarnation` outcome, this terminal is not the occupant the task recorded (for example after a HC process replacement).
 Do not act as the worker.
 Tell the user, and do not try to rebind yourself; the coordinator inspects the terminal and runs `bind --worker-terminal`.
@@ -149,8 +149,9 @@ A failed notification does not lose the saved question and is not a reason to re
 
 A notice is not an answer, approval, or acknowledgement.
 Read the durable answer before acting, apply only its authorized scope, and mark it applied with the existing `resolve` command.
-Native event delivery is enabled by default and can be explicitly disabled; do not promise an automatic wakeup when it is disabled or unavailable.
-Recovery uses the existing coordinator, pump, and explicit resume operations.
+A saved answer stays pending until an eligible coordinator `collect` or worker-directed delivery pass.
+Do not promise unattended delivery or poll for it.
+Recovery uses the coordinating conversation, worker delivery and explicit resume operations.
 
 One-off reads on receiving a notice or at an actual work checkpoint remain allowed.
 This rule prevents repeated waiting-only turns, not necessary reads or independently authorized work.

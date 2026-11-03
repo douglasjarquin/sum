@@ -43,7 +43,7 @@ import { sitePath } from "../lib/site-path.mjs";
         <div class="t">A separate worktree per worker</div>
         <p>
           The coordinator prepares a Git worktree, launches the selected
-          worker, and returns control to you. A worker is explicitly given its
+          worker, and collects its results in your existing conversation. A worker is explicitly given its
           own role; it does not become another coordinator.
         </p>
       </div>
@@ -78,16 +78,16 @@ import { sitePath } from "../lib/site-path.mjs";
         <div class="t">Seven bundled skills</div>
         <p>
           /sum-dispatch, /sum-work, /sum-deliver, /sum-status, /sum-develop,
-          /sum-factory, and /sum-update with rolling session refresh and
+          /sum-factory, and /sum-update with quiescent updates and
           code-only rollback.
           <a href={sitePath("skills")}>Skills →</a>
         </p>
       </div>
       <div class="feature">
         <div class="n">05</div>
-        <div class="t">Native HC delivery</div>
+        <div class="t">Bounded result collection</div>
         <p>
-          Coordinator init ensures a proven owned observer unless explicitly disabled; failure is visible as degraded. Metadata remains opt-in. <a href={sitePath("herdr")}>HC terminal runtime →</a>
+          Collect saved questions, reports and reviews in your existing conversation; queued worker answers use the native route. Metadata remains opt-in. <a href={sitePath("herdr")}>HC terminal runtime →</a>
         </p>
       </div>
       <div class="feature">
@@ -104,14 +104,14 @@ import { sitePath } from "../lib/site-path.mjs";
         <div class="eyebrow">Quick start</div>
         <div class="codeblock">
           <div>git clone https://github.com/douglasjarquin/sum.git</div>
-          <div class="c"># Explicitly start the selected HC core using its matched manual.</div>
-          <div class="c"># In a HC terminal:</div>
+          <div class="c"># Start your usual coding agent in this clone after setup.</div>
+          <div class="c"># No coordinator terminal is needed.</div>
           <div>cd /path/to/sum</div>
           <div>mise trust</div>
           <div>mise run setup</div>
-          <div>./bin/sumctl coordinator start --socket /path/to/hc.sock --session sum --hc-config-home /path/to/hc-config --harness codex</div>
+          <div class="c"># Ask your agent for work here.</div>
         </div>
-        <p style="margin:18px 0 0;font-size:12px">Read the exact procedure path returned by init. Without qualified HC context, initialization defaults to developer and does not claim coordination.</p>
+        <p style="margin:18px 0 0;font-size:12px">Your agent initializes a logical claim and follows its validated procedure. HC starts lazily for workers, independently of your conversation.</p>
       </div>
       <div class="split">
         <div class="eyebrow">How it works</div>
@@ -123,7 +123,7 @@ import { sitePath } from "../lib/site-path.mjs";
           <div class="k">worker</div>
           <div class="v">questions, report, PR ↑</div>
         </div>
-        <p style="margin:18px 0 0;font-size:12px">Read the exact procedure path returned by init. Without qualified HC context, initialization defaults to developer and does not claim coordination.</p>
+        <p style="margin:18px 0 0;font-size:12px">Your agent initializes a logical claim and follows its validated procedure. HC starts lazily for workers, independently of your conversation.</p>
       </div>
     </div>
   </main>

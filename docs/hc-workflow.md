@@ -1,85 +1,70 @@
-# HC startup and recovery
+# Ordinary entry and HC worker recovery
 
-A fresh installation starts with `mise run setup`, followed by `./bin/sumctl coordinator start --harness grok` for a selected Grok coordinator, or the explicitly chosen supported terminal profile.
-Sum records the selected HC socket, session and XDG configuration/state route in `.sum/runtime-route.json`.
-Explicit `--socket`, `--session` and `--hc-config-home` options override selection; a selected-session failure never falls back to the default core.
-Startup checks the selected live core against published HC 0.1.14, protocol generation 1 and the operation's required capabilities.
-It never silently downgrades a shared desktop core.
-A newer shared core needs independent compatibility qualification before use with this release.
-Read-only `doctor`, `inspect`, `history` and status commands never prepare a core.
+Run `mise run setup`, start your usual coding agent in this directory, and ask for work.
+The agent runs `./bin/sumctl init`, retains its claim and reads the validated procedure paths.
+Initialization starts or queries no HC core.
+A worker harness must be selected explicitly or saved through `settings set --claim TOKEN --worker-harness NAME`.
+It can differ from the coordinating harness.
 
-`./bin/sumctl build-info` identifies the actual executable, checksum and available embedded source provenance.
-The checkout revision and selected release describe source selection; they do not identify an unverifiable older helper.
-Setup preserves a stale or unverifiable existing helper and refuses with a staged-update instruction.
-Use the installed helper's `release stage HEAD`, inspect the staged release, then use the existing explicitly authorized update procedure.
-An update never relocates managed projects from the stable installation root into a release generation.
-`project list` warns about preserved projects already enrolled under a release; inspect and migrate them explicitly while retaining dirty or active work.
+## Workspace runtime route
+
+The first worker/reviewer launch ensures the workspace route lazily and saves socket, session, config/state homes and permanent core ID in `.sum/runtime-route.json`.
+A changed core at the same socket is refused; a route failure never silently selects another core.
+Template options come from settings, not the coordinator's environment or launch record.
+Creation omits HC parent and caller; workers and reviewers outlive the coordinating conversation.
+The pinned HC dependency and its release-matched manual define native behavior.
+Observation and collection never start a core.
 
 ## Inspect before recovery
 
-`./bin/sumctl inspect` reads the saved coordinator attempt and its output from an ordinary shell, including before init or native status.
-Use `inspect TASK --role worker` or `inspect TASK --role reviewer` for a task attempt.
-`--attempt ID` guards against inspecting a different successor.
-The result includes an exact native attach argv and socket/session environment.
-A missing endpoint remains ambiguous; inspect the saved intent and use the corresponding reconcile command rather than repeating launch.
-No inspection creates a terminal, grants authority or sends an opening.
-
-Creation and opening delivery are separate.
-New namespaced templates have an empty body; the approved installed-helper/procedure/brief pointer is saved in the launch record before creation.
-The endpoint is saved before readiness is awaited.
-Native submission is diagnostic; only the matching role init receipt establishes authority.
-Before creating a Grok worker, reviewer or coordinator terminal, Sum records trust for its workspace in the selected `GROK_HOME/trusted_folders.toml`.
-Git worktrees share the common repository's trust entry; a workspace outside Git uses its own resolved directory.
-Concurrent Sum launches serialize trust writes so they cannot append duplicate entries.
-An explicit `trusted = false`, invalid trust file or failed write refuses creation and records a not-submitted attempt.
-This grants workspace trust for repository configuration, MCP, LSP and hooks; it does not enable Grok's tool auto-approval or bypass permission mode.
-Authentication remains a human action.
-Existing terminals launched by an older release keep their original process and pending prompt; installing this change does not answer or relaunch them.
-
-| Saved outcome | Explicit next action |
-| --- | --- |
-| Worker creation response lost | `execution reconcile TASK --attempt ID`; unprovable candidates remain ambiguous |
-| Coordinator creation response lost | `coordinator reconcile --attempt ID` from an ordinary shell |
-| Reviewer creation response lost | `reviewer reconcile TASK --attempt ID` |
-| Created, opening proven unsent | `execution redeliver TASK --attempt ID`, `coordinator redeliver --attempt ID`, or `reviewer redeliver TASK --attempt ID` |
-| Worker init receipt pending | Inspect, then `execution confirm TASK --attempt ID` after the matching init |
-| Proven no-effect refusal | Correct the prerequisite; `execution park TASK --attempt ID` then resume the worker, `coordinator recover --attempt ID`, or `reviewer recover TASK --attempt ID` then explicitly launch |
-| Original process exited before init | Inspect exit/output, then `execution park TASK --attempt ID`, `coordinator recover --attempt ID`, or `reviewer recover TASK --attempt ID`; native exit, original PID death and checkout survivor evidence must prove stop |
-| Send submitted or ambiguous | Inspect and reconcile the application receipt; never blindly replay |
-| Program replaced by a recovery shell | Stop using old authority; inspect and perform an explicit new bootstrap or verified rebind |
-
-## Desktop and input compatibility
-
-For a running associated desktop, pass the existing space ID with `coordinator start --space SPACE`.
-Placement is requested only after original process evidence is saved; it is separate from launch and dispatch authority.
-Confirm the selected core and space in the actual app before treating placement as visible.
-Workers and reviewers remain linked to that root and are always reachable through `inspect`, including unready or finished attempts.
-If the app is unavailable, use the native read/attach route; no desktop visibility is claimed.
-Closing the desktop window preserves programs; closing a pane/tab can end its terminal.
-Keep-as-tab changes presentation and recovery policy, not an unchanged agent's authority.
-A recovery shell or changed PID/foreground still fails the original receipt/process checks.
-Promotion before any original foreground observation cannot establish the original process; inspect without sending when that evidence is unavailable.
-
-Running-recipient qualification preserves immutable launch/template provenance while checking current input semantics.
-Comments, formatting and unrelated configuration bytes, or a replaced executable on disk, do not identify replacement of an already-running program.
-New launches separately qualify the executable actually selected.
-A changed submit key, disabled native status or other unsupported input semantics is refused.
-Codex 0.166.0 uses Tab; Grok Build stable 1.0.67 or newer, Claude Code 2.1.316 and Devin 3000.11.234 use Enter with default input settings.
-Actual authenticated qualification, launcher/shim layouts, desktop interaction and compatible update acceptance must be recorded for the selected combination; offline fixtures do not prove them.
-
-## Independent fresh start for legacy installations
-
-Setup detects unsupported/legacy state before dependency staging or configuration retirement and preserves the original bytes.
-There is no production live legacy migration command.
-Use the old runtime for old active work and `./bin/sumctl history` for read-only preserved task records.
-Clone `https://github.com/douglasjarquin/sum.git` into a separate directory, then launch setup there with old identity removed only from that child environment:
-
 ```sh
-env -u SUM_HOME -u SUM_ROLE -u SUM_TASK -u SUM_ATTEMPT -u SUM_SESSION \
-  -u SUM_CORE_ID -u SUM_BINDING_GENERATION -u SUM_INSTALL_ROOT \
-  -u HC_SOCKET -u HC_SESSION -u HC_TERMINAL_ID mise run setup
+./bin/sumctl inspect TASK --role worker --attempt ID
+./bin/sumctl inspect TASK --role reviewer --attempt ID
 ```
 
-Select the intended core/session for the fresh instance explicitly when it differs from native defaults.
-Keep the old installation, processes, task worktrees and records intact.
-A historical reader or records restore never grants new runtime authority.
+Inspection works from an ordinary shell for live, unready and failed attempts.
+It returns the saved intent, exact address, bounded output and native attach route without sending input.
+A missing endpoint remains ambiguous; inspect and reconcile instead of repeating launch.
+Creation and opening delivery have separate durable outcomes.
+The endpoint is saved before readiness is awaited, and only a matching role-init receipt establishes native authority.
+
+| Saved outcome | Explicit action with `--claim TOKEN` |
+| --- | --- |
+| Worker creation reply lost | `execution reconcile TASK --attempt ID` |
+| Reviewer creation reply lost | `reviewer reconcile TASK --attempt ID` |
+| Created with opening proven unsent | `execution redeliver TASK --attempt ID` or `reviewer redeliver TASK --attempt ID` |
+| Worker matching init receipt pending | Inspect, then `execution confirm TASK --attempt ID` |
+| Worker proven stopped | `execution park TASK --attempt ID`, then explicit resume |
+| Reviewer refusal or exit | Inspect, then `reviewer recover TASK --attempt ID` before explicit launch |
+| Submitted or uncertain input | Reconcile exact application evidence; never blindly replay |
+
+Recovery uses the original saved launch route even after workspace settings or claim transfer change.
+A stale claim refuses before HC effects.
+Original-process, creation-time, candidate and receipt checks remain mandatory.
+Native exit, original PID death and absence of owned survivors establish stop; idle status alone releases nothing.
+
+## Trust and native input
+
+Grok worker/reviewer creation records workspace trust in the selected trust file before native creation.
+Linked Git worktrees share their common repository trust entry.
+An explicit refusal, invalid trust file or failed write prevents creation.
+Authentication and permission dialogs remain human actions; no tool approval, account/model switch or global-keymap change is implied.
+Qualified input defers working, blocked and unknown recipients and requires its supported native guard.
+Native send success, status and turn counters are diagnostics, never task application receipts.
+Actual authenticated harness combinations and desktop behavior require separate acceptance evidence.
+
+## Desktop boundary
+
+There is no coordinator placement or parent desktop terminal.
+Use worker/reviewer inspection's exact attach route; no desktop visibility follows from a label or successful native launch.
+Closing a desktop window and closing a pane can have different process effects.
+A recovery shell or changed process cannot inherit the original worker's receipt authority.
+Do not interact with terminals this task does not own.
+
+## Preserved installations
+
+Schema-one state stays untouched.
+Keep its processes, worktrees and records intact, use `sumctl history` for saved reads, and prepare an independent fresh clone with `mise run setup`.
+A supported native installation uses the explicit one-time retirement procedure in [update](update.md).
+That root-format fence preserves task/native-owner/sealed-procedure bytes and is not universal OS/Git exclusion.
+Development fixtures do not authorize a live cutover.

@@ -1,11 +1,13 @@
 # Coordinator core
 
 The coordinator's operating contract, read right after `sumctl init` returns `coordinator`.
-It is not a skill: it is read by the path `init` names and embedded in every coordinator contract revision.
+Read it by the validated path `init` names.
+Updates take effect on the next ordinary harness start; sealed task procedures retain their original bytes.
 
 You own coordination for this installation.
-Your work is routing only: talk to the user, run one bounded status check, dispatch, record answers, and run the helper commands this file names (verify, sweep, cleanup, refresh, update).
-This terminal stays free for inbox notices and further dispatches; a working coordinator defers automatic input until an eligible boundary.
+Keep the user's conversation as the point of contact.
+Investigate and plan within the approved scope, dispatch implementation to accountable workers, answer saved questions with the user's decisions, and verify results independently.
+HC owns worker and reviewer terminals; this conversation needs no HC endpoint.
 
 ## Startup
 
@@ -15,11 +17,16 @@ After context compaction or a resumed conversation, reread it before acting.
 Optionally run `./bin/sumctl doctor` (observation only; it never binds).
 Read `.sum/preferences.md` and `.sum/projects.md` only if they exist.
 2.
-If `init`'s `contract` field shows a `requested` revision, read that file and run `./bin/sumctl refresh adopt --coordinator rN` before other work.
-It refreshes this operating contract, not your role or the recorded tasks.
+Keep the returned claim token in this conversation and pass `--claim TOKEN` on every coordinator mutation, including dispatch, answer, collection and maintenance.
+After context compaction or resume, run `./bin/sumctl init --claim TOKEN`, reread the validated procedure and collect before claiming progress.
+A conflict or stale claim grants no write authority.
+Ask the user before transfer when another conversation may still be coordinating.
+For a new conversation explicitly asked to take over, run `init --transfer`, report the transfer and retain the new token.
+Never recover authority by reading the current token from a shared record.
 3.
-Run `./bin/sumctl inbox --live` and reconcile saved obligations before starting more work.
-It is read-only: `init` already ran one budgeted delivery pass, and `./bin/sumctl pump` repeats that pass (for example after it names `deferred` recipients).
+Run `./bin/sumctl collect --claim TOKEN --budget 20s` to read actionable ledger items, deliver already-recorded worker answers and wait within one shared bound.
+Use `inbox --compact` or `context` for saved detail.
+Reading records no receipt and settles nothing.
 4.
 Use the installed `sumctl` domain commands for all task communication.
    HC is the only terminal transport, through the typed native client; the release-matched `.local/skills/hc/SKILL.md` documents native observations.
@@ -31,9 +38,8 @@ Never install software, change accounts, or disable permission controls to work 
 
 ## Rules
 
-- Never do the requested work in this coordinator terminal: not research, not planning, not investigation, not implementation.
-  Dispatch it to one accountable worker in its own task checkout.
-  Write the brief from the user's words; do not investigate first.
+- Investigate and plan within the user's scope; dispatch implementation to one accountable worker in its own task checkout.
+  Write the approved brief from the user's request and any completed investigation.
 - Work starts only from the user's explicit instruction or an already-approved task; an investigation does not authorize implementation.
   When the user later authorizes a build, the brief cites that task's `report.md` / task id and forbids redoing the investigation.
 - Enroll a repository the user names once with `./bin/sumctl project enroll owner/repo` (exactly that repository, under the Git-ignored `projects/<owner>/<repo>` or adopted where a clone already is, recorded in `.sum/projects.json`) and dispatch with `--project owner/repo`.
@@ -70,21 +76,15 @@ Never install software, change accounts, or disable permission controls to work 
 - Idle/done, a successful send, or a worker's report is not verified completion.
   You verify again yourself and arrange an independent review; only the user merges, except a factory lane following `skills/sum-dispatch/references/factory.md` after `factory merge-check` is high on an authorized factory repository.
   Never delete or force-reset unfinished work.
-- Do not repeatedly wait or poll.
-  Dispatch and return control to the user.
-  Before replying to a meaningful later message while work is active, do one bounded status check (`inbox --live`).
-- Delivery is best-effort.
-  Say so rather than promising unattended delivery.
-  Coordinator `init` ensures a real scoped observer startup receipt outside the ledger lock unless explicitly disabled; startup failure is fail-open and degraded, never falsely active.
-  The non-agent observer subscribes to native events and runs fair bounded reconciliation; it carries no separate payload queue.
-  `init`, `bind`, `pump` and task-write notices retain explicit bounded delivery; `inbox --live` delivers nothing.
-  Submitted or uncertain notices are not answered, applied, verified or automatically replayed.
-- Routine returns wake you at most once per outstanding wake episode; later arrivals stay `pending` and unstamped, reported as `coalesced` in the delivery pass; they are not lost or answered.
-  After reading a routine wake, run `./bin/sumctl wake show` and then `./bin/sumctl wake consume --boundary TOKEN` with the token it printed: that records exactly what was shown to you and lets the next pass wake you for new work.
-  Consuming answers, applies, verifies, or approves nothing and closes no question, report, or review.
-  `./bin/sumctl wake reconcile` settles an episode a pass left `prepared` or interrupted; it never resends.
-  A new question (a decision) reaches you once, at the next eligible pass, even while a routine wake is outstanding; it defers a recipient observed working, and an unchanged decision is not repeated.
-  A prompt from an older helper is `uncoalesced`: it is listed, not coalesced.
+- During active work, collect results with a bounded budget and act on each saved obligation through its existing command.
+  Repeat collection when it advances the approved task; do not claim progress from idle status alone.
+  Before replying on resume, collect once and inspect the relevant details.
+  End the turn when work requires a human decision or there is no useful authorized action.
+- Collection is pull-based.
+  Questions, reports and reviewer verdicts remain in the ledger until their existing action settles them.
+  A saved answer reaches a busy worker at the next eligible collection or explicit worker-delivery pass.
+  No unattended prompt to this conversation is promised.
+  Submitted or uncertain worker input is not applied, verified or automatically replayed.
 - Capacity comes from `.sum/settings.json`, and only the user sets it.
   A report, an idle terminal, or uncertain process state releases no reservation; archive never frees one; keep uncertain execution reserved instead of improvising a replacement.
 - Corrections to a settled worker go through `repair send`; never ask a worker to add or reword code comments, other than a directive the code cannot work without, and never ask a worker to add, expand, rewrite or delete tests unless the user explicitly asked for that change.
@@ -96,7 +96,7 @@ Never install software, change accounts, or disable permission controls to work 
   Nothing else calls GitHub or cleans up.
   Never remove a checkout, close a terminal, or delete a branch by hand to make room.
 - Only the user authorizes an update or rollback.
-  Native event delivery is enabled by default; only the user decides to disable it (`hook disable`) or enable native metadata (`metadata enable`).
+  Only the user decides to enable native metadata (`metadata enable`).
 - Code graphs are built only on request; a graph result is never verification, feature-map coverage, or review.
 
 ## Processing and replies
@@ -109,7 +109,7 @@ Use `inbox --compact` for a bounded saved overview.
 Global known decision counts appear before paging; follow `page.next_after` with `--after` until the relevant items are covered.
 An incomplete snapshot may conceal more obligations.
 Inspect its source gaps and use each item's detail route.
-Full `inbox --live` remains the global observation and maintenance status view required above.
+Use `collect --claim TOKEN` for active collection and `inbox --live` for a read-only global observation.
 
 Answer a direct user question.
 Otherwise, narrate actual decisions, meaningful results, and important exceptions.
@@ -120,7 +120,7 @@ A report's claim of completion still needs verification and independent review b
 A later project-scoped status view may narrow routine presentation only.
 It must preserve global decisions and obligation processing; no project or digest scope is implemented by these compact flags.
 Native harness reasoning, tool output, and progress messages are outside Sum's control.
-These instructions take effect through the existing contract refresh and adoption procedure; editing this file does not update a running coordinator.
+These instructions take effect on the next ordinary harness start; an update requires quiescent work and the user's authorization.
 
 When the user asks for a weekday morning brief, follow the Inbox and ops brief in `skills/sum-status/SKILL.md`.
 This contract does not arm a schedule.
@@ -134,22 +134,21 @@ Do not read every skill or every task transcript at every turn.
 | --- | --- |
 | Dispatch; harness, model, and preset choice; capacity, park, resume; repair sends and grants; building a code graph | `skills/sum-dispatch/SKILL.md` |
 | Verifying and reviewing a result; evidence publication; the delivery pipeline and PR; cleanup after a merge | `skills/sum-deliver/SKILL.md` |
-| Status, pending returns, answers, maintenance and `sweep`, restart and recovery, hook, metadata, and graph states, backup | `skills/sum-status/SKILL.md` |
-| Update, rollback, and refreshing running sessions | `skills/sum-update/SKILL.md` |
+| Status, pending returns, answers, maintenance and `sweep`, restart and recovery, metadata and graph states, backup | `skills/sum-status/SKILL.md` |
+| Quiescent update, rollback, and worker brief revisions | `skills/sum-update/SKILL.md` |
 | Starting or running a factory. Software and copy differ by a settings file. | `skills/sum-factory/SKILL.md` |
 
 For one task, `./bin/sumctl context TASK_ID --role coordinator` (or `--section ...`, `--since CURSOR`) reads only what you need; full `show` stays for the complete record.
 `./bin/sumctl help [TOPIC]` lists commands without the whole manual.
 
-## Native terminal contract
+## Worker and reviewer identity
 
-Use only the supported installation/core/session scope; another same-host scope and remote Sum execution are refused before binding.
-Permanent core ID and returned terminal address are native identity; Sum additionally checks creation time, task/role/attempt/generation, process identity and matching initialization receipt.
-A socket, name, label, cwd, PID or status alone confers no authority.
-Observation never starts a missing core.
-Qualified Codex 0.166.0 uses its default keymap with the namespaced HC Tab-submit template.
-Defer observed working, blocked or unknown; use native `if:idle` for idle and ordinary send without `if` or `force` for observed Done.
-This deliberately relaxed Done guard is not atomic: a raced busy turn queues the submission for the next Codex turn.
-Native `started`, status, turn counters and completed waits are diagnostics, never application receipts.
-Normal Open/init/status never migrate schema-one state; existing-installation cutover refuses without an enforceable legacy writer/sender exclusion lease that current legacy APIs cannot prove.
+Native endpoints remain bound to permanent core ID, returned address, creation time, task/role/attempt/generation, process identity and matching initialization receipt.
+A socket, label, cwd, PID or status alone confers no authority.
+Observe and recover through the saved launch route; never use this conversation's environment as a worker identity.
+Observation and collection never start a missing core.
+Defer working, blocked or unknown worker input; use the qualified native delivery guard.
+Native send success and completed waits are diagnostics, never application receipts.
+Normal Open/init/status never migrate schema-one state.
+Native retirement requires its explicit quiescent gate and persists a root state-format fence before logical ownership; it preserves historical task, owner and sealed procedure bytes.
 Do not infer activation authority from these instructions.
