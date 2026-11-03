@@ -78,14 +78,6 @@ func configureNativeEventsForTest(t *testing.T, home string, enabled bool) {
 	}
 }
 
-func assertNativeEventsEnabledForTest(t *testing.T, home string) {
-	t.Helper()
-	status, err := runCLI(t, home, "hook", "status")
-	if err != nil || decodeObject(t, status)["enabled"] != true {
-		t.Fatalf("native delivery should be enabled after coordinator init: %s, err = %v", status, err)
-	}
-}
-
 func nativeEnv(t *testing.T, home string) {
 	t.Helper()
 	root, helper := repoReference(t)
@@ -197,22 +189,20 @@ func TestAttention_marksOpenRecordSeen(t *testing.T) {
 	if value["status"] != "seen" {
 		t.Fatalf("status = %v", value["status"])
 	}
-	if actor := asMap(value["closed_by"]); actor["role"] != "coordinator" || actor["address"] != "t1" || actor["core_id"] != os.Getenv("SUM_CORE_ID") {
-		t.Fatalf("closed_by = %v", value["closed_by"])
-	}
+	requireLogicalActor(t, home, value["closed_by"])
 }
 
-func TestBind_parentOnlyUpdatesParent(t *testing.T) {
+func TestBind_parentOnlyRestoresLogicalOwner(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "parent-bind", map[string]string{"README": "base\n"})
 	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
 	id := asString(task["id"])
-	task["parent"] = nil
+	task["owner"] = nil
 	writeJSONFile(t, filepath.Join(d.home, "tasks", id, "task.json"), task)
 	value := d.ctl(true, "bind", id, "--parent-only")
-	parent := asMap(value["parent"])
-	if parent["address"] != "t1" || parent["core_id"] != d.native.CoreID {
-		t.Fatalf("rebound parent: %v", value)
+	requireLogicalActor(t, d.home, value["owner"])
+	if value["parent"] != nil {
+		t.Fatalf("bind created native parent: %v", value)
 	}
 }
 

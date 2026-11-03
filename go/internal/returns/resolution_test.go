@@ -35,7 +35,7 @@ func uncertainAppliedLab(t *testing.T) (*nativeLab, *ordjson.Object, *ordjson.Ob
 	if routeValue(row, "state") != "uncertain" {
 		t.Fatal("effect was not uncertain")
 	}
-	q.Set("application_receipt", ApplicationReceipt(task, "answer:q1", "answer-applied", e))
+	q.Set("application_receipt", ApplicationReceipt(task, "answer:q1", "answer-applied", e.Object()))
 	q.Set("status", "applied")
 	q.Set("applied_at", store.Now())
 	if err = l.s.SaveTask(task); err != nil {

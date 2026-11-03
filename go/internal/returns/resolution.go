@@ -144,9 +144,13 @@ func ObligationRevision(task *ordjson.Object, id string) string {
 	return ""
 }
 
-func ApplicationReceipt(task *ordjson.Object, id, kind string, endpoint store.Endpoint) *ordjson.Object {
-	r := applicationReceipt{Kind: kind, Obligation: id, Revision: ObligationRevision(task, id), Endpoint: endpoint, At: store.Now()}
-	o, _ := ordjson.FromValue(r)
+func ApplicationReceipt(task *ordjson.Object, id, kind string, endpoint *ordjson.Object) *ordjson.Object {
+	o := ordjson.NewObject()
+	o.Set("kind", kind)
+	o.Set("obligation", id)
+	o.Set("revision", ObligationRevision(task, id))
+	o.Set("endpoint", evidence.Endpoint(endpoint))
+	o.Set("at", store.Now())
 	return o
 }
 

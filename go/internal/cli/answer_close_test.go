@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -11,7 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// closeLab registers this pane as coordinator and writes one task whose worker
+// closeLab claims a logical coordinator and writes one task whose worker
 // attempt is in workerState. Its questions are an answered one (q-aaaaaaaaaa),
 // an open one (q-bbbbbbbbbb), and an answered one (q-cccccccccc) for the worker
 // to apply. A workerState of "" writes a legacy task with no execution record.
@@ -130,10 +129,7 @@ func TestAnswerClose_recordDistinguishesCoordinatorClosureFromWorkerApplication(
 	if at, _ := closed["closed_at"].(string); at == "" {
 		t.Fatalf("closed_at = %v", closed["closed_at"])
 	}
-	by, _ := closed["closed_by"].(map[string]any)
-	if by["role"] != "coordinator" || by["address"] != "t1" || by["core_id"] != os.Getenv("SUM_CORE_ID") || by["attempt"] != "bootstrap" || by["created_ms"] == nil || by["binding_generation"] == nil || by["session"] != "sum-test" {
-		t.Fatalf("closed_by = %v", closed["closed_by"])
-	}
+	requireLogicalActor(t, home, closed["closed_by"])
 	applied := questionRecord(t, home, "q-cccccccccc")
 	if applied["status"] != "applied" || applied["closed_by"] != nil || applied["close_reason"] != nil {
 		t.Fatalf("worker-applied record = %v", applied)

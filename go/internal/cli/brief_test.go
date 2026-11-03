@@ -31,15 +31,14 @@ func writeTaskFixture(t *testing.T, home, taskID, taskJSON string) string {
 	if !ok {
 		t.Fatal("task fixture must be an object")
 	}
-	if s.Designated() {
-		if parent, exists := task.Get("parent"); exists && parent != nil {
-			owner, err := s.Owner()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if owner != nil {
-				task.Set("parent", owner)
-			}
+	session, err := s.CoordinatorSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session != nil {
+		if _, exists := task.Get("owner"); !exists {
+			task.Set("owner", session.Owner())
+			task.Set("parent", nil)
 		}
 	}
 	data, err := ordjson.MarshalIndent(task)
