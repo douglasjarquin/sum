@@ -28,6 +28,10 @@ var sha40Hex = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // ValidateTarget is the single target-validation path for apply, rollback, compensation, and recovery.
 // A staged directory is not approval.
 func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object) (*ordjson.Object, *ordjson.Object, error) {
+	return validateTargetForTasks(s, root, target, current, nil)
+}
+
+func validateTargetForTasks(s *store.Store, root, target string, current *ordjson.Object, tasks []*ordjson.Object) (*ordjson.Object, *ordjson.Object, error) {
 	resolvedRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, nil, err
@@ -88,7 +92,7 @@ func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object
 	if effectField(alignment, "result") == "refused" {
 		return nil, descriptor, fmt.Errorf("checkout alignment refused before activation: %s", effectField(alignment, "reason"))
 	}
-	compat, compatErr := Compatibility(s, root, candidate, current)
+	compat, compatErr := compatibilityForTasks(s, root, candidate, current, tasks)
 	if compatErr != nil {
 		return nil, nil, compatErr
 	}

@@ -163,18 +163,9 @@ func Park(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID st
 	if err != nil {
 		return nil, err
 	}
-	row, err := reservations.Transition(current, recordedID, "released", store.Now(), observation, &generation)
+	row, err := ReleaseStopped(current, recordedID, observation, generation)
 	if err != nil {
 		return nil, fmt.Errorf("Worker attempt %s changed during stop observation; reservation remains held.", attemptID)
-	}
-	row.Delete("observer_pid")
-	if kind == "worker" {
-		panes.AppendEndpoint(current, workerEndpoint(current), "execution-park")
-		if report, ok := current.Get("report"); ok && report != nil {
-			current.Set("status", "reported")
-		} else {
-			current.Set("status", "waiting")
-		}
 	}
 	if err := s.SaveTask(current); err != nil {
 		return nil, err
@@ -185,6 +176,26 @@ func Park(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID st
 	result.Set("released", true)
 	result.Set("observation", observation)
 	return result, nil
+}
+
+func ReleaseStopped(task *ordjson.Object, attemptID string, observation *ordjson.Object, generation int64) (*ordjson.Object, error) {
+	if observation == nil || stringField(observation, "outcome") != OutcomeStopped {
+		return nil, fmt.Errorf("release requires stopped process evidence")
+	}
+	row, err := reservations.Transition(task, attemptID, "released", store.Now(), observation, &generation)
+	if err != nil {
+		return nil, err
+	}
+	row.Delete("observer_pid")
+	if stringField(row, "kind") == "worker" {
+		panes.AppendEndpoint(task, workerEndpoint(task), "execution-park")
+		if report, ok := task.Get("report"); ok && report != nil {
+			task.Set("status", "reported")
+		} else {
+			task.Set("status", "waiting")
+		}
+	}
+	return row, nil
 }
 
 func matchAttempt(value *reservations.Execution, id string) *ordjson.Object {

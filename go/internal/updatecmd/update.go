@@ -214,6 +214,10 @@ func containsNumber(list []any, n int) bool {
 }
 
 func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.Object) (*ordjson.Object, error) {
+	return compatibilityForTasks(s, root, candidatePath, current, nil)
+}
+
+func compatibilityForTasks(s *store.Store, root, candidatePath string, current *ordjson.Object, snapshot []*ordjson.Object) (*ordjson.Object, error) {
 	resolvedRoot, _ := filepath.Abs(root)
 	resolvedCandidate, _ := filepath.Abs(candidatePath)
 	checkout := resolvedRoot == resolvedCandidate
@@ -298,9 +302,13 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 		blocking = append(blocking, fmt.Sprintf("state schema %d required by %s is not supported by the candidate (%v)", stateSchemaVal, filepath.Join(s.Root, "state.json"), stateSchema))
 	}
 	var tasks []any
-	all, err := s.AllTasks()
-	if err != nil {
-		return nil, err
+	all := snapshot
+	if all == nil {
+		var err error
+		all, err = s.AllTasks()
+		if err != nil {
+			return nil, err
+		}
 	}
 	blocking = append(blocking, unresolvedEffects(s, all)...)
 	diagnostics := deliveryQualification(s, all)

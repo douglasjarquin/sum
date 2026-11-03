@@ -67,8 +67,9 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 	view.Set("recorded_owner", owner)
 	view.Set("source", source)
 	view.Set("journal", journal)
+	operationID := effectField(journal, "operation")
 	if !approve {
-		inspection, inspectErr := bootstrapInspect(s, owner)
+		inspection, _, inspectErr := bootstrapInspect(s, owner, operationID, journal)
 		view.Set("inspection", inspection)
 		if inspectErr != nil {
 			view.Set("blocker", inspectErr.Error())
@@ -102,6 +103,10 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 			return nil, fmt.Errorf("old runtime cannot be verified; selection preserved")
 		}
 	}
+	_, plan, err := bootstrapInspect(s, owner, operationID, journal)
+	if err != nil {
+		return nil, err
+	}
 	staged, err := release.Stage(s, sha)
 	if err != nil {
 		return nil, err
@@ -114,7 +119,7 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 	if !hasInt(offered.Supports.StateSchema, 3) || !hasInt(offered.Supports.OwnerSchema, 2) {
 		return nil, fmt.Errorf("bootstrap target must support state schema 3 and logical owner schema 2")
 	}
-	if _, _, err = ValidateTarget(s, root, target, current); err != nil {
+	if _, _, err = validateTargetForTasks(s, root, target, current, plan.tasks); err != nil {
 		return nil, err
 	}
 	if _, _, err = settings.NativeRetirementPreferences(s, owner); err != nil {
@@ -143,6 +148,7 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 		checkout, _ := source.Get("checkout")
 		journal.Set("checkout_head", effectField(asObject(checkout), "head"))
 		journal.Set("phase", "prepared")
+		journal.Set("reconciliation", plan.releases)
 		if err = ordjson.WriteFile(path, journal); err != nil {
 			return nil, err
 		}
@@ -162,12 +168,26 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 		if err := bootstrapCheckout(root, journal); err != nil {
 			return err
 		}
-		inspection, inspectErr := bootstrapInspect(s, owner)
+		inspection, freshPlan, inspectErr := bootstrapInspect(s, owner, effectField(journal, "operation"), journal)
 		if inspectErr != nil {
 			return inspectErr
 		}
+		if _, _, err := validateTargetForTasks(s, root, target, DefaultRuntime(root), freshPlan.tasks); err != nil {
+			return err
+		}
 		journal.Set("inspection", inspection)
-		return ordjson.WriteFile(path, journal)
+		if err := ordjson.WriteFile(path, journal); err != nil {
+			return err
+		}
+		for _, task := range freshPlan.changed {
+			if err := s.SaveTask(task); err != nil {
+				return err
+			}
+			if err := bootstrapStep("reconciled:" + effectField(task, "id")); err != nil {
+				return err
+			}
+		}
+		return nil
 	}, func() error { return bootstrapStep("fenced") })
 	if err != nil {
 		return nil, resumeError(err)
@@ -277,16 +297,23 @@ func readBootstrap(path string) (*ordjson.Object, error) {
 	return obj, nil
 }
 
-func bootstrapInspect(s *store.Store, owner *ordjson.Object) (*ordjson.Object, error) {
+func bootstrapInspect(s *store.Store, owner *ordjson.Object, operation string, journal *ordjson.Object) (*ordjson.Object, *bootstrapPlan, error) {
 	view := ordjson.NewObject()
 	tasks, err := s.AllTasks()
 	if err != nil {
-		return view, err
+		return view, nil, err
 	}
-	blocked := unresolvedEffects(s, tasks)
+	plan, blocked := planBootstrapReleases(s, filepath.Dir(s.Root), operation, tasks)
+	if journal != nil {
+		if err := plan.matches(journal); err != nil {
+			blocked = append(blocked, err.Error())
+		}
+	}
+	view.Set("reconciliation", plan.releases)
+	blocked = append(blocked, unresolvedEffects(s, tasks)...)
 	registrations, err := s.Registrations()
 	if err != nil {
-		return view, err
+		return view, plan, err
 	}
 	var observations []any
 	observe := func(record *ordjson.Object, label string, observer bool) {
@@ -389,9 +416,9 @@ func bootstrapInspect(s *store.Store, owner *ordjson.Object) (*ordjson.Object, e
 	view.Set("terminals", observations)
 	view.Set("blocking", blocked)
 	if len(blocked) != 0 {
-		return view, fmt.Errorf("bootstrap refused: %s", joinBlocking(blocked))
+		return view, plan, fmt.Errorf("bootstrap refused: %s", joinBlocking(blocked))
 	}
-	return view, nil
+	return view, plan, nil
 }
 
 func retireBootstrapPreferences(s *store.Store, token string) error {
