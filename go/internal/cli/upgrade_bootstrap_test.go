@@ -321,6 +321,25 @@ func TestBootstrapInspectsRemainingWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	inspect("unresolved observer launch")
+	for _, value := range []any{nil, json.Number("7"), []any{}} {
+		health.Set("launch_effect", value)
+		if err := ordjson.WriteFile(healthPath, health); err != nil {
+			t.Fatal(err)
+		}
+		inspect("malformed observer health")
+	}
+	health.Set("launch_effect", "submitted")
+	health.Set("observer", []any{})
+	if err := ordjson.WriteFile(healthPath, health); err != nil {
+		t.Fatal(err)
+	}
+	inspect("malformed observer health")
+	health.Set("schema", json.Number("1"))
+	if err := ordjson.WriteFile(healthPath, health); err != nil {
+		t.Fatal(err)
+	}
+	inspect("malformed observer health")
+	health.Set("schema", json.Number("2"))
 	health.Set("launch_effect", "submitted")
 	health.Set("observer", worker.Object())
 	if err := ordjson.WriteFile(healthPath, health); err != nil {

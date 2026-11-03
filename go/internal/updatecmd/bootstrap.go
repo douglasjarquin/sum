@@ -342,7 +342,14 @@ func bootstrapInspect(s *store.Store, owner *ordjson.Object) (*ordjson.Object, e
 		if health == nil {
 			blocked = append(blocked, "malformed observer health")
 		} else {
-			observer := asObject(func() any { v, _ := health.Get("observer"); return v }())
+			schema, _ := health.Get("schema")
+			effectValue, hasEffect := health.Get("launch_effect")
+			_, effectString := effectValue.(string)
+			observerValue, _ := health.Get("observer")
+			observer := asObject(observerValue)
+			if fmt.Sprint(schema) != "2" || (hasEffect && !effectString) || (observerValue != nil && observer == nil) {
+				blocked = append(blocked, "malformed observer health schema or launch fields")
+			}
 			effect := effectField(health, "launch_effect")
 			if (effect != "" && effect != "submitted" && effect != "refused" && effect != "not-submitted") || (effect == "submitted" && observer == nil) || (observer != nil && effect != "submitted") || (effect == "" && effectField(health, "launch_attempt") != "") {
 				blocked = append(blocked, "unresolved observer launch")
