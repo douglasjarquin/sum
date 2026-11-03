@@ -22,7 +22,8 @@ fi
 INSTALLATION="$ROOT"
 if [[ -n "${SUM_INSTALL_ROOT:-}" && -d "$SUM_INSTALL_ROOT" ]]; then
   CANDIDATE=$(cd -- "$SUM_INSTALL_ROOT" && pwd -P)
-  case "$RUNTIME/" in
+  RESOLVED_RUNTIME=$(cd -- "$RUNTIME" && pwd -P)
+  case "$RESOLVED_RUNTIME/" in
     "$CANDIDATE/"|"$CANDIDATE/.local/releases/"*) INSTALLATION="$CANDIDATE" ;;
   esac
 fi
