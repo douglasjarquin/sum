@@ -99,7 +99,6 @@ func (s *Store) ClaimCoordinator(token, label string, transfer bool) (*Coordinat
 }
 
 // RetireNativeCoordinator preserves the old owner as evidence and excludes old writers.
-// The delivery lock drains already-admitted sends before the state lock changes the authority format.
 func (s *Store) RetireNativeCoordinator(token, label string, transfer bool) (*CoordinatorSession, error) {
 	return s.claimCoordinator(token, label, transfer, true)
 }
@@ -205,8 +204,8 @@ func (s *Store) checkRetirementLaunches() error {
 		if text(task, "status") == "preparing" && (text(task, "prepare_operation_id") != "" || number(task, "prepare_operation_pid") > 0) {
 			return blocked()
 		}
-		maintenance, _ := valueObject(task, "terminal_maintenance")
-		cleanup, _ := valueObject(task, "cleanup")
+		maintenance := valueObject(task, "terminal_maintenance")
+		cleanup := valueObject(task, "cleanup")
 		if unsettledEffect(maintenance) || (cleanup != nil && text(cleanup, "state") == "removing") {
 			return blocked()
 		}
@@ -214,22 +213,21 @@ func (s *Store) checkRetirementLaunches() error {
 			continue
 		}
 		var records []*ordjson.Object
-		execution, _ := valueObject(task, "execution")
+		execution := valueObject(task, "execution")
 		if execution != nil {
-			worker, _ := valueObject(execution, "worker")
+			worker := valueObject(execution, "worker")
 			records = append(records, worker)
-			if raw, _ := execution.Get("verifiers"); raw != nil {
-				list, _ := raw.([]any)
-				for _, v := range list {
-					if row, ok := v.(*ordjson.Object); ok {
-						records = append(records, row)
-					}
+			raw, _ := execution.Get("verifiers")
+			list, _ := raw.([]any)
+			for _, v := range list {
+				if row, ok := v.(*ordjson.Object); ok {
+					records = append(records, row)
 				}
 			}
 		}
-		reviewer, _ := valueObject(task, "reviewer")
+		reviewer, _ := RecordedReviewer(task)
 		for _, field := range []string{"prompt", "kickoff"} {
-			pending, _ := valueObject(reviewer, field)
+			pending := valueObject(reviewer, field)
 			if unsettledEffect(pending) {
 				return blocked()
 			}
@@ -240,8 +238,8 @@ func (s *Store) checkRetirementLaunches() error {
 				continue
 			}
 			state := text(record, "state")
-			launch, _ := valueObject(record, "native_launch")
-			redelivery, _ := valueObject(launch, "redelivery")
+			launch := valueObject(record, "native_launch")
+			redelivery := valueObject(launch, "redelivery")
 			if unsettledEffect(redelivery) {
 				return blocked()
 			}
@@ -252,8 +250,8 @@ func (s *Store) checkRetirementLaunches() error {
 					effect = text(launch, "state")
 				}
 			}
-			confirmed := state == "running" && s.receiptConfirmsWorker(task, record)
-			if state == "starting" || state == "uncertain" || ((effect == "claimed" || effect == "in-flight" || effect == "uncertain" || effect == "unknown") && !confirmed) {
+			unresolved := effect == "claimed" || effect == "in-flight" || effect == "uncertain" || effect == "unknown"
+			if state == "starting" || state == "uncertain" || (unresolved && !(state == "running" && s.receiptConfirmsWorker(task, record))) {
 				return fmt.Errorf("task %s has an unresolved launch; reconcile it before native retirement", text(task, "id"))
 			}
 		}
@@ -262,7 +260,7 @@ func (s *Store) checkRetirementLaunches() error {
 }
 
 func (s *Store) receiptConfirmsWorker(task, attempt *ordjson.Object) bool {
-	value, _ := valueObject(task, "worker_endpoint")
+	value := valueObject(task, "worker_endpoint")
 	endpoint := EndpointFromContext(value)
 	if endpoint.Validate() != nil || endpoint.Role != "worker" || endpoint.Task != text(task, "id") || endpoint.Attempt != text(attempt, "id") {
 		return false
@@ -308,13 +306,13 @@ func unsettledEffect(record *ordjson.Object) bool {
 	return false
 }
 
-func valueObject(o *ordjson.Object, key string) (*ordjson.Object, bool) {
+func valueObject(o *ordjson.Object, key string) *ordjson.Object {
 	if o == nil {
-		return nil, false
+		return nil
 	}
 	v, _ := o.Get(key)
-	obj, ok := v.(*ordjson.Object)
-	return obj, ok
+	obj, _ := v.(*ordjson.Object)
+	return obj
 }
 
 // CheckClaim is repeated while holding Lock immediately before a coordinator mutation.
