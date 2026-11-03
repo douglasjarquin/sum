@@ -10,7 +10,7 @@ func TestCleanupLogicalClaimUsesRecordedWorkerRoute(t *testing.T) {
 	head := l.makeWorktreeCheckout()
 	l.saveTask(l.mergedTaskJSON(head, `[]`, "released"))
 	l.workerTerminal(false)
-	session, err := l.store.RetireNativeCoordinator("", "ordinary cleanup", false)
+	session, err := l.store.CoordinatorSession()
 	if err != nil {
 		t.Fatal(err)
 	}

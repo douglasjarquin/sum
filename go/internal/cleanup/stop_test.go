@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/execution"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
@@ -77,22 +78,15 @@ func newLab(t *testing.T) *lab {
 	repo := t.TempDir()
 	initGitRepo(t, repo)
 	initGitRepo(t, checkout)
-	coordinator := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: fixture.CoreID, Socket: fixture.Socket, Session: "sum-test", Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: home}
-	cp := uint32(12000)
-	cf := &hcclient.Foreground{PID: 12001, Name: "codex", Argv: []string{"codex"}, Cwd: home}
-	fixture.SetTerminal(hcclient.Terminal{Address: "t1", Cwd: home, State: "live", CreatedMS: 1, PID: &cp, Foreground: cf})
-	bound := incarnation.NativeEvidence{Endpoint: coordinator.Native(), PID: cp, Foreground: cf}
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: coordinator.Native(), Kind: "coordinator-init", Attempt: coordinator.Attempt})
-	owner := coordinator.Object()
-	owner.Set("incarnation", bound.Record(store.Now()))
-	owner.Set("native_receipt", receipt)
-	if _, err = st.Register(coordinator, "coordinator", nil, bound.Record(store.Now())); err != nil {
+	session, err := st.ClaimCoordinator("", "maintenance conversation", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
+	ctx, err := app.RequireClaim(st, session.Token())
+	if err != nil {
 		t.Fatal(err)
 	}
-	l := &lab{t: t, store: st, ctx: coordinator.Object(), home: home, host: host.ID, checkout: checkout, runtime: root, lsofRoot: lsofRoot, repo: repo, hc: fixture}
+	l := &lab{t: t, store: st, ctx: ctx, home: home, host: host.ID, checkout: checkout, runtime: root, lsofRoot: lsofRoot, repo: repo, hc: fixture}
 	l.plantLsof(nil)
 	return l
 }
@@ -205,10 +199,16 @@ func (l *lab) saveTask(raw string) {
 		l.t.Fatal(err)
 	}
 
-	obj.Set("parent", l.ctx)
+	session, err := l.store.CoordinatorSession()
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	obj.Set("owner", session.Owner())
+	obj.Set("parent", nil)
 	if ex := asObject(func() any { v, _ := obj.Get("execution"); return v }()); ex != nil {
 		worker := asObject(func() any { v, _ := ex.Get("worker"); return v }())
 		if worker != nil {
+			worker.Set("owner", session.Owner())
 			native := ordjson.NewObject()
 			pid := uint32(40000001)
 			fg := &hcclient.Foreground{PID: int32(pid), Name: "worker", Argv: []string{"worker"}, Cwd: l.checkout}

@@ -13,7 +13,7 @@ func TestSweepLogicalClaimIgnoresHistoricalParentTerminal(t *testing.T) {
 	task.Set("parent", endpoint.Object())
 	l.save(task)
 	l.terminal(endpoint, "finished")
-	session, err := l.store.RetireNativeCoordinator("", "ordinary maintenance", false)
+	session, err := l.store.CoordinatorSession()
 	if err != nil {
 		t.Fatal(err)
 	}
