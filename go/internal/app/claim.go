@@ -15,6 +15,9 @@ func RequireClaim(s *store.Store, token string) (*ordjson.Object, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.CaptureClaim(token); err != nil {
+		return nil, err
+	}
 	ctx := session.Owner()
 	ctx.Set("role", "coordinator")
 	ctx.Set("claim", token)

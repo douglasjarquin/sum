@@ -10,15 +10,22 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 )
 
 var (
-	ErrClaimRequired = errors.New("claim_required: run init and carry its claim in --claim")
-	ErrClaimConflict = errors.New("conflict: another conversation holds the coordinator claim")
-	ErrStaleClaim    = errors.New("stale-claim: coordinator claim changed; run init to inspect the current owner")
+	ErrClaimRequired            = errors.New("claim_required: run init and carry its claim in --claim")
+	ErrClaimConflict            = errors.New("conflict: another conversation holds the coordinator claim")
+	ErrStaleClaim               = errors.New("stale-claim: coordinator claim changed; run init to inspect the current owner")
+	ErrNativeRetirementRequired = errors.New("native-retirement-required: confirm retirement with init --retire-native")
 )
+
+// LogicalStateSchema fences helpers that know only native coordinator authority.
+// Task records, sealed procedures and the historical generation header retain their formats.
+const LogicalStateSchema = contract.LogicalStateSchema
 
 type CoordinatorSession struct {
 	Schema        int
@@ -88,6 +95,21 @@ func (s *Store) CoordinatorSession() (*CoordinatorSession, error) {
 
 // ClaimCoordinator creates, resumes or explicitly transfers a claim under the state lock.
 func (s *Store) ClaimCoordinator(token, label string, transfer bool) (*CoordinatorSession, error) {
+	return s.claimCoordinator(token, label, transfer, false)
+}
+
+// RetireNativeCoordinator preserves the old owner as evidence and excludes old writers.
+// The delivery lock drains already-admitted sends before the state lock changes the authority format.
+func (s *Store) RetireNativeCoordinator(token, label string, transfer bool) (*CoordinatorSession, error) {
+	return s.claimCoordinator(token, label, transfer, true)
+}
+
+func (s *Store) claimCoordinator(token, label string, transfer, retire bool) (*CoordinatorSession, error) {
+	release, err := s.DeliveryLock()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -125,11 +147,174 @@ func (s *Store) ClaimCoordinator(token, label string, transfer bool) (*Coordinat
 			return nil, err
 		}
 		current = &CoordinatorSession{Schema: 2, Kind: "coordinator-session", Machine: host.ID, SessionID: "c-" + hex.EncodeToString(id[:]), Generation: 1, ClaimedAt: Now(), Label: label}
+		owner, err := s.Owner()
+		if err != nil {
+			return nil, err
+		}
+		if owner != nil {
+			if !retire {
+				return nil, ErrNativeRetirementRequired
+			}
+			endpoint := EndpointFromContext(owner)
+			if err := endpoint.Validate(); err != nil || endpoint.Role != "coordinator" || !host.Is(endpoint.Machine) {
+				return nil, fmt.Errorf("native owner cannot be safely identified for retirement")
+			}
+			if err := s.checkRetirementLaunches(); err != nil {
+				return nil, err
+			}
+			current.RetiredNative = owner
+		}
+	}
+	// Commit the format fence first. If recording the claim fails, old writers remain
+	// excluded and an explicit retirement retry can finish without modifying history.
+	if err = s.fenceNativeWriters(); err != nil {
+		return nil, err
 	}
 	if err = ordjson.WriteFile(filepath.Join(s.Home, "coordinator.json"), current.Object()); err != nil {
 		return nil, err
 	}
 	return current, nil
+}
+
+func (s *Store) fenceNativeWriters() error {
+	path := filepath.Join(s.Root, "state.json")
+	value, err := ordjson.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	state, ok := value.(*ordjson.Object)
+	if !ok {
+		return fmt.Errorf("state.json is not an object")
+	}
+	if number(state, "schema") == LogicalStateSchema {
+		return nil
+	}
+	state.Set("schema", json.Number(strconv.Itoa(LogicalStateSchema)))
+	return ordjson.WriteFile(path, state)
+}
+
+func (s *Store) checkRetirementLaunches() error {
+	tasks, err := s.AllTasks()
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		blocked := func() error {
+			return fmt.Errorf("task %s has an unresolved native effect; reconcile it before native retirement", text(task, "id"))
+		}
+		if text(task, "status") == "preparing" && (text(task, "prepare_operation_id") != "" || number(task, "prepare_operation_pid") > 0) {
+			return blocked()
+		}
+		maintenance, _ := valueObject(task, "terminal_maintenance")
+		cleanup, _ := valueObject(task, "cleanup")
+		if unsettledEffect(maintenance) || (cleanup != nil && text(cleanup, "state") == "removing") {
+			return blocked()
+		}
+		if text(task, "status") == "archived" {
+			continue
+		}
+		var records []*ordjson.Object
+		execution, _ := valueObject(task, "execution")
+		if execution != nil {
+			worker, _ := valueObject(execution, "worker")
+			records = append(records, worker)
+			if raw, _ := execution.Get("verifiers"); raw != nil {
+				list, _ := raw.([]any)
+				for _, v := range list {
+					if row, ok := v.(*ordjson.Object); ok {
+						records = append(records, row)
+					}
+				}
+			}
+		}
+		reviewer, _ := valueObject(task, "reviewer")
+		for _, field := range []string{"prompt", "kickoff"} {
+			pending, _ := valueObject(reviewer, field)
+			if unsettledEffect(pending) {
+				return blocked()
+			}
+		}
+		records = append(records, reviewer)
+		for _, record := range records {
+			if record == nil {
+				continue
+			}
+			state := text(record, "state")
+			launch, _ := valueObject(record, "native_launch")
+			redelivery, _ := valueObject(launch, "redelivery")
+			if unsettledEffect(redelivery) {
+				return blocked()
+			}
+			effect := ""
+			if launch != nil {
+				effect = text(launch, "effect")
+				if effect == "" {
+					effect = text(launch, "state")
+				}
+			}
+			confirmed := state == "running" && s.receiptConfirmsWorker(task, record)
+			if state == "starting" || state == "uncertain" || ((effect == "claimed" || effect == "in-flight" || effect == "uncertain" || effect == "unknown") && !confirmed) {
+				return fmt.Errorf("task %s has an unresolved launch; reconcile it before native retirement", text(task, "id"))
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Store) receiptConfirmsWorker(task, attempt *ordjson.Object) bool {
+	value, _ := valueObject(task, "worker_endpoint")
+	endpoint := EndpointFromContext(value)
+	if endpoint.Validate() != nil || endpoint.Role != "worker" || endpoint.Task != text(task, "id") || endpoint.Attempt != text(attempt, "id") {
+		return false
+	}
+	registration, err := s.Registration(endpoint)
+	if err != nil || registration == nil {
+		return false
+	}
+	raw, _ := registration.Get("native_receipt")
+	encoded, err := ordjson.MarshalCompact(raw)
+	if err != nil {
+		return false
+	}
+	var receipt struct {
+		Endpoint hcclient.Endpoint `json:"endpoint"`
+		Kind     string            `json:"kind"`
+		Attempt  string            `json:"attempt"`
+	}
+	if json.Unmarshal(encoded, &receipt) != nil || receipt.Kind != "worker-init" || receipt.Attempt != endpoint.Attempt || !receipt.Endpoint.SameAuthority(endpoint.Native()) {
+		return false
+	}
+	raw, _ = registration.Get("incarnation")
+	encoded, err = ordjson.MarshalCompact(raw)
+	if err != nil {
+		return false
+	}
+	var observed struct {
+		Endpoint hcclient.Endpoint `json:"endpoint"`
+	}
+	return json.Unmarshal(encoded, &observed) == nil && observed.Endpoint.SameAuthority(endpoint.Native())
+}
+
+func unsettledEffect(record *ordjson.Object) bool {
+	if record == nil {
+		return false
+	}
+	for _, key := range []string{"state", "effect"} {
+		switch text(record, key) {
+		case "claimed", "in-flight", "uncertain", "unknown":
+			return true
+		}
+	}
+	return false
+}
+
+func valueObject(o *ordjson.Object, key string) (*ordjson.Object, bool) {
+	if o == nil {
+		return nil, false
+	}
+	v, _ := o.Get(key)
+	obj, ok := v.(*ordjson.Object)
+	return obj, ok
 }
 
 // CheckClaim is repeated while holding Lock immediately before a coordinator mutation.

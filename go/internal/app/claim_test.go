@@ -83,3 +83,34 @@ func TestLogicalTaskActorNeedsNoNativeEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNativeCoordinatorCannotAuthorizeAfterLogicalRetirement(t *testing.T) {
+	l := taskActorLab(t, "coordinator")
+	actor, err := ObserveTaskActor(l.store, l.endpoint.Object())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireCoordinator(l.store, l.endpoint.Object()); err != nil {
+		t.Fatal(err)
+	}
+	session, err := l.store.RetireNativeCoordinator("", "ordinary conversation", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireCoordinator(l.store, l.endpoint.Object()); err == nil {
+		t.Fatal("retired native coordinator retained write authority")
+	}
+	if _, err := ObserveTaskActor(l.store, l.endpoint.Object()); err == nil {
+		t.Fatal("retired native coordinator acquired a task actor")
+	}
+	if err := checkActorLocked(l, actor, "coordinator"); err == nil {
+		t.Fatal("observed native actor survived retirement")
+	}
+	ctx, err := RequireClaim(l.store, session.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireCoordinator(l.store, ctx); err != nil {
+		t.Fatal(err)
+	}
+}

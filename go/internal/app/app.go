@@ -47,6 +47,17 @@ func isBlank(s string) bool {
 }
 
 func RequireCoordinator(s *store.Store, ctx *ordjson.Object) error {
+	if logicalContext(ctx) {
+		value, _ := ctx.Get("claim")
+		token, _ := value.(string)
+		_, err := RequireClaim(s, token)
+		return err
+	}
+	if current, err := s.CoordinatorSession(); err != nil {
+		return err
+	} else if current != nil {
+		return store.ErrClaimRequired
+	}
 	if err := s.CheckWritable(); err != nil {
 		return err
 	}

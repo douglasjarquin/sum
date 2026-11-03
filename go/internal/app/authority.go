@@ -29,6 +29,13 @@ func ObserveTaskActor(s *store.Store, ctx *ordjson.Object) (*TaskActor, error) {
 		return observeLogicalActor(s, ctx)
 	}
 	endpoint := store.EndpointFromContext(ctx)
+	if endpoint.Role == "coordinator" {
+		if current, err := s.CoordinatorSession(); err != nil {
+			return nil, err
+		} else if current != nil {
+			return nil, store.ErrClaimRequired
+		}
+	}
 	host, err := s.Machine()
 	if err != nil {
 		return nil, err
@@ -120,6 +127,11 @@ func CheckTaskRole(s *store.Store, task *ordjson.Object, actor *TaskActor, roles
 	var record *ordjson.Object
 	switch endpoint.Role {
 	case "coordinator":
+		if current, err := s.CoordinatorSession(); err != nil {
+			return err
+		} else if current != nil {
+			return store.ErrClaimRequired
+		}
 		parent, _ := task.Get("parent")
 		record, _ = parent.(*ordjson.Object)
 		owner, err := s.Owner()

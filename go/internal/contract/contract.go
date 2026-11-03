@@ -1,9 +1,11 @@
 package contract
 
 const (
-	SumVersion  = "0.1.0"
-	StateSchema = 2
-	BriefSchema = 1
+	SumVersion         = "0.1.0"
+	StateSchema        = 2
+	LogicalStateSchema = 3
+	OwnerSchema        = 2
+	BriefSchema        = 1
 	// MachineIdentity 1 says this binary resolves recorded machine values
 	// through internal/machine. Only release-contract reports it: a checkout
 	// target runs its prebuilt .local/bin/sumctl, so the binary must say what
@@ -39,6 +41,7 @@ type Supports struct {
 	BriefSchema          []int `json:"brief_schema"`
 	MachineIdentity      []int `json:"machine_identity"`
 	WakeProtocol         []int `json:"wake_protocol"`
+	OwnerSchema          []int `json:"owner_schema"`
 }
 
 type Release struct {
@@ -51,6 +54,6 @@ func BuildRelease() Release {
 	return Release{
 		SumVersion: SumVersion,
 		Contracts:  Contracts{HCCore: HCVersion, HCGeneration: HCGeneration, EndpointSchema: EndpointSchema, NotificationProtocol: NotificationProtocol},
-		Supports:   Supports{HCTemplateSchema: []int{0, HCTemplateSchema}, EndpointSchema: []int{EndpointSchema}, NotificationProtocol: []int{NotificationProtocol}, ObserverProtocol: []int{ObserverProtocol}, StateSchema: []int{StateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}},
+		Supports:   Supports{HCTemplateSchema: []int{0, HCTemplateSchema}, EndpointSchema: []int{EndpointSchema}, NotificationProtocol: []int{NotificationProtocol}, ObserverProtocol: []int{ObserverProtocol}, StateSchema: []int{StateSchema, LogicalStateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}, OwnerSchema: []int{OwnerSchema}},
 	}
 }
