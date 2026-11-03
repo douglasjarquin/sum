@@ -38,7 +38,7 @@ See [dependencies](DEPENDENCIES.md) and [configuration](configuration.md).
 ## State and authority
 
 The stable state root and selected physical generation home are distinct.
-`coordinator.json` records one logical session and claim generation.
+The generation's coordinator record stores one logical session and claim generation.
 Every coordinator mutation revalidates its captured token under the state lock.
 New tasks record logical `owner` and `parent: null`.
 Native retirement records historical ownership without rewriting existing task parents.

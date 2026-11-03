@@ -7,7 +7,7 @@ description: Inspect and stage merged Sum releases, perform user-authorized quie
 Only the user authorizes update or rollback.
 Use the installation's trusted helper and this conversation's captured `--claim TOKEN` for coordinator mutations.
 A developer or task checkout cannot publish into the installation.
-Read [docs/update.md](../../docs/update.md) for the complete activation and one-time native-retirement procedure.
+Read `docs/update.md` from the repository root for the complete activation and one-time native-retirement procedure.
 
 ```sh
 ./bin/sumctl update check --claim TOKEN [--ref REF] [--no-fetch]
