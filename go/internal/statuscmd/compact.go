@@ -159,13 +159,35 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 	}
 	result.Set("detail", compactJSON([]string{"status"}))
 	result.Set("note", "Known global counts precede paging; incomplete coverage may hide more work. Routes are sumctl argument arrays; append the user's actual answer after --text. Paging is a fresh read, not a receipt; restart at --after 0 if records change. Full status retains capacity and maintenance. Saved CI and delivery states are not new observations.")
-	savedTasks, err := s.AllTasks()
-	if err != nil {
+	if err := coordinationIdentity(s, result); err != nil {
 		return nil, err
 	}
-	if err = coordination(s, result, savedTasks); err != nil {
-		return nil, err
+	counts := ordjson.NewObject()
+	total := 0
+	byKind := map[string]int{}
+	for _, item := range snapshot.Items {
+		if item.Owner == presentation.Nobody {
+			continue
+		}
+		kind := string(item.Source.Kind)
+		if item.Source.Kind == presentation.Question && item.State == "answered" {
+			kind = "answer"
+		}
+		byKind[kind]++
+		total++
 	}
+	keys := make([]string, 0, len(byKind))
+	for kind := range byKind {
+		keys = append(keys, kind)
+	}
+	sort.Strings(keys)
+	for _, kind := range keys {
+		counts.Set(kind, jsonInt(byKind[kind]))
+	}
+	outstanding := ordjson.NewObject()
+	outstanding.Set("total", jsonInt(total))
+	outstanding.Set("by_kind", counts)
+	result.Set("outstanding", outstanding)
 	return result, nil
 }
 

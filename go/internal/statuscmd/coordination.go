@@ -11,7 +11,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-func coordination(s *store.Store, view *ordjson.Object, tasks []*ordjson.Object) error {
+func coordinationIdentity(s *store.Store, view *ordjson.Object) error {
 	session, err := s.CoordinatorSession()
 	if err != nil {
 		return err
@@ -28,6 +28,13 @@ func coordination(s *store.Store, view *ordjson.Object, tasks []*ordjson.Object)
 		return err
 	}
 	view.Set("runtime_route", route)
+	return nil
+}
+
+func coordination(s *store.Store, view *ordjson.Object, tasks []*ordjson.Object) error {
+	if err := coordinationIdentity(s, view); err != nil {
+		return err
+	}
 	total := 0
 	kinds := map[string]int{}
 	for _, task := range tasks {
