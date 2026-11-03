@@ -10,9 +10,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/pelletier/go-toml/v2"
 )
+
+const DefaultSession = "default"
 
 type Route struct {
 	Socket     string `json:"socket"`
@@ -23,27 +26,19 @@ type Route struct {
 	CoreID     string `json:"core_id,omitempty"`
 }
 
-func Select(socket, session, config string) (Route, error) {
+func DefaultRoute() (Route, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Route{}, err
 	}
-	fallback := func(key, other string) string {
+	xdg := func(key, fallback string) string {
 		if value := os.Getenv(key); value != "" {
 			return value
 		}
-		return other
+		return fallback
 	}
-	if session == "" {
-		session = fallback("HC_SESSION", fallback("SUM_SESSION", "default"))
-	}
-	if filepath.Base(session) != session || session == "." || session == ".." {
-		return Route{}, fmt.Errorf("invalid HC session")
-	}
-	if config == "" {
-		config = fallback("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	}
-	state := fallback("XDG_STATE_HOME", filepath.Join(home, ".local/state"))
+	config := xdg("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	state := xdg("XDG_STATE_HOME", filepath.Join(home, ".local/state"))
 	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
 	if runtimeDir == "" {
 		candidate := "/run/user/" + strconv.Itoa(os.Getuid())
@@ -51,35 +46,42 @@ func Select(socket, session, config string) (Route, error) {
 			runtimeDir = candidate
 		}
 	}
-	if socket == "" {
-		socket = os.Getenv("HC_SOCKET")
-	}
-	if socket == "" {
-		var settings struct {
-			Socket string `toml:"socket"`
-		}
-		data, err := os.ReadFile(filepath.Join(config, "herdr-core/config.toml"))
-		if err == nil {
-			if err = toml.Unmarshal(data, &settings); err != nil {
-				return Route{}, err
-			}
-			socket = settings.Socket
-		} else if !os.IsNotExist(err) {
-			return Route{}, err
-		}
+	socket, err := configuredSocket(config)
+	if err != nil {
+		return Route{}, err
 	}
 	if socket == "" {
 		if runtimeDir != "" {
-			socket = filepath.Join(runtimeDir, "herdr-core", session+".sock")
+			socket = filepath.Join(runtimeDir, "herdr-core", DefaultSession+".sock")
 		} else {
-			socket = filepath.Join(state, "herdr-core", session, session+".sock")
+			socket = filepath.Join(state, "herdr-core", DefaultSession, DefaultSession+".sock")
 		}
 	}
-	if !filepath.IsAbs(socket) || !filepath.IsAbs(config) || !filepath.IsAbs(state) || (runtimeDir != "" && !filepath.IsAbs(runtimeDir)) {
-		return Route{}, fmt.Errorf("HC route requires absolute socket and XDG paths")
-	}
-	return Route{Socket: socket, Session: session, ConfigHome: config, StateHome: state, RuntimeDir: runtimeDir}, nil
+	route := Route{Socket: socket, Session: DefaultSession, ConfigHome: config, StateHome: state, RuntimeDir: runtimeDir}
+	return route, route.Validate()
 }
+
+func configuredSocket(configHome string) (string, error) {
+	var settings struct {
+		Socket string `toml:"socket"`
+	}
+	data, err := os.ReadFile(filepath.Join(configHome, "herdr-core/config.toml"))
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if err = toml.Unmarshal(data, &settings); err != nil {
+		return "", fmt.Errorf("herdr-core/config.toml: %w", err)
+	}
+	return settings.Socket, nil
+}
+
+func (r Route) same(other Route) bool {
+	return r.Socket == other.Socket && r.Session == other.Session && r.ConfigHome == other.ConfigHome && r.StateHome == other.StateHome && r.RuntimeDir == other.RuntimeDir
+}
+
 func (r Route) environment() []string {
 	env := childEnv()
 	values := map[string]string{"HC_SOCKET": r.Socket, "HC_SESSION": r.Session, "XDG_CONFIG_HOME": r.ConfigHome, "XDG_STATE_HOME": r.StateHome, "XDG_RUNTIME_DIR": r.RuntimeDir}
@@ -103,28 +105,29 @@ func (r Route) environment() []string {
 	}
 	return result
 }
-func (r Route) compatibility() error {
-	if r.Socket == "" {
-		return nil
-	}
+
+func (r Route) compatibility() (listening bool, hello hcclient.HelloResult, err error) {
 	if _, err := os.Stat(r.Socket); os.IsNotExist(err) {
-		return nil
+		return false, hello, nil
 	} else if err != nil {
-		return err
+		return false, hello, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	hello, err := hcclient.Inspect(ctx, r.Socket)
+	hello, err = hcclient.Inspect(ctx, r.Socket)
 	if err != nil {
 		if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, os.ErrNotExist) {
-			return nil
+			return false, hello, nil
 		}
-		return err
+		return false, hello, err
+	}
+	if hello.Version != contract.HCVersion {
+		return true, hello, fmt.Errorf("default HC core at %s runs herdr-core %s; this release requires %s and does not restart or replace the user's core", r.Socket, hello.Version, contract.HCVersion)
 	}
 	if r.CoreID != "" && hello.Core.ID != r.CoreID {
-		return fmt.Errorf("selected core changed: expected %s observed %s", r.CoreID, hello.Core.ID)
+		return true, hello, fmt.Errorf("selected core changed: expected %s observed %s", r.CoreID, hello.Core.ID)
 	}
-	return nil
+	return true, hello, nil
 }
 
 func (r Route) Validate() error {

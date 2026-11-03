@@ -18,89 +18,111 @@ import (
 )
 
 func Reconcile(s *store.Store, coordinator *ordjson.Object, taskID, attempt string) (*ordjson.Object, error) {
-	if err := app.RequireCoordinator(s, coordinator); err != nil {
+	if err := reconcileCreation(s, coordinator, taskID, attempt); err != nil {
 		return nil, err
 	}
 	task, err := s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
 	}
+	ep := store.EndpointFromContext(objectField(task, "reviewer"))
+	if ep.Validate() == nil && ep.Attempt == attempt {
+		observe, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err = launch.ReconcileVisibility(observe, s, ep, locateReviewer(attempt)); err != nil {
+			return nil, err
+		}
+		if task, err = s.ReadTask(taskID); err != nil {
+			return nil, err
+		}
+	}
+	out := ordjson.NewObject()
+	out.Set("reviewer", objectField(task, "reviewer"))
+	return out, nil
+}
+
+func reconcileCreation(s *store.Store, coordinator *ordjson.Object, taskID, attempt string) error {
+	if err := app.RequireCoordinator(s, coordinator); err != nil {
+		return err
+	}
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		return err
+	}
 	if err = s.CheckMachine(task); err != nil {
-		return nil, err
+		return err
 	}
 	if err = maintenance.Refuse(task, "Reviewer recovery"); err != nil {
-		return nil, err
+		return err
 	}
 	actor, err := app.ObserveTaskActor(s, coordinator)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err = app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
-		return nil, err
+		return err
 	}
 	reviewer := objectField(task, "reviewer")
 	ep := store.EndpointFromContext(reviewer)
 	if attempt == "" || ep.Attempt != attempt {
-		return nil, fmt.Errorf("exact reviewer attempt required")
+		return fmt.Errorf("exact reviewer attempt required")
 	}
 	if ep.Validate() == nil {
-		out := ordjson.NewObject()
-		out.Set("reviewer", reviewer)
-		return out, nil
+		return nil
 	}
 	before, _ := ordjson.MarshalCompact(reviewer)
 	intent := objectField(reviewer, "native_launch")
 	var params hcclient.RunParams
 	var template returns.NativeTemplate
 	if err = decodeObject(objectField(intent, "params"), &params); err != nil {
-		return nil, err
+		return err
 	}
 	if err = decodeObject(objectField(reviewer, "native_template"), &template); err != nil {
-		return nil, err
+		return err
 	}
 	instance, err := s.Instance()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if params.Labels["sum.installation"] != instance || params.Labels["sum.task"] != taskID || params.Labels["sum.role"] != "reviewer" || params.Labels["sum.attempt"] != attempt || params.Cwd != asString(task, "worktree") || ep.Task != taskID || ep.Role != "reviewer" {
-		return nil, fmt.Errorf("creation intent does not belong to this reviewer attempt and checkout")
+		return fmt.Errorf("creation intent does not belong to this reviewer attempt and checkout")
 	}
 	if params.Env["HC_SOCKET"] == "" || params.Env["SUM_CORE_ID"] == "" || params.Env["SUM_SESSION"] == "" || params.Env["SUM_TASK"] != taskID || params.Env["SUM_ATTEMPT"] != attempt || params.Env["SUM_ROLE"] != "reviewer" {
-		return nil, fmt.Errorf("saved reviewer creation route is incomplete or mismatched")
+		return fmt.Errorf("saved reviewer creation route is incomplete or mismatched")
 	}
 	if ep.Socket != params.Env["HC_SOCKET"] || ep.CoreID != params.Env["SUM_CORE_ID"] || ep.Session != params.Env["SUM_SESSION"] {
-		return nil, fmt.Errorf("reviewer endpoint differs from saved creation route")
+		return fmt.Errorf("reviewer endpoint differs from saved creation route")
 	}
 	client := hcclient.Client{Socket: params.Env["HC_SOCKET"], CoreID: params.Env["SUM_CORE_ID"]}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	terminal, err := launch.DiscoverOriginal(ctx, &client, params, template.Spec, asString(intent, "at"))
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ep.Address, ep.CreatedMS = terminal.Address, terminal.CreatedMS
 	unlock, err := s.Lock()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer unlock()
 	current, err := s.ReadTask(taskID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	saved := objectField(current, "reviewer")
 	if asString(saved, "attempt") != attempt || asString(saved, "address") != "" || reviewerCandidateState(task) != reviewerCandidateState(current) {
-		return nil, fmt.Errorf("reviewer assignment changed during discovery")
+		return fmt.Errorf("reviewer assignment changed during discovery")
 	}
 	after, _ := ordjson.MarshalCompact(saved)
 	if !bytes.Equal(before, after) {
-		return nil, fmt.Errorf("reviewer intent changed during discovery")
+		return fmt.Errorf("reviewer intent changed during discovery")
 	}
 	if err = maintenance.Refuse(current, "Reviewer reconcile"); err != nil {
-		return nil, err
+		return err
 	}
 	if err = app.CheckTaskRole(s, current, actor, "coordinator"); err != nil {
-		return nil, err
+		return err
 	}
 	for _, key := range ep.Object().Keys() {
 		value, _ := ep.Object().Get(key)
@@ -118,12 +140,7 @@ func Reconcile(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	prompt.Set("candidate", asString(saved, "candidate"))
 	saved.Set("prompt", prompt)
 	saved.Set("incarnation", (incarnation.NativeEvidence{Endpoint: ep.Native(), PID: *terminal.PID, Foreground: terminal.Foreground}).Record(store.Now()))
-	if err = s.SaveTask(current); err != nil {
-		return nil, err
-	}
-	out := ordjson.NewObject()
-	out.Set("reviewer", saved)
-	return out, nil
+	return s.SaveTask(current)
 }
 
 func Recover(s *store.Store, coordinator *ordjson.Object, taskID, attempt string) (*ordjson.Object, error) {

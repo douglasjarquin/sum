@@ -1,16 +1,20 @@
 package prepare
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/hcboot"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -44,21 +48,13 @@ func newNativeBoundaryLab(t *testing.T, fresh bool) nativeBoundaryLab {
 		t.Fatal(err)
 	}
 	core := hctest.New(t)
-	route, err := hcboot.SelectedRoute(s, "", "", "")
+	core.DefaultRoute(t)
+	route, err := hcboot.SelectedRoute(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fresh {
-		if err = os.MkdirAll(route.RuntimeDir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { os.RemoveAll(route.RuntimeDir) })
-		if err = os.Symlink(core.Socket, route.Socket); err != nil {
-			t.Fatal(err)
-		}
-	} else {
-		route.Socket, route.CoreID = core.Socket, core.CoreID
-		route.ConfigHome, route.StateHome, route.RuntimeDir = t.TempDir(), t.TempDir(), ""
+	if !fresh {
+		route.CoreID = core.CoreID
 		value, _ := ordjson.FromValue(route)
 		if err = ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), value); err != nil {
 			t.Fatal(err)
@@ -120,7 +116,7 @@ func (l nativeBoundaryLab) start() (*ordjson.Object, error) {
 
 func TestFirstWorkerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
 	l := newNativeBoundaryLab(t, true)
-	for _, path := range []string{l.route.ConfigHome, filepath.Join(l.state.Root, "runtime-route.json")} {
+	for _, path := range []string{filepath.Join(l.route.ConfigHome, "herdr-core/templates"), filepath.Join(l.state.Root, "runtime-route.json")} {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("fresh fixture already has %s: %v", path, err)
 		}
@@ -132,7 +128,7 @@ func TestFirstWorkerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
 	if store.EndpointFromContext(asObject(policyField(out, "worker_endpoint"))).Address == "" {
 		t.Fatal("first launch did not save its endpoint")
 	}
-	route, err := hcboot.SelectedRoute(l.state, "", "", "")
+	route, err := hcboot.SelectedRoute(l.state)
 	if err != nil || route.CoreID != l.core.CoreID {
 		t.Fatalf("route: %+v %v", route, err)
 	}
@@ -193,5 +189,119 @@ func TestWorkerLaunchExcludesTransferThroughCreationAccounting(t *testing.T) {
 	}
 	if asString(policyField(worker, "state")) != "uncertain" || len(l.core.Terminals()) != 1 {
 		t.Fatal("lost creation was not durably retained as one uncertain attempt")
+	}
+	for key := range l.core.Terminals()[0].Labels {
+		if strings.HasPrefix(key, "herdr.") {
+			t.Fatalf("creation published Herdr labels before the reply was recorded: %s", key)
+		}
+	}
+	if visibility := asObject(policyField(asObject(policyField(worker, "native_launch")), "visibility")); asString(policyField(visibility, "state")) != launch.VisibilityPending {
+		t.Fatalf("visibility intent is not retained for reconciliation: %v", visibility)
+	}
+}
+
+func (l nativeBoundaryLab) workerVisibility(t *testing.T) (*ordjson.Object, store.Endpoint) {
+	t.Helper()
+	task, err := l.state.ReadTask(asString(policyField(l.task, "id")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return asObject(policyField(asObject(policyField(worker, "native_launch")), "visibility")), store.EndpointFromContext(asObject(policyField(task, "worker_endpoint")))
+}
+
+func TestWorkerAdoptionFollowsOriginalProofIntoTheInstallationSpace(t *testing.T) {
+	l := newNativeBoundaryLab(t, false)
+	if _, err := l.start(); err != nil {
+		t.Fatal(err)
+	}
+	instance, _ := l.state.Instance()
+	want := launch.VisibilityLabels(instance, asString(policyField(l.task, "id")))
+	visibility, ep := l.workerVisibility(t)
+	if asString(policyField(visibility, "state")) != launch.VisibilityApplied {
+		t.Fatalf("visibility = %v", visibility)
+	}
+	terminal := l.core.Terminals()[0]
+	if terminal.Labels["herdr.space"] != want["herdr.space"] || terminal.Labels["herdr.tab"] != want["herdr.tab"] || terminal.Labels["sum.attempt"] != ep.Attempt {
+		t.Fatalf("terminal labels = %v, want %v", terminal.Labels, want)
+	}
+	var order []string
+	for _, call := range l.core.Calls() {
+		switch call.Method {
+		case "terminal.run":
+			if labels, _ := call.Params["labels"].(map[string]any); labels["herdr.space"] != nil {
+				t.Fatalf("creation request carried Herdr labels: %v", labels)
+			}
+			order = append(order, call.Method)
+		case "terminal.label", "terminal.send":
+			order = append(order, call.Method)
+		}
+	}
+	if strings.Join(order, " ") != "terminal.run terminal.label terminal.send" {
+		t.Fatalf("adoption order = %v", order)
+	}
+	if err := launch.ReconcileVisibility(context.Background(), l.state, ep, LocateWorker(ep.Attempt)); err != nil {
+		t.Fatal(err)
+	}
+	labelCalls := 0
+	for _, call := range l.core.Calls() {
+		if call.Method == "terminal.label" {
+			labelCalls++
+		}
+	}
+	if labelCalls != 1 {
+		t.Fatalf("settled visibility was republished: %d label calls", labelCalls)
+	}
+}
+
+func TestWorkerLostLabelReplyIsReconciledFromTheExactTerminal(t *testing.T) {
+	l := newNativeBoundaryLab(t, false)
+	l.core.QueueFault("terminal.label", hctest.Fault{LoseResponse: true})
+	if _, err := l.start(); err != nil {
+		t.Fatal(err)
+	}
+	visibility, ep := l.workerVisibility(t)
+	if asString(policyField(visibility, "state")) != launch.VisibilityUncertain || ep.Address == "" {
+		t.Fatalf("lost label reply was not retained as uncertain: %v %+v", visibility, ep)
+	}
+	if len(l.core.Inputs(ep.Address)) != 1 {
+		t.Fatal("an uncertain adoption blocked the opening")
+	}
+	if err := launch.ReconcileVisibility(context.Background(), l.state, ep, LocateWorker(ep.Attempt)); err != nil {
+		t.Fatal(err)
+	}
+	visibility, _ = l.workerVisibility(t)
+	if asString(policyField(visibility, "state")) != launch.VisibilityApplied || len(l.core.Terminals()) != 1 {
+		t.Fatalf("reconciliation did not settle the lost reply from the terminal: %v", visibility)
+	}
+}
+
+func TestWorkerAdoptionRefusesAReplacementShell(t *testing.T) {
+	l := newNativeBoundaryLab(t, false)
+	l.core.QueueFault("terminal.label", hctest.Fault{LoseResponse: true})
+	if _, err := l.start(); err != nil {
+		t.Fatal(err)
+	}
+	_, ep := l.workerVisibility(t)
+	inputs := len(l.core.Inputs(ep.Address))
+	terminal := l.core.Terminals()[0]
+	client := l.core.Client()
+	if _, err := client.Label(context.Background(), ep.Address, map[string]string{"herdr.space": "sum-kept"}); err != nil {
+		t.Fatal(err)
+	}
+	l.core.SetForeground(ep.Address, hcclient.Foreground{PID: 777, Name: "sh", Argv: []string{"sh"}, Cwd: terminal.Cwd})
+	err := launch.ReconcileVisibility(context.Background(), l.state, ep, LocateWorker(ep.Attempt))
+	if err == nil || !strings.Contains(err.Error(), "adoption refused") {
+		t.Fatalf("replacement shell was adopted: %v", err)
+	}
+	visibility, _ := l.workerVisibility(t)
+	if asString(policyField(visibility, "state")) == launch.VisibilityApplied {
+		t.Fatalf("replacement shell gained visibility authority: %v", visibility)
+	}
+	if len(l.core.Inputs(ep.Address)) != inputs {
+		t.Fatal("replacement shell received input")
 	}
 }

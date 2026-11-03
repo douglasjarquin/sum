@@ -77,3 +77,11 @@ func WriteFile(path string, value any) error {
 	defer directory.Close()
 	return directory.Sync()
 }
+
+func DecodeValue(value any, target any) error {
+	data, err := MarshalCompact(value)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, target)
+}

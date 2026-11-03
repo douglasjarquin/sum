@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/hctest"
@@ -23,52 +24,145 @@ func workspaceStore(t *testing.T) *store.Store {
 	return s
 }
 
-func TestWorkspaceRouteIgnoresInheritedCoordinatorRoute(t *testing.T) {
+func writeCache(t *testing.T, s *store.Store, route Route) {
+	t.Helper()
+	data, _ := json.Marshal(route)
+	if err := os.WriteFile(filepath.Join(s.Root, "runtime-route.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDefaultRouteIgnoresInheritedIdentityAndUsesConfiguredSocket(t *testing.T) {
 	s := workspaceStore(t)
+	config := hctest.PointDefaultRoute(t, "/tmp/sum-test-configured.sock")
 	t.Setenv("HC_SOCKET", "/tmp/unrelated-core.sock")
-	t.Setenv("HC_SESSION", "default")
+	t.Setenv("HC_SESSION", "coordinator-session")
 	t.Setenv("SUM_SESSION", "unrelated-session")
-	route, err := SelectedRoute(s, "", "", "")
+	route, err := SelectedRoute(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.Socket == "/tmp/unrelated-core.sock" || route.Session == "default" || route.Session == "unrelated-session" {
-		t.Fatalf("inherited native identity selected the worker route: %+v", route)
-	}
-	if !strings.HasPrefix(route.ConfigHome, s.Root+string(filepath.Separator)) {
-		t.Fatalf("config is not workspace owned: %+v", route)
+	if route.Socket != "/tmp/sum-test-configured.sock" || route.Session != DefaultSession || route.ConfigHome != config || route.CoreID != "" {
+		t.Fatalf("inherited native identity or a private route selected creation: %+v", route)
 	}
 	if _, err := os.Stat(filepath.Join(s.Root, "runtime-route.json")); !os.IsNotExist(err) {
 		t.Fatalf("route observation wrote state: %v", err)
 	}
 }
 
-func TestWorkspaceRoutePinsCoreAndRefusesReplacement(t *testing.T) {
-	s := workspaceStore(t)
-	fixture := hctest.New(t)
-	base := t.TempDir()
-	saved := Route{Socket: fixture.Socket, Session: "sum-test-route", ConfigHome: filepath.Join(base, "config"), StateHome: filepath.Join(base, "state")}
-	data, _ := json.Marshal(saved)
-	if err := os.WriteFile(filepath.Join(s.Root, "runtime-route.json"), data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	route, err := EnsureWorkspaceRoute(s, t.TempDir())
+func TestDefaultRouteFollowsPlatformDefaultsWithoutConfiguredSocket(t *testing.T) {
+	config, state, runtime := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", config)
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	t.Setenv("HC_SOCKET", "/tmp/unrelated-core.sock")
+	route, err := DefaultRoute()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.CoreID != fixture.CoreID {
-		t.Fatalf("core not pinned: %+v", route)
+	if route.Socket != filepath.Join(runtime, "herdr-core", "default.sock") || route.RuntimeDir != runtime {
+		t.Fatalf("runtime directory default not used: %+v", route)
 	}
-	again, err := SelectedRoute(s, "", "", "")
-	if err != nil || again.CoreID != fixture.CoreID {
-		t.Fatalf("saved route = %+v, %v", again, err)
-	}
-	saved.CoreID = "different-core"
-	data, _ = json.Marshal(saved)
-	if err := os.WriteFile(filepath.Join(s.Root, "runtime-route.json"), data, 0600); err != nil {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	route, err = DefaultRoute()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := EnsureWorkspaceRoute(s, t.TempDir()); err == nil || !strings.Contains(err.Error(), "core changed") {
+	if route.Socket != filepath.Join(state, "herdr-core", "default", "default.sock") || route.StateHome != state || route.ConfigHome != config {
+		t.Fatalf("state home default not used: %+v", route)
+	}
+}
+
+func TestPrivateCacheDoesNotSelectCreationAndDefaultCachePinsCore(t *testing.T) {
+	s := workspaceStore(t)
+	fixture := hctest.New(t)
+	fixture.DefaultRoute(t)
+	private := Route{Socket: "/tmp/sum-hc-private/core.sock", Session: "sum-private", ConfigHome: filepath.Join(s.Root, "runtime/hc/config"), StateHome: filepath.Join(s.Root, "runtime/hc/state"), RuntimeDir: "/tmp/sum-hc-private", CoreID: "private-core"}
+	writeCache(t, s, private)
+	route, err := SelectedRoute(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.Socket != fixture.Socket || route.CoreID != "" || route.Session != DefaultSession {
+		t.Fatalf("private cache selected creation: %+v", route)
+	}
+	ensured, err := EnsureWorkspaceRoute(s, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ensured.CoreID != fixture.CoreID || ensured.Socket != fixture.Socket {
+		t.Fatalf("default core not pinned: %+v", ensured)
+	}
+	again, err := SelectedRoute(s)
+	if err != nil || again.CoreID != fixture.CoreID {
+		t.Fatalf("pinned route = %+v, %v", again, err)
+	}
+	if _, err = EnsureWorkspaceRoute(s, t.TempDir()); err != nil {
+		t.Fatalf("pinned default route refused its own core: %v", err)
+	}
+}
+
+func TestPinnedDefaultCoreRefusesReplacementWithoutFallback(t *testing.T) {
+	s := workspaceStore(t)
+	fixture := hctest.New(t)
+	fixture.DefaultRoute(t)
+	route, err := SelectedRoute(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route.CoreID = "different-core"
+	writeCache(t, s, route)
+	_, err = EnsureWorkspaceRoute(s, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "core changed") {
 		t.Fatalf("replacement core accepted: %v", err)
+	}
+	again, err := SelectedRoute(s)
+	if err != nil || again.CoreID != "different-core" {
+		t.Fatalf("refusal rewrote the pin: %+v %v", again, err)
+	}
+}
+
+func TestIncompatibleDefaultCoreVersionIsRefused(t *testing.T) {
+	s := workspaceStore(t)
+	fixture := hctest.New(t)
+	fixture.SetVersion("0.1.13")
+	fixture.DefaultRoute(t)
+	_, err := EnsureWorkspaceRoute(s, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "0.1.13") || !strings.Contains(err.Error(), "0.1.14") {
+		t.Fatalf("incompatible core accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Root, "runtime-route.json")); !os.IsNotExist(err) {
+		t.Fatalf("refusal pinned a route: %v", err)
+	}
+}
+
+func TestConcurrentLaunchesPinOneDefaultCore(t *testing.T) {
+	s := workspaceStore(t)
+	fixture := hctest.New(t)
+	fixture.DefaultRoute(t)
+	var wg sync.WaitGroup
+	results := make([]Route, 4)
+	errs := make([]error, 4)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			own, err := store.Open(s.Root)
+			if err != nil {
+				errs[i] = err
+				return
+			}
+			results[i], errs[i] = EnsureWorkspaceRoute(own, t.TempDir())
+		}(i)
+	}
+	wg.Wait()
+	for i := range results {
+		if errs[i] != nil || results[i].CoreID != fixture.CoreID {
+			t.Fatalf("launch %d: %+v %v", i, results[i], errs[i])
+		}
+	}
+	saved, err := SelectedRoute(s)
+	if err != nil || saved.CoreID != fixture.CoreID {
+		t.Fatalf("saved route = %+v %v", saved, err)
 	}
 }

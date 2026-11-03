@@ -205,6 +205,10 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 	if assigned := asString(reviewer, "candidate"); assigned != "" && assigned != candidate {
 		return nil, fmt.Errorf("candidate changed before reviewer launch")
 	}
+	instance, err := s.Instance()
+	if err != nil {
+		return nil, err
+	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -237,6 +241,7 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 	value, _ := ordjson.FromValue(params)
 	intent.Set("params", value)
 	intent.Set("opening", asString(reviewer, "opening"))
+	intent.Set("visibility", launch.NewVisibility(instance, endpoint.Task).Object())
 	reviewer.Set("native_launch", intent)
 
 	current.Set("reviewer", reviewer)

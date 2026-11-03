@@ -13,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -61,19 +62,13 @@ func TestFirstReviewerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
 	if err = os.Remove(filepath.Join(s.Root, "runtime-route.json")); err != nil {
 		t.Fatal(err)
 	}
-	route, err := hcboot.SelectedRoute(s, "", "", "")
+	core.DefaultRoute(t)
+	route, err := hcboot.SelectedRoute(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = os.Stat(route.ConfigHome); !errors.Is(err, os.ErrNotExist) {
+	if _, err = os.Stat(filepath.Join(route.ConfigHome, "herdr-core/templates")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("config home is not fresh: %v", err)
-	}
-	if err = os.MkdirAll(route.RuntimeDir, 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(route.RuntimeDir) })
-	if err = os.Symlink(core.Socket, route.Socket); err != nil {
-		t.Fatal(err)
 	}
 	if err = core.LoadTemplatesFrom(route.ConfigHome); err != nil {
 		t.Fatal(err)
@@ -84,7 +79,26 @@ func TestFirstReviewerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
 	if len(core.Terminals()) != terminalsBefore+1 {
 		t.Fatal("first launch did not create exactly one reviewer")
 	}
-	route, err = hcboot.SelectedRoute(s, "", "", "")
+	instance, _ := s.Instance()
+	want := launch.VisibilityLabels(instance, asString(task, "id"))
+	launched, err := s.ReadTask(asString(task, "id"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := store.EndpointFromContext(objectField(launched, "reviewer"))
+	var reviewerTerminal hcclient.Terminal
+	for _, candidate := range core.Terminals() {
+		if candidate.Address == created.Address {
+			reviewerTerminal = candidate
+		}
+	}
+	if reviewerTerminal.Labels["herdr.tab"] != want["herdr.tab"] || reviewerTerminal.Labels["herdr.space"] != want["herdr.space"] || reviewerTerminal.Labels["sum.role"] != "reviewer" {
+		t.Fatalf("reviewer was not adopted into the task tab: %v", reviewerTerminal.Labels)
+	}
+	if visibility := objectField(objectField(objectField(launched, "reviewer"), "native_launch"), "visibility"); asString(visibility, "state") != launch.VisibilityApplied {
+		t.Fatalf("reviewer visibility = %v", visibility)
+	}
+	route, err = hcboot.SelectedRoute(s)
 	if err != nil || route.CoreID != core.CoreID {
 		t.Fatalf("route: %+v %v", route, err)
 	}

@@ -124,6 +124,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	native.Set("native_template", qualified)
 	native.Set("effect", "claimed")
 	native.Set("claimed_at", store.Now())
+	native.Set("visibility", launch.NewVisibility(instance, taskID).Object())
 	worker.Set("native_launch", native)
 	launchSpec.Set("hc_template", qualified)
 	task.Set("status", "starting")
@@ -376,6 +377,23 @@ func deliverWorkerOpening(s *store.Store, task *ordjson.Object, spec launch.HCTe
 			current.Set("error", LaunchUncertainPrefix+": "+progress.Detail)
 		}
 		return s.SaveTask(current)
-	})
+	}, launch.Adoption(ctx, s, ep, &client, LocateWorker(ep.Attempt)))
 	return s.ReadTask(ep.Task)
+}
+
+func LocateWorker(attempt string) launch.Locate {
+	return func(task *ordjson.Object) (launch.SavedLaunch, error) {
+		worker, err := reservations.Worker(task)
+		if err != nil {
+			return launch.SavedLaunch{}, err
+		}
+		if asString(policyField(worker, "id")) != attempt {
+			return launch.SavedLaunch{}, fmt.Errorf("worker attempt changed")
+		}
+		native := asObject(policyField(worker, "native_launch"))
+		if native == nil {
+			return launch.SavedLaunch{}, fmt.Errorf("worker launch intent missing")
+		}
+		return launch.SavedLaunch{Record: native, Incarnation: policyField(native, "incarnation"), Template: policyField(native, "native_template"), Intent: policyField(native, "intent")}, nil
+	}
 }

@@ -58,7 +58,16 @@ func unreconciledWorkerLab(t *testing.T) redeliveryLab {
 	pid := uint32(command.Process.Pid)
 	terminal.PID = &pid
 	terminal.Foreground = &hcclient.Foreground{PID: int32(pid), Argv: argv, Cwd: params.Cwd}
+	for key := range terminal.Labels {
+		if strings.HasPrefix(key, "herdr.") {
+			delete(terminal.Labels, key)
+		}
+	}
+	terminal.Keep = false
 	l.fixture.SetTerminal(terminal)
+	instance, _ := l.s.Instance()
+	pending, _ := ordjson.FromValue(launch.NewVisibility(instance, l.endpoint.Task))
+	native.Set("visibility", pending)
 	// Model a crash after creation but before saving the reply. The original
 	// creation intent is retained byte-for-byte and no opening can be replayed.
 	task.Delete("worker_endpoint")
@@ -109,6 +118,10 @@ func TestWorkerCreationReconcilesSavedRouteAfterTransfer(t *testing.T) {
 	}
 	if len(l.fixture.Terminals()) != 1 {
 		t.Fatal("reconciliation created another worker")
+	}
+	instance, _ := l.s.Instance()
+	if labels := l.fixture.Terminals()[0].Labels; labels["herdr.space"] != launch.SpaceID(instance) {
+		t.Fatalf("reconciled original was not adopted after its proof: %v", labels)
 	}
 }
 

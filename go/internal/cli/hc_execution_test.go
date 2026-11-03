@@ -51,10 +51,7 @@ func TestHCPrepareReconcileAndStartThroughCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SUM_CODEX_BIN", codex)
-	config, configHome := filepath.Join(root, "config"), filepath.Join(root, "codex-home")
-	if err = os.Mkdir(config, 0700); err != nil {
-		t.Fatal(err)
-	}
+	config, configHome := fixture.DefaultRoute(t), filepath.Join(root, "codex-home")
 	if err = os.Mkdir(configHome, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -72,10 +69,6 @@ func TestHCPrepareReconcileAndStartThroughCLI(t *testing.T) {
 	}
 	session, err := s.ClaimCoordinator("", "ordinary HC execution", false)
 	if err != nil {
-		t.Fatal(err)
-	}
-	route, _ := ordjson.FromValue(map[string]any{"socket": fixture.Socket, "session": "sum-test", "config_home": config, "state_home": filepath.Join(root, "hc-state"), "core_id": fixture.CoreID})
-	if err = ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
 		t.Fatal(err)
 	}
 	settings, _ := ordjson.FromValue(map[string]any{"schema": 1, "worker": map[string]any{"harness": "codex"}, "template": map[string]any{"codex_home": configHome}})

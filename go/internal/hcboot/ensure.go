@@ -1,5 +1,3 @@
-// Package hcboot starts the local HC core and holder for a designated installation.
-// Observation commands do not use it. A bare init does, and it never claims a role.
 package hcboot
 
 import (
@@ -7,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -17,8 +14,6 @@ import (
 
 const stepTimeout = 30 * time.Second
 
-var addressPattern = regexp.MustCompile(`^t[0-9a-z]+$`)
-
 type statusDoc struct {
 	Live   int `json:"live"`
 	Holder *struct {
@@ -27,22 +22,7 @@ type statusDoc struct {
 	} `json:"holder"`
 }
 
-// Ensure brings up the pinned local HC core and a current holder.
-// A runtime without .local/bin/hc returns nil. The result is a report, not a role.
-func Ensure(runtimeRoot string) *ordjson.Object {
-	route, err := Select("", "", "")
-	if err != nil {
-		report := ordjson.NewObject()
-		report.Set("ok", false)
-		report.Set("error", err.Error())
-		return report
-	}
-	return EnsureRoute(runtimeRoot, route)
-}
-
-func EnsureRoute(runtimeRoot string, route Route) *ordjson.Object {
-	run := route.run
-	readStatus := route.readStatus
+func EnsureRoute(runtimeRoot string, route Route, listening bool) *ordjson.Object {
 	hc := filepath.Join(runtimeRoot, ".local", "bin", "hc")
 	info, err := os.Stat(hc)
 	if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
@@ -54,19 +34,19 @@ func EnsureRoute(runtimeRoot string, route Route) *ordjson.Object {
 		report.Set("error", err.Error())
 		return report
 	}
-	if err := route.compatibility(); err != nil {
-		report.Set("action", "compatibility-refused")
-		report.Set("error", err.Error())
-		return report
-	}
-	status, err := readStatus(hc, runtimeRoot)
+	status, err := route.readStatus(hc, runtimeRoot)
 	if err != nil {
-		if _, startErr := run(hc, runtimeRoot, "--json", "server", "start"); startErr != nil {
+		if listening {
+			report.Set("action", "status")
+			report.Set("error", err.Error())
+			return report
+		}
+		if _, startErr := route.run(hc, runtimeRoot, "--json", "server", "start"); startErr != nil {
 			report.Set("action", "start")
 			report.Set("error", startErr.Error())
 			return report
 		}
-		status, err = readStatus(hc, runtimeRoot)
+		status, err = route.readStatus(hc, runtimeRoot)
 		if err != nil {
 			report.Set("action", "start")
 			report.Set("error", err.Error())
@@ -75,57 +55,16 @@ func EnsureRoute(runtimeRoot string, route Route) *ordjson.Object {
 		if ready(status) {
 			return readyReport("started", status)
 		}
+		report.Set("action", "start")
+		report.Set("error", "HC core started without a current holder")
+		return report
 	}
 	if ready(status) {
 		return readyReport("ready", status)
 	}
-	if status.Live > 0 {
-		report.Set("action", "blocked")
-		report.Set("live", status.Live)
-		report.Set("error", "HC holder is missing while live terminals exist; the core was not restarted")
-		return report
-	}
-	if _, err = run(hc, runtimeRoot, "--json", "server", "restart"); err != nil {
-		report.Set("action", "restart")
-		report.Set("error", err.Error())
-		return report
-	}
-	status, err = readStatus(hc, runtimeRoot)
-	if err != nil {
-		report.Set("action", "restart")
-		report.Set("error", err.Error())
-		return report
-	}
-	if ready(status) {
-		return readyReport("restarted", status)
-	}
-	started, err := run(hc, runtimeRoot, "--json", "run", "true")
-	if err != nil {
-		report.Set("action", "spawn")
-		report.Set("error", err.Error())
-		return report
-	}
-	var launched struct {
-		Address string `json:"address"`
-	}
-	if json.Unmarshal([]byte(started.Stdout), &launched) == nil && addressPattern.MatchString(launched.Address) {
-		if _, err = run(hc, runtimeRoot, "rm", launched.Address); err != nil {
-			report.Set("action", "remove-probe")
-			report.Set("error", err.Error())
-			return report
-		}
-	}
-	status, err = readStatus(hc, runtimeRoot)
-	if err != nil {
-		report.Set("action", "spawn")
-		report.Set("error", err.Error())
-		return report
-	}
-	if ready(status) {
-		return readyReport("spawned", status)
-	}
-	report.Set("action", "spawn")
-	report.Set("error", "HC core is up and its holder is still missing")
+	report.Set("action", "holder-missing")
+	report.Set("live", status.Live)
+	report.Set("error", "the default HC core has no current holder; sum does not restart the user's core. Repair it with hc or Herdr, then launch again")
 	return report
 }
 

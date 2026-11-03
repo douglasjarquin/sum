@@ -3,7 +3,6 @@ package prepare
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/launch"
@@ -33,7 +32,8 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			if err := os.WriteFile(codex, []byte("#!/bin/sh\nprintf '%s\\n' 'codex-cli 0.166.0'\n"), 0700); err != nil {
 				t.Fatal(err)
 			}
-			config, home, checkout := t.TempDir(), t.TempDir(), t.TempDir()
+			config := fixture.DefaultRoute(t)
+			home, checkout := t.TempDir(), t.TempDir()
 			options := launch.HCTemplateOptions{Cwd: root, CodexHome: home}
 			spec, err := launch.PrepareHCTemplate(root, config, "codex", nil, options)
 			if err != nil {
@@ -56,10 +56,6 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			}
 			ctx := session.Owner()
 			ctx.Set("claim", session.Token())
-			route, _ := ordjson.FromValue(hcboot.Route{Socket: fixture.Socket, CoreID: fixture.CoreID, Session: "sum-test", ConfigHome: config, StateHome: t.TempDir()})
-			if err := ordjson.WriteFile(filepath.Join(st.Root, "runtime-route.json"), route); err != nil {
-				t.Fatal(err)
-			}
 			if err := os.WriteFile(filepath.Join(st.Home, "settings.json"), []byte(`{"schema":1,"template":{"codex_home":`+strconv.Quote(home)+`}}`), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -167,8 +163,16 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 				t.Fatalf("terminals=%d", len(terminals))
 			}
 			terminal := terminals[0]
-			if terminal.Keep || terminal.RM || terminal.Notify || terminal.DieWithParent {
+			if terminal.RM || terminal.Notify || terminal.DieWithParent {
 				t.Fatalf("unsafe lifetime %#v", terminal)
+			}
+			for _, call := range fixture.Calls() {
+				if call.Method == "terminal.run" && call.Params["keep"] != false {
+					t.Fatalf("creation requested keep: %v", call.Params)
+				}
+			}
+			if terminal.Keep != (terminal.Labels["herdr.space"] != "") {
+				t.Fatalf("keep does not follow adoption: %#v", terminal)
 			}
 			if len(*terminal.Name) > 32 {
 				t.Fatal("name exceeds bound")

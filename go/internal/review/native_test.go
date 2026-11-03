@@ -146,7 +146,7 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'codex-cli 0.166.0'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := t.TempDir()
+	config := f.DefaultRoute(t)
 	options := launch.HCTemplateOptions{Cwd: ep.Cwd, CodexHome: t.TempDir()}
 	spec, err := launch.PrepareHCTemplate(runtime, config, "codex", nil, options)
 	if err != nil {
@@ -172,8 +172,13 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 	}
 	task.Set("owner", session.Owner())
 	task.Set("parent", nil)
-	route, _ := ordjson.FromValue(hcboot.Route{Socket: ep.Socket, CoreID: ep.CoreID, Session: ep.Session, ConfigHome: config, StateHome: t.TempDir()})
-	if err = ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
+	route, err := hcboot.SelectedRoute(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route.CoreID = ep.CoreID
+	cached, _ := ordjson.FromValue(route)
+	if err = ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), cached); err != nil {
 		t.Fatal(err)
 	}
 	settings := ordjson.NewObject()
