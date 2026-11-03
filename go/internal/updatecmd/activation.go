@@ -630,44 +630,24 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 		}
 		return nil, fmt.Errorf("The prior known-good runtime is no longer compatible: %s", blocking)
 	}
-	if descriptorsEqual(current, from) {
-		check := postCheck(s, root)
-		if ok, _ := check.Get("ok"); ok != true {
-			pending.Set("recovery_status", "failed")
-			pending.Set("recovery_check", check)
-			state.Set("pending", pending)
-			_ = writeActivationState(s, root, state)
-			return nil, fmt.Errorf("Recovery generation %s found the prior selection but its stable entrypoint check failed: %v", generation, func() any { v, _ := check.Get("detail"); return v }())
-		}
-		log := ordjson.NewObject()
-		log.Set("action", "recover")
-		log.Set("result", "recovered")
-		log.Set("generation", generation)
-		log.Set("changed", false)
-		log.Set("from", current)
-		log.Set("to", current)
-		log.Set("post_check", check)
-		updateLog(root, log)
-		state.Set("pending", nil)
-		if writeErr := writeActivationState(s, root, state); writeErr != nil {
-			return nil, writeErr
-		}
-		result := ordjson.NewObject()
-		result.Set("action", "recover")
-		result.Set("generation", generation)
-		result.Set("changed", false)
-		result.Set("default", current)
-		result.Set("post_check", check)
-		result.Set("note", "The prior known-good runtime was already selected and has been verified; no pointer change was needed.")
-		return result, nil
-	}
-	if !descriptorsEqual(current, to) {
+	changed := !descriptorsEqual(current, from)
+	if changed && !descriptorsEqual(current, to) {
 		return nil, fmt.Errorf("The current selection matches neither endpoint of the pending generation; recovery refused without mutation.")
 	}
-	if _, selectErr := SelectDefault(root, target); selectErr != nil {
-		return nil, selectErr
+	restoreSHA := effectField(from, "sha")
+	if alignment := recoveryCheckout(root, pending, restoreSHA, false); effectField(alignment, "result") == "refused" {
+		return nil, fmt.Errorf("Recovery checkout alignment refused: %s", effectField(alignment, "reason"))
+	}
+	if changed {
+		if _, selectErr := SelectDefault(root, target); selectErr != nil {
+			return nil, selectErr
+		}
 	}
 	restored := selectionDescriptor(DefaultRuntime(root))
+	alignment := recoveryCheckout(root, pending, restoreSHA, true)
+	if effectField(alignment, "result") == "refused" {
+		return nil, fmt.Errorf("Recovery checkout alignment refused: %s; pending generation %s is preserved", effectField(alignment, "reason"), generation)
+	}
 	check := postCheck(s, root)
 	if ok, _ := check.Get("ok"); ok != true {
 		pending.Set("recovery_status", "failed")
@@ -680,9 +660,10 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 	log.Set("action", "recover")
 	log.Set("result", "recovered")
 	log.Set("generation", generation)
-	log.Set("changed", true)
-	log.Set("from", to)
+	log.Set("changed", changed)
+	log.Set("from", current)
 	log.Set("to", restored)
+	log.Set("checkout", alignment)
 	log.Set("post_check", check)
 	updateLog(root, log)
 	state.Set("pending", nil)
@@ -692,11 +673,38 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 	result := ordjson.NewObject()
 	result.Set("action", "recover")
 	result.Set("generation", generation)
-	result.Set("changed", true)
+	result.Set("changed", changed)
 	result.Set("default", restored)
+	result.Set("checkout", alignment)
 	result.Set("post_check", check)
-	result.Set("note", "The prior known-good runtime was restored and verified; records are untouched.")
+	result.Set("note", "The prior known-good runtime and installation checkout were restored and verified; records are untouched.")
 	return result, nil
+}
+
+func recoveryCheckout(root string, pending *ordjson.Object, sha string, apply bool) *ordjson.Object {
+	refuse := func(reason string) *ordjson.Object {
+		result := ordjson.NewObject()
+		result.Set("result", "refused")
+		result.Set("reason", reason)
+		return result
+	}
+	recorded := asObject(func() any { v, _ := pending.Get("checkout"); return v }())
+	before, after := effectField(recorded, "from"), effectField(recorded, "to")
+	if !sha40Hex.MatchString(before) || !sha40Hex.MatchString(after) || after != effectField(asObject(func() any { v, _ := pending.Get("to"); return v }()), "sha") {
+		return refuse("pending activation lacks valid recorded checkout endpoints")
+	}
+	alignment := checkoutAlignment(root, sha, false)
+	if effectField(alignment, "result") == "refused" {
+		return alignment
+	}
+	head := effectField(alignment, "head")
+	if head != before && head != after && head != sha {
+		return refuse("checkout HEAD matches neither recorded activation endpoint nor the recovery target")
+	}
+	if apply {
+		return syncInstallationCheckout(root, sha)
+	}
+	return alignment
 }
 
 func argvJoin(recovery *ordjson.Object) string {

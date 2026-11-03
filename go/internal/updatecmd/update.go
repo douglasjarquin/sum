@@ -763,6 +763,10 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	if genErr != nil {
 		return nil, genErr
 	}
+	checkoutBefore := checkoutAlignment(root, newSHA, false)
+	if effectField(checkoutBefore, "result") == "refused" {
+		return nil, fmt.Errorf("checkout alignment refused: %s", effectField(checkoutBefore, "reason"))
+	}
 	recovery, recErr := stageRecovery(s, root, generation, knownGood)
 	if recErr != nil {
 		return nil, recErr
@@ -775,6 +779,10 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	pending.Set("to", intended)
 	pending.Set("source", source)
 	pending.Set("recovery", recovery)
+	checkoutIntent := ordjson.NewObject()
+	checkoutIntent.Set("from", effectField(checkoutBefore, "head"))
+	checkoutIntent.Set("to", newSHA)
+	pending.Set("checkout", checkoutIntent)
 	pending.Set("status", "prepared")
 	state.Set("pending", pending)
 	if err := writeActivationState(s, root, state); err != nil {

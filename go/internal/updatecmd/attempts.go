@@ -48,7 +48,7 @@ func unresolvedEffects(s *store.Store, tasks []*ordjson.Object) []any {
 			for _, field := range []string{"native_launch", "prompt", "kickoff"} {
 				record := asObject(func() any { v, _ := reviewer.Get(field); return v }())
 				state := effectField(record, "state")
-				if state == "in-flight" || state == "uncertain" || state == "claimed" || unresolvedLaunch(record) {
+				if state == "in-flight" || state == "uncertain" || state == "claimed" || state == "submitted" || unresolvedLaunch(record) {
 					blocked = append(blocked, fmt.Sprintf("task %s reviewer %s is unresolved; reconcile it from the serving runtime before activation", id, field))
 				}
 			}
