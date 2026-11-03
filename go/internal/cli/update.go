@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/guard"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/updatecmd"
 	"github.com/spf13/cobra"
 )
@@ -18,6 +20,30 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 			return fmt.Errorf("command is required")
 		},
 	}
+	var bootstrapRef, operation string
+	var bootstrapNoFetch, approve bool
+	bootstrap := &cobra.Command{Use: "bootstrap", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if o.homeSet {
+			return fmt.Errorf("bootstrap uses only the installation's own state home")
+		}
+		st, err := store.Open(o.home)
+		if err != nil {
+			return err
+		}
+		if err = guard.Candidate(o.installRoot, st, "update-bootstrap"); err != nil {
+			return err
+		}
+		view, err := updatecmd.Bootstrap(st, bootstrapRef, bootstrapNoFetch, approve, operation)
+		if err != nil {
+			return err
+		}
+		return emitOrdjson(cmd.OutOrStdout(), view)
+	}}
+	bootstrap.Flags().StringVar(&bootstrapRef, "ref", "", "approved merged target")
+	bootstrap.Flags().StringVar(&operation, "operation", "", "exact interrupted bootstrap operation")
+	bootstrap.Flags().BoolVar(&bootstrapNoFetch, "no-fetch", false, "use fetched origin default branch")
+	bootstrap.Flags().BoolVar(&approve, "approve", false, "perform the user-authorized native retirement and upgrade")
+	updateCmd.AddCommand(bootstrap)
 
 	updateCmd.AddCommand(&cobra.Command{
 		Use:  "status",

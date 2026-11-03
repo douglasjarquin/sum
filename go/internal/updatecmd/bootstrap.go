@@ -1,0 +1,352 @@
+package updatecmd
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/douglasjarquin/sum/go/internal/execution"
+	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/release"
+	"github.com/douglasjarquin/sum/go/internal/settings"
+	"github.com/douglasjarquin/sum/go/internal/store"
+)
+
+var TestBootstrapBoundary func(string) error
+
+func bootstrapStep(phase string) error {
+	if TestBootstrapBoundary != nil {
+		return TestBootstrapBoundary(phase)
+	}
+	return nil
+}
+
+func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation string) (*ordjson.Object, error) {
+	root, err := release.InstallationRoot(s)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := activationLock(root)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if err = requireNoPending(s, root); err != nil {
+		return nil, err
+	}
+	source, err := resolveAuthorized(root, ref, !noFetch)
+	if err != nil {
+		return nil, err
+	}
+	sha := effectField(source, "sha")
+	path := filepath.Join(root, ".local", "bootstrap.json")
+	journal, err := readBootstrap(path)
+	if err != nil {
+		return nil, err
+	}
+	owner, err := s.Owner()
+	if err != nil {
+		return nil, err
+	}
+	current := DefaultRuntime(root)
+	view := ordjson.NewObject()
+	view.Set("installation", root)
+	view.Set("old_runtime", selectionDescriptor(current))
+	view.Set("recorded_owner", owner)
+	view.Set("source", source)
+	view.Set("journal", journal)
+	if !approve {
+		inspection, inspectErr := bootstrapInspect(s, owner)
+		view.Set("inspection", inspection)
+		if inspectErr != nil {
+			view.Set("blocker", inspectErr.Error())
+		}
+		view.Set("next", "After explicit user authorization, repeat with --approve; resume an interrupted operation with its exact --operation and --ref SHA.")
+		return view, nil
+	}
+	if journal != nil {
+		if operation == "" || operation != effectField(journal, "operation") || sha != effectField(journal, "sha") || root != effectField(journal, "installation") || s.Home != effectField(journal, "home") || s.Generation != effectField(journal, "state_generation") {
+			return nil, fmt.Errorf("bootstrap journal exists; inspect it and resume its exact --operation %s --ref %s", effectField(journal, "operation"), effectField(journal, "sha"))
+		}
+		owner = asObject(func() any { v, _ := journal.Get("owner"); return v }())
+	} else {
+		if operation != "" {
+			return nil, fmt.Errorf("no bootstrap operation %s exists", operation)
+		}
+		if session, e := s.CoordinatorSession(); e != nil {
+			return nil, e
+		} else if session != nil {
+			return nil, fmt.Errorf("logical ownership already exists; use its claim and ordinary update apply")
+		}
+		if owner == nil {
+			return nil, fmt.Errorf("bootstrap requires a recorded native coordinator")
+		}
+		if ok, _ := current.Get("ok"); ok != true {
+			return nil, fmt.Errorf("old runtime cannot be verified; selection preserved")
+		}
+	}
+	staged, err := release.Stage(s, sha)
+	if err != nil {
+		return nil, err
+	}
+	target := effectField(staged, "release")
+	offered, err := release.ReadTargetContract(context.Background(), target)
+	if err != nil {
+		return nil, err
+	}
+	if !hasInt(offered.Supports.StateSchema, 3) || !hasInt(offered.Supports.OwnerSchema, 2) {
+		return nil, fmt.Errorf("bootstrap target must support state schema 3 and logical owner schema 2")
+	}
+	if _, _, err = ValidateTarget(s, root, target, current); err != nil {
+		return nil, err
+	}
+	if _, _, err = settings.NativeRetirementPreferences(s, owner); err != nil {
+		return nil, err
+	}
+	manifestHash, err := release.Sha256File(filepath.Join(target, release.Manifest))
+	if err != nil {
+		return nil, err
+	}
+	if journal == nil {
+		id, err := newGeneration()
+		if err != nil {
+			return nil, err
+		}
+		journal = ordjson.NewObject()
+		journal.Set("schema", json.Number("1"))
+		journal.Set("operation", id)
+		journal.Set("session_id", "c-"+id)
+		journal.Set("installation", root)
+		journal.Set("home", s.Home)
+		journal.Set("state_generation", s.Generation)
+		journal.Set("sha", sha)
+		journal.Set("manifest_sha256", manifestHash)
+		journal.Set("owner", owner)
+		journal.Set("old_runtime", selectionDescriptor(current))
+		journal.Set("phase", "prepared")
+		if err = ordjson.WriteFile(path, journal); err != nil {
+			return nil, err
+		}
+	} else if manifestHash != effectField(journal, "manifest_sha256") {
+		return nil, fmt.Errorf("bootstrap target manifest changed; recovery refused")
+	}
+	resumeError := func(err error) error {
+		return fmt.Errorf("%w; resume bootstrap --approve --operation %s --ref %s", err, effectField(journal, "operation"), sha)
+	}
+	if err = bootstrapStep("prepared"); err != nil {
+		return nil, resumeError(err)
+	}
+	session, err := s.RetireForUpgrade(effectField(journal, "session_id"), owner, func() error {
+		inspection, inspectErr := bootstrapInspect(s, owner)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		journal.Set("inspection", inspection)
+		return ordjson.WriteFile(path, journal)
+	}, func() error { return bootstrapStep("fenced") })
+	if err != nil {
+		return nil, resumeError(err)
+	}
+	if err = bootstrapStep("owned"); err != nil {
+		return nil, resumeError(err)
+	}
+	if err = retireBootstrapPreferences(s, session.Token()); err != nil {
+		return nil, resumeError(err)
+	}
+	journal.Set("phase", "retired")
+	if err = ordjson.WriteFile(path, journal); err != nil {
+		return nil, resumeError(err)
+	}
+	if err = bootstrapStep("retired"); err != nil {
+		return nil, resumeError(err)
+	}
+	if _, err = SelectDefault(root, target); err != nil {
+		return nil, resumeError(err)
+	}
+	if err = bootstrapStep("selected"); err != nil {
+		return nil, resumeError(err)
+	}
+	alignment := syncInstallationCheckout(root, sha)
+	if effectField(alignment, "result") == "refused" {
+		return nil, resumeError(fmt.Errorf("checkout alignment refused: %s", effectField(alignment, "reason")))
+	}
+	if err = bootstrapStep("aligned"); err != nil {
+		return nil, resumeError(err)
+	}
+	check := postCheck(s, root)
+	if ok, _ := check.Get("ok"); ok != true {
+		return nil, resumeError(fmt.Errorf("bootstrap entrypoint verification failed: %v", check))
+	}
+	journal.Set("phase", "complete")
+	if err = ordjson.WriteFile(path, journal); err != nil {
+		return nil, resumeError(err)
+	}
+	result := ordjson.NewObject()
+	result.Set("action", "bootstrap")
+	result.Set("operation", effectField(journal, "operation"))
+	result.Set("role", "coordinator")
+	result.Set("claim", session.Token())
+	result.Set("default", selectionDescriptor(DefaultRuntime(root)))
+	result.Set("post_check", check)
+	result.Set("next", "Continue in this conversation: run the installation's bin/sumctl init --claim TOKEN and read its validated coordinator procedure.")
+	return result, nil
+}
+
+func hasInt(values []int, n int) bool {
+	for _, v := range values {
+		if v == n {
+			return true
+		}
+	}
+	return false
+}
+
+func readBootstrap(path string) (*ordjson.Object, error) {
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("bootstrap journal must not be a symlink")
+	}
+	raw, err := ordjson.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	obj := asObject(raw)
+	if obj == nil || fmt.Sprint(func() any { v, _ := obj.Get("schema"); return v }()) != "1" || !sha40Hex.MatchString(effectField(obj, "sha")) || effectField(obj, "operation") == "" {
+		return nil, fmt.Errorf("malformed bootstrap journal")
+	}
+	return obj, nil
+}
+
+func bootstrapInspect(s *store.Store, owner *ordjson.Object) (*ordjson.Object, error) {
+	view := ordjson.NewObject()
+	tasks, err := s.AllTasks()
+	if err != nil {
+		return view, err
+	}
+	blocked := unresolvedEffects(s, tasks)
+	registrations, err := s.Registrations()
+	if err != nil {
+		return view, err
+	}
+	var observations []any
+	observe := func(record *ordjson.Object, label string, observer bool) {
+		if record == nil {
+			return
+		}
+		e := store.EndpointFromContext(record)
+		row := ordjson.NewObject()
+		row.Set("kind", label)
+		row.Set("endpoint", record)
+		observations = append(observations, row)
+		if err := e.Validate(); err != nil {
+			blocked = append(blocked, label+": "+err.Error())
+			return
+		}
+		if !observer {
+			proof := execution.NativeProgramStopped(s, e)
+			row.Set("state", proof.Outcome)
+			row.Set("stop_evidence", proof.Observation)
+			if proof.Outcome != execution.OutcomeStopped {
+				blocked = append(blocked, label+": "+proof.Reason)
+			}
+			return
+		}
+		client := hcclient.Client{Socket: e.Socket, CoreID: e.CoreID}
+		terminal, err := client.Get(context.Background(), e.Address)
+		if err != nil {
+			var rpc *hcclient.RPCError
+			var detail struct {
+				Kind string `json:"kind"`
+			}
+			if errors.As(err, &rpc) && json.Unmarshal(rpc.Data, &detail) == nil && detail.Kind == "not_found" {
+				row.Set("state", "absent")
+				return
+			}
+			blocked = append(blocked, label+": "+err.Error())
+			return
+		}
+		row.Set("state", terminal.State)
+		if terminal.Address != e.Address || terminal.CreatedMS != e.CreatedMS {
+			blocked = append(blocked, label+": terminal identity changed")
+			return
+		}
+		if terminal.State != "finished" && !(observer && terminal.State == "live") {
+			blocked = append(blocked, label+": terminal is still live or uncertain")
+		}
+	}
+	observe(owner, "native coordinator", false)
+	for _, registration := range registrations {
+		role := effectField(registration, "role")
+		if role == "worker" || role == "reviewer" {
+			observe(registration, role, false)
+		}
+	}
+	for _, task := range tasks {
+		for _, field := range []string{"worker_endpoint", "reviewer"} {
+			observe(asObject(func() any { v, _ := task.Get(field); return v }()), "task "+effectField(task, "id")+" "+field, false)
+		}
+	}
+	healthPath := filepath.Join(s.Home, "hook", "health.json")
+	if raw, e := ordjson.ReadFile(healthPath); e == nil {
+		health := asObject(raw)
+		view.Set("observer_health", health)
+		if health == nil {
+			blocked = append(blocked, "malformed observer health")
+		} else {
+			observer := asObject(func() any { v, _ := health.Get("observer"); return v }())
+			effect := effectField(health, "launch_effect")
+			if effect == "in-flight" || effect == "uncertain" || effect == "claimed" || (effect == "submitted" && observer == nil) {
+				blocked = append(blocked, "unresolved observer launch")
+			}
+			observe(observer, "observer (writer and sender fenced at retirement)", true)
+		}
+	} else if !errors.Is(e, os.ErrNotExist) {
+		blocked = append(blocked, "observer health: "+e.Error())
+	}
+	view.Set("terminals", observations)
+	view.Set("blocking", blocked)
+	if len(blocked) != 0 {
+		return view, fmt.Errorf("bootstrap refused: %s", joinBlocking(blocked))
+	}
+	return view, nil
+}
+
+func retireBootstrapPreferences(s *store.Store, token string) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	session, err := s.CheckClaim(token)
+	if err != nil {
+		return err
+	}
+	prefs, changed, err := settings.NativeRetirementPreferences(s, session.RetiredNative)
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err = ordjson.WriteFile(filepath.Join(s.Home, settings.File), prefs); err != nil {
+			return err
+		}
+	}
+	path := filepath.Join(s.Home, "hook", "health.json")
+	if _, err = os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	archive := filepath.Join(s.Home, "hook", "health.retired-native.json")
+	if _, err = os.Lstat(archive); err == nil {
+		return fmt.Errorf("observer archive already exists; preserve both health records and inspect")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return os.Rename(path, archive)
+}

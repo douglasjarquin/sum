@@ -7,6 +7,8 @@ description: Inspect and stage merged Sum releases, perform user-authorized quie
 Only the user authorizes update or rollback.
 Use the installation's trusted helper and this conversation's captured `--claim TOKEN` for coordinator mutations.
 A developer or task checkout cannot publish into the installation.
+For an old native installation without a live coordinator receipt, use the explicitly authorized bootstrap driver in `docs/update.md` from the same ordinary conversation.
+Bootstrap returns its new logical claim here; do not relaunch the agent or require a native coordinator launch.
 Read `docs/update.md` from the repository root for the complete activation and one-time native-retirement procedure.
 
 ```sh
