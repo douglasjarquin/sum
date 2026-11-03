@@ -180,21 +180,13 @@ func TestForeignOrUnsupportedTokensResync(t *testing.T) {
 	parsed, _ = Parse(first.Cursor)
 	parsed.Page.Truncated = true
 	cases["truncated coverage"] = mustToken(t, parsed)
-	wake := &returns.Boundary{Schema: returns.WakeSchema, Installation: "inst-fixture", Incarnation: json.RawMessage("null"), Included: []returns.WakeCovered{}, Omitted: []returns.WakeCovered{}}
-	wakeToken, err := wake.Token()
-	if err != nil {
-		t.Fatal(err)
-	}
-	cases["wake receipt"] = wakeToken
+	cases["historical receipt"] = returns.EncodeToken([]byte(`{"schema":2,"installation":"inst-fixture","incarnation":null,"included":[],"omitted":[]}`))
 	cases["garbage"] = "not-a-token"
 	for name, token := range cases {
 		d := build(t, home, Options{Since: token})
 		if d.Resync == nil || d.Resync.Reason == "" || len(newOutcomes(d)) != 0 || len(d.Rows) != 3 || d.Cursor == "" {
 			t.Fatalf("%s: resync=%+v rows=%d new=%d", name, d.Resync, len(d.Rows), len(newOutcomes(d)))
 		}
-	}
-	if _, err := returns.ParseBoundary(first.Cursor); err == nil {
-		t.Fatal("a digest cursor must never verify as a wake boundary")
 	}
 	if d := build(t, home, Options{Project: "a/repo", Since: scoped.Cursor}); d.Resync != nil {
 		t.Fatalf("matching project scope: %+v", d.Resync)

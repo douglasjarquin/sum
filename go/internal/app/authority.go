@@ -19,7 +19,6 @@ type TaskActor struct {
 	endpoint     store.Endpoint
 	terminal     hcclient.Terminal
 	registration []byte
-	owner        []byte
 	candidate    string
 	checkout     string
 }
@@ -36,12 +35,8 @@ func ObserveTaskActor(s *store.Store, ctx *ordjson.Object) (*TaskActor, error) {
 		return observeLogicalActor(s, ctx)
 	}
 	endpoint := store.EndpointFromContext(ctx)
-	if endpoint.Role == "coordinator" {
-		if current, err := s.CoordinatorSession(); err != nil {
-			return nil, err
-		} else if current != nil {
-			return nil, store.ErrClaimRequired
-		}
+	if endpoint.Role != "worker" && endpoint.Role != "reviewer" {
+		return nil, store.ErrClaimRequired
 	}
 	host, err := s.Machine()
 	if err != nil {
@@ -70,19 +65,11 @@ func ObserveTaskActor(s *store.Store, ctx *ordjson.Object) (*TaskActor, error) {
 	if !verdict.Verified {
 		return nil, fmt.Errorf("native actor authority refused: %s", verdict.Reason)
 	}
-	owner, err := s.Owner()
-	if err != nil {
-		return nil, err
-	}
 	registrationBytes, err := ordjson.MarshalSortedCompact(registration)
 	if err != nil {
 		return nil, err
 	}
-	ownerBytes, err := ordjson.MarshalSortedCompact(owner)
-	if err != nil {
-		return nil, err
-	}
-	actor := &TaskActor{endpoint: endpoint, terminal: terminal, registration: registrationBytes, owner: ownerBytes}
+	actor := &TaskActor{endpoint: endpoint, terminal: terminal, registration: registrationBytes}
 	if endpoint.Role == "reviewer" {
 		task, err := s.ReadTask(endpoint.Task)
 		if err != nil {
@@ -133,28 +120,6 @@ func CheckTaskRole(s *store.Store, task *ordjson.Object, actor *TaskActor, roles
 	}
 	var record *ordjson.Object
 	switch endpoint.Role {
-	case "coordinator":
-		if current, err := s.CoordinatorSession(); err != nil {
-			return err
-		} else if current != nil {
-			return store.ErrClaimRequired
-		}
-		parent, _ := task.Get("parent")
-		record, _ = parent.(*ordjson.Object)
-		owner, err := s.Owner()
-		if err != nil {
-			return err
-		}
-		current, err := ordjson.MarshalSortedCompact(owner)
-		if err != nil || !bytes.Equal(current, actor.owner) {
-			return fmt.Errorf("coordinator owner changed after observation")
-		}
-		if matches, err := s.Matches(owner, endpoint); err != nil || !matches {
-			return fmt.Errorf("current coordinator owner required")
-		}
-		if err := checkTaskRecord(owner, actor); err != nil {
-			return err
-		}
 	case "worker":
 		id, _ := task.Get("id")
 		if endpoint.Task != id {
@@ -214,10 +179,7 @@ func CheckTaskRole(s *store.Store, task *ordjson.Object, actor *TaskActor, roles
 	if matches, err := s.Matches(binding, endpoint); err != nil || !matches {
 		return fmt.Errorf("task binding changed after observation")
 	}
-	if endpoint.Role != "coordinator" {
-		return checkTaskRecord(record, actor)
-	}
-	return nil
+	return checkTaskRecord(record, actor)
 }
 
 func checkTaskRecord(record *ordjson.Object, actor *TaskActor) error {

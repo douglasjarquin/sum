@@ -10,7 +10,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -21,7 +20,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/machine"
 	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
@@ -176,11 +174,7 @@ func attemptDelivery(s *store.Store, sn *snapshots, endpoint *ordjson.Object, ex
 		return fail("pending-busy", err)
 	}
 	var current *ordjson.Object
-	if record.role == "coordinator" {
-		current, err = s.Owner()
-	} else {
-		current, err = s.Registration(store.EndpointFromContext(endpoint))
-	}
+	current, err = s.Registration(store.EndpointFromContext(endpoint))
 	if err != nil {
 		return fail("pending-unreachable", err)
 	}
@@ -198,20 +192,16 @@ func attemptDelivery(s *store.Store, sn *snapshots, endpoint *ordjson.Object, ex
 		return fail("pending-unreachable", err)
 	}
 	var currentVersions *ordjson.Object
-	if record.role == "coordinator" {
-		currentVersions, err = versions.ReadContractVersions(s)
-	} else {
-		currentTask, readErr := s.ReadTask(recipient.Endpoint.Task)
-		err = readErr
-		if err == nil {
-			err = maintenance.Refuse(currentTask, "Procedure refresh")
-		}
-		if err == nil && !store.EndpointFromContext(returns.ReturnRoute(currentTask, "worker")).Native().SameAuthority(recipient.Endpoint.Native()) {
-			err = fmt.Errorf("worker route changed before refresh claim")
-		}
-		if err == nil {
-			currentVersions, err = versions.ReadVersions(s, currentTask)
-		}
+	currentTask, readErr := s.ReadTask(recipient.Endpoint.Task)
+	err = readErr
+	if err == nil {
+		err = maintenance.Refuse(currentTask, "Procedure refresh")
+	}
+	if err == nil && !store.EndpointFromContext(returns.ReturnRoute(currentTask, "worker")).Native().SameAuthority(recipient.Endpoint.Native()) {
+		err = fmt.Errorf("worker route changed before refresh claim")
+	}
+	if err == nil {
+		currentVersions, err = versions.ReadVersions(s, currentTask)
 	}
 	if err != nil {
 		unlock()
@@ -470,295 +460,8 @@ func asList(v any) []any {
 	return list
 }
 
-// coordinatorCore reads the runtime's coordinator core, validated like any role procedure; a runtime
-// without it stages no contract revision.
-func coordinatorCore(runtimeRoot string) (string, error) {
-	_, data, err := procedure.Load(runtimeRoot, procedure.Coordinator, "no coordinator contract revision was staged")
-	return string(data), err
-}
-
-func contractPolicy(runtimeRoot, core string) (*ordjson.Object, error) {
-	agents, err := os.ReadFile(filepath.Join(runtimeRoot, "AGENTS.md"))
-	if err != nil {
-		return nil, err
-	}
-	skillsDir := filepath.Join(runtimeRoot, "skills")
-	entries, _ := filepath.Glob(filepath.Join(skillsDir, "*", "SKILL.md"))
-	sort.Strings(entries)
-	skillHashes := ordjson.NewObject()
-	for _, path := range entries {
-		text, readErr := os.ReadFile(path)
-		if readErr != nil {
-			continue
-		}
-		skillHashes.Set(filepath.Base(filepath.Dir(path)), sha256Text(string(text)))
-	}
-	policy := ordjson.NewObject()
-	policy.Set("sum_version", contract.SumVersion)
-	policy.Set("runtime_sha", runtimeSHA(runtimeRoot))
-	policy.Set("backend", "hc")
-	policy.Set("agents_sha256", sha256Text(string(agents)))
-	policy.Set("coordinator_sha256", sha256Text(core))
-	policy.Set("skills_sha256", skillHashes)
-	return policy, nil
-}
-
-func contractSummary(previous, policy *ordjson.Object) []any {
-	if previous == nil {
-		return []any{"initial contract snapshot"}
-	}
-	var changes []any
-	if asString(func() any { v, _ := previous.Get("sum_version"); return v }()) != asString(func() any { v, _ := policy.Get("sum_version"); return v }()) {
-		changes = append(changes, fmt.Sprintf("sum_version: %v -> %v", func() any { v, _ := previous.Get("sum_version"); return v }(), func() any { v, _ := policy.Get("sum_version"); return v }()))
-	}
-	if asString(func() any { v, _ := previous.Get("runtime_sha"); return v }()) != asString(func() any { v, _ := policy.Get("runtime_sha"); return v }()) {
-		changes = append(changes, "runtime changed")
-	}
-	if asString(func() any { v, _ := previous.Get("agents_sha256"); return v }()) != asString(func() any { v, _ := policy.Get("agents_sha256"); return v }()) {
-		changes = append(changes, "AGENTS.md changed")
-	}
-	if asString(func() any { v, _ := previous.Get("coordinator_sha256"); return v }()) != asString(func() any { v, _ := policy.Get("coordinator_sha256"); return v }()) {
-		changes = append(changes, procedure.Coordinator.Path+" changed")
-	}
-	if len(changes) == 0 {
-		return []any{"no recorded change"}
-	}
-	return changes
-}
-
-func writeOnce(path, text string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	if _, err := os.Lstat(path); err == nil {
-		return fmt.Errorf("Refusing to overwrite %s", path)
-	}
-	return os.WriteFile(path, []byte(text), 0o644)
-}
-
-func regenerateContract(s *store.Store, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
-	unlock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	versionsObj, err := versions.ReadContractVersions(s)
-	if err != nil {
-		return nil, err
-	}
-	core, err := coordinatorCore(runtimeRoot)
-	if err != nil {
-		return nil, err
-	}
-	policy, err := contractPolicy(runtimeRoot, core)
-	if err != nil {
-		return nil, err
-	}
-	encoded, _ := ordjson.MarshalSortedCompact(policy)
-	fingerprint := sha256Text(string(encoded))
-	list, _ := versionsObj.Get("revisions")
-	revs := asList(list)
-	var previous *ordjson.Object
-	if len(revs) > 0 {
-		previous = asObject(revs[len(revs)-1])
-	}
-	base := filepath.Join(s.Home, versions.ContractDir)
-	if previous != nil && asString(func() any { v, _ := previous.Get("fingerprint"); return v }()) == fingerprint {
-		state := versions.RevisionView(base, previous)
-		if ok, _ := state.Get("ok"); ok == true {
-			result := ordjson.NewObject()
-			result.Set("duplicate", true)
-			result.Set("revision", state)
-			result.Set("active", func() any { v, _ := versionsObj.Get("active"); return v }())
-			result.Set("requested", func() any { v, _ := versionsObj.Get("requested"); return v }())
-			return result, nil
-		}
-	}
-	maxN := 0
-	for _, raw := range revs {
-		id := asString(func() any { v, _ := asObject(raw).Get("id"); return v }())
-		if strings.HasPrefix(id, "r") {
-			var n int
-			if _, scanErr := fmt.Sscanf(id, "r%d", &n); scanErr == nil && n > maxN {
-				maxN = n
-			}
-		}
-	}
-	rid := fmt.Sprintf("r%d", maxN+1)
-	var prevPolicy *ordjson.Object
-	if previous != nil {
-		prevPolicy = asObject(func() any { v, _ := previous.Get("policy"); return v }())
-	}
-	summary := contractSummary(prevPolicy, policy)
-	var summaryLines []string
-	for _, item := range summary {
-		summaryLines = append(summaryLines, "- "+fmt.Sprint(item))
-	}
-	agents, _ := os.ReadFile(filepath.Join(runtimeRoot, "AGENTS.md"))
-	text := fmt.Sprintf("# sum coordinator contract — %s\n\nThis is the coordinator's operating contract as shipped by sum %s (runtime %s).\nYou remain the coordinator of this installation. This revision does not change your role, your registered pane, the recorded tasks, or their parent routes.\n\n## Refresh procedure\n\n- Read the contract below and the change summary. Then run `%s` to record the receipt.\n- Continue coordination from saved state: `%s` and the task records are the source of truth.\n- Do not restart yourself, re-dispatch running tasks, re-run setup, or re-answer recorded decisions.\n- Native HC status and submission remain observations; a matching adoption receipt is required.\n\n## Change summary\n\n%s\n\n## Operating contract (AGENTS.md at this revision)\n\n%s\n\n## Coordinator core (%s at this revision)\n\n%s\n",
-		rid, contract.SumVersion, runtimeSHA(runtimeRoot),
-		shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", rid),
-		shquote.CommandFor(sumctlPath, s.Home, "inbox", "--live"),
-		strings.Join(summaryLines, "\n"), string(agents), procedure.Coordinator.Path, core)
-	relative := "contracts/" + rid + ".md"
-	if err := writeOnce(filepath.Join(base, relative), text); err != nil {
-		return nil, err
-	}
-	revision := ordjson.NewObject()
-	revision.Set("id", rid)
-	revision.Set("path", relative)
-	revision.Set("status", "staged")
-	revision.Set("created_at", store.Now())
-	revision.Set("sha256", sha256Text(text))
-	revision.Set("fingerprint", fingerprint)
-	revision.Set("policy", policy)
-	revision.Set("summary", summary)
-	revision.Set("verification_affected", false)
-	if previous != nil {
-		revision.Set("previous", func() any { v, _ := previous.Get("id"); return v }())
-	} else {
-		revision.Set("previous", nil)
-	}
-	revs = append(revs, revision)
-	versionsObj.Set("revisions", revs)
-	if err := versions.WriteContractVersions(s, versionsObj); err != nil {
-		return nil, err
-	}
-	result := ordjson.NewObject()
-	result.Set("duplicate", false)
-	result.Set("revision", versions.RevisionView(base, revision))
-	result.Set("active", func() any { v, _ := versionsObj.Get("active"); return v }())
-	result.Set("requested", func() any { v, _ := versionsObj.Get("requested"); return v }())
-	return result, nil
-}
-
-func markRequested(versionsObj, target *ordjson.Object) {
-	list, _ := versionsObj.Get("revisions")
-	id, _ := target.Get("id")
-	for _, raw := range asList(list) {
-		rev := asObject(raw)
-		if st, _ := rev.Get("status"); st == "requested" {
-			rev.Set("status", "superseded")
-		}
-	}
-	target.Set("status", "requested")
-	versionsObj.Set("requested", id)
-}
-
-func refreshCoordinator(s *store.Store, ctx *ordjson.Object, sn *snapshots, runtimeRoot, sumctlPath string, host machine.Identity) (*ordjson.Object, error) {
-	row := ordjson.NewObject()
-	row.Set("target", "coordinator")
-	row.Set("deferred", []any{})
-	staged, err := regenerateContract(s, runtimeRoot, sumctlPath)
-	if err != nil {
-		return nil, err
-	}
-	rev := asObject(func() any { v, _ := staged.Get("revision"); return v }())
-	latest := asString(func() any { v, _ := rev.Get("id"); return v }())
-	owner, err := s.Owner()
-	if err != nil {
-		return nil, err
-	}
-	unlock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	versionsObj, err := versions.ReadContractVersions(s)
-	if err != nil {
-		unlock()
-		return nil, err
-	}
-	var target *ordjson.Object
-	for _, raw := range asList(func() any { v, _ := versionsObj.Get("revisions"); return v }()) {
-		if item := asObject(raw); item != nil && asString(func() any { v, _ := item.Get("id"); return v }()) == latest {
-			target = item
-		}
-	}
-	row.Set("deferred", []any{})
-	active, _ := versionsObj.Get("active")
-	if active == latest {
-		state := versions.RefreshState(versionsObj)
-		row.Set("revision", latest)
-		if st, ok := state.Get("state"); ok {
-			row.Set("state", st)
-		}
-		if reason, ok := state.Get("reason"); ok {
-			row.Set("reason", reason)
-		}
-		unlock()
-		return row, nil
-	}
-	markRequested(versionsObj, target)
-	if err := versions.WriteContractVersions(s, versionsObj); err != nil {
-		unlock()
-		return nil, err
-	}
-	unlock()
-	state := versions.RevisionView(filepath.Join(s.Home, versions.ContractDir), target)
-	var event *ordjson.Object
-	if owner == nil || store.EndpointFromContext(owner).Native().SameAuthority(store.EndpointFromContext(ctx).Native()) {
-		event = ordjson.NewObject()
-		event.Set("state", "pending-busy")
-		event.Set("reason", "the coordinator is the calling pane; read the contract revision and run `refresh adopt --coordinator` at this turn boundary")
-	} else {
-		path := asString(func() any { v, _ := state.Get("path"); return v }())
-		summaryVal, _ := target.Get("summary")
-		var parts []string
-		if list, ok := summaryVal.([]any); ok {
-			for _, item := range list {
-				parts = append(parts, fmt.Sprint(item))
-			}
-		}
-		sha := runtimeSHA(runtimeRoot)
-		if len(sha) > 12 {
-			sha = sha[:12]
-		}
-		cwd := asString(func() any { v, _ := owner.Get("cwd"); return v }())
-		session := asString(func() any { v, _ := owner.Get("session"); return v }())
-		message := fmt.Sprintf("sum refresh coordinator: operating contract revision %s is requested (sum %s, runtime %s). Changes: %s. At your next safe point read %s, then run %s and continue coordination from saved state. Do not restart or re-dispatch.",
-			latest, contract.SumVersion, sha, strings.Join(parts, "; "), path, shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", latest))
-		record := occupantRecord{revision: latest, role: "coordinator", ok: true, current: func() (any, error) {
-			current, err := s.Owner()
-			if err != nil || current == nil {
-				return nil, fmt.Errorf("no coordinator record")
-			}
-			value, _ := incarnation.CoordinatorRecord(current)
-			return value, nil
-		}}
-		record.value, record.occupiedAt = incarnation.CoordinatorRecord(owner)
-		event = attemptDelivery(s, sn, owner, cwd, message, host, record, nil)
-		_ = session
-	}
-	unlock, err = s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	versionsObj, err = versions.ReadContractVersions(s)
-	if err != nil {
-		return nil, err
-	}
-	if asString(func() any { v, _ := versionsObj.Get("requested"); return v }()) == latest {
-		recordDelivery(versionsObj, latest, event, runtimeRoot)
-		if err := versions.WriteContractVersions(s, versionsObj); err != nil {
-			return nil, err
-		}
-	}
-	row.Set("revision", latest)
-	row.Set("path", func() any { v, _ := state.Get("path"); return v }())
-	row.Set("summary", func() any { v, _ := target.Get("summary"); return v }())
-	for _, k := range event.Keys() {
-		v, _ := event.Get(k)
-		row.Set(k, v)
-	}
-	return row, nil
-}
-
 func Status(s *store.Store, taskIDs []string) (*ordjson.Object, error) {
 	var rows []any
-	coord := versions.ContractState(s)
-	coord.Set("target", "coordinator")
-	rows = append(rows, coord)
 	tasks, err := s.AllTasks()
 	if err != nil {
 		return nil, err
@@ -799,58 +502,7 @@ func Status(s *store.Store, taskIDs []string) (*ordjson.Object, error) {
 	return result, nil
 }
 
-func AdoptCoordinator(s *store.Store, ctx *ordjson.Object, revision string) (*ordjson.Object, error) {
-	if err := app.RequireCoordinator(s, ctx); err != nil {
-		return nil, err
-	}
-	versionsObj, err := versions.ReadContractVersions(s)
-	if err != nil {
-		return nil, err
-	}
-	requested, _ := versionsObj.Get("requested")
-	if requested != revision {
-		return nil, fmt.Errorf("%s is not the requested revision (%v). Adopt only what was requested.", revision, requested)
-	}
-	revisionsValue, _ := versionsObj.Get("revisions")
-	list, _ := revisionsValue.([]any)
-	var target *ordjson.Object
-	for _, raw := range list {
-		rev, _ := raw.(*ordjson.Object)
-		id, _ := rev.Get("id")
-		if id == revision {
-			target = rev
-			break
-		}
-	}
-	if target == nil {
-		return nil, fmt.Errorf("Unknown revision %s.", revision)
-	}
-	for _, raw := range list {
-		rev, _ := raw.(*ordjson.Object)
-		if st, _ := rev.Get("status"); st == "active" {
-			rev.Set("status", "superseded")
-		}
-	}
-	target.Set("status", "active")
-	versionsObj.Set("active", revision)
-	versionsObj.Set("requested", nil)
-	refreshValue, _ := versionsObj.Get("refresh")
-	refresh, _ := refreshValue.([]any)
-	row := ordjson.NewObject()
-	row.Set("at", store.Now())
-	row.Set("event", "adopted")
-	row.Set("revision", revision)
-	versionsObj.Set("refresh", append(refresh, row))
-	if err := versions.WriteContractVersions(s, versionsObj); err != nil {
-		return nil, err
-	}
-	result := ordjson.NewObject()
-	result.Set("active", revision)
-	result.Set("note", "Receipt recorded: this contract revision was read and adopted. A receipt is evidence of reading, not proof it is followed.")
-	return result, nil
-}
-
-func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator bool, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
+func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}
@@ -859,16 +511,9 @@ func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator 
 		return nil, err
 	}
 	sn := newSnapshots(runtimeRoot)
-	everything := len(taskIDs) == 0 && !coordinator
+	everything := len(taskIDs) == 0
 	var rows []any
 	var excluded []any
-	if everything || coordinator {
-		row, err := refreshCoordinator(s, ctx, sn, runtimeRoot, sumctlPath, host)
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, row)
-	}
 	tasks, err := s.AllTasks()
 	if err != nil {
 		return nil, err
@@ -933,71 +578,15 @@ func Request(s *store.Store, ctx *ordjson.Object, taskIDs []string, coordinator 
 	return result, nil
 }
 
-func ReconcileCoordinator(s *store.Store, scope store.Endpoint, runtimeRoot, sumctlPath string) (*ordjson.Object, error) {
-	owner, err := s.Owner()
-	if err != nil || owner == nil {
-		return nil, err
-	}
-	endpoint := store.EndpointFromContext(owner)
-	if endpoint.CoreID != scope.CoreID || endpoint.Session != scope.Session {
-		return nil, nil
-	}
-	ledger, err := versions.ReadContractVersions(s)
-	if err != nil {
-		return nil, err
-	}
-	requested, _ := ledger.Get("requested")
-	active, _ := ledger.Get("active")
-	revision, _ := requested.(string)
-	if revision == "" || requested == active {
-		return nil, nil
-	}
-	var target *ordjson.Object
-	revisions, _ := ledger.Get("revisions")
-	for _, raw := range asList(revisions) {
-		candidate := asObject(raw)
-		if candidate != nil {
-			if id, _ := candidate.Get("id"); id == revision {
-				target = candidate
-				break
-			}
+func markRequested(versionsObj, target *ordjson.Object) {
+	list, _ := versionsObj.Get("revisions")
+	id, _ := target.Get("id")
+	for _, raw := range asList(list) {
+		rev := asObject(raw)
+		if st, _ := rev.Get("status"); st == "requested" {
+			rev.Set("status", "superseded")
 		}
 	}
-	if target == nil {
-		return nil, fmt.Errorf("requested coordinator contract revision is missing")
-	}
-	view := versions.RevisionView(filepath.Join(s.Home, versions.ContractDir), target)
-	if ok, _ := view.Get("ok"); ok != true {
-		return nil, fmt.Errorf("requested coordinator contract revision is not readable")
-	}
-	path, _ := view.Get("path")
-	message := fmt.Sprintf("sum refresh coordinator: operating contract revision %s is requested. Read %v completely, then run %s. Continue coordination from saved state; this notice is not adoption or approval.", revision, path, shquote.CommandFor(sumctlPath, s.Home, "refresh", "adopt", "--coordinator", revision))
-	recorded, occupiedAt := incarnation.CoordinatorRecord(owner)
-	record := occupantRecord{role: "coordinator", revision: revision, value: recorded, occupiedAt: occupiedAt, ok: true, current: func() (any, error) {
-		current, err := s.Owner()
-		if err != nil {
-			return nil, err
-		}
-		value, _ := incarnation.CoordinatorRecord(current)
-		return value, nil
-	}}
-	host, err := s.Machine()
-	if err != nil {
-		return nil, err
-	}
-	event := attemptDelivery(s, newSnapshots(runtimeRoot), owner, endpoint.Cwd, message, host, record, nil)
-	unlock, err := s.Lock()
-	if err != nil {
-		return nil, err
-	}
-	defer unlock()
-	ledger, err = versions.ReadContractVersions(s)
-	if err != nil {
-		return nil, err
-	}
-	if current, _ := ledger.Get("requested"); current == revision {
-		recordDelivery(ledger, revision, event, runtimeRoot)
-		err = versions.WriteContractVersions(s, ledger)
-	}
-	return event, err
+	target.Set("status", "requested")
+	versionsObj.Set("requested", id)
 }

@@ -34,7 +34,7 @@ type applicationReceipt struct {
 }
 type deliveryProof struct {
 	Application *applicationReceipt `json:"application,omitempty"`
-	Consumption *WakeReceipt        `json:"consumption,omitempty"`
+	Consumption *historicalReceipt  `json:"consumption,omitempty"`
 }
 type deliveryResolution struct {
 	Delivery    string          `json:"delivery"`
@@ -301,7 +301,7 @@ func validateProofCoverage(s *store.Store, task, row *ordjson.Object, proofs []d
 		}
 		if r := proof.Consumption; r != nil {
 			b := r.Boundary
-			if r.Result != "consumed" || !validStamp(r.At) || !receiptAfter(row, r.At) || b == nil || r.Delivery != deliveryID || b.Generation != r.Generation || b.Generation < 1 || b.Episode == "" || routeValue(row, "wake_episode") != b.Episode || fmt.Sprint(routeValue(row, "wake_generation")) != fmt.Sprint(b.Generation) || b.Installation != instance || b.Schema != WakeSchema || r.Fingerprint != b.Fingerprint() {
+			if r.Result != "consumed" || !validStamp(r.At) || !receiptAfter(row, r.At) || b == nil || r.Delivery != deliveryID || b.Generation != r.Generation || b.Generation < 1 || b.Episode == "" || routeValue(row, "wake_episode") != b.Episode || fmt.Sprint(routeValue(row, "wake_generation")) != fmt.Sprint(b.Generation) || b.Installation != instance || b.Schema != historicalSchema || r.Fingerprint != b.Fingerprint() {
 				return fmt.Errorf("invalid consumed boundary receipt")
 			}
 			var evidence incarnation.NativeEvidence
@@ -420,7 +420,7 @@ func ReconcileDelivery(s *store.Store, ctx *ordjson.Object, taskID, deliveryID s
 	if err != nil {
 		return nil, fmt.Errorf("delivery lacks full historical endpoint: %w", err)
 	}
-	lockCtx, cancel := context.WithTimeout(context.Background(), wakeLockWait)
+	lockCtx, cancel := context.WithTimeout(context.Background(), 2*DefaultPassBudget)
 	defer cancel()
 	unlockRecipient, err := LockRecipient(s, lockCtx, endpoint.Object())
 	if err != nil {
@@ -499,8 +499,8 @@ func ReconcileDelivery(s *store.Store, ctx *ordjson.Object, taskID, deliveryID s
 		if err != nil {
 			return nil, err
 		}
-		w, status := readWake(s, readInstallation(s), [3]string{host.Canonical(endpoint.Machine), endpoint.CoreID, endpoint.Address})
-		if status.State == WakeBlocked {
+		w, status := readHistoricalSidecar(s, readInstallation(s), [3]string{host.Canonical(endpoint.Machine), endpoint.CoreID, endpoint.Address})
+		if status.State == historicalBlocked {
 			return nil, fmt.Errorf("wake receipt unreadable: %s", status.Diagnostic)
 		}
 		if w != nil {

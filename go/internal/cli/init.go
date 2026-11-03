@@ -20,7 +20,6 @@ import (
 var validInitRoles = map[string]bool{"coordinator": true, "worker": true, "developer": true, "reviewer": true}
 
 func (o *rootOptions) addInitCommand(root *cobra.Command) {
-	o.addCoordinatorCommand(root)
 	var role, task string
 	var transfer, retireNative bool
 	cmd := &cobra.Command{

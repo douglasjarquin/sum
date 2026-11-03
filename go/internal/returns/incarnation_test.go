@@ -169,25 +169,27 @@ func TestPassLateConversationMetadataNeverAdoptsANativeReplacement(t *testing.T)
 	}
 }
 
-// An inline listing is presented only to the recorded occupant of the calling pane.
-func TestPassInlineListingIsNotPresentedToAReplacedCaller(t *testing.T) {
+// A worker inline listing is presented only to its recorded native occupant.
+func TestPassInlineListingIsNotPresentedToAReplacedWorker(t *testing.T) {
 	psFixture(t, `{"5151": "2030-01-01T00:00:00Z"}`)
 	l := newPassLab(t)
-	l.asking(l.host)
-	l.session("lab", map[string]any{"panes": map[string]any{"w-root:p1": l.restarted(l.root)}})
-	result, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Ctx: l.ctx, Inline: true, Budget: 5 * time.Second})
+	id := l.worker("lab", "w1:p1")
+	caller := l.nativeEndpoint("lab", "w1:p1").Object()
+	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": l.restarted(l.worktree(id))}})
+	result, err := Pump(l.s, PumpOpts{RuntimeRoot: l.root, SumctlPath: "sumctl", Ctx: caller, Inline: true, Budget: 5 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := states(result)["w-root:p1"]; got != "refused" {
+	if got := states(result)["w1:p1"]; got != "refused" {
 		t.Fatalf("inline state = %s (%v), want refused", got, result)
+	}
+	if countCalls(l.calls(), "prompt") != 0 || len(deliveries(t, l.s, id)) != 0 {
+		t.Fatal("replaced inline worker received input or delivery stamp")
 	}
 }
 
-// A caller verified as the coordinator does not skip the occupant check for a worker-role listing at its own pane.
+// A verified worker can skip observation only for its own task listing.
 func TestCallerVerifiedCoversOnlyItsOwnRoleAndTask(t *testing.T) {
-	coordinator := ordjson.NewObject()
-	coordinator.Set("role", "coordinator")
 	worker := ordjson.NewObject()
 	worker.Set("role", "worker")
 	task := ordjson.NewObject()
@@ -195,19 +197,13 @@ func TestCallerVerifiedCoversOnlyItsOwnRoleAndTask(t *testing.T) {
 	other := ordjson.NewObject()
 	other.Set("id", "t-2")
 	items := [][2]*ordjson.Object{{task, nil}}
-	if !callerVerifiedFor(PumpOpts{CallerVerifiedRole: "coordinator"}, coordinator, items) {
-		t.Fatal("a verified coordinator's own listing must not be re-observed")
-	}
-	if callerVerifiedFor(PumpOpts{CallerVerifiedRole: "coordinator"}, worker, items) {
-		t.Fatal("a coordinator verification covered a worker listing")
-	}
 	if !callerVerifiedFor(PumpOpts{CallerVerifiedRole: "worker", CallerVerifiedTask: "t-1"}, worker, items) {
 		t.Fatal("a verified worker's own task listing must not be re-observed")
 	}
 	if callerVerifiedFor(PumpOpts{CallerVerifiedRole: "worker", CallerVerifiedTask: "t-1"}, worker, append(items, [2]*ordjson.Object{other, nil})) {
 		t.Fatal("a worker verification covered another task")
 	}
-	if callerVerifiedFor(PumpOpts{}, coordinator, items) {
+	if callerVerifiedFor(PumpOpts{}, worker, items) {
 		t.Fatal("an unverified caller skipped the check")
 	}
 }

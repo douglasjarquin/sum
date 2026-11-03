@@ -365,12 +365,6 @@ func (s *Store) RecipientLockPath(endpoint [3]string) string {
 // WakeSuffix is the file suffix of a coordinator wake sidecar under <home>/deliver/.
 const WakeSuffix = ".wake.json"
 
-// WakePath is the coordinator wake sidecar for one canonical recipient endpoint, beside its recipient lock and
-// keyed the same way, so every spelling of one host's endpoint names one file.
-func (s *Store) WakePath(endpoint [3]string) string {
-	return s.deliverPath(endpoint, WakeSuffix)
-}
-
 // deliverPath is the per-recipient file under <home>/deliver/ for one canonical endpoint and suffix.
 func (s *Store) deliverPath(endpoint [3]string, suffix string) string {
 	key := RegistrationKey(Endpoint{Machine: endpoint[0], Session: endpoint[1], Pane: endpoint[2]})

@@ -2,7 +2,6 @@ package returns
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -269,41 +268,6 @@ func (l *passLab) pumpFor(tasks []string, recipient string, budget time.Duration
 	return result, time.Since(started)
 }
 
-// asking records a task whose open question is owed to the lab coordinator, with the coordinator's machine recorded
-// as parentMachine (the stable ID or a legacy hostname alias of this host).
-func (l *passLab) asking(parentMachine string) string {
-	l.t.Helper()
-	l.tasks++
-	id := fmt.Sprintf("t-%012x", l.tasks)
-	if err := os.MkdirAll(filepath.Join(l.s.Tasks, id), 0o700); err != nil {
-		l.t.Fatal(err)
-	}
-	parent := ordjson.NewObject()
-	for _, k := range l.ctx.Keys() {
-		v, _ := l.ctx.Get(k)
-		parent.Set(k, v)
-	}
-	parent.Set("machine", parentMachine)
-	task := ordjson.NewObject()
-	task.Set("schema", json.Number("1"))
-	task.Set("id", id)
-	task.Set("status", "running")
-	task.Set("machine", l.host)
-	task.Set("session", "lab")
-	task.Set("pane", fmt.Sprintf("w-asker%d:p1", l.tasks))
-	task.Set("worktree", filepath.Join(l.root, "wt", id))
-	task.Set("parent", parent)
-	question := ordjson.NewObject()
-	question.Set("id", "q1")
-	question.Set("status", "open")
-	question.Set("created_at", "2026-09-24T00:00:00+00:00")
-	task.Set("questions", []any{question})
-	if err := l.s.SaveTask(task); err != nil {
-		l.t.Fatal(err)
-	}
-	return id
-}
-
 // closeQuestion applies q1 on task id through a separate Store, as another sumctl process would.
 func (l *passLab) mutate(id string, change func(task *ordjson.Object)) {
 	l.t.Helper()
@@ -413,7 +377,7 @@ func TestConcurrentPassDoesNotWaitForAnUnrelatedRecipient(t *testing.T) {
 	}
 }
 
-// R2: two processes and two machine spellings for one coordinator make one prompt.
+// R2: two processes and two machine spellings for one worker make one prompt.
 func TestConcurrentPassesToOneRecipientPromptOnceAcrossMachineAliases(t *testing.T) {
 	l := newPassLab(t)
 	identity, err := machine.Local(l.s.Home)
@@ -423,28 +387,37 @@ func TestConcurrentPassesToOneRecipientPromptOnceAcrossMachineAliases(t *testing
 	if identity.Hostname == "" || identity.Hostname == l.host || !identity.Is(identity.Hostname) {
 		t.Skip("this host has no legacy hostname alias")
 	}
-	stable := l.asking(l.host)
-	legacy := l.asking(identity.Hostname)
-	l.session("lab", map[string]any{"hold": map[string]any{"w-root:p1": "prompt"}, "panes": map[string]any{
-		"w-root:p1": l.pane("idle", l.root)}})
-	h := l.startHelper("stable", []string{stable}, "parent")
-	l.awaitHeld(h, "prompt", "w-root:p1")
-
-	result, _ := l.pumpFor([]string{legacy}, "parent", 3*time.Second)
-	if got := states(result)["w-root:p1"]; got != "deferred" {
+	id := l.worker("lab", "w1:p1")
+	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "prompt"}, "panes": map[string]any{
+		"w1:p1": l.pane("idle", l.worktree(id))}})
+	h := l.startHelper("stable", []string{id}, "worker")
+	l.awaitHeld(h, "prompt", "w1:p1")
+	l.mutate(id, func(task *ordjson.Object) {
+		route := asNativeRoute(task)
+		route.Set("machine", identity.Hostname)
+		task.Set("worker_endpoint", route)
+	})
+	result, _ := l.pumpFor([]string{id}, "worker", 3*time.Second)
+	if got := states(result)["w1:p1"]; got != "deferred" {
 		t.Fatalf("legacy-spelled pass = %s (%v), want deferred behind the same recipient", got, result)
 	}
-	l.release("w-root:p1")
-	if got := states(h.result(t))["w-root:p1"]; got != "submitted" {
+	l.release("w1:p1")
+	if got := states(h.result(t))["w1:p1"]; got != "submitted" {
 		t.Fatalf("stable-spelled pass = %s, want submitted", got)
 	}
-	again, _ := l.pumpFor([]string{legacy}, "parent", 8*time.Second)
-	if got := states(again)["w-root:p1"]; got != "quiet" {
-		t.Fatalf("after the first notice, pass = %s (%v), want quiet", got, again)
+	// The alias exercises the recipient lock; native receipts retain their exact identity.
+	l.mutate(id, func(task *ordjson.Object) {
+		route := asNativeRoute(task)
+		route.Set("machine", l.host)
+		task.Set("worker_endpoint", route)
+	})
+	again, _ := l.pumpFor([]string{id}, "worker", 8*time.Second)
+	if got := states(again)["w1:p1"]; got != "quiet" {
+		t.Fatalf("after the first answer, pass = %s (%v), want quiet", got, again)
 	}
-	sent := prompts(l.calls(), "w-root:p1")
-	if len(sent) != 1 || !strings.Contains(sent[0], stable) || !strings.Contains(sent[0], legacy) {
-		t.Fatalf("prompts = %v, want one coalesced notice naming both tasks", sent)
+	sent := prompts(l.calls(), "w1:p1")
+	if len(sent) != 1 || !strings.Contains(sent[0], id) {
+		t.Fatalf("prompts = %v, want one answer notice", sent)
 	}
 }
 
@@ -535,30 +508,42 @@ func TestChangeDuringObservationSendsNothing(t *testing.T) {
 	}
 }
 
-// R5/R9: when one of two coalesced returns closes during observation, the survivor is still sent, alone.
+// R5/R9: when one of two answers closes during observation, the survivor is sent alone.
 func TestSurvivingObligationIsSentAloneAfterAConcurrentClose(t *testing.T) {
 	l := newPassLab(t)
-	closing := l.asking(l.host)
-	surviving := l.asking(l.host)
-	l.session("lab", map[string]any{"hold": map[string]any{"w-root:p1": "get"}, "panes": map[string]any{
-		"w-root:p1": l.pane("idle", l.root)}})
-	h := l.startHelper("both", []string{closing}, "parent")
-	l.awaitHeld(h, "get", "w-root:p1")
-	l.mutate(closing, func(task *ordjson.Object) {
+	id := l.worker("lab", "w1:p1")
+	l.mutate(id, func(task *ordjson.Object) {
 		questions, _ := task.Get("questions")
-		questions.([]any)[0].(*ordjson.Object).Set("status", "answered")
-		questions.([]any)[0].(*ordjson.Object).Set("answered_at", "2026-09-24T00:05:00+00:00")
+		q := ordjson.NewObject()
+		q.Set("id", "q2")
+		q.Set("status", "answered")
+		q.Set("created_at", "2026-09-24T00:02:00+00:00")
+		q.Set("answered_at", "2026-09-24T00:03:00+00:00")
+		task.Set("questions", append(questions.([]any), q))
 	})
-	l.release("w-root:p1")
-	if got := states(h.result(t))["w-root:p1"]; got != "submitted" {
+	l.session("lab", map[string]any{"hold": map[string]any{"w1:p1": "get"}, "panes": map[string]any{
+		"w1:p1": l.pane("idle", l.worktree(id))}})
+	h := l.startHelper("both", []string{id}, "worker")
+	l.awaitHeld(h, "get", "w1:p1")
+	l.mutate(id, func(task *ordjson.Object) {
+		questions, _ := task.Get("questions")
+		questions.([]any)[0].(*ordjson.Object).Set("status", "applied")
+	})
+	l.release("w1:p1")
+	if got := states(h.result(t))["w1:p1"]; got != "submitted" {
 		t.Fatalf("state = %s, want the survivor submitted", got)
 	}
-	sent := prompts(l.calls(), "w-root:p1")
-	if len(sent) != 1 || !strings.Contains(sent[0], surviving) || strings.Contains(sent[0], closing) {
-		t.Fatalf("prompts = %v, want one notice naming only %s", sent, surviving)
+	sent := prompts(l.calls(), "w1:p1")
+	if len(sent) != 1 || !strings.Contains(sent[0], "q2") || strings.Contains(sent[0], "q1") {
+		t.Fatalf("prompts = %v, want one notice naming only q2", sent)
 	}
-	for _, d := range deliveries(t, l.s, closing) {
-		t.Fatalf("closed task has a delivery record: %v", d)
+	rows := deliveries(t, l.s, id)
+	if len(rows) != 1 {
+		t.Fatalf("deliveries = %v, want only the surviving answer", rows)
+	}
+	obligations, _ := rows[0].Get("obligations")
+	if fmt.Sprint(obligations) != "[answer:q2]" {
+		t.Fatalf("delivery coverage = %v", obligations)
 	}
 }
 

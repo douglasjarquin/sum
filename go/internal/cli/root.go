@@ -129,7 +129,6 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addReleaseCommands(root)
 	opts.addProjectCommands(root)
 	opts.addFactoryCommands(root)
-	opts.addHookCommands(root)
 
 	opts.addShowCommand(root)
 	opts.addRestoreCommand(root)
@@ -148,7 +147,6 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addRefreshCommands(root)
 	opts.addCleanupCommand(root)
 	opts.addExecutionCommands(root)
-	opts.addWakeCommands(root)
 	opts.addRepairCommands(root)
 	opts.addStartCommand(root)
 	opts.addReviewCommand(root)

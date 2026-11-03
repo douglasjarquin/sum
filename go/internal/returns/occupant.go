@@ -13,9 +13,6 @@ import (
 type occupant struct{ native *NativeRecipient }
 
 func nativeRecord(s *store.Store, route *ordjson.Object) (*ordjson.Object, error) {
-	if routeValue(route, "role") == "coordinator" {
-		return s.Owner()
-	}
 	return s.Registration(store.EndpointFromContext(route))
 }
 func checkOccupant(s *store.Store, route *ordjson.Object, occ *occupant) string {

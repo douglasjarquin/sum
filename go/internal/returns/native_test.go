@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/douglasjarquin/sum/go/internal/contract"
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -82,6 +82,7 @@ type nativeLab struct {
 	s     *store.Store
 	owner store.Endpoint
 	next  int
+	claim string
 }
 
 func newNativeLab(t *testing.T) *nativeLab {
@@ -105,7 +106,6 @@ func newNativeLab(t *testing.T) *nativeLab {
 	l := &nativeLab{t: t, f: f, s: s}
 	l.owner = store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: f.CoreID, Session: "lab", Socket: f.Socket, Address: "t0", Role: "coordinator", Attempt: "coord-1", BindingGeneration: 1, CreatedMS: 100, Cwd: t.TempDir()}
 	record := l.bind(l.owner)
-	record.Set("wake_protocol", jsonInt(contract.WakeProtocol))
 	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), record); err != nil {
 		t.Fatal(err)
 	}
@@ -222,28 +222,6 @@ func TestNativePumpLostResponseNeverReplays(t *testing.T) {
 		t.Fatal("uncertain input replayed")
 	}
 }
-func TestNativePumpCoalescesRoutineWakeAndPreservesUrgentDecision(t *testing.T) {
-	l := newNativeLab(t)
-	for i := 0; i < 12; i++ {
-		l.task("report")
-	}
-	l.pump("parent")
-	l.f.SetStatus(l.owner.Address, "idle")
-	l.pump("parent")
-	if len(l.f.Inputs(l.owner.Address)) != 1 {
-		t.Fatal("routine wake storm")
-	}
-	l.task("open")
-	l.pump("parent")
-	if len(l.f.Inputs(l.owner.Address)) != 2 {
-		t.Fatal("urgent question suppressed")
-	}
-	l.f.SetStatus(l.owner.Address, "idle")
-	l.pump("parent")
-	if len(l.f.Inputs(l.owner.Address)) != 2 {
-		t.Fatal("decision repeated")
-	}
-}
 func TestNativePumpRejectsForegroundReplacement(t *testing.T) {
 	l := newNativeLab(t)
 	_, e := l.task("answered")
@@ -323,24 +301,18 @@ func TestNativePumpDoesNotClaimNewEffectsDuringTerminalMaintenance(t *testing.T)
 	}
 }
 
-func TestNativeInlineReadAllowsWorkingCoordinatorWithoutSending(t *testing.T) {
-	l := newNativeLab(t)
-	l.task("report")
-	l.f.SetStatus(l.owner.Address, "working")
-	result, err := Pump(l.s, PumpOpts{Recipient: "parent", Ctx: l.owner.Object(), Inline: true})
+func (l *nativeLab) coordinator() *ordjson.Object {
+	l.t.Helper()
+	if l.claim == "" {
+		session, err := l.s.RetireNativeCoordinator("", "test conversation", false)
+		if err != nil {
+			l.t.Fatal(err)
+		}
+		l.claim = session.Token()
+	}
+	ctx, err := app.RequireClaim(l.s, l.claim)
 	if err != nil {
-		t.Fatal(err)
+		l.t.Fatal(err)
 	}
-	recipients, _ := result.Get("recipients")
-	rows, _ := recipients.([]any)
-	if len(rows) != 1 {
-		t.Fatalf("recipients = %v", recipients)
-	}
-	row := rows[0].(*ordjson.Object)
-	if via, _ := row.Get("via"); via != "inline" {
-		t.Fatalf("working caller read = %v", row)
-	}
-	if len(l.f.Inputs(l.owner.Address)) != 0 {
-		t.Fatal("inline read sent native input")
-	}
+	return ctx
 }

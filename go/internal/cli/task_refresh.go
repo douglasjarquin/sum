@@ -37,7 +37,6 @@ func (o *rootOptions) addRefreshCommands(root *cobra.Command) {
 	refreshCmd.AddCommand(statusCmd)
 
 	var requestTasks []string
-	var coordinator bool
 	requestCmd := &cobra.Command{
 		Use:         "request",
 		Annotations: map[string]string{projectsAnnotation: "all"},
@@ -51,7 +50,7 @@ func (o *rootOptions) addRefreshCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := refreshcmd.Request(st, ctx, requestTasks, coordinator, o.runtimeRoot, o.sumctlPath())
+			view, err := refreshcmd.Request(st, ctx, requestTasks, o.runtimeRoot, o.sumctlPath())
 			if err != nil {
 				return err
 			}
@@ -59,35 +58,7 @@ func (o *rootOptions) addRefreshCommands(root *cobra.Command) {
 		},
 	}
 	requestCmd.Flags().StringArrayVar(&requestTasks, "task", nil, "")
-	requestCmd.Flags().BoolVar(&coordinator, "coordinator", false, "")
 	refreshCmd.AddCommand(requestCmd)
-
-	var adoptCoordinator bool
-	adoptCmd := &cobra.Command{
-		Use:         "adopt REVISION",
-		Annotations: map[string]string{projectsAnnotation: "all"},
-		Args:        cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if !adoptCoordinator {
-				return usageError("refresh adopt", args)
-			}
-			st, err := o.openStore("refresh-adopt")
-			if err != nil {
-				return err
-			}
-			ctx, err := o.context(st)
-			if err != nil {
-				return err
-			}
-			view, err := refreshcmd.AdoptCoordinator(st, ctx, args[0])
-			if err != nil {
-				return err
-			}
-			return emitOrdjson(cmd.OutOrStdout(), view)
-		},
-	}
-	adoptCmd.Flags().BoolVar(&adoptCoordinator, "coordinator", false, "")
-	refreshCmd.AddCommand(adoptCmd)
 
 	root.AddCommand(refreshCmd)
 }
