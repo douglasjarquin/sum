@@ -732,5 +732,5 @@ func assertTaskBrief(t *testing.T, lab *applyLab, want string) {
 }
 
 func failingStatusHelper(detail string) string {
-	return "#!/bin/sh\nif [ \"$1\" = --format ]; then printf '%s\\n' '" + releaseContractJSON + "'; exit 0; fi\nif [ \"$1\" = --version ]; then exit 0; fi\necho '" + detail + "' >&2\nexit 1\n"
+	return "#!/bin/sh\nif [ \"$1\" = --format ]; then printf '%s\\n' '" + releaseContractJSON + "'; exit 0; fi\nif [ \"$1\" = --version ] || { [ \"$#\" = 3 ] && [ \"$1\" = --claim ] && [ \"$3\" = --version ]; }; then exit 0; fi\necho '" + detail + "' >&2\nexit 1\n"
 }

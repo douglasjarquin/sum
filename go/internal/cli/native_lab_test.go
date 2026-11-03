@@ -60,7 +60,7 @@ func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab 
 	relative, err := filepath.Rel(resolvedRoot, s.Root)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		installation := filepath.Dir(s.Root)
-		paths := []string{"COORDINATOR.md", "skills/sum-develop/SKILL.md", "skills/sum-deliver/SKILL.md", ".agents/skills/verify/references/engineering-principles.md"}
+		paths := []string{"COORDINATOR.md", "skills/sum-develop/SKILL.md", "skills/sum-deliver/SKILL.md", ".agents/skills/verify/references/engineering-principles.md", ".agents/skills/maintain-verification/scripts/verify_audit.py", "tests/fixtures/gh_attach.py"}
 		for _, source := range procedure.Sources {
 			paths = append(paths, source.Path)
 		}
@@ -76,7 +76,11 @@ func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab 
 			if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(destination, raw, 0600); err != nil {
+			info, err := os.Stat(filepath.Join(root, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(destination, raw, info.Mode().Perm()); err != nil {
 				t.Fatal(err)
 			}
 		}
