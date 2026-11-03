@@ -2,6 +2,7 @@ package factory
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,10 +13,50 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
+
+func TestClaimRejectsNativeCoordinatorBeforeGitHub(t *testing.T) {
+	st := openStore(t)
+	enroll(t, st, "owner/app")
+	ghRoot := fakeGh(t, []map[string]any{issue(3, "ready", "ready")}, nil)
+	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app"}); err != nil {
+		t.Fatal(err)
+	}
+	native := store.Endpoint{Schema: 2, Backend: "hc", Machine: "testhost", Session: "sum-test", Socket: "/tmp/hc.sock", CoreID: "factory-core", Address: "t1", CreatedMS: 1, Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1}.Object()
+	if _, err := Claim(st, native, st.Home, ClaimArgs{Project: "owner/app", Issue: 3}); !errors.Is(err, store.ErrClaimRequired) {
+		t.Fatalf("native coordinator claim accepted: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(ghRoot, "calls.jsonl")); err == nil && len(data) > 0 {
+		t.Fatalf("native actor contacted GitHub: %s", data)
+	}
+}
+
+func TestClaimRejectsTransferredConversationBeforeGitHub(t *testing.T) {
+	st := openStore(t)
+	enroll(t, st, "owner/app")
+	ghRoot := fakeGh(t, []map[string]any{issue(3, "ready", "ready")}, nil)
+	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app"}); err != nil {
+		t.Fatal(err)
+	}
+	stale := claimContext(t, st)
+	replacement, err := store.Open(st.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replacement.ClaimCoordinator("", "replacement conversation", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Claim(st, stale, st.Home, ClaimArgs{Project: "owner/app", Issue: 3}); !errors.Is(err, store.ErrStaleClaim) {
+		t.Fatalf("stale conversation claim accepted: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(ghRoot, "calls.jsonl")); err == nil && len(data) > 0 {
+		t.Fatalf("stale actor contacted GitHub: %s", data)
+	}
+}
 
 func tickRow(t *testing.T, view *ordjson.Object) *ordjson.Object {
 	t.Helper()
@@ -67,7 +108,27 @@ func enroll(t *testing.T, st *store.Store, name string) {
 }
 
 func ctx() *ordjson.Object {
-	return store.Endpoint{Schema: 2, Backend: "hc", Machine: "testhost", Session: "sum-test", Socket: "/tmp/hc.sock", CoreID: "factory-core", Address: "t1", CreatedMS: 1, Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1}.Object()
+	owner, _ := ordjson.FromValue(map[string]any{"schema": 2, "kind": "coordinator-session", "machine": "testhost", "session_id": "c-factory-fixture"})
+	return owner
+}
+
+func claimContext(t *testing.T, st *store.Store) *ordjson.Object {
+	t.Helper()
+	session, err := st.CoordinatorSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session == nil {
+		session, err = st.ClaimCoordinator("", "factory conversation", false)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor, err := app.RequireClaim(st, session.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return actor
 }
 
 func fakeGh(t *testing.T, issues []map[string]any, bodies map[string]string) string {
@@ -156,7 +217,7 @@ func mergeSetup(t *testing.T) (*store.Store, string, string) {
 		t.Fatal(err)
 	}
 	mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
-	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "cofactorworks/nicebaas", Issue: 12, Task: "t-bbbbbbbbbbbb"}); err != nil {
+	if _, err := Claim(st, claimContext(t, st), st.Home, ClaimArgs{Project: "cofactorworks/nicebaas", Issue: 12, Task: "t-bbbbbbbbbbbb"}); err != nil {
 		t.Fatal(err)
 	}
 	return st, root, sha
@@ -246,7 +307,7 @@ func TestTick_dispatchThenOccupied(t *testing.T) {
 	if got := asInt(get(row, "issue")); got != 7 {
 		t.Fatalf("issue = %d", got)
 	}
-	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "owner/app", Issue: 7, Task: "t-aaaaaaaaaaaa"}); err != nil {
+	if _, err := Claim(st, claimContext(t, st), st.Home, ClaimArgs{Project: "owner/app", Issue: 7, Task: "t-aaaaaaaaaaaa"}); err != nil {
 		t.Fatal(err)
 	}
 	view, err = Tick(st, st.Home, "owner/app")
@@ -399,8 +460,20 @@ func TestClaim_writesLabelAndComment(t *testing.T) {
 	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "owner/app", Issue: 3}); err != nil {
+	actor := claimContext(t, st)
+	result, err := Claim(st, actor, st.Home, ClaimArgs{Project: "owner/app", Issue: 3})
+	if err != nil {
 		t.Fatal(err)
+	}
+	identity := asObject(get(asObject(get(result, "claim")), "endpoint"))
+	if err := store.ValidateLogicalOwner(identity); err != nil {
+		t.Fatalf("claim did not preserve logical identity: %v", err)
+	}
+	if get(identity, "session_id") != get(actor, "session_id") {
+		t.Fatal("claim recorded another session")
+	}
+	if get(identity, "claim") != nil || get(identity, "generation") != nil {
+		t.Fatal("claim persisted conversation token or generation")
 	}
 	calls, err := os.ReadFile(filepath.Join(ghRoot, "calls.jsonl"))
 	if err != nil {
@@ -430,7 +503,7 @@ func TestRelease_continueFreesGatedLane(t *testing.T) {
 	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "owner/app", Issue: 4}); err != nil {
+	if _, err := Claim(st, claimContext(t, st), st.Home, ClaimArgs{Project: "owner/app", Issue: 4}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Release(st, ReleaseArgs{Project: "owner/app", Issue: 4, Reason: ReasonGated}); err != nil {
@@ -456,10 +529,10 @@ func TestLaneLimit_refusesSecondClaim(t *testing.T) {
 	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app", Lanes: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "owner/app", Issue: 1}); err != nil {
+	if _, err := Claim(st, claimContext(t, st), st.Home, ClaimArgs{Project: "owner/app", Issue: 1}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "owner/app", Issue: 2})
+	_, err := Claim(st, claimContext(t, st), st.Home, ClaimArgs{Project: "owner/app", Issue: 2})
 	if err == nil || !strings.Contains(err.Error(), "lane limit") {
 		t.Fatalf("err = %v", err)
 	}
@@ -793,7 +866,7 @@ func TestMerge_highPassesMatchHeadCommit(t *testing.T) {
 	mergeTask(t, st, worktree, sha, "t-bbbbbbbbbbbb")
 	writePRViews(t, root, []map[string]any{livePRView(sha, "MERGEABLE", false)})
 	writePRChecks(t, root, passedPRChecks())
-	if _, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "cofactorworks/nicebaas", Issue: 12, Task: "t-bbbbbbbbbbbb"}); err != nil {
+	if _, err := Claim(st, claimContext(t, st), st.Home, ClaimArgs{Project: "cofactorworks/nicebaas", Issue: 12, Task: "t-bbbbbbbbbbbb"}); err != nil {
 		t.Fatal(err)
 	}
 	view, err := Merge(st, ctx(), st.Home, "t-bbbbbbbbbbbb")
@@ -1204,7 +1277,7 @@ func TestClaim_commentFailureRemovesLabel(t *testing.T) {
 	if _, err := Enable(st, ctx(), EnableArgs{Project: "owner/app"}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Claim(st, ctx(), st.Home, ClaimArgs{Project: "owner/app", Issue: 3})
+	_, err := Claim(st, claimContext(t, st), st.Home, ClaimArgs{Project: "owner/app", Issue: 3})
 	if err == nil || !strings.Contains(err.Error(), "removed") {
 		t.Fatalf("err = %v", err)
 	}

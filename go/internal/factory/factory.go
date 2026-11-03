@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -859,6 +860,18 @@ func projectItems(parsed any) []map[string]any {
 }
 
 func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimArgs) (*ordjson.Object, error) {
+	release, err := s.DeliveryLock()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
+	}
+	actorContext, err := app.RequireClaim(s, asString(get(ctx, "claim")))
+	if err != nil {
+		return nil, err
+	}
 	name, err := normalizeProject(args.Project)
 	if err != nil {
 		return nil, err
@@ -878,22 +891,15 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	if existing == nil && heldCount(rec) >= asInt(get(rec, "lanes")) {
 		return nil, fmt.Errorf("lane limit %d reached for %s", asInt(get(rec, "lanes")), name)
 	}
-	host := asString(get(ctx, "machine"))
-	endpoint := store.EndpointFromContext(ctx)
-	actor := asString(get(ctx, "session_id"))
-	if store.ValidateLogicalOwner(ctx) != nil {
-		if err := endpoint.Validate(); err != nil {
-			return nil, err
-		}
-		actor = endpoint.CoreID + "/" + endpoint.Address
-	}
-	if host == "" {
-		host, _ = os.Hostname()
-	}
+	host := asString(get(actorContext, "machine"))
+	actor := asString(get(actorContext, "session_id"))
 	body := claimBody(host, actor, args.Task, sumruntime.Marker())
 	undoLabel := func() error {
 		_, err := runGh(runtimeRoot, "issue", "edit", fmt.Sprint(args.Issue), "--repo", name, "--remove-label", ClaimLabel)
 		return err
+	}
+	if err := app.RequireCoordinator(s, actorContext); err != nil {
+		return nil, err
 	}
 	if _, err := runGh(runtimeRoot, "issue", "edit", fmt.Sprint(args.Issue), "--repo", name, "--add-label", ClaimLabel); err != nil {
 		return nil, err
@@ -941,7 +947,7 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	}
 	claim := ordjson.NewObject()
 	claim.Set("host", host)
-	claim.Set("endpoint", endpoint.Object())
+	claim.Set("endpoint", evidence.Endpoint(actorContext))
 	claim.Set("label", ClaimLabel)
 	lane.Set("claim", claim)
 	if err := write(s, reg); err != nil {
@@ -956,11 +962,11 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	return result, nil
 }
 
-func claimBody(host, terminal, task, marker string) string {
+func claimBody(host, session, task, marker string) string {
 	if task == "" {
 		task = "none"
 	}
-	return fmt.Sprintf("<!-- %s -->\n%s\nhost: %s\nterminal: %s\ntask: %s\nat: %s\n", ClaimMark, marker, host, terminal, task, store.Now())
+	return fmt.Sprintf("<!-- %s -->\n%s\nhost: %s\nsession: %s\ntask: %s\nat: %s\n", ClaimMark, marker, host, session, task, store.Now())
 }
 
 func laneFor(rec *ordjson.Object, issue int) *ordjson.Object {
