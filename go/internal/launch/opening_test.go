@@ -144,10 +144,18 @@ func TestOpeningAdoptsOnceAfterOriginalProofAndBeforeInput(t *testing.T) {
 func TestOpeningStopsBeforeInputWhenAdoptionCannotBePersisted(t *testing.T) {
 	fixture, initial, spec := readyOriginal(t)
 	client := fixture.Client()
-	progress := DeliverOpening(context.Background(), &client, initial, spec, "opening", func(OpeningProgress) error { return nil }, func() error {
+	var persisted []OpeningProgress
+	progress := DeliverOpening(context.Background(), &client, initial, spec, "opening", func(p OpeningProgress) error {
+		persisted = append(persisted, p)
+		return nil
+	}, func() error {
 		return errors.New("state unavailable")
 	})
-	if progress.State == "submitted" || len(fixture.Inputs(initial.Address)) != 0 {
-		t.Fatalf("opening was sent without a durable adoption record: %+v", progress)
+	if progress.State != "not-delivered" || progress.Detail != "state unavailable" || len(fixture.Inputs(initial.Address)) != 0 {
+		t.Fatalf("opening was sent or the adoption failure was not reported: %+v", progress)
+	}
+	last := persisted[len(persisted)-1]
+	if last.State != "not-delivered" || last.Detail != "state unavailable" || last.First == nil || last.First.Sent {
+		t.Fatalf("adoption failure left the opening record unsettled: %+v", last)
 	}
 }

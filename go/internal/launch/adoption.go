@@ -2,6 +2,8 @@ package launch
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
@@ -79,6 +81,17 @@ func Adoption(ctx context.Context, s *store.Store, ep store.Endpoint, client *hc
 	}
 }
 
+func terminalAbsent(err error) bool {
+	var rpc *hcclient.RPCError
+	if !errors.As(err, &rpc) {
+		return false
+	}
+	var data struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(rpc.Data, &data) == nil && data.Kind == "not_found"
+}
+
 func recordVisibility(s *store.Store, ep store.Endpoint, locate Locate, outcome Visibility) error {
 	unlock, err := s.Lock()
 	if err != nil {
@@ -127,8 +140,14 @@ func ReconcileVisibility(ctx context.Context, s *store.Store, ep store.Endpoint,
 	}
 	client := hcclient.Client{Socket: ep.Socket, CoreID: ep.CoreID}
 	observed, err := client.Get(ctx, ep.Address)
+	if terminalAbsent(err) {
+		return recordVisibility(s, ep, locate, Visibility{Labels: intent.Labels, State: VisibilityRefused, Detail: "terminal is no longer known to the core; nothing was adopted"})
+	}
 	if err != nil {
 		return err
+	}
+	if observed.State != "live" {
+		return recordVisibility(s, ep, locate, Visibility{Labels: intent.Labels, State: VisibilityRefused, Observed: herdrLabels(observed.Labels), Detail: "program exited before adoption; nothing was adopted"})
 	}
 	initial := hcclient.Terminal{Address: ep.Address, CreatedMS: ep.CreatedMS, PID: &process.PID, Foreground: process.Foreground, Cwd: params.Cwd, Labels: params.Labels}
 	if err := OriginalProgram(initial, observed, template.Spec); err != nil {

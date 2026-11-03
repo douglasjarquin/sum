@@ -77,7 +77,7 @@ func DeliverOpening(ctx context.Context, client *hcclient.Client, initial hcclie
 			adopted = true
 			if err = adopt(); err != nil {
 				progress.Detail = err.Error()
-				return progress
+				goto complete
 			}
 		}
 		if err = originalErr; err == nil && observed.Status != nil && (observed.Status.State == "idle" || observed.Status.State == "done") {

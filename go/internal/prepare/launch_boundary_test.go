@@ -279,6 +279,75 @@ func TestWorkerLostLabelReplyIsReconciledFromTheExactTerminal(t *testing.T) {
 	}
 }
 
+func TestRecordsWithoutVisibilityIntentAreNeverLabeled(t *testing.T) {
+	l := newNativeBoundaryLab(t, false)
+	l.core.QueueFault("terminal.label", hctest.Fault{LoseResponse: true})
+	if _, err := l.start(); err != nil {
+		t.Fatal(err)
+	}
+	_, ep := l.workerVisibility(t)
+	task, err := l.state.ReadTask(ep.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, _ := reservations.Worker(task)
+	asObject(policyField(worker, "native_launch")).Delete("visibility")
+	if err = l.state.SaveTask(task); err != nil {
+		t.Fatal(err)
+	}
+	labels := len(l.core.Calls())
+	client := l.core.Client()
+	if err = launch.Adoption(context.Background(), l.state, ep, &client, LocateWorker(ep.Attempt))(); err != nil {
+		t.Fatal(err)
+	}
+	if err = launch.ReconcileVisibility(context.Background(), l.state, ep, LocateWorker(ep.Attempt)); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range l.core.Calls()[labels:] {
+		if call.Method == "terminal.label" {
+			t.Fatal("a record without visibility intent was labeled")
+		}
+	}
+	visibility, _ := l.workerVisibility(t)
+	if visibility != nil {
+		t.Fatalf("recovery invented a visibility intent: %v", visibility)
+	}
+}
+
+func TestWorkerExitBeforeAdoptionSettlesVisibilityAsRefused(t *testing.T) {
+	l := newNativeBoundaryLab(t, false)
+	l.core.QueueFault("terminal.label", hctest.Fault{LoseResponse: true})
+	if _, err := l.start(); err != nil {
+		t.Fatal(err)
+	}
+	_, ep := l.workerVisibility(t)
+	l.core.Exit(ep.Address, 0)
+	labels := 0
+	for _, call := range l.core.Calls() {
+		if call.Method == "terminal.label" {
+			labels++
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if err := launch.ReconcileVisibility(context.Background(), l.state, ep, LocateWorker(ep.Attempt)); err != nil {
+			t.Fatalf("reconcile %d of an exited unadopted terminal failed: %v", i, err)
+		}
+	}
+	visibility, _ := l.workerVisibility(t)
+	if asString(policyField(visibility, "state")) != launch.VisibilityRefused || asString(policyField(visibility, "detail")) == "" {
+		t.Fatalf("exit before adoption was not settled: %v", visibility)
+	}
+	after := 0
+	for _, call := range l.core.Calls() {
+		if call.Method == "terminal.label" {
+			after++
+		}
+	}
+	if after != labels || len(l.core.Terminals()) != 1 {
+		t.Fatal("an exited terminal was relabeled or recreated")
+	}
+}
+
 func TestWorkerAdoptionRefusesAReplacementShell(t *testing.T) {
 	l := newNativeBoundaryLab(t, false)
 	l.core.QueueFault("terminal.label", hctest.Fault{LoseResponse: true})

@@ -56,6 +56,26 @@ func TestEnsureStartsADownCore(t *testing.T) {
 	}
 }
 
+func TestEnsureNeverStartsOverAListeningCore(t *testing.T) {
+	for _, scenario := range []struct{ mode, action string }{{"ready", "ready"}, {"wedged", "holder-missing"}, {"down", "status"}} {
+		t.Run(scenario.mode, func(t *testing.T) {
+			root := t.TempDir()
+			log := filepath.Join(root, "hc.log")
+			writeHC(t, root, log, scenario.mode)
+			report := EnsureRoute(root, labRoute(t), true)
+			if reportValue(t, report, "action") != scenario.action || (reportValue(t, report, "ok") == true) != (scenario.action == "ready") {
+				t.Fatalf("%s report = %v", scenario.mode, report)
+			}
+			calls := readLog(t, log)
+			for _, forbidden := range []string{"server start", "restart", "run true"} {
+				if strings.Contains(calls, forbidden) {
+					t.Fatalf("listening core was disturbed with %q: %s", forbidden, calls)
+				}
+			}
+		})
+	}
+}
+
 func TestEnsureRefusesAHolderlessCoreWithoutRestartOrProbe(t *testing.T) {
 	for _, mode := range []string{"wedged", "busy"} {
 		t.Run(mode, func(t *testing.T) {
