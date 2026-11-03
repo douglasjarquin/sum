@@ -103,7 +103,7 @@ func (o *rootOptions) runPresetSet(cmd *cobra.Command, parsed settings.PresetWri
 	if err != nil {
 		return err
 	}
-	ctx, err := store.Context(o.installRoot)
+	ctx, err := o.context(st)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func (o *rootOptions) runPresetDelete(cmd *cobra.Command, name string) error {
 	if err != nil {
 		return err
 	}
-	ctx, err := store.Context(o.installRoot)
+	ctx, err := o.context(st)
 	if err != nil {
 		return err
 	}

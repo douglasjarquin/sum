@@ -889,7 +889,7 @@ func Stop(s *store.Store, args StopArgs) (*ordjson.Object, error) {
 	}
 	caller := args.Caller
 	if caller == nil {
-		caller = app.OptionalContext(args.RuntimeRoot)
+		caller = app.OptionalContext(s, args.RuntimeRoot, "")
 	}
 	if err = requireServiceCaller(s, task, caller); err != nil {
 		return nil, err

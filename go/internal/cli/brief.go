@@ -48,7 +48,7 @@ func (o *rootOptions) addBriefCommands(root *cobra.Command) {
 			if err := guard.Candidate(o.installRoot, st, "brief-request"); err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -93,7 +93,7 @@ func (o *rootOptions) addBriefCommands(root *cobra.Command) {
 			if err := guard.Candidate(o.installRoot, st, "brief-regenerate"); err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}

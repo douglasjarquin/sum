@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,18 +13,25 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
 
 const Version = "sum 0.1.0"
 
 type ExitError struct {
-	Code int
+	Code  int
+	Cause error
 }
 
 func (e *ExitError) Error() string {
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
 	return fmt.Sprintf("reference helper exited with status %d", e.Code)
 }
+
+func (e *ExitError) Unwrap() error { return e.Cause }
 
 type rootOptions struct {
 	reference   string
@@ -236,7 +244,22 @@ func wrapOutputFormat(cmd *cobra.Command, opts *rootOptions) {
 				opts.format = format
 			}
 			outputFormat = opts.format
-			return next(c, rest)
+			err := next(c, rest)
+			if errors.Is(err, store.ErrClaimRequired) || errors.Is(err, store.ErrStaleClaim) {
+				view := ordjson.NewObject()
+				view.Set("error", err.Error())
+				kind := "claim_required"
+				if errors.Is(err, store.ErrStaleClaim) {
+					kind = "stale-claim"
+				}
+				view.Set("blocker", kind)
+				view.Set("next", "Run init to inspect the current owner; resume this conversation with its captured claim.")
+				if writeErr := emitOrdjsonFormat(c.OutOrStdout(), opts.format, view); writeErr != nil {
+					return writeErr
+				}
+				return &ExitError{Code: 1, Cause: err}
+			}
+			return err
 		}
 	}
 	for _, child := range cmd.Commands() {

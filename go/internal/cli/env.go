@@ -45,7 +45,7 @@ func (o *rootOptions) addEnvCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := environment.Discover(st, args[0], app.OptionalContext(o.installRoot), o.sumctlPath())
+			view, err := environment.Discover(st, args[0], app.OptionalContext(st, o.installRoot, o.claim), o.sumctlPath())
 			if err != nil {
 				return err
 			}
@@ -61,7 +61,7 @@ func (o *rootOptions) addEnvCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := environment.Inspect(st, environment.InspectArgs{Task: args[0], RuntimeRoot: o.runtimeRoot}, app.OptionalContext(o.installRoot))
+			view, err := environment.Inspect(st, environment.InspectArgs{Task: args[0], RuntimeRoot: o.runtimeRoot}, app.OptionalContext(st, o.installRoot, o.claim))
 			if err != nil {
 				return err
 			}
@@ -87,7 +87,7 @@ func (o *rootOptions) addEnvCommands(root *cobra.Command) {
 				Label:       label,
 				Ownership:   ownership,
 				RuntimeRoot: o.runtimeRoot,
-			}, app.OptionalContext(o.installRoot))
+			}, app.OptionalContext(st, o.installRoot, o.claim))
 			if err != nil {
 				return err
 			}
@@ -123,7 +123,7 @@ func (o *rootOptions) addEnvCommands(root *cobra.Command) {
 				Timeout:     startTimeout,
 				TimeoutSet:  cmd.Flags().Changed("timeout"),
 				RuntimeRoot: o.runtimeRoot,
-			}, app.OptionalContext(o.installRoot))
+			}, app.OptionalContext(st, o.installRoot, o.claim))
 			if err != nil {
 				return err
 			}

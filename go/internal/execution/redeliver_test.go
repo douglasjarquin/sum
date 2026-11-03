@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/hcclient"
+	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
@@ -72,7 +73,7 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 	}
 	t.Setenv("CODEX_HOME", home)
 	options := launch.HCTemplateOptions{Cwd: runtime, CodexHome: home}
-	template, err := launch.PrepareHCTemplate(runtime, config, "codex", nil, options)
+	_, err = launch.PrepareHCTemplate(runtime, config, "codex", nil, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,26 +84,27 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 	if err = s.Init(); err != nil {
 		t.Fatal(err)
 	}
-	host, err := s.Machine()
+	session, err := s.ClaimCoordinator("", "redelivery test conversation", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := app.RequireClaim(s, session.Token())
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture := hctest.New(t)
-	coordinator := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: fixture.CoreID, Socket: fixture.Socket, Session: "sum-test", Address: "t1", CreatedMS: 1, Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, Cwd: runtime}
-	pid := uint32(100000)
-	fg := &hcclient.Foreground{PID: 100001, Name: "codex", Argv: template.Argv, Cwd: runtime}
-	fixture.SetTerminal(hcclient.Terminal{Address: "t1", CreatedMS: 1, Cwd: runtime, State: "live", PID: &pid, Foreground: fg})
-	observed := incarnation.NativeEvidence{Endpoint: coordinator.Native(), PID: pid, Foreground: fg}
-	owner := coordinator.Object()
-	owner.Set("incarnation", observed.Record(store.Now()))
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: coordinator.Native(), Kind: "coordinator-init", Attempt: coordinator.Attempt})
-	owner.Set("native_receipt", receipt)
-	provenance, _ := ordjson.FromValue(prepare.NativeTemplate{Spec: template, ConfigHome: config, Options: options})
-	owner.Set("native_template", provenance)
-	if _, err = s.Register(coordinator, "coordinator", nil, observed.Record(store.Now())); err != nil {
+	route, err := ordjson.FromValue(hcboot.Route{Socket: fixture.Socket, CoreID: fixture.CoreID, Session: "sum-test-redelivery", ConfigHome: config, StateHome: filepath.Join(root, "hc-state")})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+	if err := ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
+		t.Fatal(err)
+	}
+	configured, err := ordjson.FromValue(map[string]any{"schema": 1, "worker": map[string]string{"harness": "codex"}, "template": map[string]string{"codex_home": home}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ordjson.WriteFile(filepath.Join(s.Home, "settings.json"), configured); err != nil {
 		t.Fatal(err)
 	}
 	if err = fixture.LoadTemplatesFrom(config); err != nil {
@@ -113,7 +115,7 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 		t.Fatal(err)
 	}
 	fixture.QueueFault("terminal.send", hctest.Fault{RefuseKind: "blocked"})
-	task, err := prepare.Dispatch(s, coordinator.Object(), prepare.Args{Repo: repo, Base: "main", Brief: brief, Harness: "codex", Approved: true, RuntimeRoot: runtime, SumctlPath: filepath.Join(runtime, "bin/sumctl")})
+	task, err := prepare.Dispatch(s, ctx, prepare.Args{Repo: repo, Base: "main", Brief: brief, Harness: "codex", Approved: true, RuntimeRoot: runtime, SumctlPath: filepath.Join(runtime, "bin/sumctl")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +130,7 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return redeliveryLab{s, coordinator.Object(), endpoint, fixture, runtime, filepath.Join(path, "task.json"), 1}
+	return redeliveryLab{s, ctx, endpoint, fixture, runtime, filepath.Join(path, "task.json"), 1}
 }
 func redeliveryTaskBytes(t *testing.T, l redeliveryLab) []byte {
 	t.Helper()

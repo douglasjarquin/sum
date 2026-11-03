@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
@@ -179,7 +180,7 @@ func reserveVerifier(s *store.Store, ctx *ordjson.Object, taskID, candidate, che
 	if err != nil {
 		return "", err
 	}
-	owner := store.EndpointFromContext(ctx).Object()
+	owner := evidence.Endpoint(ctx)
 	attempt, err := reservations.NewAttempt("verifier", owner, checkout, store.Now(), "starting", candidate)
 	if err != nil {
 		return "", wrapReservation(taskID, err)

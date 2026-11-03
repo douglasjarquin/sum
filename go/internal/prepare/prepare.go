@@ -217,7 +217,6 @@ type Args struct {
 	Harness      string
 	Model        string
 	Reasoning    string
-	SameAsYou    bool
 	Preset       string
 	PresetSet    bool
 	Base         string
@@ -271,7 +270,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		Harness:     args.Harness,
 		Model:       args.Model,
 		Reasoning:   args.Reasoning,
-		SameAsRoot:  args.SameAsYou,
 		Extra:       args.Extra,
 		Preset:      args.Preset,
 		PresetSet:   args.PresetSet,

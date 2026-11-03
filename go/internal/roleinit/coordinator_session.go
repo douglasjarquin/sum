@@ -1,8 +1,6 @@
 package roleinit
 
 import (
-	"github.com/douglasjarquin/sum/go/internal/cleanup"
-	"github.com/douglasjarquin/sum/go/internal/lifecycle"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -33,7 +31,6 @@ func InitCoordinator(root, helper string, s *store.Store, token, label string, t
 	items := make([]any, 0)
 	counts := ordjson.NewObject()
 	total := 0
-	cleanupPending := make([]any, 0)
 	for _, task := range tasks {
 		obligations, err := returns.OpenObligations(s, task)
 		if err != nil {
@@ -57,16 +54,6 @@ func InitCoordinator(root, helper string, s *store.Store, token, label string, t
 				items = append(items, item)
 			}
 		}
-		if pending := cleanup.Pending(task); pending != nil {
-			item := ordjson.NewObject()
-			id, _ := task.Get("id")
-			item.Set("task", id)
-			for _, key := range pending.Keys() {
-				value, _ := pending.Get(key)
-				item.Set(key, value)
-			}
-			cleanupPending = append(cleanupPending, item)
-		}
 	}
 	outstanding := ordjson.NewObject()
 	outstanding.Set("total", total)
@@ -80,8 +67,6 @@ func InitCoordinator(root, helper string, s *store.Store, token, label string, t
 	view.Set("procedure", roleProcedure(root, s, "coordinator", nil, core))
 	view.Set("helper", helper)
 	view.Set("outstanding", outstanding)
-	view.Set("maintenance", lifecycle.Pending(s, helper, tasks))
-	view.Set("cleanup_pending", cleanupPending)
 	view.Set("next", "Read the validated coordinator procedure, then run collect --claim "+session.Token()+".")
 	return view, nil
 }

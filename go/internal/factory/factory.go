@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/pipeline"
@@ -354,7 +355,7 @@ func Enable(s *store.Store, ctx *ordjson.Object, args EnableArgs) (*ordjson.Obje
 	rec.Set("skip", skip)
 	rec.Set("enabled_at", store.Now())
 	if ctx != nil {
-		by := store.EndpointFromContext(ctx).Object()
+		by := evidence.Endpoint(ctx)
 		rec.Set("enabled_by", by)
 	}
 	projects := projectsOf(reg)
@@ -879,13 +880,17 @@ func Claim(s *store.Store, ctx *ordjson.Object, runtimeRoot string, args ClaimAr
 	}
 	host := asString(get(ctx, "machine"))
 	endpoint := store.EndpointFromContext(ctx)
-	if err := endpoint.Validate(); err != nil {
-		return nil, err
+	actor := asString(get(ctx, "session_id"))
+	if store.ValidateLogicalOwner(ctx) != nil {
+		if err := endpoint.Validate(); err != nil {
+			return nil, err
+		}
+		actor = endpoint.CoreID + "/" + endpoint.Address
 	}
 	if host == "" {
 		host, _ = os.Hostname()
 	}
-	body := claimBody(host, endpoint.CoreID+"/"+endpoint.Address, args.Task, sumruntime.Marker())
+	body := claimBody(host, actor, args.Task, sumruntime.Marker())
 	undoLabel := func() error {
 		_, err := runGh(runtimeRoot, "issue", "edit", fmt.Sprint(args.Issue), "--repo", name, "--remove-label", ClaimLabel)
 		return err

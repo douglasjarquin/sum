@@ -156,6 +156,11 @@ func ReadMetadata(s *store.Store) (*ordjson.Object, error) {
 }
 
 func writeMetadata(s *store.Store, meta *ordjson.Object) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	errs := asList(get(meta, "errors"))
 	if len(errs) > MaxErrors {
 		errs = errs[len(errs)-MaxErrors:]

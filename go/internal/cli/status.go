@@ -42,7 +42,7 @@ func (o *rootOptions) addStatusCommands(root *cobra.Command) {
 				}
 				opts := statuscmd.Options{Compact: compact, After: after, Limit: limit, MaxChars: maxChars, Inbox: inboxMode, Live: live, RuntimeRoot: o.runtimeRoot, SumctlPath: o.sumctlPath()}
 				if live {
-					opts.Ctx = app.OptionalContext(o.installRoot)
+					opts.Ctx = app.OptionalContext(st, o.installRoot, o.claim)
 				}
 				view, err := statuscmd.Status(st, opts)
 				if err != nil {

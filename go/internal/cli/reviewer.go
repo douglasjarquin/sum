@@ -4,7 +4,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/review"
-	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +21,7 @@ func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -57,7 +56,7 @@ func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 		if err != nil {
 			return err
 		}
-		ctx, err := store.Context(o.installRoot)
+		ctx, err := o.context(st)
 		if err != nil {
 			return err
 		}
@@ -81,7 +80,7 @@ func (o *rootOptions) addReviewerCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}

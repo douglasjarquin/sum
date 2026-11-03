@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -51,7 +52,7 @@ func Seen(s *store.Store, ctx *ordjson.Object, taskID, attentionID string) (*ord
 	if status == "open" {
 		record.Set("status", "seen")
 		record.Set("closed_at", store.Now())
-		record.Set("closed_by", store.EndpointFromContext(ctx).Object())
+		record.Set("closed_by", evidence.Endpoint(ctx))
 		if err := s.SaveTask(task); err != nil {
 			return nil, err
 		}

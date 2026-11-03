@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/settings"
@@ -134,7 +133,6 @@ type ResolveArgs struct {
 	Harness            string
 	Model              string
 	Reasoning          string
-	SameAsRoot         bool
 	Extra              []string
 	Preset             string
 	PresetSet          bool
@@ -268,33 +266,6 @@ func CheckRecorded(spec *ordjson.Object) error {
 	return fmt.Errorf("Permission/trust override %s for %s is not authorized by this task's record: a record prepared before sum required %s carries no authorization, and `start --arg` cannot add one. Nothing was started; dispatch the task again with %s after the user authorizes it.", strings.Join(missing, ", "), harness, PermissionOverrideFlag, PermissionOverrideFlag)
 }
 
-func RootLaunch(s *store.Store, ctx *ordjson.Object) *ordjson.Object {
-	result := ordjson.NewObject()
-	result.Set("harness", nil)
-	result.Set("model", nil)
-	if err := app.RequireCoordinator(s, ctx); err != nil {
-		result.Set("error", err.Error())
-		return result
-	}
-	owner, err := s.Owner()
-	if err != nil {
-		result.Set("error", err.Error())
-		return result
-	}
-	recorded := asObject(func() any { v, _ := owner.Get("launch"); return v }())
-	if recorded == nil || !harnessKindOK(asString(func() any { v, _ := recorded.Get("harness"); return v }())) {
-		result.Set("error", "coordinator has no receipt-bound recorded harness launch")
-		return result
-	}
-	for _, key := range []string{"harness", "model", "reasoning"} {
-		v, _ := recorded.Get(key)
-		result.Set(key, v)
-	}
-	result.Set("observed_at", store.Now())
-	result.Set("error", nil)
-	return result
-}
-
 func harnessKindOK(kind string) bool {
 	if kind == "" {
 		return false
@@ -311,9 +282,6 @@ func harnessKindOK(kind string) bool {
 }
 
 func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Object, error) {
-	if args.SameAsRoot && (args.Harness != "" || args.Model != "" || args.Reasoning != "" || args.PresetSet) {
-		return nil, fmt.Errorf("--same-as-you conflicts with --harness/--model/--reasoning/--preset: same-as-you means the coordinator's own harness and native model.")
-	}
 	if args.Harness != "" && !harnessKindOK(args.Harness) {
 		return nil, fmt.Errorf("Harness must be a supported terminal integration, such as codex, claude, grok, or cursor.")
 	}
@@ -352,7 +320,7 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		if args.Harness != "" && args.Harness != h {
 			return nil, fmt.Errorf("Preset '%s' runs on %s but --harness %s was requested. Choose one: drop --harness, pick another preset, or dispatch without --preset. Nothing was created.", args.Preset, h, args.Harness)
 		}
-	} else if name := asString(func() any { v, _ := saved.Get("preset"); return v }()); name != "" && !args.SameAsRoot {
+	} else if name := asString(func() any { v, _ := saved.Get("preset"); return v }()); name != "" {
 		spec, ok := presets[name]
 		if !ok {
 			return nil, fmt.Errorf("The saved worker default names unknown preset %q. Fix .sum/settings.json (`preset set` or `settings set --clear-worker`), or pass --preset/--harness explicitly.", name)
@@ -372,35 +340,20 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 	}
 	source := ordjson.NewObject()
 	harness := args.Harness
-	var root *ordjson.Object
 	switch {
 	case harness != "":
 		source.Set("harness", "explicit")
 	case chosen != nil:
 		harness = asString(func() any { v, _ := chosen.Get("harness"); return v }())
 		source.Set("harness", chosenSource)
-	case args.SameAsRoot || plainSaved.Len() == 0:
-		root = RootLaunch(s, ctx)
-		h := asString(func() any { v, _ := root.Get("harness"); return v }())
-		if h == "" {
-			errText := asString(func() any { v, _ := root.Get("error"); return v }())
-			return nil, fmt.Errorf("Cannot determine the coordinator's own harness (%s). Pass --harness explicitly or save a worker default with `settings set --worker-harness`.", errText)
-		}
-		if args.SameAsRoot && asString(func() any { value, _ := root.Get("model"); return value }()) == "" {
-			return nil, fmt.Errorf("The coordinator's model is not exposed or explicitly recorded; --same-as-you cannot prove a matching model. Pass --harness and --model explicitly.")
-		}
-		harness = h
-		if args.SameAsRoot {
-			source.Set("harness", "same-as-you")
-		} else {
-			source.Set("harness", "root")
-		}
+	case plainSaved.Len() == 0:
+		return nil, fmt.Errorf("Choose a worker harness with --harness or save one with `settings set --worker-harness` before dispatching.")
 	default:
 		harness = asString(func() any { v, _ := plainSaved.Get("harness"); return v }())
 		source.Set("harness", "saved-default")
 	}
 	savedHarness := asString(func() any { v, _ := plainSaved.Get("harness"); return v }())
-	inheritsSaved := plainSaved.Len() > 0 && !args.SameAsRoot && harness == savedHarness
+	inheritsSaved := plainSaved.Len() > 0 && harness == savedHarness
 	presetArgs := []string{}
 	if chosen != nil {
 		for _, a := range asList(func() any { v, _ := chosen.Get("args"); return v }()) {
@@ -424,9 +377,6 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		case chosen != nil && asString(func() any { v, _ := chosen.Get(field); return v }()) != "":
 			values[field] = asString(func() any { v, _ := chosen.Get(field); return v }())
 			source.Set(field, chosenSource)
-		case args.SameAsRoot && root != nil && asString(func() any { v, _ := root.Get(field); return v }()) != "":
-			values[field], _ = root.Get(field)
-			source.Set(field, "same-as-you")
 		case inheritsSaved && asString(func() any { v, _ := plainSaved.Get(field); return v }()) != "":
 			values[field] = asString(func() any { v, _ := plainSaved.Get(field); return v }())
 			source.Set(field, "saved-default")
@@ -461,8 +411,6 @@ func Resolve(s *store.Store, ctx *ordjson.Object, args ResolveArgs) (*ordjson.Ob
 		extraAny[i] = a
 	}
 	result.Set("explicit_args", extraAny)
-	result.Set("same_as_root", args.SameAsRoot)
-	result.Set("root", root)
 	if chosen != nil {
 		preset := ordjson.NewObject()
 		preset.Set("name", args.Preset)
@@ -590,8 +538,6 @@ func TaskLaunch(task *ordjson.Object) *ordjson.Object {
 	result.Set("permissions", HarnessDefaultPermissions(asString(harness)))
 	result.Set("source", source)
 	result.Set("explicit_args", []any{})
-	result.Set("same_as_root", false)
-	result.Set("root", nil)
 	result.Set("preset", nil)
 	result.Set("saved_default", nil)
 	result.Set("resolved_at", nil)

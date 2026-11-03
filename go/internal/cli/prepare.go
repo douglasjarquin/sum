@@ -14,7 +14,7 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 		var (
 			repo, project, brief, harness, model, reasoning, preset, base, targetBranch, kind string
 			reconcile                                                                         string
-			sameAsYou, approved, permissionOverride                                           bool
+			approved, permissionOverride                                                      bool
 			extra                                                                             []string
 		)
 		cmd := &cobra.Command{
@@ -29,7 +29,7 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 				if err != nil {
 					return err
 				}
-				ctx, err := store.Context(o.installRoot)
+				ctx, err := o.context(st)
 				if err != nil {
 					return err
 				}
@@ -37,7 +37,7 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 					if name != "prepare" {
 						return fmt.Errorf("only prepare supports --reconcile")
 					}
-					for _, flag := range []string{"repo", "project", "brief", "harness", "model", "reasoning", "same-as-you", "preset", "base", "target-branch", "kind", "approved", "arg", "permission-override"} {
+					for _, flag := range []string{"repo", "project", "brief", "harness", "model", "reasoning", "preset", "base", "target-branch", "kind", "approved", "arg", "permission-override"} {
 						if cmd.Flags().Changed(flag) {
 							return fmt.Errorf("--reconcile uses only the saved approved task; it conflicts with --%s", flag)
 						}
@@ -55,7 +55,6 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 					Harness:      harness,
 					Model:        model,
 					Reasoning:    reasoning,
-					SameAsYou:    sameAsYou,
 					Preset:       preset,
 					PresetSet:    cmd.Flags().Changed("preset"),
 					Base:         base,
@@ -83,7 +82,6 @@ func (o *rootOptions) addPrepareCommands(root *cobra.Command) {
 		cmd.Flags().StringVar(&harness, "harness", "", "")
 		cmd.Flags().StringVar(&model, "model", "", "")
 		cmd.Flags().StringVar(&reasoning, "reasoning", "", "")
-		cmd.Flags().BoolVar(&sameAsYou, "same-as-you", false, "")
 		cmd.Flags().StringVar(&preset, "preset", "", "")
 		cmd.Flags().StringVar(&base, "base", "HEAD", "")
 		cmd.Flags().StringVar(&targetBranch, "target-branch", "", "")

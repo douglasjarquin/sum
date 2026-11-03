@@ -31,7 +31,7 @@ func (o *rootOptions) addFindingCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			value, duplicate, err := findings.Capture(st, args[0], in, app.OptionalContext(o.installRoot))
+			value, duplicate, err := findings.Capture(st, args[0], in, app.OptionalContext(st, o.installRoot, o.claim))
 			if err != nil {
 				return err
 			}
@@ -150,7 +150,7 @@ func (o *rootOptions) addFindingCommands(root *cobra.Command) {
 						target = args[1]
 					}
 				}
-				value, err := findings.ChangeTargetExpected(st, args[0], action, reason, targetKind, target, expectedRevision, expectedState, app.OptionalContext(o.installRoot))
+				value, err := findings.ChangeTargetExpected(st, args[0], action, reason, targetKind, target, expectedRevision, expectedState, app.OptionalContext(st, o.installRoot, o.claim))
 				if err != nil {
 					return err
 				}

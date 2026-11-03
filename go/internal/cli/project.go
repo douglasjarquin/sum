@@ -64,7 +64,7 @@ func (o *rootOptions) addProjectCommands(root *cobra.Command) {
 			if err := guard.Candidate(o.installRoot, st, "project-enroll"); err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -94,7 +94,7 @@ func (o *rootOptions) addProjectCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx := app.OptionalContext(o.installRoot)
+			ctx := app.OptionalContext(st, o.installRoot, o.claim)
 			view, err := project.Migrate(st, ctx, o.runtimeRoot, args[0], apply)
 			if err != nil {
 				return err

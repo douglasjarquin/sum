@@ -53,7 +53,7 @@ func (o *rootOptions) addHookCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -77,7 +77,7 @@ func (o *rootOptions) addHookCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}

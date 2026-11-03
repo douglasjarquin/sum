@@ -25,6 +25,13 @@ type TaskActor struct {
 }
 
 func ObserveTaskActor(s *store.Store, ctx *ordjson.Object) (*TaskActor, error) {
+	if ctx == nil {
+		if current, err := s.CoordinatorSession(); err != nil {
+			return nil, err
+		} else if current != nil {
+			return nil, store.ErrClaimRequired
+		}
+	}
 	if logicalContext(ctx) {
 		return observeLogicalActor(s, ctx)
 	}

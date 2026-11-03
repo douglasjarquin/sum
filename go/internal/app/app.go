@@ -140,8 +140,26 @@ func registrationField(registration *ordjson.Object, key string) (string, bool) 
 	return s, ok && isString
 }
 
-func OptionalContext(root string) *ordjson.Object {
+func Context(s *store.Store, root, claim string) (*ordjson.Object, error) {
+	if claim != "" {
+		return RequireClaim(s, claim)
+	}
+	role := os.Getenv("SUM_ROLE")
+	taskIdentity := os.Getenv("SUM_TASK") != "" || role == "worker" || role == "reviewer"
+	if current, err := s.CoordinatorSession(); err != nil {
+		return nil, err
+	} else if current != nil && !taskIdentity {
+		return nil, store.ErrClaimRequired
+	}
 	ctx, err := store.Context(root)
+	if err != nil && !taskIdentity {
+		return nil, store.ErrClaimRequired
+	}
+	return ctx, err
+}
+
+func OptionalContext(s *store.Store, root, claim string) *ordjson.Object {
+	ctx, err := Context(s, root, claim)
 	if err != nil {
 		return nil
 	}

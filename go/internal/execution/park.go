@@ -299,7 +299,7 @@ func Resume(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID 
 		unlock()
 		return nil, err
 	}
-	owner := store.EndpointFromContext(ctx).Object()
+	owner := evidence.Endpoint(ctx)
 	worktree, _ := task.Get("worktree")
 	successor, err := reservations.NewAttempt("worker", owner, worktree, store.Now(), "", nil)
 	if err != nil {

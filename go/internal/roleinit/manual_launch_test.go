@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
@@ -79,38 +78,6 @@ func TestManualCoordinatorAdoptionResolvesDispatchWithoutLaunch(t *testing.T) {
 			}
 			endpointValue, _ := view.Get("endpoint")
 			bound := endpointValue.(*ordjson.Object)
-			rootLaunch := launch.RootLaunch(s, bound)
-			if value, _ := rootLaunch.Get("error"); value != nil {
-				t.Fatalf("manual adoption cannot resolve coordinator launch: %v", value)
-			}
-			if value, _ := rootLaunch.Get("harness"); value != "codex" {
-				t.Fatalf("harness %v", value)
-			}
-			for key, want := range map[string]any{"model": test.model, "reasoning": test.reasoning} {
-				if value, _ := rootLaunch.Get(key); value != want {
-					t.Fatalf("%s=%v want %v", key, value, want)
-				}
-			}
-			resolved, err := launch.Resolve(s, bound, launch.ResolveArgs{})
-			if err != nil {
-				t.Fatalf("ordinary dispatch resolution: %v", err)
-			}
-			if value, _ := resolved.Get("harness"); value != "codex" {
-				t.Fatalf("resolved harness %v", value)
-			}
-			same, err := launch.Resolve(s, bound, launch.ResolveArgs{SameAsRoot: true})
-			if test.model == nil {
-				if err == nil || !strings.Contains(err.Error(), "cannot prove a matching model") {
-					t.Fatalf("unknown same-as-you model: %v %v", same, err)
-				}
-			} else {
-				if err != nil {
-					t.Fatal(err)
-				}
-				if value, _ := same.Get("model"); value != test.model {
-					t.Fatalf("same-as-you model %v", value)
-				}
-			}
 			owner, err := s.Owner()
 			if err != nil {
 				t.Fatal(err)
