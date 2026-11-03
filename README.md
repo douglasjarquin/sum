@@ -65,6 +65,8 @@ Harness choice, model flags, and presets are in [docs/configuration.md](docs/con
 
 Clone and stage the runtime, then start your usual coding agent in this directory.
 Setup starts no authenticated agent.
+You can run setup beforehand as shown below, or start your agent after cloning and approve setup from its first prompt.
+If `init` reports `blocker: unstaged`, the agent requests approval for `mise run setup` through the normal permission prompt, then reruns `init` in the same conversation.
 
 ```sh
 git clone https://github.com/douglasjarquin/sum.git

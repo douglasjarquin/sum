@@ -10,6 +10,7 @@ sum is an agent distro, not a supervisor service; HC owns live terminals.
   Run only its absolute installed helper, never the checkout's `./bin/sumctl`.
   Read the complete brief and follow its contract.
 - Otherwise, run `./bin/sumctl init` here first; follow only its returned `role` contract.
+- On `blocker: unstaged`, ask the user to approve `mise run setup` through the normal permission prompt, then rerun `./bin/sumctl init` here in the same conversation.
 - Cwd and inherited environment confer no role.
 - Do not fake a successful check.
 - Ordinary entry claims coordination without HC.
