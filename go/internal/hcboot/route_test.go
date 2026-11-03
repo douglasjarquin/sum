@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -68,9 +69,18 @@ func TestDefaultRouteFollowsPlatformDefaultsWithoutConfiguredSocket(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.Socket != filepath.Join(state, "herdr-core", "default", "default.sock") || route.StateHome != state || route.ConfigHome != config {
-		t.Fatalf("state home default not used: %+v", route)
+	want := filepath.Join(state, "herdr-core", "default", "default.sock")
+	if platformRuntime := "/run/user/" + strconv.Itoa(os.Getuid()); isDirectory(platformRuntime) {
+		want = filepath.Join(platformRuntime, "herdr-core", "default.sock")
 	}
+	if route.Socket != want || route.StateHome != state || route.ConfigHome != config {
+		t.Fatalf("platform default not used: %+v", route)
+	}
+}
+
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func TestPrivateCacheDoesNotSelectCreationAndDefaultCachePinsCore(t *testing.T) {
