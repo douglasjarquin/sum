@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,8 +99,88 @@ func TestOrdinaryInitResumesConflictsAndTransfers(t *testing.T) {
 	}
 }
 
+func TestOrdinaryInitInheritedTaskHomeProvenance(t *testing.T) {
+	for _, home := range []string{"foreign", "unset", "local"} {
+		t.Run(home, func(t *testing.T) {
+			root, s := ordinaryInitLab(t)
+			t.Setenv("SUM_ROLE", "worker")
+			t.Setenv("SUM_TASK", "t-aaaaaaaaaaaa")
+			t.Setenv("SUM_ATTEMPT", "missing")
+			switch home {
+			case "foreign":
+				t.Setenv("SUM_HOME", filepath.Join(t.TempDir(), ".sum"))
+			case "local":
+				t.Setenv("SUM_HOME", s.Home)
+			}
+			view, err := ordinaryInit(t, root)
+			if home == "local" {
+				if err == nil || view["blocker"] != "task-context" {
+					t.Fatalf("local inherited task = %v %v", view, err)
+				}
+				if _, err := os.Stat(filepath.Join(s.Home, "coordinator.json")); !os.IsNotExist(err) {
+					t.Fatal("invalid local task wrote a coordinator claim")
+				}
+				return
+			}
+			if err != nil || view["role"] != "coordinator" || asString(view["claim"]) == "" {
+				t.Fatalf("ordinary entry with %s home = %v %v", home, view, err)
+			}
+			opened, err := store.Open(filepath.Join(root, ".sum"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(opened.Home, "coordinator.json")); err != nil {
+				t.Fatalf("ordinary entry did not write its claim: %v", err)
+			}
+			if _, err := opened.CheckClaim(asString(view["claim"])); err != nil {
+				t.Fatalf("ordinary entry claim is not valid: %v", err)
+			}
+		})
+	}
+}
+
+func TestOrdinaryInitExplicitTaskWithForeignHomeIsValidated(t *testing.T) {
+	for _, args := range [][]string{{"--task", "t-aaaaaaaaaaaa"}, {"--role", "worker"}, {"--role", "reviewer"}} {
+		t.Run(args[1], func(t *testing.T) {
+			root, s := ordinaryInitLab(t)
+			t.Setenv("SUM_HOME", filepath.Join(t.TempDir(), ".sum"))
+			t.Setenv("SUM_ROLE", "worker")
+			t.Setenv("SUM_TASK", "t-aaaaaaaaaaaa")
+			t.Setenv("SUM_ATTEMPT", "missing")
+			view, err := ordinaryInit(t, root, args...)
+			if err == nil || view["blocker"] != "task-context" {
+				t.Fatalf("explicit task bypassed validation: %v %v", view, err)
+			}
+			if _, err := os.Stat(filepath.Join(s.Home, "coordinator.json")); !os.IsNotExist(err) {
+				t.Fatal("invalid explicit task wrote a coordinator claim")
+			}
+		})
+	}
+}
+
+func TestSettingsSetForeignInheritedTaskRequiresClaim(t *testing.T) {
+	root, s := ordinaryInitLab(t)
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SUM_HOME", filepath.Join(t.TempDir(), ".sum"))
+	t.Setenv("SUM_ROLE", "worker")
+	t.Setenv("SUM_TASK", "t-aaaaaaaaaaaa")
+	t.Setenv("SUM_ATTEMPT", "missing")
+	var out, errOut bytes.Buffer
+	cmd := NewRoot(filepath.Join(root, "bin", "sumctl"), &out, &errOut)
+	cmd.SetArgs([]string{"--format", "json", "settings", "set", "--global", "3"})
+	if err := cmd.Execute(); !errors.Is(err, store.ErrClaimRequired) {
+		t.Fatalf("claimless settings under foreign identity = %v; output %s", err, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(s.Home, "settings.json")); !os.IsNotExist(err) {
+		t.Fatal("claimless settings changed preferences")
+	}
+}
+
 func TestOrdinaryInitInvalidTaskCannotBecomeDeveloper(t *testing.T) {
-	root, _ := ordinaryInitLab(t)
+	root, s := ordinaryInitLab(t)
+	t.Setenv("SUM_HOME", s.Home)
 	if err := os.MkdirAll(filepath.Join(root, ".sum"), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +211,10 @@ func TestOrdinaryInitRecordedTaskCheckoutCannotBecomeCoordinator(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(checkout)
+	t.Setenv("SUM_HOME", filepath.Join(t.TempDir(), ".sum"))
+	t.Setenv("SUM_ROLE", "worker")
+	t.Setenv("SUM_TASK", "t-bbbbbbbbbbbb")
+	t.Setenv("SUM_ATTEMPT", "missing")
 	view, err := ordinaryInit(t, root)
 	if err == nil || view["blocker"] != "task-context" || view["role"] != nil {
 		t.Fatalf("task checkout acquired coordination: %v %v", view, err)

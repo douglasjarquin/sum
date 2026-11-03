@@ -43,12 +43,18 @@ func ResolveInstallation(runtimeRoot, envInstallRoot string) string {
 	return runtimeRoot
 }
 
+func InheritedHomeBelongsToInstallation(installRoot string) bool {
+	value := os.Getenv("SUM_HOME")
+	if value == "" {
+		return false
+	}
+	relative, err := filepath.Rel(resolve(installRoot), resolve(value))
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
+}
+
 func DefaultHome(installRoot string) string {
-	if value := os.Getenv("SUM_HOME"); value != "" {
-		relative, err := filepath.Rel(resolve(installRoot), resolve(value))
-		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative) {
-			return resolve(value)
-		}
+	if InheritedHomeBelongsToInstallation(installRoot) {
+		return resolve(os.Getenv("SUM_HOME"))
 	}
 	return filepath.Join(installRoot, ".sum")
 }

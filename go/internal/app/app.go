@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -109,14 +110,10 @@ func Context(s *store.Store, root, claim string) (*ordjson.Object, error) {
 	}
 	role := os.Getenv("SUM_ROLE")
 	taskIdentity := os.Getenv("SUM_TASK") != "" || role == "worker" || role == "reviewer"
-	if !taskIdentity {
+	if !sumruntime.InheritedHomeBelongsToInstallation(root) || !taskIdentity {
 		return nil, store.ErrClaimRequired
 	}
-	ctx, err := store.Context(root)
-	if err != nil && !taskIdentity {
-		return nil, store.ErrClaimRequired
-	}
-	return ctx, err
+	return store.Context(root)
 }
 
 func OptionalContext(s *store.Store, root, claim string) *ordjson.Object {

@@ -13,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
@@ -52,7 +53,7 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			inheritedTask := os.Getenv("SUM_TASK") != "" || os.Getenv("SUM_ROLE") == "worker" || os.Getenv("SUM_ROLE") == "reviewer"
+			inheritedTask := sumruntime.InheritedHomeBelongsToInstallation(o.installRoot) && (os.Getenv("SUM_TASK") != "" || os.Getenv("SUM_ROLE") == "worker" || os.Getenv("SUM_ROLE") == "reviewer")
 			taskContext := role == "worker" || role == "reviewer" || task != "" || inheritedTask
 			if taskContext {
 				if role == "developer" || role == "coordinator" || transfer || retireNative {

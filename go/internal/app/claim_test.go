@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -112,5 +113,48 @@ func TestNativeCoordinatorCannotAuthorizeAfterLogicalRetirement(t *testing.T) {
 	}
 	if err := RequireCoordinator(l.store, ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestContextInheritedTaskHomeProvenance(t *testing.T) {
+	for _, home := range []string{"foreign", "unset", "local"} {
+		t.Run(home, func(t *testing.T) {
+			root := t.TempDir()
+			s, err := store.Open(filepath.Join(root, ".sum"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"SUM_HOME", "SUM_SESSION", "HC_SESSION", "HC_SOCKET", "HC_TERMINAL_ID", "SUM_CORE_ID"} {
+				t.Setenv(name, "")
+			}
+			t.Setenv("SUM_ROLE", "worker")
+			t.Setenv("SUM_TASK", "t-aaaaaaaaaaaa")
+			t.Setenv("SUM_ATTEMPT", "missing")
+			switch home {
+			case "foreign":
+				t.Setenv("SUM_HOME", t.TempDir())
+			case "local":
+				t.Setenv("SUM_HOME", s.Home)
+			}
+			_, err = Context(s, root, "")
+			if home == "local" {
+				if err == nil || errors.Is(err, store.ErrClaimRequired) {
+					t.Fatalf("local task bypassed native context validation: %v", err)
+				}
+			} else if !errors.Is(err, store.ErrClaimRequired) {
+				t.Fatalf("foreign or absent home did not require a claim: %v", err)
+			}
+			session, err := s.ClaimCoordinator("", "conversation", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, err := Context(s, root, session.Token())
+			if err != nil {
+				t.Fatalf("explicit claim ignored: %v", err)
+			}
+			if err := RequireCoordinator(s, ctx); err != nil {
+				t.Fatalf("explicit claim lost authority: %v", err)
+			}
+		})
 	}
 }

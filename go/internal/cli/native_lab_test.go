@@ -16,6 +16,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -51,8 +52,51 @@ func newNativeDemoLab(t *testing.T, root, helper, base string) *demoLab {
 func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab {
 	t.Helper()
 	s := nativeTestStore(t, home)
+	env := demoEnv(t, root, base)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(resolvedRoot, s.Root)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		installation := filepath.Dir(s.Root)
+		paths := []string{"COORDINATOR.md", "skills/sum-develop/SKILL.md", "skills/sum-deliver/SKILL.md", ".agents/skills/verify/references/engineering-principles.md"}
+		for _, source := range procedure.Sources {
+			paths = append(paths, source.Path)
+		}
+		for _, name := range paths {
+			raw, err := os.ReadFile(filepath.Join(root, name))
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			destination := filepath.Join(installation, name)
+			if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(destination, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		raw, err := os.ReadFile(filepath.Join(root, ".local", "bin", "sumctl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"bin/sumctl", ".local/bin/sumctl"} {
+			destination := filepath.Join(installation, name)
+			if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(destination, raw, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		root, helper = installation, filepath.Join(installation, "bin", "sumctl")
+	}
 	f := hctest.New(t)
-	d := &demoLab{t: t, root: root, helper: helper, base: base, home: s.Home, env: demoEnv(t, root, base), native: f, config: filepath.Join(base, "hc-config")}
+	d := &demoLab{t: t, root: root, helper: helper, base: base, home: s.Home, env: env, native: f, config: filepath.Join(base, "hc-config")}
 	// Ordinary entry needs a staged installation boundary without this source checkout's development marker.
 	entryRoot := filepath.Join(base, "ordinary-runtime")
 	d.entryHelper = filepath.Join(entryRoot, "bin", "sumctl")
@@ -130,7 +174,7 @@ func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab 
 	if err := ordjson.WriteFile(filepath.Join(s.Home, "settings.json"), settings); err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range map[string]string{"SUM_INSTALL_ROOT": root, "SUM_CODEX_BIN": codex, "CODEX_HOME": codexHome} {
+	for key, value := range map[string]string{"SUM_INSTALL_ROOT": root, "SUM_HOME": s.Home, "SUM_CODEX_BIN": codex, "CODEX_HOME": codexHome} {
 		d.setEnv(key, value)
 	}
 	if err := f.LoadTemplatesFrom(d.config); err != nil {

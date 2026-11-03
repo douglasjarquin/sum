@@ -27,8 +27,12 @@ func runCLI(t *testing.T, home string, args ...string) (string, error) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	reference := filepath.Join(repoRoot(t), "bin", "sumctl")
-	if value, ok := nativeLabs.Load(home); ok && len(args) > 0 && args[0] == "init" && os.Getenv("SUM_TASK") == "" {
-		reference = value.(*demoLab).entryHelper
+	if value, ok := nativeLabs.Load(home); ok {
+		d := value.(*demoLab)
+		reference = d.helper
+		if len(args) > 0 && args[0] == "init" && os.Getenv("SUM_TASK") == "" {
+			reference = d.entryHelper
+		}
 	}
 	root := NewRoot(reference, &stdout, &stderr)
 	root.SetArgs(testClaimArgs(home, args))
