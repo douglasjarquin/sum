@@ -140,6 +140,8 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 		journal.Set("manifest_sha256", manifestHash)
 		journal.Set("owner", owner)
 		journal.Set("old_runtime", selectionDescriptor(current))
+		checkout, _ := source.Get("checkout")
+		journal.Set("checkout_head", effectField(asObject(checkout), "head"))
 		journal.Set("phase", "prepared")
 		if err = ordjson.WriteFile(path, journal); err != nil {
 			return nil, err
@@ -150,10 +152,16 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 	resumeError := func(err error) error {
 		return fmt.Errorf("%w; resume bootstrap --approve --operation %s --ref %s", err, effectField(journal, "operation"), sha)
 	}
+	if err = bootstrapCheckout(root, journal); err != nil {
+		return nil, resumeError(err)
+	}
 	if err = bootstrapStep("prepared"); err != nil {
 		return nil, resumeError(err)
 	}
 	session, err := s.RetireForUpgrade(effectField(journal, "session_id"), owner, func() error {
+		if err := bootstrapCheckout(root, journal); err != nil {
+			return err
+		}
 		inspection, inspectErr := bootstrapInspect(s, owner)
 		if inspectErr != nil {
 			return inspectErr
@@ -187,10 +195,16 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 	if err = bootstrapStep("retired"); err != nil {
 		return nil, resumeError(err)
 	}
+	if err = bootstrapCheckout(root, journal); err != nil {
+		return nil, resumeError(err)
+	}
 	if _, err = SelectDefault(root, target); err != nil {
 		return nil, resumeError(err)
 	}
 	if err = bootstrapStep("selected"); err != nil {
+		return nil, resumeError(err)
+	}
+	if err = bootstrapCheckout(root, journal); err != nil {
 		return nil, resumeError(err)
 	}
 	alignment := syncInstallationCheckout(root, sha)
@@ -209,6 +223,19 @@ func Bootstrap(s *store.Store, ref string, noFetch, approve bool, operation stri
 		return nil, resumeError(err)
 	}
 	return bootstrapResult(root, journal, session, check), nil
+}
+
+func bootstrapCheckout(root string, journal *ordjson.Object) error {
+	sha := effectField(journal, "sha")
+	alignment := checkoutAlignment(root, sha, false)
+	if effectField(alignment, "result") == "refused" {
+		return fmt.Errorf("bootstrap checkout refused: %s", effectField(alignment, "reason"))
+	}
+	head := effectField(alignment, "head")
+	if !sha40Hex.MatchString(effectField(journal, "checkout_head")) || (head != sha && (effectField(journal, "phase") == "complete" || head != effectField(journal, "checkout_head"))) {
+		return fmt.Errorf("bootstrap checkout HEAD changed outside its recorded endpoints; checkout preserved")
+	}
+	return nil
 }
 
 func bootstrapResult(root string, journal *ordjson.Object, session *store.CoordinatorSession, check *ordjson.Object) *ordjson.Object {

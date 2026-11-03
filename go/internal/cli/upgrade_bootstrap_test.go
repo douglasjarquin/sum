@@ -93,6 +93,22 @@ func TestOrdinaryUpgradeFromExitedNativeCoordinator(t *testing.T) {
 				if _, e = updatecmd.Bootstrap(fresh, sha, true, true, "wrong-operation"); e == nil {
 					t.Fatal("wrong recovery operation accepted")
 				}
+				if boundary == "prepared" {
+					before := bootstrapGit(t, root, "rev-parse", "HEAD")
+					bootstrapGit(t, root, "switch", "--quiet", "-c", "external-checkout", sha)
+					bootstrapGit(t, root, "commit", "--allow-empty", "-m", "external checkout move")
+					moved := bootstrapGit(t, root, "rev-parse", "HEAD")
+					bootstrapGit(t, root, "update-ref", "refs/remotes/origin/main", moved)
+					pointerBefore, _ := os.ReadFile(filepath.Join(s.Root, "state.json"))
+					if _, e := updatecmd.Bootstrap(fresh, sha, true, true, op.(string)); e == nil || !strings.Contains(e.Error(), "checkout HEAD changed") {
+						t.Fatalf("external checkout move accepted: %v", e)
+					}
+					pointerAfter, _ := os.ReadFile(filepath.Join(s.Root, "state.json"))
+					if bootstrapGit(t, root, "rev-parse", "HEAD") != moved || string(pointerBefore) != string(pointerAfter) {
+						t.Fatal("refusal changed the checkout or fenced the old writer")
+					}
+					bootstrapGit(t, root, "checkout", "--quiet", "--detach", before)
+				}
 				view = bootstrapDriver(t, root, sha, env, op.(string))
 				err = nil
 			}
@@ -138,6 +154,16 @@ func TestOrdinaryUpgradeFromExitedNativeCoordinator(t *testing.T) {
 			if token, _ := replayed.Get("claim"); token != claim {
 				t.Fatal("lost-response replay changed claim")
 			}
+			if boundary == "none" {
+				bootstrapGit(t, root, "checkout", "--quiet", "--detach", "8a4300c646cb6dcea8ca6f19f9199268b3adb6e3")
+				if _, e := updatecmd.Bootstrap(s, sha, true, true, op.(string)); e == nil {
+					t.Fatal("complete replay accepted mismatched checkout instructions")
+				}
+				if bootstrapGit(t, root, "rev-parse", "HEAD") != "8a4300c646cb6dcea8ca6f19f9199268b3adb6e3" {
+					t.Fatal("complete replay overwrote external checkout move")
+				}
+				bootstrapGit(t, root, "checkout", "--quiet", "--detach", sha)
+			}
 			if _, e := s.ClaimCoordinator("", "explicit test transfer", true); e != nil {
 				t.Fatal(e)
 			}
@@ -146,6 +172,15 @@ func TestOrdinaryUpgradeFromExitedNativeCoordinator(t *testing.T) {
 			}
 		})
 	}
+}
+
+func bootstrapGit(t *testing.T, root string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func bootstrapInstallation(t *testing.T, old string) (string, *store.Store, *hctest.Fixture, string, []string) {
