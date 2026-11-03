@@ -1,5 +1,5 @@
 topic: ask
-help: "Worker: save a question before waiting; structured choices require one recommendation and rationale; human actions can include ordered steps, references, expected result, user report, and worker check; the parent is notified only after it is saved"
+help: "Worker: save a question for collection by the coordinating conversation"
 arguments[14]:
   - name: task
     help: null

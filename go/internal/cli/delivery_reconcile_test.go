@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/updatecmd"
 )
@@ -116,66 +114,6 @@ func deliveryRead(t *testing.T, path string) map[string]any {
 	return v
 }
 
-func TestDeliveryReconcileLostReportResponse(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "delivery-report", map[string]string{"README.md": "Report lab.\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
-	id, worker := asString(task["id"]), workerAddress(task)
-	d.ctlPane(worker, true, "init")
-	d.native.SetStatus("t1", "idle")
-	d.native.QueueFault("terminal.send", hctest.Fault{LoseResponse: true})
-	d.ctlPane(worker, true, "report", id, "--text", "The recorded candidate is ready for inspection.")
-	path := filepath.Join(d.home, "tasks", id, "returns.json")
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var delivery string
-	for _, raw := range asSlice(deliveryRead(t, path)["deliveries"]) {
-		row := asMap(raw)
-		if row["state"] == "uncertain" {
-			delivery = asString(row["id"])
-		}
-	}
-	if delivery == "" {
-		t.Fatalf("no uncertain report effect: %s", before)
-	}
-	refusal := d.ctl(false, "delivery", "reconcile", id, "--delivery", delivery)
-	if !strings.Contains(asString(refusal["error"]), "no matching durable receipt") {
-		t.Fatalf("missing receipt accepted: %v", refusal)
-	}
-	view := d.ctl(true, "wake", "show")
-	recipients := asSlice(view["recipients"])
-	if len(recipients) != 1 {
-		t.Fatalf("wake: %v", view)
-	}
-	boundary := asString(asMap(recipients[0])["boundary"])
-	if boundary == "" {
-		t.Fatalf("no boundary: %v", view)
-	}
-	d.ctl(true, "wake", "consume", "--boundary", boundary)
-	s, err := store.Open(d.home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cleanup.RefusePendingEffects(s, id) == nil {
-		t.Fatal("consumption silently rewrote historical uncertainty")
-	}
-	inputs := len(d.native.Inputs("t1"))
-	d.ctl(true, "delivery", "reconcile", id, "--delivery", delivery)
-	if err = cleanup.RefusePendingEffects(s, id); err != nil {
-		t.Fatal(err)
-	}
-	inbox := d.ctl(true, "show", id)
-	if len(asSlice(asMap(inbox["returns"])["open"])) == 0 {
-		t.Fatal("reconciliation waived the report obligation")
-	}
-	after, _ := os.ReadFile(path)
-	if !bytes.Equal(before, after) || len(d.native.Inputs("t1")) != inputs {
-		t.Fatal("report reconciliation changed old delivery or sent input")
-	}
-}
-
 func deliveryCandidate(t *testing.T, d *demoLab) string {
 	t.Helper()
 	root := policyProject(t, d.base, "recovery-candidate", map[string]string{"README.md": "Candidate.\n"})
@@ -210,127 +148,24 @@ func deliveryActivationBlocks(t *testing.T, s *store.Store, candidate string) st
 	return string(b)
 }
 
-func TestDeliveryReconcileLostQuestionResponseUsesExactAnswerRead(t *testing.T) {
+func TestParentDirectedResultsAreCollectedWithoutNativeDelivery(t *testing.T) {
 	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "delivery-question", map[string]string{"README.md": "Question lab.\n"})
+	repo := policyProject(t, d.base, "pull-results", map[string]string{"README": "base\n"})
 	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
-	id, worker := asString(task["id"]), workerAddress(task)
-	d.ctlPane(worker, true, "init")
-	d.native.SetStatus("t1", "idle")
-	d.native.QueueFault("terminal.send", hctest.Fault{LoseResponse: true})
-	q := d.ctlPane(worker, true, "ask", id, "--key", "question-recovery", "--text", "Choose the approach.")
-	qid := asString(asMap(q["question"])["id"])
-	path := filepath.Join(d.home, "tasks", id, "returns.json")
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var delivery string
-	for _, raw := range asSlice(deliveryRead(t, path)["deliveries"]) {
-		row := asMap(raw)
-		if row["state"] == "uncertain" {
-			delivery = asString(row["id"])
+	id, address := asString(task["id"]), workerAddress(task)
+	d.ctlPane(address, true, "init")
+	calls := len(d.native.Calls())
+	d.ctlPane(address, true, "ask", id, "--text", "Which approach?")
+	d.ctlPane(address, true, "report", id, "--text", "Ready for inspection.")
+	for _, call := range d.native.Calls()[calls:] {
+		if call.Method == "terminal.send" {
+			t.Fatalf("parent-directed result sent native input: %v", call)
 		}
 	}
-	if delivery == "" {
-		t.Fatalf("no uncertain question send: %s", before)
-	}
-	d.native.SetStatus(worker, "working")
-	d.ctl(true, "answer", id, qid, "--text", "Use this exact approach.")
-	before, err = os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := store.Open(d.home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cleanup.RefusePendingEffects(s, id) == nil {
-		t.Fatal("coordinator answering silently resolved original send")
-	}
-	inputs := len(d.native.Inputs("t1"))
-	d.ctl(true, "delivery", "reconcile", id, "--delivery", delivery)
-	if err = cleanup.RefusePendingEffects(s, id); err != nil {
-		t.Fatal(err)
-	}
-	record := d.ctl(true, "show", id)
-	if len(asSlice(asMap(record["returns"])["open"])) != 1 {
-		t.Fatal("unapplied answer obligation was waived")
-	}
-	after, _ := os.ReadFile(path)
-	if !bytes.Equal(before, after) || len(d.native.Inputs("t1")) != inputs {
-		t.Fatal("question recovery changed original effect or sent input")
-	}
-}
-
-func TestDeliveryReconcileFirstRecoveryAfterWakeReceiptEviction(t *testing.T) {
-	d := newPolicyLab(t)
-	repo := policyProject(t, d.base, "delivery-retention", map[string]string{"README.md": "Retention lab.\n"})
-	task := d.ctl(true, "dispatch", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
-	id, worker := asString(task["id"]), workerAddress(task)
-	d.ctlPane(worker, true, "init")
-	d.native.SetStatus("t1", "idle")
-	d.native.QueueFault("terminal.send", hctest.Fault{LoseResponse: true})
-	d.ctlPane(worker, true, "report", id, "--text", "First uncertain report.")
-	path := filepath.Join(d.home, "tasks", id, "returns.json")
-	var delivery string
-	for _, raw := range asSlice(deliveryRead(t, path)["deliveries"]) {
-		row := asMap(raw)
-		if row["state"] == "uncertain" {
-			delivery = asString(row["id"])
+	for range 2 {
+		view := d.ctl(true, "collect", "--budget", "100ms")
+		if !collectedKind(view, "question") || !collectedKind(view, "report") {
+			t.Fatalf("reading settled results: %v", view)
 		}
-	}
-	if delivery == "" {
-		t.Fatal("missing uncertain effect")
-	}
-	consume := func() {
-		t.Helper()
-		view := d.ctl(true, "wake", "show")
-		recipients := asSlice(view["recipients"])
-		if len(recipients) != 1 {
-			t.Fatalf("wake: %v", view)
-		}
-		token := asString(asMap(recipients[0])["boundary"])
-		if token == "" {
-			t.Fatalf("no boundary: %v", view)
-		}
-		d.ctl(true, "wake", "consume", "--boundary", token)
-	}
-	consume()
-	for i := 0; i < 21; i++ {
-		d.native.SetStatus("t1", "idle")
-		d.ctlPane(worker, true, "report", id, "--text", fmt.Sprintf("Subsequent report %d.", i))
-		consume()
-	}
-	s, err := store.Open(d.home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	owner, err := s.Owner()
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := store.EndpointFromContext(owner)
-	w, status := returns.ReadWake(s, [3]string{endpoint.Machine, endpoint.CoreID, endpoint.Address})
-	if status.State != returns.WakeOK {
-		t.Fatal(status)
-	}
-	for _, r := range w.Receipts {
-		if r.Delivery == delivery {
-			t.Fatal("original receipt was not evicted")
-		}
-	}
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	inputs := len(d.native.Inputs("t1"))
-	d.ctl(true, "delivery", "reconcile", id, "--delivery", delivery)
-	if err = cleanup.RefusePendingEffects(s, id); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := os.ReadFile(path)
-	if !bytes.Equal(before, after) || len(d.native.Inputs("t1")) != inputs {
-		t.Fatal("retention recovery changed original effect or sent input")
 	}
 }

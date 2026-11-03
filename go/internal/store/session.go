@@ -119,6 +119,13 @@ func (s *Store) claimCoordinator(token, label string, transfer, retire bool) (*C
 		return nil, err
 	}
 	if current != nil {
+		host, err := s.Machine()
+		if err != nil {
+			return nil, err
+		}
+		if !host.Is(current.Machine) {
+			return nil, fmt.Errorf("coordinator session belongs to another machine")
+		}
 		if !transfer {
 			if token == current.Token() {
 				return current, nil

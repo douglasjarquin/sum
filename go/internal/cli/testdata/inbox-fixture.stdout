@@ -35,3 +35,9 @@ metadata:
   last_error: null
   degraded: true
   reason: native metadata projection is not enabled; `inbox --live` remains the authoritative view
+session: null
+claim_generation: null
+runtime_route: null
+outstanding:
+  total: 0
+  by_kind:

@@ -8,7 +8,7 @@ import (
 )
 
 func (o *rootOptions) addCollectCommand(root *cobra.Command) {
-	var claim, task string
+	var task string
 	var budget time.Duration
 	cmd := &cobra.Command{
 		Use: "collect", Args: cobra.NoArgs,
@@ -20,14 +20,13 @@ func (o *rootOptions) addCollectCommand(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := collect.Run(cmd.Context(), st, collect.Options{Claim: claim, Task: task, Budget: budget, RuntimeRoot: o.runtimeRoot, SumctlPath: o.sumctlPath()})
+			view, err := collect.Run(cmd.Context(), st, collect.Options{Claim: o.claim, Task: task, Budget: budget, RuntimeRoot: o.runtimeRoot, SumctlPath: o.sumctlPath()})
 			if err != nil {
 				return err
 			}
 			return emitOrdjson(cmd.OutOrStdout(), view)
 		},
 	}
-	cmd.Flags().StringVar(&claim, "claim", "", "Current logical session claim")
 	cmd.Flags().StringVar(&task, "task", "", "Collect one recorded task")
 	cmd.Flags().DurationVar(&budget, "budget", collect.DefaultBudget, "Shared collection deadline (maximum 60s)")
 	root.AddCommand(cmd)

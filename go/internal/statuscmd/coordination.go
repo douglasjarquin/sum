@@ -1,6 +1,7 @@
 package statuscmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -23,7 +24,7 @@ func coordination(s *store.Store, view *ordjson.Object, tasks []*ordjson.Object)
 		view.Set("claim_generation", generation)
 	}
 	route, err := ordjson.ReadFile(filepath.Join(s.Root, "runtime-route.json"))
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	view.Set("runtime_route", route)

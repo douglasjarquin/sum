@@ -127,70 +127,32 @@ def execute_canary(args, source, lab):
     (gh_root / "github.json").write_text(json.dumps({"repository": "sum-canary/project", "visibility": "PRIVATE", "viewer_permission": "ADMIN", "checks": []}))
 
     with lab:
+        claim = None
         def cli(*command):
-            return json.loads(run([helper, "--format", "json", *command], cwd=runtime, env=lab.env))
-        startup = ["coordinator", "start", "--socket", str(lab.socket), "--session", lab.session,
-                   "--hc-config-home", lab.env["XDG_CONFIG_HOME"], "--harness", "codex"]
-        if args.ready_delay > 0:
-            process = subprocess.Popen([str(helper), "--format", "json", *startup], cwd=runtime, env=lab.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            try:
-                state = json.loads((runtime / ".sum/state.json").read_text())
-                record_path = runtime / ".sum/generations" / state["generation"] / "coordinator-launch.json"
-                deadline = time.monotonic() + min(args.ready_delay, 15)
-                while time.monotonic() < deadline:
-                    if record_path.exists():
-                        launch_record = json.loads(record_path.read_text())
-                        if launch_record.get("endpoint", {}).get("address"):
-                            break
-                    time.sleep(0.02)
-                else:
-                    raise RuntimeError("creation identity was not durable before synthetic readiness")
-                inspected = cli("inspect", "--role", "coordinator", "--attempt", launch_record["endpoint"]["attempt"])
-                assert inspected["endpoint"]["address"] == launch_record["endpoint"]["address"]
-                assert process.poll() is None and not inspected["terminal"].get("status")
-                lab.summary["inspect_before_readiness"] = {"address": inspected["endpoint"]["address"], "attempt": inspected["endpoint"]["attempt"], "launch_pending": True, "native_status_absent": True}
-                stdout, stderr = process.communicate(timeout=120)
-                if process.returncode:
-                    raise RuntimeError(stderr[-3000:])
-                started = json.loads(stdout)
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    process.communicate(timeout=10)
-        else:
-            started = cli(*startup)
-        coordinator = started["endpoint"]["address"]
-        init = wait_record(output, coordinator, "init")
-        assert init["result"]["role"] == "coordinator", init
-        lab.summary.setdefault("callbacks", {})[coordinator + "-init.json"] = init
-        activation = init["result"].get("hook_activation") or {}
-        observer = activation.get("observer") or {}
-        diagnostics = {"activation": activation}
-        lab.summary["observer_startup"] = diagnostics
-        if observer.get("address"):
-            diagnostics["terminal_get"] = lab.rpc("terminal.get", terminal=observer["address"])
-            diagnostics["terminal_read"] = lab.rpc("terminal.read", terminal=observer["address"], lines=40)
-        for label, arguments in (("hook_status", ("hook", "status")), ("status", ("status", "--live"))):
-            try:
-                diagnostics[label] = cli(*arguments)
-            except Exception as error:
-                diagnostics[label] = {"diagnostic_error": str(error)}
-        health = diagnostics.get("hook_status") or {}
-        terminal = (diagnostics.get("terminal_get") or {}).get("result") or {}
-        receipt = health.get("observer_receipt") or {}
-        incarnation = health.get("observer_incarnation") or {}
-        receipt_endpoint = receipt.get("endpoint") or {}
-        assert activation.get("readiness") == "ready" and (activation.get("startup") or {}).get("ready") is True, diagnostics
-        assert health.get("connected_at") and health.get("snapshot_seq") is not None and receipt.get("kind") == "observer-start", diagnostics
-        assert activation.get("launch_attempt") == health.get("launch_attempt") == observer.get("attempt") == receipt.get("attempt"), diagnostics
-        assert all(receipt_endpoint.get(key) == observer.get(key) for key in ("core_id", "address", "created_ms", "attempt", "binding_generation")), diagnostics
-        assert activation.get("observer_receipt") == receipt and activation.get("observer_incarnation") == incarnation, diagnostics
-        assert receipt_endpoint.get("core_id") == lab.core_id and receipt_endpoint.get("address") == terminal.get("address") and receipt_endpoint.get("created_ms") == terminal.get("created_ms") and incarnation.get("endpoint") == receipt_endpoint, diagnostics
-        assert terminal.get("state") == "live" and terminal.get("pid") is not None and terminal.get("pid") == incarnation.get("pid") and terminal.get("foreground") == incarnation.get("foreground") and terminal.get("foreground"), diagnostics
-        lab.summary["checkpoints"].append("coordinator-start-and-init-receipt")
-        lab.summary["checkpoints"].append("native-observer-startup-receipt-and-fresh-snapshot")
+            flags = ["--claim", claim] if claim else []
+            return json.loads(run([helper, "--format", "json", *flags, *command], cwd=runtime, env=lab.env))
+        initialized = cli("init")
+        assert initialized["role"] == "coordinator" and "endpoint" not in initialized, initialized
+        claim = initialized["claim"]
+        state = json.loads((runtime / ".sum/state.json").read_text())
+        generation = runtime / ".sum/generations" / state["generation"]
+        (runtime / ".sum/runtime-route.json").write_text(json.dumps({
+            "socket": str(lab.socket), "session": lab.session, "core_id": lab.core_id,
+            "config_home": lab.env["XDG_CONFIG_HOME"], "state_home": lab.env["XDG_STATE_HOME"],
+            "runtime_dir": lab.env.get("XDG_RUNTIME_DIR", ""),
+        }))
+        (generation / "settings.json").write_text(json.dumps({
+            "schema": 1, "worker": {"harness": "codex"}, "template": {"codex_home": str(codex_home)},
+        }))
+        coordinator = "ordinary-conversation"
+        lab.summary["ordinary_entry"] = initialized
+        lab.summary["checkpoints"].append("ordinary-init-without-native-coordinator")
 
         def command(address, tag, *arguments, action=None):
+            if address == coordinator:
+                result = {"code": 0, "result": cli(*arguments)}
+                lab.summary.setdefault("callbacks", {})[coordinator + "-" + tag] = result
+                return result
             payload = {"tag": tag, "args": list(arguments)}
             if action:
                 payload["action"] = action
@@ -209,12 +171,9 @@ def execute_canary(args, source, lab):
         lab.summary["checkpoints"].append("prepare-start-worker-init-receipt")
         question = command(worker, "ask", "ask", task_id, "--key", "punctuation", "--text", "Keep punctuation?")["result"]
         question_id = question["question"]["id"]
-        wake = command(coordinator, "wake-question", "wake", "show")["result"]
-        current_wake = next(row for row in wake["recipients"] if row["recipient"]["address"] == coordinator)
-        assert current_wake["outstanding"] and current_wake["boundary"], wake
-        command(coordinator, "consume-question", "wake", "consume", "--boundary", current_wake["boundary"])
-        consumed = command(coordinator, "wake-after-consume", "wake", "show")["result"]
-        assert not next(row for row in consumed["recipients"] if row["recipient"]["address"] == coordinator)["outstanding"], consumed
+        collected = cli("collect", "--budget", "100ms")
+        assert any(item.get("kind") == "question" and item.get("task") == task_id for item in collected["items"]), collected
+        assert cli("collect", "--budget", "100ms")["items"], "reading settled the question"
         working_events = lab.subscribe(terminal=worker)
         held = command(worker, "hold-working", action="hold-working")
         assert held.get("helper_invoked") is False and held.get("state") == "working", held
@@ -241,8 +200,8 @@ def execute_canary(args, source, lab):
             return [row for row in ledger.get("deliveries", []) if obligation in row.get("obligations", []) and (row.get("recipient") or {}).get("address") == worker]
 
         proof = {"working": working, "hold_action": held, "obligation": obligation,
-                 "observer_receipt": receipt, "notices_before_answer": answer_notices(), "all_notices_before_answer": notice_records()}
-        lab.summary["native_event_delivery"] = proof
+                 "notices_before_answer": answer_notices(), "all_notices_before_answer": notice_records()}
+        lab.summary["active_collection_delivery"] = proof
         assert not proof["notices_before_answer"], proof
         answered = command(coordinator, "answer", "answer", task_id, question_id, "--text", "Yes, keep punctuation.")["result"]
         deferred = next(row for row in answered["notice"]["returns"]["recipients"] if row["recipient"]["address"] == worker)
@@ -268,6 +227,7 @@ def execute_canary(args, source, lab):
                 proof["native_done_event"] = event
                 break
         assert "native_done_event" in proof, proof
+        proof["collection_after_ready"] = cli("collect", "--budget", "1s")
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             proof["notices_after_done"] = answer_notices()
@@ -283,8 +243,8 @@ def execute_canary(args, source, lab):
         assert unapplied["status"] == "answered", proof
         proof["helper_calls_after_delivery"] = helper_calls()
         assert proof["helper_calls_before_ready"] == proof["helper_calls_after_delivery"], proof
-        proof.update(no_sum_command_before_notice=True, question_before_resolve=unapplied)
-        lab.summary["checkpoints"].append("native-done-event-delivers-deferred-answer-without-sum-command")
+        proof.update(delivered_during_active_collection=True, question_before_resolve=unapplied)
+        lab.summary["checkpoints"].append("active-collection-delivers-deferred-answer-after-native-done")
         applied = command(worker, "apply", "resolve", task_id, question_id)["result"]
         assert applied["status"] == "applied" and applied["answer"] == "Yes, keep punctuation.", applied
         authored = command(worker, "candidate", action="candidate")
@@ -295,6 +255,8 @@ def execute_canary(args, source, lab):
         review_init = wait_record(output, reviewer, "init")
         assert review_init["result"]["role"] == "reviewer"
         command(reviewer, "review", "review", task_id, "--verdict", "approve", "--candidate", candidate, "--text", "Independent scripted reviewer inspected the exact candidate and approved the fixture change.")
+        reviewed = cli("collect", "--budget", "100ms")
+        assert any(item.get("kind") == "review" and item.get("task") == task_id for item in reviewed["items"]), reviewed
         verification = command(coordinator, "verify", "verify", task_id, "--candidate", candidate, "--execute")["result"]
         assert verification["evidence"]["result"] == "pass", verification
         assert verification["evidence"]["certifies"] == candidate, verification

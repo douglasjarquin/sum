@@ -1,116 +1,123 @@
-# HC runtime acceptance
+# Ordinary-agent and HC acceptance
 
-This is a manual acceptance checklist, not a receipt that these scenarios passed.
-Run only in an authorized isolated lab with a unique named HC session and scratch state/config/runtime paths.
-Never use the user's default session, live installation, credentials from another scope, model/account changes or permission bypasses to obtain a result.
-Retain the exact candidate SHA, published HC artifact identity, harness version/argv/keymap, commands, records and limitations.
+This checklist separates automated lab evidence from authenticated harness journeys and production acceptance.
+All checks use private state, a unique named HC session, and scratch config/runtime paths.
+Never use the user's default session or live installation for a test.
+Record the candidate SHA, exact published HC artifact, harness version, commands, ledger records, and limitations with each manual run.
+The canonical aggregate is offline evidence and cannot certify an unrun manual journey.
 
-## 1. Setup and startup
+## Issue 342 acceptance matrix
 
-Stage unmodified HC 0.1.14 and its matched manual/template with custom Sum MCP and legacy Herdr unavailable.
-Confirm fresh setup generates no custom Sum MCP and unrelated MCP integrations remain intact on a repeat run.
-Explicitly start the lab core through native HC; read-only observation of an absent/stopped core must not auto-start it.
-Launch with `coordinator start --socket PATH --session NAME --hc-config-home PATH --harness codex`.
-Verify bound environment, permanent core ID/address/creation time, process and matching initialization receipt.
-Without that qualified context, `init` must default to developer rather than silently claim coordinator.
-Manual existing-terminal initialization must preserve known launch fields or an unknown model.
+The named tests below are automated drivers, not a claim that the final aggregate or a manual journey has passed.
+The verification artifact and PR record their actual result for the final candidate.
 
-## 2. End-to-end task
-
-Dispatch one approved task into a verified Git worktree, save a worker question, record the user's answer, obtain the worker's matching application receipt and report, arrange independent candidate-bound review, run coordinator verification, and perform only authorized publication.
-Only the user merges except an explicitly authorized factory high-confidence merge contract.
-After a real merge, inspect and apply guarded cleanup.
-Retain each ledger record and endpoint/attempt identity, not only terminal scrollback.
-A native send or Done transition proves no application, review, verification or merge.
-
-## 3. Harness compatibility
-
-| Harness/runtime | Required evidence | Current boundary |
+| Row | Automated driver | Manual boundary |
 | --- | --- | --- |
-| Published unmodified HC 0.1.14 plus Codex 0.166.0 with `--no-daemon`, default keymap, namespaced Tab template | Done follow-up, queued busy race, ordered application responses and matching Sum receipts | Isolated actual Codex Done and busy-queue probes passed; full candidate-specific Sum canary must be recorded separately |
-| Grok Build stable 1.0.67 or newer, Claude Code 2.1.316 and local Devin CLI 3000.11.234, default input configurations and namespaced Enter templates | Exact argv/model/permission disclosure, prompt receipt, blocked dialogs, native status, submit and resume behavior | Offline launch/init/Done return and drift refusal contracts are covered; isolated unauthenticated startup found Grok blocked on auth, Claude exiting on a network error, and Devin login without status; authenticated model turns remain unrun |
-| Other terminal harnesses | Exact argv/model/permission disclosure, prompt receipt, blocked dialogs, native status, submit and resume behavior | Unqualified for automatic input; actual harness gaps remain explicit |
-| Model-free native HC lab | Typed API, identity, lifecycle and observer boundaries; separately, full Sum application composition with scripted worker/reviewer terminals and local strict fake GitHub | The full application canary passed in `/tmp/sum330-full-canary-final.json`; `authenticated_harness:false`, `model_execution:false` and confirmed core stop remain explicit; no actual-model or production qualification follows |
-| Existing production installation | Enforceable legacy writer/sender exclusion and explicit generation cutover | Current legacy APIs cannot prove exclusion; activation must refuse without the external prerequisite; production migration unrun |
+| A1 | `cli.TestExternalCoordinatorLifecycle`, `cli.TestInitDesignatedWorkspaceClaimsLogicalCoordinator` | Ordinary terminal Grok and Codex coordinator entry: not run for this candidate |
+| A2 | CLI unstaged-init blocker and `tests/test_setup.py` | Fresh-host prerequisite installation: not run |
+| A3 | `cli.TestExternalCoordinatorLifecycle` | Each helper call is a separate process with a scrubbed lab environment |
+| A4 | `cli.TestOrdinaryCoordinatorIgnoresInheritedNativeIdentity` and init environment-precedence tests | No user environment surgery is required |
+| A5 | `hcboot` workspace route tests | Real private HC reuse and changed-core refusal: not run for this candidate |
+| A6 | `prepare` parentless native launch tests and `cli.TestOfflineDemo` | Two authenticated workers in distinct checkouts: not run |
+| A7 | `collect` answer delivery tests and `cli.TestExternalCoordinatorLifecycle` | Grok and Codex busy-worker answer delivery through active collection: not run |
+| A8 | `review.TestCandidateBoundReviewerEvidenceDischargesAmbiguousKickoff`, `cli.TestExternalCoordinatorLifecycle` | Authenticated independent reviewer: not run |
+| A9 | `execution` and `review` saved-route reconciliation tests; CLI lost-creation tests | Real transport interruption: not run for this candidate |
+| A10 | `cli.TestExternalCoordinatorLifecycle` and retirement preservation tests | Existing installation retirement and resumption: not run |
+| A11 | Coordinator claim conflict, transfer, race and stale-generation tests | Another live conversation must not share the recorded token automatically |
+| A12 | `collect` shared-budget and terminal-wait tests | Authenticated bounded waiting in Grok and Codex: not run |
+| A13 | `cli` ordinary inspection tests for saved live, unready, failed and reused terminal identities | Desktop visibility and actual harness attach: not run |
+| A14 | CLI development-marker and undesignated-workspace init tests | No production coordination is initialized from the development checkout |
+| A15 | `updatecmd` quiescence, alignment and rollback-floor tests; `cli.TestNativeBaseUpdaterSelectsCandidateWithEventsDisabled` | Installed update and next ordinary harness start: not run |
+| A16 | CLI schema-one blocker and `cli.TestHistoricalReaderPreservesEvidenceAndRefusesWrites` | Old task and sealed procedure bytes remain historical records |
+| A17 | `launch` explicit/default harness selection tests and `cli.TestOfflineDemo` | Authenticated mixed coordinator/worker harness combination: not run |
 
-For supported profiles, defer observed working, blocked and unknown; idle uses `if:idle` and observed Done uses ordinary send without `if` or `force`.
-The raced Done-to-working transition uses each harness's native submission behavior, deliberately relaxing an atomic Done guard; Codex queues Tab, while Enter profiles may queue or steer at a native safe gap.
-`started`, status and native turn counts remain diagnostics; they do not replace application receipts.
-Trust/auth/permission prompts require the user's action and are never accepted by Sum.
+## Ordinary conversation journey
 
-## 4. Preparation, launch and uncertainty
+Start the usual terminal coding agent in an isolated staged Sum workspace and run `./bin/sumctl init`.
+It must return `coordinator`, a claim token, procedure paths, and outstanding work without contacting HC or creating another agent terminal.
+Retain the returned token in the conversation and pass `--claim TOKEN` to coordinator mutations and collection.
+Repeat init with that token and verify the same session and generation.
+A separate conversation without the token must receive a conflict.
+Transfer only after the user's decision, then prove the previous token refuses before any ledger or native effect and existing task bytes remain unchanged.
+On resume, collect before reporting progress.
+Reading a question or report twice must neither settle it nor create an application receipt.
 
-Interrupt Git worktree preparation before and after registration and reconcile with `prepare --reconcile TASK_ID`.
-Assert one verified checkout, saved branch/base and no reset or duplicate.
-Create a terminal with its opening message proven unsent, then recover once through `execution redeliver` or `reviewer redeliver` with the exact attempt.
-Lose the response after a creation/send or kill a sender during input; uncertainty must persist without automatic replay.
-A failed non-kept launch may leave no recoverable address.
-For a recorded pre-creation `no holder` refusal, restart only the authorized lab core and run `coordinator recover --attempt ATTEMPT`; verify the failed record is archived intact, the same core has no matching terminal and another explicit start can proceed.
-A lost response, a changed core, a registered coordinator, a matching live or finished terminal, or a concurrent record change must refuse recovery without native mutations.
-`started:false` or null must never become processed/completed or trigger an extra Enter.
+Prepare and start two approved tasks with distinct checkouts, labels, and attempt identities.
+Verify HC run requests omit parent and caller, reuse the workspace route, and take the explicit or saved worker harness choice.
+Record a worker question, answer with the claim from a fresh helper process, and collect while the worker is busy.
+The answer must remain pending until eligible, then be delivered once through the worker route during active collection.
+Only the matching worker application receipt settles the answer.
+Record a candidate report, launch an independent candidate-bound reviewer, and verify its verdict appears in collect with a null task parent.
+Run independent verification and perform only user-authorized publication.
+Only the user merges except an explicitly authorized factory high-confidence merge contract.
 
-## 5. Identity and replacement
+## Native identity, recovery and inspection
 
-Reuse a name, socket path, address on a different core, reset state and alias; old authority must not transfer.
-Replace the harness process at the same native terminal; require current process/role/receipt proof and explicit rebind.
-A non-kept agent replaced by a shell must receive no automatic worker role or prompt.
-Exit or replace the coordinator while workers/services continue; bind future returns to the verified replacement without duplicating work.
-A second same-host scope and remote task execution must refuse before binding rather than create a silent delivery gap.
+Workers and reviewers retain published HC 0.1.14 native identity, exact core/address/creation-time checks, attempt receipts, qualified templates, bounded readiness, and conservative uncertain input handling.
+A send, Done state, started result or completed wait is not an application receipt, verification result, review or process-exit proof.
+Reuse a socket, address or name on a different core and replace a harness process within one terminal; each old identity must refuse.
+An unproven shell occupant gains no worker role or automatic prompt.
 
-## 6. Returns, observers and fairness
+Lose a worker or reviewer creation reply after durable intent persistence.
+Reconcile from that exact intent's saved socket, core, session and labels, including after coordinator claim transfer.
+Changing today's workspace route must not redirect recovery.
+Conflicting candidates refuse, and repeating successful reconciliation records the original endpoint without another launch or opening send.
+An uncertain input is never automatically replayed.
+Inspect live, unready and failed attempts from an ordinary shell and retain their bounded output, saved address and attach argv.
+Trust, auth and permission dialogs require the user's action and are never accepted by Sum.
 
-Save an answer/refresh while the worker is busy and prove one eligible delivery plus a matching application/adoption receipt.
-Generate twelve routine returns and an urgent question; routine wakes coalesce while the question retains priority without busy interruption.
-Close a question or rebind a route during observation; revalidation must prevent a stale send without blocking unrelated recipients.
-Restart a lab core, drop events and fail/restart an observer; fresh snapshots and reconciliation must catch up without sequence-as-ack or uncertain replay.
-Use more idle recipients than one bounded pass and no later HC event; fair continuation must eventually reach eligible pending work.
-Bind, consume a wake and adopt a revision without a native status change; post-commit reconciliation must expose eligible work.
-Verify one proven owned non-agent outliving observer, real startup/readiness receipt and no payload queue.
-Default coordinator initialization must ensure it outside the ledger lock.
-A startup failure must leave explicit degraded health and working bounded `pump`, not a false active state.
-An explicit disabled preference must survive update and initialization without silently launching an observer.
+## Harness matrix
 
-## 7. Services, capacity and cleanup
+| Coordinator conversation | Worker/reviewer | Candidate-specific status |
+| --- | --- | --- |
+| Terminal Codex | Codex 0.166.0, default keymap, namespaced Tab template over unmodified HC 0.1.14 | Authenticated journey not run |
+| Terminal Grok Build | Grok stable 1.0.67 or newer, default input configuration, namespaced Enter template | Authenticated journey not run |
+| Terminal Grok Build | Codex | Authenticated mixed-harness journey not run |
+| Terminal Codex | Grok Build | Authenticated mixed-harness journey not run |
+| Ordinary external scripted caller | Model-free native HC scripted worker and reviewer plus local strict fake GitHub | `scripts/live_sum_canary.py` is the isolated driver; an actual run needs its own artifact |
+| Any ordinary conversation | Claude Code 2.1.316 or local Devin CLI 3000.11.234 with default Enter profiles | Offline contracts covered; authenticated journey not run |
+| Any ordinary conversation | Other terminal harnesses | Unqualified for automatic input |
 
-Start only a declared task-local service and retain exact native/process/readiness ownership.
-Repeat start, conflict on a port, replace the process outside Sum and let a service ignore its interrupt.
-Stop must send one interrupt only to a proven owned instance, require actual exit and absence of survivors, and never escalate to kill.
-An ended wait or idle terminal is not exit.
-Reports and uncertain processes retain capacity until exact stopped-attempt evidence permits park.
-Cleanup must block dirty/untracked/unmerged work, shared/unproven processes, pending questions/answers/evidence and active attempts.
-A maintenance barrier and reinspection must prevent cleanup racing new work.
-Remove only exact owned native terminal/history and the verified Git worktree through their respective APIs.
-No HC I/O may occur while holding the state lock.
-Repeat completed cleanup as a no-op; preserve unrelated work and records.
+Historical Codex Done/busy probes and older scripted application artifacts do not certify this candidate.
+The scripted canary proves exercised wiring only, never real agent reasoning or external publication.
 
-## 8. Migration and rollback
+## Update and state boundary
 
-Inspect schema-one records without migration through normal Open/init/status.
-Preserve sealed old policy/procedure/evidence bytes and keep stable root separate from selected physical generation home.
-Pause a legacy writer after Open/read, attempt cutover, and prove enforceable exclusion before authority transfer.
-Current APIs cannot prove that lease, so absence of proof must refuse activation; do not simulate it with `ps` or an operator boolean.
-A repeated or interrupted attempt must neither lose obligations nor permit mixed writers/senders.
-Do not claim a production migration was tested while this prerequisite is unavailable.
-Test rollback against actual binary capabilities and active receipts/endpoints, not a manifest alone.
-An old schema-one runtime must not reactivate the inactive archive.
-Compatible rollback preserves domain records and uncertainty.
+An update requires the user's authorization and a valid claim.
+Block activation on running, starting or uncertain attempts and unresolved launch, delivery or maintenance effects.
+Open questions or unapplied answers alone do not block an otherwise quiescent update.
+Dirty or divergent installation instructions must refuse before selection, preserving all work.
+After an allowed update, checkout HEAD, selected helper and entry instructions must agree for the next ordinary agent start.
 
-Restore a real records-only backup with `restore ARCHIVE NEW_HOME` into a nonexistent destination on the same host and another simulated machine identity.
-Compare imported task and pinned procedure bytes/hashes, assert a fresh instance/generation and `records_only:true`, and read the saved task through the new home.
-Reject coordinator registration, binding, capacity adoption, native launch/send and every mutation; old sessions, owner and observer must remain historical evidence only.
-Reject unsupported schema/scope, unsafe paths, links, duplicate entries and a damaged gzip trailer without a created destination; preserve any partial quarantine after a later I/O failure and refuse destination overwrite.
-This restores records for inspection, never a live installation or schema-one authority.
+The one-time native cutover uses the old helper's native-event disable operation before its existing update procedure.
+The candidate advertises preserved sidecar protocol support so the old updater can select it without manifest repair.
+Then explicitly retire the native coordinator with `init --retire-native`.
+Retirement raises the root state pointer format to 3 under the existing locks, fencing old writers before publishing logical authority.
+Generation headers remain format 2, and historical task, native owner and sealed procedure bytes remain unchanged.
+`cli.TestNativeRetirementFencesPreviouslyBuiltHelper` builds the immutable native-only base helper and checks fresh, physical-generation and paused-authorization writer refusal.
+This is ledger and native-send exclusion evidence, not universal OS or Git I/O exclusion for a command already authorized before retirement.
+Rollback below the logical-owner/state-format floor must refuse, including a crash after the pointer fence but before session publication.
+No production retirement, deployment or migration is certified by development tests.
+Schema-one state remains preserved and blocked rather than converted.
 
-## 9. Optional views and graph
+## Services, capacity, cleanup and records
 
-Metadata uses owned namespaced HC labels on verified terminals and never changes role, approval or native lifecycle.
-Read-only compact/grouped views preserve global decisions, unknown coverage and explicit paging.
-An on-demand codegraph remains isolated to its task checkout and is never verification or policy evidence.
-Unrelated MCP configuration and the separate Grok Bot product remain unchanged.
+Retain exact task-local service/process ownership, ports and readiness records.
+Stop sends one interrupt only to a proven owned instance, requires actual exit and no survivors, and never escalates to kill.
+Reports and uncertain processes retain capacity until exact stopped-attempt proof permits park.
+Cleanup blocks dirty, untracked, unmerged or active work, pending obligations and unproven shared processes.
+Its maintenance barrier and final reinspection prevent races.
+Remove only proven owned worker/reviewer terminals and verified worktrees through the guarded APIs; repeat completion as a no-op.
+A coordinator conversation has no protected parent terminal.
 
-## 10. Evidence and release boundaries
+Restore a records-only backup into a nonexistent isolated destination and compare task and pinned procedure hashes.
+The restored instance is inspection-only: old owner, endpoints and sessions remain historical evidence and confer no live authority.
+Reject unsafe archive paths, links, duplicates, unsupported state and corrupt trailers without overwriting a destination.
+Preserve unrelated work, MCP configuration and the separate Grok Bot product.
 
-Attach the canonical aggregate once for the final candidate, independent policy review, isolated native canary, actual harness matrix and explicit migration refusal evidence.
-Record every unrun manual scenario and unsupported harness as a gap.
+## Evidence and release boundaries
+
+Attach the canonical aggregate once for the final candidate, independent policy review, isolated native canary when available, and the explicit authenticated matrix above.
+Record each unrun scenario as not run.
 Local checks, hosted CI, merge, deployment and production acceptance are separate facts.
-Historical `VALIDATION.md` and `test-results.txt` are dated pre-HC receipts, not current certification.
+Historical `VALIDATION.md` and `test-results.txt` are dated receipts, not current certification.

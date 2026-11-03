@@ -41,6 +41,21 @@ class SetupTest(unittest.TestCase):
             setup.configure(self.root)
         self.assertEqual(json.loads((self.root / '.sum/state.json').read_text())['schema'], 1)
 
+    def test_setup_preserves_logical_state_format_fence_and_generation_bytes(self):
+        setup.configure(self.root)
+        pointer = self.root / '.sum/state.json'
+        state = json.loads(pointer.read_text())
+        physical = self.root / '.sum/generations' / state['generation']
+        state['schema'] = 3
+        pointer.write_text(json.dumps(state) + '\n')
+        (physical / 'coordinator.json').write_text('{"schema":2,"session_id":"s-fixture","generation":1}\n')
+        before = {p.relative_to(self.root / '.sum'): p.read_bytes() for p in (self.root / '.sum').rglob('*') if p.is_file()}
+        setup.configure(self.root)
+        after = {p.relative_to(self.root / '.sum'): p.read_bytes() for p in (self.root / '.sum').rglob('*') if p.is_file()}
+        self.assertEqual(after, before)
+        self.assertEqual(json.loads(pointer.read_text())['schema'], 3)
+        self.assertEqual(json.loads((physical / 'state.json').read_text())['schema'], 2)
+
     def test_setup_in_a_development_checkout_never_designates_it(self):
         (self.root / '.sum').mkdir()
         marker = json.dumps({'schema': 1, 'kind': 'development', 'name': 'x', 'installation': '/elsewhere'})
@@ -189,14 +204,15 @@ class SetupTest(unittest.TestCase):
         with self.assertRaisesRegex(setup.runtime_install.InstallError, "disabled"):
             setup.runtime_install.install_remainder(self.root / "runtime", pin=pin, platform_name="darwin-arm64")
 
-    def test_setup_guidance_uses_qualified_launch_and_explicit_core_config(self):
+    def test_setup_guidance_uses_ordinary_agent_entry_and_qualified_worker_profiles(self):
         output = io.StringIO()
         with patch.object(setup.sys, 'argv', ['setup.py', '--configure-only']), patch.object(setup, 'configure'), redirect_stdout(output):
             setup.main()
         text = output.getvalue()
         self.assertIn('Codex 0.166.0', text)
         self.assertIn('Tab', text)
-        self.assertIn('--hc-config-home', text)
+        self.assertIn('Start your agent here and ask for work.', text)
+        self.assertNotIn('coordinator start', text)
         self.assertIn('refused', text)
         self.assertNotIn('then launch codex, claude', text)
 

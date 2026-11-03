@@ -28,3 +28,30 @@ func TestCollectCommandHelpAndBudget(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectAcceptsPersistentClaimOnEitherSideOfCommand(t *testing.T) {
+	for _, after := range []bool{false, true} {
+		runtime, s := ordinaryInitLab(t)
+		if err := s.Init(); err != nil {
+			t.Fatal(err)
+		}
+		session, err := s.ClaimCoordinator("", "flag placement", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out, stderr bytes.Buffer
+		root := NewRoot(runtime+"/bin/sumctl", &out, &stderr)
+		args := []string{"--home", s.Root, "--format", "json"}
+		if !after {
+			args = append(args, "--claim", session.Token())
+		}
+		args = append(args, "collect", "--budget", "1ms")
+		if after {
+			args = append(args, "--claim", session.Token())
+		}
+		root.SetArgs(args)
+		if err := root.Execute(); err != nil {
+			t.Fatalf("claim after=%v: %v %s", after, err, stderr.String())
+		}
+	}
+}

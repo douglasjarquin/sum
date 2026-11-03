@@ -63,36 +63,21 @@ func questionTask(id, taskMachine, parentMachine, cwd string) string {
  "attention": [], "evidence": [], "report": null, "notice": null, "brief": "worker task"}`, id, taskMachine, parentMachine, cwd, id[2:6])
 }
 
-// bindReturnsInline rebinds a task to this coordinator and requires its open
-// question to have reached this pane inline, in this delivery pass or an
-// earlier one, and never a second time.
+// bindReturnsInline binds stable logical ownership; results remain pull obligations.
 func bindReturnsInline(t *testing.T, home, taskID string) {
 	t.Helper()
 	attachNativeTaskCheckout(t, home, taskID)
 	out, err := runCLI(t, home, "bind", taskID, "--parent-only")
 	if err != nil {
-		t.Fatalf("bind %s: %v\n%s", taskID, err, out)
+		t.Fatalf("bind %s: %v %s", taskID, err, out)
 	}
-	returns, _ := decodeObject(t, out)["returns"].(map[string]any)
-	recipients, _ := returns["recipients"].([]any)
-	for _, raw := range recipients {
-		row, _ := raw.(map[string]any)
-		obligations, _ := row["obligations"].([]any)
-		for _, rawObligation := range obligations {
-			obligation, _ := rawObligation.(map[string]any)
-			if obligation["task"] != taskID {
-				continue
-			}
-			notification, _ := obligation["notification"].(map[string]any)
-			sentNow := row["state"] == "submitted" && row["via"] == "inline" && notification["attempts"] == float64(0)
-			sentBefore := notification["state"] == "submitted" && notification["via"] == "inline" && notification["attempts"] == float64(1)
-			if !sentNow && !sentBefore {
-				t.Fatalf("bind %s return = %v, want one inline submission to this pane", taskID, row)
-			}
-			return
-		}
+	if row := asMap(decodeObject(t, out)["returns"]); row["prompts"] != float64(0) {
+		t.Fatalf("bind prompted a nonexistent parent: %v", row)
 	}
-	t.Fatalf("bind %s routed no return to the coordinator: %v", taskID, returns)
+	task := readJSON(t, filepath.Join(home, "tasks", taskID, "task.json"))
+	if asMap(task["owner"])["kind"] != "coordinator-session" {
+		t.Fatalf("bind omitted logical owner: %v", task)
+	}
 }
 
 func readJSON(t *testing.T, path string) map[string]any {
@@ -123,7 +108,7 @@ func TestMachineIdentity_aRenamedHostKeepsTheCoordinatorAndItsRoutes(t *testing.
 	mustRole(t, home, "coordinator")
 	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", questionTask("t-aaaaaaaaaaaa", id, id, home))
 	bindReturnsInline(t, home, "t-aaaaaaaaaaaa")
-	if owner := readJSON(t, filepath.Join(home, "context.json")); owner["machine"] != id {
+	if owner := readJSON(t, filepath.Join(home, "coordinator.json")); owner["machine"] != id {
 		t.Fatalf("coordinator machine = %v, want the stable identity %s", owner["machine"], id)
 	}
 }
@@ -141,8 +126,8 @@ func TestMachineIdentity_anotherMachinesCoordinatorIsStillRefused(t *testing.T) 
 	if role, err := initRole(t, home); err == nil && role != "developer" {
 		t.Fatalf("another machine inherited role %q", role)
 	}
-	if _, err := initRole(t, home, "--role", "coordinator", "--reclaim"); err == nil {
-		t.Fatalf("reclaim of another machine's coordinator = %v, want the other-machine refusal", err)
+	if _, err := initRole(t, home, "--transfer"); err == nil {
+		t.Fatalf("transfer of another machine's coordinator = %v, want the other-machine refusal", err)
 	}
 	onHost(t, thisHostRaw, "dev")
 	out, err := runCLI(t, home, "bind", "t-aaaaaaaaaaaa", "--parent-only")
@@ -179,8 +164,8 @@ func TestMachineIdentity_hostnameKeyedRecordsRequireExplicitMigration(t *testing
 	onHost(t, thisHostRaw, "dev")
 	home := legacyHome(t, "dev")
 	before := snapshotHome(t, home)
-	for _, args := range [][]string{{"init"}, {"init", "--role", "coordinator"}, {"init", "--role", "coordinator", "--reclaim"}} {
-		if out, err := runCLI(t, home, args...); err == nil || !strings.Contains(err.Error(), "unsupported state schema") {
+	for _, args := range [][]string{{"init"}, {"init", "--role", "coordinator"}, {"init", "--transfer"}} {
+		if out, err := runCLI(t, home, args...); err == nil || (!strings.Contains(err.Error(), "unsupported state schema") && !strings.Contains(out, "legacy-state")) {
 			t.Fatalf("legacy authority adoption %v: %v %s", args, err, out)
 		}
 	}
@@ -237,8 +222,8 @@ func TestMachineIdentity_aClonedVMWithANewMachineIDDoesNotInheritTheOriginal(t *
 	if role, err := initRole(t, cloneRoot); err == nil && role != "developer" {
 		t.Fatalf("clone inherited role %q", role)
 	}
-	if _, err := initRole(t, cloneRoot, "--role", "coordinator", "--reclaim"); err == nil {
-		t.Fatal("clone reclaimed original coordinator")
+	if _, err := initRole(t, cloneRoot, "--transfer"); err == nil {
+		t.Fatal("clone transferred original coordinator")
 	}
 	task, err := cloned.ReadTask("t-aaaaaaaaaaaa")
 	if err != nil {
@@ -373,7 +358,7 @@ func TestMachineIdentity_aNativeWorkerStillCannotAnswerItsOwnQuestionAfterRename
 	}
 }
 
-func TestMachineIdentity_aNativeUncertainDeliveryIsNotReplayedAfterRename(t *testing.T) {
+func TestMachineIdentity_parentResultsAreNotPromptedAfterRename(t *testing.T) {
 	id := onHost(t, thisHostRaw, "dev")
 	home := writeDesignatedHome(t)
 	nativeEnv(t, home)
@@ -386,11 +371,11 @@ func TestMachineIdentity_aNativeUncertainDeliveryIsNotReplayedAfterRename(t *tes
 		t.Fatal(err)
 	}
 	before := len(lab.native.Inputs("t1"))
-	if before != 1 {
-		t.Fatalf("lost-response send effects=%d", before)
+	if before != 0 {
+		t.Fatalf("parent result native send effects=%d", before)
 	}
 	onHost(t, thisHostRaw, "renamed")
-	useNativeCoordinator(t, home)
+	useLogicalCoordinator(t, home)
 	mustRole(t, home, "coordinator")
 	if got := len(lab.native.Inputs("t1")); got != before {
 		t.Fatalf("uncertain native send replayed after rename: %d->%d", before, got)

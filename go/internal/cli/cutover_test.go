@@ -26,10 +26,21 @@ func repoRoot(t *testing.T) string {
 func runCLI(t *testing.T, home string, args ...string) (string, error) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &stdout, &stderr)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	reference := filepath.Join(repoRoot(t), "bin", "sumctl")
+	if value, ok := nativeLabs.Load(home); ok && len(args) > 0 && args[0] == "init" && os.Getenv("SUM_TASK") == "" {
+		reference = value.(*demoLab).entryHelper
+	}
+	root := NewRoot(reference, &stdout, &stderr)
+	prefix := []string{"--home", home}
+	if value, ok := nativeLabs.Load(home); ok && os.Getenv("SUM_TASK") == "" {
+		prefix = append(prefix, "--claim", value.(*demoLab).claim)
+	}
+	root.SetArgs(append(prefix, args...))
 	err := root.ExecuteContext(context.Background())
 	if err != nil {
+		if stdout.Len() > 0 {
+			return stdout.String(), err
+		}
 		return stderr.String(), err
 	}
 	return stdout.String(), nil

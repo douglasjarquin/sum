@@ -13,16 +13,13 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
-	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 )
 
 func originalProcessFault(t *testing.T, binary, cwd string) hctest.Fault {
 	t.Helper()
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Fatal(err)
-	}
+	python := pinnedFixturePython(t)
+	var err error
 	body := "#!" + python + "\nimport sys,time\nif '--version' in sys.argv:\n print('codex-cli 0.166.0')\nelse:\n while True: time.sleep(1)\n"
 	if err = os.WriteFile(binary, []byte(body), 0700); err != nil {
 		t.Fatal(err)
@@ -159,107 +156,6 @@ func TestReconcileLostCreationAndDelayedReplyDoesNotDuplicateOpening(t *testing.
 		})
 	}
 }
-
-func TestCoordinatorReconcileDelayedCreationReplyPreservesOpening(t *testing.T) {
-	clearFallbackIdentity(t)
-	root, st, f, _ := developerFallbackLab(t)
-	if err := os.Rename(filepath.Join(st.Home, "context.json"), filepath.Join(t.TempDir(), "owner.json")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "COORDINATOR.md"), []byte("Coordinator procedure.\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(root, "codex")
-	fault := originalProcessFault(t, binary, root)
-	t.Setenv("SUM_CODEX_BIN", binary)
-	t.Setenv("CODEX_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	config := t.TempDir()
-	spec, err := launch.PrepareHCTemplate(root, config, "codex", nil, launch.HCTemplateOptions{Cwd: root})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.SetTemplates([]hcclient.TemplateInfo{{Name: spec.Name, Command: spec.Command()}})
-	f.SetTemplateSubmit(spec.Name, spec.Submit)
-	configureNativeEventsForTest(t, st.Home, false)
-	run := func(args ...string) (map[string]any, error) {
-		var out, stderr bytes.Buffer
-		command := NewRoot(filepath.Join(root, "bin/sumctl"), &out, &stderr)
-		command.SetArgs(append([]string{"--home", st.Root, "--format", "json"}, args...))
-		if e := command.Execute(); e != nil {
-			return nil, e
-		}
-		var view map[string]any
-		e := json.Unmarshal(out.Bytes(), &view)
-		return view, e
-	}
-	f.QueueFault("terminal.run", fault)
-	entered, release := f.HoldReplyNext("terminal.run", "")
-	defer release()
-	done := make(chan error, 1)
-	go func() {
-		_, e := run("coordinator", "start", "--socket", f.Socket, "--session", "sum-test-reconcile", "--hc-config-home", config)
-		done <- e
-	}()
-	select {
-	case <-entered:
-	case e := <-done:
-		t.Fatalf("start ended before creation: %v", e)
-	case <-time.After(10 * time.Second):
-		t.Fatal("creation never reached reply barrier")
-	}
-	raw, err := os.ReadFile(filepath.Join(st.Home, "coordinator-launch.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var pending map[string]any
-	if err = json.Unmarshal(raw, &pending); err != nil {
-		t.Fatal(err)
-	}
-	attempt := asString(asMap(pending["endpoint"])["attempt"])
-	if _, err = run("inspect", "--attempt", attempt); err != nil {
-		t.Fatal(err)
-	}
-	recovered, err := run("coordinator", "reconcile", "--attempt", attempt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := asMap(recovered["endpoint"])
-	address := asString(endpoint["address"])
-	if _, err = run("coordinator", "redeliver", "--attempt", attempt); err != nil {
-		t.Fatal(err)
-	}
-	release()
-	select {
-	case err = <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("late reply hung")
-	}
-	if len(f.Inputs(address)) != 1 {
-		t.Fatal("late creation duplicated coordinator opening")
-	}
-	for key, value := range endpointEnv(endpoint) {
-		t.Setenv(key, value)
-	}
-	t.Setenv("SUM_SESSION", asString(endpoint["session"]))
-	if _, err = run("init"); err != nil {
-		t.Fatal(err)
-	}
-	owner, err := st.Owner()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if owner == nil {
-		t.Fatal("coordinator init defaulted to developer")
-	}
-	if value, _ := owner.Get("native_receipt"); value == nil {
-		t.Fatal("coordinator init missing")
-	}
-}
-
 func TestCreatedOpeningSurvivesStartupCommandInterruption(t *testing.T) {
 	for _, role := range []string{"worker", "reviewer"} {
 		t.Run(role, func(t *testing.T) {
@@ -280,7 +176,7 @@ func TestCreatedOpeningSurvivesStartupCommandInterruption(t *testing.T) {
 			}
 			entered, release := d.native.HoldNext("terminal.get", address)
 			defer release()
-			command := exec.Command(d.helper, append([]string{"--format", "json", "--home", d.home}, args...)...)
+			command := exec.Command(d.helper, append([]string{"--format", "json", "--home", d.home, "--claim", d.claim}, args...)...)
 			command.Env = d.env
 			var output bytes.Buffer
 			command.Stdout = &output

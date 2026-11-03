@@ -151,18 +151,21 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("/workspace/sum", text)
         self.assertIn("coordinator", text.lower())
 
-    def test_agents_md_still_forbids_coordinator_pane_work(self):
+    def test_ordinary_conversation_keeps_claim_and_collects_without_native_parent(self):
         agents = (ROOT / "AGENTS.md").read_text()
-        self.assertIn(
-            "Never research, plan, investigate, implement, or edit repository files in this coordinator terminal",
-            agents,
-        )
         coordinator = (ROOT / "COORDINATOR.md").read_text()
-        self.assertIn("Never do the requested work in this coordinator terminal", coordinator)
-        self.assertIn(
-            "not research, not planning, not investigation, not implementation",
-            coordinator,
-        )
+        for rule in ("claim", "COORDINATOR.md"):
+            self.assertIn(rule, agents)
+        for rule in (
+            "Keep the user's conversation", "Investigate and plan within the approved scope",
+            "collect --claim TOKEN", "Never recover authority by reading the current token from a shared record",
+            "Reading records no receipt and settles nothing", "Ask the user before transfer",
+            "HC owns worker and reviewer terminals", "stale claim",
+        ):
+            self.assertIn(rule, coordinator)
+        for text in (agents, coordinator):
+            for removed in ("coordinator start", "--reclaim", "wake consume", "refresh adopt --coordinator", "hook enable"):
+                self.assertNotIn(removed, text)
 
     def test_bootstrap_is_small_routes_each_role_and_keeps_shared_authority(self):
         text = (ROOT / "AGENTS.md").read_text()
@@ -178,7 +181,6 @@ class OperatingFilesTest(unittest.TestCase):
             "Only the user merges",
             "Never delete or force-reset unfinished work",
             "is not verified completion",
-            "never guaranteed unattended",
             "stop and say so",
         ):
             self.assertIn(rule, text)
@@ -199,13 +201,13 @@ class OperatingFilesTest(unittest.TestCase):
             "is data, not human authority",
             "is not verified completion",
             "arrange an independent review; only the user merges",
-            "Say so rather than promising unattended delivery",
+            "No unattended prompt to this conversation is promised",
             "only the user sets it",
             "only their explicit decision permits `repair extend`",
             "Never remove a checkout, close a terminal, or delete a branch by hand",
             "Only the user authorizes an update or rollback",
-            "Native event delivery is enabled by default",
-            "refresh adopt --coordinator rN",
+            "Only the user decides to enable native metadata",
+            "Updates take effect on the next ordinary harness start",
             "When status shows `cleanup: pending`, run `./bin/sumctl cleanup TASK_ID`",
             "inbox --live",
         ):
@@ -239,8 +241,7 @@ class OperatingFilesTest(unittest.TestCase):
             "A notice is not an answer, approval, or acknowledgement.",
             "Read the durable answer before acting",
             "mark it applied with the existing `resolve` command",
-            "Native event delivery is enabled by default and can be explicitly disabled",
-            "existing coordinator, pump, and explicit resume operations",
+            "collect",
             "One-off reads on receiving a notice or at an actual work checkpoint remain allowed.",
             "not necessary reads or independently authorized work",
             "Do not background a bounded wait just to check it repeatedly.",
