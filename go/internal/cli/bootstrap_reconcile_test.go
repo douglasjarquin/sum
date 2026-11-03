@@ -199,6 +199,14 @@ func TestBootstrapWorkerReconciliationRecovery(t *testing.T) {
 				if _, err := updatecmd.Bootstrap(s, sha, true, true, op.(string)); err == nil || !strings.Contains(err.Error(), "plan changed") {
 					t.Fatalf("accepted stale release generations: %v", err)
 				}
+				persisted, err := s.ReadTask("t-38545efe903c")
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, err = reservations.Worker(persisted)
+				if err != nil {
+					t.Fatal(err)
+				}
 				if state, _ := a.Get("state"); state != "running" {
 					t.Fatal("stale recovery released a worker")
 				}
