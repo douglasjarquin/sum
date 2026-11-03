@@ -13,6 +13,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
@@ -128,6 +129,9 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 				if _, err := procedure.Describe(o.runtimeRoot, procedure.Coordinator, "no coordinator role was granted and nothing was retired"); err != nil {
 					return err
 				}
+				if _, _, err := settings.NativeRetirementPreferences(st, owner); err != nil {
+					return blocker("retire-native", err.Error(), "Inspect the native template and settings preferences before retrying retirement.")
+				}
 				session, err = st.RetireNativeCoordinator(token, "agent conversation", transfer)
 				if err != nil {
 					return blocker("retire-native", err.Error(), "Inspect the recorded native coordinator and retry retirement only after its blockers are settled.")
@@ -200,21 +204,17 @@ func retireNativePreferences(s *store.Store, token string) error {
 	if _, err = s.CheckClaim(token); err != nil {
 		return err
 	}
-	path := filepath.Join(s.Home, "settings.json")
-	raw, err := ordjson.ReadFile(path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	session, err := s.CoordinatorSession()
+	if err != nil {
 		return err
 	}
-	if err == nil {
-		settings, ok := raw.(*ordjson.Object)
-		if !ok {
-			return fmt.Errorf("settings.json is not an object")
-		}
-		if _, present := settings.Get("hook"); present {
-			settings.Delete("hook")
-			if err = ordjson.WriteFile(path, settings); err != nil {
-				return err
-			}
+	preferences, changed, err := settings.NativeRetirementPreferences(s, session.RetiredNative)
+	if err != nil {
+		return err
+	}
+	if changed {
+		if err = ordjson.WriteFile(filepath.Join(s.Home, settings.File), preferences); err != nil {
+			return err
 		}
 	}
 	health := filepath.Join(s.Home, "hook", "health.json")

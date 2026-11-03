@@ -230,6 +230,60 @@ func TestCollectWaitsWithinBudgetAndNeverEnsuresHC(t *testing.T) {
 	}
 }
 
+func TestCollectSharesBudgetAndRereadsOtherTaskAfterStalledRPC(t *testing.T) {
+	for _, method := range []string{"terminal.get", "terminal.wait"} {
+		t.Run(method, func(t *testing.T) {
+			l, other := newLab(t), newLab(t)
+			other.endpoint.Task = "t-bbbbbbbbbbbb"
+			other.task.Set("id", other.endpoint.Task)
+			other.task.Set("owner", get(l.task, "owner"))
+			other.task.Set("worker_endpoint", other.endpoint.Object())
+			if err := l.s.SaveTask(other.task); err != nil {
+				t.Fatal(err)
+			}
+			entered, release := l.f.HoldReplyNext(method, l.endpoint.Address)
+			defer release()
+			type outcome struct {
+				view *ordjson.Object
+				err  error
+			}
+			done := make(chan outcome, 1)
+			started := time.Now()
+			go func() {
+				view, err := Run(context.Background(), l.s, Options{Claim: l.token, Budget: 250 * time.Millisecond, SumctlPath: "/sumctl"})
+				done <- outcome{view, err}
+			}()
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("collection did not enter stalled RPC")
+			}
+			writer, err := store.Open(l.s.Root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unlock, err := writer.Lock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			other.task.Set("questions", []any{question("q-late", "open")})
+			err = writer.SaveTask(other.task)
+			unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case got := <-done:
+				if got.err != nil || !hasKind(got.view, "question") || time.Since(started) > time.Second {
+					t.Fatalf("late obligation lost or budget exceeded: %v %v elapsed=%s", got.view, got.err, time.Since(started))
+				}
+			case <-time.After(time.Second):
+				t.Fatal("collection used more than one shared budget")
+			}
+		})
+	}
+}
+
 func TestCollectMissingTerminalIsWorkerFailure(t *testing.T) {
 	l := newLab(t)
 	l.f.QueueFault("terminal.get", hctest.Fault{RefuseKind: "not_found"})

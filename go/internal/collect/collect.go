@@ -145,7 +145,7 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 			return result(items, delivered, false, opts), nil
 		}
 		if ctx.Err() != nil {
-			return result(items, delivered, true, opts), nil
+			continue
 		}
 		if len(live) == 0 {
 			return result(items, delivered, false, opts), nil

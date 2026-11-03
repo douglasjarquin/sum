@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -18,13 +19,27 @@ func TestCollectCommandHelpAndBudget(t *testing.T) {
 	if !strings.Contains(out.String(), "collect --claim TOKEN") || !strings.Contains(out.String(), "20s") {
 		t.Fatalf("collect help: %s", out.String())
 	}
-	for _, budget := range []string{"0s", "-1s", "61s"} {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := s.ClaimCoordinator("", "budget validation", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, budget := range []string{"0s", "-1s", "61s", "1ms"} {
 		root := &cobra.Command{Use: "sumctl", SilenceUsage: true, SilenceErrors: true}
-		options := rootOptions{home: t.TempDir()}
+		root.SetOut(&out)
+		options := rootOptions{home: s.Root, claim: session.Token()}
 		options.addCollectCommand(root)
 		root.SetArgs([]string{"collect", "--budget", budget})
-		if err := root.Execute(); err == nil {
-			t.Fatalf("invalid budget %s accepted", budget)
+		err := root.Execute()
+		if budget == "1ms" {
+			if err != nil {
+				t.Fatalf("valid budget refused: %v", err)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "--budget") {
+			t.Fatalf("budget %s: expected budget usage error, got %v", budget, err)
 		}
 	}
 }
