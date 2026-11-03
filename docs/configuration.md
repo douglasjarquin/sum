@@ -192,15 +192,24 @@ Totals are counts, not a bill: no dollar estimate, quota, enforcement, daemon, a
 ./bin/sumctl settings set --clear-usage                # back to the default, which is off
 ```
 
-## Workspace route and qualified worker input
+## Default HC route, Herdr visibility and qualified worker input
 
 Ordinary `init` claims coordination without querying or starting HC.
-Worker and reviewer launch lazily ensure the saved `.sum/runtime-route.json` route and persist its observed permanent core ID.
-A changed core at the same socket is refused.
+A genuinely new worker or reviewer terminal is created on HC's default route: the `default` session, the user's XDG configuration and state homes, and the socket named by `herdr-core/config.toml` before HC's platform default socket path.
+Inherited `HC_SOCKET`, `HC_SESSION` and `SUM_SESSION` values never select that route, and a route an earlier release saved for a private workspace core selects nothing.
+`.sum/runtime-route.json` only pins the permanent core ID a launch observed on that same default route.
+A changed core at the pinned socket, a core running another herdr-core version than the pinned 0.1.14, and a core without a current holder are refused with the reason; sum never restarts, replaces or upgrades the user's core and starts one only when nothing listens on the default socket.
+Existing attempts keep the socket, core, session and template configuration their own records name, so work created earlier on a private core stays observable, recoverable and cleanable from those records.
 Template options live in `.sum/settings.json`, independently of the coordinating conversation.
 Inherited `SUM_*`, `HC_*` and `HERDR_*` values do not redirect ordinary entry or grant authority.
-Use explicit `--home` for isolated lab state.
+Use explicit `--home` for isolated lab state and point its XDG configuration home at a lab core; never a test at the person's default core.
 Read-only observation and collection never start a core.
+
+New terminals are shown in Herdr in one Sum space per installation, with one tab per task that the task's worker and reviewer share.
+Creation carries only Sum's ownership labels; the Herdr space and tab labels are saved as the attempt's visibility intent and published only after the original program has been corroborated and persisted, before the opening is sent.
+Herdr adopts the labeled terminal and enables its keep, which never changes Sum's original-program, exact-attempt or receipt checks: a shell Herdr later places at a lost program's address cannot receive the opening, be adopted again or acquire the attempt's authority.
+A lost label reply leaves the attempt's launch record with an uncertain visibility state; `execution reconcile` or `reviewer reconcile` reads that exact terminal, records the labels it carries and republishes the saved intent only for the proven original.
+Attempts recorded before this release carry no visibility intent and are never labeled by recovery.
 
 The HC config home is the XDG root, usually `~/.config`, rather than `~/.config/herdr-core`.
 Sum writes a namespaced template without changing the user's harness configuration.
