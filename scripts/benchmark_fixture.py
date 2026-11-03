@@ -86,12 +86,12 @@ def write_json(path, value):
         stream.write(json.dumps(value, indent=2) + "\n")
 
 
-def ordinary_runtime(base):
-    root = base / "ordinary-runtime"
+def ordinary_runtime(root):
     for name in ("COORDINATOR.md", "skills/sum-develop/SKILL.md"):
         destination = root / name
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / name, destination)
+    shutil.copytree(ROOT / "skills/sum-work", root / "skills/sum-work")
     helper = root / "bin/sumctl"
     helper.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(SUMCTL, helper)
@@ -100,7 +100,7 @@ def ordinary_runtime(base):
 
 
 def command(case, *args, role="coordinator"):
-    prefix = [SUMCTL, "--format", "json", "--home", case["root"]]
+    prefix = [case["entry"], "--format", "json", "--home", case["root"]]
     if role == "coordinator":
         prefix.extend(("--claim", case["claim"]))
     return [*prefix, *args]
@@ -134,7 +134,7 @@ def actor_env(case, role="coordinator"):
     if role == "coordinator":
         return dict(case["env"])
     endpoint = case["actors"][role]
-    return dict(case["env"], SUM_SESSION=endpoint["session"], SUM_CORE_ID=endpoint["core_id"],
+    return dict(case["env"], SUM_HOME=str(case["home"]), SUM_SESSION=endpoint["session"], SUM_CORE_ID=endpoint["core_id"],
                 HC_SOCKET=endpoint["socket"], HC_TERMINAL_ID=endpoint["address"], SUM_ROLE=role,
                 SUM_TASK=endpoint["task"], SUM_ATTEMPT=endpoint["attempt"], SUM_BINDING_GENERATION=str(endpoint["binding_generation"]))
 
@@ -212,7 +212,7 @@ def clone_case(base, source, name):
     state = json.loads((home / "state.json").read_text())
     state["root"] = str(root)
     write_json(home / "state.json", state)
-    return dict(source, root=root, home=home)
+    return dict(source, root=root, home=home, entry=ordinary_runtime(root.parent))
 
 
 def add_tasks(home, source_id, count, status):
