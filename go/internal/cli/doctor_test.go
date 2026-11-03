@@ -161,7 +161,7 @@ func TestDoctorNativeChecksAreReadOnly(t *testing.T) {
 	if openErr != nil {
 		t.Fatal(openErr)
 	}
-	session, claimErr := st.RetireNativeCoordinator("", "doctor", false)
+	session, claimErr := st.CoordinatorSession()
 	if claimErr != nil {
 		t.Fatal(claimErr)
 	}

@@ -43,11 +43,12 @@ func presentationHome(t *testing.T) string {
 		t.Fatal(err)
 	}
 	task := value.(*ordjson.Object)
-	owner, err := state.Owner()
+	session, err := state.CoordinatorSession()
 	if err != nil {
 		t.Fatal(err)
 	}
-	task.Set("parent", owner)
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
 	seedNativeWorker(t, d, state, task)
 	return home
 }

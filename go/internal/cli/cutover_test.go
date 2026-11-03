@@ -31,11 +31,7 @@ func runCLI(t *testing.T, home string, args ...string) (string, error) {
 		reference = value.(*demoLab).entryHelper
 	}
 	root := NewRoot(reference, &stdout, &stderr)
-	prefix := []string{"--home", home}
-	if value, ok := nativeLabs.Load(home); ok && os.Getenv("SUM_TASK") == "" {
-		prefix = append(prefix, "--claim", value.(*demoLab).claim)
-	}
-	root.SetArgs(append(prefix, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err := root.ExecuteContext(context.Background())
 	if err != nil {
 		if stdout.Len() > 0 {
@@ -449,7 +445,7 @@ func TestRepairExtend_requiresCoordinator(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected coordinator requirement")
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "HC session") {
+	if !strings.Contains(err.Error(), "claim_required") {
 		t.Fatalf("err = %v", err)
 	}
 }

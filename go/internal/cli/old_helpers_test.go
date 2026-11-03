@@ -31,7 +31,7 @@ func TestOlderHelpersOnCandidateRecords(t *testing.T) {
 			before := snapshotTree(t, home)
 			d := &demoLab{t: t, root: root, helper: helper, base: base, home: home, env: demoEnv(t, root, base)}
 			result := d.ctl(false, args...)
-			if !strings.Contains(asString(result["error"]), "unsupported state schema") {
+			if !strings.Contains(asString(result["error"]), "unsupported state schema") && !(args[0] == "init" && result["blocker"] == "legacy-state") {
 				t.Fatalf("historical writer was not explicitly refused: %v", result)
 			}
 			assertTreeUnchanged(t, before, snapshotTree(t, home))
