@@ -12,7 +12,7 @@ import (
 
 func TestMetadataFinalWriteRefusesTransferredClaim(t *testing.T) {
 	l := newMetadataLab(t)
-	session, err := l.s.RetireNativeCoordinator("", "metadata conversation", false)
+	session, err := l.s.CoordinatorSession()
 	if err != nil {
 		t.Fatal(err)
 	}

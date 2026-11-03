@@ -34,6 +34,11 @@ func (o *rootOptions) projectAfter(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
+	if o.claim != "" {
+		if err := st.CaptureClaim(o.claim); err != nil {
+			return
+		}
+	}
 	if scope == "finding" {
 		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 			return
