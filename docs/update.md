@@ -70,6 +70,24 @@ A finished coordinator alone is insufficient: program exit, recorded PID death a
 A live observer may remain, but retirement drains admitted delivery and fences its subsequent ledger writes and native sends.
 An unresolved observer launch blocks retirement.
 
+A stopped worker may still have a receipt-confirmed `running` reservation after its native coordinator exits.
+Bootstrap inspection previews the exact task, attempt and generation that can be released using fresh native exit, original process, checkout survivor and owned-service evidence.
+Inspection changes no task records.
+Under `--approve`, the journal binds those releases and the final delivery/state locks protect fresh validation and recording before the writer fence.
+No old coordinator receipt or separate `execution park` command is required for those proven-stopped workers.
+The ordinary `execution park` authorization remains unchanged.
+
+Only settled, receipt-confirmed worker launches in running, waiting or reported tasks qualify.
+Live or unobservable programs, surviving checkout processes, unresolved creation or delivery effects, preparation, active maintenance and service reservations remain blockers.
+Archived tasks are never reopened.
+A released reservation means stopped capacity, not accepted work: reports, questions, briefs, checkouts and native history remain available, with task status waiting or reported as appropriate.
+A partial release is recorded with its bootstrap operation; exact-operation recovery rechecks stop evidence and generations without releasing an attempt twice.
+If a survivor appears after an interruption, recovery refuses until it is settled.
+
+Bootstrap stops no process or terminal.
+An isolated reproduction core or other unrecorded checkout process must be settled through an explicitly authorized action against that exact resource before approval.
+The live Herdr core is not a substitute target.
+
 The private `.local/bootstrap.json` journal records installation, state generation, prior runtime, historical owner, target manifest hash and planned logical session before raising the writer fence.
 Interruption requires the exact operation and target printed in the refusal, using the same driver with `--approve --operation OPERATION --ref MERGED_SHA`.
 Recovery moves forward through the compatible target; it never reselects the obsolete writer after the format fence.

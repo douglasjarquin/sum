@@ -72,6 +72,43 @@ func TestBootstrapReconcilesStoppedWorkersWithoutNativeCoordinator(t *testing.T)
 	if string(before) != string(after) {
 		t.Fatal("inspect persisted its proposed reconciliation")
 	}
+	for _, mode := range []string{"unsettled launch", "archived task", "preparing task", "live worker"} {
+		current, err := s.ReadTask("t-38545efe903c")
+		if err != nil {
+			t.Fatal(err)
+		}
+		attempt, _ := reservations.Worker(current)
+		if mode == "unsettled launch" {
+			raw, _ := attempt.Get("native_launch")
+			raw.(*ordjson.Object).Set("effect", "uncertain")
+		}
+		if mode == "archived task" {
+			current.Set("status", "archived")
+		}
+		if mode == "preparing task" {
+			current.Set("status", "preparing")
+			current.Set("prepare_operation_id", "unresolved-preparation")
+		}
+		if mode == "live worker" {
+			f.SetTerminal(hcclient.Terminal{Address: "t5", CreatedMS: 1, Cwd: worktree.(string), State: "live", Status: &hcclient.Status{State: "done"}})
+		}
+		if err := s.SaveTask(current); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := updatecmd.Bootstrap(s, sha, true, true, ""); err == nil {
+			t.Fatalf("bootstrap released %s", mode)
+		}
+		unchanged, _ := s.ReadTask("t-38545efe903c")
+		actual, _ := reservations.Worker(unchanged)
+		if state, _ := actual.Get("state"); state != "running" {
+			t.Fatalf("refusal changed %s reservation", mode)
+		}
+		if err := s.SaveTask(first); err != nil {
+			t.Fatal(err)
+		}
+		finished, exit := uint64(2), int32(0)
+		f.SetTerminal(hcclient.Terminal{Address: "t5", CreatedMS: 1, Cwd: worktree.(string), State: "finished", FinishedMS: &finished, ExitCode: &exit})
+	}
 	worker, _ := reservations.Worker(first)
 	id, _ := worker.Get("id")
 	cmd := exec.Command(filepath.Join(root, "bin/sumctl"), "execution", "park", "t-38545efe903c", "--attempt", id.(string))
@@ -173,6 +210,28 @@ func TestBootstrapWorkerReconciliationRecovery(t *testing.T) {
 			if state, _ := b.Get("state"); state != "running" {
 				t.Fatal("second release did not remain pending")
 			}
+			checkout, _ := first.Get("worktree")
+			survivor := exec.Command("sleep", "60")
+			survivor.Dir = checkout.(string)
+			if err := survivor.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if survivor.ProcessState == nil {
+					_ = survivor.Process.Kill()
+					_ = survivor.Wait()
+				}
+			})
+			if _, err := updatecmd.Bootstrap(s, sha, true, true, op.(string)); err == nil || !strings.Contains(err.Error(), "process") {
+				t.Fatalf("recovery trusted a cached release over a survivor: %v", err)
+			}
+			pending, _ := s.ReadTask("t-bfc3d2e38890")
+			pendingWorker, _ := reservations.Worker(pending)
+			if state, _ := pendingWorker.Get("state"); state != "running" {
+				t.Fatal("blocked recovery committed the remaining release")
+			}
+			_ = survivor.Process.Kill()
+			_ = survivor.Wait()
 			bootstrapDriver(t, root, sha, env, op.(string))
 			for _, task := range tasks {
 				id, _ := task.Get("id")

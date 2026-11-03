@@ -9,6 +9,8 @@ Use the installation's trusted helper and this conversation's captured `--claim 
 A developer or task checkout cannot publish into the installation.
 For an old native installation without a live coordinator receipt, use the explicitly authorized bootstrap driver in `docs/update.md` from the same ordinary conversation.
 Bootstrap returns its new logical claim here; do not relaunch the agent or require a native coordinator launch.
+Its inspect previews exact receipt-confirmed stopped worker releases; `--approve` journals and rechecks them without requiring the dead native coordinator to run `execution park`.
+Surviving processes and unresolved effects still block; bootstrap stops nothing and never accepts or discards task work.
 Read `docs/update.md` from the repository root for the complete activation and one-time native-retirement procedure.
 
 ```sh

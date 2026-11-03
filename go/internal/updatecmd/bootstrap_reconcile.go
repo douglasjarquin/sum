@@ -23,6 +23,10 @@ func planBootstrapReleases(s *store.Store, root, operation string, tasks []*ordj
 	plan := &bootstrapPlan{tasks: tasks, releases: []any{}}
 	var blocked []any
 	for _, task := range tasks {
+		status := effectField(task, "status")
+		if status != "running" && status != "waiting" && status != "reported" {
+			continue
+		}
 		reservation, err := reservations.GetExecution(task)
 		if err != nil {
 			blocked = append(blocked, fmt.Sprintf("task %s execution cannot be validated: %v", effectField(task, "id"), err))
