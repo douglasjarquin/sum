@@ -91,6 +91,9 @@ func (o *rootOptions) addInspectCommand(root *cobra.Command) {
 				args = append(args, ep.Task)
 			}
 			args = append(args, "--attempt", ep.Attempt)
+			if o.claim != "" {
+				args = append(args, "--claim", o.claim)
+			}
 			value := make([]any, len(args))
 			for i, arg := range args {
 				value[i] = arg

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +31,31 @@ func TestCollectHelpDescribesBoundedRead(t *testing.T) {
 	}
 	if get(view, "budget") == nil {
 		t.Fatal("collect help omits budget")
+	}
+}
+
+func TestCollectReportAndReviewNextActionUsesReferencedCandidate(t *testing.T) {
+	for _, kind := range []string{"report", "review"} {
+		for _, candidate := range []string{strings.Repeat("a", 40), "", "unknown"} {
+			t.Run(kind+"/"+candidate, func(t *testing.T) {
+				l := newLab(t)
+				record := ordjson.NewObject()
+				record.Set("id", "e-first")
+				record.Set("kind", kind)
+				record.Set("candidate", candidate)
+				record.Set("at", store.Now())
+				l.task.Set("evidence", []any{record})
+				l.save(t)
+				out := l.run(t, time.Second)
+				want := []any{"/sumctl", "--home", l.s.Home, "context", l.endpoint.Task, "--section", "evidence"}
+				if candidate == strings.Repeat("a", 40) {
+					want = []any{"/sumctl", "--home", l.s.Home, "verify", l.endpoint.Task, "--candidate", candidate, "--execute", "--claim", l.token}
+				}
+				if !hasKind(out, kind) || !reflect.DeepEqual(get(out, "next"), want) {
+					t.Fatalf("next=%v want=%v items=%v", get(out, "next"), want, items(out))
+				}
+			})
+		}
 	}
 }
 

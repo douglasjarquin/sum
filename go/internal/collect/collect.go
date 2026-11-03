@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
@@ -226,7 +227,20 @@ func ledgerItems(s *store.Store, tasks []*ordjson.Object, opts Options) ([]any, 
 			case "question":
 				next = command(opts, "answer", id, text(obligation, "ref"), "--claim", opts.Claim)
 			case "report", "review":
-				next = command(opts, "verify", id, "--claim", opts.Claim)
+				candidate := text(obligation, "candidate")
+				if kind == "report" {
+					evidence, _ := field(task, "evidence").([]any)
+					for _, value := range evidence {
+						record, _ := value.(*ordjson.Object)
+						if text(record, "kind") == "report" && text(record, "id") == text(obligation, "ref") {
+							candidate = text(record, "candidate")
+							break
+						}
+					}
+				}
+				if len(candidate) == 40 && strings.Trim(candidate, "0123456789abcdef") == "" {
+					next = command(opts, "verify", id, "--candidate", candidate, "--execute", "--claim", opts.Claim)
+				}
 			case "attention":
 				next = command(opts, "inspect", id, "--role", "worker")
 			}

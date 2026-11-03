@@ -110,3 +110,61 @@ func TestInspectRequiresTaskAndRejectsCoordinatorRole(t *testing.T) {
 		}
 	}
 }
+
+func TestInspectRecoveryActionsCarryOnlyTheSuppliedClaim(t *testing.T) {
+	for _, role := range []string{"worker", "reviewer"} {
+		t.Run(role, func(t *testing.T) {
+			root, s := ordinaryInitLab(t)
+			session, err := s.ClaimCoordinator("", "original", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.ClaimCoordinator("", "replacement", true); err != nil {
+				t.Fatal(err)
+			}
+			taskID, attempt := "t-aaaaaaaaaaaa", "x-aaaaaaaaaaaa"
+			record, err := reservations.NewAttempt("worker", session.Owner(), t.TempDir(), store.Now(), "held", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			record.Set("id", attempt)
+			record.Set("attempt", attempt)
+			task := ordjson.NewObject()
+			task.Set("schema", 2)
+			task.Set("id", taskID)
+			task.Set("execution", reservations.NewExecution(record))
+			task.Set("reviewer", record)
+			if err := s.SaveTask(task); err != nil {
+				t.Fatal(err)
+			}
+			for _, supplied := range []string{"", session.Token()} {
+				var out bytes.Buffer
+				command := NewRoot(filepath.Join(root, "bin", "sumctl"), &out, &out)
+				args := []string{"--home", s.Root, "--format", "json", "inspect", taskID, "--role", role}
+				if supplied != "" {
+					args = append(args, "--claim", supplied)
+				}
+				command.SetArgs(args)
+				if err := command.Execute(); err != nil {
+					t.Fatalf("read-only inspection: %v %s", err, out.String())
+				}
+				view := decodeCLIMap(t, out.String())
+				for _, key := range []string{"next", "reconcile", "redeliver_if_proven_unsent", "park_if_proven_stopped", "recover_if_proven_stopped_or_uncreated"} {
+					action, ok := view[key].([]any)
+					if !ok {
+						continue
+					}
+					claim := ""
+					for i := 0; i+1 < len(action); i++ {
+						if action[i] == "--claim" {
+							claim, _ = action[i+1].(string)
+						}
+					}
+					if claim != supplied {
+						t.Fatalf("%s supplied=%q action=%v", key, supplied, action)
+					}
+				}
+			}
+		})
+	}
+}
