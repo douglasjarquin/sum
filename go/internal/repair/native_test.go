@@ -45,7 +45,7 @@ func TestNativeRepairClaimsOnceAndRetainsUncertainCharge(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		kind := map[string]string{"worker": "worker-init", "coordinator": "coordinator-init"}[e.Role]
+		kind := "worker-init"
 		receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: e.Native(), Kind: kind, Attempt: e.Attempt})
 		record.Set("native_receipt", receipt)
 		qualification, _ := ordjson.FromValue(returns.NativeTemplate{Spec: spec, ConfigHome: config, Options: options})
@@ -53,21 +53,21 @@ func TestNativeRepairClaimsOnceAndRetainsUncertainCharge(t *testing.T) {
 		if err = ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(e)+".json"), record); err != nil {
 			t.Fatal(err)
 		}
-		if e.Role == "coordinator" {
-			if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), record); err != nil {
-				t.Fatal(err)
-			}
-		}
+
 	}
-	coordinator := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: f.CoreID, Session: "lab", Socket: f.Socket, Address: "t0", Role: "coordinator", Attempt: "coord-1", BindingGeneration: 1, CreatedMS: 100, Cwd: t.TempDir()}
-	bind(coordinator)
+	session, err := s.ClaimCoordinator("", "repair conversation", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := session.Owner()
+	ctx.Set("claim", session.Token())
 	cwd := t.TempDir()
-	attempt, err := reservations.NewAttempt("worker", coordinator.Object(), cwd, store.Now(), "running", nil)
+	attempt, err := reservations.NewAttempt("worker", session.Owner(), cwd, store.Now(), "running", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	attemptID, _ := attempt.Get("id")
-	worker := coordinator
+	worker := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: f.CoreID, Session: "lab", Socket: f.Socket, BindingGeneration: 1}
 	worker.Address = "t1"
 	worker.Role = "worker"
 	worker.Task = "t-aaaaaaaaaaaa"
@@ -82,21 +82,22 @@ func TestNativeRepairClaimsOnceAndRetainsUncertainCharge(t *testing.T) {
 	task.Set("machine", host.ID)
 	task.Set("worktree", cwd)
 	task.Set("worker_endpoint", worker.Object())
-	task.Set("parent", coordinator.Object())
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
 	task.Set("execution", reservations.NewExecution(attempt))
 	if err = s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
 	args := SendArgs{TaskID: worker.Task, Attempt: worker.Attempt, Key: "repair-native-1", Text: "Apply the approved correction.", Class: ClassExpansion, Reason: "explicit authorized additional correction", RuntimeRoot: "/not-live"}
 	f.QueueFault("terminal.send", hctest.Fault{LoseResponse: true})
-	if _, err = Send(s, coordinator.Object(), args); err == nil {
+	if _, err = Send(s, ctx, args); err == nil {
 		t.Fatal("lost response was not uncertain")
 	}
 	if len(f.Inputs(worker.Address)) != 1 {
 		t.Fatal("repair was not submitted once")
 	}
 	f.SetStatus(worker.Address, "idle")
-	result, err := Send(s, coordinator.Object(), args)
+	result, err := Send(s, ctx, args)
 	if err != nil {
 		t.Fatal(err)
 	}
