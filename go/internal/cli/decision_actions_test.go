@@ -3,6 +3,7 @@ package cli
 import (
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/machine"
@@ -25,7 +26,7 @@ func decisionActionLab(t *testing.T) (string, *store.Store, *ordjson.Object, str
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := store.Context(home)
+	_, err = app.RequireClaim(s, nativeLabFor(t, home).claim)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,12 @@ func decisionActionLab(t *testing.T) (string, *store.Store, *ordjson.Object, str
 	task.Set("session", "sum-test")
 	task.Set("pane", "w-worker:p1")
 	task.Set("worktree", home)
-	task.Set("parent", ctx)
+	session, err := s.CoordinatorSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
 	task.Set("questions", []any{func() *ordjson.Object {
 		question := ordjson.NewObject()
 		question.Set("id", "q-one")

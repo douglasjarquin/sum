@@ -136,10 +136,16 @@ func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab 
 	if err := f.LoadTemplatesFrom(d.config); err != nil {
 		t.Fatal(err)
 	}
+	nativeLabs.Store(s.Root, d)
 	nativeLabs.Store(d.home, d)
 	nativeLabs.Store(base, d)
 	nativeLabs.Store(home, d)
-	t.Cleanup(func() { nativeLabs.Delete(d.home); nativeLabs.Delete(base); nativeLabs.Delete(home) })
+	t.Cleanup(func() {
+		nativeLabs.Delete(s.Root)
+		nativeLabs.Delete(d.home)
+		nativeLabs.Delete(base)
+		nativeLabs.Delete(home)
+	})
 	return d
 }
 

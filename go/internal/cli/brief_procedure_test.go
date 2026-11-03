@@ -36,6 +36,7 @@ func newRuntimeLab(t *testing.T, withProcedure bool) *demoLab {
 	copyFile("bin/sumctl", 0o755)
 	copyFile(".local/bin/sumctl", 0o755)
 	copyFile("skills/sum-deliver/SKILL.md", 0o644)
+	copyFile("skills/sum-develop/SKILL.md", 0o644)
 	copyFile("COORDINATOR.md", 0o644)
 	copyFile(".agents/skills/verify/references/engineering-principles.md", 0o644)
 	if withProcedure {
