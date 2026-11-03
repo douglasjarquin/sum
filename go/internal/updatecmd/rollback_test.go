@@ -36,8 +36,8 @@ func TestRollback_plainSelectsRecordedPreviousNotCheckout(t *testing.T) {
 	if strField(rt, "kind") != "release" {
 		t.Fatalf("kind = %q, want release (not checkout)\n%s", strField(rt, "kind"), dump(view))
 	}
-	if git(t, lab.root, "rev-parse", "HEAD") != lab.newSHA {
-		t.Fatalf("rollback moved checkout HEAD to %s, want B %s", git(t, lab.root, "rev-parse", "HEAD"), lab.newSHA)
+	if git(t, lab.root, "rev-parse", "HEAD") != lab.oldSHA {
+		t.Fatalf("rollback instructions disagree with selection: HEAD %s, selected %s", git(t, lab.root, "rev-parse", "HEAD"), lab.oldSHA)
 	}
 	assertTaskBrief(t, lab, taskBefore)
 }

@@ -83,6 +83,10 @@ func ValidateTarget(s *store.Store, root, target string, current *ordjson.Object
 			return nil, nil, err
 		}
 	}
+	alignment := checkoutAlignment(root, asString(func() any { v, _ := descriptor.Get("sha"); return v }()), false)
+	if effectField(alignment, "result") == "refused" {
+		return nil, descriptor, fmt.Errorf("checkout alignment refused before activation: %s", effectField(alignment, "reason"))
+	}
 	compat, compatErr := Compatibility(s, root, candidate, current)
 	if compatErr != nil {
 		return nil, nil, compatErr

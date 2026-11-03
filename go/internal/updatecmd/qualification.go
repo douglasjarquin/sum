@@ -50,12 +50,6 @@ func deliveryQualification(s *store.Store, tasks []*ordjson.Object) []any {
 			blocked = append(blocked, label+" automatic delivery qualification: "+err.Error())
 		}
 	}
-	owner, err := s.Owner()
-	if err != nil {
-		blocked = append(blocked, "coordinator automatic delivery qualification: "+err.Error())
-	} else {
-		check("coordinator", owner, false)
-	}
 	for _, task := range tasks {
 		if effectField(task, "status") == "archived" {
 			continue
@@ -99,24 +93,17 @@ func deliveryQualification(s *store.Store, tasks []*ordjson.Object) []any {
 			blocked = append(blocked, fmt.Sprintf("selected %s default automatic delivery qualification: harness %s has no qualified native status/input contract", selected.name, harness))
 			continue
 		}
-		var template returns.NativeTemplate
-		if owner != nil {
-			raw, _ := owner.Get("native_template")
-			data, err := ordjson.MarshalCompact(raw)
-			if err == nil && json.Unmarshal(data, &template) == nil && template.Options.Cwd != "" {
-				var argv []string
-				raw, _ := spec.Get("args")
-				args, _ := raw.([]any)
-				for _, arg := range args {
-					if text, ok := arg.(string); ok {
-						argv = append(argv, text)
-					}
-				}
-				template.Options.InputEnv = template.Spec.InputEnv
-				if err := launch.ValidateHCInputConfig(harness, argv, template.Options); err != nil {
-					blocked = append(blocked, fmt.Sprintf("selected %s default automatic delivery qualification: %v", selected.name, err))
-				}
+		var argv []string
+		raw, _ := spec.Get("args")
+		args, _ := raw.([]any)
+		for _, arg := range args {
+			if text, ok := arg.(string); ok {
+				argv = append(argv, text)
 			}
+		}
+		options := launch.HCTemplateOptions{Cwd: s.Root, CodexHome: loaded.Template.CodexHome, ConfigFiles: loaded.Template.ConfigFiles, InputEnv: loaded.Template.InputEnv}
+		if err := launch.ValidateHCInputConfig(harness, argv, options); err != nil {
+			blocked = append(blocked, fmt.Sprintf("selected %s default automatic delivery qualification: %v", selected.name, err))
 		}
 	}
 	return blocked

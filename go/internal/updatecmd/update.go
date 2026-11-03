@@ -14,7 +14,6 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/contract"
-	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/release"
@@ -274,20 +273,37 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 			}
 		}
 	}
+	rootState, rootErr := ordjson.ReadFile(filepath.Join(s.Root, "state.json"))
+	if rootErr != nil {
+		blocking = append(blocking, "state-format fence cannot be read: "+rootErr.Error())
+	} else if pointer := asObject(rootState); pointer != nil {
+		if raw, _ := pointer.Get("schema"); fmt.Sprint(raw) == fmt.Sprint(store.LogicalStateSchema) {
+			stateSchemaVal = store.LogicalStateSchema
+		}
+	}
+	if session, err := s.CoordinatorSession(); err != nil {
+		blocking = append(blocking, "logical ownership cannot be read: "+err.Error())
+	} else if session != nil || stateSchemaVal == store.LogicalStateSchema {
+		supports := asObject(func() any { v, _ := executableContract.Get("supports"); return v }())
+		var owners []any
+		if supports != nil {
+			raw, _ := supports.Get("owner_schema")
+			owners, _ = raw.([]any)
+		}
+		if !containsNumber(owners, contract.OwnerSchema) {
+			blocking = append(blocking, "logical-owner floor raised by "+filepath.Join(s.Home, "coordinator.json")+" or state-format fence "+filepath.Join(s.Root, "state.json")+": candidate lacks owner_schema 2")
+		}
+	}
 	if !containsNumber(stateSchema, stateSchemaVal) {
-		blocking = append(blocking, fmt.Sprintf("state schema %d is not supported by the candidate (%v)", stateSchemaVal, stateSchema))
+		blocking = append(blocking, fmt.Sprintf("state schema %d required by %s is not supported by the candidate (%v)", stateSchemaVal, filepath.Join(s.Root, "state.json"), stateSchema))
 	}
 	var tasks []any
 	all, err := s.AllTasks()
 	if err != nil {
 		return nil, err
 	}
-	observer, observerErr := hookstatus.Compatibility(context.Background(), s)
-	if observerErr != nil {
-		blocking = append(blocking, "active observer: "+observerErr.Error())
-	}
 	blocking = append(blocking, unresolvedEffects(s, all)...)
-	blocking = append(blocking, deliveryQualification(s, all)...)
+	diagnostics := deliveryQualification(s, all)
 	for _, task := range all {
 		status, _ := task.Get("status")
 		if status == "archived" {
@@ -319,14 +335,6 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 			}
 		}
 		tasks = append(tasks, row)
-	}
-	wakeTarget := checkoutWake(executableContract)
-	wake, wakeBlocking, err := wakeCompatibility(s, wakeTarget, false)
-	if err != nil {
-		return nil, err
-	}
-	if wakeBlocking != "" {
-		blocking = append(blocking, wakeBlocking)
 	}
 	headOut, _ := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, true, nil)
 	head := strings.TrimSpace(headOut.Stdout)
@@ -399,11 +407,23 @@ func Compatibility(s *store.Store, root, candidatePath string, current *ordjson.
 	result.Set("deferred", deferred)
 	result.Set("probes", probes)
 	result.Set("tasks", tasks)
-	result.Set("wake_protocol", wake)
-	result.Set("observer", observer)
+	result.Set("diagnostics", diagnostics)
+	result.Set("historical_sidecars", historicalSidecars(s))
 	result.Set("candidate", candidateObj)
 	result.Set("current", currentObj)
 	return result, nil
+}
+
+func historicalSidecars(s *store.Store) []any {
+	paths, _ := filepath.Glob(filepath.Join(s.Home, "deliver", "*"+store.WakeSuffix))
+	rows := make([]any, 0, len(paths))
+	for _, path := range paths {
+		row := ordjson.NewObject()
+		row.Set("path", path)
+		row.Set("state", "historical")
+		rows = append(rows, row)
+	}
+	return rows
 }
 
 func postCheck(s *store.Store, root string) *ordjson.Object {
@@ -481,15 +501,25 @@ func SelectDefault(root, target string) (string, error) {
 	return relative, nil
 }
 
-func syncInstallationCheckout(root, sha string) *ordjson.Object {
+func checkoutAlignment(root, sha string, apply bool) *ordjson.Object {
 	result := ordjson.NewObject()
+	refuse := func(reason string) *ordjson.Object {
+		result.Set("result", "refused")
+		result.Set("reason", reason)
+		return result
+	}
 	headOut, err := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, false, nil)
 	head := strings.TrimSpace(headOut.Stdout)
 	result.Set("head", head)
 	if err != nil || headOut.Code != 0 || head == "" {
-		result.Set("result", "refused")
-		result.Set("reason", "installation checkout HEAD is unreadable")
-		return result
+		return refuse("installation checkout HEAD is unreadable")
+	}
+	dirty, err := proc.Run([]string{"git", "-C", root, "status", "--porcelain", "--untracked-files=all"}, "", 20*time.Second, false, nil)
+	if err != nil || dirty.Code != 0 {
+		return refuse("checkout state cannot be read: " + dirty.Detail())
+	}
+	if paths := strings.TrimSpace(dirty.Stdout); paths != "" {
+		return refuse("checkout has local changes: " + paths)
 	}
 	if sha == "" || sha == head {
 		result.Set("result", "already-aligned")
@@ -497,60 +527,48 @@ func syncInstallationCheckout(root, sha string) *ordjson.Object {
 	}
 	branch := defaultBranch(root)
 	upstream := "refs/remotes/origin/" + branch
-	tipOut, tipErr := proc.Run([]string{"git", "-C", root, "rev-parse", "--verify", upstream}, "", 20*time.Second, false, nil)
+	tipOut, err := proc.Run([]string{"git", "-C", root, "rev-parse", "--verify", upstream}, "", 20*time.Second, false, nil)
+	if err != nil || tipOut.Code != 0 {
+		return refuse(upstream + " is unknown here")
+	}
 	tip := strings.TrimSpace(tipOut.Stdout)
-	if tipErr != nil || tipOut.Code != 0 || tip == "" {
-		result.Set("result", "refused")
-		result.Set("reason", fmt.Sprintf("%s is unknown here", upstream))
-		return result
+	merged, err := proc.Run([]string{"git", "-C", root, "merge-base", "--is-ancestor", sha, tip}, "", 20*time.Second, false, nil)
+	if err != nil || merged.Code != 0 {
+		return refuse(sha + " is not an ancestor of origin/" + branch)
 	}
-	anc, _ := proc.Run([]string{"git", "-C", root, "merge-base", "--is-ancestor", sha, tip}, "", 20*time.Second, false, nil)
-	if anc.Code != 0 {
-		result.Set("result", "refused")
-		result.Set("reason", fmt.Sprintf("%s is not an ancestor of origin/%s", sha, branch))
-		return result
+	forward, err := proc.Run([]string{"git", "-C", root, "merge-base", "--is-ancestor", head, sha}, "", 20*time.Second, false, nil)
+	if err != nil {
+		return refuse(err.Error())
 	}
-	dirtyOut, dirtyErr := proc.Run([]string{"git", "-C", root, "status", "--porcelain", "--untracked-files=no"}, "", 20*time.Second, true, nil)
-	if dirtyErr != nil {
-		result.Set("result", "refused")
-		result.Set("reason", "checkout state cannot be read: "+dirtyErr.Error())
-		return result
-	}
-	if strings.TrimSpace(dirtyOut.Stdout) != "" {
-		result.Set("result", "refused")
-		result.Set("reason", "checkout has tracked changes")
-		return result
-	}
-	ff, _ := proc.Run([]string{"git", "-C", root, "merge-base", "--is-ancestor", head, sha}, "", 20*time.Second, false, nil)
-	if ff.Code != 0 {
-		result.Set("result", "refused")
-		result.Set("reason", fmt.Sprintf("HEAD %s is not a fast-forward to %s", head, sha))
-		return result
-	}
-	merge, mergeErr := proc.Run([]string{"git", "-C", root, "merge", "--ff-only", sha}, "", 20*time.Second, false, nil)
-	if mergeErr != nil || merge.Code != 0 {
-		reason := strings.TrimSpace(merge.Stderr)
-		if reason == "" {
-			reason = strings.TrimSpace(merge.Stdout)
+	argv := []string{"git", "-C", root, "merge", "--ff-only", sha}
+	outcome := "fast-forwarded"
+	if forward.Code != 0 {
+		backward, err := proc.Run([]string{"git", "-C", root, "merge-base", "--is-ancestor", sha, head}, "", 20*time.Second, false, nil)
+		if err != nil || backward.Code != 0 {
+			return refuse("checkout HEAD " + head + " diverges from target " + sha)
 		}
-		if reason == "" && mergeErr != nil {
-			reason = mergeErr.Error()
-		}
-		if reason == "" {
-			reason = "git merge --ff-only refused"
-		}
-		result.Set("result", "refused")
-		result.Set("reason", reason)
+		argv = []string{"git", "-C", root, "switch", "--detach", sha}
+		outcome = "aligned-rollback"
+	}
+	if !apply {
+		result.Set("result", "alignable")
 		return result
 	}
-	newHeadOut, _ := proc.Run([]string{"git", "-C", root, "rev-parse", "HEAD"}, "", 20*time.Second, false, nil)
-	result.Set("head", strings.TrimSpace(newHeadOut.Stdout))
-	result.Set("result", "fast-forwarded")
+	out, err := proc.Run(argv, "", 20*time.Second, false, nil)
+	if err != nil || out.Code != 0 {
+		return refuse("checkout alignment refused: " + out.Detail())
+	}
+	result.Set("head", sha)
+	result.Set("result", outcome)
 	return result
 }
 
-func applyCheckoutOutcome(compat, checkout *ordjson.Object) {
-	if compat == nil || checkout == nil {
+func syncInstallationCheckout(root, sha string) *ordjson.Object {
+	return checkoutAlignment(root, sha, true)
+}
+
+func clearCheckoutDeferred(compat *ordjson.Object) {
+	if compat == nil {
 		return
 	}
 	raw, _ := compat.Get("deferred")
@@ -562,17 +580,6 @@ func applyCheckoutOutcome(compat, checkout *ordjson.Object) {
 			continue
 		}
 		kept = append(kept, item)
-	}
-	outcome, _ := checkout.Get("result")
-	if asString(outcome) == "refused" {
-		head, _ := checkout.Get("head")
-		reason, _ := checkout.Get("reason")
-		row := ordjson.NewObject()
-		row.Set("what", "checkout-instructions")
-		row.Set("checkout_head", head)
-		row.Set("reason", reason)
-		row.Set("note", "AGENTS.md and skills read by a plain harness come from the checkout. The default runtime is the new release. The checkout was not reset, stashed, or force-updated.")
-		kept = append(kept, row)
 	}
 	compat.Set("deferred", kept)
 }
@@ -663,8 +670,8 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 var deliveryLockWait = 30 * time.Second
 
 // holdDeliveryLock takes the delivery compatibility lock exclusively for the final validation and the switch: a pass
-// admitting a coordinator wake holds it shared, so its capability and adoption reads and the runtime selection never
-// interleave. It is ordered after the activation lock and before any recipient or state lock.
+// sending worker answers holds it shared, so delivery effects and runtime selection never interleave.
+// It is ordered after the activation lock and before any recipient or state lock.
 func holdDeliveryLock(s *store.Store, action string) (func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deliveryLockWait)
 	defer cancel()
@@ -679,6 +686,16 @@ func holdDeliveryLock(s *store.Store, action string) (func(), error) {
 }
 
 func activateLocked(s *store.Store, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
+	releaseDelivery, err := holdDeliveryLock(s, action)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseDelivery()
+	unlockState, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlockState()
 	if err := requireNoPending(s, root); err != nil {
 		return nil, err
 	}
@@ -687,11 +704,6 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	if err != nil {
 		return nil, err
 	}
-	releaseDelivery, err := holdDeliveryLock(s, action)
-	if err != nil {
-		return nil, err
-	}
-	defer releaseDelivery()
 	compat, intended, err := ValidateTarget(s, root, target, current)
 	newSHA := asString(func() any {
 		if intended != nil {
@@ -724,7 +736,10 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	}
 	if curKind == wantKind && curSHA == newSHA {
 		checkout := syncInstallationCheckout(root, newSHA)
-		applyCheckoutOutcome(compat, checkout)
+		if effectField(checkout, "result") == "refused" {
+			return nil, fmt.Errorf("checkout alignment refused: %s", effectField(checkout, "reason"))
+		}
+		clearCheckoutDeferred(compat)
 		note := "Already the default; nothing changed."
 		checkoutResult, _ := checkout.Get("result")
 		if asString(checkoutResult) == "fast-forwarded" {
@@ -817,7 +832,11 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 		return nil, fmt.Errorf("%s candidate entrypoint check failed: %v. The prior known-good runtime %s was restored and verified; records are untouched.", action, detail, restoredSHA)
 	}
 	checkout := syncInstallationCheckout(root, newSHA)
-	applyCheckoutOutcome(compat, checkout)
+	if effectField(checkout, "result") == "refused" {
+		_, restoreErr := compensate(s, root, generation)
+		return nil, fmt.Errorf("checkout alignment failed after validation: %s; runtime recovery: %v", effectField(checkout, "reason"), restoreErr)
+	}
+	clearCheckoutDeferred(compat)
 	committed := ordjson.NewObject()
 	committed.Set("generation", generation)
 	committed.Set("from", before)
@@ -848,7 +867,7 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	result.Set("source", source)
 	result.Set("generation", generation)
 	result.Set("recovery", recovery)
-	result.Set("note", "New entrypoint invocations use this default. Commands already running finish on the runtime they resolved; the owned HC observer is handed off after selection. Task records, worktrees, and state generation are preserved.")
+	result.Set("note", "New entrypoint invocations use this default. Commands already running finish on the runtime they resolved; the next ordinary conversation adopts the selected instructions. Task records, worktrees, and state generation are preserved.")
 	return result, nil
 }
 
@@ -894,12 +913,13 @@ func Status(s *store.Store) (*ordjson.Object, error) {
 		}
 	}
 	result.Set("history", readUpdateLog(root, 20))
+	result.Set("historical_sidecars", historicalSidecars(s))
 	activation, actErr := readActivationState(s, root)
 	if actErr != nil {
 		return nil, actErr
 	}
 	result.Set("activation", activation)
-	result.Set("note", "Selection is the .local/current symlink; history is a local log, not the source of truth. Running commands retain their starting runtime; observer health records its separately verified HC ownership.")
+	result.Set("note", "Selection is the .local/current symlink; history is a local log, not the source of truth. Running commands retain their starting runtime; the next ordinary conversation adopts the selected instructions.")
 	return result, nil
 }
 
@@ -968,6 +988,12 @@ func Stage(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	if lockErr != nil {
 		return nil, lockErr
 	}
+	unlockState, err := s.Lock()
+	if err != nil {
+		_ = unlock()
+		return nil, err
+	}
+	defer unlockState()
 	if err := approveUpdateTarget(s, root, relPath, nil); err != nil {
 		_ = unlock()
 		return nil, err
@@ -1021,30 +1047,11 @@ func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 	if err != nil {
 		return nil, err
 	}
-	return completeObserverHandoff(s, ctx, root, result)
-}
-
-func completeObserverHandoff(s *store.Store, ctx *ordjson.Object, root string, result *ordjson.Object) (*ordjson.Object, error) {
-	active := DefaultRuntime(root)
-	activeRoot := asString(func() any { v, _ := active.Get("path"); return v }())
-	handoff, err := hookstatus.Handoff(context.Background(), s, ctx, activeRoot, filepath.Join(root, "bin", "sumctl"))
-	if err != nil {
-		return result, fmt.Errorf("runtime selection completed, but its HC observer handoff failed: %w; inspect observer health before admitting new work", err)
-	}
-	result.Set("observer_activation", handoff)
 	return result, nil
 }
 
 func Rollback(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, error) {
-	result, err := rollbackSelection(s, ctx, to)
-	if err != nil {
-		return result, err
-	}
-	root, err := release.InstallationRoot(s)
-	if err != nil {
-		return result, err
-	}
-	return completeObserverHandoff(s, ctx, root, result)
+	return rollbackSelection(s, ctx, to)
 }
 
 func rollbackSelection(s *store.Store, ctx *ordjson.Object, to string) (*ordjson.Object, error) {
@@ -1064,7 +1071,12 @@ func rollbackSelection(s *store.Store, ctx *ordjson.Object, to string) (*ordjson
 		return nil, err
 	}
 	current := DefaultRuntime(root)
+	unlockState, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
 	state, err := ensureActivationState(s, root, current)
+	unlockState()
 	if err != nil {
 		return nil, err
 	}
@@ -1115,15 +1127,7 @@ func resolveRollbackTarget(root, to string, state, current *ordjson.Object) (str
 }
 
 func Recover(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.Object, error) {
-	result, err := recoverSelection(s, ctx, generation)
-	if err != nil {
-		return result, err
-	}
-	root, err := release.InstallationRoot(s)
-	if err != nil {
-		return result, err
-	}
-	return completeObserverHandoff(s, ctx, root, result)
+	return recoverSelection(s, ctx, generation)
 }
 
 func recoverSelection(s *store.Store, ctx *ordjson.Object, generation string) (*ordjson.Object, error) {
@@ -1144,6 +1148,11 @@ func recoverSelection(s *store.Store, ctx *ordjson.Object, generation string) (*
 		return nil, err
 	}
 	defer releaseDelivery()
+	unlockState, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlockState()
 	return recoverPendingLocked(s, root, generation)
 }
 

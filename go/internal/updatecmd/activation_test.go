@@ -234,9 +234,9 @@ func TestRecover_wrongCoordinatorPreservesEvidence(t *testing.T) {
 	other.Set("cwd", lab.root)
 	_, err := Recover(lab.store, other, generation)
 	if err == nil {
-		t.Fatal("recover from a non-coordinator pane succeeded")
+		t.Fatal("recover without a logical claim succeeded")
 	}
-	if !strings.Contains(err.Error(), "coordinator") {
+	if !strings.Contains(err.Error(), "claim") {
 		t.Fatalf("wrong-coordinator error: %v", err)
 	}
 	assertJournalUnchanged(t, lab.root, journal)
@@ -429,42 +429,24 @@ func TestApply_reconcilesStaleKnownGoodThenActivatesPulledSHA(t *testing.T) {
 	}
 }
 
-func TestApply_staleKnownGoodDirtyCheckoutStillActivatesRuntime(t *testing.T) {
+func TestApply_staleKnownGoodDirtyCheckoutRefusesBeforeSelection(t *testing.T) {
 	lab := newActivationLab(t)
 	selectWorkingRelease(t, lab, lab.newSHA)
-	git(t, lab.root, "reset", "--hard", lab.newSHA)
 	plantStaleKnownGood(t, lab, lab.oldSHA)
 	next := stageNextRelease(t, lab)
 	plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", next), workingHelper(""))
 	dirty := filepath.Join(lab.root, "AGENTS.md")
-	if err := os.WriteFile(dirty, []byte("DIRTY MARKER\nold instructions\n"), 0o644); err != nil {
-		t.Fatal(err)
+	writeFile(t, dirty, "DIRTY MARKER\n")
+	_, err := Apply(lab.store, lab.ctx, next, true)
+	if err == nil || !strings.Contains(err.Error(), "AGENTS.md") {
+		t.Fatalf("dirty apply: %v", err)
 	}
-
-	view, err := Apply(lab.store, lab.ctx, next, true)
-	assertNoRecoveryHistoryRefusal(t, err)
-	if err != nil {
-		t.Fatalf("dirty apply with stale known-good: %v", err)
+	if currentSHA(t, lab.root) != lab.newSHA {
+		t.Fatal("dirty checkout changed selection")
 	}
-	if git(t, lab.root, "rev-parse", "HEAD") != lab.newSHA {
-		t.Fatalf("dirty HEAD moved: %s, want %s\n%s", git(t, lab.root, "rev-parse", "HEAD"), lab.newSHA, dump(view))
-	}
-	body, err := os.ReadFile(dirty)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(body), "DIRTY MARKER") {
-		t.Fatalf("dirty file was reverted: %q", body)
-	}
-	if got := currentSHA(t, lab.root); got != next {
-		t.Fatalf("runtime = %s, want %s (symlink must still switch)", got, next)
-	}
-	if got := recordedKnownGood(t, lab.root); got != next {
-		t.Fatalf("known-good = %s, want activated %s", got, next)
-	}
-	row := checkoutInstructions(view)
-	if row == nil {
-		t.Fatalf("dirty apply omitted checkout-instructions\n%s", dump(view))
+	body, _ := os.ReadFile(dirty)
+	if string(body) != "DIRTY MARKER\n" {
+		t.Fatal("dirty checkout changed")
 	}
 }
 
@@ -630,7 +612,7 @@ func plantNativeHelper(t *testing.T, runtimeRoot, body string) {
 	}
 }
 
-const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"hc_core":"0.1.14","hc_generation":1,"endpoint_schema":2,"notification_protocol":2},"supports":{"hc_template_schema":[0,2],"state_schema":[2],"brief_schema":[1],"machine_identity":[1],"wake_protocol":[1],"endpoint_schema":[2],"notification_protocol":[2],"observer_protocol":[1]}}`
+const releaseContractJSON = `{"sum_version":"0.1.0","contracts":{"hc_core":"0.1.14","hc_generation":1,"endpoint_schema":2,"notification_protocol":2},"supports":{"hc_template_schema":[0,2],"state_schema":[2,3],"owner_schema":[2],"brief_schema":[1],"machine_identity":[1],"wake_protocol":[1],"endpoint_schema":[2],"notification_protocol":[2],"observer_protocol":[1]}}`
 
 func workingHelper(logPath string) string {
 	prefix := "#!/bin/sh\nif [ \"$1\" = \"--format\" ]; then echo '" + releaseContractJSON + "'; exit 0; fi\n"

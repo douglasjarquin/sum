@@ -13,7 +13,6 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
-	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"github.com/douglasjarquin/sum/go/internal/settings"
@@ -54,9 +53,8 @@ func TestApply_preservesExplicitNativeEventOptOut(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply after explicit disable: %v", err)
 	}
-	activation := asObject(func() any { v, _ := view.Get("observer_activation"); return v }())
-	if skipped, _ := activation.Get("skipped"); skipped != true {
-		t.Fatalf("hook activation = %v, want skipped", activation)
+	if _, exists := view.Get("observer_activation"); exists {
+		t.Fatal("candidate retained observer activation")
 	}
 	enabled, err := settings.NativeEventsEnabled(lab.store)
 	if err != nil || enabled {
@@ -64,96 +62,25 @@ func TestApply_preservesExplicitNativeEventOptOut(t *testing.T) {
 	}
 }
 
-func TestApply_launchesNativeObserverAfterSelection(t *testing.T) {
-	lab := newApplyLab(t, applyLabOpts{})
-	startNativeObserverProgram(t, lab)
-	if err := settings.SetNativeEventsEnabled(lab.store, true); err != nil {
-		t.Fatal(err)
-	}
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	activation := asObject(func() any { v, _ := view.Get("observer_activation"); return v }())
-	if strField(activation, "readiness") != "ready" {
-		t.Fatalf("observer bootstrap unconfirmed: %s", dump(activation))
-	}
-	if strField(activation, "launch_effect") != "submitted" {
-		t.Fatalf("observer launch: %s", dump(activation))
-	}
-	count := 0
-	for _, call := range lab.fixture.Calls() {
-		if call.Method == "terminal.run" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Fatalf("observer launches=%d", count)
-	}
-}
-
-func TestApply_uncertainObserverLaunchReportsSelectedRuntimeWithoutRetry(t *testing.T) {
-	lab := newApplyLab(t, applyLabOpts{})
-	if err := settings.SetNativeEventsEnabled(lab.store, true); err != nil {
-		t.Fatal(err)
-	}
-	lab.fixture.QueueFault("terminal.run", hctest.Fault{LoseResponse: true})
-	_, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
-	if err == nil || !strings.Contains(err.Error(), "runtime selection completed") {
-		t.Fatalf("uncertain observer launch: %v", err)
-	}
-	if currentSHA(t, lab.root) != lab.newSHA {
-		t.Fatal("lost observer response silently changed runtime selection")
-	}
-	health, err := hookstatus.Health(lab.store)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strField(health, "launch_effect") != "uncertain" {
-		t.Fatalf("observer health: %s", dump(health))
-	}
-	count := 0
-	for _, call := range lab.fixture.Calls() {
-		if call.Method == "terminal.run" {
-			count++
-		}
-	}
-	if count != 1 {
-		t.Fatalf("observer launch replayed %d times", count)
-	}
-}
-
 func TestApply_refusesDirtyCheckoutAndKeepsRuntime(t *testing.T) {
 	lab := newApplyLab(t, applyLabOpts{})
 	dirty := filepath.Join(lab.root, "AGENTS.md")
-	if err := os.WriteFile(dirty, []byte("DIRTY MARKER\nold instructions\n"), 0o644); err != nil {
+	if err := os.WriteFile(dirty, []byte("DIRTY MARKER\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	view, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
-	if err != nil {
-		t.Fatalf("apply: %v", err)
+	_, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
+	if err == nil || !strings.Contains(err.Error(), "AGENTS.md") {
+		t.Fatalf("dirty apply: %v", err)
 	}
-	head := git(t, lab.root, "rev-parse", "HEAD")
-	if head != lab.oldSHA {
-		t.Fatalf("dirty HEAD moved: %s, want %s\nview=%s", head, lab.oldSHA, dump(view))
+	if hasCurrent(t, lab.root) {
+		t.Fatal("dirty apply changed runtime selection")
 	}
-	body, err := os.ReadFile(dirty)
-	if err != nil {
-		t.Fatal(err)
+	if git(t, lab.root, "rev-parse", "HEAD") != lab.oldSHA {
+		t.Fatal("dirty HEAD moved")
 	}
-	if !strings.Contains(string(body), "DIRTY MARKER") {
-		t.Fatalf("dirty file was reverted: %q", body)
-	}
-	if got := currentSHA(t, lab.root); got != lab.newSHA {
-		t.Fatalf(".local/current SHA = %s, want %s (runtime must still switch)", got, lab.newSHA)
-	}
-	row := checkoutInstructions(view)
-	if row == nil {
-		t.Fatalf("dirty apply omitted checkout-instructions\nview=%s", dump(view))
-	}
-	reason := strField(row, "reason")
-	if reason == "" || !strings.Contains(strings.ToLower(reason), "tracked") {
-		t.Fatalf("refuse reason = %q, want a tracked-change reason\nrow=%s", reason, dump(row))
+	body, _ := os.ReadFile(dirty)
+	if string(body) != "DIRTY MARKER\n" {
+		t.Fatal("dirty file changed")
 	}
 }
 

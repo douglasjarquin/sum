@@ -12,10 +12,8 @@ const (
 	// it is. Staging never copies it into release.json, where it would describe
 	// the stager rather than the staged tree.
 	MachineIdentity = 1
-	// WakeProtocol 1 says this binary keeps the coordinator wake sidecar
-	// (internal/returns/wake.go): at most one outstanding routine wake per
-	// adopted coordinator, persisted before any prompt. Reported the same way
-	// as MachineIdentity, by release-contract only.
+	// WakeProtocol and ObserverProtocol advertise read-only preservation of historical sidecars.
+	// They remain reported so the last native updater can select this release.
 	WakeProtocol         = 1
 	HCVersion            = "0.1.14"
 	HCGeneration         = 1
