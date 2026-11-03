@@ -51,6 +51,10 @@ func planBootstrapReleases(s *store.Store, root, operation string, tasks []*ordj
 		if !nativeReceiptResolvesLaunch(s, task, worker) {
 			continue
 		}
+		launch, _ := worker.Get("native_launch")
+		if unresolvedLaunch(asObject(launch)) {
+			continue
+		}
 		if err := s.CheckMachine(task); err != nil {
 			blocked = append(blocked, err.Error())
 			continue

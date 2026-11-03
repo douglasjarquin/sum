@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,6 +56,22 @@ func TestBootstrapReconcilesStoppedWorkersWithoutNativeCoordinator(t *testing.T)
 	}
 	_ = survivor.Process.Kill()
 	_ = survivor.Wait()
+	view, err = updatecmd.Bootstrap(s, sha, true, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocker, _ := view.Get("blocker"); blocker != nil {
+		t.Fatalf("fully stopped workers remained blockers: %v", blocker)
+	}
+	inspection, _ := view.Get("inspection")
+	releases, _ := inspection.(*ordjson.Object).Get("reconciliation")
+	if len(releases.([]any)) != 2 {
+		t.Fatalf("inspect did not preview both exact worker releases: %v", releases)
+	}
+	after, _ = os.ReadFile(filepath.Join(s.Tasks, "t-38545efe903c/task.json"))
+	if string(before) != string(after) {
+		t.Fatal("inspect persisted its proposed reconciliation")
+	}
 	worker, _ := reservations.Worker(first)
 	id, _ := worker.Get("id")
 	cmd := exec.Command(filepath.Join(root, "bin/sumctl"), "execution", "park", "t-38545efe903c", "--attempt", id.(string))
@@ -84,6 +101,91 @@ func TestBootstrapReconcilesStoppedWorkersWithoutNativeCoordinator(t *testing.T)
 		if status, _ := current.Get("status"); status != "waiting" {
 			t.Fatalf("stopped work was marked accepted or lost: %v", status)
 		}
+		if generation, _ := attempt.Get("generation"); generation != json.Number("6") {
+			t.Fatalf("worker was released more than once: %v", generation)
+		}
+		if questions, _ := current.Get("questions"); len(questions.([]any)) != 1 {
+			t.Fatal("reconciliation erased an unresolved question")
+		}
+	}
+}
+
+func TestBootstrapWorkerReconciliationRecovery(t *testing.T) {
+	clearFallbackIdentity(t)
+	old := buildNativeBaseHelper(t)
+	for _, mode := range []string{"partial release", "changed generation"} {
+		t.Run(mode, func(t *testing.T) {
+			root, s, f, sha, env := bootstrapInstallation(t, old)
+			tasks := bootstrapStoppedWorkers(t, root, s, f)
+			interrupt := errors.New("interrupted worker reconciliation")
+			updatecmd.TestBootstrapBoundary = func(phase string) error {
+				if mode == "partial release" && phase == "reconciled:t-38545efe903c" {
+					return interrupt
+				}
+				if mode == "changed generation" && phase == "prepared" {
+					current, err := s.ReadTask("t-38545efe903c")
+					if err != nil {
+						return err
+					}
+					if _, err := reservations.Transition(current, "x-abc9d0bcbb95", "running", store.Now(), nil, nil); err != nil {
+						return err
+					}
+					if err := s.SaveTask(current); err != nil {
+						return err
+					}
+					return interrupt
+				}
+				return nil
+			}
+			t.Cleanup(func() { updatecmd.TestBootstrapBoundary = nil })
+			if _, err := updatecmd.Bootstrap(s, sha, true, true, ""); !errors.Is(err, interrupt) {
+				t.Fatalf("did not interrupt at reconciliation: %v", err)
+			}
+			updatecmd.TestBootstrapBoundary = nil
+			raw, err := ordjson.ReadFile(filepath.Join(root, ".local/bootstrap.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			op, _ := raw.(*ordjson.Object).Get("operation")
+			pointer, err := ordjson.ReadFile(filepath.Join(s.Root, "state.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if schema, _ := pointer.(*ordjson.Object).Get("schema"); schema != json.Number("2") {
+				t.Fatal("interrupted reconciliation prematurely fenced the old writer")
+			}
+			first, _ := s.ReadTask("t-38545efe903c")
+			second, _ := s.ReadTask("t-bfc3d2e38890")
+			a, _ := reservations.Worker(first)
+			b, _ := reservations.Worker(second)
+			if mode == "changed generation" {
+				if _, err := updatecmd.Bootstrap(s, sha, true, true, op.(string)); err == nil || !strings.Contains(err.Error(), "plan changed") {
+					t.Fatalf("accepted stale release generations: %v", err)
+				}
+				if state, _ := a.Get("state"); state != "running" {
+					t.Fatal("stale recovery released a worker")
+				}
+				return
+			}
+			if state, _ := a.Get("state"); state != "released" {
+				t.Fatal("first release was not durably saved")
+			}
+			if state, _ := b.Get("state"); state != "running" {
+				t.Fatal("second release did not remain pending")
+			}
+			bootstrapDriver(t, root, sha, env, op.(string))
+			for _, task := range tasks {
+				id, _ := task.Get("id")
+				current, _ := s.ReadTask(id.(string))
+				attempt, _ := reservations.Worker(current)
+				if generation, _ := attempt.Get("generation"); generation != json.Number("6") {
+					t.Fatalf("replayed worker release: %v", generation)
+				}
+				if state, _ := attempt.Get("state"); state != "released" {
+					t.Fatal("pending worker did not release during recovery")
+				}
+			}
+		})
 	}
 }
 
@@ -134,7 +236,13 @@ func bootstrapStoppedWorkers(t *testing.T, root string, s *store.Store, f *hctes
 		task.Set("worktree", checkout)
 		task.Set("worker_endpoint", e.Object())
 		task.Set("execution", reservations.NewExecution(attempt))
-		task.Set("questions", []any{"keep-unresolved-question"})
+		question := ordjson.NewObject()
+		question.Set("id", "q-preserved")
+		question.Set("text", "Keep this decision unresolved")
+		question.Set("status", "open")
+		task.Set("questions", []any{question})
+		task.Set("owner", owner)
+		task.Set("parent", owner)
 		if err := s.SaveTask(task); err != nil {
 			t.Fatal(err)
 		}
