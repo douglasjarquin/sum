@@ -35,6 +35,10 @@ func ObserveStop(s *store.Store, runtimeRoot string, task, attempt *ordjson.Obje
 	if stringField(attempt, "state") == "released" {
 		return StopProof{Outcome: OutcomeStopped, Observation: lastObservation(attempt)}
 	}
+	return ObserveStopFresh(s, runtimeRoot, task, attempt)
+}
+
+func ObserveStopFresh(s *store.Store, runtimeRoot string, task, attempt *ordjson.Object) StopProof {
 	kind := stringField(attempt, "kind")
 	if kind == "worker" {
 		return observeWorker(s, runtimeRoot, task, attempt)
