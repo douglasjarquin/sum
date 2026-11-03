@@ -177,12 +177,7 @@ func recordObservationWith(s *store.Store, ctx *ordjson.Object, taskID string, d
 		}
 		pr.Set("review_threads", threads)
 	}
-	by := ordjson.NewObject()
-	for _, k := range []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"} {
-		v, _ := ctx.Get(k)
-		by.Set(k, v)
-	}
-	pr.Set("observed_by", by)
+	pr.Set("observed_by", evidence.Endpoint(ctx))
 	var findings, notes []any
 	headSHA := fmt.Sprint(data["headRefOid"])
 	var candidate string
