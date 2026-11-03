@@ -238,3 +238,116 @@ func buildPreclaimRecoveryHelper(t *testing.T) string {
 	}
 	return helper
 }
+
+func TestFirstUpdatePrintedRecoveryRunsFreshNativeHelper(t *testing.T) {
+	helper := buildCurrentRecoveryHelper(t)
+	body, err := os.ReadFile(helper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, point := range []string{"before-selection", "after-alignment"} {
+		t.Run(point, func(t *testing.T) {
+			lab := newActivationLab(t)
+			plantNativeHelper(t, lab.root, string(body))
+			plantNativeHelper(t, filepath.Join(lab.root, ".local", "releases", lab.newSHA), string(body))
+			procedure := filepath.Join(lab.home, "tasks", "t-aaaaaaaaaaaa", "procedure", "WORKER.md")
+			writeFile(t, procedure, "# Historical worker procedure\nPreserve exact sealed bytes.\n")
+			taskPath := filepath.Join(lab.home, "tasks", "t-aaaaaaaaaaaa", "task.json")
+			preserved := map[string][]byte{}
+			for _, path := range []string{taskPath, procedure} {
+				before, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				preserved[path] = before
+			}
+			if point == "before-selection" {
+				afterPendingWrite = func() error { return errTestInterrupt }
+			} else {
+				beforeActivationCommit = func() error { return errTestInterrupt }
+			}
+			t.Cleanup(func() { afterPendingWrite = nil; beforeActivationCommit = nil })
+			_, err := Apply(lab.store, lab.ctx, lab.newSHA, true)
+			afterPendingWrite = nil
+			beforeActivationCommit = nil
+			if err == nil {
+				t.Fatal("activation did not interrupt")
+			}
+			if point == "before-selection" {
+				if !errors.Is(err, errTestInterrupt) || hasCurrent(t, lab.root) || git(t, lab.root, "rev-parse", "HEAD") != lab.oldSHA {
+					t.Fatalf("not interrupted before selection: %v", err)
+				}
+				_, err = Apply(lab.store, lab.ctx, lab.newSHA, true)
+			} else if !strings.Contains(err.Error(), "activation record could not be committed") || currentSHA(t, lab.root) != lab.newSHA || git(t, lab.root, "rev-parse", "HEAD") != lab.newSHA {
+				t.Fatalf("not interrupted after alignment: %v", err)
+			}
+			generation := pendingGeneration(t, lab.root)
+			if generation == "" {
+				t.Fatal("no pending generation")
+			}
+			message := err.Error()
+			start, end := strings.Index(message, "`"), strings.LastIndex(message, "`")
+			if start < 0 || end <= start {
+				t.Fatalf("missing printed command: %s", message)
+			}
+			printed := message[start+1 : end]
+			if !strings.Contains(printed, "--claim "+strField(lab.ctx, "claim")) {
+				t.Fatalf("missing captured claim: %s", printed)
+			}
+			command := exec.Command("sh", "-c", printed)
+			command.Dir = t.TempDir()
+			command.Env = proc.ScrubbedEnv()
+			output, err := command.CombinedOutput()
+			if err != nil {
+				t.Fatalf("fresh helper recovery failed: %v\ncommand=%s\n%s", err, printed, output)
+			}
+			if !strings.Contains(string(output), "action: recover") || !strings.Contains(string(output), lab.oldSHA) {
+				t.Fatalf("real recovery result absent: %s", output)
+			}
+			if hasCurrent(t, lab.root) || git(t, lab.root, "rev-parse", "HEAD") != lab.oldSHA || pendingGeneration(t, lab.root) != "" {
+				t.Fatal("fresh helper did not restore known-good checkout and clear pending")
+			}
+			for path, before := range preserved {
+				after, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("recovery rewrote historical bytes: %s: %v", path, err)
+				}
+			}
+			t.Logf("real helper restored generation %s at %s; historical task and procedure unchanged", generation, point)
+		})
+	}
+}
+
+func TestFirstUpdateImmutablePreclaimRuntimeRefusedBeforePending(t *testing.T) {
+	lab := newActivationLab(t)
+	helper := buildPreclaimRecoveryHelper(t)
+	body, err := os.ReadFile(helper)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plantNativeHelper(t, lab.root, string(body))
+	_, err = Apply(lab.store, lab.ctx, lab.newSHA, true)
+	if err == nil || !strings.Contains(err.Error(), "current runtime cannot be established as known-good") || !strings.Contains(err.Error(), "candidate lacks owner_schema 2") || !strings.Contains(err.Error(), "state schema 3") || !strings.Contains(err.Error(), "([2])") {
+		t.Fatalf("preclaim runtime was not refused by the known-good compatibility floor: %v", err)
+	}
+	if hasCurrent(t, lab.root) || pendingGeneration(t, lab.root) != "" || git(t, lab.root, "rev-parse", "HEAD") != lab.oldSHA {
+		t.Fatal("incompatible preclaim activation mutated selection, pending, or checkout")
+	}
+	t.Logf("immutable preclaim activation refused before pending/selection: %v", err)
+}
+
+func buildCurrentRecoveryHelper(t *testing.T) string {
+	t.Helper()
+	output, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(t.TempDir(), "sumctl")
+	command := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-trimpath", "-buildvcs=false", "-o", helper, "./cmd/sumctl")
+	command.Dir = filepath.Join(strings.TrimSpace(string(output)), "go")
+	command.Env = append(proc.ScrubbedEnv(), "GOTOOLCHAIN=local", "CGO_ENABLED=0")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("build current recovery helper: %v\n%s", err, output)
+	}
+	return helper
+}

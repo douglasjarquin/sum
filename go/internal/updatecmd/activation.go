@@ -14,6 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
 	"github.com/douglasjarquin/sum/go/internal/release"
+	"github.com/douglasjarquin/sum/go/internal/shquote"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -731,14 +732,10 @@ func argvJoin(recovery *ordjson.Object) string {
 	list, _ := raw.([]any)
 	parts := make([]string, 0, len(list))
 	for _, item := range list {
-		value := fmt.Sprint(item)
-		if value == "" || strings.ContainsAny(value, " \t\n\r\"'`$\\;&|<>()*?[]{}!#~") {
-			value = "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
-		}
-		parts = append(parts, value)
+		parts = append(parts, fmt.Sprint(item))
 	}
 	if len(parts) == 0 {
 		return "update recover --generation GENERATION"
 	}
-	return strings.Join(parts, " ")
+	return shquote.Join(parts)
 }
