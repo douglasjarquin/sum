@@ -1,25 +1,17 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"github.com/douglasjarquin/sum/go/internal/app"
 	"os"
 	"path/filepath"
-	"strconv"
-	"time"
+	"strings"
 
-	"github.com/douglasjarquin/sum/go/internal/cleanup"
-	"github.com/douglasjarquin/sum/go/internal/hcboot"
-	"github.com/douglasjarquin/sum/go/internal/hookstatus"
-	"github.com/douglasjarquin/sum/go/internal/lifecycle"
-	"github.com/douglasjarquin/sum/go/internal/metadata"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/returns"
 	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/versions"
 	"github.com/spf13/cobra"
 )
 
@@ -27,9 +19,8 @@ var validInitRoles = map[string]bool{"coordinator": true, "worker": true, "devel
 
 func (o *rootOptions) addInitCommand(root *cobra.Command) {
 	o.addCoordinatorCommand(root)
-	var role, task, coreConfigHome, harness string
-	var argv []string
-	var reclaim bool
+	var role, task string
+	var transfer, retireNative bool
 	cmd := &cobra.Command{
 		Use:  "init",
 		Args: cobra.NoArgs,
@@ -37,134 +28,136 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 			if role != "" && !validInitRoles[role] {
 				return fmt.Errorf("invalid init arguments")
 			}
+			blocker := func(kind, detail, next string) error {
+				view := ordjson.NewObject()
+				view.Set("role", nil)
+				view.Set("blocker", kind)
+				view.Set("detail", detail)
+				view.Set("next", next)
+				if err := emitOrdjson(cmd.OutOrStdout(), view); err != nil {
+					return err
+				}
+				return &ExitError{Code: 1}
+			}
 			st, err := store.Open(o.home)
+			if err != nil {
+				if strings.Contains(err.Error(), "unsupported state schema") {
+					return blocker("legacy-state", "Existing state and development checkouts are preserved at "+o.home+" and "+filepath.Join(o.installRoot, ".sum", "dev")+"/*; live legacy conversion is unavailable.", "Use an independent fresh workspace beside "+o.installRoot+" and run mise run setup there.")
+				}
+				return err
+			}
+			marker, err := roleinit.DevelopmentMarker(o.runtimeRoot)
 			if err != nil {
 				return err
 			}
-			marker, markerErr := roleinit.DevelopmentMarker(o.runtimeRoot)
-			if markerErr != nil {
-				return markerErr
-			}
-			explicitAuthority := role != "" && role != "developer" || task != "" || reclaim
-			developmentOnly := marker != nil && !st.Designated()
-			inheritedTaskIdentity := !developmentOnly && (os.Getenv("SUM_TASK") != "" || ((os.Getenv("SUM_ROLE") == "worker" || os.Getenv("SUM_ROLE") == "reviewer") && os.Getenv("SUM_ATTEMPT") != ""))
-			emitDeveloper := func(ensure bool) error {
+			inheritedTask := os.Getenv("SUM_TASK") != "" || os.Getenv("SUM_ROLE") == "worker" || os.Getenv("SUM_ROLE") == "reviewer"
+			taskContext := role == "worker" || role == "reviewer" || task != "" || inheritedTask
+			if taskContext {
+				if role == "developer" || role == "coordinator" || transfer || retireNative {
+					return blocker("task-context", "An explicit task identity cannot claim another role.", "Inspect the recorded task attempt and initialize its required worker or reviewer role.")
+				}
+				ctx, err := store.Context(o.runtimeRoot)
+				if err != nil {
+					return blocker("task-context", "The task identity could not be validated.", "Inspect the recorded task attempt; do not initialize coordination from this context.")
+				}
+				if role == "" {
+					roleValue, _ := ctx.Get("role")
+					role, _ = roleValue.(string)
+				}
+				if task == "" {
+					taskValue, _ := ctx.Get("task")
+					task, _ = taskValue.(string)
+				}
 				var view *ordjson.Object
-				var initErr error
 				if st.Designated() {
-					view, initErr = roleinit.InitDesignated(roleinit.DesignatedOpts{RuntimeRoot: o.runtimeRoot, Store: st, Role: "developer"})
+					view, err = roleinit.InitDesignated(roleinit.DesignatedOpts{RuntimeRoot: o.runtimeRoot, SumctlPath: o.sumctlPath(), Store: st, Ctx: ctx, Role: role, Task: task})
 				} else {
-					view, initErr = roleinit.Init(o.runtimeRoot, st, nil, "developer", "")
+					view, err = roleinit.Init(o.runtimeRoot, st, ctx, role, task)
 				}
-				if initErr != nil {
-					return initErr
+				if err != nil {
+					return blocker("task-context", "The recorded task attempt refused initialization: "+err.Error(), "Inspect the recorded task attempt before retrying.")
 				}
-				if ensure {
-					route, err := selectedHCRoute(st, "", "", "")
-					if err != nil {
+				actualRole, _ := view.Get("role")
+				if actualRole == "worker" && st.Designated() {
+					endpointValue, _ := view.Get("endpoint")
+					caller, _ := endpointValue.(*ordjson.Object)
+					endpoint := store.EndpointFromContext(caller)
+					pending, pumpErr := returns.Pump(st, returns.PumpOpts{Ctx: caller, RuntimeRoot: o.runtimeRoot, SumctlPath: o.sumctlPath(), CoreID: endpoint.CoreID, Session: endpoint.Session, Inline: true, CallerVerifiedRole: "worker", CallerVerifiedTask: endpoint.Task, Parent: cmd.Context()})
+					if pumpErr != nil {
+						view.Set("returns_error", pumpErr.Error())
+					} else {
+						view.Set("returns", pending)
+					}
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			if role == "developer" || marker != nil {
+				if transfer || retireNative || role == "coordinator" {
+					return blocker("development-checkout", "A marked development checkout cannot own coordination.", "Use the installation workspace for coordination; keep developing here.")
+				}
+				var view *ordjson.Object
+				if st.Designated() {
+					view, err = roleinit.InitDesignated(roleinit.DesignatedOpts{RuntimeRoot: o.runtimeRoot, Store: st, Role: "developer"})
+				} else {
+					view, err = roleinit.Init(o.runtimeRoot, st, nil, "developer", "")
+				}
+				if err != nil {
+					return err
+				}
+				return emitOrdjson(cmd.OutOrStdout(), view)
+			}
+			if hint, err := roleinit.TaskCheckout(o.runtimeRoot, st); err != nil {
+				return err
+			} else if hint != "" {
+				return blocker("task-context", "This checkout belongs to recorded task "+hint+" but no valid task identity was supplied.", "Inspect "+hint+" and use its recorded worker or reviewer launch.")
+			}
+			owner, err := st.Owner()
+			if err != nil {
+				return err
+			}
+			session, err := st.CoordinatorSession()
+			if err != nil {
+				return err
+			}
+			token := o.claim
+			if owner != nil && session == nil {
+				if !retireNative {
+					return blocker("retire-native", "This workspace still records a native coordinator.", "After the user confirms retirement, run init --retire-native.")
+				}
+				if _, err := procedure.Describe(o.runtimeRoot, procedure.Coordinator, "no coordinator role was granted and nothing was retired"); err != nil {
+					return err
+				}
+				session, err = st.RetireNativeCoordinator(token, "agent conversation", transfer)
+				if err != nil {
+					return blocker("retire-native", err.Error(), "Inspect the recorded native coordinator and retry retirement only after its blockers are settled.")
+				}
+				token, transfer = session.Token(), false
+			}
+			view, err := roleinit.InitCoordinator(o.runtimeRoot, o.sumctlPath(), st, token, "agent conversation", transfer)
+			if err != nil {
+				if errors.Is(err, store.ErrNativeRetirementRequired) {
+					return blocker("retire-native", err.Error(), "After the user confirms retirement, run init --retire-native.")
+				}
+				if errors.Is(err, store.ErrClaimConflict) || errors.Is(err, store.ErrStaleClaim) {
+					if view == nil {
+						view = ordjson.NewObject()
+					}
+					view.Set("role", nil)
+					view.Set("blocker", "conflict")
+					view.Set("detail", err.Error())
+					view.Set("next", "Resume this conversation with init --claim TOKEN; use init --transfer only for a user-requested transfer.")
+					if err := emitOrdjson(cmd.OutOrStdout(), view); err != nil {
 						return err
 					}
-					if services := hcboot.EnsureRoute(o.runtimeRoot, route); services != nil {
-						view.Set("services", services)
-					}
+					return &ExitError{Code: 1}
 				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
+				return err
 			}
-			if role == "developer" && (task != "" || reclaim || inheritedTaskIdentity) {
-				return fmt.Errorf("Developer initialization cannot adopt a task identity or reclaim coordination; use the required verified role.")
-			}
-			if !explicitAuthority && !inheritedTaskIdentity {
-				if role == "developer" || developmentOnly {
-					return emitDeveloper(false)
-				}
-				bound, bindingErr := recordedCoordinatorContext(st)
-				if bindingErr != nil {
-					return bindingErr
-				}
-				if !bound {
-					return emitDeveloper(st.Designated())
-				}
-			}
-
-			ctx, ctxErr := store.Context(o.runtimeRoot)
-			if ctxErr != nil && st.Designated() && role == "coordinator" && os.Getenv("SUM_CORE_ID") == "" {
-				session, sessionErr := store.SessionFromEnv()
-				if sessionErr != nil {
-					return sessionErr
-				}
-				bootstrapCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				ctx, ctxErr = roleinit.BootstrapContext(bootstrapCtx, os.Getenv("HC_SOCKET"), session, os.Getenv("HC_TERMINAL_ID"), st, o.runtimeRoot)
-				cancel()
-			}
-			if ctxErr != nil {
-				if !explicitAuthority && !inheritedTaskIdentity {
-					return emitDeveloper(false)
-				}
-				return fmt.Errorf("%s", capitalizeHerdrContext(ctxErr.Error()))
-			}
-
-			if !st.Designated() {
-				view, initErr := roleinit.Init(o.runtimeRoot, st, ctx, role, task)
-				if initErr != nil {
-					return initErr
-				}
-				return emitOrdjson(cmd.OutOrStdout(), view)
-			}
-			view, initErr := roleinit.InitDesignated(roleinit.DesignatedOpts{
-				RuntimeRoot:    o.runtimeRoot,
-				SumctlPath:     o.sumctlPath(),
-				Store:          st,
-				Ctx:            ctx,
-				Role:           role,
-				Task:           task,
-				Reclaim:        reclaim,
-				CoreConfigHome: coreConfigHome, Harness: harness, Argv: argv,
-			})
-			if initErr != nil {
-				return initErr
-			}
-			actualRole, _ := view.Get("role")
-			endpointValue, _ := view.Get("endpoint")
-			caller, _ := endpointValue.(*ordjson.Object)
-			if actualRole == "coordinator" {
-				activationCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-				view.Set("hook_activation", hookstatus.AutoEnableAfterInit(activationCtx, st, caller, o.runtimeRoot, o.sumctlPath()))
-				cancel()
-				tasks, err := st.AllTasks()
-				if err != nil {
+			if retireNative {
+				raw, _ := view.Get("claim")
+				claim, _ := raw.(string)
+				if err := retireNativePreferences(st, claim); err != nil {
 					return err
-				}
-				view.Set("contract", versions.ContractState(st))
-				view.Set("maintenance", lifecycle.Pending(st, o.sumctlPath(), tasks))
-				pendingCleanup := make([]any, 0)
-				for _, task := range tasks {
-					if pending := cleanup.Pending(task); pending != nil {
-						row := ordjson.NewObject()
-						id, _ := task.Get("id")
-						row.Set("task", id)
-						for _, key := range pending.Keys() {
-							value, _ := pending.Get(key)
-							row.Set(key, value)
-						}
-						pendingCleanup = append(pendingCleanup, row)
-					}
-				}
-				view.Set("cleanup_pending", pendingCleanup)
-				hook, err := hookstatus.SummaryOf(st, tasks)
-				if err != nil {
-					return err
-				}
-				view.Set("hook", hook)
-				view.Set("metadata", metadata.Summary(st))
-			}
-			if actualRole == "coordinator" || actualRole == "worker" {
-				endpoint := store.EndpointFromContext(caller)
-				roleName, _ := actualRole.(string)
-				pending, pumpErr := returns.Pump(st, returns.PumpOpts{Ctx: caller, RuntimeRoot: o.runtimeRoot, SumctlPath: o.sumctlPath(), CoreID: endpoint.CoreID, Session: endpoint.Session, Inline: true, CallerVerifiedRole: roleName, CallerVerifiedTask: endpoint.Task, Parent: cmd.Context()})
-				if pumpErr != nil {
-					view.Set("returns_error", pumpErr.Error())
-				} else {
-					view.Set("returns", pending)
 				}
 			}
 			return emitOrdjson(cmd.OutOrStdout(), view)
@@ -172,87 +165,49 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 	}
 	cmd.Flags().StringVar(&role, "role", "", "")
 	cmd.Flags().StringVar(&task, "task", "", "")
-	cmd.Flags().BoolVar(&reclaim, "reclaim", false, "")
-	cmd.Flags().StringVar(&coreConfigHome, "hc-config-home", "", "")
-	cmd.Flags().StringVar(&harness, "harness", "codex", "")
-	cmd.Flags().StringArrayVar(&argv, "arg", nil, "")
+	cmd.Flags().BoolVar(&transfer, "transfer", false, "")
+	cmd.Flags().BoolVar(&retireNative, "retire-native", false, "")
 	root.AddCommand(cmd)
 }
 
-func recordedCoordinatorContext(s *store.Store) (bool, error) {
-	if os.Getenv("SUM_ROLE") != "coordinator" || os.Getenv("SUM_TASK") != "" {
-		return false, nil
-	}
-	session, err := store.SessionFromEnv()
+// retireNativePreferences removes active observer configuration while retaining its health evidence.
+func retireNativePreferences(s *store.Store, token string) error {
+	unlock, err := s.Lock()
 	if err != nil {
-		return false, nil
+		return err
 	}
-	for _, key := range []string{"HC_SOCKET", "HC_TERMINAL_ID", "SUM_CORE_ID", "SUM_ATTEMPT", "SUM_BINDING_GENERATION"} {
-		if os.Getenv(key) == "" {
-			return false, nil
-		}
+	defer unlock()
+	if _, err = s.CheckClaim(token); err != nil {
+		return err
 	}
-	owner, err := s.Owner()
-	if err != nil {
-		return false, err
+	path := filepath.Join(s.Home, "settings.json")
+	raw, err := ordjson.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	var saved store.Endpoint
-	pending := owner == nil
-	if !pending {
-		saved = store.EndpointFromContext(owner)
-		if saved.Validate() != nil || saved.Role != "coordinator" {
-			return false, nil
-		}
-		receipt, receiptErr := app.NativeReceipt(owner)
-		if receiptErr != nil || receipt.Kind != "coordinator-init" || receipt.Attempt != saved.Attempt || !receipt.Endpoint.SameAuthority(saved.Native()) {
-			return false, nil
-		}
-	} else {
-		value, readErr := ordjson.ReadFile(filepath.Join(s.Home, "coordinator-launch.json"))
-		if errors.Is(readErr, os.ErrNotExist) {
-			return false, nil
-		}
-		if readErr != nil {
-			return false, readErr
-		}
-		claim, ok := value.(*ordjson.Object)
+	if err == nil {
+		settings, ok := raw.(*ordjson.Object)
 		if !ok {
-			return false, nil
+			return fmt.Errorf("settings.json is not an object")
 		}
-		effect, _ := claim.Get("effect")
-		if effect != "claimed" && effect != "created" && effect != "uncertain" {
-			return false, nil
-		}
-		endpointValue, _ := claim.Get("endpoint")
-		endpointObject, _ := endpointValue.(*ordjson.Object)
-		saved = store.EndpointFromContext(endpointObject)
-		if saved.Schema != 2 || saved.Backend != "hc" || saved.Role != "coordinator" || saved.Attempt == "" || saved.BindingGeneration == 0 {
-			return false, nil
-		}
-		intentValue, _ := claim.Get("intent")
-		intent, _ := intentValue.(*ordjson.Object)
-		if intent == nil {
-			return false, nil
-		}
-		envValue, _ := intent.Get("env")
-		launchEnv, _ := envValue.(*ordjson.Object)
-		if launchEnv == nil {
-			return false, nil
-		}
-		for key, want := range map[string]string{"SUM_HOME": s.Root, "SUM_CORE_ID": saved.CoreID, "HC_SOCKET": saved.Socket, "SUM_SESSION": saved.Session, "SUM_ROLE": "coordinator", "SUM_ATTEMPT": saved.Attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(saved.BindingGeneration, 10)} {
-			actual, _ := launchEnv.Get(key)
-			if want == "" || actual != want {
-				return false, nil
+		if _, present := settings.Get("hook"); present {
+			settings.Delete("hook")
+			if err = ordjson.WriteFile(path, settings); err != nil {
+				return err
 			}
 		}
 	}
-
-	host, err := s.Machine()
-	if err != nil {
-		return false, err
+	health := filepath.Join(s.Home, "hook", "health.json")
+	if _, err = os.Stat(health); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
 	}
-	if !host.Is(saved.Machine) {
-		return false, nil
+	retired := filepath.Join(s.Home, "hook", "health.retired-native.json")
+	if _, err = os.Stat(retired); err == nil {
+		return fmt.Errorf("retired observer health already exists at %s; preserve both records and inspect before retrying", retired)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	return saved.Session == session && saved.Socket == os.Getenv("HC_SOCKET") && (saved.Address == os.Getenv("HC_TERMINAL_ID") || (pending && saved.Address == "")) && saved.CoreID == os.Getenv("SUM_CORE_ID") && saved.Attempt == os.Getenv("SUM_ATTEMPT") && strconv.FormatUint(saved.BindingGeneration, 10) == os.Getenv("SUM_BINDING_GENERATION"), nil
+	return os.Rename(health, retired)
 }

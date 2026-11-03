@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import tomllib
@@ -204,6 +205,32 @@ class SetupTest(unittest.TestCase):
         for parent in ('lib', 'scripts', 'tests'):
             for path in (ROOT / parent).rglob('*.py'):
                 compile(path.read_text(), str(path), 'exec')
+
+class BootstrapEntryTest(unittest.TestCase):
+    def test_unstaged_init_reports_setup_blocker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            shutil.copy2(ROOT / "bin/sumctl", root / "bin/sumctl")
+            result = subprocess.run([str(root / "bin/sumctl"), "init"], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(json.loads(result.stdout), {"role": None, "blocker": "unstaged", "next": "mise run setup"})
+
+    def test_staged_entry_ignores_unrelated_inherited_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "workspace"
+            unrelated = Path(directory) / "unrelated"
+            unrelated.mkdir()
+            (root / "bin").mkdir(parents=True)
+            (root / ".local/bin").mkdir(parents=True)
+            shutil.copy2(ROOT / "bin/sumctl", root / "bin/sumctl")
+            binary = root / ".local/bin/sumctl"
+            binary.write_text('#!/bin/sh\nprintf "%s\\n" "$SUM_INSTALL_ROOT"\n')
+            binary.chmod(0o700)
+            result = subprocess.run([str(root / "bin/sumctl"), "init"], env=dict(os.environ, SUM_INSTALL_ROOT=str(unrelated)), text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(Path(result.stdout.strip()).resolve(), root.resolve())
+
 
 if __name__ == '__main__':
     unittest.main()

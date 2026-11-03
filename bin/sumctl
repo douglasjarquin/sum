@@ -11,10 +11,20 @@ if [[ ! -x "$BINARY" ]]; then
   BINARY="$RUNTIME/.local/bin/sumctl-go"
 fi
 if [[ ! -x "$BINARY" ]]; then
-  echo "sumctl: staged native binary is missing; run mise run setup or stage a release." >&2
+  if [[ "${1:-}" == "init" ]]; then
+    echo '{"role":null,"blocker":"unstaged","next":"mise run setup"}'
+  else
+    echo "sumctl: staged native binary is missing; run mise run setup or stage a release." >&2
+  fi
   exit 1
 fi
-# Keep an installation root the installation launcher already exported (a release wrapper run by the
-# updater inherits it); the runtime validates the value against its own tree. Same rule as bin/herdr-mesh.
-export SUM_INSTALL_ROOT="${SUM_INSTALL_ROOT:-$ROOT}"
+# Preserve an inherited installation only for this checkout or its selected release.
+INSTALLATION="$ROOT"
+if [[ -n "${SUM_INSTALL_ROOT:-}" && -d "$SUM_INSTALL_ROOT" ]]; then
+  CANDIDATE=$(cd -- "$SUM_INSTALL_ROOT" && pwd -P)
+  case "$RUNTIME/" in
+    "$CANDIDATE/"|"$CANDIDATE/.local/releases/"*) INSTALLATION="$CANDIDATE" ;;
+  esac
+fi
+export SUM_INSTALL_ROOT="$INSTALLATION"
 exec "$BINARY" "$@"

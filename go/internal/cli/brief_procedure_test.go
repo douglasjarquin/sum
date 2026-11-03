@@ -388,7 +388,7 @@ func TestWorkerInitReportsAnUnreadableProcedureRecord(t *testing.T) {
 	}
 	before := snapshotTree(t, filepath.Join(d.home, "tasks", taskID))
 	view := d.ctlPane(pane, false, "init")
-	if asString(view["error"]) == "" {
+	if view["blocker"] != "task-context" || view["role"] != nil || !strings.Contains(asString(view["detail"]), "versions.json") {
 		t.Fatalf("unreadable versions granted initialized authority: %v", view)
 	}
 	assertTreeUnchanged(t, before, snapshotTree(t, filepath.Join(d.home, "tasks", taskID)))

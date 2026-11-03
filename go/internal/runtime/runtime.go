@@ -3,6 +3,7 @@ package runtime
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const Releases = ".local/releases"
@@ -44,7 +45,10 @@ func ResolveInstallation(runtimeRoot, envInstallRoot string) string {
 
 func DefaultHome(installRoot string) string {
 	if value := os.Getenv("SUM_HOME"); value != "" {
-		return value
+		relative, err := filepath.Rel(resolve(installRoot), resolve(value))
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative) {
+			return resolve(value)
+		}
 	}
 	return filepath.Join(installRoot, ".sum")
 }
@@ -54,10 +58,22 @@ func resolve(path string) string {
 	if err != nil {
 		return path
 	}
-	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
-		return resolved
+	ancestor := absolute
+	var tail []string
+	for {
+		if resolved, err := filepath.EvalSymlinks(ancestor); err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return resolved
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return absolute
+		}
+		tail = append(tail, filepath.Base(ancestor))
+		ancestor = parent
 	}
-	return absolute
 }
 
 func samePath(a, b string) bool {

@@ -32,6 +32,7 @@ type rootOptions struct {
 	home        string
 	homeSet     bool
 	format      string
+	claim       string
 	out         io.Writer
 	err         io.Writer
 }
@@ -70,6 +71,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	root.Flags().StringVar(&opts.home, "home", "", "state home")
 	root.Flags().Lookup("home").NoOptDefVal = ""
 	root.PersistentFlags().StringVar(&opts.format, "format", "toon", "stdout encoding: toon or json")
+	root.PersistentFlags().StringVar(&opts.claim, "claim", "", "captured coordinator conversation claim")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		opts.homeSet = root.Flags().Changed("home")
 		if !opts.homeSet {

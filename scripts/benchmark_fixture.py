@@ -125,7 +125,7 @@ def actor(core, home, role, cwd, task="", attempt="benchmark-bootstrap"):
 
 def actor_env(case, role="coordinator"):
     endpoint = case["actors"][role]
-    return dict(case["env"], SUM_HOME=str(case["root"]), SUM_SESSION=endpoint["session"], SUM_CORE_ID=endpoint["core_id"],
+    return dict(case["env"], SUM_SESSION=endpoint["session"], SUM_CORE_ID=endpoint["core_id"],
                 HC_SOCKET=endpoint["socket"], HC_TERMINAL_ID=endpoint["address"], SUM_ROLE=role,
                 SUM_TASK=endpoint["task"], SUM_ATTEMPT=endpoint["attempt"], SUM_BINDING_GENERATION=str(endpoint["binding_generation"]))
 

@@ -100,33 +100,23 @@ func decodeObject(t *testing.T, raw string) map[string]any {
 	return decodeCLIMap(t, raw)
 }
 
-func TestInit_designatedFirstPaneClaimsCoordinator(t *testing.T) {
-	home := writeDesignatedHome(t)
-	nativeEnv(t, home)
-	out, err := runCLI(t, home, "init")
-	if err != nil {
-		t.Fatalf("init: %v\n%s", err, out)
+func TestInitDesignatedWorkspaceClaimsLogicalCoordinator(t *testing.T) {
+	root, s := ordinaryInitLab(t)
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
 	}
-	value := decodeObject(t, out)
-	if value["role"] != "coordinator" {
-		t.Fatalf("role = %v, want coordinator", value["role"])
-	}
-	if value["installation"] != true {
-		t.Fatalf("installation = %v", value["installation"])
-	}
-	if value["registered"] == false {
-		t.Fatal("expected registration")
-	}
-	ownerRaw, err := os.ReadFile(filepath.Join(home, "context.json"))
+	value, err := ordinaryInit(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var owner map[string]any
-	if err := json.Unmarshal(ownerRaw, &owner); err != nil {
-		t.Fatal(err)
+	if value["role"] != "coordinator" || asString(value["claim"]) == "" {
+		t.Fatalf("logical coordinator = %v", value)
 	}
-	if owner["role"] != "coordinator" || owner["address"] != "t1" || owner["backend"] != "hc" || owner["core_id"] != os.Getenv("SUM_CORE_ID") {
-		t.Fatalf("owner = %v", owner)
+	if _, present := value["endpoint"]; present {
+		t.Fatal("logical coordinator has a native endpoint")
+	}
+	if _, err := os.Stat(filepath.Join(s.Home, "context.json")); !os.IsNotExist(err) {
+		t.Fatal("logical claim created native ownership")
 	}
 }
 

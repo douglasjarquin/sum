@@ -46,7 +46,7 @@ def call(args):
         if observed != candidate or note != "Application-local HC composition verified.\n":
             raise RuntimeError("reviewer inspection did not match the assigned candidate")
         inspection = {"candidate": candidate, "note": note, "read_only": True}
-    result = subprocess.run([str(helper), "--format", "json", *args], text=True, capture_output=True, timeout=90)
+    result = subprocess.run([str(helper), "--home", os.environ["SUM_HOME"], "--format", "json", *args], text=True, capture_output=True, timeout=90)
     value = {"args": args, "code": result.returncode, "stdout": result.stdout, "stderr": result.stderr,
              "fixture_python": sys.executable, "resolved_python3": shutil.which("python3")}
     if inspection:
