@@ -11,9 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/bindcmd"
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
+	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
@@ -21,15 +23,15 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/returns"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/taskcheckout"
 	"github.com/douglasjarquin/sum/go/internal/versions"
 )
 
 func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string, args LaunchArgs) (*ordjson.Object, error) {
-	coordinator := store.EndpointFromContext(ctx)
-	if err := coordinator.Validate(); err != nil || coordinator.Role != "coordinator" {
-		return nil, fmt.Errorf("a registered native coordinator is required to launch a reviewer")
+	if err := app.RequireCoordinator(s, ctx); err != nil {
+		return nil, err
 	}
 	instance, err := s.Instance()
 	if err != nil {
@@ -45,16 +47,12 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if err = s.CheckMachine(task); err != nil {
 		return nil, err
 	}
-	parent := store.EndpointFromContext(objectField(task, "parent"))
-	if !coordinator.Native().SameAuthority(parent.Native()) {
-		return nil, fmt.Errorf("only the task's recorded coordinator may launch its reviewer")
-	}
-	owner, err := s.Owner()
+	actor, err := app.ObserveTaskActor(s, ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !coordinator.Native().SameAuthority(store.EndpointFromContext(owner).Native()) {
-		return nil, fmt.Errorf("coordinator ownership changed; reviewer launch refused")
+	if err = app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
+		return nil, err
 	}
 	worktree := asString(task, "worktree")
 	if worktree == "" {
@@ -113,19 +111,29 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if err != nil {
 		return nil, err
 	}
-	templateHome := asString(objectField(owner, "native_template"), "config_home")
-	var ownerTemplate returns.NativeTemplate
-	if err = decodeObject(objectField(owner, "native_template"), &ownerTemplate); err != nil {
+	route, err := hcboot.SelectedRoute(s, "", "", "")
+	if err != nil {
 		return nil, err
 	}
-	options := ownerTemplate.Options
-	options.InputEnv = ownerTemplate.Spec.InputEnv
+	loaded, err := settings.LoadSettings(s)
+	if err != nil {
+		return nil, err
+	}
+	templateHome := route.ConfigHome
+	options := launch.HCTemplateOptions{CodexHome: loaded.Template.CodexHome, ConfigFiles: loaded.Template.ConfigFiles, InputEnv: loaded.Template.InputEnv}
 	options.Cwd = worktree
 	spec, err := launch.PrepareHCTemplate(runtimeRoot, templateHome, harness, argv, options)
 	if err != nil {
 		return nil, err
 	}
-	client := hcclient.Client{Socket: coordinator.Socket, CoreID: coordinator.CoreID}
+	route, err = hcboot.EnsureWorkspaceRoute(s, runtimeRoot)
+	if err != nil {
+		return nil, err
+	}
+	if err = app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
+		return nil, err
+	}
+	client := hcclient.Client{Socket: route.Socket, CoreID: route.CoreID}
 	templates, err := client.Templates(context.Background())
 	if err != nil {
 		return nil, err
@@ -144,7 +152,11 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 		return nil, err
 	}
 	attempt := hex.EncodeToString(random)
-	ep := store.Endpoint{Schema: 2, Backend: "hc", Machine: coordinator.Machine, CoreID: coordinator.CoreID, Session: coordinator.Session, Socket: coordinator.Socket, Task: args.Task, Role: "reviewer", Attempt: attempt, BindingGeneration: 1, Cwd: worktree}
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
+	ep := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: route.CoreID, Session: route.Session, Socket: route.Socket, Task: args.Task, Role: "reviewer", Attempt: attempt, BindingGeneration: 1, Cwd: worktree}
 	reviewer := ep.Object()
 	reviewer.Set("harness", harness)
 	reviewer.Set("argv", stringList(argv))
@@ -159,7 +171,7 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	}
 	prompt := kickoffPrompt(sumctlPath, args.Task, candidate, skill, policyCandidate(task, candidate))
 	labels := map[string]string{"sum.installation": instance, "sum.task": args.Task, "sum.role": "reviewer", "sum.attempt": attempt}
-	params := hcclient.RunParams{Argv: []string{spec.Name}, Cwd: worktree, Name: "sum-r-" + strings.TrimPrefix(args.Task, "t-") + "-" + attempt[:12], Parent: coordinator.Address, Caller: coordinator.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: labels, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "reviewer", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(ep.BindingGeneration, 10), "SUM_CORE_ID": ep.CoreID, "SUM_SESSION": ep.Session, "HC_SOCKET": ep.Socket}}
+	params := hcclient.RunParams{Argv: []string{spec.Name}, Cwd: worktree, Name: "sum-r-" + strings.TrimPrefix(args.Task, "t-") + "-" + attempt[:12], OutliveParent: true, NoNotify: true, Keep: false, RM: false, Labels: labels, Env: map[string]string{"SUM_HOME": s.Root, "SUM_TASK": args.Task, "SUM_ROLE": "reviewer", "SUM_ATTEMPT": attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(ep.BindingGeneration, 10), "SUM_CORE_ID": ep.CoreID, "SUM_SESSION": ep.Session, "HC_SOCKET": ep.Socket}}
 	spec.BindInputEnvironment(params.Env)
 	reviewer.Set("opening", prompt)
 	result, err := launchPreparedNative(context.Background(), s, task, ep, reviewer, params)
@@ -203,12 +215,9 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 		unlock()
 		return nil, fmt.Errorf("candidate changed before reviewer launch")
 	}
-	if parent := objectField(task, "parent"); parent != nil {
-		owner, ownerErr := s.Owner()
-		if ownerErr != nil || !store.EndpointFromContext(parent).Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) || !store.EndpointFromContext(parent).Native().SameAuthority(store.EndpointFromContext(owner).Native()) {
-			unlock()
-			return nil, fmt.Errorf("coordinator authority changed before reviewer launch")
-		}
+	if err = checkCoordinatorSnapshot(s, task, current); err != nil {
+		unlock()
+		return nil, err
 	}
 	intent := ordjson.NewObject()
 	intent.Set("attempt", endpoint.Attempt)
@@ -236,6 +245,23 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 	if runErr != nil {
 		runErr = &hcclient.Error{Method: "terminal.run", Effect: hcclient.NotSubmitted, Cause: runErr}
 	} else {
+		// Recheck the captured claim after qualification and trust work, immediately
+		// before the external effect. Store.Lock fences transferred conversations.
+		release, claimErr := s.Lock()
+		if claimErr != nil {
+			return nil, claimErr
+		}
+		current, claimErr = s.ReadTask(endpoint.Task)
+		if claimErr == nil {
+			claimErr = checkCoordinatorSnapshot(s, task, current)
+		}
+		if claimErr == nil {
+			claimErr = maintenance.Refuse(current, "Reviewer launch")
+		}
+		release()
+		if claimErr != nil {
+			return nil, claimErr
+		}
 		run, runErr = client.Run(runCtx, params)
 	}
 	created, err := func() (*ordjson.Object, error) {
@@ -347,7 +373,7 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 		}
 		if rebind := objectField(saved, "rebind"); rebind != nil {
 			rebind.Set("to", endpoint.Object())
-			record, appendErr := evidence.Append(current, "reviewer-rebind", "coordinator", rebind, nil, objectField(current, "parent"))
+			record, appendErr := evidence.Append(current, "reviewer-rebind", "coordinator", rebind, nil, objectField(current, "owner"))
 			if appendErr != nil {
 				return nil, appendErr
 			}
@@ -435,11 +461,7 @@ func promptNativeReviewer(ctx context.Context, s *store.Store, task, recorded *o
 		err = fmt.Errorf("reviewer endpoint or candidate changed before input")
 	}
 	if err == nil {
-		parent := store.EndpointFromContext(objectField(task, "parent"))
-		owner, ownerErr := s.Owner()
-		if ownerErr != nil || !parent.Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) || !parent.Native().SameAuthority(store.EndpointFromContext(owner).Native()) {
-			err = fmt.Errorf("coordinator authority changed before reviewer input")
-		}
+		err = checkCoordinatorSnapshot(s, task, current)
 	}
 	if err == nil {
 		prior := objectField(objectField(current, "reviewer"), "prompt")
@@ -577,13 +599,15 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	if err != nil {
 		return nil, err
 	}
-	caller := store.EndpointFromContext(coordinator)
-	owner, err := s.Owner()
+	if err = app.RequireCoordinator(s, coordinator); err != nil {
+		return nil, err
+	}
+	actor, err := app.ObserveTaskActor(s, coordinator)
 	if err != nil {
 		return nil, err
 	}
-	if caller.Role != "coordinator" || caller.Validate() != nil || !caller.Native().SameAuthority(store.EndpointFromContext(owner).Native()) || !caller.Native().SameAuthority(store.EndpointFromContext(objectField(task, "parent")).Native()) {
-		return nil, fmt.Errorf("only the recorded native coordinator may redeliver")
+	if err = app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
+		return nil, err
 	}
 	reviewer := objectField(task, "reviewer")
 	ep := store.EndpointFromContext(reviewer)
@@ -657,7 +681,10 @@ func Redeliver(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	}
 	if err == nil {
 		saved := objectField(current, "reviewer")
-		if !ep.Native().SameAuthority(store.EndpointFromContext(saved).Native()) || !caller.Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) || asString(objectField(saved, "prompt"), "state") != "not-delivered" || reviewerCandidateState(current) != snapshot {
+		if err = app.CheckTaskRole(s, current, actor, "coordinator"); err != nil {
+			return nil, err
+		}
+		if !ep.Native().SameAuthority(store.EndpointFromContext(saved).Native()) || asString(objectField(saved, "prompt"), "state") != "not-delivered" || reviewerCandidateState(current) != snapshot {
 			err = fmt.Errorf("reviewer recovery claim changed concurrently")
 		} else {
 			prompt := objectField(saved, "prompt")
@@ -719,4 +746,41 @@ func reviewerCandidateState(task *ordjson.Object) string {
 	}
 	data, _ := ordjson.MarshalCompact(snapshot)
 	return string(data)
+}
+
+// A captured claim is checked again by Store.Lock; the task owner must also
+// remain unchanged while native observations are made outside that lock.
+func checkCoordinatorSnapshot(s *store.Store, before, current *ordjson.Object) error {
+	owner := objectField(before, "owner")
+	if owner == nil {
+		session, err := s.CoordinatorSession()
+		if err != nil {
+			return err
+		}
+		if session == nil {
+			return nil
+		}
+		if session.RetiredNative == nil {
+			return fmt.Errorf("task has no logical coordinator owner")
+		}
+		matches, err := s.Matches(objectField(current, "parent"), store.EndpointFromContext(session.RetiredNative))
+		if err != nil {
+			return err
+		}
+		if !matches {
+			return fmt.Errorf("retired task coordinator changed")
+		}
+		return nil
+	}
+	if !store.LogicalOwnersMatch(owner, objectField(current, "owner")) {
+		return fmt.Errorf("task coordinator owner changed")
+	}
+	session, err := s.CoordinatorSession()
+	if err != nil {
+		return err
+	}
+	if session == nil || !store.LogicalOwnersMatch(owner, session.Owner()) {
+		return fmt.Errorf("task belongs to another coordinator session")
+	}
+	return nil
 }

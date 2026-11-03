@@ -12,7 +12,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
-	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/proc"
@@ -181,11 +180,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 		if previous.Address == address {
 			return nil, fmt.Errorf("replacement terminal must differ")
 		}
-		current := store.EndpointFromContext(ctx)
 		candidate := previous
-		candidate.CoreID = current.CoreID
-		candidate.Socket = current.Socket
-		candidate.Session = current.Session
 		candidate.Address = address
 		candidate.BindingGeneration++
 		lookupClient := hcclient.Client{Socket: candidate.Socket, CoreID: candidate.CoreID}
@@ -249,16 +244,6 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 		}
 		reviewerSnapshot = reviewerCandidateState(task)
 	}
-	scopeTarget := store.EndpointFromContext(ctx)
-	if replacement != nil {
-		scopeTarget = store.EndpointFromContext(replacement)
-	}
-	coverageCtx, cancelCoverage := context.WithTimeout(context.Background(), 10*time.Second)
-	_, err = hookstatus.EnsureScope(coverageCtx, s, ctx, scopeTarget, pump.RuntimeRoot, pump.SumctlPath)
-	cancelCoverage()
-	if err != nil {
-		return nil, fmt.Errorf("binding unchanged; native observer coverage: %w", err)
-	}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -272,9 +257,12 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 	if err != nil {
 		return nil, err
 	}
-	owner, ownerErr := s.Owner()
-	if ownerErr != nil || !store.EndpointFromContext(ctx).Native().SameAuthority(store.EndpointFromContext(owner).Native()) {
-		return nil, fmt.Errorf("coordinator authority changed during native rebind")
+	session, err := s.CoordinatorSession()
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		return nil, store.ErrClaimRequired
 	}
 	if !parentOnly {
 		if !SameEndpoint(object(current, key), old) {
@@ -297,7 +285,7 @@ func Run(s *store.Store, ctx *ordjson.Object, taskID, workerTerminal, reviewerTe
 		}
 		current.Set(key, replacement)
 	}
-	current.Set("parent", ctx)
+	current.Set("owner", session.Owner())
 	body := ordjson.NewObject()
 	body.Set("from", old)
 	body.Set("to", replacement)

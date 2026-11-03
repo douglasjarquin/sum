@@ -109,8 +109,11 @@ func requireWorktree(task *ordjson.Object) (string, error) {
 }
 
 func endpointRole(s *store.Store, task, endpoint *ordjson.Object) string {
+	if store.LogicalOwnersMatch(objectField(task, "owner"), endpoint) {
+		return "coordinator"
+	}
 	actual := store.EndpointFromContext(endpoint)
-	for _, entry := range []struct{ key, role string }{{"worker_endpoint", "worker"}, {"parent", "coordinator"}, {"reviewer", "reviewer"}} {
+	for _, entry := range []struct{ key, role string }{{"worker_endpoint", "worker"}, {"reviewer", "reviewer"}} {
 		if actual.Native().SameAuthority(store.EndpointFromContext(objectField(task, entry.key)).Native()) {
 			return entry.role
 		}

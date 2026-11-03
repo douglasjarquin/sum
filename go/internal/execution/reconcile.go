@@ -32,9 +32,12 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if err = maintenance.Refuse(task, "Execution reconcile"); err != nil {
 		return nil, err
 	}
-	parent := store.EndpointFromContext(asObject(field(task, "parent")))
-	if !parent.Native().SameAuthority(store.EndpointFromContext(ctx).Native()) {
-		return nil, fmt.Errorf("task belongs to another coordinator")
+	actor, err := app.ObserveTaskActor(s, ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err = app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
+		return nil, err
 	}
 	worker, err := reservations.Worker(task)
 	if err != nil {
@@ -66,14 +69,21 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 		return nil, fmt.Errorf("creation intent does not belong to this worker attempt and checkout")
 	}
 	before, _ := ordjson.MarshalCompact(native)
-	client := hcclient.Client{Socket: parent.Socket, CoreID: parent.CoreID}
+	if params.Env["HC_SOCKET"] == "" || params.Env["SUM_CORE_ID"] == "" || params.Env["SUM_SESSION"] == "" || params.Env["SUM_TASK"] != taskID || params.Env["SUM_ATTEMPT"] != attempt || params.Env["SUM_ROLE"] != "worker" {
+		return nil, fmt.Errorf("saved worker creation route is incomplete or mismatched")
+	}
+	host, err := s.Machine()
+	if err != nil {
+		return nil, err
+	}
+	client := hcclient.Client{Socket: params.Env["HC_SOCKET"], CoreID: params.Env["SUM_CORE_ID"]}
 	observe, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	terminal, err := launch.DiscoverWorkerCreation(observe, &client, params, template.Spec, asString(field(native, "claimed_at")))
 	if err != nil {
 		return nil, err
 	}
-	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: parent.Machine, Socket: parent.Socket, CoreID: parent.CoreID, Session: parent.Session, Address: terminal.Address, CreatedMS: terminal.CreatedMS, Task: taskID, Role: "worker", Attempt: attempt, BindingGeneration: 1, Cwd: params.Cwd}
+	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, Socket: params.Env["HC_SOCKET"], CoreID: params.Env["SUM_CORE_ID"], Session: params.Env["SUM_SESSION"], Address: terminal.Address, CreatedMS: terminal.CreatedMS, Task: taskID, Role: "worker", Attempt: attempt, BindingGeneration: 1, Cwd: params.Cwd}
 	unlock, err := s.Lock()
 	if err != nil {
 		return nil, err
@@ -93,8 +103,8 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if err = maintenance.Refuse(current, "Execution reconcile"); err != nil {
 		return nil, err
 	}
-	if !parent.Native().SameAuthority(store.EndpointFromContext(asObject(field(current, "parent"))).Native()) {
-		return nil, fmt.Errorf("task parent changed during discovery")
+	if err = app.CheckTaskRole(s, current, actor, "coordinator"); err != nil {
+		return nil, err
 	}
 	n := asObject(field(w, "native_launch"))
 	after, _ := ordjson.MarshalCompact(n)
