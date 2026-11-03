@@ -51,6 +51,281 @@ Record a candidate report, launch an independent candidate-bound reviewer, and v
 Run independent verification and perform only user-authorized publication.
 Only the user merges except an explicitly authorized factory high-confidence merge contract.
 
+## User-run authenticated Terminal Grok Build journey
+
+Status: not run for this candidate.
+The user runs this journey and handles every authentication, trust and permission prompt.
+An agent may prepare the isolated files and record the user's results; preparation does not certify any manual step.
+Keep A1, A6, A7, A8, A12, A15 and the Terminal Grok Build harness row marked not run until the user supplies the corresponding evidence.
+Fresh-clone setup supplies evidence for A2 separately.
+Do not count this journey as Codex, mixed-harness, production retirement or production deployment evidence.
+
+1. **Inspect the prepared handoff and start Grok yourself.**
+   The handoff must give absolute paths for `SUM_ACCEPTANCE_ROOT` (an independent staged Sum workspace, never the live installation or a development checkout), `ACCEPTANCE_PROJECT` (a disposable Git project with a standardized verification contract), `ACCEPTANCE_BRIEFS` (approved `task-one.md` and `task-two.md`) and `ACCEPTANCE_EVIDENCE` (a private evidence directory outside either tracked tree).
+   The prepared `launch.env` supplies these paths under `.artifacts/pr343-repairs/acceptance/{installation,project,briefs,evidence}`; inspect it before loading it into the user-run shell.
+   The disposable project needs a local origin/default branch for task base resolution; no external publication is part of this fixture.
+   It must identify the candidate SHA, the exact published HC artifact and matched templates/manual, a unique private HC session and scratch runtime/config paths, and the approved Grok worker/reviewer configuration.
+   Both briefs must authorize their exact changes, commits and verification, use distinct owned paths, and retain the generated absolute helper callbacks.
+   Task one owns `notes/one.md`, explains the fixture's `hello.py` CLI, saves the question in step 5 about including `APPROVED`, continues finite approved independent read/verification work while the answer is pending, applies the answer before its dependent change, and reports its committed candidate.
+   Task two owns `notes/two.md`, documents normal and shout examples, runs the existing verification contract, and independently commits and reports its approved change.
+   These fixture documentation changes require no new tests; running the existing verification contract remains part of both briefs.
+   The operator must have existing authenticated Grok Build access; do not change accounts, models, billing or permission controls for this exercise.
+   Missing prerequisites are blockers to record, not instructions to improvise installation or live configuration.
+   Start the usual Terminal Grok Build conversation in `SUM_ACCEPTANCE_ROOT` yourself and give it the two approved briefs and this runbook.
+   Preserve the exact starting prompt, harness version/default input configuration, candidate identity, workspace paths and HC artifact identity in `ACCEPTANCE_EVIDENCE`.
+   Keep claim-bearing transcripts private and redact tokens from public excerpts.
+
+2. **Claim ordinary coordination without launching an HC coordinator.**
+   In that Grok conversation, invoke the staged workspace's helper:
+
+   ```sh
+   cd "$SUM_ACCEPTANCE_ROOT"
+   ./bin/sumctl init --format json
+   ```
+
+   Expect `role: "coordinator"`, nonempty `claim`, `session.kind: "coordinator-session"`, `session.session_id`, `session.generation`, `procedure`, `helper`, `home` and `outstanding`.
+   Read every validated path returned under `procedure` before coordination.
+   Retain the returned token as `CLAIM` in this conversation and use the returned absolute `helper` as `SUM_ACCEPTANCE_HELPER` for subsequent commands.
+   No coordinator terminal or authenticated agent is created by ordinary init, and init must neither start nor query an HC core.
+   Preserve init stdout/stderr, exit status, the validated procedure paths and visible terminal/core observations.
+   Repeat initialization and verify identical `claim`, `session.session_id` and `session.generation`:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" init --claim "$CLAIM" --format json
+   ```
+
+3. **Let the user choose the isolated workspace's capacity before preparing tasks.**
+   Only the user sets capacity; the agent must never set or raise it automatically.
+   Inspect the current settings first:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" settings show --format json
+   ```
+
+   Preserve `limits`, `source`, `occupied` and `effective` when present.
+   Fresh default limits are two global execution reservations and one per repository, so the second task in this single-repository fixture cannot be admitted under those defaults.
+   This sequence retains two worker reservations and runs coordinator verification serially, requiring room for one additional verifier reservation: three global and three per repository when there is no other held work.
+   Reports retain worker reservations until conclusive stop evidence releases them.
+   Live reviewers are separate native terminals; the current execution reservation ledger counts workers and verifiers, not reviewers.
+   The user must also consider the two real reviewer terminals when deciding whether to run this fixture.
+   If the user approves these bounded limits for this isolated workspace, the user runs:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" settings set --global 3 --per-repository 3 --claim "$CLAIM" --format json
+   "$SUM_ACCEPTANCE_HELPER" settings show --format json
+   ```
+
+   Preserve the user's decision and both command responses, verifying `limits.global: 3`, `limits.per_repository: 3`, the actual settings `source`, and the applicable `effective` scope/limit when present.
+   A fresh empty workspace can return `effective: []`; repeat `settings show --format json` after preparation to preserve the actual occupied scope.
+   Existing project overrides or held reservations must be considered from the returned view; these values do not authorize an automatic adjustment of an override or a further increase.
+   If the user declines, or existing effective limits/occupancy do not permit the fixture, leave the dependent worker, delivery, review and verification steps and their acceptance rows not run.
+   Do not clear limits, release unproven attempts or edit state to bypass that decision.
+
+4. **Prepare and launch the two approved tasks.**
+   Each line below is a separate helper process in the coordinator conversation.
+   `--approved` records the user's actual brief approval; it does not grant approval on its own.
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" prepare --repo "$ACCEPTANCE_PROJECT" --brief "$ACCEPTANCE_BRIEFS/task-one.md" --harness grok --approved --claim "$CLAIM" --format json
+   "$SUM_ACCEPTANCE_HELPER" prepare --repo "$ACCEPTANCE_PROJECT" --brief "$ACCEPTANCE_BRIEFS/task-two.md" --harness grok --approved --claim "$CLAIM" --format json
+   ```
+
+   Save each returned `id` as `TASK_ONE` or `TASK_TWO` in the conversation.
+   Expect `status: "prepared"`, distinct `id`, `branch` and `worktree`, `parent: null`, `owner.kind: "coordinator-session"`, and `verification_policy.status: "standardized"`.
+   Preserve both JSON responses, approved brief bytes and generated `brief_path` files.
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" start "$TASK_ONE" --claim "$CLAIM" --format json
+   "$SUM_ACCEPTANCE_HELPER" start "$TASK_TWO" --claim "$CLAIM" --format json
+   ```
+
+   Preserve each returned task's `worker_endpoint`, `execution.worker` and native launch/first-message records, including distinct attempt, address and creation identities.
+   Observe two real authenticated Grok workers in their separate task checkouts using the private workspace route.
+   A created terminal or submitted opening message alone is insufficient: each worker must run its brief's absolute helper `init --format json`, read its validated procedure and retain the returned `role: "worker"`, matching `task`, `endpoint`, `registered: true` and native initialization receipt.
+   Keep screenshots or terminal transcripts showing actual harness readiness and the matching saved task records.
+   If creation or delivery is uncertain, preserve the exact attempt and returned recovery instruction; do not repeat a launch blindly.
+
+5. **Save a worker question and answer while the worker is busy.**
+   Only task one's actual worker invokes the following through its brief's installed absolute helper; `TASK_ONE` below is its actual task id, not a new identity supplied by the coordinator.
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" ask "$TASK_ONE" --key acceptance-answer --text 'Should the final note include APPROVED?' --format json
+   ```
+
+   Expect `question.id`, `question.key: "acceptance-answer"`, `question.status: "open"` and the durable question record.
+   Save `question.id` as `QUESTION_ID` in the coordinator conversation after observing it through collection:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" collect --claim "$CLAIM" --budget 20s --format json
+   ```
+
+   Expect `items` containing `kind: "question"`, matching `task` and `ref`, plus `detail` and `next` argv.
+   Preserve the question JSON, collection JSON and evidence that the worker is doing the brief's finite independent work when the coordinator records the user's answer:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" answer "$TASK_ONE" "$QUESTION_ID" --text 'Yes; include APPROVED in notes/one.md and complete only the approved brief.' --claim "$CLAIM" --format json
+   "$SUM_ACCEPTANCE_HELPER" collect --claim "$CLAIM" --budget 20s --format json
+   ```
+
+   Expect the answer response's `question.status: "answered"`, matching `question.id`, saved `question.answer`, and `notice`/`feedback` describing the actual delivery outcome.
+   Retain pending/busy delivery evidence before the worker becomes eligible and every subsequent collection response.
+   Repeat bounded `collect` calls while work is active; each has `items`, `delivered`, `deadline_hit` and `next`.
+   A submitted delivery may appear in `delivered`; delivery is not proof of application.
+   Once the actual worker receives and applies the answer, it must invoke its brief's absolute helper:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" resolve "$TASK_ONE" "$QUESTION_ID" --format json
+   ```
+
+   Expect the returned question's `status: "applied"`, `applied_at` and `application_receipt` for this worker attempt and answer.
+   Preserve the before/after task records and worker transcript proving one application, with no coordinator-forged receipt or duplicate application.
+   Reading a saved question or answer is never a substitute for that receipt.
+   If the worker was already idle when answered, record that limitation and leave busy-worker delivery unproven.
+
+6. **Collect both reports without equating reports with verification.**
+   Each actual worker commits its authorized change, then uses its brief's absolute helper to submit its own report:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" report "$TASK_ONE" --text 'Approved task one complete; committed candidate and verification evidence are recorded in this task.' --format json
+   "$SUM_ACCEPTANCE_HELPER" report "$TASK_TWO" --text 'Approved task two complete; committed candidate and verification evidence are recorded in this task.' --format json
+   ```
+
+   These are two different worker terminals; neither worker reports for the other task.
+   Use truthful report text describing the actual checks and limitations, and the brief's `--file`/`--handoff` form if it requires structured evidence.
+   Expect each response's matching `task`, `status: "reported-not-verified"` and `evidence` ids.
+   In the coordinator conversation, repeat:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" collect --claim "$CLAIM" --budget 20s --format json
+   "$SUM_ACCEPTANCE_HELPER" context "$TASK_ONE" --role coordinator --section evidence --format json
+   "$SUM_ACCEPTANCE_HELPER" context "$TASK_TWO" --role coordinator --section evidence --format json
+   ```
+
+   Expect collected `kind: "report"` items for both task ids and candidate-bound report evidence.
+   Save the two actual committed candidate SHAs as `CANDIDATE_ONE` and `CANDIDATE_TWO`.
+   Preserve complete reports, handoffs, run artifacts and bounded collect timing/exit results; an immediate outstanding item can legitimately return before the budget expires.
+   Neither Done, a completed wait nor a report proves actual process exit or releases capacity.
+
+7. **Obtain independent review and independent verification.**
+   From the coordinator conversation, launch a separately accountable Grok reviewer for each reported candidate:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" reviewer launch "$TASK_ONE" --harness grok --claim "$CLAIM" --format json
+   "$SUM_ACCEPTANCE_HELPER" reviewer launch "$TASK_TWO" --harness grok --claim "$CLAIM" --format json
+   ```
+
+   Preserve `task`, `reviewer`, its candidate/endpoint/attempt identity and actual opening-message outcome.
+   Each real reviewer initializes through its returned absolute helper, reads the validated reviewer procedure, inspects the exact candidate independently and records its honest verdict from that reviewer terminal.
+   For example, an approval after an actual successful review uses:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" review "$TASK_ONE" --verdict approve --candidate "$CANDIDATE_ONE" --text 'Independent review findings and limitations for the exact candidate.' --format json
+   "$SUM_ACCEPTANCE_HELPER" review "$TASK_TWO" --verdict approve --candidate "$CANDIDATE_TWO" --text 'Independent review findings and limitations for the exact candidate.' --format json
+   ```
+
+   Use `changes-requested` or `blocked` when warranted; never manufacture approval to complete the script.
+   Collect until both candidate-bound `kind: "review"` items appear, and keep the distinct reviewer initialization receipts, verdict evidence and null task parents.
+   Run coordinator-owned verification for each candidate through separate detached checkouts:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" verify "$TASK_ONE" --candidate "$CANDIDATE_ONE" --execute --claim "$CLAIM" --format json
+   "$SUM_ACCEPTANCE_HELPER" verify "$TASK_TWO" --candidate "$CANDIDATE_TWO" --execute --claim "$CLAIM" --format json
+   ```
+
+   Preserve each response's `task`, `evidence`, `verification`, exact candidate, distinct coordinator verification run id, `run.json` and `verify.log`.
+   Inspect the actual result; an emitted record can describe failure or a blocker.
+   A worker's check or reviewer verdict cannot replace this independent run, and missing evidence remains a blocker rather than an implicit waiver.
+   No merge, publication or cleanup is authorized by this acceptance journey.
+
+8. **Restart only the ordinary Grok conversation and resume the retained claim.**
+   Preserve the token privately before the user exits and restarts the ordinary coordinator Grok conversation in the same `SUM_ACCEPTANCE_ROOT`.
+   Do not close task terminals, replace the HC core or transfer ownership for this step.
+   Provide the retained token to the resumed conversation and run:
+
+   ```sh
+   "$SUM_ACCEPTANCE_HELPER" init --claim "$CLAIM" --format json
+   "$SUM_ACCEPTANCE_HELPER" collect --claim "$CLAIM" --budget 20s --format json
+   ```
+
+   Expect `role: "coordinator"`, unchanged `claim`, `session.session_id` and `session.generation`, preserved task/worker/reviewer identities, returned validated `procedure` paths and durable outstanding work.
+   Read those procedure paths again and collect before reporting progress.
+   Preserve the new conversation transcript and before/after identity comparison.
+   A `blocker: "conflict"` is a failed resume to investigate, not authority to use `--transfer`.
+
+9. **Exercise first-use setup in a separate fresh clone under user approval.**
+   The handoff must provide `ACCEPTANCE_CLONE_URL`, `ACCEPTANCE_CLONE_REF` and a nonexistent independent `ACCEPTANCE_FRESH_ROOT` for the same approved candidate.
+   The user creates that clone and handles repository trust:
+
+   ```sh
+   git clone "$ACCEPTANCE_CLONE_URL" "$ACCEPTANCE_FRESH_ROOT"
+   git -C "$ACCEPTANCE_FRESH_ROOT" checkout --detach "$ACCEPTANCE_CLONE_REF"
+   cd "$ACCEPTANCE_FRESH_ROOT"
+   mise trust
+   ```
+
+   Start a fresh usual Grok conversation there yourself before running setup.
+   Its first helper command is:
+
+   ```sh
+   ./bin/sumctl init --format json
+   ```
+
+   Expect nonzero exit, `role: null`, `blocker: "unstaged"` and `next` directing approved setup.
+   Preserve `detail` too when the helper emits it.
+   The agent must request the user's actual permission for setup through the normal permission prompt.
+   Only after that approval, run:
+
+   ```sh
+   mise run setup
+   ./bin/sumctl init --format json
+   ```
+
+   Expect successful setup followed by ordinary `role: "coordinator"`, a new claim/session and validated procedure paths, without setup launching an authenticated agent.
+   Preserve the first init response/exit, permission request and user approval, setup transcript/exit and second init response.
+   A host with preexisting prerequisites does not prove fresh-host prerequisite installation; retain that limitation on A2.
+
+10. **Perform one separately authorized quiescent update, then inspect the next ordinary start.**
+    This step is not authorized by preparing the workspace or running the earlier steps.
+    The user must identify and approve the exact isolated installation and `ACCEPTANCE_UPDATE_REF`, and the target must be merged on that installation's origin default branch.
+    If no such approved target is available, retain A15 as not run and record the missing prerequisite.
+    Return to `SUM_ACCEPTANCE_ROOT` and the corresponding retained `CLAIM`/absolute helper, not the fresh clone's claim.
+    First inspect status and collect, then use the existing procedure to settle every running, starting or uncertain attempt and unresolved launch, delivery or maintenance effect.
+    Do not edit records, forcibly terminate processes, remove task checkouts or fabricate receipts to make the installation quiescent.
+    Open questions or unapplied answers alone are not update blockers.
+    Preserve the explicit authorization, quiescence evidence and these command results:
+
+    ```sh
+    "$SUM_ACCEPTANCE_HELPER" status --format json
+    "$SUM_ACCEPTANCE_HELPER" collect --claim "$CLAIM" --budget 20s --format json
+    "$SUM_ACCEPTANCE_HELPER" update check --ref "$ACCEPTANCE_UPDATE_REF" --claim "$CLAIM" --format json
+    "$SUM_ACCEPTANCE_HELPER" update stage --ref "$ACCEPTANCE_UPDATE_REF" --claim "$CLAIM" --format json
+    "$SUM_ACCEPTANCE_HELPER" update apply --ref "$ACCEPTANCE_UPDATE_REF" --claim "$CLAIM" --format json
+    ./bin/sumctl update status --format json
+    ./bin/sumctl build-info --format json
+    git rev-parse HEAD
+    ```
+
+    Check/stage must not select the target; inspect their `source`, `staged` and `compatibility` data and actual exit status.
+    Successful activation records `changed: true`, `default`, `checkout`, `post_check` and `generation`; an already-selected no-op does not prove an update.
+    After selection, compare checkout HEAD, `update status`'s `default`/`active`/`checkout`, `build-info` and next-start entry instructions against the approved target.
+    Restart the ordinary Grok conversation yourself and run `./bin/sumctl init --claim "$CLAIM" --format json`, read its returned procedure paths and collect with the retained claim.
+    Keep activation journal/history and before/after hashes of task and sealed procedure records.
+    If activation is interrupted, retain its exact generation and returned recovery argv including the claim; do not repeat apply or switch runtime links by hand.
+    The current rollback floor starts when schema-3 root state is created, even before the first coordinator claim, and also protects logical ownership after a claim or native retirement.
+    A target's actual helper must support the required state format and owner schema; an older preclaim helper that can still read earlier state is not a safe downgrade once that floor is raised.
+    This ordinary fresh-workspace journey does not execute native retirement or certify universal exclusion of already-authorized process/Git I/O.
+
+11. **Record only user-observed outcomes.**
+    Send the agent each numbered step's outcome, command stdout/stderr/exit status, evidence paths and any interruption or limitation.
+    The agent records candidate-specific date, identity, evidence and pass/fail/not-run separately for ordinary entry/resume (A1), two workers (A6), busy-worker answer/application receipt (A7), independent review (A8), bounded active collection (A12), update/next start (A15), and first-use setup (A2).
+    Update the Terminal Grok Build harness row only for the combinations actually exercised.
+    Preserve failures and unrun portions explicitly; local automated checks and a prepared runbook cannot fill them in.
+
+The helper argv and field expectations above come from `go/internal/cli/{root,init,settings,prepare,start,native,collect,reviewer,review,verify,update}.go`, `go/internal/roleinit/{coordinator_session,designated}.go`, `go/internal/prepare/{prepare,native}.go`, `go/internal/ask/ask.go`, `go/internal/collect/collect.go`, `go/internal/report/report.go`, `go/internal/verifycmd/verify.go` and `go/internal/updatecmd/{update,activation}.go`.
+The capacity calculation follows `go/internal/settings/{settings,scope}.go`, `go/internal/reservations/reservations.go`, `go/internal/launch/launch.go` and `go/internal/verifycmd/execute.go`; reviewer launches are recorded separately in `go/internal/review/native.go`.
+The preclaim downgrade boundary is exercised by `go/internal/updatecmd/first_update_recovery_test.go`.
+Revalidate these expectations against the staged candidate before recording a manual pass.
+
 ## Native identity, recovery and inspection
 
 Workers and reviewers retain published HC 0.1.14 native identity, exact core/address/creation-time checks, attempt receipts, qualified templates, bounded readiness, and conservative uncertain input handling.
