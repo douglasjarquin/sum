@@ -56,14 +56,14 @@ func TestPRCommands(t *testing.T) {
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid reconcile --number --repo --replace", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--repo", "owner/repo", "--replace"}, domainErr: "HC session"},
-		{name: "valid reconcile --number= --repo=", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number=12", "--repo=owner/repo", "--replace=true"}, domainErr: "HC session"},
+		{name: "valid reconcile --number --repo --replace", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--repo", "owner/repo", "--replace"}, domainErr: "claim_required"},
+		{name: "valid reconcile --number= --repo=", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number=12", "--repo=owner/repo", "--replace=true"}, domainErr: "claim_required"},
 		{name: "valid reconcile with herdr", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12"}, herdr: true, domainErr: "PR observation for #12 is uncertain"},
-		{name: "valid reconcile --accept-base-branch", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--accept-base-branch"}, domainErr: "HC session"},
-		{name: "valid evidence --run --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, domainErr: "HC session"},
-		{name: "valid evidence --run= --visibility=", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run=r1", "--visibility=public"}, domainErr: "HC session"},
-		{name: "valid evidence every flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--scenario", "web", "--scenario", "cli", "--evidence-root", "/tmp/promoted", "--verification-run", "20260906T010203Z-abcd", "--dry-run", "--timeout", "5", "--allow-head-mismatch", "--replace-foreign-block"}, domainErr: "HC session"},
-		{name: "valid evidence without --run or --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
+		{name: "valid reconcile --accept-base-branch", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--accept-base-branch"}, domainErr: "claim_required"},
+		{name: "valid evidence --run --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, domainErr: "claim_required"},
+		{name: "valid evidence --run= --visibility=", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run=r1", "--visibility=public"}, domainErr: "claim_required"},
+		{name: "valid evidence every flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--scenario", "web", "--scenario", "cli", "--evidence-root", "/tmp/promoted", "--verification-run", "20260906T010203Z-abcd", "--dry-run", "--timeout", "5", "--allow-head-mismatch", "--replace-foreign-block"}, domainErr: "claim_required"},
+		{name: "valid evidence without --run or --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa"}, domainErr: "claim_required"},
 		{name: "valid evidence with herdr", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public"}, herdr: true, domainErr: "pr evidence requires a reconciled PR"},
 		{name: "pr missing subcommand", args: []string{"pr"}, usage: true},
 		{name: "reconcile missing --number", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa"}, usage: true},
@@ -71,8 +71,8 @@ func TestPRCommands(t *testing.T) {
 		{name: "reconcile unknown flag", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "--unexpected"}, usage: true, unknown: true},
 		{name: "reconcile extra positional", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "12", "extra"}, usage: true},
 		{name: "reconcile invalid --number", args: []string{"pr", "reconcile", "t-aaaaaaaaaaaa", "--number", "nope"}, usage: true},
-		{name: "evidence without --run", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--visibility", "public"}, domainErr: "HC session"},
-		{name: "evidence without --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1"}, domainErr: "HC session"},
+		{name: "evidence without --run", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--visibility", "public"}, domainErr: "claim_required"},
+		{name: "evidence without --visibility", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1"}, domainErr: "claim_required"},
 		{name: "evidence invalid --timeout", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--timeout", "nope"}, usage: true},
 		{name: "evidence unknown flag", args: []string{"pr", "evidence", "t-aaaaaaaaaaaa", "--run", "r1", "--visibility", "public", "--unexpected"}, usage: true, unknown: true},
 	}
@@ -121,7 +121,7 @@ func runPRCLI(t *testing.T, home string, args ...string) (stdout, stderr string,
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

@@ -67,10 +67,9 @@ func procedureRow(t *testing.T, view map[string]any) map[string]any {
 }
 
 func TestInitNamesEachRoleCoreFromTheRuntime(t *testing.T) {
+	clearFallbackIdentity(t)
 	runtime := roleRuntime(t)
-	home := writeDesignatedHome(t)
-	nativeEnv(t, home)
-
+	home := filepath.Join(runtime, ".sum")
 	coordinator, errText, err := runCLIFrom(t, runtime, home, "init")
 	if err != nil {
 		t.Fatalf("init: %s", errText)
@@ -78,165 +77,113 @@ func TestInitNamesEachRoleCoreFromTheRuntime(t *testing.T) {
 	row := procedureRow(t, coordinator)
 	core := filepath.Join(runtime, "COORDINATOR.md")
 	if coordinator["role"] != "coordinator" || row["path"] != core || row["sha256"] != fileSHA(t, core) || row["load"] != procedure.Required || row["ok"] != true {
-		t.Fatalf("coordinator init = role %v, procedure %v", coordinator["role"], row)
+		t.Fatalf("coordinator procedure = %v", coordinator)
 	}
-	if !strings.Contains(asString(coordinator["note"]), "`procedure`") {
-		t.Fatalf("coordinator note does not point at the core: %v", coordinator["note"])
+	if !strings.Contains(asString(coordinator["next"]), "procedure") {
+		t.Fatalf("next does not name procedure: %v", coordinator["next"])
 	}
-
-	t.Setenv("SUM_ROLE", "developer")
-	t.Setenv("SUM_ATTEMPT", "")
-	t.Setenv("SUM_BINDING_GENERATION", "")
-	developer, errText, err := runCLIFrom(t, runtime, home, "init")
+	developer, errText, err := runCLIFrom(t, runtime, home, "init", "--role", "developer")
 	if err != nil {
-		t.Fatalf("second init: %s", errText)
+		t.Fatalf("developer init: %s", errText)
 	}
 	row = procedureRow(t, developer)
 	if developer["role"] != "developer" || row["name"] != procedure.Developer.Name || row["path"] != filepath.Join(runtime, procedure.Developer.Path) || row["ok"] != true {
-		t.Fatalf("developer init = role %v, procedure %v", developer["role"], row)
+		t.Fatalf("developer procedure = %v", developer)
 	}
-
-	// A developer claims no coordination, so a missing developer procedure is reported, not refused.
-	if err := os.Remove(filepath.Join(runtime, procedure.Developer.Path)); err != nil {
+	source := filepath.Join(runtime, procedure.Developer.Path)
+	if err := os.Rename(source, source+".missing"); err != nil {
 		t.Fatal(err)
 	}
-	developer, errText, err = runCLIFrom(t, runtime, home, "init")
+	developer, errText, err = runCLIFrom(t, runtime, home, "init", "--role", "developer")
 	if err != nil {
-		t.Fatalf("developer init without its procedure: %s", errText)
+		t.Fatalf("developer init without procedure: %s", errText)
 	}
 	row = procedureRow(t, developer)
 	if developer["role"] != "developer" || row["ok"] != false || !strings.Contains(asString(row["error"]), procedure.Developer.Path+" is missing") {
-		t.Fatalf("developer init without its procedure = role %v, procedure %v", developer["role"], row)
+		t.Fatalf("missing developer procedure = %v", developer)
 	}
 }
 
 func TestCoordinatorInitRefusesARuntimeWithoutItsCore(t *testing.T) {
+	clearFallbackIdentity(t)
 	runtime := roleRuntime(t)
 	core := filepath.Join(runtime, "COORDINATOR.md")
 	body, err := os.ReadFile(core)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(core); err != nil {
+	if err := os.Rename(core, core+".missing"); err != nil {
 		t.Fatal(err)
 	}
-	home := writeDesignatedHome(t)
-	nativeEnv(t, home)
-	contextPath := filepath.Join(home, "context.json")
-	ownerBackup := filepath.Join(home, "pre-claim-owner.json")
-	if err = os.Rename(contextPath, ownerBackup); err != nil {
+	home := filepath.Join(runtime, ".sum")
+	if _, errText, err := runCLIFrom(t, runtime, home, "init"); err == nil || !strings.Contains(errText, "COORDINATOR.md is missing") {
+		t.Fatalf("claim without procedure = %v %s", err, errText)
+	}
+	if _, err := os.Stat(filepath.Join(home, "state.json")); !os.IsNotExist(err) {
+		t.Fatal("refused claim created state")
+	}
+	if err := os.WriteFile(core, body, 0600); err != nil {
 		t.Fatal(err)
 	}
-	sessions := filepath.Join(home, "sessions")
-	sessionsBackup := filepath.Join(home, "pre-claim-sessions")
-	if err = os.Rename(sessions, sessionsBackup); err != nil {
+	first, errText, err := runCLIFrom(t, runtime, home, "init")
+	if err != nil {
+		t.Fatalf("claim after procedure restored: %s", errText)
+	}
+	token := asString(first["claim"])
+	sessionPath := filepath.Join(asString(first["home"]), "coordinator.json")
+	before, err := os.ReadFile(sessionPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Mkdir(sessions, 0700); err != nil {
+	if err := os.WriteFile(core, nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-
-	// First claim: refused before anything is recorded.
-	if _, errText, err := runCLIFrom(t, runtime, home, "init", "--role", "coordinator"); err == nil || !strings.Contains(errText, "COORDINATOR.md is missing") || !strings.Contains(errText, "no coordinator role was granted") {
-		t.Fatalf("first claim without the core = %v %s", err, errText)
+	for _, args := range [][]string{{"init", "--claim", token}, {"init", "--transfer"}} {
+		if _, errText, err := runCLIFrom(t, runtime, home, args...); err == nil || !strings.Contains(errText, "COORDINATOR.md is empty") {
+			t.Fatalf("claim without procedure = %v %s", err, errText)
+		}
 	}
-	if _, err := os.Stat(contextPath); err == nil {
-		t.Fatal("a refused claim recorded a coordinator")
-	}
-	if entries, _ := os.ReadDir(filepath.Join(home, "sessions")); len(entries) != 0 {
-		t.Fatalf("a refused claim registered the pane: %v", entries)
-	}
-
-	if err = os.Rename(ownerBackup, contextPath); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Rename(sessions, filepath.Join(home, "empty-preclaim-sessions")); err != nil {
-		t.Fatal(err)
-	}
-	if err = os.Rename(sessionsBackup, sessions); err != nil {
-		t.Fatal(err)
-	}
-	// The owner's own re-init is refused too, and leaves its record untouched.
-	if err := os.WriteFile(core, body, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if view, errText, err := runCLIFrom(t, runtime, home, "init"); err != nil || view["role"] != "coordinator" {
-		t.Fatalf("claim with the core restored = %v %s", view, errText)
-	}
-	before, _ := os.ReadFile(contextPath)
-	if err := os.WriteFile(core, []byte{}, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, errText, err := runCLIFrom(t, runtime, home, "init"); err == nil || !strings.Contains(errText, "COORDINATOR.md is empty") {
-		t.Fatalf("owner re-init with an empty core = %v %s", err, errText)
-	}
-
-	// A reclaim of a verifiably replaced pane is refused as well: the old record stays.
-	d := nativeLabFor(t, home)
-	terminal := nativeCoordinatorTerminal(t, d)
-	terminal.State = "finished"
-	d.native.SetTerminal(terminal)
-	terminal.Address = "t3"
-	terminal.CreatedMS = 3
-	terminal.State = "live"
-	d.native.SetTerminal(terminal)
-	t.Setenv("HC_TERMINAL_ID", "t3")
-	if _, errText, err := runCLIFrom(t, runtime, home, "init", "--role", "coordinator", "--reclaim"); err == nil || !strings.Contains(errText, "COORDINATOR.md is empty") {
-		t.Fatalf("reclaim with an empty core = %v %s", err, errText)
-	}
-	if after, _ := os.ReadFile(contextPath); string(after) != string(before) {
-		t.Fatalf("a refused init changed the coordinator record:\nbefore %s\nafter  %s", before, after)
+	after, err := os.ReadFile(sessionPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("refused init changed claim: %v", err)
 	}
 }
 
-func TestContractRevisionEmbedsTheCoordinatorCore(t *testing.T) {
+func TestOrdinaryInitReadsCurrentCoreWithoutContractRevisions(t *testing.T) {
+	clearFallbackIdentity(t)
 	runtime := roleRuntime(t)
-	home := writeDesignatedHome(t)
-	nativeEnv(t, home)
-	if _, errText, err := runCLIFrom(t, runtime, home, "init"); err != nil {
-		t.Fatalf("init: %s", errText)
+	first, errText, err := runCLIFrom(t, runtime, filepath.Join(runtime, ".sum"), "init")
+	if err != nil {
+		t.Fatalf("init: %v %s", err, errText)
+	}
+	home, token := asString(first["home"]), asString(first["claim"])
+	sessionPath := filepath.Join(home, "coordinator.json")
+	before, err := os.ReadFile(sessionPath)
+	if err != nil {
+		t.Fatal(err)
 	}
 	core := filepath.Join(runtime, "COORDINATOR.md")
-	body, _ := os.ReadFile(core)
-	contract := func(id string) string {
-		t.Helper()
-		data, err := os.ReadFile(filepath.Join(home, "coordinator", "contracts", id+".md"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
-	}
-
-	if _, errText, err := runCLIFrom(t, runtime, home, "refresh", "request"); err != nil {
-		t.Fatalf("refresh request: %s", errText)
-	}
-	r1 := contract("r1")
-	agents, _ := os.ReadFile(filepath.Join(runtime, "AGENTS.md"))
-	if !strings.Contains(r1, string(agents)) || !strings.Contains(r1, "## Coordinator core (COORDINATOR.md at this revision)\n\n"+string(body)) {
-		t.Fatalf("contract r1 does not carry the bootstrap and the core:\n%s", r1)
-	}
-
-	// Changing only the core stages a new revision that says so.
-	if err := os.WriteFile(core, append(append([]byte{}, body...), []byte("\nOne more coordinator rule.\n")...), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	result, errText, err := runCLIFrom(t, runtime, home, "refresh", "request")
+	body, err := os.ReadFile(core)
 	if err != nil {
-		t.Fatalf("second refresh request: %s", errText)
-	}
-	if !strings.Contains(contract("r2"), "One more coordinator rule.") || !strings.Contains(asString(result["coordinator"])+stringsOf(result), "COORDINATOR.md changed") {
-		t.Fatalf("second refresh = %v", result)
-	}
-
-	// A runtime without the core stages nothing.
-	if err := os.Remove(core); err != nil {
 		t.Fatal(err)
 	}
-	if _, errText, err := runCLIFrom(t, runtime, home, "refresh", "request"); err == nil || !strings.Contains(errText, "COORDINATOR.md is missing") || !strings.Contains(errText, "no coordinator contract revision was staged") {
-		t.Fatalf("refresh without the core = %v %s", err, errText)
+	body = append(body, []byte("\nUpdated ordinary coordinator procedure.\n")...)
+	if err = os.WriteFile(core, body, 0600); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(home, "coordinator", "contracts", "r3.md")); err == nil {
-		t.Fatal("a revision was staged without the core")
+	resumed, errText, err := runCLIFrom(t, runtime, home, "init", "--claim", token)
+	if err != nil {
+		t.Fatalf("resume: %v %s", err, errText)
+	}
+	if asString(resumed["claim"]) != token || !strings.Contains(stringsOf(resumed["procedure"]), core) {
+		t.Fatalf("current core not returned: %v", resumed)
+	}
+	after, err := os.ReadFile(sessionPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("procedure read changed claim: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "coordinator", "contracts")); !os.IsNotExist(err) {
+		t.Fatalf("ordinary entry staged a contract revision: %v", err)
 	}
 }
 

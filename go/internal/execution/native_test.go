@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -36,19 +37,12 @@ func TestNativeParkRequiresTerminalAndProcessDeath(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SUM_LSOF_BIN", lsof)
-	coordinator := store.Endpoint{Schema: 2, Backend: "hc", Machine: machine.ID, CoreID: fixture.CoreID, Session: "sum-test", Socket: fixture.Socket, Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: root}
-	cp := uint32(12000)
-	cf := &hcclient.Foreground{PID: 12001, Name: "codex", Argv: []string{"codex"}, Cwd: root}
-	fixture.SetTerminal(hcclient.Terminal{Address: "t1", Cwd: root, State: "live", CreatedMS: 1, PID: &cp, Foreground: cf})
-	ce := incarnation.NativeEvidence{Endpoint: coordinator.Native(), PID: cp, Foreground: cf}
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: coordinator.Native(), Kind: "coordinator-init", Attempt: "bootstrap"})
-	owner := coordinator.Object()
-	owner.Set("incarnation", ce.Record(store.Now()))
-	owner.Set("native_receipt", receipt)
-	if _, err = s.Register(coordinator, "coordinator", nil, ce.Record(store.Now())); err != nil {
+	session, err := s.ClaimCoordinator("", "maintenance conversation", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+	ctx, err := app.RequireClaim(s, session.Token())
+	if err != nil {
 		t.Fatal(err)
 	}
 	process := exec.Command("sleep", "60")
@@ -62,7 +56,7 @@ func TestNativeParkRequiresTerminalAndProcessDeath(t *testing.T) {
 			process.Wait()
 		}
 	}()
-	attempt, err := reservations.NewAttempt("worker", coordinator.Object(), checkout, store.Now(), "running", nil)
+	attempt, err := reservations.NewAttempt("worker", session.Owner(), checkout, store.Now(), "running", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,13 +79,15 @@ func TestNativeParkRequiresTerminalAndProcessDeath(t *testing.T) {
 	task.Set("machine", machine.ID)
 	task.Set("status", "running")
 	task.Set("worktree", checkout)
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
 	task.Set("worker_endpoint", endpoint.Object())
 	task.Set("execution", reservations.NewExecution(attempt))
 	task.Set("questions", []any{"keep"})
 	if err = s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Park(s, coordinator.Object(), root, endpoint.Task, id); err == nil {
+	if _, err = Park(s, ctx, root, endpoint.Task, id); err == nil {
 		t.Fatal("Done terminal released capacity")
 	}
 	terminal.State = "finished"
@@ -114,7 +110,7 @@ func TestNativeParkRequiresTerminalAndProcessDeath(t *testing.T) {
 	process.Process.Kill()
 	process.Wait()
 	stopped = true
-	if _, err = Park(s, coordinator.Object(), root, endpoint.Task, id); err != nil {
+	if _, err = Park(s, ctx, root, endpoint.Task, id); err != nil {
 		t.Fatal(err)
 	}
 	current, err := s.ReadTask(endpoint.Task)

@@ -27,25 +27,24 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       <p><code>env start</code> launches one declared repository command in a proven owned HC terminal at the Git checkout. <code>env stop</code> sends one interrupt, verifies actual exit and survivor absence, and never escalates to kill. Idle status or an ended wait is not exit. Shared, replaced and unproven processes remain blockers.</p>
     </div>
     <div class="sec">
-      <h2>Native event delivery (enabled by default)</h2>
+      <h2>Bounded collection</h2>
       <div class="codeblock">
-        <div>./bin/sumctl hook enable      <span class="c"># coordinator only; retry or re-enable the proven owned scoped observer</span></div>
-        <div>./bin/sumctl hook status</div>
-        <div>./bin/sumctl hook disable     <span class="c"># or --unlink</span></div>
+        <div>./bin/sumctl collect --claim TOKEN --budget 20s</div>
+        <div>./bin/sumctl inbox --live</div>
       </div>
-      <p>The non-agent outliving observer subscribes to native events and runs fair bounded ledger reconciliation, with a fresh snapshot after reconnect. It has no payload queue. Attention points to output for inspection; it is not a question, report, verification or approval.</p>
-      <p>Coordinator <code>init</code> ensures a real observer startup/readiness receipt outside the ledger lock unless the user explicitly disabled delivery. Enabled preference alone is not active delivery. Failure is fail-open and explicitly degraded; <code>pump</code> remains available.</p>
+      <p>Collection reads actionable questions, reports and reviews, delivers eligible queued worker answers and waits on recorded native addresses within one shared deadline. It starts no core and records no read receipt. Native attention is an inspection signal, never approval.</p>
+      <p>The coordinating conversation has no HC parent endpoint. Results stay saved until their existing action settles them; there is no unattended coordinator prompt.</p>
     </div>
     <div class="sec">
       <h2>Native metadata (optional)</h2>
       <div class="codeblock">
-        <div>./bin/sumctl metadata enable</div>
-        <div>./bin/sumctl metadata sync [--force]</div>
+        <div>./bin/sumctl metadata enable --claim TOKEN</div>
+        <div>./bin/sumctl metadata sync --claim TOKEN [--force]</div>
         <div>./bin/sumctl metadata status</div>
         <div>./bin/sumctl metadata inbox [--grouped]</div>
-        <div>./bin/sumctl metadata disable</div>
+        <div>./bin/sumctl metadata disable --claim TOKEN</div>
       </div>
-      <p style="margin:14px 0 12px">Optional metadata projects owned namespaced HC labels only to verified recorded terminals. It never changes native lifecycle, confers role authority or proves task completion. Unrelated labels and configuration remain intact.</p>
+      <p style="margin:14px 0 12px">Optional metadata projects owned namespaced HC labels only to verified task worker/reviewer terminals. It never changes native lifecycle, confers role authority or proves task completion. Unrelated labels and configuration remain intact.</p>
       <div class="chips">
         <span class="chip">needs-decision</span>
         <span class="chip">needs-attention</span>

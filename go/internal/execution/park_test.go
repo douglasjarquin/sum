@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -79,20 +80,12 @@ func newLab(t *testing.T) *lab {
 		t.Fatal(err)
 	}
 	fixture := hctest.New(t)
-	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: host, CoreID: fixture.CoreID, Session: "sum-test", Socket: fixture.Socket, Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: home}
-	ctx := endpoint.Object()
-	pid := uint32(424242)
-	fg := &hcclient.Foreground{PID: 424243, Name: "codex", Argv: []string{"codex"}, Cwd: home}
-	fixture.SetTerminal(hcclient.Terminal{Address: "t1", State: "live", Cwd: home, CreatedMS: 1, PID: &pid, Foreground: fg})
-	bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: fg}
-	owner := endpoint.Object()
-	owner.Set("incarnation", bound.Record(store.Now()))
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: endpoint.Native(), Kind: "coordinator-init", Attempt: "bootstrap"})
-	owner.Set("native_receipt", receipt)
-	if err := ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
+	session, err := st.ClaimCoordinator("", "maintenance conversation", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Register(endpoint, "coordinator", nil, bound.Record(store.Now())); err != nil {
+	ctx, err := app.RequireClaim(st, session.Token())
+	if err != nil {
 		t.Fatal(err)
 	}
 	checkout := t.TempDir()
@@ -199,7 +192,16 @@ func (l *lab) saveTask(raw string) {
 		obj.Delete("workspace")
 		endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: l.host, CoreID: l.fixture.CoreID, Session: "sum-test", Socket: l.fixture.Socket, Address: "t2", CreatedMS: 2, Task: taskID, Role: "worker", Attempt: workerID, BindingGeneration: 1, Cwd: l.checkout}
 		obj.Set("worker_endpoint", endpoint.Object())
-		execution.Worker.Set("owner", l.ctx)
+		session, err := l.store.CoordinatorSession()
+		if err != nil {
+			l.t.Fatal(err)
+		}
+		obj.Set("owner", session.Owner())
+		obj.Set("parent", nil)
+		execution.Worker.Set("owner", session.Owner())
+		for _, verifier := range execution.Verifiers {
+			verifier.Set("owner", session.Owner())
+		}
 		execution.Worker.Delete("occupant")
 		pid := uint32(l.deadPID)
 		bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: &hcclient.Foreground{PID: int32(pid), Name: "sleep", Argv: []string{"sleep", "120"}, Cwd: l.checkout}}

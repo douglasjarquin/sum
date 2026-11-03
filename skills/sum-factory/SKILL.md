@@ -5,6 +5,9 @@ description: Start or run a factory from a markdown settings file. Software and 
 
 # Factory
 
+Use this conversation's captured `--claim TOKEN` on every coordinator mutation shown below.
+Never obtain current authority by rereading a shared token after a conflict.
+
 A factory is one lane of work. The shared steps are this skill. What changes between software and copy is a markdown settings file.
 
 Read that file for the factory the user named. Do the software procedure only when the file says `runner: software`. Do the written lane actions only when the file says `runner: directive`.

@@ -10,7 +10,8 @@ Site: <https://douglasjarquin.github.io/sum/>
 ## What it is
 
 sum is a small, HC-native agent distro.
-Start a qualified coordinator through HC: it dispatches every approved request to a worker, stays free for inbox notices, gathers results, and brings decisions back to you.
+Start your usual coding agent in the Sum directory and ask for work.
+That same conversation plans, dispatches approved implementation to HC workers, collects results, and brings decisions back to you.
 
 It is for someone who already has mise, Git, and an authenticated coding harness.
 The default path is one finished task.
@@ -18,14 +19,14 @@ A factory lane (`sumctl factory` plus the factory procedures in `sum-dispatch` a
 Instructions and skills do the reasoning.
 HC owns terminal processes; Git owns worktrees.
 A small synchronous helper preserves task records.
-A scoped non-agent HC observer reconciles native events with the ledger.
+Bounded collection reconciles saved results and worker delivery during active work.
 There is no task scheduler, database server, or permanent hierarchy of managers.
 
 Roles and work objects use the dictionary in [docs/terminology.md](docs/terminology.md).
 
 ## Features
 
-* **A separate worktree per worker.** The coordinator prepares a Git worktree, launches the selected worker, and returns control to you.
+* **A separate worktree per worker.** The coordinator prepares a Git worktree, launches the selected worker, and collects its results.
   A worker is explicitly given its own role; it does not become another coordinator.
 
 * **Nine delivery gates.** Intent, Rebase, Review, Test, Document, Lint, Push, PR, and CI are recorded on the PR.
@@ -34,11 +35,10 @@ Roles and work objects use the dictionary in [docs/terminology.md](docs/terminol
 * **Evidence on the PR.** Before/after evidence publishes on `pr reconcile` unless you turn it off.
   See [docs/verification.md](docs/verification.md).
 
-* **Seven bundled skills.** /sum-dispatch, /sum-work, /sum-deliver, /sum-status, /sum-develop, /sum-factory, and /sum-update with rolling session refresh and code-only rollback.
+* **Seven bundled skills.** /sum-dispatch, /sum-work, /sum-deliver, /sum-status, /sum-develop, /sum-factory, and /sum-update with quiescent updates, worker brief revisions and code-only rollback.
 
-* **Native HC delivery.** Coordinator initialization ensures a proven owned observer unless the user disabled delivery.
-  Startup failure is explicitly degraded; saved obligations and explicit `pump` remain available.
-  See [docs/herdr-backend.md](docs/herdr-backend.md).
+* **Bounded result collection.** `collect` lists questions, reports and reviews, delivers queued worker answers, and waits within one shared deadline.
+  Reading a result settles nothing; the ledger retains it until its existing action completes.
 
 * **Portable verification.** A project-root `VERIFY.md` and `mise run verify` work in any clone without Sum or HC.
   The rest of the component list is in [docs/architecture.md](docs/architecture.md).
@@ -63,26 +63,26 @@ Harness choice, model flags, and presets are in [docs/configuration.md](docs/con
 
 ### Install and launch
 
-Clone and stage the runtime, then explicitly start the selected HC core using its release-matched native manual.
-Setup does not start an authenticated agent or silently claim coordination.
+Clone and stage the runtime, then start your usual coding agent in this directory.
+Setup starts no authenticated agent.
+You can run setup beforehand as shown below, or start your agent after cloning and approve setup from its first prompt.
+If `init` reports `blocker: unstaged`, the agent requests approval for `mise run setup` through the normal permission prompt, then reruns `init` in the same conversation.
 
 ```sh
 git clone https://github.com/douglasjarquin/sum.git
 cd sum
 mise trust
 mise run setup
-./bin/sumctl coordinator start --socket /absolute/path/to/hc.sock \
-  --session sum --hc-config-home ~/.config --harness codex
 ```
 
-`coordinator start` seeds the bound environment and matching initialization receipt.
-Use `--harness grok`, `--harness claude` or `--harness devin` for the supported versions and input configurations in [configuration](docs/configuration.md#qualified-input-and-coordinator-startup).
-A refused launch is retained; `coordinator recover --attempt ATTEMPT` archives only a proven uncreated attempt before another explicit start.
-Every agent follows the exact procedure path returned by `init`.
-Without a qualified HC context, `init` defaults to developer.
-A bare init in this installation ensures the local HC core and its holder.
-A manually launched qualified existing terminal requires explicit coordinator initialization; model values stay unknown unless established by its launch record.
-Never infer an exact model through `--same-as-you`.
+Ask your agent for work here.
+It runs `./bin/sumctl init`, keeps the returned claim token, and follows the validated procedure paths.
+Initialization starts and queries no HC core.
+The first worker launch ensures the workspace runtime route lazily.
+Choose a worker harness explicitly or save a default with `./bin/sumctl settings set --claim TOKEN --worker-harness codex`.
+The worker harness can differ from the agent you are talking to.
+A later conversation sees a conflict until it resumes with its own token or explicitly transfers authority under the user's instruction.
+Development checkouts remain developers; workers and reviewers retain exact native process and receipt checks.
 See [architecture](docs/architecture.md#session-roles) and [configuration](docs/configuration.md).
 
 ### Talk to it
@@ -91,7 +91,7 @@ Then delegate normally:
 
 > Use Codex to fix the failing login test in `/Users/me/projects/myapp`. Keep scope to the bug, run the existing checks, arrange independent review, and bring me a PR. Do not merge it. Ask before changing the public API.
 
-The coordinator creates a task brief, prepares a separate Git worktree, launches the selected worker, submits its brief, and returns control to you.
+The coordinator creates a task brief, prepares a separate Git worktree, launches the selected worker, submits its brief, and collects its results.
 
 Every session starts with `./bin/sumctl init` and follows the role it returns.
 Coordinator, worker, and developer rules are in [docs/architecture.md](docs/architecture.md#session-roles).
@@ -99,7 +99,7 @@ Coordinator, worker, and developer rules are in [docs/architecture.md](docs/arch
 ### HC terminals
 
 HC owns terminal processes; Git owns worktrees.
-Env start and stop, native event delivery, and native metadata are in [docs/herdr-backend.md](docs/herdr-backend.md).
+Env start and stop, worker input delivery, and native metadata are in [docs/herdr-backend.md](docs/herdr-backend.md).
 
 ## How It Works
 
@@ -115,7 +115,8 @@ worker
  └─ questions, report, PR
 ```
 
-A question is saved before notification.
+A question is saved before collection.
+Run `collect --claim TOKEN` during active work to read saved questions, reports and reviews and deliver already-recorded worker answers.
 Qualified Codex input defers working/blocked/unknown, guards idle with `if:idle`, and submits observed Done without `if` or `force`.
 A raced busy turn queues the Tab submission for the next turn; this deliberately relaxed Done guard is not atomic.
 A successful send is submitted, not acknowledged.
@@ -154,7 +155,7 @@ Agent-loaded procedures ship with the distro: `AGENTS.md` is a short role bootst
 
 * [docs/configuration.md](docs/configuration.md) — worker harness, presets, and the capacity schema.
 
-* [docs/herdr-backend.md](docs/herdr-backend.md) — env start and stop, native event delivery, and native metadata.
+* [docs/herdr-backend.md](docs/herdr-backend.md) — env start and stop, worker input delivery, and native metadata.
 
 * [docs/verification.md](docs/verification.md) — evidence publication, the nine gates, and brief revisions.
 

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -43,22 +44,16 @@ func newServiceLab(t *testing.T) *serviceLab {
 	}
 	hc := hctest.New(t)
 	cwd := t.TempDir()
-	ep := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: hc.CoreID, Socket: hc.Socket, Session: "sum-test-services", Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: cwd}
-	pid := uint32(12000)
-	fg := &hcclient.Foreground{PID: 12001, Name: "codex", Argv: []string{"codex"}, Cwd: cwd}
-	hc.SetTerminal(hcclient.Terminal{Address: "t1", CreatedMS: 1, Cwd: cwd, State: "live", PID: &pid, Foreground: fg})
-	bound := incarnation.NativeEvidence{Endpoint: ep.Native(), PID: pid, Foreground: fg}
-	owner := ep.Object()
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: ep.Native(), Kind: "coordinator-init", Attempt: ep.Attempt})
-	owner.Set("incarnation", bound.Record(store.Now()))
-	owner.Set("native_receipt", receipt)
-	if _, err = s.Register(ep, "coordinator", nil, bound.Record(store.Now())); err != nil {
+	session, err := s.ClaimCoordinator("", "service conversation", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+	caller, err := app.RequireClaim(s, session.Token())
+	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := reservations.NewAttempt("worker", ep.Object(), cwd, store.Now(), "running", nil)
+	ep := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: hc.CoreID, Socket: hc.Socket, Session: "sum-test-services", BindingGeneration: 1, Cwd: cwd}
+	worker, err := reservations.NewAttempt("worker", session.Owner(), cwd, store.Now(), "running", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +72,8 @@ func newServiceLab(t *testing.T) *serviceLab {
 	task.Set("status", "running")
 	task.Set("machine", host.ID)
 	task.Set("worktree", cwd)
-	task.Set("parent", ep.Object())
+	task.Set("parent", nil)
+	task.Set("owner", session.Owner())
 	task.Set("worker_endpoint", we.Object())
 	task.Set("execution", reservations.NewExecution(worker))
 	if err = s.SaveTask(task); err != nil {
@@ -97,7 +93,7 @@ func newServiceLab(t *testing.T) *serviceLab {
 	if err = Write(s, record, event); err != nil {
 		t.Fatal(err)
 	}
-	return &serviceLab{s: s, hc: hc, task: task, caller: ep.Object(), worktree: cwd}
+	return &serviceLab{s: s, hc: hc, task: task, caller: caller, worktree: cwd}
 }
 func (l *serviceLab) start() (*ordjson.Object, error) {
 	return Start(l.s, StartArgs{Task: stringField(l.task, "id"), Command: "dev"}, l.caller)
@@ -147,7 +143,7 @@ func TestNativeServiceLaunchKeepsIntentAndIndependentReadiness(t *testing.T) {
 		if len(argv) != 3 || argv[0] != "npm" || argv[1] != "run" || argv[2] != "dev" {
 			t.Fatalf("structured argv=%v", argv)
 		}
-		if call.Params["cwd"] != l.worktree || call.Params["parent"] != "t1" || call.Params["caller"] != "t1" {
+		if call.Params["cwd"] != l.worktree || call.Params["parent"] != nil || call.Params["caller"] != nil {
 			t.Fatal(call.Params)
 		}
 	}
@@ -192,7 +188,7 @@ func (l *serviceLab) savedService(t *testing.T, live bool) (*ordjson.Object, hcc
 		terminal.ExitCode = nil
 	}
 	l.hc.SetTerminal(terminal)
-	endpoint := store.EndpointFromContext(l.caller)
+	endpoint := store.EndpointFromContext(objectField(l.task, "worker_endpoint"))
 	endpoint.Role = "service"
 	endpoint.Task = stringField(l.task, "id")
 	endpoint.Attempt = "s-native"
@@ -439,5 +435,106 @@ func TestNativeServiceDetachedGroupSurvivorBlocksExitOutsideCheckout(t *testing.
 	process.Set("descendants", []any{})
 	if err = processExited(process); err == nil {
 		t.Fatalf("detached writer %d surviving in native process group %d was accepted as exit", child, group)
+	}
+}
+
+func TestLogicalServiceAuthorityRejectsTransferAndForeignOwnerBeforeHC(t *testing.T) {
+	for _, scenario := range []string{"transfer", "foreign-owner"} {
+		t.Run(scenario, func(t *testing.T) {
+			l := newServiceLab(t)
+			if scenario == "transfer" {
+				other, err := store.Open(l.s.Root)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err = other.ClaimCoordinator("", "new conversation", true); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				owner := objectField(l.task, "owner")
+				owner.Set("session_id", "different-session")
+				if err := l.s.SaveTask(l.task); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := l.start(); err == nil {
+				t.Fatal("unauthorized service launch accepted")
+			}
+			if _, err := Stop(l.s, StopArgs{Task: stringField(l.task, "id"), Caller: l.caller}); err == nil {
+				t.Fatal("unauthorized service stop accepted")
+			}
+			if calls := l.hc.Calls(); len(calls) != 0 {
+				t.Fatalf("unauthorized operation contacted HC: %v", calls)
+			}
+			record, err := Read(l.s, stringField(l.task, "id"))
+			if err != nil || len(listField(record, "services")) != 0 {
+				t.Fatalf("unauthorized intent saved: %v", err)
+			}
+		})
+	}
+}
+
+func TestLogicalServiceStopUsesRecordedEndpoint(t *testing.T) {
+	l := newServiceLab(t)
+	l.savedService(t, false)
+	out, err := Stop(l.s, StopArgs{Task: stringField(l.task, "id"), Caller: l.caller})
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := listField(out, "services")
+	if len(services) != 1 {
+		t.Fatalf("services=%v", services)
+	}
+	row, _ := services[0].(*ordjson.Object)
+	if stringField(row, "state") != "stopped" {
+		t.Fatalf("stop=%v", row)
+	}
+	for _, call := range l.hc.Calls() {
+		if call.Method == "terminal.run" || call.Method == "terminal.interrupt" {
+			t.Fatalf("finished service replayed effect: %v", call)
+		}
+	}
+}
+
+func TestServiceNativeWorkerStillRequiresReceiptAndCurrentAttempt(t *testing.T) {
+	l := newServiceLab(t)
+	endpoint := store.EndpointFromContext(objectField(l.task, "worker_endpoint"))
+	l.caller = endpoint.Object()
+	if _, err := l.start(); err == nil {
+		t.Fatal("unregistered worker accepted")
+	}
+	if len(l.hc.Calls()) != 0 {
+		t.Fatal("unregistered caller reached native launch")
+	}
+	client := hcclient.Client{Socket: endpoint.Socket, CoreID: endpoint.CoreID}
+	terminal, err := client.Get(context.Background(), endpoint.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := (incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: *terminal.PID, Foreground: terminal.Foreground}).Record(store.Now())
+	registration, err := l.s.Register(endpoint, "worker", endpoint.Task, observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: endpoint.Native(), Kind: "worker-init", Attempt: endpoint.Attempt})
+	registration.Set("native_receipt", receipt)
+	if err = ordjson.WriteFile(filepath.Join(l.s.Sessions, store.RegistrationKey(endpoint)+".json"), registration); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := reservations.Worker(l.task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.Set("incarnation", observed)
+	worker.Set("native_receipt", receipt)
+	if err = l.s.SaveTask(l.task); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = serviceCaller(l.s, l.task, l.caller); err != nil {
+		t.Fatal(err)
+	}
+	worker.Set("id", "x-other-attempt")
+	if _, err = serviceCaller(l.s, l.task, l.caller); err == nil {
+		t.Fatal("stale worker attempt accepted")
 	}
 }

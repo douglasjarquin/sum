@@ -94,8 +94,8 @@ func TestMetadataCommands(t *testing.T) {
 		{name: "valid snippet --raw=", args: []string{"metadata", "snippet", "--raw=true"}, success: true},
 		{name: "valid status", args: []string{"metadata", "status"}, success: true},
 		{name: "valid status after dashdash", args: []string{"metadata", "status", "--"}, success: true},
-		{name: "valid enable --notify", args: []string{"metadata", "enable", "--notify"}, herdr: true, domainErr: "registration identity mismatch"},
-		{name: "valid enable --notify=", args: []string{"metadata", "enable", "--notify=true"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "valid enable --notify", args: []string{"metadata", "enable", "--notify"}, herdr: true, domainErr: "claim_required"},
+		{name: "valid enable --notify=", args: []string{"metadata", "enable", "--notify=true"}, herdr: true, domainErr: "claim_required"},
 		{name: "metadata missing subcommand", args: []string{"metadata"}, usage: true},
 		{name: "snippet extra positional", args: []string{"metadata", "snippet", "extra"}, usage: true},
 		{name: "snippet unknown flag", args: []string{"metadata", "snippet", "--unexpected"}, usage: true, unknown: true},
@@ -111,10 +111,10 @@ func TestMetadataCommands(t *testing.T) {
 		{name: "sync unknown flag", args: []string{"metadata", "sync", "--unexpected"}, usage: true, unknown: true},
 		{name: "sync --notify", args: []string{"metadata", "sync", "--notify"}, usage: true, unknown: true},
 		{name: "inbox unknown flag", args: []string{"metadata", "inbox", "--unexpected"}, usage: true, unknown: true},
-		{name: "enable requires coordinator", args: []string{"metadata", "enable"}, herdr: true, domainErr: "registration identity mismatch"},
-		{name: "enable requires pane without herdr", args: []string{"metadata", "enable"}, domainErr: "HC session"},
-		{name: "disable requires pane without herdr", args: []string{"metadata", "disable"}, domainErr: "HC session"},
-		{name: "sync requires pane without herdr", args: []string{"metadata", "sync"}, domainErr: "HC session"},
+		{name: "enable requires coordinator", args: []string{"metadata", "enable"}, herdr: true, domainErr: "claim_required"},
+		{name: "enable requires pane without herdr", args: []string{"metadata", "enable"}, domainErr: "claim_required"},
+		{name: "disable requires pane without herdr", args: []string{"metadata", "disable"}, domainErr: "claim_required"},
+		{name: "sync requires pane without herdr", args: []string{"metadata", "sync"}, domainErr: "claim_required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -35,7 +35,7 @@ import (
 // ContextSections mirrors CONTEXT_SECTIONS: the section names `--section` accepts, and what `outline.read.sections` reports.
 var ContextSections = []string{"outline", "brief", "decisions", "handoff", "evidence", "execution", "environment", "update", "returns", "notes", "findings", "pipeline", "review_threads"}
 
-var stateFields = []string{"status", "worker_endpoint", "parent", "reviewer", "worktree", "branch", "cleanup", "pr", "error"}
+var stateFields = []string{"status", "worker_endpoint", "owner", "parent", "reviewer", "worktree", "branch", "cleanup", "pr", "error"}
 var cursorFields = []string{"questions", "evidence", "answered", "applied", "notes", "refresh", "attention"}
 var outlineTaskKeys = []string{"id", "status", "kind", "repository", "branch", "worktree", "harness", "error"}
 
@@ -924,6 +924,7 @@ func sectionExecution(s *store.Store, task *ordjson.Object) (*ordjson.Object, er
 		}
 	}
 	endpoints.Set("worker", worker)
+	endpoints.Set("owner", pick(asObject(getField(task, "owner")), []string{"schema", "kind", "machine", "session_id"}))
 	if parentValue := getField(task, "parent"); truthy(parentValue) {
 		endpoints.Set("parent", pick(asObject(parentValue), executionEndpointKeys))
 	} else {

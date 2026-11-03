@@ -43,7 +43,7 @@ It runs the Go, top-level Python unittest discovery and web checks, stopping at 
 
 | Check | Command | Proves |
 | --- | --- | --- |
-| Go CLI, HC, and skill tests | `cd go && go test ./...` | sumctl command contracts, typed HC protocol, endpoint/receipt authority and observer, portable verify/evidence skills, and the offline demo |
+| Go CLI, HC, and skill tests | `cd go && go test ./...` | sumctl command contracts, typed HC protocol, native endpoint/receipt authority, logical claim fencing and bounded collection, portable verify/evidence skills, and the offline demo |
 | Python HC, setup and packaging tests | `python3 -m unittest discover -s tests -p 'test_*.py'` | native socket fixture characterization, exact-artifact installer/cache/refusal contracts, mocked lab ownership/teardown failures and existing setup/packaging checks; these are offline tests, not actual-model qualification |
 | Web site | `aube -C web install --frozen-lockfile`, `aube -C web run check`, `aube -C web run test:unit`, `aube -C web run build`, then a `web/dist` route-emission check | the Astro site installs from the lockfile, typechecks, passes unit tests, and builds all routes into `web/dist` under the `/sum/` base |
 
@@ -104,8 +104,9 @@ Supported native input profiles require unmodified published HC 0.1.14 and defau
 Idle uses `if:idle`; observed Done sends without `if` or `force`, so a raced working turn uses the harness's native queue or steering behavior rather than providing an atomic Done guard.
 Native `started`, status, turn counts and completed waits are never application receipts or proof of exit.
 Authenticated turns for the new profiles, other harnesses and every unrun manual scenario remain gaps in [acceptance](docs/ACCEPTANCE.md).
-Existing-installation migration must refuse without enforceable legacy writer/sender exclusion; current legacy APIs cannot establish that prerequisite.
-No production cutover or working production exclusion lease is certified by local checks.
+Schema-one migration remains unavailable.
+Supported native retirement uses a locked root state-format fence to reject the exact old helper's ledger writes and native sends, including final authorization rechecks.
+This does not prove universal exclusion of preauthorized OS/Git effects, and local checks certify no live cutover.
 Generated dependency inventory freshness is checked with `python3 scripts/generate_dependency_inventory.py --check`; never edit the generated JSON by hand.
 
 The Python discovery step includes the top-level HC fixture, installer and lab modules; feature-map automated claims for those modules rely on this aggregate step.

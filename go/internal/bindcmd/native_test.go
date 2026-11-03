@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,7 +63,7 @@ func TestNativeBindRequiresSuccessorReceiptAndPreservesGit(t *testing.T) {
 	if _, err = taskcheckout.Create(context.Background(), intent); err != nil {
 		t.Fatal(err)
 	}
-	coordinator := store.Endpoint{Schema: 2, Backend: "hc", Machine: machine.ID, CoreID: fixture.CoreID, Session: "sum-test", Socket: fixture.Socket, Address: "t1", CreatedMS: 1, Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, Cwd: root}
+	route := store.Endpoint{Schema: 2, Backend: "hc", Machine: machine.ID, CoreID: fixture.CoreID, Session: "sum-test", Socket: fixture.Socket, BindingGeneration: 1}
 	register := func(endpoint store.Endpoint, pid uint32, kind string, receipt bool) *ordjson.Object {
 		fg := &hcclient.Foreground{PID: int32(pid), Name: "sleep", Argv: []string{"sleep", "60"}, Cwd: endpoint.Cwd}
 		bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: fg}
@@ -85,11 +86,15 @@ func TestNativeBindRequiresSuccessorReceiptAndPreservesGit(t *testing.T) {
 		}
 		return reg
 	}
-	owner := register(coordinator, 100000, "coordinator-init", true)
-	if err = ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
+	session, err := st.ClaimCoordinator("", "bind test", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	old := coordinator
+	ctx, err := app.RequireClaim(st, session.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := route
 	old.Address = "t2"
 	old.CreatedMS = 2
 	old.Role = "worker"
@@ -109,6 +114,8 @@ func TestNativeBindRequiresSuccessorReceiptAndPreservesGit(t *testing.T) {
 	task.Set("schema", json.Number("2"))
 	task.Set("id", taskID)
 	task.Set("machine", machine.ID)
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
 	task.Set("status", "running")
 	task.Set("worktree", intent.Path)
 	task.Set("worker_endpoint", old.Object())
@@ -129,7 +136,7 @@ func TestNativeBindRequiresSuccessorReceiptAndPreservesGit(t *testing.T) {
 	next.CreatedMS = 3
 	next.BindingGeneration = 2
 	register(next, uint32(live.Process.Pid), "worker-init", false)
-	if _, err = Run(st, coordinator.Object(), taskID, next.Address, "", false, returns.PumpOpts{}); err == nil {
+	if _, err = Run(st, ctx, taskID, next.Address, "", false, returns.PumpOpts{}); err == nil {
 		t.Fatal("replacement without receipt acquired worker authority")
 	}
 	unchanged, err := st.ReadTask(taskID)
@@ -149,7 +156,7 @@ func TestNativeBindRequiresSuccessorReceiptAndPreservesGit(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("SUM_LSOF_BIN", lsof)
-	result, err := Run(st, coordinator.Object(), taskID, next.Address, "", false, returns.PumpOpts{})
+	result, err := Run(st, ctx, taskID, next.Address, "", false, returns.PumpOpts{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,4 +166,21 @@ func TestNativeBindRequiresSuccessorReceiptAndPreservesGit(t *testing.T) {
 	if _, err = taskcheckout.Verify(context.Background(), intent, false); err != nil {
 		t.Fatal("rebind changed Git identity:", err)
 	}
+	if _, err = Run(st, ctx, taskID, "", "", true, returns.PumpOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := st.ReadTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.LogicalOwnersMatch(object(saved, "owner"), session.Owner()) || field(saved, "parent") != nil {
+		t.Fatal("parent-only bind did not preserve logical ownership")
+	}
+	if field(object(saved, "owner"), "claim") != nil {
+		t.Fatal("volatile claim leaked into task owner")
+	}
+	if !SameEndpoint(object(saved, "worker_endpoint"), next.Object()) {
+		t.Fatal("parent-only bind changed worker endpoint")
+	}
+
 }

@@ -2,7 +2,10 @@ package review
 
 import (
 	"context"
+	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/collect"
 	"github.com/douglasjarquin/sum/go/internal/evidenceview"
+	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -18,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func reviewerLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *hctest.Fixture) {
@@ -155,15 +159,29 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 		t.Fatal(err)
 	}
 	ep.Machine = host.ID
+	task.Set("machine", host.ID)
 	ep.Address = "t7"
 	ep.CreatedMS = 7
-	coordinator := ep
-	coordinator.Address = "t8"
-	coordinator.Role = "coordinator"
-	coordinator.Task = ""
-	coordinator.Attempt = "coord"
-	task.Set("parent", coordinator.Object())
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), coordinator.Object()); err != nil {
+	session, err := s.ClaimCoordinator("", "review test conversation", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := app.RequireClaim(s, session.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
+	route, _ := ordjson.FromValue(hcboot.Route{Socket: ep.Socket, CoreID: ep.CoreID, Session: ep.Session, ConfigHome: config, StateHome: t.TempDir()})
+	if err = ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
+		t.Fatal(err)
+	}
+	settings := ordjson.NewObject()
+	settings.Set("schema", 1)
+	opts := ordjson.NewObject()
+	opts.Set("codex_home", options.CodexHome)
+	settings.Set("template", opts)
+	if err = ordjson.WriteFile(filepath.Join(s.Home, "settings.json"), settings); err != nil {
 		t.Fatal(err)
 	}
 	candidate := evidenceview.CurrentCandidate(task)
@@ -176,7 +194,7 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 		t.Fatalf("invalid test installation identity: %q %v", instance, err)
 	}
 	labels := map[string]string{"sum.installation": instance, "sum.task": ep.Task, "sum.role": "reviewer", "sum.attempt": ep.Attempt}
-	params := hcclient.RunParams{Argv: []string{spec.Name, "sealed opening pointer"}, Cwd: ep.Cwd, Labels: labels, Env: map[string]string{"SUM_ATTEMPT": ep.Attempt, "SUM_TASK": ep.Task, "SUM_ROLE": "reviewer", "SUM_CORE_ID": ep.CoreID, "HC_SOCKET": ep.Socket}}
+	params := hcclient.RunParams{Argv: []string{spec.Name, "sealed opening pointer"}, Cwd: ep.Cwd, Labels: labels, Env: map[string]string{"SUM_ATTEMPT": ep.Attempt, "SUM_TASK": ep.Task, "SUM_ROLE": "reviewer", "SUM_CORE_ID": ep.CoreID, "SUM_SESSION": ep.Session, "SUM_BINDING_GENERATION": "1", "HC_SOCKET": ep.Socket}}
 	intent := ordjson.NewObject()
 	intent.Set("state", "created")
 	intent.Set("attempt", ep.Attempt)
@@ -204,7 +222,7 @@ func recoveryLab(t *testing.T) (*store.Store, *ordjson.Object, store.Endpoint, *
 	if err = s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	return s, coordinator.Object(), ep, f
+	return s, coordinator, ep, f
 }
 func TestReviewerExplicitUnsentRedeliveryUsesNativeGuardAndNoLaunch(t *testing.T) {
 	for _, status := range []string{"idle", "done"} {
@@ -317,17 +335,11 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 	if err = s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	owner := ctx
-	nativeTemplate, _ := ordjson.FromValue(template)
-	owner.Set("native_template", nativeTemplate)
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
-		t.Fatal(err)
-	}
 	f.SetTemplates([]hcclient.TemplateInfo{{Name: template.Spec.Name, Command: template.Spec.Command()}})
 	f.SetTemplateSubmit(template.Spec.Name, "tab")
 	no := false
 	f.QueueFault("terminal.run", hctest.Fault{FirstMessage: &hcclient.FirstMessage{Sent: true, Started: &no}})
-	out, err := Launch(s, ctx, runtime, "/tmp/sumctl", LaunchArgs{Task: asString(task, "id")})
+	out, err := Launch(s, ctx, runtime, "/tmp/sumctl", LaunchArgs{Task: asString(task, "id"), Harness: "codex"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +373,7 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 		t.Fatal("launched reviewer has no matching application init receipt")
 	}
 	f.Exit(oldEndpoint.Address, 0)
-	replacement, err := Launch(s, ctx, runtime, "/tmp/sumctl", LaunchArgs{Task: oldEndpoint.Task})
+	replacement, err := Launch(s, ctx, runtime, "/tmp/sumctl", LaunchArgs{Task: oldEndpoint.Task, Harness: "codex"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,6 +401,12 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 			if labels["sum.installation"] != instance || labels["sum.installation"] == s.Root {
 				t.Fatalf("reviewer used a route instead of installation identity: %v", labels)
 			}
+			if _, exists := call.Params["parent"]; exists {
+				t.Fatal("reviewer creation carried an HC parent")
+			}
+			if _, exists := call.Params["caller"]; exists {
+				t.Fatal("reviewer creation carried an HC caller")
+			}
 			if call.Params["outlive_parent"] != true || call.Params["no_notify"] != true || call.Params["keep"] != false || call.Params["rm"] != false {
 				t.Fatalf("managed flags %v", call.Params)
 			}
@@ -408,7 +426,7 @@ func TestNativeReviewerLaunchEndToEndUsesTaskCheckoutAndManagedTemplate(t *testi
 }
 
 func TestCandidateBoundReviewerEvidenceDischargesAmbiguousKickoff(t *testing.T) {
-	s, _, ep, f := recoveryLab(t)
+	s, ctx, ep, f := recoveryLab(t)
 	task, _ := s.ReadTask(ep.Task)
 	reviewer := objectField(task, "reviewer")
 	candidate := asString(reviewer, "candidate")
@@ -446,6 +464,20 @@ func TestCandidateBoundReviewerEvidenceDischargesAmbiguousKickoff(t *testing.T) 
 	launch := objectField(objectField(saved, "reviewer"), "native_launch")
 	if asString(launch, "state") != "created" || asString(launch, "reconciled_from") != "uncertain" {
 		t.Fatal("receipt reconciliation lost uncertainty history")
+	}
+	inbox, err := collect.Run(context.Background(), s, collect.Options{Claim: asString(ctx, "claim"), Task: ep.Task, Budget: time.Millisecond, SumctlPath: "/tmp/sumctl"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := inbox.Get("items")
+	found := false
+	for _, row := range rows.([]any) {
+		if asString(objectValue(row), "kind") == "review" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("parentless reviewer verdict missing from collect")
 	}
 }
 

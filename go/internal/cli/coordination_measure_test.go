@@ -99,7 +99,7 @@ func TestMeasureCoordinationPasses(t *testing.T) {
 							c.Deferred = measureDeferred(t, stdout)
 							if scenario == "slow" {
 								for _, call := range run.native.Calls() {
-									if call.Method == "terminal.get" {
+									if call.Method == "terminal.list" {
 										c.SlowRequestObserved = true
 										break
 									}
@@ -138,11 +138,7 @@ func TestMeasureCoordinationPasses(t *testing.T) {
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	replay := "not recorded in this directory: run TestQuietCoordinationReplay with the same SUM_MEASURE_OUT; it measures its own 12-task home"
-	if _, err := os.Stat(filepath.Join(out, "replay.json")); err == nil {
-		replay = filepath.Join(out, "replay.json")
-	}
-	raw, err := json.MarshalIndent(map[string]any{"schema": 2, "generated_at": time.Now().UTC().Format(time.RFC3339), "cells": cells, "replay": replay, "scope": "native socket fixtures and synthetic schema2 task workload; no model, provider or installation state", "counts": "HC/gh counts describe the first successful sample per cell; strace counts use one additional instrumented run", "slow_dependency": "the first terminal.get request is delayed six seconds; actual observation is recorded per cell", "host_load": "uncontrolled shared development host; descriptive samples, not latency guarantees"}, "", "  ")
+	raw, err := json.MarshalIndent(map[string]any{"schema": 2, "generated_at": time.Now().UTC().Format(time.RFC3339), "cells": cells, "scope": "native socket fixtures and synthetic schema2 task workload; no model, provider or installation state", "counts": "HC/gh counts describe the first successful sample per cell; strace counts use one additional instrumented run", "slow_dependency": "the first terminal.list request is delayed two seconds; actual observation is recorded per cell", "host_load": "uncontrolled shared development host; descriptive samples, not latency guarantees"}, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,11 +165,13 @@ type measureFixture struct {
 }
 
 type measureRun struct {
-	base   string
-	home   string
-	env    []string
-	native *hctest.Fixture
-	stderr string
+	base    string
+	home    string
+	env     []string
+	native  *hctest.Fixture
+	stderr  string
+	claim   string
+	entries map[string]string
 }
 
 func newMeasureFixture(t *testing.T, root string, n int, scenario string) *measureFixture {
@@ -189,14 +187,31 @@ func newMeasureFixture(t *testing.T, root string, n int, scenario string) *measu
 
 func measureWriteJSON(t *testing.T, path string, value any) {
 	t.Helper()
-	object, err := ordjson.FromValue(value)
-	if err != nil {
-		t.Fatal(err)
+	var ordered func(any) any
+	ordered = func(value any) any {
+		switch value := value.(type) {
+		case map[string]any:
+			object := ordjson.NewObject()
+			keys := make([]string, 0, len(value))
+			for key := range value {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				object.Set(key, ordered(value[key]))
+			}
+			return object
+		case []any:
+			items := make([]any, len(value))
+			for i, item := range value {
+				items[i] = ordered(item)
+			}
+			return items
+		default:
+			return value
+		}
 	}
-	if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err = ordjson.WriteFile(path, object); err != nil {
+	if err := ordjson.WriteFile(path, ordered(value)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -234,7 +249,10 @@ func (f *measureFixture) fresh(t *testing.T) *measureRun {
 		t.Fatal(err)
 	}
 	templates := map[string]hcclient.TemplateInfo{}
-	var coordinator store.Endpoint
+	session, err := s.ClaimCoordinator("", "ordinary measurement", false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	bind := func(address, role, task, attempt, cwd string, created uint64) (store.Endpoint, *ordjson.Object, *ordjson.Object) {
 		t.Helper()
 		options := launch.HCTemplateOptions{Cwd: cwd, CodexHome: codexHome}
@@ -265,25 +283,9 @@ func (f *measureFixture) fresh(t *testing.T) *measureRun {
 		if err = ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(endpoint)+".json"), registration); err != nil {
 			t.Fatal(err)
 		}
-		if role == "coordinator" {
-			owner := endpoint.Object()
-			owner.Set("incarnation", evidence)
-			owner.Set("native_receipt", receipt)
-			owner.Set("native_template", provenance)
-			launchRecord := ordjson.NewObject()
-			launchRecord.Set("harness", "codex")
-			launchRecord.Set("model", nil)
-			launchRecord.Set("reasoning", nil)
-			owner.Set("launch", launchRecord)
-			if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
-				t.Fatal(err)
-			}
-		}
 		return endpoint, evidence, receipt
 	}
-	coordinator, _, _ = bind("t1", "coordinator", "", "bootstrap", f.root, 1)
-	native.SetStatus("t1", "idle")
-	measureWriteJSON(t, filepath.Join(s.Home, "settings.json"), map[string]any{"schema": 1, "hook": map[string]any{"enabled": false}})
+	measureWriteJSON(t, filepath.Join(s.Home, "settings.json"), map[string]any{"schema": 1})
 	repo := filepath.Join(base, "repo")
 	for _, argv := range [][]string{{"init", "-q", "-b", "main", repo}, {"-C", repo, "-c", "user.email=m@example.invalid", "-c", "user.name=m", "commit", "-q", "--allow-empty", "-m", "base"}} {
 		if output, err := exec.Command("git", argv...).CombinedOutput(); err != nil {
@@ -298,7 +300,7 @@ func (f *measureFixture) fresh(t *testing.T) *measureRun {
 			t.Fatal(err)
 		}
 		endpoint, evidence, receipt := bind(address, "worker", id, attemptID, worktree, uint64(i+2))
-		attempt, err := reservations.NewAttempt("worker", coordinator.Object(), worktree, store.Now(), "running", nil)
+		attempt, err := reservations.NewAttempt("worker", session.Owner(), worktree, store.Now(), "running", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -306,7 +308,7 @@ func (f *measureFixture) fresh(t *testing.T) *measureRun {
 		attempt.Set("incarnation", evidence)
 		attempt.Set("native_receipt", receipt)
 		task := map[string]any{"schema": store.Schema, "id": id, "status": "running", "repository": repo, "machine": host.ID, "worker_endpoint": endpoint.Object(), "worktree": worktree, "branch": "sum/" + id,
-			"parent": coordinator.Object(), "questions": []any{}, "evidence": []any{}, "report": nil, "notice": nil, "attention": []any{}, "brief": "measure", "base_sha": strings.Repeat("0", 40), "kind": "ship", "execution": reservations.NewExecution(attempt)}
+			"owner": session.Owner(), "parent": nil, "questions": []any{}, "evidence": []any{}, "report": nil, "notice": nil, "attention": []any{}, "brief": "measure", "base_sha": strings.Repeat("0", 40), "kind": "ship", "execution": reservations.NewExecution(attempt)}
 		status := "working"
 		if i%3 == 2 {
 			task["status"] = "archived"
@@ -336,6 +338,19 @@ func (f *measureFixture) fresh(t *testing.T) *measureRun {
 			native.SetStatus(address, status)
 		}
 		measureWriteJSON(t, filepath.Join(s.Tasks, id, "task.json"), task)
+		saved, err := s.ReadTask(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		worker, err := reservations.Worker(saved)
+		if err != nil || worker == nil {
+			t.Fatalf("measurement reservation malformed: %v", err)
+		}
+		endpointRecord, _ := saved.Get("worker_endpoint")
+		if err := store.EndpointFromContext(endpointRecord.(*ordjson.Object)).Validate(); err != nil {
+			t.Fatalf("measurement endpoint malformed: %v", err)
+		}
+
 	}
 	nativeTemplates := make([]hcclient.TemplateInfo, 0, len(templates))
 	for _, spec := range templates {
@@ -345,7 +360,7 @@ func (f *measureFixture) fresh(t *testing.T) *measureRun {
 	gh := map[string]any{"number": 7, "repository": "douglasjarquin/project", "state": "OPEN", "head_branch": "sum/x", "head_sha": strings.Repeat("a", 40)}
 	if f.scenario == "slow" {
 		gh["delay"] = 5
-		native.QueueFault("terminal.get", hctest.Fault{Delay: 6 * time.Second})
+		native.QueueFault("terminal.list", hctest.Fault{Delay: 2 * time.Second})
 	}
 	measureWriteJSON(t, filepath.Join(base, "fake-gh", "pr.json"), gh)
 	var env []string
@@ -356,13 +371,56 @@ func (f *measureFixture) fresh(t *testing.T) *measureRun {
 		}
 		env = append(env, entry)
 	}
-	env = append(env, "HOME="+filepath.Join(base, "home"), "CODEX_HOME="+codexHome, "SUM_INSTALL_ROOT="+f.root, "SUM_SESSION="+coordinator.Session, "SUM_CORE_ID="+native.CoreID, "HC_SOCKET="+native.Socket, "HC_TERMINAL_ID=t1", "SUM_ROLE=coordinator", "SUM_TASK=", "SUM_ATTEMPT=bootstrap", "SUM_BINDING_GENERATION=1", "SUM_CODEX_BIN="+codex, "SUM_GH_BIN="+filepath.Join(f.root, "tests/fixtures/gh.py"), "FAKE_GH_ROOT="+filepath.Join(base, "fake-gh"))
-	return &measureRun{base: base, home: s.Home, env: env, native: native}
+	env = append(env, "HOME="+filepath.Join(base, "home"), "CODEX_HOME="+codexHome, "SUM_INSTALL_ROOT="+f.root, "SUM_CODEX_BIN="+codex, "SUM_GH_BIN="+filepath.Join(f.root, "tests/fixtures/gh.py"), "FAKE_GH_ROOT="+filepath.Join(base, "fake-gh"))
+	run := &measureRun{base: base, home: s.Home, env: env, native: native, claim: session.Token(), entries: map[string]string{}}
+	binaries := []string{filepath.Join(f.root, ".local/bin/sumctl")}
+	for _, item := range strings.Split(os.Getenv("SUM_MEASURE_BINS"), ",") {
+		if _, binary, ok := strings.Cut(strings.TrimSpace(item), "="); ok {
+			binaries = append(binaries, binary)
+		}
+	}
+	for i, binary := range binaries {
+		entry := filepath.Join(base, fmt.Sprintf("ordinary-entry-%d", i))
+		for _, rel := range []string{"COORDINATOR.md", "skills/sum-develop/SKILL.md"} {
+			data, err := os.ReadFile(filepath.Join(f.root, rel))
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(entry, rel)
+			if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		data, err := os.ReadFile(binary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(entry, "bin/sumctl")
+		if err = os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(path, data, 0700); err != nil {
+			t.Fatal(err)
+		}
+		run.entries[binary] = path
+	}
+	return run
 }
 
 // exec runs one sumctl command (under strace when trace is set) and returns its exit code and stdout.
 func (r *measureRun) exec(bin, trace string, args ...string) (int, string) {
-	argv := append([]string{"--home", r.home, "--format", "json"}, args...)
+	if len(args) > 0 && args[0] == "init" {
+		entry, ok := r.entries[bin]
+		if !ok {
+			r.stderr = "fixture did not stage an ordinary entry for " + bin
+			return -1, ""
+		}
+		bin = entry
+	}
+	argv := append([]string{"--home", r.home, "--format", "json", "--claim", r.claim}, args...)
 	name := bin
 	if trace != "" {
 		argv = append([]string{"-f", "-qq", "-e", "trace=execve,clone,clone3,vfork,fork,openat", "-o", trace, bin}, argv...)
@@ -535,17 +593,21 @@ func TestMeasureNativeCoordinationFixture(t *testing.T) {
 			} else {
 				measureDeferred(t, stdout)
 			}
+			if args[0] == "init" && len(run.native.Calls()) != 0 {
+				t.Fatalf("ordinary init contacted HC: %v", run.native.Calls())
+			}
 			run.native.AssertNoForce(t)
 		})
 	}
 	t.Run("slow-native-request", func(t *testing.T) {
 		run := newMeasureFixture(t, root, 1, "slow").fresh(t)
 		started := time.Now()
-		if code, _ := run.exec(binary, "", "init"); code != 0 {
+		code, stdout := run.exec(binary, "", "status", "--live")
+		if code != 0 {
 			t.Fatalf("slow native fixture failed: %d %s", code, run.stderr)
 		}
-		if time.Since(started) < 6*time.Second {
-			t.Fatal("slow scenario did not observe its declared native request delay")
+		if time.Since(started) < 2*time.Second {
+			t.Fatalf("slow scenario did not observe its declared native request delay: calls=%v stdout=%s", run.native.Calls(), stdout)
 		}
 	})
 }

@@ -26,10 +26,21 @@ func repoRoot(t *testing.T) string {
 func runCLI(t *testing.T, home string, args ...string) (string, error) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &stdout, &stderr)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	reference := filepath.Join(repoRoot(t), "bin", "sumctl")
+	if value, ok := nativeLabs.Load(home); ok {
+		d := value.(*demoLab)
+		reference = d.helper
+		if len(args) > 0 && args[0] == "init" && os.Getenv("SUM_TASK") == "" {
+			reference = d.entryHelper
+		}
+	}
+	root := NewRoot(reference, &stdout, &stderr)
+	root.SetArgs(testClaimArgs(home, args))
 	err := root.ExecuteContext(context.Background())
 	if err != nil {
+		if stdout.Len() > 0 {
+			return stdout.String(), err
+		}
 		return stderr.String(), err
 	}
 	return stdout.String(), nil
@@ -67,14 +78,6 @@ func configureNativeEventsForTest(t *testing.T, home string, enabled bool) {
 	}
 }
 
-func assertNativeEventsEnabledForTest(t *testing.T, home string) {
-	t.Helper()
-	status, err := runCLI(t, home, "hook", "status")
-	if err != nil || decodeObject(t, status)["enabled"] != true {
-		t.Fatalf("native delivery should be enabled after coordinator init: %s, err = %v", status, err)
-	}
-}
-
 func nativeEnv(t *testing.T, home string) {
 	t.Helper()
 	root, helper := repoReference(t)
@@ -100,33 +103,23 @@ func decodeObject(t *testing.T, raw string) map[string]any {
 	return decodeCLIMap(t, raw)
 }
 
-func TestInit_designatedFirstPaneClaimsCoordinator(t *testing.T) {
-	home := writeDesignatedHome(t)
-	nativeEnv(t, home)
-	out, err := runCLI(t, home, "init")
-	if err != nil {
-		t.Fatalf("init: %v\n%s", err, out)
+func TestInitDesignatedWorkspaceClaimsLogicalCoordinator(t *testing.T) {
+	root, s := ordinaryInitLab(t)
+	if err := s.Init(); err != nil {
+		t.Fatal(err)
 	}
-	value := decodeObject(t, out)
-	if value["role"] != "coordinator" {
-		t.Fatalf("role = %v, want coordinator", value["role"])
-	}
-	if value["installation"] != true {
-		t.Fatalf("installation = %v", value["installation"])
-	}
-	if value["registered"] == false {
-		t.Fatal("expected registration")
-	}
-	ownerRaw, err := os.ReadFile(filepath.Join(home, "context.json"))
+	value, err := ordinaryInit(t, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var owner map[string]any
-	if err := json.Unmarshal(ownerRaw, &owner); err != nil {
-		t.Fatal(err)
+	if value["role"] != "coordinator" || asString(value["claim"]) == "" {
+		t.Fatalf("logical coordinator = %v", value)
 	}
-	if owner["role"] != "coordinator" || owner["address"] != "t1" || owner["backend"] != "hc" || owner["core_id"] != os.Getenv("SUM_CORE_ID") {
-		t.Fatalf("owner = %v", owner)
+	if _, present := value["endpoint"]; present {
+		t.Fatal("logical coordinator has a native endpoint")
+	}
+	if _, err := os.Stat(filepath.Join(s.Home, "context.json")); !os.IsNotExist(err) {
+		t.Fatal("logical claim created native ownership")
 	}
 }
 
@@ -196,22 +189,20 @@ func TestAttention_marksOpenRecordSeen(t *testing.T) {
 	if value["status"] != "seen" {
 		t.Fatalf("status = %v", value["status"])
 	}
-	if actor := asMap(value["closed_by"]); actor["role"] != "coordinator" || actor["address"] != "t1" || actor["core_id"] != os.Getenv("SUM_CORE_ID") {
-		t.Fatalf("closed_by = %v", value["closed_by"])
-	}
+	requireLogicalActor(t, home, value["closed_by"])
 }
 
-func TestBind_parentOnlyUpdatesParent(t *testing.T) {
+func TestBind_parentOnlyRestoresLogicalOwner(t *testing.T) {
 	d := newPolicyLab(t)
 	repo := policyProject(t, d.base, "parent-bind", map[string]string{"README": "base\n"})
 	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--approved")
 	id := asString(task["id"])
-	task["parent"] = nil
+	task["owner"] = nil
 	writeJSONFile(t, filepath.Join(d.home, "tasks", id, "task.json"), task)
 	value := d.ctl(true, "bind", id, "--parent-only")
-	parent := asMap(value["parent"])
-	if parent["address"] != "t1" || parent["core_id"] != d.native.CoreID {
-		t.Fatalf("rebound parent: %v", value)
+	requireLogicalActor(t, d.home, value["owner"])
+	if value["parent"] != nil {
+		t.Fatalf("bind created native parent: %v", value)
 	}
 }
 
@@ -458,7 +449,7 @@ func TestRepairExtend_requiresCoordinator(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected coordinator requirement")
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "HC session") {
+	if !strings.Contains(err.Error(), "claim_required") {
 		t.Fatalf("err = %v", err)
 	}
 }

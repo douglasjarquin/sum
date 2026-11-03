@@ -6,22 +6,25 @@ Moved out of the README.
 ### Worker harness and model
 
 `--harness` is optional.
-Without it, the worker runs the saved worker default when one exists, otherwise the coordinator's recorded launch harness; its model is known only from the launch record or explicitly unknown, and sum says so instead of claiming exact inheritance.
-The precedence is fixed: an explicit instruction (`--harness`, `--model`, `--reasoning`, or `--same-as-you`), then the saved worker default in `.sum/settings.json`, then the reliably known root harness, then the disclosed native default.
+Without an explicit harness, the worker uses a saved default; absent both, launch refuses with the settings command.
+A coordinating harness or model is never inferred.
+The precedence is explicit task selection (`--harness`, `--model`, `--reasoning` or `--preset`), then the saved worker default in `.sum/settings.json`.
+Without an explicit or saved harness, launch refuses and names `settings set --worker-harness`.
+The coordinating conversation's harness and model are never inferred.
+Use the retained `--claim TOKEN` on coordinator mutations in these examples.
 
 ```sh
 ./bin/sumctl settings set --worker-harness codex --worker-model gpt-5-codex --worker-reasoning high   # coordinator only; future dispatches
 ./bin/sumctl settings set --worker-harness claude                                                    # switching harness drops the old harness's model
-./bin/sumctl settings set --clear-worker                                                             # back to the coordinator's harness
+./bin/sumctl settings set --clear-worker                                                             # explicit selection required without a saved default
 ./bin/sumctl dispatch --repo R --brief B --approved --model o4-mini                                  # this task only; the default is unchanged
 ./bin/sumctl dispatch --repo R --brief B --approved --harness claude                                 # harness-only override: a saved Codex model is never applied to claude
-./bin/sumctl dispatch --repo R --brief B --approved --same-as-you                                    # the coordinator's harness and native model, ignoring the saved default
 ```
 
 A model or reasoning value is translated only through a flag verified from the installed CLI's own help: `codex -m MODEL -c model_reasoning_effort=LEVEL`, `claude --model MODEL --effort LEVEL`, `grok -m MODEL --reasoning-effort LEVEL`, `copilot --model MODEL --effort LEVEL`, `cursor --model MODEL`, `pi --model MODEL`, `omp --model=MODEL`.
 A harness without a verified flag refuses `--model`/`--reasoning` instead of guessing; pass the native argument yourself with `--arg`, which still works exactly as before.
-Conflicts (`--same-as-you` with a harness or model, `--model` plus an `--arg` that sets the same flag, a flag-shaped value) are refused before any record, slot, or HC call, and arguments are passed as exact argv tokens, never through a shell.
-The resolved specification (harness, model, reasoning, exact argv, the source of each field, the observed root harness, and the observed-versus-requested status) is saved with the task at `prepare`, so a prepared task starts with the same specification even if the defaults change in between; `start --arg` may append but not contradict it.
+Conflicts (`--model` plus an `--arg` that sets the same flag, a flag-shaped value) are refused before any record, slot, or HC call, and arguments are passed as exact argv tokens, never through a shell.
+The resolved specification (harness, model, reasoning, exact argv, the source of each field, the source of the explicit or saved selection) is saved with the task at `prepare`, so a prepared task starts with the same specification even if the defaults change in between; `start --arg` may append but not contradict it.
 `settings show` and every `prepare`/`dispatch`/`start` result carry the saved default and a one-line `confirmation`; HC and the matching initialization receipt establish the launched endpoint, while a CLI-requested model stays "requested, not runtime-verified".
 Saving a default affects future dispatches only: no running worker, the coordinator's own harness or model, account, or billing route changes, and the existing advisory quota checks still apply.
 
@@ -42,8 +45,8 @@ It is not an agent, a role, a credential store, or a default until you save it a
 ./bin/sumctl preset delete deep                                                                     # refused while a default still references it
 ```
 
-Precedence stays fixed: an explicit `--harness`/`--model`/`--reasoning` refines the chosen preset when compatible; `--preset X --harness Y` with a different harness, an `--arg` that repeats the preset's model or reasoning flag, an unknown preset name, or `--same-as-you` together with `--preset` are refused before any record, slot, or HC call, naming the fix.
-`--same-as-you` also bypasses a saved default preset, and a harness-only override never carries another harness's preset along.
+Precedence stays fixed: an explicit `--harness`/`--model`/`--reasoning` refines the chosen preset when compatible; `--preset X --harness Y` with a different harness, an `--arg` that repeats the preset's model or reasoning flag, an unknown preset name are refused before any record, slot, or HC call, naming the fix.
+A harness-only override never carries another harness's preset along.
 The preset is expanded at `prepare` and the resolved specification is persisted with the task together with the preset's name and revision (`launch.preset`); `preset set` bumps the revision and, like `preset delete`, changes future dispatches only, so a prepared or running task keeps exactly what it was prepared with.
 A model in a preset is CLI-requested, never runtime-verified, and presets change nothing about authorization, accounts, or the advisory quota checks.
 
@@ -154,13 +157,13 @@ Older helpers may preserve these records, but an old coordinator does not enforc
 Rundown, delivery and refresh use bounded native HC snapshots and exact recipient revalidation.
 One unavailable scope cannot justify speculative sends, restart a missing core or replay an uncertain mutation.
 A second same-host scope and remote Sum execution are currently unsupported and refused before binding.
-`inbox --live` and `status --live` report `fanout` with the sessions, HC calls, and elapsed and budget milliseconds of their read-only observation; `pump` and coordinator `init` (under `returns`) report the same for their delivery pass, plus the count of `deferred` recipients, whenever the pass visited a recipient; `refresh request` reports its HC calls and elapsed time.
+`inbox --live` and `status --live` report `fanout` with the sessions, HC calls, and elapsed and budget milliseconds of their read-only observation; `pump` reports the same for its worker-directed delivery pass, plus the count of `deferred` recipients, whenever the pass visited a recipient; `refresh request` reports its HC calls and elapsed time.
 A delivery pass has a 20-second budget (`pump --budget SECONDS` overrides it for one pass) and `sweep` a 60-second admission budget (`sweep --budget SECONDS`); neither is a setting in this file.
 
 ### Usage accounting
 
 Usage accounting is off until `.sum/settings.json` carries `"usage": {"enabled": true}`; with the block absent or `false`, no command resolves a Claude projects directory, reads a transcript, or creates a usage record.
-The block accepts exactly one boolean key, `enabled`; any other key or value refuses the whole settings file with the defect, like `hook` and `evidence`.
+The block accepts exactly one boolean key, `enabled`; any other key or value refuses the whole settings file with the defect, like `evidence`.
 `settings set --usage-accounting true|false` writes it and `--clear-usage` removes it (coordinator only, atomic, every other settings writer preserves the block); `usage show TASK_ID` reports the effective value with its source.
 An older `sumctl` refuses a settings file that carries `usage` as an unknown key, so remove the block before rolling back below the release that introduced it.
 
@@ -189,16 +192,19 @@ Totals are counts, not a bill: no dollar estimate, quota, enforcement, daemon, a
 ./bin/sumctl settings set --clear-usage                # back to the default, which is off
 ```
 
-## Qualified input and coordinator startup
+## Workspace route and qualified worker input
 
-Prefer `coordinator start --socket PATH --session NAME --hc-config-home PATH --harness codex` for a bound launch and matching receipt.
-Use explicit `--model`, `--reasoning`, repeatable `--arg` or `--preset` only for the user's selection.
-A manually initialized qualified existing terminal records a known launch or explicitly unknown model; `--same-as-you` cannot guess an exact model.
-`init` defaults to developer without qualified HC context.
-A bare init in the designated installation ensures the local HC core and its holder, and still does not claim coordination.
-Observation commands never start a core.
+Ordinary `init` claims coordination without querying or starting HC.
+Worker and reviewer launch lazily ensure the saved `.sum/runtime-route.json` route and persist its observed permanent core ID.
+A changed core at the same socket is refused.
+Template options live in `.sum/settings.json`, independently of the coordinating conversation.
+Inherited `SUM_*`, `HC_*` and `HERDR_*` values do not redirect ordinary entry or grant authority.
+Use explicit `--home` for isolated lab state.
+Read-only observation and collection never start a core.
+
 The HC config home is the XDG root, usually `~/.config`, rather than `~/.config/herdr-core`.
-Sum appends `herdr-core/templates` and writes a namespaced template without changing the user's harness configuration.
+Sum writes a namespaced template without changing the user's harness configuration.
+Workers and reviewers are parentless and retain native task/attempt/process/receipt checks.
 
 | Harness | Supported version | Submit key |
 | --- | --- | --- |
@@ -207,33 +213,10 @@ Sum appends `herdr-core/templates` and writes a namespaced template without chan
 | `claude` | 2.1.316 | Enter |
 | `devin` | 3000.11.234, local interactive CLI | Enter |
 
-Each profile binds the executable hash, exact argv, effective input configuration, template bytes and submit key.
-The hashed template command sets the inspected home/config roots explicitly, so HC cannot substitute the core process's different configuration environment.
-Custom keymaps, composer modes that change submission, alternate CLI settings/config files, inline Grok config overlays, and noninteractive launch modes are refused.
-Codex, Claude, and Devin require their pinned versions.
-Grok accepts a stable build at 1.0.67 or any newer version that prints the same version line. Older Grok builds are refused.
-Grok checks its managed, user, requirements, pager and system configuration layers; modal prompt editing (`ui.simple_mode=false`) and multiline submission are unqualified.
-Defer observed working/blocked/unknown, guard idle with `if:idle`, and submit observed Done without `if` or `force`.
-HC 0.1.14 has no atomic Done guard: a raced busy transition uses the harness's native queue or steering behavior, never a cancellation chord or extra Enter.
-Claude's [interactive input contract](https://code.claude.com/docs/en/interactive-mode#queue-messages-while-claude-works) and Grok's [keyboard reference](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/03-keyboard-shortcuts.md) distinguish normal submission from interruptive send-now keys.
-Native status and successful submission remain diagnostic; a matching Sum application receipt is required.
-Authentication, trust or permission screens require the user's action; silent startup stays unknown and receives no automatic input.
-No permission/account/model/global-keymap changes are authorized to make support pass.
-Authenticated candidate-specific harness scenarios remain separate acceptance work; see [acceptance](ACCEPTANCE.md).
-
-### Recover a refused coordinator launch
-
-A failed launch stays recorded and blocks another `coordinator start`.
-After repairing HC, inspect that attempt and recover it explicitly:
-
-```sh
-./bin/sumctl coordinator recover --attempt ATTEMPT_FROM_START_OUTPUT
-```
-
-Recovery requires the recorded machine and permanent HC core identity, no registered coordinator, no application receipt and no matching live or finished native terminal.
-Only a proven request not submitted to HC or HC 0.1.14's pre-creation `no holder` refusal can be archived as `not-created`.
-The failed record, error and recovery observation remain in `coordinator-launches/ATTEMPT.json` under the active state home.
-Repeating the completed recovery is a no-op.
-Then run `coordinator start` again with the chosen harness.
-A lost response, an in-flight request, an existing terminal or an unverifiable core remains ambiguous; absence alone does not authorize a retry.
-Recovery never starts a core, launches a terminal, resends a prompt or reclaims coordinator authority.
+Each profile binds executable provenance, exact argv, effective input configuration, template bytes and submit key.
+Custom input modes or permission screens remain refusal/deferred states.
+Defer working, blocked or unknown; idle uses the qualified guard and observed Done uses the harness's ordinary submission without force.
+A raced busy turn can queue input; native status and successful submission remain diagnostics, never application receipts.
+Authentication, trust and permission decisions remain human actions.
+No account, model, permission or global-keymap change is authorized to make support pass.
+Offline profile fixtures do not prove authenticated model behavior; record each real combination in `docs/ACCEPTANCE.md`.

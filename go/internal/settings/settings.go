@@ -30,7 +30,7 @@ var (
 	presetNamePattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	harnessKindPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	launchValuePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@,=\[\]-]{0,127}$`)
-	settingsKeys       = map[string]bool{"schema": true, "capacity": true, "worker": true, "presets": true, "reviewer": true, "evidence": true, "hook": true, "usage": true}
+	settingsKeys       = map[string]bool{"schema": true, "capacity": true, "worker": true, "presets": true, "reviewer": true, "evidence": true, "hook": true, "usage": true, "template": true}
 	defaultCapacity    = map[string]int{"global": defaultGlobal, "per_repository": defaultPerRepository}
 	capacityKeys       = []string{"global", "per_repository", "projects"}
 )
@@ -218,6 +218,13 @@ type Settings struct {
 	Usage    *ordjson.Object
 	Source   string
 	Path     string
+	Template TemplateOptions
+}
+
+type TemplateOptions struct {
+	CodexHome   string            `json:"codex_home,omitempty"`
+	ConfigFiles []string          `json:"config_files,omitempty"`
+	InputEnv    map[string]string `json:"input_env,omitempty"`
 }
 
 // AutoPublishEvidence is on unless an explicit evidence block turns it off.
@@ -285,7 +292,7 @@ func loadSettingsFile(path string) (*Settings, error) {
 	}
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
-		allowed := []string{"capacity", "evidence", "hook", "presets", "reviewer", "schema", "usage", "worker"}
+		allowed := []string{"capacity", "evidence", "hook", "presets", "reviewer", "schema", "template", "usage", "worker"}
 		return nil, fmt.Errorf("unknown keys %s; allowed: %s", pyrepr.StrList(unknown), pyrepr.StrList(allowed))
 	}
 	var capacity *ordjson.Object
@@ -335,7 +342,26 @@ func loadSettingsFile(path string) (*Settings, error) {
 		}
 		usageBlock = validated
 	}
-	return &Settings{Capacity: capacity, Worker: worker, Presets: presets, Reviewer: reviewer, Evidence: evidenceBlock, Hook: hookBlock, Usage: usageBlock, Source: "settings.json", Path: path}, nil
+	var template TemplateOptions
+	if value, has := obj.Get("template"); has {
+		block, ok := value.(*ordjson.Object)
+		if !ok {
+			return nil, fmt.Errorf("template must be an object")
+		}
+		for _, key := range block.Keys() {
+			if key != "codex_home" && key != "config_files" && key != "input_env" {
+				return nil, fmt.Errorf("unknown template option %s", key)
+			}
+		}
+		data, err := ordjson.MarshalCompact(block)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &template); err != nil {
+			return nil, fmt.Errorf("invalid template options: %w", err)
+		}
+	}
+	return &Settings{Capacity: capacity, Worker: worker, Presets: presets, Reviewer: reviewer, Evidence: evidenceBlock, Hook: hookBlock, Usage: usageBlock, Source: "settings.json", Path: path, Template: template}, nil
 }
 
 func validateEnabledBlock(name string, value any) (*ordjson.Object, error) {

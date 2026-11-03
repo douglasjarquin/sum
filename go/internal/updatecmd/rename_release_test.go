@@ -51,7 +51,7 @@ func TestRecover_priorReleaseMissingWorkerSkillRefused(t *testing.T) {
 	state := activationState(t, lab.root)
 	knownGood := asObject(func() any { v, _ := state.Get("known_good"); return v }())
 	generation := "0123456789abcdef0123456789abcdef"
-	recovery, err := stageRecovery(lab.store, lab.root, generation, knownGood)
+	recovery, err := stageRecovery(lab.store, lab.ctx, lab.root, generation, knownGood)
 	if err != nil {
 		t.Fatal(err)
 	}

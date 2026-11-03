@@ -84,9 +84,32 @@ handoff:
   report: null
   authority: "Agent-written text: a claim to verify, not approval and not verification evidence."
 returns:
-  open[2]{id,kind,ref,recipient,since,obligation,route{role,session,pane},notification{state,attempts,reason}}:
-    "question:q1",question,q1,parent,"2026-01-01T00:00:30+00:00",open,coordinator,null,null,pending,0,no delivery attempted to this recipient yet
-    "answer:q2",answer,q2,worker,"2026-01-01T00:00:20+00:00",open,worker,null,null,pending,0,no delivery attempted to this recipient yet
+  open[2]:
+    - id: "question:q1"
+      kind: question
+      ref: q1
+      recipient: parent
+      since: "2026-01-01T00:00:30+00:00"
+      obligation: open
+      route: null
+      notification:
+        state: pending
+        attempts: 0
+        reason: no delivery attempted to this recipient yet
+    - id: "answer:q2"
+      kind: answer
+      ref: q2
+      recipient: worker
+      since: "2026-01-01T00:00:20+00:00"
+      obligation: open
+      route:
+        role: worker
+        session: null
+        pane: null
+      notification:
+        state: pending
+        attempts: 0
+        reason: no delivery attempted to this recipient yet
   deliveries: 0
   note: Obligations come from the records; a submitted or presented notice closes none of them. `closed` names obligations a later record has since settled.
 update:

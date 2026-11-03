@@ -13,9 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/shquote"
@@ -71,27 +69,18 @@ func preparationLockFixture(t *testing.T) preparationLockLab {
 		t.Fatal(err)
 	}
 	fixture := hctest.New(t)
-	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: fixture.CoreID, Socket: fixture.Socket, Session: "sum-test", Address: "t1", CreatedMS: 1, Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, Cwd: runtime}
-	pid := uint32(100000)
-	fg := &hcclient.Foreground{PID: 100001, Name: "codex", Argv: []string{"codex"}, Cwd: runtime}
-	fixture.SetTerminal(hcclient.Terminal{Address: "t1", CreatedMS: 1, Cwd: runtime, State: "live", PID: &pid, Foreground: fg})
-	bound := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: fg}
-	owner := endpoint.Object()
-	owner.Set("incarnation", bound.Record(store.Now()))
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: endpoint.Native(), Kind: "coordinator-init", Attempt: endpoint.Attempt})
-	owner.Set("native_receipt", receipt)
-	if _, err = s.Register(endpoint, "coordinator", nil, bound.Record(store.Now())); err != nil {
+	session, err := s.ClaimCoordinator("", "preparation conversation", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
-		t.Fatal(err)
-	}
+	ctx := session.Owner()
+	ctx.Set("claim", session.Token())
 	id := "t-abcdef123456"
 	intent, err := taskcheckout.Plan(s.Root, repo, id, base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	attempt, err := reservations.NewAttempt("worker", endpoint.Object(), nil, store.Now(), "held", nil)
+	attempt, err := reservations.NewAttempt("worker", session.Owner(), nil, store.Now(), "held", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +95,8 @@ func preparationLockFixture(t *testing.T) preparationLockLab {
 	task.Set("brief", "Only approved scope.")
 	task.Set("kind", "ship")
 	task.Set("status", "preparing")
-	task.Set("parent", endpoint.Object())
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
 	task.Set("execution", reservations.NewExecution(attempt))
 	task.Set("questions", []any{})
 	task.Set("evidence", []any{})
@@ -117,7 +107,7 @@ func preparationLockFixture(t *testing.T) preparationLockLab {
 	if err = s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	return preparationLockLab{s, endpoint.Object(), runtime, intent, fixture}
+	return preparationLockLab{s, ctx, runtime, intent, fixture}
 }
 
 func pausePreparationGit(t *testing.T, stage string) (entered string, release func()) {
@@ -256,7 +246,7 @@ func TestPreparationGitIOReleasesLedgerLock(t *testing.T) {
 					t.Fatal("preparation reset dirty checkout")
 				}
 			}
-			if len(lab.fixture.Terminals()) != 1 {
+			if len(lab.fixture.Terminals()) != 0 {
 				t.Fatal("Git reconciliation launched a terminal")
 			}
 			if _, err = taskcheckout.Verify(context.Background(), lab.intent, true); err != nil {

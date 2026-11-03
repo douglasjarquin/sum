@@ -1,5 +1,9 @@
 # Issue 335 workflow repair
 
+Historical evidence archive for the revisions named below.
+Native coordinator, event-subscriber and live contract-adoption procedures described here are retired.
+Use `docs/architecture.md`, `docs/update.md` and the current `docs/ACCEPTANCE.md` for this candidate; historical results do not certify it.
+
 This record covers the repair following main `934085e0056300af8c9009c25cbebc43ea65da42`.
 The installed coordinator's saved launch selects Grok; its saved model/reasoning fields are unset.
 No account, model, permission, live installation or production core was changed during this work.

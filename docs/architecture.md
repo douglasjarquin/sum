@@ -1,108 +1,89 @@
 # Architecture
 
-Sum is an agent distro using HC for terminal processes and Git for isolated worktrees.
-Instructions and skills do the reasoning; a local ledger preserves approved work and its evidence.
-The scoped event observer is a long-lived non-agent helper, not a scheduler, supervisor or manager hierarchy.
+Sum is an agent distro using HC for worker and reviewer terminals and Git for isolated worktrees.
+The user's ordinary agent conversation coordinates approved work.
+Instructions and skills do the reasoning; a local ledger preserves approved tasks and evidence.
+There is no persistent supervisor, coordinator terminal or event subscriber.
 
 ## Session roles
 
-Run `./bin/sumctl init` and follow the exact procedure path it returns.
-Without a qualified HC launch context, `init` defaults to developer and does not implicitly claim coordination.
-The preferred coordinator launch is:
+Run `./bin/sumctl init` and read each exact validated procedure path it returns.
+Ordinary workspace entry creates a logical session and returns a claim token without querying or starting HC.
+Retain that token in the conversation and pass `--claim TOKEN` to every coordinator mutation.
+A matching claim resumes idempotently; a missing or stale token conflicts with the recorded owner.
+Only explicit `init --transfer` advances its generation.
+Transfer changes write authority, preserves the session's task ownership and never relaunches workers.
+Ask before takeover if another conversation may still be coordinating.
 
-```sh
-./bin/sumctl coordinator start --socket /absolute/path/to/hc.sock \
-  --session sum --hc-config-home /absolute/path/to/hc-config --harness codex
-```
-
-Start the selected HC core explicitly using its release-matched native manual before this command.
-Observation never auto-starts it.
-`coordinator start` seeds the bound environment and matching initialization receipt; `--model`, `--reasoning`, repeatable `--arg`, and `--preset` retain their explicit launch meanings.
-A manually started qualified existing terminal needs explicit coordinator initialization and records its known launch or an unknown model; `--same-as-you` cannot invent an exact model.
-Exactly one verified coordinator binding owns the installation.
-A dispatched session remains its task's worker; other sessions are developers.
-A developer modifies Sum only in an isolated development checkout and uses temporary lab state.
-`doctor` observes without binding.
+An explicit worker brief, task checkout or inherited task identity must validate as its exact worker or reviewer, otherwise initialization fails.
+It never becomes a coordinator by falling through an error.
+A development marker selects developer; developers modify Sum only in isolated development checkouts and temporary lab state.
+Inherited environment cannot redirect ordinary entry into another installation or grant a role.
 Role bookkeeping is not an OS sandbox.
 
-## What ships
+## Components
 
 | Component | Responsibility |
 | --- | --- |
-| `AGENTS.md`, `COORDINATOR.md`, canonical skills | Role bootstrap and action-specific procedures |
-| `bin/sumctl` and native Go helper | Durable tasks, answers, receipts, candidate-bound review/verification and guarded publication |
-| Typed HC client | Exact published 0.1.14 protocol and version/core checks, bounded I/O, conservative mutation effects |
-| Matched HC manual and namespaced template | Qualified local terminal execution; Codex 0.166.0 default keymap with Tab submission |
-| Scoped observer | Native event subscription, snapshot catch-up and bounded ledger reconciliation |
-| Git worktree operations | Task checkout intent, registration and removal with dirty/unmerged-work protection |
-| `VERIFY.md` and portable verify/evidence skills | Repository verification usable without Sum or HC |
-| Pinned development tools | Go, Python, Node, project tools, quota and optional codegraph/LSP integrations |
+| `AGENTS.md`, `COORDINATOR.md`, canonical skills | Ordinary entry and action-specific procedures |
+| Native Go helper and file ledger | Claims, approved tasks, answers, reports, candidate-bound review and guarded publication |
+| Workspace runtime route and settings | Saved HC socket/core/session/template configuration and explicit worker defaults |
+| Typed HC client and matched manual/templates | Exact native worker identity, bounded transport and conservative mutation effects |
+| Git worktrees | Isolated task checkouts with dirty/unmerged-work protection |
+| `VERIFY.md` and portable verification skills | Verification usable without Sum or HC |
 
-Fresh setup generates no custom Sum MCP configuration.
-Unrelated MCP configuration remains owned by its existing integrations.
-Only explicitly owned legacy Sum configuration may be retired after a successful controlled cutover.
-See [Dependencies](DEPENDENCIES.md), [configuration](configuration.md) and [HC runtime](herdr-backend.md).
+Fresh setup generates no custom Sum MCP configuration and preserves unrelated integrations.
+See [dependencies](DEPENDENCIES.md) and [configuration](configuration.md).
 
-## State and communication
+## State and authority
 
 The stable state root and selected physical generation home are distinct.
-Tasks retain approved briefs, sealed procedure/policy revisions, questions, answers, reports, attempts, receipts and append-only evidence.
-Generation selection does not rewrite historical bytes or fabricate HC endpoints for old records.
-Normal Open, `init` and `status` never migrate schema-one state.
-An explicit migration requires an enforceable lease excluding all legacy writers and senders; current legacy APIs cannot prove that prerequisite.
-Existing-installation cutover therefore refuses without proof.
-No production migration or automatic hot adoption is claimed.
-See [Update](update.md).
-`restore ARCHIVE NEW_HOME` imports a records-only backup into a fresh write-blocked quarantine, preserving task/procedure bytes without transferring coordinator, session or native runtime authority.
-Read the imported saved records through `--home NEW_HOME`; direct extraction is not a writable generation restore.
+The generation's coordinator record stores one logical session and claim generation.
+Every coordinator mutation revalidates its captured token under the state lock.
+New tasks record logical `owner` and `parent: null`.
+Native retirement records historical ownership without rewriting existing task parents.
+The root state pointer uses format 3 to reject older helpers before they mutate the ledger or submit native input; generation headers and task schemas stay unchanged.
+This fence is not a universal process or Git I/O exclusion mechanism.
+Normal Open, init and status never migrate schema-one records.
+Preserve those installations and use an independent fresh workspace.
+See [update](update.md).
 
-Each terminal binding includes permanent core ID, returned address, creation time, task/role/attempt/generation, process and matching receipt.
-Names, labels, cwd, sockets, PIDs and native status alone cannot confer authority.
-The local ledger remains authoritative; terminal scrollback and HC documents are not task storage.
-File writes are locked and atomic; no HC I/O runs under the state lock.
+Worker/reviewer identity includes permanent core ID, returned address, creation time, task/role/attempt/generation, process and matching initialization receipt.
+Names, labels, cwd, sockets, PIDs and native status alone confer no authority.
+The local ledger remains authoritative; scrollback is not task storage.
+File writes are locked and atomic; HC I/O runs outside the state lock and the claim is rechecked before effects.
+Records-only restore preserves task/procedure bytes in a fresh write-blocked quarantine without transferring live authority.
 
-Questions are saved before notification.
-Open questions, unapplied answers, unverified reports, reviewer verdicts and requested revisions remain obligations until their canonical records close them.
-Native send success means submitted, never acknowledged, applied or verified.
-Uncertain mutations are preserved without automatic replay.
-Routine wakes coalesce; new decision questions retain priority without interrupting busy recipients.
-`wake show` provides an exact boundary token and `wake consume --boundary TOKEN` records only the covered presentation, closing no task obligation.
-
-## Bounded reads and explicit maintenance
+## Collection and maintenance
 
 ```sh
-./bin/sumctl inbox --live
+./bin/sumctl collect --claim TOKEN --budget 20s
+./bin/sumctl inbox --compact
 ./bin/sumctl context TASK_ID --role coordinator
-./bin/sumctl context TASK_ID --section decisions --after 20 --limit 20
-./bin/sumctl context TASK_ID --since CURSOR
-./bin/sumctl answer TASK_ID QUESTION_ID --text 'The approved decision'
-./bin/sumctl help TOPIC
+./bin/sumctl answer TASK_ID QUESTION_ID --claim TOKEN --text 'The approved decision'
 ```
 
-`context` is bounded; full `show` and transcripts are for explicit inspection.
-Read-only status commands neither deliver nor call GitHub.
-`init`, `bind`, `pump`, task-write notices and the observer run bounded fast delivery without PR observation, publication or cleanup.
-`pr reconcile`, `pipeline`, `cleanup` and `sweep` are explicit maintenance.
-An idle or Done terminal is not task completion, actual process exit or released capacity.
+Questions, unapplied answers, reports, reviews and requested worker revisions remain obligations until their canonical actions settle them.
+Collection lists actionable items, delivers queued worker answers and waits on recorded native addresses within one shared bound.
+It neither ensures HC nor records read receipts.
+Worker input submission is not application acknowledgement; uncertain input is never automatically replayed.
+There are no prompts to the coordinator and no unattended delivery guarantee.
+Read-only status never delivers, calls GitHub or cleans up.
+`pr reconcile`, `pipeline`, `cleanup` and `sweep` are explicit maintenance under the claim.
+Idle or Done status is not completion, process exit or released capacity.
 Only the user merges, except the separately authorized factory contract's high-confidence merge gate.
 
-## Manual dispatch
+## Dispatch
 
 ```sh
-./bin/sumctl dispatch --repo /absolute/path/to/repo \
+./bin/sumctl dispatch --claim TOKEN --repo /absolute/path/to/repo \
   --brief /absolute/path/to/approved-brief.md --harness codex --approved
 ```
 
-`--approved` records the caller's assertion, not an independent authority grant.
-`prepare` creates a verified Git checkout and durable intent without launching; `start TASK_ID` starts the saved task once.
-`prepare --reconcile TASK_ID` reconciles interrupted checkout preparation from its saved approved intent.
-Terminal creation and opening-message delivery have separate outcomes.
-An uncertain launch cannot simply be started again.
-See [Recovery](recovery.md) for receipt-based confirmation and proven-unsent redelivery.
-
-## No installed harness
-
-Setup can stage the runtime without starting an authenticated model.
-The execution host must already have the user's selected harness and account available.
-Use its configured environment in a named HC session; do not restart a busy core to refresh PATH.
-No harness installation, account change, permission bypass or global configuration edit is implied by a task.
+The user grants scope; `--approved` records the caller's assertion.
+`prepare` records intent and creates an isolated checkout without launching; `start TASK_ID --claim TOKEN` starts it once.
+Launch uses the saved worker selection and workspace runtime route with no HC parent or caller.
+HC is ensured lazily at launch; observation never starts a core.
+Creation and opening delivery have distinct durable outcomes.
+An uncertain launch is inspected and reconciled from its saved route, never blindly repeated.
+See [recovery](recovery.md).

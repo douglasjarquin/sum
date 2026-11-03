@@ -246,7 +246,7 @@ func (o *rootOptions) coordinatorContext(label string) (*store.Store, *ordjson.O
 	if err != nil {
 		return nil, nil, err
 	}
-	ctx, err := store.Context(o.installRoot)
+	ctx, err := o.context(st)
 	if err != nil {
 		return nil, nil, err
 	}

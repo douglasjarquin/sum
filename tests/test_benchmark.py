@@ -81,17 +81,43 @@ class BenchmarkMeasurementTest(unittest.TestCase):
         self.assertEqual(sample["helper_invocations"], 1)
         self.assertEqual(sample["exit_codes"], [0])
 
-    def test_fixture_uses_current_generation_and_receipt_bound_native_identity(self):
+    def test_transfer_fences_captured_claim_without_changing_native_callback_identity(self):
+        original = self.case["claim"]
+        argv = self.command(self.case, "init", "--transfer")
+        argv[0] = str(self.case["entry"])
+        transferred = subprocess.run(argv, env=actor_env(self.case), text=True, capture_output=True, timeout=20)
+        self.assertEqual(transferred.returncode, 0, transferred.stderr)
+        self.assertNotEqual(json.loads(transferred.stdout)["claim"], original)
+        refused = subprocess.run(self.command(self.case, "settings", "set", "--global", "3"),
+                                 env=actor_env(self.case), text=True, capture_output=True, timeout=20)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("stale", refused.stdout + refused.stderr)
+        self.assertEqual(self.case["claim"], original)
+        callback = subprocess.run([str(part) for part in benchmark.command(self.case, "ask", self.case["task"]["id"],
+                                   "--key", "after-transfer", "--text", "Still working?", role="worker")],
+                                  env=actor_env(self.case, "worker"), text=True, capture_output=True, timeout=20)
+        self.assertEqual(callback.returncode, 0, callback.stderr)
+
+    def test_fixture_uses_ordinary_claim_and_receipt_bound_native_worker(self):
         pointer = json.loads((self.case["root"] / "state.json").read_text())
         state = json.loads((self.case["home"] / "state.json").read_text())
-        self.assertEqual((pointer["schema"], state["schema"], state["backend"]), (2, 2, "hc"))
+        self.assertEqual((pointer["schema"], state["schema"], state["backend"]), (3, 2, "hc"))
         self.assertEqual(state["root"], str(self.case["root"]))
-        for role in ("worker", "coordinator"):
-            endpoint = self.case["actors"][role]
-            self.assertEqual(endpoint["core_id"], self.case["core"].core_id)
-            self.assertEqual(endpoint["role"], role)
-            self.assertGreater(endpoint["created_ms"], 0)
-            self.assertNotIn("pane", endpoint)
+        self.assertFalse((self.case["home"] / "context.json").exists())
+        self.assertEqual(self.case["task"]["owner"]["kind"], "coordinator-session")
+        self.assertIsNone(self.case["task"]["parent"])
+        self.assertNotIn("SUM_SESSION", actor_env(self.case))
+        self.assertNotIn("--claim", benchmark.command(self.case, "report", role="worker"))
+        self.assertIn(self.case["claim"], benchmark.command(self.case, "settings", "set", "--global", "3"))
+        endpoint = self.case["actors"]["worker"]
+        self.assertEqual(endpoint["core_id"], self.case["core"].core_id)
+        self.assertEqual(endpoint["role"], "worker")
+        self.assertGreater(endpoint["created_ms"], 0)
+        self.assertNotIn("pane", endpoint)
+        attempt = self.case["task"]["execution"]["worker"]
+        self.assertEqual(attempt["native_receipt"]["endpoint"], attempt["incarnation"]["endpoint"])
+        self.assertEqual(attempt["native_receipt"]["attempt"], endpoint["attempt"])
+        self.assertEqual(attempt["incarnation"]["endpoint"]["address"], endpoint["address"])
         self.assertTrue(all(call["method"].startswith(("hello", "terminal.")) for call in self.case["core"].calls))
 
 

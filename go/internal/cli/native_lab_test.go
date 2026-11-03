@@ -16,8 +16,8 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/prepare"
+	"github.com/douglasjarquin/sum/go/internal/procedure"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
-	"github.com/douglasjarquin/sum/go/internal/roleinit"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -52,8 +52,81 @@ func newNativeDemoLab(t *testing.T, root, helper, base string) *demoLab {
 func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab {
 	t.Helper()
 	s := nativeTestStore(t, home)
+	env := demoEnv(t, root, base)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(resolvedRoot, s.Root)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
+		installation := filepath.Dir(s.Root)
+		paths := []string{"COORDINATOR.md", "skills/sum-develop/SKILL.md", "skills/sum-deliver/SKILL.md", ".agents/skills/verify/references/engineering-principles.md", ".agents/skills/maintain-verification/scripts/verify_audit.py", "tests/fixtures/gh_attach.py"}
+		for _, source := range procedure.Sources {
+			paths = append(paths, source.Path)
+		}
+		for _, name := range paths {
+			raw, err := os.ReadFile(filepath.Join(root, name))
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			destination := filepath.Join(installation, name)
+			if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+				t.Fatal(err)
+			}
+			info, err := os.Stat(filepath.Join(root, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(destination, raw, info.Mode().Perm()); err != nil {
+				t.Fatal(err)
+			}
+		}
+		raw, err := os.ReadFile(filepath.Join(root, ".local", "bin", "sumctl"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"bin/sumctl", ".local/bin/sumctl"} {
+			destination := filepath.Join(installation, name)
+			if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(destination, raw, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}
+		root, helper = installation, filepath.Join(installation, "bin", "sumctl")
+	}
 	f := hctest.New(t)
-	d := &demoLab{t: t, root: root, helper: helper, base: base, home: s.Home, env: demoEnv(t, root, base), native: f, config: filepath.Join(base, "hc-config")}
+	d := &demoLab{t: t, root: root, helper: helper, base: base, home: s.Home, env: env, native: f, config: filepath.Join(base, "hc-config")}
+	// Ordinary entry needs a staged installation boundary without this source checkout's development marker.
+	entryRoot := filepath.Join(base, "ordinary-runtime")
+	d.entryHelper = filepath.Join(entryRoot, "bin", "sumctl")
+	for _, name := range []string{"COORDINATOR.md", "skills/sum-develop/SKILL.md"} {
+		raw, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		destination := filepath.Join(entryRoot, name)
+		if err = os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(destination, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rawHelper, err := os.ReadFile(filepath.Join(root, ".local", "bin", "sumctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(filepath.Dir(d.entryHelper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(d.entryHelper, rawHelper, 0700); err != nil {
+		t.Fatal(err)
+	}
 	codex := filepath.Join(base, "codex")
 	if err := os.WriteFile(codex, []byte("#!/bin/sh\nprintf '%s\\n' 'codex-cli 0.166.0'\n"), 0700); err != nil {
 		t.Fatal(err)
@@ -84,55 +157,43 @@ func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab 
 		d.setEnv(key, path)
 	}
 	options := launch.HCTemplateOptions{Cwd: root, CodexHome: codexHome}
-	spec, err := launch.PrepareHCTemplate(root, d.config, "codex", nil, options)
+	_, err = launch.PrepareHCTemplate(root, d.config, "codex", nil, options)
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, err := s.Machine()
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: f.CoreID, Socket: f.Socket, Session: "sum-test", Address: "t1", CreatedMS: 1, Cwd: root, Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1}
+	// Keep an unrelated native terminal so address allocation also covers existing cores.
 	pid := uint32(100000)
-	foreground := &hcclient.Foreground{PID: 100001, Name: "codex", Argv: spec.Argv, Cwd: root}
-	key, name := "tab", spec.Name
-	command := nativeTemplateCommand(t, d.config, spec.Name)
-	f.SetTerminal(hcclient.Terminal{Address: "t1", CreatedMS: 1, Cwd: root, State: "live", PID: &pid, Foreground: foreground, Template: &name, Submit: &key, Argv: []string{"sh", "-c", command}})
+	f.SetTerminal(hcclient.Terminal{Address: "t1", CreatedMS: 1, Cwd: root, State: "live", PID: &pid})
 	f.SetStatus("t1", "idle")
-	evidence := incarnation.NativeEvidence{Endpoint: endpoint.Native(), PID: pid, Foreground: foreground}
-	owner := endpoint.Object()
-	owner.Set("incarnation", evidence.Record(store.Now()))
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: endpoint.Native(), Kind: "coordinator-init", Attempt: endpoint.Attempt})
-	owner.Set("native_receipt", receipt)
-	provenance, _ := ordjson.FromValue(prepare.NativeTemplate{Spec: spec, ConfigHome: d.config, Options: options})
-	owner.Set("native_template", provenance)
-	recordedLaunch := ordjson.NewObject()
-	recordedLaunch.Set("harness", "codex")
-	recordedLaunch.Set("model", nil)
-	recordedLaunch.Set("reasoning", nil)
-	owner.Set("launch", recordedLaunch)
-	if _, err = s.Register(endpoint, "coordinator", nil, evidence.Record(store.Now())); err != nil {
+	session, err := s.ClaimCoordinator("", "ordinary test conversation", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+	d.claim = session.Token()
+	route, _ := ordjson.FromValue(map[string]any{"socket": f.Socket, "session": "sum-test", "config_home": d.config, "state_home": filepath.Join(base, "hc-state"), "core_id": f.CoreID})
+	if err := ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range map[string]string{"SUM_INSTALL_ROOT": root, "SUM_SESSION": "sum-test", "SUM_CORE_ID": f.CoreID, "HC_SOCKET": f.Socket, "HC_TERMINAL_ID": "t1", "SUM_ROLE": "coordinator", "SUM_ATTEMPT": "bootstrap", "SUM_BINDING_GENERATION": "1", "SUM_CODEX_BIN": codex, "CODEX_HOME": codexHome} {
+	settings, _ := ordjson.FromValue(map[string]any{"schema": 1, "worker": map[string]any{"harness": "codex"}, "template": map[string]any{"codex_home": codexHome}})
+	if err := ordjson.WriteFile(filepath.Join(s.Home, "settings.json"), settings); err != nil {
+		t.Fatal(err)
+	}
+	for key, value := range map[string]string{"SUM_INSTALL_ROOT": root, "SUM_HOME": s.Home, "SUM_CODEX_BIN": codex, "CODEX_HOME": codexHome} {
 		d.setEnv(key, value)
-	}
-	if _, err := os.Stat(filepath.Join(s.Home, "settings.json")); os.IsNotExist(err) {
-		configureNativeEventsForTest(t, s.Home, false)
 	}
 	if err := f.LoadTemplatesFrom(d.config); err != nil {
 		t.Fatal(err)
 	}
+	nativeLabs.Store(s.Root, d)
 	nativeLabs.Store(d.home, d)
 	nativeLabs.Store(base, d)
 	nativeLabs.Store(home, d)
-	t.Cleanup(func() { nativeLabs.Delete(d.home); nativeLabs.Delete(base); nativeLabs.Delete(home) })
-	if _, err := roleinit.InitDesignated(roleinit.DesignatedOpts{RuntimeRoot: root, SumctlPath: helper, Store: s, Ctx: endpoint.Object(), Role: "coordinator", CoreConfigHome: d.config, Harness: "codex"}); err != nil {
-		t.Fatalf("native coordinator init: %v", err)
-	}
+	t.Cleanup(func() {
+		nativeLabs.Delete(s.Root)
+		nativeLabs.Delete(d.home)
+		nativeLabs.Delete(base)
+		nativeLabs.Delete(home)
+	})
 	return d
 }
 
@@ -155,7 +216,7 @@ func endpointEnv(value any) map[string]string {
 	data, _ := json.Marshal(value)
 	var e store.Endpoint
 	_ = json.Unmarshal(data, &e)
-	return map[string]string{"SUM_CORE_ID": e.CoreID, "HC_SOCKET": e.Socket, "HC_TERMINAL_ID": e.Address, "SUM_ROLE": e.Role, "SUM_TASK": e.Task, "SUM_ATTEMPT": e.Attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(e.BindingGeneration, 10)}
+	return map[string]string{"SUM_SESSION": e.Session, "SUM_CORE_ID": e.CoreID, "HC_SOCKET": e.Socket, "HC_TERMINAL_ID": e.Address, "SUM_ROLE": e.Role, "SUM_TASK": e.Task, "SUM_ATTEMPT": e.Attempt, "SUM_BINDING_GENERATION": strconv.FormatUint(e.BindingGeneration, 10)}
 }
 
 func workerAddress(record map[string]any) string {
@@ -257,7 +318,8 @@ func seedNativeWorker(t *testing.T, d *demoLab, s *store.Store, task *ordjson.Ob
 	}
 	taskID, _ := task.Get("id")
 	id := taskID.(string)
-	owner, err := s.Owner()
+	session, err := s.CoordinatorSession()
+	owner := session.Owner()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,6 +353,7 @@ func seedNativeWorker(t *testing.T, d *demoLab, s *store.Store, task *ordjson.Ob
 	}
 	attempt.Set("native_receipt", receipt)
 	attempt.Set("incarnation", observed)
+	task.Set("owner", owner)
 	task.Set("schema", json.Number("2"))
 	task.Set("worker_endpoint", endpoint.Object())
 	task.Set("execution", reservations.NewExecution(attempt))
@@ -344,4 +407,38 @@ func pinnedFixturePython(t *testing.T) string {
 		t.Fatalf("project-pinned Python fixture interpreter: %v", fixturePythonError)
 	}
 	return fixturePythonPath
+}
+
+func useLogicalCoordinator(t *testing.T, home string) {
+	t.Helper()
+	for key := range endpointEnv(nil) {
+		t.Setenv(key, "")
+	}
+}
+func useNativeTaskWorker(t *testing.T, home, taskID string) {
+	t.Helper()
+	s := nativeTestStore(t, home)
+	task, err := s.ReadTask(taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var endpoint store.Endpoint
+	if value, ok := task.Get("worker_endpoint"); ok {
+		object, _ := value.(*ordjson.Object)
+		endpoint = store.EndpointFromContext(object)
+	} else {
+		endpoint = seedNativeWorker(t, nativeLabFor(t, home), s, task)
+	}
+	for key, value := range endpointEnv(endpoint) {
+		t.Setenv(key, value)
+	}
+}
+
+func mustCLI(t *testing.T, home string, args ...string) string {
+	t.Helper()
+	out, err := runCLI(t, home, args...)
+	if err != nil {
+		t.Fatalf("sumctl %v: %v\n%s", args, err, out)
+	}
+	return out
 }

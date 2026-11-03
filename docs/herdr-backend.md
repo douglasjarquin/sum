@@ -36,28 +36,18 @@ An early dial, identity or validation failure means nothing was submitted.
 A stable native refusal before input can leave an obligation pending.
 See [Recovery](recovery.md) for an explicit single recovery attempt.
 
-## Native events and attention
+## Collection and attention
 
-Coordinator `init` ensures a real scoped observer startup receipt outside the ledger lock unless `hook.enabled:false` records the user's opt-out.
-The observer is a non-agent HC terminal, with the same outlive-parent and non-kept lifecycle, not a supervisor or task executor.
-It subscribes to events and runs bounded reconciliation against the durable ledger, with fresh snapshots after reconnect and fair continuation for deferred recipients.
-It has no second payload queue.
-One provably owned observer serves the installation's supported core/session scope.
-A second unsupported scope is refused rather than silently left without delivery.
+The ordinary coordinating conversation has no native terminal identity.
+Worker and reviewer launch uses the saved workspace route with no HC parent or caller.
+`init`, status, inbox and inspection never ensure a missing core; launch ensures it lazily.
 
-`sumctl hook status` shows saved health and observer ownership/readiness evidence.
-Enabled preference alone is not proof of a running observer.
-Startup waits within a bound for native foreground evidence while preserving the exact terminal creation, program PID, argv, labels and cwd.
-Readiness requires the matching observer receipt and the first connected snapshot; activation and handoff return that proven health rather than a pre-start snapshot.
-Startup failure is fail-open and explicitly degraded; `init`, `bind`, task-write notices and `sumctl pump` remain available.
-After proving a prior observer finished, replacement retires its old endpoint/receipt proof and persists a distinct `launch_attempt` before native creation.
-An early child may record its exact matching startup receipt before `terminal.run` replies; the parent merges only that same launch intent and never overwrites a newer receipt or changed launch.
-Transient read-only HC transport/observation failures reconnect to the existing core with bounded backoff and a fresh subscription snapshot.
-Cancellation or explicit disablement stops the observer; wrong core, incompatible config/protocol and invalid durable records are hard failures rather than reconnect permission.
-No reconnect replays a submitted or uncertain mutation.
-`hook enable` ensures the observer, while `hook disable` preserves the explicit preference and stops only a proven owned observer.
-Only the user chooses to disable delivery.
-Native attention points to output requiring inspection; it is not a question, report, verification or approval.
+`collect --claim TOKEN --budget 20s` reads actionable ledger items, delivers eligible queued worker answers and waits on recorded worker/reviewer addresses within one shared deadline.
+It reads native attention as snapshot evidence and names an inspect route for blocked or failed attempts.
+Attention is not a question, report, verification or approval.
+Questions, reports and reviews owed to the logical coordinator remain saved until their existing settling action runs.
+No read receipt or background prompt to this conversation is created.
+Submitted or uncertain native input is never automatically replayed.
 `inbox --live` observes without delivering or calling GitHub.
 
 ## Services and cleanup
@@ -77,7 +67,7 @@ See [verification](verification.md) and [recovery](recovery.md).
 
 ## Metadata
 
-Optional metadata is display only and uses owned namespaced HC labels on verified recorded terminals.
+Optional metadata is display only and uses owned namespaced HC labels on verified task worker/reviewer terminals.
 Labels never supply role, task completion or approval.
 `metadata status` reads saved projection health; `metadata sync` projects differences, and disable clears only recorded owned keys.
 `metadata inbox` and `inbox --grouped --view` expose saved task views.

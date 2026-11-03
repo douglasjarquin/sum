@@ -120,7 +120,7 @@ func TestReviewReturnClosesOnlyWhenTheCoordinatorActs(t *testing.T) {
 			reviewTask("w-root:p1", []*ordjson.Object{review(), record("e-2", "lint", "coordinator", shaA, after)}), []string{"review:e-review"}},
 		{"a review naming no candidate closes on any coordinator verification",
 			reviewTask("w-root:p1", []*ordjson.Object{record("e-review", "review", "reviewer", "", reviewAt), record("e-2", "verification", "coordinator", shaB, after)}), nil},
-		{"no parent pane owes no return", reviewTask("", []*ordjson.Object{review()}), nil},
+		{"a review remains owed without a native parent", reviewTask("", []*ordjson.Object{review()}), []string{"review:e-review"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

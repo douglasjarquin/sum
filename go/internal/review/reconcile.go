@@ -31,9 +31,12 @@ func Reconcile(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	if err = maintenance.Refuse(task, "Reviewer recovery"); err != nil {
 		return nil, err
 	}
-	parent := store.EndpointFromContext(objectField(task, "parent"))
-	if !parent.Native().SameAuthority(store.EndpointFromContext(coordinator).Native()) {
-		return nil, fmt.Errorf("task belongs to another coordinator")
+	actor, err := app.ObserveTaskActor(s, coordinator)
+	if err != nil {
+		return nil, err
+	}
+	if err = app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
+		return nil, err
 	}
 	reviewer := objectField(task, "reviewer")
 	ep := store.EndpointFromContext(reviewer)
@@ -55,7 +58,20 @@ func Reconcile(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	if err = decodeObject(objectField(reviewer, "native_template"), &template); err != nil {
 		return nil, err
 	}
-	client := hcclient.Client{Socket: ep.Socket, CoreID: ep.CoreID}
+	instance, err := s.Instance()
+	if err != nil {
+		return nil, err
+	}
+	if params.Labels["sum.installation"] != instance || params.Labels["sum.task"] != taskID || params.Labels["sum.role"] != "reviewer" || params.Labels["sum.attempt"] != attempt || params.Cwd != asString(task, "worktree") || ep.Task != taskID || ep.Role != "reviewer" {
+		return nil, fmt.Errorf("creation intent does not belong to this reviewer attempt and checkout")
+	}
+	if params.Env["HC_SOCKET"] == "" || params.Env["SUM_CORE_ID"] == "" || params.Env["SUM_SESSION"] == "" || params.Env["SUM_TASK"] != taskID || params.Env["SUM_ATTEMPT"] != attempt || params.Env["SUM_ROLE"] != "reviewer" {
+		return nil, fmt.Errorf("saved reviewer creation route is incomplete or mismatched")
+	}
+	if ep.Socket != params.Env["HC_SOCKET"] || ep.CoreID != params.Env["SUM_CORE_ID"] || ep.Session != params.Env["SUM_SESSION"] {
+		return nil, fmt.Errorf("reviewer endpoint differs from saved creation route")
+	}
+	client := hcclient.Client{Socket: params.Env["HC_SOCKET"], CoreID: params.Env["SUM_CORE_ID"]}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	terminal, err := launch.DiscoverOriginal(ctx, &client, params, template.Spec, asString(intent, "at"))
@@ -83,8 +99,8 @@ func Reconcile(s *store.Store, coordinator *ordjson.Object, taskID, attempt stri
 	if err = maintenance.Refuse(current, "Reviewer reconcile"); err != nil {
 		return nil, err
 	}
-	if !parent.Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) {
-		return nil, fmt.Errorf("task parent changed during discovery")
+	if err = app.CheckTaskRole(s, current, actor, "coordinator"); err != nil {
+		return nil, err
 	}
 	for _, key := range ep.Object().Keys() {
 		value, _ := ep.Object().Get(key)
@@ -125,9 +141,12 @@ func Recover(s *store.Store, coordinator *ordjson.Object, taskID, attempt string
 	if err = maintenance.Refuse(task, "Reviewer recover"); err != nil {
 		return nil, err
 	}
-	parent := store.EndpointFromContext(objectField(task, "parent"))
-	if !parent.Native().SameAuthority(store.EndpointFromContext(coordinator).Native()) {
-		return nil, fmt.Errorf("task belongs to another coordinator")
+	actor, err := app.ObserveTaskActor(s, coordinator)
+	if err != nil {
+		return nil, err
+	}
+	if err = app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
+		return nil, err
 	}
 	reviewer := objectField(task, "reviewer")
 	ep := store.EndpointFromContext(reviewer)
@@ -165,15 +184,8 @@ func Recover(s *store.Store, coordinator *ordjson.Object, taskID, attempt string
 	if err = maintenance.Refuse(current, "Reviewer recover"); err != nil {
 		return nil, err
 	}
-	if !parent.Native().SameAuthority(store.EndpointFromContext(objectField(current, "parent")).Native()) {
-		return nil, fmt.Errorf("task parent changed during recovery")
-	}
-	owner, err := s.Owner()
-	if err != nil {
+	if err = app.CheckTaskRole(s, current, actor, "coordinator"); err != nil {
 		return nil, err
-	}
-	if !parent.Native().SameAuthority(store.EndpointFromContext(owner).Native()) {
-		return nil, fmt.Errorf("coordinator authority changed during recovery")
 	}
 	task = current
 	prior, _ := task.Get("reviewer_launches")

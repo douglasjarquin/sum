@@ -133,7 +133,10 @@ func Add(s *store.Store, taskID, text string, endpoint *ordjson.Object) (*ordjso
 	who := role + " (no terminal)"
 	if endpoint != nil {
 		native := store.EndpointFromContext(endpoint)
-		if native.Validate() == nil {
+		if store.ValidateLogicalOwner(endpoint) == nil {
+			session, _ := endpoint.Get("session_id")
+			who = fmt.Sprintf("%s %s", role, session)
+		} else if native.Validate() == nil {
 			who = fmt.Sprintf("%s %s/%s", role, native.CoreID, native.Address)
 		} else {
 			who = role + " (historical endpoint)"
@@ -168,6 +171,11 @@ func Add(s *store.Store, taskID, text string, endpoint *ordjson.Object) (*ordjso
 func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string {
 	if endpoint == nil {
 		return ""
+	}
+	if owner, _ := task.Get("owner"); owner != nil {
+		if logical, ok := owner.(*ordjson.Object); ok && store.LogicalOwnersMatch(logical, endpoint) {
+			return "coordinator"
+		}
 	}
 	if value, ok := task.Get("worker_endpoint"); ok && host.SameEndpoint(asNativeObject(value), endpoint) {
 		return "worker"

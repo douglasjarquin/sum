@@ -105,11 +105,11 @@ func TestStartCommands(t *testing.T) {
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid task", args: []string{"start", "t-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
-		{name: "valid task after dashdash", args: []string{"start", "--", "t-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
-		{name: "valid --arg", args: []string{"start", "t-aaaaaaaaaaaa", "--arg", "dev", "--arg", "serve"}, domainErr: "explicit HC session required"},
-		{name: "valid --arg=", args: []string{"start", "t-aaaaaaaaaaaa", "--arg=dev"}, domainErr: "explicit HC session required"},
-		{name: "valid with herdr", args: []string{"start", "t-aaaaaaaaaaaa", "--arg", "dev"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid task", args: []string{"start", "t-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid task after dashdash", args: []string{"start", "--", "t-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid --arg", args: []string{"start", "t-aaaaaaaaaaaa", "--arg", "dev", "--arg", "serve"}, domainErr: "claim_required"},
+		{name: "valid --arg=", args: []string{"start", "t-aaaaaaaaaaaa", "--arg=dev"}, domainErr: "claim_required"},
+		{name: "valid with herdr", args: []string{"start", "t-aaaaaaaaaaaa", "--arg", "dev"}, herdr: true, domainErr: "claim_required"},
 		{name: "unknown flag", args: []string{"start", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
 		{name: "unknown flag before task", args: []string{"start", "--unexpected", "t-aaaaaaaaaaaa"}, usage: true, unknown: true},
 		{name: "extra positional", args: []string{"start", "t-aaaaaaaaaaaa", "extra"}, usage: true},
@@ -161,7 +161,7 @@ func runStartCLI(t *testing.T, home string, args ...string) (stdout, stderr stri
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -48,6 +49,25 @@ func trimmed(s string) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+func TestDoctorBeforeFirstWorkerTreatsAbsentRouteAsUnconfigured(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ClaimCoordinator("", "ordinary conversation", false); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	report := Doctor(root, root, s)
+	row := doctorRow(t, report, "hc-core")
+	if ok, _ := row.Get("ok"); ok != true {
+		t.Fatalf("absent lazy route treated as read failure: %v", row)
+	}
+	if available, _ := row.Get("available"); available != false {
+		t.Fatal("unconfigured core reported available")
+	}
 }
 
 // stagedRelease writes the one field runtimeRevisionCheck reads out of a
@@ -259,10 +279,14 @@ func TestDoctorObservesExistingCoreWithoutInputOrStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HC_SOCKET", f.Socket)
-	t.Setenv("SUM_CORE_ID", f.CoreID)
-	t.Setenv("HC_TERMINAL_ID", terminal.Address)
-	t.Setenv("SUM_SESSION", "sum-test-doctor")
+	_ = terminal
+	route := ordjson.NewObject()
+	route.Set("socket", f.Socket)
+	route.Set("core_id", f.CoreID)
+	route.Set("session", "sum-test-doctor")
+	if err := ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
+		t.Fatal(err)
+	}
 	before := len(f.Calls())
 	report := Doctor(runtime, runtime, s)
 	if available, _ := doctorRow(t, report, "hc-core").Get("available"); available != true {
@@ -273,6 +297,48 @@ func TestDoctorObservesExistingCoreWithoutInputOrStart(t *testing.T) {
 		case "hello", "terminal.get":
 		default:
 			t.Fatalf("doctor performed %s", call.Method)
+		}
+	}
+}
+
+func TestDoctorReportsLogicalSessionWithoutInheritedCallerObservation(t *testing.T) {
+	clearDoctorRuntimeEnv(t)
+	runtime := t.TempDir()
+	s := doctorStore(t)
+	session, err := s.ClaimCoordinator("", "ordinary conversation", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := hctest.New(t)
+	t.Setenv("HC_SOCKET", f.Socket)
+	t.Setenv("SUM_CORE_ID", f.CoreID)
+	t.Setenv("HC_TERMINAL_ID", "tstale")
+	t.Setenv("SUM_SESSION", "unrelated-session")
+	report := Doctor(runtime, runtime, s)
+	role := doctorRow(t, report, "role")
+	raw, _ := role.Get("session")
+	current, _ := raw.(*ordjson.Object)
+	if !store.LogicalOwnersMatch(current, session.Owner()) {
+		t.Fatalf("logical session missing: %v", role)
+	}
+	if generation, _ := role.Get("claim_generation"); fmt.Sprint(generation) != "1" {
+		t.Fatalf("generation missing: %v", role)
+	}
+	raw, _ = role.Get("outstanding")
+	outstanding, _ := raw.(*ordjson.Object)
+	if outstanding == nil {
+		t.Fatal("saved outstanding work missing")
+	}
+	if total, _ := outstanding.Get("total"); fmt.Sprint(total) != "0" {
+		t.Fatalf("outstanding work=%v", outstanding)
+	}
+	if len(f.Calls()) != 0 {
+		t.Fatalf("doctor queried inherited caller: %v", f.Calls())
+	}
+	raw, _ = report.Get("checks")
+	for _, item := range raw.([]any) {
+		if name, _ := item.(*ordjson.Object).Get("tool"); name == "hc-context" {
+			t.Fatal("ordinary doctor requires a native caller")
 		}
 	}
 }

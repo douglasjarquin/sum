@@ -86,7 +86,8 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 		}
 	}
 	var terminalView any
-	if pane {
+	caller := store.EndpointFromContext(ctx)
+	if pane && caller.Schema == 2 && caller.Backend == "hc" && caller.CoreID != "" && caller.Session != "" && filepath.IsAbs(caller.Socket) {
 		terminalView, err = developerTerminal(s, ctx, path, name)
 		if err != nil {
 			return nil, err
@@ -103,6 +104,9 @@ func Prepare(s *store.Store, ctx *ordjson.Object, runtimeRoot, name, base string
 	result.Set("role", "developer")
 	result.Set("terminal", terminalView)
 	result.Set("note", fmt.Sprintf("Development checkout: modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates. sum built no code graph here; read the source, or index this checkout yourself on demand with `CODEGRAPH_NO_DAEMON=1 CODEGRAPH_NO_DOWNLOAD=1 %s`.", shquote.Join([]string{graph.BinPath(runtimeRoot), "init", path})))
+	if pane && terminalView == nil {
+		result.Set("note", "Development checkout prepared with no native caller; no terminal was launched. Start an ordinary shell or agent in the returned path.")
+	}
 	return result, nil
 }
 

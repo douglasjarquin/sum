@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,115 +11,71 @@ import (
 	"testing"
 	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/hctest"
-	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// Regression: init and bind used to hold .sum/.lock across returns.Pump, whose
-// delivery stamping re-acquires the same flock through a fresh descriptor - a
-// permanent self-deadlock whenever a delivery pass had real work. The commands
-// must run as a child under a deadline: a flock blocked in-process cannot be
-// interrupted by context cancellation.
-func TestInitAndBindDeliveryPassDoNotSelfDeadlock(t *testing.T) {
-	root, helper := repoReference(t)
-	base := t.TempDir()
-	home := filepath.Join(base, "state")
-	if err := os.Mkdir(home, 0o755); err != nil {
+func TestInitWithPendingWorkDoesNotSelfDeadlock(t *testing.T) {
+	root, s := ordinaryInitLab(t)
+	if err := s.Init(); err != nil {
 		t.Fatal(err)
 	}
-	home = nativeTestStore(t, home).Home
-	configureNativeEventsForTest(t, home, false)
-	d := newNativeDemoLabAt(t, root, helper, base, home)
-	if got := d.ctl(true, "init")["role"]; got != "coordinator" {
-		t.Fatalf("init role = %v, want coordinator", got)
+	task := ordjson.NewObject()
+	task.Set("schema", store.Schema)
+	task.Set("id", "t-aaaaaaaaaaaa")
+	task.Set("status", "waiting")
+	question := ordjson.NewObject()
+	question.Set("id", "q-one")
+	question.Set("status", "open")
+	question.Set("text", "continue?")
+	task.Set("questions", []any{question})
+	if err := s.SaveTask(task); err != nil {
+		t.Fatal(err)
 	}
-	if value := d.ctl(true, "hook", "status")["enabled"]; value != false {
-		t.Fatalf("disabled observer preference changed: %v", value)
-	}
-
-	host, err := machine.ID()
+	taskPath := filepath.Join(s.Tasks, "t-aaaaaaaaaaaa", "task.json")
+	before, err := os.ReadFile(taskPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fixture := func(id, questionID string) string {
-		return fmt.Sprintf(`{"schema": 1, "id": %q, "status": "running", "kind": "task", "machine": %q, "session": "sum-test", "pane": "w-worker:p1",
- "parent": {"machine": %q, "session": "sum-test", "pane": "w-parent:p1", "cwd": %q},
- "questions": [{"id": %q, "key": "k", "text": "still blocked?", "status": "open", "created_at": "2026-01-01T00:00:00+00:00"}],
- "attention": [], "evidence": [], "report": null, "notice": null, "brief": "worker task", "brief_path": "brief.md"}`,
-			id, host, host, root, questionID)
+	binary := filepath.Join(root, ".local", "bin", "sumctl")
+	if err := os.MkdirAll(filepath.Dir(binary), 0700); err != nil {
+		t.Fatal(err)
 	}
-	home = writeTaskFixture(t, home, "t-aaaaaaaaaaaa", fixture("t-aaaaaaaaaaaa", "q-aaaa"))
-	home = writeTaskFixture(t, home, "t-bbbbbbbbbbbb", fixture("t-bbbbbbbbbbbb", "q-bbbb"))
-
-	const deadline = 20 * time.Second
-	bound := func(args ...string) map[string]any {
+	built, err := os.ReadFile(filepath.Join(repoRoot(t), ".local", "bin", "sumctl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binary, built, 0700); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) map[string]any {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, d.helper, append([]string{"--format", "json", "--home", d.home}, args...)...)
-		cmd.Env = d.env
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		runErr := cmd.Run()
-		if ctx.Err() == context.DeadlineExceeded {
-			t.Fatalf("sumctl %s did not finish within %s: the delivery pass deadlocked on .sum/.lock\n%s%s",
-				strings.Join(args, " "), deadline, stdout.String(), stderr.String())
-		}
-		if runErr != nil {
-			t.Fatalf("sumctl %s: %v\n%s%s", strings.Join(args, " "), runErr, stdout.String(), stderr.String())
-		}
-		raw := stdout.Bytes()
-		if len(bytes.TrimSpace(raw)) == 0 {
-			raw = stderr.Bytes()
-		}
-		var out map[string]any
-		if unmarshalErr := json.Unmarshal(raw, &out); unmarshalErr != nil {
-			t.Fatalf("json %s: %v\n%s", strings.Join(args, " "), unmarshalErr, raw)
-		}
-		return out
-	}
-	assertSubmitted := func(out map[string]any, cmd string) {
-		t.Helper()
-		returns, _ := out["returns"].(map[string]any)
-		recipients, _ := returns["recipients"].([]any)
-		if len(recipients) == 0 {
-			t.Fatalf("%s delivered no returns; the regression needs a pending obligation", cmd)
-		}
-		row, _ := recipients[0].(map[string]any)
-		if row["state"] != "submitted" || row["via"] != "inline" {
-			t.Fatalf("%s returns row = %v, want submitted/inline", cmd, row)
-		}
-	}
-
-	attachNativeTaskCheckout(t, home, "t-aaaaaaaaaaaa")
-	attachNativeTaskCheckout(t, home, "t-bbbbbbbbbbbb")
-	// bind re-saves the parent route and pumps inline for this task's open
-	// question; it used to hold .lock across the pump and hang here.
-	assertSubmitted(bound("bind", "t-bbbbbbbbbbbb", "--parent-only"), "bind")
-
-	// init's post-registration delivery pass still owes task A's question to this
-	// pane; it used to hang while holding both .lock and .deliver.lock.
-	beforeInit := d.native.Calls()
-	initView := bound("init")
-	assertSubmitted(initView, "init")
-	activation, _ := initView["hook_activation"].(map[string]any)
-	if activation["skipped"] != true {
-		t.Fatalf("hook activation = %v, want existing hook skipped", activation)
-	}
-	if _, hasReconciliation := activation["reconciliation"]; hasReconciliation {
-		t.Fatalf("hook activation = %v, want no second reconciliation", activation)
-	}
-	afterInit := d.native.Calls()
-	countRuns := func(calls []hctest.Call) int {
-		count := 0
-		for _, call := range calls {
-			if call.Method == "terminal.run" {
-				count++
+		cmd := exec.CommandContext(ctx, binary, append([]string{"--format", "json", "init"}, args...)...)
+		cmd.Dir = root
+		for _, entry := range os.Environ() {
+			if !strings.HasPrefix(entry, "SUM_") && !strings.HasPrefix(entry, "HC_") && !strings.HasPrefix(entry, "HERDR_") {
+				cmd.Env = append(cmd.Env, entry)
 			}
 		}
-		return count
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("init did not return within its deadline: %v %s", err, output)
+		}
+		var view map[string]any
+		if err := json.Unmarshal(output, &view); err != nil {
+			t.Fatal(err)
+		}
+		if view["role"] != "coordinator" || asMap(view["outstanding"])["total"] != float64(1) {
+			t.Fatalf("pending work vanished: %v", view)
+		}
+		return view
 	}
-	if countRuns(afterInit) != countRuns(beforeInit) {
-		t.Fatalf("second init launched a duplicate observer: before=%v after=%v", beforeInit, afterInit)
+	first := run()
+	run("--claim", asString(first["claim"]))
+	after, err := os.ReadFile(taskPath)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("reading pending work changed the task: %v", err)
 	}
 }

@@ -57,8 +57,6 @@ func jsonInt(n int) json.Number {
 
 var TaskTokens = []string{"sum_state", "sum_pipeline", "sum_task", "sum_repo", "sum_rev", "sum_pr"}
 
-var RootTokens = []string{"sum_inbox", "sum_tasks"}
-
 var SumStates = []string{
 	"needs-attention", "needs-decision", "merged-cleanup-pending", "review-ready", "attention-blocked", "attention-exited",
 	"attention-closed", "attention-idle", "instruction-refresh-pending", "answer-pending", "pr-open", "verified", "preparing", "running",
@@ -73,7 +71,6 @@ func snippetTOML() string {
 func Snippet(sumctlPath, home string) *ordjson.Object {
 	tokens := ordjson.NewObject()
 	tokens.Set("task", toAny(TaskTokens))
-	tokens.Set("coordinator", toAny(RootTokens))
 
 	result := ordjson.NewObject()
 	result.Set("toml", snippetTOML())
@@ -156,6 +153,11 @@ func ReadMetadata(s *store.Store) (*ordjson.Object, error) {
 }
 
 func writeMetadata(s *store.Store, meta *ordjson.Object) error {
+	unlock, err := s.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	errs := asList(get(meta, "errors"))
 	if len(errs) > MaxErrors {
 		errs = errs[len(errs)-MaxErrors:]
@@ -280,8 +282,6 @@ func summaryOf(meta *ordjson.Object) *ordjson.Object {
 	return result
 }
 
-// Status is Summary plus the recorded detail: saved capabilities, per-task applied tokens, the coordinator pane
-// record, ambiguous legacy sources seen in the last pass, and the bounded error log. Records only, no Herdr call.
 func Status(s *store.Store) *ordjson.Object {
 	meta, err := ReadMetadata(s)
 	if err != nil {
@@ -299,7 +299,6 @@ func Status(s *store.Store) *ordjson.Object {
 		}
 	}
 	result.Set("resources_detail", detail)
-	result.Set("root", get(meta, "root"))
 	ambiguous := asList(get(meta, "ambiguous"))
 	if ambiguous == nil {
 		ambiguous = []any{}
@@ -315,8 +314,6 @@ func Status(s *store.Store) *ordjson.Object {
 	return result
 }
 
-// Source is this instance's reporter identity, derived from the instance id like the hook plugin id, so two homes
-// with the same basename never share a source.
 func Source(s *store.Store) (string, error) {
 	value, err := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
 	if err != nil {
@@ -324,7 +321,7 @@ func Source(s *store.Store) (string, error) {
 	}
 	instance := asString(get(asObject(value), "instance"))
 	if instance == "" {
-		return "", fmt.Errorf("This instance has no identity yet; run ./bin/sumctl init in the coordinator pane first.")
+		return "", fmt.Errorf("This instance has no identity yet; run ./bin/sumctl init in the workspace first.")
 	}
 	if len(instance) > 12 {
 		instance = instance[:12]
@@ -367,50 +364,6 @@ func (p *pass) taskTokens(task *ordjson.Object, state string) map[string]string 
 		tokens["sum_pr"] = tokenValue(url)
 	}
 	return tokens
-}
-
-func inboxToken(snapshot inboxview.Snapshot) string {
-	labels := []string{}
-	if !snapshot.Complete {
-		labels = append(labels, "unknown")
-	}
-	for _, count := range []struct {
-		n                int
-		singular, plural string
-	}{
-		{snapshot.Counts.Decisions, "decision", "decisions"},
-		{snapshot.Counts.Coordinator - snapshot.Counts.Inspection, "coordinator", "coordinator"},
-		{snapshot.Counts.Worker, "worker", "worker"},
-		{snapshot.Counts.Inspection, "inspection", "inspections"},
-	} {
-		if count.n == 1 {
-			labels = append(labels, "1 "+count.singular)
-		} else if count.n > 1 {
-			labels = append(labels, fmt.Sprintf("%d %s", count.n, count.plural))
-		}
-	}
-	if len(labels) == 0 {
-		return "clear"
-	}
-	text := strings.Join(labels, "; ")
-	if len(text) <= tokenMax {
-		return text
-	}
-	// Herdr caps tokens at 80 bytes. Keep exact decisions and unknown coverage;
-	// full compact counts remain available when the other counts will not fit.
-	prefix := ""
-	if !snapshot.Complete {
-		prefix = "unknown; "
-	}
-	return fmt.Sprintf("%s%d decisions; other work pending", prefix, snapshot.Counts.Decisions)
-}
-
-func rootTokens(snapshot inboxview.Snapshot, active int) map[string]string {
-	tasks := fmt.Sprintf("%d active", active)
-	if !snapshot.Complete {
-		tasks += "; coverage unknown"
-	}
-	return map[string]string{"sum_inbox": inboxToken(snapshot), "sum_tasks": tasks}
 }
 
 type pass struct {
@@ -505,9 +458,6 @@ func (p *pass) project(ctx context.Context, endpoint store.Endpoint, tokens map[
 	record := ordjson.NewObject()
 	record.Set("endpoint", endpoint.Object())
 	binding, readErr := p.s.Registration(endpoint)
-	if endpoint.Role == "coordinator" {
-		binding, readErr = p.s.Owner()
-	}
 	if readErr != nil {
 		return fail(readErr)
 	}
@@ -537,12 +487,8 @@ func (p *pass) run(scope []string, reason string) *ordjson.Object {
 		selected[id] = true
 	}
 	rows := []any{}
-	active := 0
 	for _, task := range tasks {
 		id := asString(get(task, "id"))
-		if get(task, "status") != "archived" {
-			active++
-		}
 		if scope != nil && !selected[id] {
 			continue
 		}
@@ -576,17 +522,8 @@ func (p *pass) run(scope []string, reason string) *ordjson.Object {
 			resources.Set(id, record)
 		}
 	}
-	owner, err := p.s.Owner()
-	var root *ordjson.Object
-	if err == nil && owner != nil {
-		root = p.project(ctx, store.EndpointFromContext(owner), rootTokens(snapshot, active), asObject(get(p.meta, "root")))
-		if rec := asObject(get(root, "record")); rec != nil {
-			p.meta.Set("root", rec)
-		}
-	}
 	result := ordjson.NewObject()
 	result.Set("tasks", rows)
-	result.Set("root", root)
 	result.Set("note", note)
 	p.meta.Set("last_pass", store.Now())
 	return result
@@ -698,16 +635,6 @@ func Disable(s *store.Store, caller *ordjson.Object, runtimeRoot string) (*ordjs
 			} else {
 				resources.Delete(id)
 			}
-		}
-	}
-	if prior := asObject(get(meta, "root")); prior != nil {
-		if err = p.clearNative(ctx, prior); err != nil {
-			row := ordjson.NewObject()
-			row.Set("role", "coordinator")
-			row.Set("reason", err.Error())
-			failures = append(failures, row)
-		} else {
-			meta.Set("root", nil)
 		}
 	}
 	meta.Set("enabled", false)

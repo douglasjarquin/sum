@@ -2,12 +2,12 @@ package returns
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -35,7 +35,7 @@ func uncertainAppliedLab(t *testing.T) (*nativeLab, *ordjson.Object, *ordjson.Ob
 	if routeValue(row, "state") != "uncertain" {
 		t.Fatal("effect was not uncertain")
 	}
-	q.Set("application_receipt", ApplicationReceipt(task, "answer:q1", "answer-applied", e))
+	q.Set("application_receipt", ApplicationReceipt(task, "answer:q1", "answer-applied", e.Object()))
 	q.Set("status", "applied")
 	q.Set("applied_at", store.Now())
 	if err = l.s.SaveTask(task); err != nil {
@@ -94,7 +94,7 @@ func TestDeliveryReconciliationRefusesUnprovedOrChangedInputs(t *testing.T) {
 				t.Fatal(err)
 			}
 			inputs := len(l.f.Inputs("t1"))
-			if _, err := ReconcileDelivery(l.s, l.owner.Object(), taskIDOf(task), id); err == nil {
+			if _, err := ReconcileDelivery(l.s, l.coordinator(), taskIDOf(task), id); err == nil {
 				t.Fatal("unsafe recovery succeeded")
 			}
 			if len(l.f.Inputs("t1")) != inputs {
@@ -119,7 +119,7 @@ func TestDeliveryReconciliationRetainsDiagnosticAndAllowsClaimRecovery(t *testin
 	if err := PendingDeliveryEffects(l.s, task); err == nil {
 		t.Fatal("effect not blocked")
 	}
-	if _, err := ReconcileDelivery(l.s, l.owner.Object(), taskIDOf(task), id); err != nil {
+	if _, err := ReconcileDelivery(l.s, l.coordinator(), taskIDOf(task), id); err != nil {
 		t.Fatal(err)
 	}
 	if err := PendingDeliveryEffects(l.s, task); err != nil {
@@ -127,7 +127,7 @@ func TestDeliveryReconciliationRetainsDiagnosticAndAllowsClaimRecovery(t *testin
 	}
 	proof := filepath.Join(dir, ResolutionFile)
 	first, _ := os.ReadFile(proof)
-	if result, err := ReconcileDelivery(l.s, l.owner.Object(), taskIDOf(task), id); err != nil || routeValue(result, "result") != "repeated" {
+	if result, err := ReconcileDelivery(l.s, l.coordinator(), taskIDOf(task), id); err != nil || routeValue(result, "result") != "repeated" {
 		t.Fatalf("repeat %v %v", result, err)
 	}
 	second, _ := os.ReadFile(proof)
@@ -145,44 +145,7 @@ func TestDeliveryReconciliationRetainsDiagnosticAndAllowsClaimRecovery(t *testin
 		t.Fatal("stale original row digest accepted")
 	}
 }
-func TestDeliveryReconciliationObservesBeforeStateLockAndRechecksTask(t *testing.T) {
-	l, task, _, id := uncertainAppliedLab(t)
-	taskID := taskIDOf(task)
-	entered, release := l.f.HoldNext("terminal.get", l.owner.Address)
-	defer release()
-	done := make(chan error, 1)
-	go func() { _, err := ReconcileDelivery(l.s, l.owner.Object(), taskID, id); done <- err }()
-	select {
-	case <-entered:
-	case <-time.After(3 * time.Second):
-		t.Fatal("native authority observation not reached")
-	}
-	lockDone := make(chan error, 1)
-	go func() {
-		unlock, err := l.s.Lock()
-		if err == nil {
-			parent, _ := routeValue(task, "parent").(*ordjson.Object)
-			parent.Set("binding_generation", jsonInt(2))
-			err = l.s.SaveTask(task)
-			unlock()
-		}
-		lockDone <- err
-	}()
-	select {
-	case err := <-lockDone:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("state lock held during native observation")
-	}
-	release()
-	if err := <-done; err == nil {
-		t.Fatal("concurrent parent binding change was ignored")
-	}
-}
-
-func consumedDeliveryLab(t *testing.T, kinds ...string) (*nativeLab, *ordjson.Object, string, *Wake) {
+func consumedDeliveryLab(t *testing.T, kinds ...string) (*nativeLab, *ordjson.Object, string, *historicalSidecar) {
 	t.Helper()
 	l := newNativeLab(t)
 	task, _ := l.task("report")
@@ -200,27 +163,50 @@ func consumedDeliveryLab(t *testing.T, kinds ...string) (*nativeLab, *ordjson.Ob
 			t.Fatal(err)
 		}
 	}
-	l.f.QueueFault("terminal.send", hctest.Fault{LoseResponse: true})
-	l.pump("parent")
-	endpoint := [3]string{l.owner.Machine, l.owner.CoreID, l.owner.Address}
-	w, status := ReadWake(l.s, endpoint)
-	if status.State != WakeOK {
-		t.Fatal(status)
-	}
-	b, err := BuildBoundary(l.s, w, []WakeCovered{{Task: taskIDOf(task), ID: kind + ":r1", Revision: "r1", InputRevision: ObligationRevision(task, kind+":r1")}}, nil)
+	id := "d-historical"
+	instance, err := l.s.Instance()
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := b.Token()
+	item := historicalCovered{Task: taskIDOf(task), ID: kind + ":r1", Revision: "r1", InputRevision: ObligationRevision(task, kind+":r1")}
+	record, err := l.s.Owner()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = Consume(l.s, l.owner.Object(), token); err != nil {
+	raw, _ := ordjson.MarshalCompact(routeValue(record, "incarnation"))
+	w := &historicalSidecar{Schema: historicalSchema, Installation: instance, Recipient: historicalRecipient{Machine: l.owner.Machine, CoreID: l.owner.CoreID, Address: l.owner.Address, Role: "coordinator"}, Incarnation: raw, Generation: 1, Episode: &historicalEpisode{ID: "w-historical", Delivery: id}}
+	b := &historicalBoundary{Schema: historicalSchema, Installation: instance, Recipient: w.Recipient, Incarnation: raw, Episode: w.Episode.ID, Generation: 1, Included: []historicalCovered{item}, Omitted: []historicalCovered{}}
+	receipt := historicalReceipt{Boundary: b, Accepted: []historicalCovered{item}, Fingerprint: b.Fingerprint(), Generation: 1, At: store.Now(), Result: "consumed", Delivery: id}
+	w.Receipts = []historicalReceipt{receipt}
+	row := ordjson.NewObject()
+	row.Set("id", id)
+	row.Set("state", "uncertain")
+	row.Set("at", store.Now())
+	row.Set("recipient", l.owner.Object())
+	row.Set("wake_episode", w.Episode.ID)
+	row.Set("wake_generation", jsonInt(1))
+	row.Set("obligations", []any{item.ID})
+	coverage, _ := ordjson.FromValue(deliveryCoverage{ID: item.ID, Revision: item.InputRevision})
+	row.Set("coverage", []any{coverage})
+	history, err := ReadReturns(l.s, taskIDOf(task))
+	if err != nil {
 		t.Fatal(err)
 	}
-	w, status = ReadWake(l.s, endpoint)
-	if status.State != WakeOK {
-		t.Fatal(status)
+	history.Set("deliveries", []any{row})
+	if err = Write(l.s, history); err != nil {
+		t.Fatal(err)
+	}
+	if err = writeHistoricalFixture(t, l, w); err != nil {
+		t.Fatal(err)
+	}
+	retained := consumedDelivery{Schema: 1, Task: taskIDOf(task), Delivery: id, Digest: digest(row), Receipt: receipt}
+	path, err := consumptionPath(l.s, taskIDOf(task), receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, _ := ordjson.FromValue(retained)
+	if err = ordjson.WriteFile(path, object); err != nil {
+		t.Fatal(err)
 	}
 	return l, task, w.Episode.Delivery, w
 }
@@ -249,7 +235,7 @@ func TestDeliveryReconciliationValidatesExactConsumedReceipt(t *testing.T) {
 				r.Boundary.Recipient.Address = "t999"
 				r.Fingerprint = r.Boundary.Fingerprint()
 			}
-			if err := WriteWake(l.s, w); err != nil {
+			if err := writeHistoricalFixture(t, l, w); err != nil {
 				t.Fatal(err)
 			}
 			if name != "matching" {
@@ -278,7 +264,7 @@ func TestDeliveryReconciliationValidatesExactConsumedReceipt(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err := ReconcileDelivery(l.s, l.owner.Object(), taskIDOf(task), id)
+			_, err := ReconcileDelivery(l.s, l.coordinator(), taskIDOf(task), id)
 			if name == "matching" {
 				if err != nil {
 					t.Fatal(err)
@@ -286,8 +272,8 @@ func TestDeliveryReconciliationValidatesExactConsumedReceipt(t *testing.T) {
 				if err = PendingDeliveryEffects(l.s, task); err != nil {
 					t.Fatal(err)
 				}
-				w.Receipts = []WakeReceipt{}
-				if err = WriteWake(l.s, w); err != nil {
+				w.Receipts = []historicalReceipt{}
+				if err = writeHistoricalFixture(t, l, w); err != nil {
 					t.Fatal(err)
 				}
 				if err = PendingDeliveryEffects(l.s, task); err != nil {
@@ -315,7 +301,7 @@ func TestDeliveryReconciliationRequiresExactConsumedReviewCandidate(t *testing.T
 					t.Fatal(err)
 				}
 			}
-			_, err := ReconcileDelivery(l.s, l.owner.Object(), taskIDOf(task), id)
+			_, err := ReconcileDelivery(l.s, l.coordinator(), taskIDOf(task), id)
 			if changed && err == nil {
 				t.Fatal("a consumed verdict for another candidate resolved this delivery")
 			}
@@ -336,7 +322,7 @@ func TestDeliveryReconciliationRejectsCorruptSavedResolution(t *testing.T) {
 	for _, name := range []string{"row digest", "proof generation", "proof revision", "actor", "duplicate", "unknown waiver"} {
 		t.Run(name, func(t *testing.T) {
 			l, task, _, id := uncertainAppliedLab(t)
-			if _, err := ReconcileDelivery(l.s, l.owner.Object(), taskIDOf(task), id); err != nil {
+			if _, err := ReconcileDelivery(l.s, l.coordinator(), taskIDOf(task), id); err != nil {
 				t.Fatal(err)
 			}
 			ledger, err := readResolutions(l.s, taskIDOf(task))
@@ -352,7 +338,7 @@ func TestDeliveryReconciliationRejectsCorruptSavedResolution(t *testing.T) {
 			case "proof revision":
 				r.Proofs[0].Application.Revision = strings.Repeat("e", 64)
 			case "actor":
-				r.Coordinator.Role = "worker"
+				r.Coordinator = json.RawMessage(`{"kind":"worker"}`)
 			case "duplicate":
 				ledger.Resolutions = append(ledger.Resolutions, *r)
 			}
@@ -386,10 +372,21 @@ func TestDeliveryReconciliationPreservesHistoricalReceiptAcrossBindingChange(t *
 	if err := l.s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReconcileDelivery(l.s, l.owner.Object(), taskIDOf(task), id); err != nil {
+	if _, err := ReconcileDelivery(l.s, l.coordinator(), taskIDOf(task), id); err != nil {
 		t.Fatal(err)
 	}
 	if err := PendingDeliveryEffects(l.s, task); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// This fixture writes pre-retirement evidence directly; production has no sidecar writer.
+func writeHistoricalFixture(t *testing.T, l *nativeLab, w *historicalSidecar) error {
+	t.Helper()
+	o, err := ordjson.FromValue(w)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(l.s.Home, "deliver", store.RegistrationKey(store.Endpoint{Machine: w.Recipient.Machine, Session: w.Recipient.CoreID, Pane: w.Recipient.Address})+store.WakeSuffix)
+	return ordjson.WriteFile(path, o)
 }

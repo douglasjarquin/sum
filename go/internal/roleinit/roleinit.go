@@ -14,7 +14,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-var ErrDesignated = fmt.Errorf("designated installation: use native role initialization")
+var ErrDesignated = fmt.Errorf("designated installation: use role-specific initialization")
 
 func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, requestedTask string) (*ordjson.Object, error) {
 	if requestedRole == "worker" && requestedTask == "" {
@@ -50,13 +50,15 @@ func Init(root string, s *store.Store, ctx *ordjson.Object, requestedRole, reque
 		role = "worker"
 		taskID, _ = task.Get("id")
 	}
-	if requestedRole == "coordinator" {
-		return nil, fmt.Errorf("%s is not a sum installation (no state.json from setup). A checkout alone grants no coordinator authority; run mise run setup in the designated installation", s.Home)
-	}
-
 	marker, err := DevelopmentMarker(root)
 	if err != nil {
 		return nil, err
+	}
+	if requestedRole == "coordinator" || (requestedRole == "" && marker == nil) {
+		if endpoint.Task != "" || endpoint.Role == "worker" || endpoint.Role == "reviewer" {
+			return nil, fmt.Errorf("task identity cannot claim coordinator authority")
+		}
+		return InitCoordinator(root, filepath.Join(root, "bin", "sumctl"), s, "", "agent conversation", false)
 	}
 
 	result := ordjson.NewObject()

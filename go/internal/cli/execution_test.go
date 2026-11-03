@@ -59,12 +59,12 @@ func TestExecutionCommands(t *testing.T) {
 	}{
 		{name: "valid show", args: []string{"execution", "show", "t-aaaaaaaaaaaa"}, ok: true},
 		{name: "valid show after dashdash", args: []string{"execution", "show", "--", "t-aaaaaaaaaaaa"}, ok: true},
-		{name: "valid park --attempt", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
-		{name: "valid park --attempt=", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
-		{name: "valid park with herdr", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, herdr: true, domainErr: "registered coordinator"},
-		{name: "valid resume --attempt", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
-		{name: "valid resume --attempt=", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa"}, domainErr: "explicit HC session required"},
-		{name: "valid resume with herdr", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, herdr: true, domainErr: "registered coordinator"},
+		{name: "valid park --attempt", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid park --attempt=", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid park with herdr", args: []string{"execution", "park", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, herdr: true, domainErr: "claim_required"},
+		{name: "valid resume --attempt", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid resume --attempt=", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid resume with herdr", args: []string{"execution", "resume", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa"}, herdr: true, domainErr: "claim_required"},
 		{name: "execution missing subcommand", args: []string{"execution"}, usage: true},
 		{name: "show extra positional", args: []string{"execution", "show", "t-aaaaaaaaaaaa", "extra"}, usage: true},
 		{name: "show unknown flag", args: []string{"execution", "show", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
@@ -126,7 +126,7 @@ func runExecutionCLI(t *testing.T, home string, args ...string) (stdout, stderr 
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

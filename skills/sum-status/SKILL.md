@@ -4,13 +4,14 @@ description: Reconcile saved tasks with bounded HC observations, surface unresol
 ---
 # Status
 
-Run `./bin/sumctl inbox --live`.
+Run `./bin/sumctl collect --claim TOKEN --budget 20s` during active work or on resume, then use `./bin/sumctl inbox --live` for read-only observation.
+Pass this conversation's captured `--claim TOKEN` to every coordinator mutation shown below.
 It reads saved records and adds one bounded native terminal snapshot per HC session of the listed local, unarchived tasks: twelve workers cost one observation call, not twelve sequential waits.
 Each such row gets `observed` (the agent state, `absent` when the worker is missing from its session's list, without its own lookup, or `unobserved` with a reason); `fanout` shows the sessions, HC calls, and elapsed and budget milliseconds, and `capacity` shows the held slots.
 Without a HC context it returns `live: false` with `live_reason` and the plain records view.
 It writes nothing: it delivers no returns, creates no attention records, reconciles no cleanup, and never calls GitHub.
 It is not a background monitor.
-A status check does not authorize doing requested work in this terminal; dispatch that work.
+A status check grants no new scope; investigate within the user's instruction and dispatch implementation.
 For one task, `./bin/sumctl context TASK_ID --role coordinator` gives the outline, open questions with their text, the latest handoff (a worker claim), open returns, and the brief/update state in one bounded read; `--since CURSOR` (from the previous read's `cursor`) says whether anything changed and names only the new records.
 Reach for full `show` when you need the complete record.
 Surface unanswered decisions first, then reports ready for review, then failures/uncertainty, then tasks whose `cleanup` field is `pending` or `blocked`.
@@ -84,7 +85,7 @@ For example:
   Never automatically resend a possibly submitted prompt or claim receipt or processing; an idle recipient alone proves neither.
 
 Sum cannot suppress a harness's own reasoning, tool output, or progress messages.
-Running coordinators adopt this policy through the existing refresh procedure; a source edit alone does not change their contract.
+The next ordinary harness start reads the selected policy; no live coordinator-contract replacement is performed.
 
 ## Inbox and ops brief
 
@@ -157,85 +158,36 @@ The question becomes `closed-unapplied` with who closed it, when, and why; it is
 It refuses an open question, which still needs the user's answer, and any attempt that is not released.
 `sumctl brief list TASK_ID` shows whether a report was produced under an older brief revision whose verification policy has since changed; treat that as evidence needing refresh review, not as a failure or an approval.
 
-## Pending returns
+## Collection and pending returns
 
-A closed or busy parent may have pending returns.
-Each row's `returns` lists what is still owed and to whom: open questions, unverified reports, and recorded review verdicts (`review:ID`, with its `verdict` and `candidate`) to you, unapplied answers and requested brief revisions to the worker.
-The `obligation` is open until a later record closes it; the `notification` beside it is only what is known about telling the current recipient: `pending`, `submitted` (prompt accepted or presented in your own output), `uncertain` (a timeout after a possible submission or an interrupted pass), `not-delivered` (busy, absent, wrong checkout, not registered) or `stalled` (three known failures).
-`inbox --live` delivers nothing.
-Delivery is one budgeted pass run by `init`, `bind`, `pump`, and the notice a task write triggers: at most one coalesced notice per recipient, with record IDs and commands only.
-Items routed to you appear inline in that output; reading them answers, applies, and verifies nothing.
-A pass has one budget (default 20 s; `sumctl pump --budget SECONDS`).
-Deliveries to different recipients no longer wait for each other; only two operations delivering to the same recipient take turns.
-A recipient the budget or a busy delivery lock did not reach is `deferred`: nothing was recorded for it, it stays pending, and it goes first on the next pass.
-A HC call that fails or times out makes that session unavailable for the rest of the pass, so its later recipients are `not-delivered` and count toward `stalled`.
-`fanout` shows the sessions, HC calls, elapsed and budget milliseconds, and the deferred count.
-For an uncertain historical effect, inspect its exact durable application/consumed-boundary receipt and use `sumctl delivery reconcile TASK_ID --delivery DELIVERY_ID`.
-It sends nothing, requires current coordinator authority and exact endpoint/obligation/input-revision proof, and accepts no proof/force/reason override.
-It preserves the original effect/error and writes a separate digest-bound reconciliation receipt; repeated identical resolution is a no-op.
-It closes no business obligation or reservation.
-A separate explicitly requested `sumctl notice TASK_ID --to worker` (or `--to parent`) is a new attempt, never evidence resolving the old uncertain one.
-`sumctl pump` repeats the ordinary pass, which also reaches deferred recipients; `--force` is an explicit ledger recovery selection, never a native force-input flag.
-Do not replay uncertainty automatically or loop.
+Questions, reports and review verdicts owed to the logical coordinator are listed from the ledger and never routed to an HC parent.
+They remain open until their existing action settles them.
+Reading an item twice lists it twice; reading records no receipt.
+`collect --claim TOKEN [--budget 20s] [--task TASK_ID]` returns actionable items, delivered worker answers, a deadline indicator and one next action.
+The default budget is 20 seconds and the maximum is 60 seconds across all native calls and waits.
+It never ensures a missing core.
+A failed saved route is a `core-unreachable` item; an uncertain launch names explicit worker/reviewer reconciliation.
+Inspect the named detail command before deciding how to act.
 
-Wake consumption and `wake reconcile` affect the wake episode only; they do not by themselves resolve its historical native delivery effect.
-Cleanup and activation require the exact separately validated delivery reconciliation where such an effect remains uncertain.
+Unapplied answers and requested worker brief revisions use the existing exact worker route and native input checks.
+Collection retries eligible stalled worker deliveries, defers busy/blocked/unknown input and never replays submitted or uncertain effects.
+`pump` remains a bounded worker-directed delivery pass; parent-directed prompts are removed.
+Historical uncertain delivery effects require exact durable application or retained consumed-boundary proof through `delivery reconcile TASK_ID --delivery DELIVERY_ID --claim TOKEN`.
+That command sends nothing, preserves original effect/error bytes and settles no business obligation or reservation.
+Do not manufacture proof or bypass an unresolved effect.
 
-### Coordinator wake episodes
-
-Routine returns to you (reports, review verdicts, attention) are coalesced: an adopted coordinator has at most one outstanding wake episode, persisted in `.sum/deliver/<recipient>.wake.json` before any prompt.
-While it is outstanding, a pass that finds more returns for you records nothing for them and reports the row as `coalesced` with the episode id; each such return keeps its real notification state (`pending`), and `inbox` still lists it.
-Coalesced is never proof that an ID was delivered or read.
-
-After reading a routine wake, run `./bin/sumctl wake show`.
-It writes nothing and prints, per sidecar, the episode and its phase, and for an outstanding episode a `boundary` token over the current open obligations to you: `included` is exactly what the token covers, `omitted` names tasks whose records could not be read.
-Read the included work through its records, then run `./bin/sumctl wake consume --boundary TOKEN`.
-Consumption is a presentation attestation, not proof of comprehension: it closes only that episode, withholds the included identities from later routine prompts until each closes canonically, and changes nothing else (no answer, application, verification, approval, reservation, or attention record).
-Omitted identities and anything that arrived after the token was printed were never covered: the next pass opens a new episode for them.
-An exact repeat of a consume is idempotent (`repeated`); a token from an older generation is `expired` and changes nothing; a token for another terminal, another occupant of this terminal, or a tampered payload is refused.
-A new occupant of the coordinator terminal does not inherit the old occupant's consumption authority.
-
-Recovery is explicit and timer-free.
-`./bin/sumctl wake reconcile [--recipient KEY]` follows the wake recovery table in `docs/recovery.md`: a `prepared` episode (a pass crashed before claiming anything) is closed as `not-submitted` and the next pass may prompt; a `claimed` or `intent` episode (a crash around the prompt) becomes `uncertain` and stays outstanding, with its attempts untouched, until you consume it; `submitted` and `uncertain` are left alone (consume is the way out, or `sumctl notice TASK_ID --to parent` supersedes the episode explicitly with the next generation); an episode bound to a replaced occupant is closed as `replaced` without granting the new occupant anything; an unreadable sidecar is reported by path and never rewritten.
-Nothing resends because a process disappeared or time passed.
-
-A new open question owed to you is a decision and is not held behind the routine latch: at the next eligible pass it is sent as one priority prompt (all new decisions to you in that pass coalesced into it) through the same observation, occupant, identity and budget checks as a routine prompt, so a busy terminal receives nothing and the attempt is recorded `not-delivered` until an eligible pass.
-The routine episode is untouched (the prompt names it and its `wake consume` route); the decision's attempt is recorded per obligation as usual, and its identity (task, question, key) is recorded on the sidecar so no pass repeats it while it is unchanged: a consumed or already-prompted decision stays in `inbox` and `wake show` (`priority_prompts`) without a new prompt; a question saved again under a new key is a new decision and is eligible once more.
-An uncertain priority attempt is never resent by a pass.
-Priority is never real-time interruption.
-
-A missed hook event or a disabled hook loses nothing: the return stays in the records and in `inbox`, `wake show` shows whether an episode is outstanding, and the next explicit pass (`init`, `bind`, `pump`, a task write's notice) is the bounded route that delivers it.
-Prompts sent by an older or non-adopted helper are listed under `uncoalesced_legacy_prompts`: they were not coalesced, and no episode accounts for them.
-
-## Native events and attention
-
-Coordinator `init` ensures a real scoped HC observer startup receipt outside the ledger lock unless the user explicitly disabled delivery.
-The observer is a non-agent outliving HC terminal with no independent payload queue; it takes snapshots after reconnect and runs fair bounded reconciliation.
-`hook status` distinguishes enabled preference, owned scope, readiness receipt and degraded errors.
-Startup failure is fail-open: `init`, `bind`, `pump` and task-write notices remain available, and no false active state is claimed.
-`hook enable` ensures the observer, while `hook disable` preserves the user's explicit preference and stops only a proven owned instance.
-A second same-host core/session scope and remote Sum execution are refused before binding.
-Qualified Codex 0.166.0 uses the default keymap and namespaced Tab template: defer observed working/blocked/unknown, guard idle with `if:idle`, and send observed Done ordinarily without `if` or `force`.
-A raced busy turn queues input for the next turn; this is deliberately not an atomic Done guard.
-`started`, native status and turn counters never supply application receipts.
-A `review:ID` return is a reviewer's (or an imported Made) verdict you have not acted on yet.
-It is a finding, never approval, and it stays open until you act on that candidate: your own `verify`, `pipeline push`, `pipeline pr`, `pipeline ci`, or `pr reconcile`, or a `repair send` after the verdict.
-A later report, handoff, or review naming a newer candidate supersedes it.
-Reading the notice closes nothing.
-
-While the hook is enabled, a worker that HC observed `blocked`, idle with nothing owed and no report, exited, or closed has an `attention` record (`attention_records` in each row, `attention:ID` under `returns`) with a bounded output excerpt and a native HC output pointer.
-Read the terminal before deciding anything: the record proves a native status, not a question, a finished task, a quota cause, or permission to answer an approval prompt.
-If the excerpt holds a real question, save it with `sumctl ask` from the worker's brief commands; that record supersedes the attention.
-If the worker merely resumed, the record closes itself.
-After inspecting a record that needs no action, run `./bin/sumctl attention TASK_ID ATTENTION_ID --seen`; the record stays in the task.
-A status check does not replay missed events: `inbox --live` shows each worker's observed state, and `sumctl pump` delivers what is still owed.
-Do not wait for the observer to notice something it already missed.
+Collection snapshots native worker/reviewer attention and output routes.
+A blocked or failed terminal is not a question, permission grant or verified result.
+Inspect it and preserve trust/authentication boundaries.
+Saved attention may be marked seen with its existing `attention` command; the record remains.
+A reviewer verdict is a finding, never approval, and remains listed until candidate-bound verification, publication/reconciliation or an authorized repair settles it.
+Native status, turn counters and successful sends never replace application receipts.
 
 ## Native metadata
 
 Native metadata is optional and display only.
 Only the user decides to enable it with `metadata enable`.
-Projection writes owned namespaced HC labels only to verified recorded terminals and clears only its own recorded keys.
+Projection writes owned namespaced HC labels only to verified task worker/reviewer terminals and clears only its own recorded keys.
 `metadata status` reads saved health; `metadata sync` projects differences; `metadata disable` clears recorded owned keys.
 `metadata inbox` and `inbox --grouped --view` print saved task views; no legacy sidebar or plugin-terminal API is required.
 A label, name or displayed state never establishes authority, verification or completion.
@@ -248,17 +200,16 @@ None of those states blocks a task, changes a slot, or says anything about verif
 
 ## Restart
 
-Run `init` and follow the exact procedure path it returns.
-Without a qualified HC launch context it defaults to developer; it never claims coordinator implicitly.
-Prefer `coordinator start` for a new bound launch and matching initialization receipt.
-For an existing qualified terminal, initialize explicitly and preserve known launch fields or an unknown model rather than guessing.
-Only when the user requested takeover and the previous coordinator is verifiably gone or replaced may you pass `--reclaim`.
-Unobservable state is not stop evidence.
-Bind old tasks to the new coordinator explicitly with `bind TASK_ID --parent-only`; this supplies one catch-up listing without replaying old uncertain sends.
-Native core ID/address/creation time, task/role/attempt/generation, process and matching receipt establish identity; sockets, labels, names, cwd, PID and status alone do not.
-Never launch a replacement merely because observation failed.
-Capacity remains held until `execution park` proves actual stop and no owned survivors or services.
-Normal Open/init/status never migrate schema-one state; existing-installation cutover refuses without an enforceable legacy writer/sender exclusion lease unavailable from current legacy APIs.
+Run `init --claim TOKEN` with this conversation's retained token and reread its validated procedure paths.
+Collect before claiming progress.
+A new conversation without that token sees a conflict naming the recorded session.
+Transfer only under the user's explicit takeover instruction; ask first when another conversation may still be coordinating.
+`init --transfer` advances the claim generation without rewriting tasks, changing worker endpoints or relaunching work.
+An old token is refused at its next locked mutation.
+Native worker and reviewer identity checks remain unchanged.
+Never launch a replacement merely because observation failed; capacity remains held until the existing park path proves actual stop and no owned survivors or services.
+Normal Open/init/status never migrate schema-one state.
+Native retirement uses its explicit quiescent gate and root format fence, preserving historical task and sealed procedure bytes.
 See `docs/recovery.md`.
 
 ## Backup and records-only restore
@@ -271,7 +222,7 @@ The importer validates scope/schema, safe unique regular paths and the complete 
 The imported home has a fresh instance/generation and `records_only:true` quarantine; exact original entries remain under its `restore-source/` directory.
 The schema-two pointer/header use `backend:"records"`, distinct from active `backend:"hc"`, so HC-only readers cannot ignore the quarantine flag and acquire authority.
 Import is bounded to 64 MiB per entry, 512 MiB expanded archive including trailing data, and 100,000 entries.
-It preserves task and pinned procedure bytes but imports no live coordinator, sessions, observer or runtime authority.
+It preserves task and pinned procedure bytes but imports no live coordinator, sessions or runtime authority.
 Use saved `show`, `status` and bounded `context` reads; all mutations, role claims, binds, capacity adoption and native launch/send are blocked.
 There is no automatic promotion or schema-one executable fallback.
 Retain the archive and any partial quarantined destination after an I/O failure; a deliberate retry requires another fresh destination rather than overwrite or automatic replay.

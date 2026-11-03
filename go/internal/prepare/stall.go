@@ -107,42 +107,42 @@ func stallMessage(cause error) string {
 	return text
 }
 
-func openingEndpoint(parent store.Endpoint, taskID, attemptID, checkout string, term hcclient.Terminal) store.Endpoint {
-	return store.Endpoint{Schema: 2, Backend: "hc", Machine: parent.Machine, CoreID: parent.CoreID, Session: parent.Session, Socket: parent.Socket, Address: term.Address, CreatedMS: term.CreatedMS, Task: taskID, Role: "worker", Attempt: attemptID, BindingGeneration: 1, Cwd: checkout}
+func openingEndpoint(route store.Endpoint, taskID, attemptID, checkout string, term hcclient.Terminal) store.Endpoint {
+	return store.Endpoint{Schema: 2, Backend: "hc", Machine: route.Machine, CoreID: route.CoreID, Session: route.Session, Socket: route.Socket, Address: term.Address, CreatedMS: term.CreatedMS, Task: taskID, Role: "worker", Attempt: attemptID, BindingGeneration: 1, Cwd: checkout}
 }
 
-func matchedOpening(ctx context.Context, client *hcclient.Client, parent store.Endpoint, instance, taskID, attemptID, checkout, requiredAddress string) (hcclient.Terminal, error) {
+func matchedOpening(ctx context.Context, client *hcclient.Client, route store.Endpoint, instance, taskID, attemptID, checkout, requiredAddress string) (hcclient.Terminal, error) {
 	matches, err := liveOpenings(ctx, client, workerLabels(instance, taskID, attemptID), NativeName(instance, taskID, "worker", attemptID), checkout)
 	if err != nil {
 		return hcclient.Terminal{}, err
 	}
-	if len(matches) != 1 || (requiredAddress != "" && matches[0].Address != requiredAddress) || openingEndpoint(parent, taskID, attemptID, checkout, matches[0]).Validate() != nil {
+	if len(matches) != 1 || (requiredAddress != "" && matches[0].Address != requiredAddress) || openingEndpoint(route, taskID, attemptID, checkout, matches[0]).Validate() != nil {
 		return hcclient.Terminal{}, errNotOneOpening
 	}
 	return matches[0], nil
 }
 
-func settleStalled(s *store.Store, client *hcclient.Client, parent store.Endpoint, instance, taskID, attemptID, checkout, prompt, requiredAddress, effect string, first *hcclient.FirstMessage) (*ordjson.Object, bool, error) {
+func settleStalled(s *store.Store, client *hcclient.Client, route store.Endpoint, instance, taskID, attemptID, checkout, prompt, requiredAddress, effect string, first *hcclient.FirstMessage) (*ordjson.Object, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	term, err := matchedOpening(ctx, client, parent, instance, taskID, attemptID, checkout, requiredAddress)
+	term, err := matchedOpening(ctx, client, route, instance, taskID, attemptID, checkout, requiredAddress)
 	if err != nil {
 		return nil, false, nil
 	}
 	landed, sendErr := landPrompt(ctx, client, term.Address, prompt)
-	task, err := persistStalled(s, taskID, attemptID, prompt, parent, checkout, term, landed, effect, first, sendErr)
+	task, err := persistStalled(s, taskID, attemptID, prompt, route, checkout, term, landed, effect, first, sendErr)
 	return task, true, err
 }
 
-func resumeStalledOpening(s *store.Store, parent store.Endpoint, taskID, attemptID, prompt, savedAddress, checkout string) (*ordjson.Object, error) {
+func resumeStalledOpening(s *store.Store, route store.Endpoint, taskID, attemptID, prompt, savedAddress, checkout string) (*ordjson.Object, error) {
 	instance, err := s.Instance()
 	if err != nil {
 		return nil, err
 	}
-	client := hcclient.Client{Socket: parent.Socket, CoreID: parent.CoreID}
+	client := hcclient.Client{Socket: route.Socket, CoreID: route.CoreID}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	term, err := matchedOpening(ctx, &client, parent, instance, taskID, attemptID, checkout, savedAddress)
+	term, err := matchedOpening(ctx, &client, route, instance, taskID, attemptID, checkout, savedAddress)
 	if err != nil {
 		if errors.Is(err, errNotOneOpening) {
 			return nil, fmt.Errorf("%s: the stalled worker pane is not the one live terminal. start does not allocate another one.", taskID)
@@ -150,11 +150,11 @@ func resumeStalledOpening(s *store.Store, parent store.Endpoint, taskID, attempt
 		return nil, err
 	}
 	landed, sendErr := landPrompt(ctx, &client, term.Address, prompt)
-	return persistStalled(s, taskID, attemptID, prompt, parent, checkout, term, landed, "uncertain", nil, sendErr)
+	return persistStalled(s, taskID, attemptID, prompt, route, checkout, term, landed, "uncertain", nil, sendErr)
 }
 
-func persistStalled(s *store.Store, taskID, attemptID, prompt string, parent store.Endpoint, checkout string, term hcclient.Terminal, landed bool, effect string, first *hcclient.FirstMessage, cause error) (*ordjson.Object, error) {
-	endpoint := openingEndpoint(parent, taskID, attemptID, checkout, term)
+func persistStalled(s *store.Store, taskID, attemptID, prompt string, route store.Endpoint, checkout string, term hcclient.Terminal, landed bool, effect string, first *hcclient.FirstMessage, cause error) (*ordjson.Object, error) {
+	endpoint := openingEndpoint(route, taskID, attemptID, checkout, term)
 	if err := endpoint.Validate(); err != nil {
 		return nil, err
 	}
@@ -261,4 +261,25 @@ func persistStalled(s *store.Store, taskID, attemptID, prompt string, parent sto
 		return nil, fmt.Errorf("%s: %s", taskID, stallMessage(cause))
 	}
 	return current, nil
+}
+
+func stalledRoute(s *store.Store, task *ordjson.Object, taskID, attemptID string) (store.Endpoint, error) {
+	worker, err := reservations.Worker(task)
+	if err != nil {
+		return store.Endpoint{}, err
+	}
+	var params hcclient.RunParams
+	native := asObject(policyField(worker, "native_launch"))
+	if err = decode(policyField(native, "intent"), &params); err != nil {
+		return store.Endpoint{}, err
+	}
+	env := params.Env
+	if env["HC_SOCKET"] == "" || env["SUM_CORE_ID"] == "" || env["SUM_SESSION"] == "" || env["SUM_TASK"] != taskID || env["SUM_ATTEMPT"] != attemptID || env["SUM_ROLE"] != "worker" || params.Cwd != policyField(task, "worktree") {
+		return store.Endpoint{}, fmt.Errorf("saved worker creation route is incomplete or mismatched")
+	}
+	host, err := s.Machine()
+	if err != nil {
+		return store.Endpoint{}, err
+	}
+	return store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, Socket: env["HC_SOCKET"], CoreID: env["SUM_CORE_ID"], Session: env["SUM_SESSION"]}, nil
 }

@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/release"
+	"github.com/douglasjarquin/sum/go/internal/returns"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/toolpath"
@@ -58,26 +60,32 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 		rows = append(rows, row)
 	}
 
-	ctx, ctxErr := store.Context(runtimeRoot)
-	owner, ownerErr := s.Owner()
-	endpoint := store.EndpointFromContext(owner)
-	source := "registered-coordinator"
-	if endpoint.CoreID == "" && ctxErr == nil {
-		endpoint = store.EndpointFromContext(ctx)
-		source = "caller-context"
-	}
-	if endpoint.Socket == "" {
-		if raw, err := ordjson.ReadFile(filepath.Join(s.Root, "runtime-route.json")); err == nil {
-			if route, ok := raw.(*ordjson.Object); ok {
-				socket, _ := route.Get("socket")
-				endpoint.Socket, _ = socket.(string)
-				core, _ := route.Get("core_id")
-				endpoint.CoreID, _ = core.(string)
-				source = "selected-route"
-			}
+	session, sessionErr := s.CoordinatorSession()
+	var route *ordjson.Object
+	var routeErr error
+	value, err := ordjson.ReadFile(filepath.Join(s.Root, "runtime-route.json"))
+	if err == nil {
+		var ok bool
+		route, ok = value.(*ordjson.Object)
+		if !ok {
+			routeErr = fmt.Errorf("runtime-route.json is not an object")
 		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		routeErr = err
 	}
-	rows = append(rows, hcCoreCheck(endpoint, source))
+	endpoint := store.Endpoint{}
+	if route != nil {
+		value, _ := route.Get("socket")
+		endpoint.Socket, _ = value.(string)
+		value, _ = route.Get("core_id")
+		endpoint.CoreID, _ = value.(string)
+	}
+	core := hcCoreCheck(endpoint, "selected-route")
+	if routeErr != nil {
+		core.Set("ok", false)
+		core.Set("detail", routeErr.Error())
+	}
+	rows = append(rows, core)
 	rows = append(rows, hcArtifactCheck(runtimeRoot))
 
 	rows = append(rows, ghAttachCheck(runtimeRoot))
@@ -95,38 +103,42 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 
 	role := ordjson.NewObject()
 	role.Set("tool", "role")
-	role.Set("ok", ownerErr == nil)
-	if ownerErr != nil {
-		role.Set("detail", ownerErr.Error())
-	}
-	designated := s.Designated()
-	role.Set("installation", designated)
-	if designated {
-		if owner != nil {
-			role.Set("coordinator", owner)
-		} else {
-			role.Set("coordinator", nil)
-		}
-	} else {
-		role.Set("coordinator", nil)
-	}
-
-	nativeContext := ordjson.NewObject()
-	nativeContext.Set("tool", "hc-context")
-	nativeContext.Set("ok", ctxErr == nil)
-	if ctxErr != nil {
-		nativeContext.Set("detail", ctxErr.Error())
-	} else {
-		nativeContext.Set("detail", ctx)
-		registration, _ := s.Registration(store.EndpointFromContext(ctx))
-		if registration != nil {
-			roleValue, _ := registration.Get("role")
-			role.Set("registered", roleValue)
-		} else {
-			role.Set("registered", nil)
+	role.Set("ok", sessionErr == nil)
+	role.Set("installation", s.Designated())
+	role.Set("session", nil)
+	role.Set("claim_generation", nil)
+	role.Set("runtime_route", route)
+	outstanding := ordjson.NewObject()
+	total := 0
+	tasks, tasksErr := s.AllTasks()
+	if tasksErr == nil {
+		for _, task := range tasks {
+			items, err := returns.OpenObligations(s, task)
+			if err != nil {
+				tasksErr = err
+				break
+			}
+			total += len(items)
 		}
 	}
-	rows = append(rows, nativeContext)
+	outstanding.Set("total", json.Number(strconv.Itoa(total)))
+	if tasksErr != nil {
+		outstanding.Set("error", tasksErr.Error())
+	}
+	role.Set("outstanding", outstanding)
+	if sessionErr != nil {
+		role.Set("detail", sessionErr.Error())
+	}
+	if session != nil {
+		role.Set("session", session.Object())
+		role.Set("claim_generation", json.Number(strconv.FormatUint(session.Generation, 10)))
+	} else if owner, err := s.Owner(); err != nil {
+		role.Set("ok", false)
+		role.Set("detail", err.Error())
+	} else if owner != nil {
+		role.Set("native_retirement_required", true)
+		role.Set("next", "Run init and follow its retirement blocker before coordinating.")
+	}
 	rows = append(rows, role)
 
 	installed := ordjson.NewObject()
@@ -369,7 +381,8 @@ func hcCoreCheck(endpoint store.Endpoint, source string) *ordjson.Object {
 	row.Set("ok", false)
 	row.Set("available", false)
 	if endpoint.Socket == "" {
-		row.Set("detail", "No recorded local HC endpoint or attested caller context; doctor never starts or binds a core.")
+		row.Set("ok", true)
+		row.Set("detail", "No worker runtime route is recorded; worker launch selects it lazily. Doctor never starts a core.")
 		return row
 	}
 	row.Set("source", source)

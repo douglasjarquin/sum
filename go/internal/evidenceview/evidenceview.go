@@ -117,8 +117,12 @@ func evidenceRowCopy(record *ordjson.Object, head string) *ordjson.Object {
 		v, _ := record.Get(k)
 		row.Set(k, v)
 	}
-	if endpoint := asObject(getField(record, "endpoint")); endpoint != nil && store.EndpointFromContext(endpoint).Validate() != nil {
-		row.Set("endpoint_authority", "historical")
+	if endpoint := asObject(getField(record, "endpoint")); endpoint != nil {
+		if store.ValidateLogicalOwner(endpoint) == nil {
+			row.Set("endpoint_authority", "coordinator-session")
+		} else if store.EndpointFromContext(endpoint).Validate() != nil {
+			row.Set("endpoint_authority", "historical")
+		}
 	}
 	candidateValue := getField(record, "candidate")
 	var current any

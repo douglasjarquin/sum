@@ -48,7 +48,7 @@ func nativeRunCount(d *demoLab) int {
 
 func TestReviewerLaunchUsesTaskCheckoutAndRecordsNativeEndpoint(t *testing.T) {
 	for _, preset := range []bool{false, true} {
-		t.Run(map[bool]string{false: "coordinator harness", true: "saved reviewer preset"}[preset], func(t *testing.T) {
+		t.Run(map[bool]string{false: "saved worker harness", true: "saved reviewer preset"}[preset], func(t *testing.T) {
 			d, taskID := reviewLab(t)
 			task := d.taskRecord(taskID)
 			if preset {
@@ -56,7 +56,7 @@ func TestReviewerLaunchUsesTaskCheckoutAndRecordsNativeEndpoint(t *testing.T) {
 				d.ctl(true, "settings", "set", "--reviewer-preset", "review")
 			}
 			denied := d.ctlPane(workerAddress(task), false, "reviewer", "launch", taskID)
-			if !strings.Contains(asString(denied["error"]), "coordinator") {
+			if !strings.Contains(asString(denied["error"]), "claim_required") {
 				t.Fatalf("worker could launch independent reviewer: %v", denied)
 			}
 			before := nativeRunCount(d)

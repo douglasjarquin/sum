@@ -13,7 +13,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/environment"
-	"github.com/douglasjarquin/sum/go/internal/machine"
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/project"
@@ -96,16 +96,12 @@ func Capture(s *store.Store, taskID string, in Input, endpoint *ordjson.Object) 
 		return Record{}, false, err
 	}
 
-	host, err := s.Machine()
-	if err != nil {
-		return Record{}, false, err
-	}
-	role := findingRole(host, task, endpoint)
-	if role != "worker" && role != "coordinator" {
-		return Record{}, false, fmt.Errorf("Only the registered worker or coordinator can record a finding for this task.")
-	}
 	if err := app.CheckTaskRole(s, task, proof, "worker", "coordinator"); err != nil {
 		return Record{}, false, err
+	}
+	role := "worker"
+	if store.ValidateLogicalOwner(endpoint) == nil {
+		role = "coordinator"
 	}
 	projectID, err := taskProjectID(task)
 	if err != nil {
@@ -186,13 +182,6 @@ func ChangeTargetExpected(s *store.Store, id, action, reason, targetKind, target
 		return Record{}, err
 	}
 
-	host, err := s.Machine()
-	if err != nil {
-		return Record{}, err
-	}
-	if findingRole(host, source, endpoint) != "coordinator" {
-		return Record{}, fmt.Errorf("Only the registered coordinator can change a finding disposition or link.")
-	}
 	if err := app.CheckTaskRole(s, source, proof, "coordinator"); err != nil {
 		return Record{}, err
 	}
@@ -491,27 +480,11 @@ func validateRepairTarget(task *ordjson.Object, target string) error {
 	return fmt.Errorf("Scoped repair %q is not recorded for the source task.", target)
 }
 
-func findingRole(host machine.Identity, task, endpoint *ordjson.Object) string {
-	if endpoint == nil {
-		return ""
-	}
-	if value, ok := task.Get("worker_endpoint"); ok && host.SameEndpoint(asNativeObject(value), endpoint) {
-		return "worker"
-	}
-	parent, _ := task.Get("parent")
-	if obj, ok := parent.(*ordjson.Object); ok && host.SameEndpoint(obj, endpoint) {
-		return "coordinator"
-	}
-	return "other"
-}
-
 func actorObject(endpoint *ordjson.Object, role string) *ordjson.Object {
-	actor := ordjson.NewObject()
-	for _, key := range []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"} {
-		value, _ := endpoint.Get(key)
-		actor.Set(key, value)
+	actor := evidence.Endpoint(endpoint)
+	if store.ValidateLogicalOwner(actor) != nil {
+		actor.Set("role", role)
 	}
-	actor.Set("role", role)
 	return actor
 }
 

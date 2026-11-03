@@ -299,7 +299,7 @@ func Resume(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID 
 		unlock()
 		return nil, err
 	}
-	owner := store.EndpointFromContext(ctx).Object()
+	owner := evidence.Endpoint(ctx)
 	worktree, _ := task.Get("worktree")
 	successor, err := reservations.NewAttempt("worker", owner, worktree, store.Now(), "", nil)
 	if err != nil {
@@ -311,6 +311,7 @@ func Resume(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID 
 		unlock()
 		return nil, err
 	}
+	worker.Set("worker_endpoint", field(task, "worker_endpoint"))
 	body := ordjson.NewObject()
 	body.Set("attempt", worker)
 	sid, _ := successor.Get("id")
@@ -319,6 +320,7 @@ func Resume(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attemptID 
 		unlock()
 		return nil, err
 	}
+	task.Set("worker_endpoint", nil)
 	if err := reservations.ReplaceWorker(task, successor); err != nil {
 		unlock()
 		return nil, err

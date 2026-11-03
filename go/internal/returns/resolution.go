@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
@@ -33,13 +34,13 @@ type applicationReceipt struct {
 }
 type deliveryProof struct {
 	Application *applicationReceipt `json:"application,omitempty"`
-	Consumption *WakeReceipt        `json:"consumption,omitempty"`
+	Consumption *historicalReceipt  `json:"consumption,omitempty"`
 }
 type deliveryResolution struct {
 	Delivery    string          `json:"delivery"`
 	Digest      string          `json:"digest"`
 	At          string          `json:"at"`
-	Coordinator store.Endpoint  `json:"coordinator"`
+	Coordinator json.RawMessage `json:"coordinator"`
 	Proofs      []deliveryProof `json:"proofs"`
 }
 type resolutionLedger struct {
@@ -143,9 +144,13 @@ func ObligationRevision(task *ordjson.Object, id string) string {
 	return ""
 }
 
-func ApplicationReceipt(task *ordjson.Object, id, kind string, endpoint store.Endpoint) *ordjson.Object {
-	r := applicationReceipt{Kind: kind, Obligation: id, Revision: ObligationRevision(task, id), Endpoint: endpoint, At: store.Now()}
-	o, _ := ordjson.FromValue(r)
+func ApplicationReceipt(task *ordjson.Object, id, kind string, endpoint *ordjson.Object) *ordjson.Object {
+	o := ordjson.NewObject()
+	o.Set("kind", kind)
+	o.Set("obligation", id)
+	o.Set("revision", ObligationRevision(task, id))
+	o.Set("endpoint", evidence.Endpoint(endpoint))
+	o.Set("at", store.Now())
 	return o
 }
 
@@ -300,7 +305,7 @@ func validateProofCoverage(s *store.Store, task, row *ordjson.Object, proofs []d
 		}
 		if r := proof.Consumption; r != nil {
 			b := r.Boundary
-			if r.Result != "consumed" || !validStamp(r.At) || !receiptAfter(row, r.At) || b == nil || r.Delivery != deliveryID || b.Generation != r.Generation || b.Generation < 1 || b.Episode == "" || routeValue(row, "wake_episode") != b.Episode || fmt.Sprint(routeValue(row, "wake_generation")) != fmt.Sprint(b.Generation) || b.Installation != instance || b.Schema != WakeSchema || r.Fingerprint != b.Fingerprint() {
+			if r.Result != "consumed" || !validStamp(r.At) || !receiptAfter(row, r.At) || b == nil || r.Delivery != deliveryID || b.Generation != r.Generation || b.Generation < 1 || b.Episode == "" || routeValue(row, "wake_episode") != b.Episode || fmt.Sprint(routeValue(row, "wake_generation")) != fmt.Sprint(b.Generation) || b.Installation != instance || b.Schema != historicalSchema || r.Fingerprint != b.Fingerprint() {
 				return fmt.Errorf("invalid consumed boundary receipt")
 			}
 			var evidence incarnation.NativeEvidence
@@ -361,7 +366,11 @@ func DeliveryResolved(s *store.Store, task *ordjson.Object, row *ordjson.Object)
 	if found == nil {
 		return false, nil
 	}
-	if found.Digest != digest(row) || !validStamp(found.At) || found.Coordinator.Validate() != nil || found.Coordinator.Role != "coordinator" {
+	actorValue, actorErr := ordjson.Decode(found.Coordinator)
+	actor, _ := actorValue.(*ordjson.Object)
+	native := store.EndpointFromContext(actor)
+	validActor := store.ValidateLogicalOwner(actor) == nil || native.Validate() == nil && native.Role == "coordinator"
+	if found.Digest != digest(row) || !validStamp(found.At) || actorErr != nil || !validActor {
 		return false, fmt.Errorf("invalid or stale delivery reconciliation")
 	}
 	if err = validateProofs(s, task, row, found.Proofs); err != nil {
@@ -415,7 +424,7 @@ func ReconcileDelivery(s *store.Store, ctx *ordjson.Object, taskID, deliveryID s
 	if err != nil {
 		return nil, fmt.Errorf("delivery lacks full historical endpoint: %w", err)
 	}
-	lockCtx, cancel := context.WithTimeout(context.Background(), wakeLockWait)
+	lockCtx, cancel := context.WithTimeout(context.Background(), 2*DefaultPassBudget)
 	defer cancel()
 	unlockRecipient, err := LockRecipient(s, lockCtx, endpoint.Object())
 	if err != nil {
@@ -494,8 +503,8 @@ func ReconcileDelivery(s *store.Store, ctx *ordjson.Object, taskID, deliveryID s
 		if err != nil {
 			return nil, err
 		}
-		w, status := readWake(s, readInstallation(s), [3]string{host.Canonical(endpoint.Machine), endpoint.CoreID, endpoint.Address})
-		if status.State == WakeBlocked {
+		w, status := readHistoricalSidecar(s, readInstallation(s), [3]string{host.Canonical(endpoint.Machine), endpoint.CoreID, endpoint.Address})
+		if status.State == historicalBlocked {
 			return nil, fmt.Errorf("wake receipt unreadable: %s", status.Diagnostic)
 		}
 		if w != nil {
@@ -514,7 +523,11 @@ func ReconcileDelivery(s *store.Store, ctx *ordjson.Object, taskID, deliveryID s
 	if err != nil {
 		return nil, err
 	}
-	ledger.Resolutions = append(ledger.Resolutions, deliveryResolution{Delivery: deliveryID, Digest: digest(row), At: store.Now(), Coordinator: store.EndpointFromContext(ctx), Proofs: proofs})
+	coordinator, err := ordjson.MarshalCompact(evidence.Endpoint(ctx))
+	if err != nil {
+		return nil, err
+	}
+	ledger.Resolutions = append(ledger.Resolutions, deliveryResolution{Delivery: deliveryID, Digest: digest(row), At: store.Now(), Coordinator: coordinator, Proofs: proofs})
 	dir, _ := s.TaskPath(taskID)
 	object, _ := ordjson.FromValue(ledger)
 	if err = ordjson.WriteFile(filepath.Join(dir, ResolutionFile), object); err != nil {

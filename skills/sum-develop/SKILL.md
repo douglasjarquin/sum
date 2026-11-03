@@ -26,7 +26,7 @@ Read the returned `path`, `branch`, `role`, and `note`; tell the user the path y
 Rerunning the same name reopens the existing checkout with its uncommitted work intact.
 The helper refuses symlinked or overlapping paths and never nests a development checkout inside another one.
 `--pane` creates an ordinary HC terminal at the checkout; it starts no agent and copies no coordinator identity.
-It uses only the current existing qualified HC context and never starts a core.
+With no existing qualified native caller, it still creates the checkout and reports `terminal: null`; it never starts a core.
 The shell launch strips inherited task/home/role identity and records durable intent, effect and the returned terminal in the development marker.
 Repeating prepare observes that saved launch; it never automatically replays a lost response or replaces a finished or uncertain shell terminal.
 
@@ -56,8 +56,9 @@ Without an index, read the source; nothing about the checkout depends on it.
 `VERIFY.md` at the root is this repository's verification contract; `.agents/skills/verify` is the portable procedure and runner behind `mise run verify`, usable in any clone without sum.
 `.agents/skills/evidence` captures before/after proof of one mapped scenario from the base and candidate builds; `.agents/skills/create-verification` bootstraps that contract in another repository and `.agents/skills/maintain-verification` audits it after a change.
 HC CLI facts come from the staged release-matched HC manual, not remembered flags.
-The observer is a non-agent event subscriber; it does not grant authority to operate another session.
-Never claim an existing-installation migration succeeded without an enforceable old-writer/sender exclusion lease; current legacy APIs do not provide that proof.
+Ordinary coordination uses a logical claim; a developer remains isolated from installation runtime authority.
+Native retirement uses a root state-format fence to reject old helper ledger writes and native sends, while preserving generation headers and historical task/procedure bytes.
+It does not prove universal exclusion of preauthorized process or Git I/O, and development tests do not prove a live cutover.
 
 Run the canonical verifier once for this role in the checkout, using the candidate's merge base:
 

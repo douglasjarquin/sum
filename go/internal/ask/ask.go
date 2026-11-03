@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/maintenance"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/redact"
@@ -535,7 +536,7 @@ func answerOperation(s *store.Store, taskID, questionID, text, choiceID, expecte
 	if choiceID != "" {
 		question.Set("answer_choice", choiceID)
 	}
-	question.Set("read_receipt", returns.ApplicationReceipt(task, "question:"+questionID, "question-answered", store.EndpointFromContext(endpoint)))
+	question.Set("read_receipt", returns.ApplicationReceipt(task, "question:"+questionID, "question-answered", endpoint))
 	question.Set("answer", text)
 	question.Set("answered_at", store.Now())
 	question.Set("status", "answered")
@@ -666,7 +667,7 @@ func Resolve(s *store.Store, taskID, questionID string, ctx *ordjson.Object) (*o
 	if status != "answered" {
 		return nil, fmt.Errorf("Only an answered question can be marked applied.")
 	}
-	question.Set("application_receipt", returns.ApplicationReceipt(task, "answer:"+questionID, "answer-applied", store.EndpointFromContext(ctx)))
+	question.Set("application_receipt", returns.ApplicationReceipt(task, "answer:"+questionID, "answer-applied", ctx))
 	question.Set("status", "applied")
 	question.Set("applied_at", store.Now())
 	if allApplied(task) {
@@ -738,12 +739,7 @@ func Close(s *store.Store, ctx *ordjson.Object, taskID, questionID, reason strin
 	if state, _ := execution.Worker.Get("state"); state != "released" {
 		return nil, fmt.Errorf("Worker attempt %v is %v, so a worker may still apply this answer. Run `execution park %s --attempt %v` once its stop is proven. Nothing was closed.", attemptID, state, taskID, attemptID)
 	}
-	by := ordjson.NewObject()
-	by.Set("role", "coordinator")
-	for _, field := range []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"} {
-		v, _ := ctx.Get(field)
-		by.Set(field, v)
-	}
+	by := evidence.Endpoint(ctx)
 	question.Set("status", ClosedUnapplied)
 	question.Set("closed_at", store.Now())
 	question.Set("closed_by", by)

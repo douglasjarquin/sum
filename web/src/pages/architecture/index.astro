@@ -8,7 +8,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     <p class="lede">
       Roles, state, and what ships in the distro. Instructions and skills do
       the reasoning. HC owns terminal processes; Git owns worktrees. A small synchronous
-      helper preserves task records. A scoped non-agent event observer reconciles the ledger. There is no task scheduler, database server, or permanent hierarchy of managers.
+      helper preserves task records. Bounded collection reads saved results and delivers queued worker answers. There is no task scheduler, database server, or permanent hierarchy of managers.
     </p>
     <div class="sec">
       <h2 style="margin:0 0 14px">Session roles</h2>
@@ -20,7 +20,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
             coordinator
           </div>
           <div style="color:var(--body);font-size:12px">
-            An explicit qualified HC launch binds the coordinator and its initialization receipt; no implicit claim from a working directory.
+            Your usual agent conversation initializes a logical claim without HC and carries it on coordinator mutations.
           </div>
         </div>
         <div>
@@ -41,7 +41,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
             developer
           </div>
           <div style="color:var(--body);font-size:12px">
-            Other sessions default to developer, cannot dispatch or rebind tasks, and modify Sum only in an isolated development checkout.
+            A development marker or explicit developer role keeps Sum development in an isolated checkout; failed task identity never falls through to coordination.
           </div>
         </div>
       </div>
@@ -64,7 +64,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       <div class="codeblock">
         <div>./bin/sumctl inbox --live</div>
         <div>./bin/sumctl show TASK_ID</div>
-        <div>./bin/sumctl answer TASK_ID QUESTION_ID --text 'Keep both endpoints for one release.'</div>
+        <div>./bin/sumctl answer TASK_ID QUESTION_ID --claim TOKEN --text 'Keep both endpoints for one release.'</div>
       </div>
       <p style="margin:14px 0 12px">
         <code>show</code> returns the whole record and keeps its shape. <code
@@ -99,7 +99,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         worker. Nothing has to be acknowledged for it to stay listed, and
         nothing but a later record closes it.
       </p>
-      <p>The scoped observer performs bounded native-event and snapshot reconciliation; an enabled preference alone proves no running observer. Submitted or uncertain mutations are never automatically replayed. Native idle/Done is not completion and a report still needs independent review and coordinator verification.</p>
+      <p>Collection lists actionable results and waits within one shared deadline without starting HC or recording read receipts. Submitted or uncertain mutations are never automatically replayed. Native idle/Done is not completion and a report still needs independent review and coordinator verification.</p>
     </div>
     <div class="sec">
       <h2>Three command classes</h2>
@@ -111,7 +111,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         </div>
         <div class="k">fast delivery</div>
         <div class="v">
-          init, bind, pump, notice, observer events. Budgeted delivery passes
+          collect, pump and worker-directed notice. Budgeted delivery passes
           (default 20 s); never call GitHub or apply cleanup.
         </div>
         <div class="k">maintenance</div>
@@ -126,8 +126,8 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
       <h2>Manual dispatch</h2>
       <div class="codeblock">
         <div>cp templates/task.md /tmp/my-task.md</div>
-        <div class="c"># Edit the brief, then from inside a HC terminal:</div>
-        <div>./bin/sumctl dispatch --repo /absolute/path/to/repo \</div>
+        <div class="c"># Edit the approved brief in your ordinary conversation:</div>
+        <div>./bin/sumctl dispatch --claim TOKEN --repo /absolute/path/to/repo \</div>
         <div>&#32;&#32;--brief /tmp/my-task.md --harness codex --approved</div>
       </div>
       <p>

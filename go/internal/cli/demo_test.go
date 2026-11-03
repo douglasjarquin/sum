@@ -24,25 +24,8 @@ func TestOfflineDemo(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	mainSHA := git(repo, "rev-parse", "HEAD")
-	coordinator := nativeCoordinatorTerminal(t, d)
-	stranger := coordinator
-	stranger.Address = "t9"
-	stranger.CreatedMS = 9
-	pid := uint32(300000)
-	stranger.PID = &pid
-	foreground := *stranger.Foreground
-	foreground.PID = 300001
-	stranger.Foreground = &foreground
-	d.native.SetTerminal(stranger)
-	if view := d.ctlPane("t9", true, "init"); view["role"] != "developer" {
-		t.Fatalf("unregistered native terminal inherited authority: %v", view)
-	}
-	beforeOwner := readFileString(t, filepath.Join(d.home, "context.json"))
-	if view := d.ctlPane("t9", false, "init", "--role", "coordinator"); asString(view["error"]) == "" {
-		t.Fatalf("second live terminal took over: %v", view)
-	}
-	if readFileString(t, filepath.Join(d.home, "context.json")) != beforeOwner {
-		t.Fatal("failed takeover rewrote owner")
+	if view := d.ctl(true, "init"); view["role"] != "coordinator" || view["endpoint"] != nil {
+		t.Fatalf("ordinary conversation init: %v", view)
 	}
 	codegraphCalls := filepath.Join(d.base, "fake-codegraph", "calls.jsonl")
 	beforeCalls := countLines(t, codegraphCalls)
@@ -55,8 +38,8 @@ func TestOfflineDemo(t *testing.T) {
 	if countLines(t, codegraphCalls) != beforeCalls {
 		t.Fatal("dispatch indexed a checkout without request")
 	}
-	if asString(asMap(asMap(task["launch"])["source"])["harness"]) != "root" {
-		t.Fatalf("coordinator harness resolution: %v", task["launch"])
+	if asString(asMap(asMap(task["launch"])["source"])["harness"]) != "saved-default" {
+		t.Fatalf("saved worker harness resolution: %v", task["launch"])
 	}
 	if launch := asMap(task["launch"]); launch["model"] != nil || asString(asMap(launch["source"])["model"]) != "native-default" {
 		t.Fatalf("native default model provenance: %v", launch)
@@ -85,19 +68,19 @@ func TestOfflineDemo(t *testing.T) {
 	if worker := d.ctlPane(address, true, "init"); worker["role"] != "worker" || worker["task"] != id {
 		t.Fatalf("native worker receipt: %v", worker)
 	}
-	startNativeObserver(t, d)
-	d.native.SetStatus("t1", "working")
 	first := d.ctlPane(address, true, "ask", id, "--key", "punctuation", "--text", "Keep the exclamation mark?")
 	second := d.ctlPane(address, true, "ask", id, "--key", "second", "--text", "Make another change?")
 	firstID, secondID := asString(asMap(first["question"])["id"]), asString(asMap(second["question"])["id"])
 	if firstID == "" || secondID == "" || firstID == secondID {
 		t.Fatal("two durable decisions were not preserved")
 	}
-	d.native.SetStatus("t1", "done")
-	waitNativeCondition(t, func() bool { return len(d.native.Inputs("t1")) > 0 })
+	collected := d.ctl(true, "collect", "--budget", "100ms")
+	if len(asSlice(collected["items"])) < 2 {
+		t.Fatalf("questions missing from collection: %v", collected)
+	}
 	shown := d.ctl(true, "show", id)
 	if len(asSlice(shown["questions"])) != 2 {
-		t.Fatal("native wake closed decisions without answers")
+		t.Fatal("collection closed decisions without answers")
 	}
 	for _, decision := range []struct{ id, text string }{{secondID, "No second change."}, {firstID, "Yes, keep it."}} {
 		d.ctl(true, "answer", id, decision.id, "--text", decision.text)
@@ -122,7 +105,7 @@ func TestOfflineDemo(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(repo, "greeting.py")); !os.IsNotExist(err) {
 		t.Fatalf("primary checkout gained worker changes: %v", err)
 	}
-	t.Log("native offline demo proved explicit roles, isolated dispatch, capacity, real observer startup, durable decisions, worker report, independent review and coordinator verification")
+	t.Log("ordinary-agent offline demo proved claims, isolated parentless dispatch, capacity, pull collection, durable decisions, worker report, independent review and coordinator verification")
 }
 
 // countLines counts newline-terminated records in a fake's call log; a missing log counts zero.
@@ -145,6 +128,8 @@ type demoLab struct {
 	env          []string
 	native       *hctest.Fixture
 	config       string
+	claim        string
+	entryHelper  string
 }
 
 func demoEnv(t *testing.T, root, base string) []string {
@@ -192,7 +177,15 @@ func (d *demoLab) ctl(check bool, args ...string) map[string]any {
 
 func (d *demoLab) ctlPane(pane string, check bool, args ...string) map[string]any {
 	d.t.Helper()
-	cmd := exec.Command(d.helper, append([]string{"--format", "json", "--home", d.home}, args...)...)
+	prefix := []string{"--format", "json", "--home", d.home}
+	if pane == "" && d.claim != "" {
+		prefix = append(prefix, "--claim", d.claim)
+	}
+	helper := d.helper
+	if pane == "" && len(args) > 0 && args[0] == "init" && d.entryHelper != "" {
+		helper = d.entryHelper
+	}
+	cmd := exec.Command(helper, append(prefix, args...)...)
 	env := d.env
 	if pane != "" {
 		env = append([]string{}, d.env...)

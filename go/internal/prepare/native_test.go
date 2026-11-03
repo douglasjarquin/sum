@@ -2,6 +2,8 @@ package prepare
 
 import (
 	"encoding/json"
+	"fmt"
+	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/launch"
@@ -10,6 +12,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -47,17 +50,20 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: machine.ID, CoreID: fixture.CoreID, Session: "sum-test", Socket: fixture.Socket, Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: root}
-			provenance, _ := ordjson.FromValue(NativeTemplate{spec, config, options})
-			owner := endpoint.Object()
-			owner.Set("native_template", provenance)
-			if err = ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
+			session, err := st.ClaimCoordinator("", "ordinary coordinator", false)
+			if err != nil {
 				t.Fatal(err)
 			}
-			holder := ordjson.NewObject()
-			holder.Set("machine", machine.ID)
-			holder.Set("session", "sum-test")
-			holder.Set("pane", nil)
+			ctx := session.Owner()
+			ctx.Set("claim", session.Token())
+			route, _ := ordjson.FromValue(hcboot.Route{Socket: fixture.Socket, CoreID: fixture.CoreID, Session: "sum-test", ConfigHome: config, StateHome: t.TempDir()})
+			if err := ordjson.WriteFile(filepath.Join(st.Root, "runtime-route.json"), route); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(st.Home, "settings.json"), []byte(`{"schema":1,"template":{"codex_home":`+strconv.Quote(home)+`}}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			holder := session.Owner()
 			attempt, err := reservations.NewAttempt("worker", holder, checkout, store.Now(), "held", nil)
 			if err != nil {
 				t.Fatal(err)
@@ -71,6 +77,8 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			task.Set("execution", reservations.NewExecution(attempt))
 			task.Set("launch", ordjson.NewObject())
 			task.Set("evidence", []any{})
+			task.Set("owner", session.Owner())
+			task.Set("parent", nil)
 			if err = st.SaveTask(task); err != nil {
 				t.Fatal(err)
 			}
@@ -85,7 +93,7 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := startNative(st, endpoint.Object(), root, "t-0123456789ab", filepath.Join(checkout, "brief.md"), task, attempt, ordjson.NewObject(), nil, unlock)
+			result, err := startNative(st, ctx, root, "t-0123456789ab", filepath.Join(checkout, "brief.md"), task, attempt, ordjson.NewObject(), nil, unlock)
 			if err == nil {
 				t.Fatal("empty harness unexpectedly qualified")
 			}
@@ -110,7 +118,7 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err = startNative(st, endpoint.Object(), root, "t-0123456789ab", filepath.Join(checkout, "brief.md"), task, attempt, specLaunch, nil, unlock)
+			result, err = startNative(st, ctx, root, "t-0123456789ab", filepath.Join(checkout, "brief.md"), task, attempt, specLaunch, nil, unlock)
 			if scenario.lost {
 				if err == nil {
 					t.Fatal("lost response was accepted")
@@ -151,6 +159,9 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			if native == nil || policyField(native, "first_message") == nil {
 				t.Fatal("first-message record missing")
 			}
+			if policyField(asObject(policyField(result, "launch")), "hc_template") == nil {
+				t.Fatal("the persisted launch lost its qualified worker template")
+			}
 			terminals := fixture.Terminals()
 			if len(terminals) != 1 {
 				t.Fatalf("terminals=%d", len(terminals))
@@ -164,6 +175,9 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			}
 			sends := 0
 			for _, call := range fixture.Calls() {
+				if call.Method == "terminal.run" && (call.Params["parent"] != nil || call.Params["caller"] != nil) {
+					t.Fatal("worker creation retained a native coordinator parent/caller")
+				}
 				if call.Method == "terminal.run" && len(call.Params["argv"].([]any)) != 1 {
 					t.Fatal("creation included an implicit opening")
 				}
@@ -173,6 +187,55 @@ func TestNativeLaunchPersistsCreationWithoutAdoptingStarted(t *testing.T) {
 			}
 			if sends != 1 {
 				t.Fatalf("opening sends=%d", sends)
+			}
+			if scenario.name == "sent" {
+				secondCheckout := t.TempDir()
+				secondAttempt, err := reservations.NewAttempt("worker", session.Owner(), secondCheckout, store.Now(), "held", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				second := ordjson.NewObject()
+				for _, key := range task.Keys() {
+					value, _ := task.Get(key)
+					second.Set(key, value)
+				}
+				second.Set("id", "t-abcdef012345")
+				second.Set("status", "prepared")
+				second.Set("worktree", secondCheckout)
+				second.Set("execution", reservations.NewExecution(secondAttempt))
+				if err := st.SaveTask(second); err != nil {
+					t.Fatal(err)
+				}
+				unlock, err := st.Lock()
+				if err != nil {
+					t.Fatal(err)
+				}
+				secondResult, err := startNative(st, ctx, root, "t-abcdef012345", filepath.Join(secondCheckout, "brief.md"), second, secondAttempt, specLaunch, nil, unlock)
+				if err != nil {
+					t.Fatal(err)
+				}
+				firstEndpoint := store.EndpointFromContext(asObject(policyField(result, "worker_endpoint")))
+				secondEndpoint := store.EndpointFromContext(asObject(policyField(secondResult, "worker_endpoint")))
+				if firstEndpoint.Address == secondEndpoint.Address || firstEndpoint.Attempt == secondEndpoint.Attempt || firstEndpoint.Cwd == secondEndpoint.Cwd {
+					t.Fatal("workers did not retain distinct execution identities")
+				}
+				tasks, err := st.AllTasks()
+				if err != nil {
+					t.Fatal(err)
+				}
+				occupied, err := launch.Occupancy(tasks)
+				if err != nil {
+					t.Fatal(err)
+				}
+				count, _ := occupied.Get("global")
+				if fmt.Sprint(count) != "2" {
+					t.Fatalf("two worker attempts not counted: %v", occupied)
+				}
+				for _, call := range fixture.Calls() {
+					if call.Method == "terminal.run" && (call.Params["parent"] != nil || call.Params["caller"] != nil) {
+						t.Fatal("second worker inherited a native coordinator")
+					}
+				}
 			}
 		})
 	}

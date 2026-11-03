@@ -1,5 +1,9 @@
 # Issue 330 verification record
 
+Historical evidence archive for the revisions named below.
+Native coordinator, event-subscriber and live contract-adoption procedures described here are retired.
+Use `docs/architecture.md`, `docs/update.md` and the current `docs/ACCEPTANCE.md` for this candidate; historical results do not certify it.
+
 This change uses unmodified published HC 0.1.14.
 The readiness workaround, exact release provenance and limits are recorded in [the runtime decision](../decisions/hc-runtime.md).
 The implementation remains isolated from the serving installation.

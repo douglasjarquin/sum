@@ -95,10 +95,10 @@ func TestPresetCommands(t *testing.T) {
 		{name: "valid list after dashdash", args: []string{"preset", "list", "--"}, success: true},
 		{name: "valid show", args: []string{"preset", "show", "fast"}, success: true},
 		{name: "valid show after dashdash", args: []string{"preset", "show", "--", "fast"}, success: true},
-		{name: "valid set --harness", args: []string{"preset", "set", "fast", "--harness", "claude"}, domainErr: "HC session"},
-		{name: "valid set --harness=", args: []string{"preset", "set", "fast", "--harness=claude"}, domainErr: "HC session"},
-		{name: "valid set --arg repeatable", args: []string{"preset", "set", "fast", "--arg", "--flag", "--arg=--other"}, domainErr: "HC session"},
-		{name: "valid delete", args: []string{"preset", "delete", "fast"}, domainErr: "HC session"},
+		{name: "valid set --harness", args: []string{"preset", "set", "fast", "--harness", "claude"}, domainErr: "claim_required"},
+		{name: "valid set --harness=", args: []string{"preset", "set", "fast", "--harness=claude"}, domainErr: "claim_required"},
+		{name: "valid set --arg repeatable", args: []string{"preset", "set", "fast", "--arg", "--flag", "--arg=--other"}, domainErr: "claim_required"},
+		{name: "valid delete", args: []string{"preset", "delete", "fast"}, domainErr: "claim_required"},
 		{name: "preset missing subcommand", args: []string{"preset"}, usage: true},
 		{name: "list extra positional", args: []string{"preset", "list", "extra"}, usage: true},
 		{name: "list unknown flag", args: []string{"preset", "list", "--unexpected"}, usage: true, unknown: true},
@@ -109,8 +109,8 @@ func TestPresetCommands(t *testing.T) {
 		{name: "set missing --harness value", args: []string{"preset", "set", "fast", "--harness"}, usage: true},
 		{name: "delete missing name", args: []string{"preset", "delete"}, usage: true},
 		{name: "delete unknown flag", args: []string{"preset", "delete", "fast", "--unexpected"}, usage: true, unknown: true},
-		{name: "set requires coordinator", args: []string{"preset", "set", "fast", "--harness", "claude"}, herdr: true, domainErr: "registration identity mismatch"},
-		{name: "delete requires coordinator", args: []string{"preset", "delete", "fast"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "set requires coordinator", args: []string{"preset", "set", "fast", "--harness", "claude"}, herdr: true, domainErr: "claim_required"},
+		{name: "delete requires coordinator", args: []string{"preset", "delete", "fast"}, herdr: true, domainErr: "claim_required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -162,7 +162,7 @@ func runPreset(t *testing.T, home string, args ...string) (stdout, stderr string
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

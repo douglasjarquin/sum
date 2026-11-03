@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ask"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
@@ -77,22 +78,14 @@ func newSweepLab(t *testing.T) *sweepLab {
 	}
 	host := hostInfo.ID
 	hc := hctest.New(t)
-	ep := store.Endpoint{Schema: 2, Backend: "hc", Machine: host, CoreID: hc.CoreID, Session: "sum-test", Socket: hc.Socket, Address: "t1", Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, CreatedMS: 1, Cwd: home}
-	cp := uint32(12000)
-	cf := &hcclient.Foreground{PID: 12001, Name: "codex", Argv: []string{"codex"}, Cwd: home}
-	hc.SetTerminal(hcclient.Terminal{Address: "t1", State: "live", CreatedMS: 1, Cwd: home, PID: &cp, Foreground: cf})
-	bound := incarnation.NativeEvidence{Endpoint: ep.Native(), PID: cp, Foreground: cf}
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: ep.Native(), Kind: "coordinator-init", Attempt: ep.Attempt})
-	owner := ep.Object()
-	owner.Set("incarnation", bound.Record(store.Now()))
-	owner.Set("native_receipt", receipt)
-	if _, err = st.Register(ep, "coordinator", nil, bound.Record(store.Now())); err != nil {
+	session, err := st.ClaimCoordinator("", "maintenance conversation", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(st.Home, "context.json"), owner); err != nil {
+	ctx, err := app.RequireClaim(st, session.Token())
+	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := ep.Object()
 	repo := t.TempDir()
 	for _, argv := range [][]string{
 		{"git", "-C", repo, "init", "-b", "main"},
@@ -158,7 +151,14 @@ func (l *sweepLab) saveTaskAs(pr, candidate, extraEvidence string) {
 	ep := l.endpoint("t2", "worker", sweepWorkerID, 2, l.checkout)
 	obj.Set("schema", json.Number("2"))
 	obj.Set("worker_endpoint", ep.Object())
-	obj.Set("parent", l.ctx)
+	session, err := l.store.CoordinatorSession()
+	if err != nil {
+		l.t.Fatal(err)
+	}
+	obj.Set("owner", session.Owner())
+	obj.Set("parent", nil)
+	worker := asObject(field(asObject(field(obj, "execution")), "worker"))
+	worker.Set("owner", session.Owner())
 	for _, raw := range asList(field(obj, "evidence")) {
 		e := asObject(raw)
 		e.Set("endpoint", ep.Object())
@@ -657,12 +657,13 @@ func TestSweep_closesReportedWorkerPane(t *testing.T) {
 	l.saveTask(l.openPR())
 	ep := roleEndpoint(l.task(), "worker")
 	l.terminal(ep, "finished")
+	l.hc.SetTerminal(hcclient.Terminal{Address: "unrelated", CreatedMS: 1, State: "live"})
 	row := l.closeWorker()
 	if asString(row, "state") != "closed" {
 		t.Fatalf("%v", row)
 	}
 	l.assertTerminal(ep.Address, false)
-	l.assertTerminal("t1", true)
+	l.assertTerminal("unrelated", true)
 	if !panes.WorkerIsClosed(l.task()) {
 		t.Fatal("missing exact closure")
 	}
@@ -691,17 +692,25 @@ func TestSweep_leavesInFlightWorkerPane(t *testing.T) {
 		})
 	}
 }
-func TestSweep_neverClosesCoordinatorPane(t *testing.T) {
+func TestSweep_rejectsLogicalOwnerAsWorkerEndpoint(t *testing.T) {
 	l := newSweepLab(t)
 	l.saveTask(l.openPR())
 	task := l.task()
+	endpoint := roleEndpoint(task, "worker")
+	l.terminal(endpoint, "finished")
 	task.Set("worker_endpoint", l.ctx)
 	l.save(task)
+	before := len(l.hc.Calls())
 	row := l.closeWorker()
 	if asString(row, "state") != "skipped" {
 		t.Fatal(row)
 	}
-	l.assertTerminal("t1", true)
+	for _, call := range l.hc.Calls()[before:] {
+		if call.Method == "terminal.remove" {
+			t.Fatal("invalid worker identity removed a terminal")
+		}
+	}
+	l.assertTerminal(endpoint.Address, true)
 }
 func TestSweep_closesReviewerPaneAfterVerdict(t *testing.T) {
 	l := newSweepLab(t)

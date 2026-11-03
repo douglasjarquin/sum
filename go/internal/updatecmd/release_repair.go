@@ -27,6 +27,11 @@ func RepairReleaseTemplateContract(s *store.Store, sha string) (*ordjson.Object,
 		return nil, err
 	}
 	defer unlock()
+	unlockState, err := s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	defer unlockState()
 	state, err := readActivationState(s, root)
 	if err != nil {
 		return nil, err

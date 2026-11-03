@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
+	"github.com/douglasjarquin/sum/go/internal/evidence"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -179,12 +180,7 @@ func enrollmentRecord(identity *Identity, kind, path, remote, canonical string, 
 	record.Set("remote", remote)
 	record.Set("canonical_path", canonical)
 	record.Set("enrolled_at", store.Now())
-	by := ordjson.NewObject()
-	for _, k := range []string{"schema", "backend", "machine", "core_id", "session", "socket", "address", "task", "role", "attempt", "binding_generation", "created_ms"} {
-		v, _ := ctx.Get(k)
-		by.Set(k, v)
-	}
-	record.Set("enrolled_by", by)
+	record.Set("enrolled_by", evidence.Endpoint(ctx))
 	record.Set("note", note)
 	return record
 }

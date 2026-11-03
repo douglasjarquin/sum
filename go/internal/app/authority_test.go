@@ -127,7 +127,7 @@ func checkActorLocked(l actorLab, actor *TaskActor, roles ...string) error {
 }
 
 func TestTaskActorRequiresLiveProcessReceiptAndCurrentBinding(t *testing.T) {
-	for _, role := range []string{"worker", "coordinator", "reviewer"} {
+	for _, role := range []string{"worker", "reviewer"} {
 		t.Run(role, func(t *testing.T) {
 			l := taskActorLab(t, role)
 			actor, err := ObserveTaskActor(l.store, l.endpoint.Object())

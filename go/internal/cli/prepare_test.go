@@ -70,49 +70,49 @@ func TestPrepareCommands(t *testing.T) {
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--harness", "codex", "--approved"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid prepare after dashdash",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--approved", "--"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid prepare equals flags",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo=owner/repo", "--brief=" + brief, "--harness=codex", "--approved"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid prepare --kind scout",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--kind", "scout", "--approved"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid prepare --kind=scout",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--kind=scout", "--approved"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
-			name: "valid prepare --same-as-you --preset --arg",
+			name: "valid prepare --explicit-harness --preset --arg",
 			args: func(brief string) []string {
-				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--same-as-you", "--preset", "fast", "--arg", "foo", "--arg=bar", "--approved"}
+				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--harness", "codex", "--preset", "fast", "--arg", "foo", "--arg=bar", "--approved"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid prepare --approved=",
 			args: func(brief string) []string {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--approved=true"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid prepare with herdr",
@@ -120,28 +120,28 @@ func TestPrepareCommands(t *testing.T) {
 				return []string{"prepare", "--repo", "owner/repo", "--brief", brief, "--approved"}
 			},
 			herdr:     true,
-			domainErr: "registered coordinator",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid dispatch",
 			args: func(brief string) []string {
 				return []string{"dispatch", "--repo", "owner/repo", "--brief", brief, "--harness", "codex", "--approved"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid dispatch equals flags",
 			args: func(brief string) []string {
 				return []string{"dispatch", "--repo=owner/repo", "--brief=" + brief, "--approved"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid dispatch --arg and --base",
 			args: func(brief string) []string {
 				return []string{"dispatch", "--repo", "owner/repo", "--brief", brief, "--base", "HEAD", "--arg", "foo", "--approved"}
 			},
-			domainErr: "explicit HC session required",
+			domainErr: "claim_required",
 		},
 		{
 			name: "valid dispatch with herdr",
@@ -149,7 +149,7 @@ func TestPrepareCommands(t *testing.T) {
 				return []string{"dispatch", "--repo", "owner/repo", "--brief", brief, "--approved"}
 			},
 			herdr:     true,
-			domainErr: "registered coordinator",
+			domainErr: "claim_required",
 		},
 		{
 			name: "prepare unknown flag",

@@ -11,10 +11,8 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
-	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/prepare"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -61,7 +59,7 @@ func TestHCPrepareReconcileAndStartThroughCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := launch.HCTemplateOptions{Cwd: runtimeRoot, CodexHome: configHome}
-	spec, err := launch.PrepareHCTemplate(runtimeRoot, config, "codex", nil, options)
+	_, err = launch.PrepareHCTemplate(runtimeRoot, config, "codex", nil, options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,34 +70,26 @@ func TestHCPrepareReconcileAndStartThroughCLI(t *testing.T) {
 	if err = s.Init(); err != nil {
 		t.Fatal(err)
 	}
-	machine, err := s.Machine()
+	session, err := s.ClaimCoordinator("", "ordinary HC execution", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := store.Endpoint{Schema: 2, Backend: "hc", Machine: machine.ID, CoreID: fixture.CoreID, Socket: fixture.Socket, Session: "sum-test", Address: "t1", CreatedMS: 1, Role: "coordinator", Attempt: "bootstrap", BindingGeneration: 1, Cwd: runtimeRoot}
-	pid := uint32(100000)
-	fg := &hcclient.Foreground{PID: 100001, Name: "codex", Argv: []string{codex}, Cwd: runtimeRoot}
-	fixture.SetTerminal(hcclient.Terminal{Address: "t1", CreatedMS: 1, Cwd: runtimeRoot, State: "live", PID: &pid, Foreground: fg})
-	bound := incarnation.NativeEvidence{Endpoint: coordinator.Native(), PID: pid, Foreground: fg}
-	owner := coordinator.Object()
-	owner.Set("incarnation", bound.Record(store.Now()))
-	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: coordinator.Native(), Kind: "coordinator-init", Attempt: "bootstrap"})
-	owner.Set("native_receipt", receipt)
-	provenance, _ := ordjson.FromValue(prepare.NativeTemplate{Spec: spec, ConfigHome: config, Options: options})
-	owner.Set("native_template", provenance)
-	if _, err = s.Register(coordinator, "coordinator", nil, bound.Record(store.Now())); err != nil {
+	route, _ := ordjson.FromValue(map[string]any{"socket": fixture.Socket, "session": "sum-test", "config_home": config, "state_home": filepath.Join(root, "hc-state"), "core_id": fixture.CoreID})
+	if err = ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+	settings, _ := ordjson.FromValue(map[string]any{"schema": 1, "worker": map[string]any{"harness": "codex"}, "template": map[string]any{"codex_home": configHome}})
+	if err = ordjson.WriteFile(filepath.Join(s.Home, "settings.json"), settings); err != nil {
 		t.Fatal(err)
 	}
-	for key, value := range map[string]string{"SUM_HOME": "", "SUM_INSTALL_ROOT": runtimeRoot, "SUM_SESSION": "sum-test", "SUM_CORE_ID": fixture.CoreID, "HC_SOCKET": fixture.Socket, "HC_TERMINAL_ID": "t1", "SUM_ROLE": "coordinator", "SUM_ATTEMPT": "bootstrap", "SUM_BINDING_GENERATION": "1"} {
-		t.Setenv(key, value)
+	for _, key := range []string{"SUM_HOME", "SUM_SESSION", "SUM_CORE_ID", "HC_SOCKET", "HC_TERMINAL_ID", "SUM_ROLE", "SUM_TASK", "SUM_ATTEMPT", "SUM_BINDING_GENERATION"} {
+		t.Setenv(key, "")
 	}
+	t.Setenv("SUM_INSTALL_ROOT", runtimeRoot)
 	run := func(args ...string) (map[string]any, error) {
 		var out, errOut bytes.Buffer
 		command := NewRoot(filepath.Join(runtimeRoot, "bin/sumctl"), &out, &errOut)
-		command.SetArgs(append([]string{"--home", s.Root, "--format", "json"}, args...))
+		command.SetArgs(append([]string{"--home", s.Root, "--format", "json", "--claim", session.Token()}, args...))
 		e := command.ExecuteContext(context.Background())
 		if e != nil {
 			return nil, e

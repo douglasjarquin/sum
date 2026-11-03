@@ -16,6 +16,11 @@ func unresolvedEffects(s *store.Store, tasks []*ordjson.Object) []any {
 	var blocked []any
 	for _, task := range tasks {
 		id := effectField(task, "id")
+		maintenance := asObject(func() any { v, _ := task.Get("terminal_maintenance"); return v }())
+		cleanup := asObject(func() any { v, _ := task.Get("cleanup"); return v }())
+		if unresolvedLaunch(maintenance) || effectField(cleanup, "state") == "removing" || (effectField(task, "status") == "preparing" && (effectField(task, "prepare_operation_id") != "" || func() bool { v, _ := task.Get("prepare_operation_pid"); return v != nil && fmt.Sprint(v) != "0" }())) {
+			blocked = append(blocked, fmt.Sprintf("task %s has unresolved preparation or terminal maintenance", id))
+		}
 		execution, err := reservations.GetExecution(task)
 		if err != nil {
 			blocked = append(blocked, fmt.Sprintf("task %s execution cannot be validated: %v", id, err))
@@ -26,17 +31,24 @@ func unresolvedEffects(s *store.Store, tasks []*ordjson.Object) []any {
 			for _, attempt := range attempts {
 				state := effectField(attempt, "state")
 				launch := asObject(func() any { v, _ := attempt.Get("native_launch"); return v }())
-				if state == "starting" || state == "uncertain" || (unresolvedLaunch(launch) && !nativeReceiptResolvesLaunch(s, task, attempt)) {
-					blocked = append(blocked, fmt.Sprintf("task %s attempt %s has an unresolved launch or send; reconcile it from the serving runtime before activation", id, effectField(attempt, "id")))
+				redelivery := asObject(func() any {
+					if launch == nil {
+						return nil
+					}
+					v, _ := launch.Get("redelivery")
+					return v
+				}())
+				if state == "running" || state == "starting" || state == "uncertain" || unresolvedLaunch(redelivery) || (unresolvedLaunch(launch) && !nativeReceiptResolvesLaunch(s, task, attempt)) {
+					blocked = append(blocked, fmt.Sprintf("task %s attempt %s is active or has an unresolved launch or send; settle or reconcile it before activation", id, effectField(attempt, "id")))
 				}
 			}
 		}
 		reviewer := asObject(func() any { v, _ := task.Get("reviewer"); return v }())
 		if reviewer != nil {
-			for _, field := range []string{"native_launch", "prompt"} {
+			for _, field := range []string{"native_launch", "prompt", "kickoff"} {
 				record := asObject(func() any { v, _ := reviewer.Get(field); return v }())
 				state := effectField(record, "state")
-				if state == "in-flight" || state == "uncertain" {
+				if state == "in-flight" || state == "uncertain" || state == "claimed" || state == "submitted" || unresolvedLaunch(record) {
 					blocked = append(blocked, fmt.Sprintf("task %s reviewer %s is unresolved; reconcile it from the serving runtime before activation", id, field))
 				}
 			}
@@ -53,7 +65,10 @@ func unresolvedLaunch(launch *ordjson.Object) bool {
 		return false
 	}
 	effect := effectField(launch, "effect")
-	if effect == "claimed" || effect == "uncertain" {
+	if effect == "" {
+		effect = effectField(launch, "state")
+	}
+	if effect == "claimed" || effect == "uncertain" || effect == "in-flight" || effect == "unknown" {
 		return true
 	}
 	redelivery := asObject(func() any { v, _ := launch.Get("redelivery"); return v }())
@@ -61,7 +76,7 @@ func unresolvedLaunch(launch *ordjson.Object) bool {
 		return false
 	}
 	effect = effectField(redelivery, "effect")
-	return effect == "claimed" || effect == "uncertain"
+	return effect == "claimed" || effect == "uncertain" || effect == "in-flight" || effect == "unknown"
 }
 
 func effectField(o *ordjson.Object, key string) string {
@@ -73,7 +88,7 @@ func effectField(o *ordjson.Object, key string) string {
 }
 
 func nativeReceiptResolvesLaunch(s *store.Store, task, attempt *ordjson.Object) bool {
-	if effectField(attempt, "state") != "running" {
+	if state := effectField(attempt, "state"); state != "running" && state != "released" {
 		return false
 	}
 	endpoint := store.EndpointFromContext(asObject(func() any { v, _ := task.Get("worker_endpoint"); return v }()))

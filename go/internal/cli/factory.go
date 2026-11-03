@@ -77,7 +77,7 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -121,7 +121,7 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -145,6 +145,13 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
+			ctx, err := o.context(st)
+			if err != nil {
+				return err
+			}
+			if err := app.RequireCoordinator(st, ctx); err != nil {
+				return err
+			}
 			view, err := factory.Tick(st, o.runtimeRoot, tickProject)
 			if err != nil {
 				return err
@@ -165,7 +172,7 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -198,7 +205,7 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -246,7 +253,7 @@ func (o *rootOptions) addFactoryCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}

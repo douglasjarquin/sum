@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import tomllib
@@ -39,6 +40,21 @@ class SetupTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Live migration is unavailable'):
             setup.configure(self.root)
         self.assertEqual(json.loads((self.root / '.sum/state.json').read_text())['schema'], 1)
+
+    def test_setup_preserves_logical_state_format_fence_and_generation_bytes(self):
+        setup.configure(self.root)
+        pointer = self.root / '.sum/state.json'
+        state = json.loads(pointer.read_text())
+        physical = self.root / '.sum/generations' / state['generation']
+        state['schema'] = 3
+        pointer.write_text(json.dumps(state) + '\n')
+        (physical / 'coordinator.json').write_text('{"schema":2,"session_id":"s-fixture","generation":1}\n')
+        before = {p.relative_to(self.root / '.sum'): p.read_bytes() for p in (self.root / '.sum').rglob('*') if p.is_file()}
+        setup.configure(self.root)
+        after = {p.relative_to(self.root / '.sum'): p.read_bytes() for p in (self.root / '.sum').rglob('*') if p.is_file()}
+        self.assertEqual(after, before)
+        self.assertEqual(json.loads(pointer.read_text())['schema'], 3)
+        self.assertEqual(json.loads((physical / 'state.json').read_text())['schema'], 2)
 
     def test_setup_in_a_development_checkout_never_designates_it(self):
         (self.root / '.sum').mkdir()
@@ -188,14 +204,15 @@ class SetupTest(unittest.TestCase):
         with self.assertRaisesRegex(setup.runtime_install.InstallError, "disabled"):
             setup.runtime_install.install_remainder(self.root / "runtime", pin=pin, platform_name="darwin-arm64")
 
-    def test_setup_guidance_uses_qualified_launch_and_explicit_core_config(self):
+    def test_setup_guidance_uses_ordinary_agent_entry_and_qualified_worker_profiles(self):
         output = io.StringIO()
         with patch.object(setup.sys, 'argv', ['setup.py', '--configure-only']), patch.object(setup, 'configure'), redirect_stdout(output):
             setup.main()
         text = output.getvalue()
         self.assertIn('Codex 0.166.0', text)
         self.assertIn('Tab', text)
-        self.assertIn('--hc-config-home', text)
+        self.assertIn('Start your agent here and ask for work.', text)
+        self.assertNotIn('coordinator start', text)
         self.assertIn('refused', text)
         self.assertNotIn('then launch codex, claude', text)
 
@@ -204,6 +221,32 @@ class SetupTest(unittest.TestCase):
         for parent in ('lib', 'scripts', 'tests'):
             for path in (ROOT / parent).rglob('*.py'):
                 compile(path.read_text(), str(path), 'exec')
+
+class BootstrapEntryTest(unittest.TestCase):
+    def test_unstaged_init_reports_setup_blocker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "bin").mkdir()
+            shutil.copy2(ROOT / "bin/sumctl", root / "bin/sumctl")
+            result = subprocess.run([str(root / "bin/sumctl"), "init"], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(json.loads(result.stdout), {"role": None, "blocker": "unstaged", "next": "mise run setup"})
+
+    def test_staged_entry_ignores_unrelated_inherited_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "workspace"
+            unrelated = Path(directory) / "unrelated"
+            unrelated.mkdir()
+            (root / "bin").mkdir(parents=True)
+            (root / ".local/bin").mkdir(parents=True)
+            shutil.copy2(ROOT / "bin/sumctl", root / "bin/sumctl")
+            binary = root / ".local/bin/sumctl"
+            binary.write_text('#!/bin/sh\nprintf "%s\\n" "$SUM_INSTALL_ROOT"\n')
+            binary.chmod(0o700)
+            result = subprocess.run([str(root / "bin/sumctl"), "init"], env=dict(os.environ, SUM_INSTALL_ROOT=str(unrelated)), text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(Path(result.stdout.strip()).resolve(), root.resolve())
+
 
 if __name__ == '__main__':
     unittest.main()

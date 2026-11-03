@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -155,6 +157,18 @@ func TestDoctorNativeChecksAreReadOnly(t *testing.T) {
 	home := writeDesignatedHome(t)
 	nativeEnv(t, home)
 	d := nativeLabFor(t, home)
+	st, openErr := store.Open(home)
+	if openErr != nil {
+		t.Fatal(openErr)
+	}
+	session, claimErr := st.CoordinatorSession()
+	if claimErr != nil {
+		t.Fatal(claimErr)
+	}
+	route, _ := ordjson.FromValue(map[string]string{"socket": d.native.Socket, "core_id": d.native.CoreID})
+	if err := ordjson.WriteFile(filepath.Join(st.Root, "runtime-route.json"), route); err != nil {
+		t.Fatal(err)
+	}
 	before := snapshotPresentationFiles(t, home)
 	calls := len(d.native.Calls())
 	stdout, stderr, err := runDoctor(t, home, "--format", "json", "doctor")
@@ -166,15 +180,18 @@ func TestDoctorNativeChecksAreReadOnly(t *testing.T) {
 		row := asMap(raw)
 		checks[asString(row["tool"])] = row
 	}
-	for _, name := range []string{"hc-runtime", "hc-core", "hc-context"} {
+	for _, name := range []string{"hc-runtime", "hc-core", "role"} {
 		if checks[name] == nil {
 			t.Fatalf("missing native doctor check %s: %v", name, checks)
 		}
 	}
+	if checks["hc-context"] != nil {
+		t.Fatal("ordinary doctor required native caller")
+	}
 	if checks["mesh"] != nil {
 		t.Fatal("doctor retained obsolete Mesh requirement")
 	}
-	if checks["hc-core"]["available"] != true || checks["hc-context"]["ok"] != true {
+	if checks["hc-core"]["available"] != true || asMap(checks["role"]["session"])["session_id"] != session.SessionID {
 		t.Fatalf("current native fixture not observed: %v", checks)
 	}
 	if after := snapshotPresentationFiles(t, home); !reflect.DeepEqual(before, after) {

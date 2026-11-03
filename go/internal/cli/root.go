@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,18 +13,25 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/helpview"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
+	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/spf13/cobra"
 )
 
 const Version = "sum 0.1.0"
 
 type ExitError struct {
-	Code int
+	Code  int
+	Cause error
 }
 
 func (e *ExitError) Error() string {
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
 	return fmt.Sprintf("reference helper exited with status %d", e.Code)
 }
+
+func (e *ExitError) Unwrap() error { return e.Cause }
 
 type rootOptions struct {
 	reference   string
@@ -32,6 +40,7 @@ type rootOptions struct {
 	home        string
 	homeSet     bool
 	format      string
+	claim       string
 	out         io.Writer
 	err         io.Writer
 }
@@ -70,6 +79,7 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	root.Flags().StringVar(&opts.home, "home", "", "state home")
 	root.Flags().Lookup("home").NoOptDefVal = ""
 	root.PersistentFlags().StringVar(&opts.format, "format", "toon", "stdout encoding: toon or json")
+	root.PersistentFlags().StringVar(&opts.claim, "claim", "", "captured coordinator conversation claim")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		opts.homeSet = root.Flags().Changed("home")
 		if !opts.homeSet {
@@ -119,7 +129,6 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addReleaseCommands(root)
 	opts.addProjectCommands(root)
 	opts.addFactoryCommands(root)
-	opts.addHookCommands(root)
 
 	opts.addShowCommand(root)
 	opts.addRestoreCommand(root)
@@ -130,6 +139,8 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	}})
 	opts.addHistoryCommand(root)
 	opts.addInspectCommand(root)
+	opts.addCollectCommand(root)
+	opts.addDeliveryCommands(root)
 	opts.addInitCommand(root)
 	opts.addPrepareCommands(root)
 	opts.addVerifyCommand(root)
@@ -137,7 +148,6 @@ func NewRoot(reference string, out, errOut io.Writer) *cobra.Command {
 	opts.addRefreshCommands(root)
 	opts.addCleanupCommand(root)
 	opts.addExecutionCommands(root)
-	opts.addWakeCommands(root)
 	opts.addRepairCommands(root)
 	opts.addStartCommand(root)
 	opts.addReviewCommand(root)
@@ -234,7 +244,22 @@ func wrapOutputFormat(cmd *cobra.Command, opts *rootOptions) {
 				opts.format = format
 			}
 			outputFormat = opts.format
-			return next(c, rest)
+			err := next(c, rest)
+			if errors.Is(err, store.ErrClaimRequired) || errors.Is(err, store.ErrStaleClaim) {
+				view := ordjson.NewObject()
+				view.Set("error", err.Error())
+				kind := "claim_required"
+				if errors.Is(err, store.ErrStaleClaim) {
+					kind = "stale-claim"
+				}
+				view.Set("blocker", kind)
+				view.Set("next", "Run init to inspect the current owner; resume this conversation with its captured claim.")
+				if writeErr := emitOrdjsonFormat(c.OutOrStdout(), opts.format, view); writeErr != nil {
+					return writeErr
+				}
+				return &ExitError{Code: 1, Cause: err}
+			}
+			return err
 		}
 	}
 	for _, child := range cmd.Commands() {

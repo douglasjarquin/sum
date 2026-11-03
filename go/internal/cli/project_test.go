@@ -131,7 +131,7 @@ func TestProjectEnroll_requiresCoordinator(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected coordinator requirement, stdout=%s stderr=%s", stdout, stderr)
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "HC session") {
+	if !strings.Contains(err.Error(), "claim_required") {
 		t.Fatalf("err = %v", err)
 	}
 	assertProjectRegistryUnchanged(t, home, "")
@@ -194,11 +194,11 @@ func TestProjectCommands(t *testing.T) {
 		{name: "valid show", args: []string{"project", "show", "owner/clean-proj"}, lab: "show", success: true},
 		{name: "valid show after dashdash", args: []string{"project", "show", "--", "owner/clean-proj"}, lab: "show", success: true},
 		{name: "valid migrate inspect", args: []string{"project", "migrate", "owner/clean-proj"}, lab: "show", success: true},
-		{name: "valid migrate --apply", args: []string{"project", "migrate", "owner/clean-proj", "--apply"}, lab: "show", herdr: true, domainErr: "registration identity mismatch"},
-		{name: "valid enroll --host", args: []string{"project", "enroll", "owner/repo", "--host", "github.com"}, herdr: true, domainErr: "registration identity mismatch"},
-		{name: "valid enroll --host=", args: []string{"project", "enroll", "owner/repo", "--host=github.com"}, herdr: true, domainErr: "registration identity mismatch"},
-		{name: "valid enroll --remote", args: []string{"project", "enroll", "owner/repo", "--remote", "https://github.com/owner/repo.git"}, herdr: true, domainErr: "registration identity mismatch"},
-		{name: "valid enroll --path", args: []string{"project", "enroll", "owner/repo", "--path", "/tmp/no-such-clone"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "valid migrate --apply", args: []string{"project", "migrate", "owner/clean-proj", "--apply"}, lab: "show", herdr: true, domainErr: "claim_required"},
+		{name: "valid enroll --host", args: []string{"project", "enroll", "owner/repo", "--host", "github.com"}, herdr: true, domainErr: "claim_required"},
+		{name: "valid enroll --host=", args: []string{"project", "enroll", "owner/repo", "--host=github.com"}, herdr: true, domainErr: "claim_required"},
+		{name: "valid enroll --remote", args: []string{"project", "enroll", "owner/repo", "--remote", "https://github.com/owner/repo.git"}, herdr: true, domainErr: "claim_required"},
+		{name: "valid enroll --path", args: []string{"project", "enroll", "owner/repo", "--path", "/tmp/no-such-clone"}, herdr: true, domainErr: "claim_required"},
 		{name: "project missing subcommand", args: []string{"project"}, usage: true},
 		{name: "show missing name", args: []string{"project", "show"}, usage: true},
 		{name: "enroll missing spec", args: []string{"project", "enroll"}, usage: true},
@@ -214,8 +214,8 @@ func TestProjectCommands(t *testing.T) {
 		{name: "migrate extra positional", args: []string{"project", "migrate", "owner/clean-proj", "extra"}, lab: "show", usage: true},
 		{name: "migrate unknown flag", args: []string{"project", "migrate", "owner/clean-proj", "--unexpected"}, lab: "show", usage: true, unknown: true},
 		{name: "migrate extra after --apply", args: []string{"project", "migrate", "owner/clean-proj", "--apply", "extra"}, lab: "show", usage: true},
-		{name: "enroll requires coordinator", args: []string{"project", "enroll", "owner/repo"}, herdr: true, domainErr: "registration identity mismatch"},
-		{name: "enroll requires pane without herdr", args: []string{"project", "enroll", "owner/repo"}, domainErr: "HC session"},
+		{name: "enroll requires coordinator", args: []string{"project", "enroll", "owner/repo"}, herdr: true, domainErr: "claim_required"},
+		{name: "enroll requires pane without herdr", args: []string{"project", "enroll", "owner/repo"}, domainErr: "claim_required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -261,7 +261,7 @@ func runProject(t *testing.T, home string, args ...string) (stdout, stderr strin
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

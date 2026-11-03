@@ -36,6 +36,7 @@ func newRuntimeLab(t *testing.T, withProcedure bool) *demoLab {
 	copyFile("bin/sumctl", 0o755)
 	copyFile(".local/bin/sumctl", 0o755)
 	copyFile("skills/sum-deliver/SKILL.md", 0o644)
+	copyFile("skills/sum-develop/SKILL.md", 0o644)
 	copyFile("COORDINATOR.md", 0o644)
 	copyFile(".agents/skills/verify/references/engineering-principles.md", 0o644)
 	if withProcedure {
@@ -388,7 +389,7 @@ func TestWorkerInitReportsAnUnreadableProcedureRecord(t *testing.T) {
 	}
 	before := snapshotTree(t, filepath.Join(d.home, "tasks", taskID))
 	view := d.ctlPane(pane, false, "init")
-	if asString(view["error"]) == "" {
+	if view["blocker"] != "task-context" || view["role"] != nil || !strings.Contains(asString(view["detail"]), "versions.json") {
 		t.Fatalf("unreadable versions granted initialized authority: %v", view)
 	}
 	assertTreeUnchanged(t, before, snapshotTree(t, filepath.Join(d.home, "tasks", taskID)))

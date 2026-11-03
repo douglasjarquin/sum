@@ -12,11 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/reservations"
+	"github.com/douglasjarquin/sum/go/internal/settings"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -39,34 +41,70 @@ func NativeName(installation, task, role, attempt string) string {
 }
 
 func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, briefFile string, task, worker, launchSpec *ordjson.Object, argv []string, unlock func() error) (*ordjson.Object, error) {
-	parent := store.EndpointFromContext(ctx)
-	owner, err := s.Owner()
+	token := asString(policyField(ctx, "claim"))
+	if err := s.CaptureClaim(token); err != nil {
+		unlock()
+		return nil, err
+	}
+	route, err := hcboot.PrepareWorkspaceRoute(s)
 	if err != nil {
 		unlock()
 		return nil, err
 	}
-	matches, err := s.Matches(owner, parent)
-	if err != nil || !matches {
-		unlock()
-		return nil, fmt.Errorf("coordinator template belongs to a different current endpoint")
-	}
-	var provenance NativeTemplate
-	if err = decode(policyField(owner, "native_template"), &provenance); err != nil {
-		unlock()
-		return nil, fmt.Errorf("coordinator has no verified native template configuration: %w", err)
-	}
-	if err = launch.ValidateHCTemplate(provenance.ConfigHome, provenance.Spec, provenance.Options); err != nil {
+	loaded, err := settings.LoadSettings(s)
+	if err != nil {
 		unlock()
 		return nil, err
 	}
 	checkout := asString(policyField(task, "worktree"))
-	options := launch.HCTemplateOptions{Cwd: checkout, CodexHome: provenance.Options.CodexHome, ConfigFiles: provenance.Options.ConfigFiles, InputEnv: provenance.Spec.InputEnv}
-	template, err := launch.PrepareHCTemplate(runtimeRoot, provenance.ConfigHome, asString(policyField(launchSpec, "harness")), argv, options)
+	options := launch.HCTemplateOptions{Cwd: checkout, CodexHome: loaded.Template.CodexHome, ConfigFiles: loaded.Template.ConfigFiles, InputEnv: loaded.Template.InputEnv}
+	template, err := launch.PrepareHCTemplate(runtimeRoot, route.ConfigHome, asString(policyField(launchSpec, "harness")), argv, options)
 	if err != nil {
 		unlock()
 		return nil, err
 	}
-	client := hcclient.Client{Socket: parent.Socket, CoreID: parent.CoreID}
+	unlock()
+	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	releaseEffects, err := s.DeliveryShared(runCtx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseEffects()
+	if _, err = s.CheckClaim(token); err != nil {
+		return nil, err
+	}
+	route, err = hcboot.EnsureWorkspaceRoute(s, runtimeRoot)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err = s.Lock()
+	if err != nil {
+		return nil, err
+	}
+	current, err := s.ReadTask(taskID)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	currentWorker, err := reservations.Worker(current)
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	currentState := policyField(currentWorker, "state")
+	if policyField(currentWorker, "id") != policyField(worker, "id") || (currentState != "held" && currentState != "running") || policyField(current, "status") != "prepared" || policyField(current, "worktree") != checkout {
+		unlock()
+		return nil, fmt.Errorf("worker attempt changed while ensuring its runtime")
+	}
+	task, worker = current, currentWorker
+	task.Set("launch", launchSpec)
+	host, err := s.Machine()
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	client := hcclient.Client{Socket: route.Socket, CoreID: route.CoreID}
 	attemptID := asString(policyField(worker, "id"))
 	instance, err := s.Instance()
 	if err != nil {
@@ -74,12 +112,12 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		return nil, err
 	}
 	opening := WorkerPrompt(s, runtimeRoot, taskID, briefFile, task)
-	params := hcclient.RunParams{Argv: []string{template.Name}, Cwd: checkout, Name: NativeName(instance, taskID, "worker", attemptID), Parent: parent.Address, Caller: parent.Address, OutliveParent: true, NoNotify: true, Keep: false, RM: false,
+	params := hcclient.RunParams{Argv: []string{template.Name}, Cwd: checkout, Name: NativeName(instance, taskID, "worker", attemptID), OutliveParent: true, NoNotify: true, Keep: false, RM: false,
 		Labels: workerLabels(instance, taskID, attemptID),
-		Env:    map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": parent.Session, "SUM_CORE_ID": parent.CoreID, "HC_SOCKET": parent.Socket, "SUM_TASK": taskID, "SUM_ROLE": "worker", "SUM_ATTEMPT": attemptID, "SUM_BINDING_GENERATION": "1"}}
+		Env:    map[string]string{"SUM_HOME": s.Root, "SUM_SESSION": route.Session, "SUM_CORE_ID": route.CoreID, "HC_SOCKET": route.Socket, "SUM_TASK": taskID, "SUM_ROLE": "worker", "SUM_ATTEMPT": attemptID, "SUM_BINDING_GENERATION": "1"}}
 	template.BindInputEnvironment(params.Env)
 	intent, _ := ordjson.FromValue(params)
-	qualified, _ := ordjson.FromValue(NativeTemplate{template, provenance.ConfigHome, options})
+	qualified, _ := ordjson.FromValue(NativeTemplate{template, route.ConfigHome, options})
 	native := ordjson.NewObject()
 	native.Set("intent", intent)
 	native.Set("opening", opening)
@@ -98,15 +136,13 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		return nil, err
 	}
 	unlock()
-	runCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
 	var result hcclient.RunResult
-	runErr := verifyCoreTemplate(runCtx, &client, provenance.ConfigHome, template)
-	if runErr == nil {
-		runErr = launchStillAuthorized(s, taskID, attemptID, parent)
-	}
+	runErr := verifyCoreTemplate(runCtx, &client, route.ConfigHome, template)
 	if runErr == nil && template.Harness == "grok" {
 		runErr = launch.TrustGrokRepository(runCtx, template.InputEnv["GROK_HOME"], checkout)
+	}
+	if runErr == nil {
+		runErr = launchStillAuthorized(s, taskID, attemptID, token)
 	}
 	if runErr != nil {
 		runErr = &hcclient.Error{Method: "terminal.run", Effect: hcclient.NotSubmitted, Cause: runErr}
@@ -139,7 +175,7 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 		return FailStart(s, taskID, runErr)
 	}
 	created, err := func() (*ordjson.Object, error) {
-		endpoint := openingEndpoint(parent, taskID, attemptID, checkout, result.Terminal)
+		endpoint := store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: route.CoreID, Session: route.Session, Socket: route.Socket, Address: result.Terminal.Address, CreatedMS: result.Terminal.CreatedMS, Task: taskID, Role: "worker", Attempt: attemptID, BindingGeneration: 1, Cwd: checkout}
 		if err = endpoint.Validate(); err != nil {
 			return FailStart(s, taskID, err)
 		}
@@ -253,19 +289,14 @@ func verifyCoreTemplate(ctx context.Context, client *hcclient.Client, config str
 	return fmt.Errorf("selected HC core does not expose the qualified template command; verify its explicit config home")
 }
 
-func launchStillAuthorized(s *store.Store, taskID, attemptID string, parent store.Endpoint) error {
+func launchStillAuthorized(s *store.Store, taskID, attemptID, token string) error {
 	unlock, err := s.Lock()
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	owner, err := s.Owner()
-	if err != nil {
+	if _, err := s.CheckClaim(token); err != nil {
 		return err
-	}
-	matches, err := s.Matches(owner, parent)
-	if err != nil || !matches {
-		return fmt.Errorf("coordinator authority changed before native launch")
 	}
 	task, err := s.ReadTask(taskID)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
+	sumruntime "github.com/douglasjarquin/sum/go/internal/runtime"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
@@ -47,42 +48,16 @@ func isBlank(s string) bool {
 }
 
 func RequireCoordinator(s *store.Store, ctx *ordjson.Object) error {
+	if logicalContext(ctx) {
+		value, _ := ctx.Get("claim")
+		token, _ := value.(string)
+		_, err := RequireClaim(s, token)
+		return err
+	}
 	if err := s.CheckWritable(); err != nil {
 		return err
 	}
-	endpoint := store.EndpointFromContext(ctx)
-	registration, err := s.Registration(endpoint)
-	if err != nil {
-		return err
-	}
-	owner, err := s.Owner()
-	if err != nil {
-		return err
-	}
-	role, _ := registrationField(registration, "role")
-	owns := false
-	if owner != nil {
-		if owns, err = s.Matches(owner, endpoint); err != nil {
-			return err
-		}
-	}
-	if registration == nil || role != "coordinator" || !owns {
-		return fmt.Errorf("This terminal is not the registered coordinator of this sum instance. Run the installed helper init in its coordinator terminal; a developer session must not dispatch or rebind.")
-	}
-	_, terminal, err := ObserveNative(endpoint)
-	if err != nil {
-		return err
-	}
-	recorded, _ := owner.Get("incarnation")
-	receipt, err := NativeReceipt(owner)
-	if err != nil {
-		return err
-	}
-	verdict := incarnation.JudgeNative(recorded, endpoint.Native(), terminal, receipt)
-	if !verdict.Verified {
-		return fmt.Errorf("recorded coordinator authority is not current (%s: %s)", verdict.Outcome, verdict.Reason)
-	}
-	return nil
+	return store.ErrClaimRequired
 }
 
 func ObserveNative(endpoint store.Endpoint) (incarnation.NativeEvidence, hcclient.Terminal, error) {
@@ -129,8 +104,20 @@ func registrationField(registration *ordjson.Object, key string) (string, bool) 
 	return s, ok && isString
 }
 
-func OptionalContext(root string) *ordjson.Object {
-	ctx, err := store.Context(root)
+func Context(s *store.Store, root, claim string) (*ordjson.Object, error) {
+	if claim != "" {
+		return RequireClaim(s, claim)
+	}
+	role := os.Getenv("SUM_ROLE")
+	taskIdentity := os.Getenv("SUM_TASK") != "" || role == "worker" || role == "reviewer"
+	if !taskIdentity || !sumruntime.InheritedHomeBelongsToInstallation(root) {
+		return nil, store.ErrClaimRequired
+	}
+	return store.Context(root)
+}
+
+func OptionalContext(s *store.Store, root, claim string) *ordjson.Object {
+	ctx, err := Context(s, root, claim)
 	if err != nil {
 		return nil
 	}

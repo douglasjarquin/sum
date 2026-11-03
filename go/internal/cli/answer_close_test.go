@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 
@@ -11,7 +10,7 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// closeLab registers this pane as coordinator and writes one task whose worker
+// closeLab claims a logical coordinator and writes one task whose worker
 // attempt is in workerState. Its questions are an answered one (q-aaaaaaaaaa),
 // an open one (q-bbbbbbbbbb), and an answered one (q-cccccccccc) for the worker
 // to apply. A workerState of "" writes a legacy task with no execution record.
@@ -32,11 +31,12 @@ func closeLab(t *testing.T, workerState string) string {
 	task.Set("id", "t-aaaaaaaaaaaa")
 	task.Set("status", "waiting")
 	task.Set("repository", "owner/repo")
-	owner, err := s.Owner()
+	session, err := s.CoordinatorSession()
 	if err != nil {
 		t.Fatal(err)
 	}
-	task.Set("parent", owner)
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
 	questions, err := ordjson.Decode([]byte(`[
  {"id":"q-aaaaaaaaaa","key":"gone","status":"answered","text":"keep going?","answer":"yes","created_at":"2026-01-01T00:00:00+00:00","answered_at":"2026-01-02T00:00:00+00:00"},
  {"id":"q-bbbbbbbbbb","key":"unanswered","status":"open","text":"which one?","answer":null,"created_at":"2026-01-01T00:00:00+00:00"},
@@ -130,10 +130,7 @@ func TestAnswerClose_recordDistinguishesCoordinatorClosureFromWorkerApplication(
 	if at, _ := closed["closed_at"].(string); at == "" {
 		t.Fatalf("closed_at = %v", closed["closed_at"])
 	}
-	by, _ := closed["closed_by"].(map[string]any)
-	if by["role"] != "coordinator" || by["address"] != "t1" || by["core_id"] != os.Getenv("SUM_CORE_ID") || by["attempt"] != "bootstrap" || by["created_ms"] == nil || by["binding_generation"] == nil || by["session"] != "sum-test" {
-		t.Fatalf("closed_by = %v", closed["closed_by"])
-	}
+	requireLogicalActor(t, home, closed["closed_by"])
 	applied := questionRecord(t, home, "q-cccccccccc")
 	if applied["status"] != "applied" || applied["closed_by"] != nil || applied["close_reason"] != nil {
 		t.Fatalf("worker-applied record = %v", applied)
@@ -203,11 +200,12 @@ func TestAnswerClose_refusesUnansweredQuestion(t *testing.T) {
 func TestAnswerClose_refusesNonCoordinatorPane(t *testing.T) {
 	home := closeLab(t, "released")
 	before := readNamedTask(t, home, "t-aaaaaaaaaaaa")
-	t.Setenv("SUM_ROLE", "worker")
-	t.Setenv("SUM_TASK", "t-aaaaaaaaaaaa")
+	for key, value := range nativeLabFor(t, home).callerEnv("t2", nil) {
+		t.Setenv(key, value)
+	}
 	t.Setenv("SUM_ATTEMPT", "not-the-coordinator")
 	_, err := closeQuestion(t, home, "q-aaaaaaaaaa", "worker pane is gone")
-	if err == nil || !strings.Contains(err.Error(), "session registration identity mismatch") {
+	if err == nil || !strings.Contains(err.Error(), "claim_required") {
 		t.Fatalf("err = %v", err)
 	}
 	if got := readNamedTask(t, home, "t-aaaaaaaaaaaa"); got != before {

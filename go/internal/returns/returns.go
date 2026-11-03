@@ -249,10 +249,6 @@ var reviewClosers = map[string]bool{"verification": true, "push": true, "pr": tr
 // the worker a repair, or until a later report, handoff, or review names another candidate and so supersedes it.
 
 func reviewObligations(task *ordjson.Object) []*ordjson.Object {
-	parent, _ := routeValue(task, "parent").(*ordjson.Object)
-	if store.EndpointFromContext(parent).Validate() != nil {
-		return nil
-	}
 	list, _ := routeValue(task, "evidence").([]any)
 	records := make([]*ordjson.Object, 0, len(list))
 	for _, raw := range list {
@@ -314,14 +310,10 @@ func reviewObligations(task *ordjson.Object) []*ordjson.Object {
 }
 
 func ReturnRoute(task *ordjson.Object, recipient string) *ordjson.Object {
-	var endpoint *ordjson.Object
-	if recipient == "parent" {
-		value, _ := task.Get("parent")
-		endpoint, _ = value.(*ordjson.Object)
-	} else {
-		value, _ := task.Get("worker_endpoint")
-		endpoint, _ = value.(*ordjson.Object)
+	if recipient != "worker" {
+		return nil
 	}
+	endpoint, _ := routeValue(task, "worker_endpoint").(*ordjson.Object)
 	route := ordjson.NewObject()
 	if endpoint != nil {
 		for _, key := range endpoint.Keys() {
@@ -330,13 +322,9 @@ func ReturnRoute(task *ordjson.Object, recipient string) *ordjson.Object {
 		}
 	}
 	route.Set("recipient", recipient)
-	if recipient == "parent" {
-		route.Set("role", "coordinator")
-	} else {
-		route.Set("role", "worker")
-		cwd, _ := task.Get("worktree")
-		route.Set("cwd", cwd)
-	}
+	route.Set("role", "worker")
+	cwd, _ := task.Get("worktree")
+	route.Set("cwd", cwd)
 	return route
 }
 func RouteKey(route *ordjson.Object) any {
@@ -528,13 +516,18 @@ func View(s *store.Store, task *ordjson.Object) (*ordjson.Object, error) {
 			row.Set("candidate", routeValue(obligation, "candidate"))
 		}
 		row.Set("obligation", "open")
-		routeView := ordjson.NewObject()
-		for _, key := range []string{"role", "session", "pane"} {
-			v, _ := route.Get(key)
-			routeView.Set(key, v)
+		if route == nil {
+			row.Set("route", nil)
+			row.Set("notification", NotificationState(returnsObj, obligation))
+		} else {
+			routeView := ordjson.NewObject()
+			for _, key := range []string{"role", "session", "pane"} {
+				v, _ := route.Get(key)
+				routeView.Set(key, v)
+			}
+			row.Set("route", routeView)
+			row.Set("notification", NotificationState(returnsObj, obligation, routeKeys(host, route)...))
 		}
-		row.Set("route", routeView)
-		row.Set("notification", NotificationState(returnsObj, obligation, routeKeys(host, route)...))
 		rows = append(rows, row)
 		id, _ := obligation.Get("id")
 		openIDs[id] = true

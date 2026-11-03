@@ -217,7 +217,6 @@ type Args struct {
 	Harness      string
 	Model        string
 	Reasoning    string
-	SameAsYou    bool
 	Preset       string
 	PresetSet    bool
 	Base         string
@@ -271,7 +270,6 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		Harness:     args.Harness,
 		Model:       args.Model,
 		Reasoning:   args.Reasoning,
-		SameAsRoot:  args.SameAsYou,
 		Extra:       args.Extra,
 		Preset:      args.Preset,
 		PresetSet:   args.PresetSet,
@@ -311,8 +309,12 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 		unlock()
 		return nil, err
 	}
-	session := asString(func() any { v, _ := ctx.Get("session"); return v }())
-	owner := store.EndpointFromContext(ctx).Object()
+	current, err := s.CheckClaim(asString(func() any { value, _ := ctx.Get("claim"); return value }()))
+	if err != nil {
+		unlock()
+		return nil, err
+	}
+	owner := current.Owner()
 	attempt, err := reservations.NewAttempt("worker", owner, nil, store.Now(), "", nil)
 	if err != nil {
 		unlock()
@@ -335,8 +337,8 @@ func Prepare(s *store.Store, ctx *ordjson.Object, args Args) (*ordjson.Object, e
 	task.Set("launch", launchSpec)
 	task.Set("kind", args.Kind)
 	task.Set("brief", string(briefText))
-	task.Set("parent", ctx)
-	task.Set("session", session)
+	task.Set("owner", owner)
+	task.Set("parent", nil)
 	task.Set("worktree", nil)
 	task.Set("questions", []any{})
 	task.Set("report", nil)
@@ -702,10 +704,14 @@ func Start(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID string, extr
 	status, _ := task.Get("status")
 	if status != "prepared" {
 		if prompt, attemptID, saved, ok := stalledOpening(task); ok {
-			parent := store.EndpointFromContext(ctx)
+			route, routeErr := stalledRoute(s, task, taskID, attemptID)
+			if routeErr != nil {
+				unlock()
+				return nil, routeErr
+			}
 			checkout := asString(policyField(task, "worktree"))
 			unlock()
-			return resumeStalledOpening(s, parent, taskID, attemptID, prompt, saved, checkout)
+			return resumeStalledOpening(s, route, taskID, attemptID, prompt, saved, checkout)
 		}
 		unlock()
 		return nil, fmt.Errorf("Only a prepared task can be started. sum never retries an uncertain launch automatically.")

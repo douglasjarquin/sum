@@ -34,6 +34,11 @@ func (o *rootOptions) projectAfter(cmd *cobra.Command, args []string) {
 	if err != nil {
 		return
 	}
+	if o.claim != "" {
+		if err := st.CaptureClaim(o.claim); err != nil {
+			return
+		}
+	}
 	if scope == "finding" {
 		if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 			return
@@ -101,7 +106,7 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -123,7 +128,7 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -144,7 +149,7 @@ func (o *rootOptions) addMetadataCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}

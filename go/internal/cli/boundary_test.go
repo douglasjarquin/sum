@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-// Fast coordination (init, status, inbox, pump, bind, hook enable, hook events) never reaches GitHub or applies
+// Fast coordination (init, status, inbox, pump, bind, collect) never reaches GitHub or applies
 // cleanup, while outstanding maintenance stays listed with its exact command; only the explicit `sweep` observes the
 // PR. The fake gh logs every call it receives.
 func TestFastPathsNeverReconcileOrCleanUp(t *testing.T) {
@@ -80,12 +80,7 @@ func TestFastPathsNeverReconcileOrCleanUp(t *testing.T) {
 		t.Fatal("a fast path still reports a lifecycle sweep")
 	}
 	d.ctl(true, "bind", openID, "--parent-only")
-	startNativeObserver(t, d)
-	d.native.SetStatus("t1", "idle")
-	for _, task := range []map[string]any{open, merged} {
-		settleNativeTerminal(t, d.base, workerAddress(task))
-	}
-	d.native.SetStatus("t1", "working")
+	d.ctl(true, "collect", "--budget", "1ms")
 
 	if n := ghCalls(); n != 0 {
 		raw, _ := os.ReadFile(filepath.Join(ghRoot, "calls.jsonl"))

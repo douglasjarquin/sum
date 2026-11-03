@@ -178,7 +178,7 @@ func Write(s *store.Store, args WriteArgs) (*ordjson.Object, error) {
 	previousReviewer := current.Reviewer
 	previousEvidence := current.Evidence
 	previousUsage := current.Usage
-	path, err := save(s, mergedCapacity, mergedWorker, current.Presets, mergedReviewer, mergedEvidence, current.Hook, mergedUsage)
+	path, err := save(s, mergedCapacity, mergedWorker, current.Presets, mergedReviewer, mergedEvidence, current.Hook, mergedUsage, current.Template)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +334,7 @@ func WritePreset(s *store.Store, args PresetWriteArgs) (*ordjson.Object, error) 
 		presets[k] = v
 	}
 	presets[args.Name] = spec
-	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence, current.Hook, current.Usage)
+	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence, current.Hook, current.Usage, current.Template)
 	if err != nil {
 		return nil, err
 	}
@@ -371,7 +371,7 @@ func DeletePreset(s *store.Store, name string) (*ordjson.Object, error) {
 			presets[k] = v
 		}
 	}
-	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence, current.Hook, current.Usage)
+	path, err := save(s, current.Capacity, current.Worker, presets, current.Reviewer, current.Evidence, current.Hook, current.Usage, current.Template)
 	if err != nil {
 		return nil, err
 	}
@@ -392,10 +392,17 @@ func DeletePreset(s *store.Store, name string) (*ordjson.Object, error) {
 	return result, nil
 }
 
-func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*ordjson.Object, reviewer, evidenceBlock, hook, usage *ordjson.Object) (string, error) {
+func save(s *store.Store, capacity, worker *ordjson.Object, presets map[string]*ordjson.Object, reviewer, evidenceBlock, hook, usage *ordjson.Object, template TemplateOptions) (string, error) {
 	path := filepath.Join(s.Home, File)
 	doc := ordjson.NewObject()
 	doc.Set("schema", json.Number(fmt.Sprint(Schema)))
+	if template.CodexHome != "" || len(template.ConfigFiles) > 0 || len(template.InputEnv) > 0 {
+		value, err := ordjson.FromValue(template)
+		if err != nil {
+			return "", err
+		}
+		doc.Set("template", value)
+	}
 	if capacity != nil {
 		doc.Set("capacity", capacity)
 	}
@@ -447,6 +454,6 @@ func SetNativeEventsEnabled(s *store.Store, enabled bool) error {
 	}
 	hook := ordjson.NewObject()
 	hook.Set("enabled", enabled)
-	_, err = save(s, current.Capacity, current.Worker, current.Presets, current.Reviewer, current.Evidence, hook, current.Usage)
+	_, err = save(s, current.Capacity, current.Worker, current.Presets, current.Reviewer, current.Evidence, hook, current.Usage, current.Template)
 	return err
 }

@@ -138,44 +138,25 @@ func reviewerLaunch(s *store.Store, ctx *ordjson.Object, runtimeRoot string, arg
 		resolve.Preset = asString(loaded.Reviewer, "preset")
 		resolve.PresetSet = true
 	}
-	if resolve.PresetSet || args.newReviewerOnly() {
-		if resolve.Harness == "" && !resolve.PresetSet {
-			owner, err := s.Owner()
-			if err != nil {
-				return "", nil, nil, nil, err
-			}
-			resolve.Harness = asString(objectField(objectField(owner, "native_template"), "spec"), "harness")
-			if resolve.Harness == "" {
-				return "", nil, nil, nil, fmt.Errorf("coordinator has no qualified native harness; select a harness explicitly")
-			}
-		}
-		resolved, err := launch.Resolve(s, ctx, resolve)
-		if err != nil {
-			return "", nil, nil, nil, err
-		}
-		argv := []string{}
-		if list, ok := resolved.Get("argv"); ok {
-			if values, is := list.([]any); is {
-				for _, value := range values {
-					if arg, is := value.(string); is {
-						argv = append(argv, arg)
-					}
-				}
-			}
-		}
-		preset, _ := resolved.Get("preset")
-		return asString(resolved, "harness"), argv, preset, objectField(resolved, "permissions"), nil
+	if resolve.Harness == "" && !resolve.PresetSet {
+		resolve.Harness = "codex"
 	}
-	owner, err := s.Owner()
+	resolved, err := launch.Resolve(s, ctx, resolve)
 	if err != nil {
 		return "", nil, nil, nil, err
 	}
-	root := objectField(objectField(owner, "native_template"), "spec")
-	harness := asString(root, "harness")
-	if harness == "" {
-		return "", nil, nil, nil, fmt.Errorf("Cannot determine the coordinator's harness (%s); configure `reviewer.preset` or start from the coordinator terminal.", asString(root, "error"))
+	argv := []string{}
+	if list, ok := resolved.Get("argv"); ok {
+		if values, ok := list.([]any); ok {
+			for _, value := range values {
+				if arg, ok := value.(string); ok {
+					argv = append(argv, arg)
+				}
+			}
+		}
 	}
-	return harness, nil, nil, launch.HarnessDefaultPermissions(harness), nil
+	preset, _ := resolved.Get("preset")
+	return asString(resolved, "harness"), argv, preset, objectField(resolved, "permissions"), nil
 }
 
 func asString(obj *ordjson.Object, key string) string {
@@ -216,12 +197,15 @@ func resolvePath(path string) string {
 }
 
 func endpointRole(host machine.Identity, task, endpoint *ordjson.Object) string {
+	if store.LogicalOwnersMatch(objectField(task, "owner"), endpoint) {
+		return "coordinator"
+	}
 	if endpoint == nil {
 		return ""
 	}
 	current := store.EndpointFromContext(endpoint)
 	if current.Schema == 2 {
-		for _, entry := range []struct{ key, role string }{{"worker_endpoint", "worker"}, {"parent", "coordinator"}, {"reviewer", "reviewer"}} {
+		for _, entry := range []struct{ key, role string }{{"worker_endpoint", "worker"}, {"reviewer", "reviewer"}} {
 			expected := store.EndpointFromContext(objectField(task, entry.key))
 			if current.Native().SameAuthority(expected.Native()) {
 				return entry.role
@@ -244,7 +228,7 @@ type Args struct {
 	Notes          []Note
 }
 
-func Run(s *store.Store, args Args, endpoint *ordjson.Object, pump returns.PumpOpts) (*ordjson.Object, error) {
+func Run(s *store.Store, args Args, endpoint *ordjson.Object, _ returns.PumpOpts) (*ordjson.Object, error) {
 	verdict := args.Verdict
 	candidate := args.Candidate
 	toolName := args.Tool
@@ -295,29 +279,12 @@ func Run(s *store.Store, args Args, endpoint *ordjson.Object, pump returns.PumpO
 	if err := validateNativeReview(s, taskID, candidate, toolName, endpoint); err != nil {
 		return nil, err
 	}
-	result, task, err := record(s, taskID, verdict, candidate, toolName, text, policyReviewed, notes, made, endpoint)
+	result, _, err := record(s, taskID, verdict, candidate, toolName, text, policyReviewed, notes, made, endpoint)
 	if err != nil {
 		return nil, err
-	}
-	// Like a report, the saved verdict is a return to the parent, and one bounded pass tries to tell it now.
-	saved, _ := result.Get("evidence")
-	id, _ := saved.(*ordjson.Object).Get("id")
-	owed, err := returns.OpenObligations(s, task)
-	if err != nil {
-		return nil, err
-	}
-	for _, obligation := range owed {
-		if oid, _ := obligation.Get("id"); oid == fmt.Sprintf("review:%v", id) {
-			notice, err := returns.Notify(s, pump, taskID, "parent", "a review verdict is recorded", false)
-			if err != nil {
-				return nil, err
-			}
-			result.Set("notice", notice)
-			return result, nil
-		}
 	}
 	result.Set("notice", nil)
-	result.Set("note", "Findings saved. The task records no parent terminal, so no return was created and no one was notified. They do not verify the candidate or close anything.")
+	result.Set("note", "Findings saved for coordinator collection. They do not verify the candidate or close anything.")
 	return result, nil
 }
 
@@ -441,6 +408,6 @@ func record(s *store.Store, taskID, verdict, candidate, toolName, text string, p
 	result.Set("pipeline_note", note)
 	reviewer, _ := task.Get("reviewer")
 	result.Set("reviewer", reviewer)
-	result.Set("note", "Findings saved as a return to the parent. They do not verify the candidate or close anything; a reviewer terminal with saved findings is closable later, one without is not.")
+	result.Set("note", "Findings saved for coordinator collection. They do not verify the candidate or close anything; a reviewer terminal with saved findings is closable later, one without is not.")
 	return result, task, nil
 }

@@ -71,7 +71,7 @@ func TestExecutionShow_pinsStdout(t *testing.T) {
 
 func TestSkillsAndExecutionAreOnTheCommandTree(t *testing.T) {
 	root := NewRoot("", &bytes.Buffer{}, &bytes.Buffer{})
-	for _, name := range []string{"skills", "execution", "repair", "reviewer", "help", "quota", "notes", "coordinator", "release-contract", "archive"} {
+	for _, name := range []string{"skills", "execution", "repair", "reviewer", "help", "quota", "notes", "collect", "delivery", "release-contract", "archive"} {
 		if root.Commands() == nil {
 			t.Fatal("no commands")
 		}
@@ -84,6 +84,13 @@ func TestSkillsAndExecutionAreOnTheCommandTree(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("missing command %s", name)
+		}
+	}
+	for _, removed := range []string{"coordinator", "hook", "wake"} {
+		for _, command := range root.Commands() {
+			if command.Name() == removed {
+				t.Fatalf("obsolete command %s remains", removed)
+			}
 		}
 	}
 }

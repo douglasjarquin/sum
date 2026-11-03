@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
-	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/release"
 	"os"
@@ -15,16 +13,14 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
-	"github.com/douglasjarquin/sum/go/internal/updatecmd"
 )
 
 var fleetRoles = []string{
 	"busy-tool-call", "dirty-checkout", "open-question", "answered-unapplied", "pending-report", "old-runtime-client",
-	"closed-parent", "unknown-worker", "failed-refresh", "ignores-refresh", "cooperative-a", "cooperative-b",
+	"parentless-question", "unknown-worker", "blocked-worker", "unreported-worker", "cooperative-a", "cooperative-b",
 }
 
 type fleetLab struct {
@@ -43,14 +39,14 @@ func TestFleetTwelveWorkers(t *testing.T) {
 		t.Fatalf("previous capacity=%v", settings["previous"])
 	}
 	tasks := map[string]map[string]any{}
-	byID := map[string]string{}
 	brief := f.brief()
 	for _, role := range fleetRoles {
 		task := f.ctl(true, "dispatch", "--repo", f.project(role), "--brief", brief, "--harness", "codex", "--approved")
 		address := workerAddress(task)
-		if address == "" {
-			t.Fatalf("%s has no native endpoint", role)
+		if address == "" || task["parent"] != nil {
+			t.Fatalf("%s is not parentless: %v", role, task)
 		}
+		requireLogicalActor(t, f.home, task["owner"])
 		f.ctlPane(address, true, "init")
 		task = f.readTask(asString(task["id"]))
 		if asString(task["status"]) != "running" {
@@ -61,7 +57,6 @@ func TestFleetTwelveWorkers(t *testing.T) {
 			t.Fatalf("%s admission=%v", role, task["admission"])
 		}
 		tasks[role] = task
-		byID[asString(task["id"])] = role
 	}
 	if asInt(asMap(f.ctl(true, "settings", "show")["occupied"])["global"]) != 12 {
 		t.Fatal("twelve active attempts not counted")
@@ -73,7 +68,6 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	for _, task := range tasks {
 		f.native.SetStatus(workerAddress(task), "idle")
 	}
-	f.native.SetStatus("t1", "working")
 	f.native.SetStatus(workerAddress(tasks["busy-tool-call"]), "working")
 	wip := filepath.Join(asString(tasks["dirty-checkout"]["worktree"]), "wip.txt")
 	if err := os.WriteFile(wip, []byte("uncommitted work\n"), 0644); err != nil {
@@ -83,32 +77,23 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	answered := asMap(f.ctlPane(workerAddress(tasks["answered-unapplied"]), true, "ask", asString(tasks["answered-unapplied"]["id"]), "--key", "answered", "--text", "Answered question?")["question"])
 	f.ctl(true, "answer", asString(tasks["answered-unapplied"]["id"]), asString(answered["id"]), "--text", "Yes.")
 	f.ctlPane(workerAddress(tasks["pending-report"]), true, "report", asString(tasks["pending-report"]["id"]), "--text", "Candidate ready; not verified.")
-	closedID := asString(tasks["closed-parent"]["id"])
-	closed := f.readTask(closedID)
-	asMap(closed["parent"])["address"] = "tzz"
-	f.writeTask(closedID, closed)
-	orphan := f.ctlPane(workerAddress(tasks["closed-parent"]), true, "ask", closedID, "--key", "orphan", "--text", "Parent gone?")
-	if asString(asMap(orphan["notice"])["status"]) == "submitted" {
-		t.Fatal("absent parent reported submitted")
-	}
+	f.ctlPane(workerAddress(tasks["parentless-question"]), true, "ask", asString(tasks["parentless-question"]["id"]), "--key", "parentless", "--text", "No native parent is needed.")
+	f.native.SetStatus(workerAddress(tasks["blocked-worker"]), "blocked")
 	unknown := workerAddress(tasks["unknown-worker"])
 	stopNativeRecoveryTerminal(t, f.demoLab, unknown)
 	client := f.native.Client()
 	if _, err := client.Remove(context.Background(), unknown); err != nil {
 		t.Fatal(err)
 	}
-	var qualifiedFailedRefresh hcclient.Terminal
-	for _, terminal := range f.native.Terminals() {
-		if terminal.Address == workerAddress(tasks["failed-refresh"]) {
-			qualifiedFailedRefresh = terminal
-			bad := "return"
-			terminal.Submit = &bad
-			f.native.SetTerminal(terminal)
+
+	before := map[string][]byte{}
+	for _, task := range tasks {
+		id := asString(task["id"])
+		raw, err := os.ReadFile(filepath.Join(f.home, "tasks", id, "task.json"))
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	records := map[string][]string{}
-	for role, task := range tasks {
-		records[role] = questionKeys(f.readTask(asString(task["id"])))
+		before[id] = raw
 	}
 	checkouts := f.checkouts(tasks)
 	callsBefore := len(f.native.Calls())
@@ -117,217 +102,53 @@ func TestFleetTwelveWorkers(t *testing.T) {
 		t.Fatalf("live status=%v", live)
 	}
 	assertFleetReadOnly(t, f.native.Calls()[callsBefore:])
+	for role, want := range map[string]string{"busy-tool-call": "working", "blocked-worker": "blocked", "unknown-worker": "absent"} {
+		found := false
+		for _, raw := range asSlice(live["tasks"]) {
+			row := asMap(raw)
+			if row["id"] == tasks[role]["id"] {
+				found = true
+				if state := asString(asMap(row["observed"])["state"]); state != want {
+					t.Fatalf("%s observed=%v", role, row["observed"])
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("%s absent from status", role)
+		}
+	}
+
+	// The artifact fixture supplies update provenance after worker dispatch; its
+	// binary deliberately implements no core lifecycle operations.
+	hctest.InstallRuntime(t, f.root)
 	skill, err := os.ReadFile(filepath.Join(f.root, "skills/sum-work/SKILL.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sha1 := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nUpdate one: reread decisions before continuing.\n")
-	f.stageFixture(sha1)
-	selectedBefore := f.currentPath()
-	qualificationCalls := len(f.native.Calls())
-	refusedQualification := f.ctl(false, "update", "apply", "--ref", sha1, "--no-fetch")
-	if !strings.Contains(asString(refusedQualification["error"]), "automatic delivery qualification") || f.currentPath() != selectedBefore {
-		t.Fatalf("unqualified current worker changed runtime selection: %v", refusedQualification)
+	sha := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nNext-start instruction update.\n")
+	f.stageFixture(sha)
+	selected := f.currentPath()
+	callsBefore = len(f.native.Calls())
+	refused = f.ctl(false, "update", "apply", "--ref", sha, "--no-fetch")
+	if !strings.Contains(asString(refused["error"]), "is active") || f.currentPath() != selected {
+		t.Fatalf("active fleet changed runtime selection: %v", refused)
 	}
-	assertFleetReadOnly(t, f.native.Calls()[qualificationCalls:])
-
-	f.native.SetTerminal(qualifiedFailedRefresh)
-	applied := f.ctl(true, "update", "apply", "--ref", sha1, "--no-fetch")
-	if applied["changed"] != true || asString(asMap(applied["default"])["sha"]) != sha1 {
-		t.Fatalf("apply one=%v", applied)
-	}
-	unqualifiedRefresh := qualifiedFailedRefresh
-	wrongSubmit := "return"
-	unqualifiedRefresh.Submit = &wrongSubmit
-	f.native.SetTerminal(unqualifiedRefresh)
-	start := len(f.native.Calls())
-	first := f.ctl(true, "refresh", "request")
-	rows := f.targetRows(first, byID)
-	if asString(asMap(first["runtime"])["sha"]) != sha1 {
-		t.Fatalf("refresh runtime=%v", first["runtime"])
-	}
-	for _, role := range fleetRoles {
-		state := asString(rows[role]["state"])
-		if role == "busy-tool-call" {
-			if state != "pending-busy" {
-				t.Fatalf("busy state=%v", rows[role])
-			}
-		} else if role == "unknown-worker" {
-			if state != "unreachable" {
-				t.Fatalf("gone state=%v", rows[role])
-			}
-		} else if role == "failed-refresh" {
-			if state != "pending-unreachable" {
-				t.Fatalf("qualification refusal=%v", rows[role])
-			}
-		} else if state != "submitted-unconfirmed" {
-			t.Fatalf("%s refresh=%v", role, rows[role])
-		}
-		if asString(rows[role]["revision"]) != "r2" {
-			t.Fatalf("%s revision=%v", role, rows[role])
+	assertFleetReadOnly(t, f.native.Calls()[callsBefore:])
+	for id, want := range before {
+		got, err := os.ReadFile(filepath.Join(f.home, "tasks", id, "task.json"))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("quiescent refusal rewrote task %s: %v", id, err)
 		}
 	}
-	if asString(rows["coordinator"]["state"]) != "pending-busy" {
-		t.Fatalf("coordinator refresh=%v", rows["coordinator"])
+	if !checkoutEqual(f.checkouts(tasks), checkouts) {
+		t.Fatal("quiescent refusal altered task checkouts")
 	}
-	sends := 0
-	for _, call := range f.native.Calls()[start:] {
-		if call.Method == "terminal.run" || call.Method == "terminal.read" || call.Method == "terminal.kill" || call.Method == "terminal.interrupt" {
-			t.Fatalf("refresh lifecycle effect=%v", call)
-		}
-		if call.Method == "terminal.send" {
-			sends++
-			text := asString(call.Params["text"])
-			for _, private := range []string{"Open question?", "Answered question?", "Yes.", "Candidate ready", "Parent gone?"} {
-				if strings.Contains(text, private) {
-					t.Fatalf("refresh leaked task prose %q", private)
-				}
-			}
-		}
-	}
-	if sends != 9 {
-		t.Fatalf("refresh sends=%d, want nine eligible workers", sends)
+	if body, err := os.ReadFile(wip); err != nil || string(body) != "uncommitted work\n" {
+		t.Fatal("dirty work was lost", err)
 	}
 
-	f.native.SetTerminal(qualifiedFailedRefresh)
-	oldRuntime := f.readVersions(asString(tasks["old-runtime-client"]["id"]))
-	if asString(oldRuntime["active"]) != "r1" || asString(oldRuntime["requested"]) != "r2" {
-		t.Fatalf("native submission adopted old client=%v", oldRuntime)
-	}
-	f.ctl(true, "answer", asString(tasks["open-question"]["id"]), asString(openQ["id"]), "--text", "Answered after update one.")
+	f.ctl(true, "answer", asString(tasks["open-question"]["id"]), asString(openQ["id"]), "--text", "Continue the approved work.")
 	f.ctlPane(workerAddress(tasks["answered-unapplied"]), true, "resolve", asString(tasks["answered-unapplied"]["id"]), asString(answered["id"]))
-	f.ctlPane(workerAddress(tasks["cooperative-a"]), true, "report", asString(tasks["cooperative-a"]["id"]), "--text", "Reported during update.")
-	more := asMap(f.ctlPane(workerAddress(tasks["busy-tool-call"]), true, "ask", asString(tasks["busy-tool-call"]["id"]), "--key", "busy", "--text", "Asked while busy?")["question"])
-	for _, role := range []string{"dirty-checkout", "cooperative-a", "cooperative-b"} {
-		f.ctlPane(workerAddress(tasks[role]), true, "brief", "adopt", asString(tasks[role]["id"]), "r2")
-	}
-	if asInt(asMap(f.ctl(true, "refresh", "status")["counts"])["confirmed"]) != 3 {
-		t.Fatal("matching adoption receipts did not confirm exactly three tasks")
-	}
-	agents, err := os.ReadFile(filepath.Join(f.root, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.commitUpstream("AGENTS.md", string(agents)+"\nUpdate two.\n")
-	sha2 := f.commitUpstream("skills/sum-work/SKILL.md", string(skill)+"\nUpdate two: reread decisions before continuing.\n")
-	f.stageFixture(sha2)
-	f.ctl(true, "update", "apply", "--ref", sha2, "--no-fetch")
-
-	target := tasks["cooperative-b"]
-	initialInputs := len(f.native.Inputs(workerAddress(target)))
-	entered, release := f.native.HoldNext("terminal.send", workerAddress(target))
-	command := exec.Command(f.helper, "--format", "json", "--home", f.home, "refresh", "request")
-	command.Env = f.env
-	var output bytes.Buffer
-	command.Stdout = &output
-	command.Stderr = &output
-	if err = command.Start(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-entered:
-	case <-time.After(10 * time.Second):
-		release()
-		_ = command.Process.Kill()
-		_ = command.Wait()
-		t.Fatalf("refresh never reached native boundary: %s", output.String())
-	}
-	if err = command.Process.Kill(); err != nil {
-		t.Fatal(err)
-	}
-	_ = command.Wait()
-	release()
-	deadline := time.NewTimer(3 * time.Second)
-	tick := time.NewTicker(time.Millisecond)
-	defer deadline.Stop()
-	defer tick.Stop()
-	for len(f.native.Inputs(workerAddress(target))) == initialInputs {
-		select {
-		case <-deadline.C:
-			t.Fatal("held native send did not finish its observable effect")
-		case <-tick.C:
-		}
-	}
-
-	for role, task := range tasks {
-		want := append([]string{}, records[role]...)
-		if role == "busy-tool-call" {
-			want = append(want, "busy")
-		}
-		if strings.Join(questionKeys(f.readTask(asString(task["id"]))), ",") != strings.Join(want, ",") {
-			t.Fatalf("%s lost questions during interruption", role)
-		}
-	}
-	sentBefore := len(f.native.Inputs(workerAddress(target)))
-	recovered := f.ctl(true, "refresh", "request")
-	rows = f.targetRows(recovered, byID)
-	if len(f.native.Inputs(workerAddress(target))) != sentBefore {
-		t.Fatal("interrupted native refresh was blindly replayed")
-	}
-	for _, role := range fleetRoles {
-		if asString(rows[role]["revision"]) != "r3" {
-			t.Fatalf("%s did not recover r3=%v", role, rows[role])
-		}
-	}
-	stale := f.ctlPane(workerAddress(target), false, "brief", "adopt", asString(target["id"]), "r2")
-	if !strings.Contains(asString(stale["error"]), "not the requested revision") {
-		t.Fatalf("stale adoption=%v", stale)
-	}
-	for _, role := range []string{"dirty-checkout", "cooperative-a", "cooperative-b"} {
-		f.ctlPane(workerAddress(tasks[role]), true, "brief", "adopt", asString(tasks[role]["id"]), "r3")
-	}
-	rolled := f.ctl(true, "update", "rollback")
-	if asString(asMap(rolled["default"])["sha"]) != sha1 {
-		t.Fatalf("rollback=%v", rolled)
-	}
-	third := f.ctl(true, "refresh", "request")
-	rows = f.targetRows(third, byID)
-	for _, role := range fleetRoles {
-		if asString(rows[role]["revision"]) != "r4" {
-			t.Fatalf("%s rollback brief=%v", role, rows[role])
-		}
-	}
-	versions := f.readVersions(asString(tasks["cooperative-a"]["id"]))
-	pins := map[string]string{}
-	for _, raw := range asSlice(versions["revisions"]) {
-		revision := asMap(raw)
-		for _, raw := range asSlice(asMap(revision["policy"])["procedure"]) {
-			procedure := asMap(raw)
-			if asString(procedure["name"]) == "sum-work" {
-				pins[asString(revision["id"])] = asString(procedure["path"])
-			}
-		}
-	}
-	if pins["r2"] == "" || pins["r4"] != pins["r2"] || pins["r3"] == pins["r2"] {
-		t.Fatalf("immutable procedure pins=%v", pins)
-	}
-	rolledBrief, err := os.ReadFile(asString(rows["cooperative-a"]["path"]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(rolledBrief), "reread decisions before continuing") {
-		t.Fatal("brief copied mutable procedure body instead of pinning it")
-	}
-	procedureText, err := os.ReadFile(pinnedProcedure(t, string(rolledBrief)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(procedureText), "Update one") || strings.Contains(string(procedureText), "Update two") {
-		t.Fatal("rollback did not restore the immutable update-one procedure")
-	}
-
-	for _, raw := range asSlice(f.ctl(true, "brief", "list", asString(tasks["cooperative-a"]["id"]))["revisions"]) {
-		if asMap(raw)["ok"] != true {
-			t.Fatalf("historical brief unusable=%v", raw)
-		}
-	}
-	f.ctl(true, "refresh", "adopt", "--coordinator", "r3")
-	for _, role := range []string{"dirty-checkout", "cooperative-a", "cooperative-b"} {
-		f.ctlPane(workerAddress(tasks[role]), true, "brief", "adopt", asString(tasks[role]["id"]), "r4")
-	}
-	f.verifyActivationRecovery(tasks, sha1, sha2)
-	f.ctl(true, "answer", asString(tasks["busy-tool-call"]["id"]), asString(more["id"]), "--text", "Answered after recovered activation.")
-	f.ctlPane(workerAddress(tasks["cooperative-b"]), true, "report", asString(tasks["cooperative-b"]["id"]), "--text", "Reported after recovered activation.")
 	pending := tasks["pending-report"]
 	stopNativeRecoveryTerminal(t, f.demoLab, workerAddress(pending))
 	worker := asMap(asMap(f.readTask(asString(pending["id"]))["execution"])["worker"])
@@ -337,49 +158,20 @@ func TestFleetTwelveWorkers(t *testing.T) {
 	if asInt(asMap(asMap(late["admission"])["occupied_before"])["global"]) != 11 {
 		t.Fatalf("released reservation not reusable=%v", late["admission"])
 	}
-	lateText, err := os.ReadFile(asString(late["brief_path"]))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(lateText), filepath.Join(f.root, "bin", "sumctl")) || filepath.Base(f.currentPath()) != sha1 {
-		t.Fatal("late work did not retain the verified default helper")
-	}
-
-	if !checkoutEqual(f.checkouts(tasks), checkouts) {
-		t.Fatal("rolling updates altered task checkouts")
-	}
-	if body, err := os.ReadFile(wip); err != nil || string(body) != "uncommitted work\n" {
-		t.Fatal("dirty work was lost", err)
-	}
-	for _, role := range []string{"pending-report", "cooperative-a"} {
-		if asString(asMap(f.readTask(asString(tasks[role]["id"]))["report"])["brief_revision"]) != "r1" {
-			t.Fatal("historical report was rewritten to adopted revision")
-		}
-	}
-
-	for role, want := range map[string]string{"open-question": "answered", "answered-unapplied": "applied", "closed-parent": "open", "busy-tool-call": "answered"} {
-		questions := asSlice(f.readTask(asString(tasks[role]["id"]))["questions"])
-		if len(questions) != 1 || asString(asMap(questions[0])["status"]) != want {
-			t.Fatalf("%s final question state=%v", role, questions)
-		}
-	}
-	if asString(f.readTask(asString(pending["id"]))["status"]) != "archived" {
-		t.Fatal("released reported task was not archived")
-	}
-	if asString(asMap(f.readTask(asString(tasks["cooperative-b"]["id"]))["report"])["brief_revision"]) != "r4" {
-		t.Fatal("new report lost current revision")
-	}
-	runCount := 0
+	runs := 0
 	for _, call := range f.native.Calls() {
 		if call.Method == "terminal.run" {
-			runCount++
+			runs++
+			if call.Params["parent"] != nil || call.Params["caller"] != nil {
+				t.Fatalf("worker creation carried a coordinator parent: %v", call)
+			}
 		}
-		if call.Method == "terminal.kill" || call.Method == "terminal.interrupt" || call.Method == "terminal.read" {
-			t.Fatalf("update stopped unrelated execution=%v", call)
+		if call.Method == "terminal.kill" || call.Method == "terminal.interrupt" {
+			t.Fatalf("fleet operation stopped unrelated execution=%v", call)
 		}
 	}
-	if runCount != 12 {
-		t.Fatalf("updates relaunched workers=%d native launches", runCount)
+	if runs != 12 {
+		t.Fatalf("fleet created %d native workers, want12", runs)
 	}
 	f.native.AssertNoForce(t)
 }
@@ -501,7 +293,6 @@ func newFleetLab(t *testing.T) *fleetLab {
 		}
 	}
 
-	hctest.InstallRuntime(t, install)
 	f := &fleetLab{demoLab: d, source: source}
 	if asString(f.ctl(true, "init")["role"]) != "coordinator" {
 		t.Fatal("fleet init")
@@ -610,43 +401,6 @@ func (f *fleetLab) readTask(id string) map[string]any {
 	return task
 }
 
-func (f *fleetLab) writeTask(id string, task map[string]any) {
-	f.t.Helper()
-	data, err := json.Marshal(task)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(f.home, "tasks", id, "task.json"), data, 0o600); err != nil {
-		f.t.Fatal(err)
-	}
-}
-
-func (f *fleetLab) readVersions(id string) map[string]any {
-	f.t.Helper()
-	data, err := os.ReadFile(filepath.Join(f.home, "tasks", id, "versions.json"))
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	var vers map[string]any
-	if err := json.Unmarshal(data, &vers); err != nil {
-		f.t.Fatal(err)
-	}
-	return vers
-}
-
-func (f *fleetLab) targetRows(view map[string]any, byID map[string]string) map[string]map[string]any {
-	out := map[string]map[string]any{}
-	for _, item := range asSlice(view["targets"]) {
-		row := asMap(item)
-		key := byID[asString(row["task"])]
-		if key == "" {
-			key = asString(row["target"])
-		}
-		out[key] = row
-	}
-	return out
-}
-
 func (f *fleetLab) currentPath() string {
 	f.t.Helper()
 	return currentRuntimePath(f.root)
@@ -669,14 +423,6 @@ func currentRuntimePath(root string) string {
 		return target
 	}
 	return abs
-}
-
-func questionKeys(task map[string]any) []string {
-	var keys []string
-	for _, item := range asSlice(task["questions"]) {
-		keys = append(keys, asString(asMap(item)["key"]))
-	}
-	return keys
 }
 
 func checkoutEqual(a, b map[string]checkoutSnap) bool {
@@ -819,73 +565,5 @@ func (f *fleetLab) stageFixture(sha string) {
 	}
 	if _, err = release.VerifyRelease(dir, sha); err != nil {
 		f.t.Fatal(err)
-	}
-}
-
-func (f *fleetLab) verifyActivationRecovery(tasks map[string]map[string]any, previous, candidate string) {
-	f.t.Helper()
-	writeReleaseFile(f.t, f.root, "local-only.txt", []byte("unmerged\n"), 0644)
-	f.git(f.root, "add", "local-only.txt")
-	f.git(f.root, "commit", "-q", "-m", "unmerged local commit")
-	refused := f.ctl(false, "update", "apply", "--ref", "HEAD", "--no-fetch")
-	if !strings.Contains(asString(refused["error"]), "not merged on origin/main") {
-		f.t.Fatalf("unmerged apply=%v", refused)
-	}
-	s := nativeTestStore(f.t, f.home)
-	ctx, err := store.Context(f.root)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	priorPath := filepath.Join(f.root, ".local/releases", previous)
-	candidatePath := filepath.Join(f.root, ".local/releases", candidate)
-	hits := 0
-	updatecmd.TestPostCheck = func(_ *store.Store, root string) *ordjson.Object {
-		row := ordjson.NewObject()
-		if sameFile(currentRuntimePath(root), candidatePath) {
-			hits++
-			f.ctl(true, "ask", asString(tasks["cooperative-a"]["id"]), "--key", fmt.Sprintf("activation-%d", hits), "--text", "Question during activation?")
-			f.ctlPane(workerAddress(tasks["failed-refresh"]), true, "report", asString(tasks["failed-refresh"]["id"]), "--text", fmt.Sprintf("Report during activation %d.", hits))
-			row.Set("ok", false)
-			row.Set("detail", "fleet candidate-only post-check failure")
-		} else {
-			row.Set("ok", true)
-			row.Set("detail", nil)
-		}
-		return row
-	}
-	defer func() { updatecmd.TestPostCheck = nil; updatecmd.TestRecoverPending = nil }()
-	updatecmd.TestRecoverPending = func(*store.Store, string, string) (*ordjson.Object, error) {
-		return nil, fmt.Errorf("fleet test-only compensation fault")
-	}
-	if _, err = updatecmd.Apply(s, ctx, candidate, true); err == nil || !strings.Contains(err.Error(), "Recovery also failed") {
-		f.t.Fatalf("failed compensation=%v", err)
-	}
-	pending := asMap(asMap(f.ctl(true, "update", "status")["activation"])["pending"])
-	if asString(asMap(pending["to"])["sha"]) != candidate || !sameFile(f.currentPath(), candidatePath) {
-		f.t.Fatalf("failed compensation discarded pending selection=%v", pending)
-	}
-	updatecmd.TestRecoverPending = nil
-	if _, err = updatecmd.Recover(s, ctx, asString(pending["generation"])); err != nil {
-		f.t.Fatal(err)
-	}
-	if !sameFile(f.currentPath(), priorPath) {
-		f.t.Fatal("recovery did not restore prior compatible artifact")
-	}
-	if _, err = updatecmd.Apply(s, ctx, candidate, true); err == nil || !strings.Contains(err.Error(), "restored and verified") {
-		f.t.Fatalf("verified compensation=%v", err)
-	}
-	if hits != 2 {
-		f.t.Fatalf("candidate failure injections=%d", hits)
-	}
-	if asMap(f.ctl(true, "update", "status")["activation"])["pending"] != nil {
-		f.t.Fatal("successful recovery left pending activation")
-	}
-	for _, key := range []string{"activation-1", "activation-2"} {
-		if !strings.Contains(strings.Join(questionKeys(f.readTask(asString(tasks["cooperative-a"]["id"]))), ","), key) {
-			f.t.Fatalf("concurrent callback %s lost", key)
-		}
-	}
-	if asString(asMap(f.readTask(asString(tasks["failed-refresh"]["id"]))["report"])["text"]) != "Report during activation 2." {
-		f.t.Fatal("concurrent report lost during compensation")
 	}
 }

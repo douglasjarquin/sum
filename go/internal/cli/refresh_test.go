@@ -21,13 +21,9 @@ func TestRefreshUnknownFlagsAreUsageErrorsBeforeRefresh(t *testing.T) {
 		{name: "status extra after --task", args: []string{"refresh", "status", "--task", "t-aaaaaaaaaaaa", "extra"}},
 		{name: "status missing --task value", args: []string{"refresh", "status", "--task"}},
 		{name: "request unknown flag", args: []string{"refresh", "request", "--unexpected"}, unknown: true},
-		{name: "request unknown flag after --coordinator", args: []string{"refresh", "request", "--coordinator", "--unexpected"}, unknown: true},
 		{name: "request extra positional", args: []string{"refresh", "request", "extra"}},
 		{name: "request extra after --task", args: []string{"refresh", "request", "--task", "t-aaaaaaaaaaaa", "extra"}},
 		{name: "request missing --task value", args: []string{"refresh", "request", "--task"}},
-		{name: "adopt unknown flag", args: []string{"refresh", "adopt", "--coordinator", "r1", "--unexpected"}, unknown: true},
-		{name: "adopt extra positional", args: []string{"refresh", "adopt", "--coordinator", "r1", "extra"}},
-		{name: "adopt extra after dashdash", args: []string{"refresh", "adopt", "--coordinator", "--", "r1", "extra"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,21 +59,13 @@ func TestRefreshCommands(t *testing.T) {
 		{name: "valid status after dashdash", args: []string{"refresh", "status", "--"}, success: true},
 		{name: "valid status --task", args: []string{"refresh", "status", "--task", "t-aaaaaaaaaaaa"}, success: true},
 		{name: "valid status --task= repeated", args: []string{"refresh", "status", "--task=t-aaaaaaaaaaaa", "--task", "t-bbbbbbbbbbbb"}, success: true},
-		{name: "valid request --task --coordinator", args: []string{"refresh", "request", "--task", "t-aaaaaaaaaaaa", "--coordinator"}, domainErr: "HC session"},
-		{name: "valid request --task= --coordinator=", args: []string{"refresh", "request", "--task=t-aaaaaaaaaaaa", "--coordinator=true"}, domainErr: "HC session"},
-		{name: "valid request with native context", args: []string{"refresh", "request", "--coordinator"}, native: true, success: true},
-		{name: "valid adopt --coordinator", args: []string{"refresh", "adopt", "--coordinator", "r1"}, domainErr: "HC session"},
-		{name: "valid adopt --coordinator= after dashdash", args: []string{"refresh", "adopt", "--coordinator=true", "--", "r1"}, domainErr: "HC session"},
-		{name: "valid adopt with native context", args: []string{"refresh", "adopt", "--coordinator", "r1"}, native: true, domainErr: "is not the requested revision"},
+		{name: "worker request requires claim", args: []string{"refresh", "request", "--task", "t-aaaaaaaaaaaa"}, domainErr: "claim"},
 		{name: "refresh missing subcommand", args: []string{"refresh"}, usage: true},
 		{name: "status extra positional", args: []string{"refresh", "status", "extra"}, usage: true},
 		{name: "status unknown flag", args: []string{"refresh", "status", "--unexpected"}, usage: true, unknown: true},
 		{name: "request extra positional", args: []string{"refresh", "request", "extra"}, usage: true},
 		{name: "request unknown flag", args: []string{"refresh", "request", "--unexpected"}, usage: true, unknown: true},
 		{name: "request missing --task value", args: []string{"refresh", "request", "--task"}, usage: true},
-		{name: "adopt missing revision", args: []string{"refresh", "adopt", "--coordinator"}, usage: true},
-		{name: "adopt missing --coordinator", args: []string{"refresh", "adopt", "r1"}, usage: true},
-		{name: "adopt unknown flag", args: []string{"refresh", "adopt", "--coordinator", "r1", "--unexpected"}, usage: true, unknown: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

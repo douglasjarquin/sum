@@ -47,7 +47,7 @@ func (o *rootOptions) addReviewCommand(root *cobra.Command) {
 				RunPath:        runPath,
 				PolicyReviewed: policyReviewed,
 				Notes:          notes,
-			}, app.OptionalContext(o.installRoot), o.pumpOpts())
+			}, app.OptionalContext(st, o.installRoot, o.claim), o.pumpOpts(st))
 			if err != nil {
 				return err
 			}

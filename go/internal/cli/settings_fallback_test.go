@@ -79,10 +79,10 @@ func TestSettingsCommands(t *testing.T) {
 	}{
 		{name: "valid show", args: []string{"settings", "show"}, success: true},
 		{name: "valid show after dashdash", args: []string{"settings", "show", "--"}, success: true},
-		{name: "valid set --global", args: []string{"settings", "set", "--global", "3"}, domainErr: "HC session"},
-		{name: "valid set --global=", args: []string{"settings", "set", "--global=3"}, domainErr: "HC session"},
-		{name: "valid set --clear-capacity", args: []string{"settings", "set", "--clear-capacity"}, domainErr: "HC session"},
-		{name: "valid set --worker-preset=", args: []string{"settings", "set", "--worker-preset=fast"}, domainErr: "HC session"},
+		{name: "valid set --global", args: []string{"settings", "set", "--global", "3"}, domainErr: "claim_required"},
+		{name: "valid set --global=", args: []string{"settings", "set", "--global=3"}, domainErr: "claim_required"},
+		{name: "valid set --clear-capacity", args: []string{"settings", "set", "--clear-capacity"}, domainErr: "claim_required"},
+		{name: "valid set --worker-preset=", args: []string{"settings", "set", "--worker-preset=fast"}, domainErr: "claim_required"},
 		{name: "settings missing subcommand", args: []string{"settings"}, usage: true},
 		{name: "show extra positional", args: []string{"settings", "show", "extra"}, usage: true},
 		{name: "show unknown flag", args: []string{"settings", "show", "--unexpected"}, usage: true, unknown: true},
@@ -90,8 +90,8 @@ func TestSettingsCommands(t *testing.T) {
 		{name: "set unknown flag", args: []string{"settings", "set", "--unexpected"}, usage: true, unknown: true},
 		{name: "set missing --global value", args: []string{"settings", "set", "--global"}, usage: true},
 		{name: "set invalid --global", args: []string{"settings", "set", "--global", "nope"}, usage: true},
-		{name: "set requires pane without herdr", args: []string{"settings", "set"}, domainErr: "HC session"},
-		{name: "set requires coordinator", args: []string{"settings", "set", "--global", "3"}, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "set requires pane without herdr", args: []string{"settings", "set"}, domainErr: "claim_required"},
+		{name: "set requires coordinator", args: []string{"settings", "set", "--global", "3"}, herdr: true, domainErr: "claim_required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -143,7 +143,7 @@ func runSettings(t *testing.T, home string, args ...string) (stdout, stderr stri
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

@@ -383,11 +383,11 @@ func TestPassHealthySessionIsNotStarvedByAHungOne(t *testing.T) {
 	}
 }
 
-func TestPassBudgetTooSmallDefersButStillPresentsInline(t *testing.T) {
+func TestPassBudgetTooSmallDefersWorkerWithoutPresentingParent(t *testing.T) {
 	l := newPassLab(t)
 	id := l.worker("lab", "w1:p1")
 	l.session("lab", map[string]any{"panes": map[string]any{"w1:p1": l.pane("idle", l.worktree(id))}})
-	// An open question owed to the calling coordinator: presented inline, no Herdr call needed.
+	// An open question stays in the ledger and has no native parent recipient.
 	task, _ := l.s.ReadTask(id)
 	open := ordjson.NewObject()
 	open.Set("id", "q2")
@@ -400,8 +400,8 @@ func TestPassBudgetTooSmallDefersButStillPresentsInline(t *testing.T) {
 	}
 	result, _ := l.pump(time.Second)
 	got := states(result)
-	if got["w1:p1"] != "deferred" || got["w-root:p1"] != "submitted" {
-		t.Fatalf("states = %v, want the worker deferred and the inline listing submitted", got)
+	if got["w1:p1"] != "deferred" || len(got) != 1 {
+		t.Fatalf("states = %v, want only the deferred worker", got)
 	}
 	if len(l.calls()) != 0 {
 		t.Fatalf("calls = %v, want none", l.calls())
@@ -481,8 +481,9 @@ func TestPassNeverStampsAnObligationClosedAfterTheSnapshot(t *testing.T) {
 	task, _ := l.s.ReadTask(id)
 	question := ordjson.NewObject()
 	question.Set("id", "q1")
-	question.Set("status", "open")
+	question.Set("status", "answered")
 	question.Set("created_at", "2026-09-24T00:00:00+00:00")
+	question.Set("answered_at", "2026-09-24T00:01:00+00:00")
 	task.Set("questions", []any{question})
 	if err := l.s.SaveTask(task); err != nil {
 		t.Fatal(err)
@@ -563,7 +564,7 @@ func TestPassRecordsAttemptsOnlyInTheReturnsSidecar(t *testing.T) {
 	submitted := l.worker("lab", "w1:p1")
 	busy := l.worker("lab", "w2:p1")
 	timedOut := l.worker("slow", "w3:p1")
-	// The root owes itself an open question from the submitted task: presented inline to the caller.
+	// An open question remains in the ledger while only worker answers are delivered.
 	task, err := l.s.ReadTask(submitted)
 	if err != nil {
 		t.Fatal(err)
@@ -593,7 +594,7 @@ func TestPassRecordsAttemptsOnlyInTheReturnsSidecar(t *testing.T) {
 	}
 	result, _ := l.pump(0)
 	got := states(result)
-	if got["w1:p1"] != "submitted" || got["w2:p1"] != "not-delivered" || got["w3:p1"] != "uncertain" || got["w-root:p1"] != "submitted" {
+	if got["w1:p1"] != "submitted" || got["w2:p1"] != "not-delivered" || got["w3:p1"] != "uncertain" || len(got) != 3 {
 		t.Fatalf("states = %v", got)
 	}
 	want := map[string]string{submitted: "submitted-not-acknowledged", busy: "pending", timedOut: "uncertain"}
@@ -660,27 +661,4 @@ func TestSetNoticeKeepsTheRecordedKeyShape(t *testing.T) {
 func asNativeRoute(task *ordjson.Object) *ordjson.Object {
 	raw, _ := task.Get("worker_endpoint")
 	return cloneObject(raw.(*ordjson.Object))
-}
-
-func (l *passLab) replaceOwner() {
-	e := l.nativeEndpoint("lab", "w-root:p1")
-	e.Attempt += "-next"
-	e.BindingGeneration++
-	l.endpoints["lab/w-root:p1"] = e
-	record := l.bind(e)
-	record.Set("wake_protocol", jsonInt(1))
-	if err := ordjson.WriteFile(filepath.Join(l.s.Home, "context.json"), record); err != nil {
-		l.t.Fatal(err)
-	}
-	l.ctx = e.Object()
-	tasks, err := l.s.AllTasks()
-	if err != nil {
-		l.t.Fatal(err)
-	}
-	for _, task := range tasks {
-		task.Set("parent", e.Object())
-		if err = l.s.SaveTask(task); err != nil {
-			l.t.Fatal(err)
-		}
-	}
 }

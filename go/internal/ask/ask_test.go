@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -89,36 +90,19 @@ func registeredWorker(t *testing.T) (*store.Store, *ordjson.Object, *ordjson.Obj
 		}(),
 	})
 	task.Set("questions", []any{question})
-	coordEndpoint := endpoint
-	coordEndpoint.Address = "t2"
-	coordEndpoint.CreatedMS = 2
-	coordEndpoint.Role = "coordinator"
-	coordEndpoint.Task = ""
-	coordEndpoint.Attempt = "bootstrap"
-	terminal.Address = "t2"
-	terminal.CreatedMS = 2
-	fixture.SetTerminal(terminal)
-	coord := coordEndpoint.Object()
-	coordEvidence := (incarnation.NativeEvidence{Endpoint: coordEndpoint.Native(), PID: pid, Foreground: terminal.Foreground}).Record(store.Now())
-	coordReceipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: coordEndpoint.Native(), Kind: "coordinator-init", Attempt: coordEndpoint.Attempt})
-	coord.Set("incarnation", coordEvidence)
-	coord.Set("native_receipt", coordReceipt)
-	registered, err := s.Register(coordEndpoint, "coordinator", nil, coordEvidence)
+	session, err := s.ClaimCoordinator("", "answer conversation", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	registered.Set("native_receipt", coordReceipt)
-	if err := ordjson.WriteFile(filepath.Join(s.Sessions, store.RegistrationKey(coordEndpoint)+".json"), registered); err != nil {
+	ctx, err := app.RequireClaim(s, session.Token())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ordjson.WriteFile(filepath.Join(s.Home, "context.json"), coord); err != nil {
-		t.Fatal(err)
-	}
-	task.Set("parent", coordEndpoint.Object())
+	task.Set("owner", session.Owner())
+	task.Set("parent", nil)
 	if err := s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	ctx := coordEndpoint.Object()
 	return s, task, ctx
 }
 
@@ -482,7 +466,7 @@ type notificationError struct{}
 
 func (*notificationError) Error() string { return "notification failed" }
 
-func TestCloseRetainsNativeCoordinatorIdentity(t *testing.T) {
+func TestCloseRetainsLogicalCoordinatorIdentity(t *testing.T) {
 	s, task, ctx := registeredWorker(t)
 	question := findQuestion(task, "q-one")
 	question.Set("status", "answered")
@@ -507,8 +491,8 @@ func TestCloseRetainsNativeCoordinatorIdentity(t *testing.T) {
 	}
 	value, _ := findQuestion(saved, "q-one").Get("closed_by")
 	by, _ := value.(*ordjson.Object)
-	if !store.EndpointFromContext(by).Native().SameAuthority(store.EndpointFromContext(ctx).Native()) {
-		t.Fatalf("close lost native identity: %#v", by)
+	if !store.LogicalOwnersMatch(by, ctx) {
+		t.Fatalf("close lost logical identity: %#v", by)
 	}
 }
 

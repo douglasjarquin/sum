@@ -4,10 +4,42 @@ import (
 	"context"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
+	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestHistoricalParentRouteIsListedWithoutDelivery(t *testing.T) {
+	l := newNativeLab(t)
+	task, _ := l.task("open")
+	if ReturnRoute(task, "parent") != nil {
+		t.Fatal("historical parent endpoint still creates a delivery route")
+	}
+	before := len(l.f.Calls())
+	if _, err := Pump(l.s, PumpOpts{Snapshot: []*ordjson.Object{task}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.f.Calls()) != before {
+		t.Fatal("parent obligation contacted HC")
+	}
+	history, err := ReadReturns(l.s, taskIDOf(task))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ := routeValue(history, "deliveries").([]any)
+	if len(rows) != 0 {
+		t.Fatal("reading parent obligation wrote a delivery")
+	}
+	view, err := View(l.s, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, _ := routeValue(view, "open").([]any)
+	if len(open) != 1 {
+		t.Fatalf("parent obligation disappeared: %v", open)
+	}
+}
 
 func TestPromptFailureKeepsPossibleDeliveryUncertain(t *testing.T) {
 	for _, tc := range []struct {

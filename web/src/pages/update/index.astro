@@ -6,29 +6,26 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
   <div class="doc">
     <h1>Update &amp; rollback</h1>
     <p class="lede">
-      Update, rollback, refresh, and runtime releases. An update activates only
+      Quiescent updates, rollback and runtime releases. An update activates only
       a revision merged on the sum origin default branch, resolved to an
       immutable SHA.
     </p>
     <div class="sec">
       <h2>Update and roll back</h2>
       <div class="codeblock">
-        <div>./bin/sumctl update check          <span class="c"># fetch origin, resolve the merged revision, report default/active/compatibility</span></div>
-        <div>./bin/sumctl update apply          <span class="c"># stage the release, validate coexistence, switch .local/current, fast-forward a clean clone</span></div>
+        <div>./bin/sumctl update check --claim TOKEN          <span class="c"># fetch origin, resolve the merged revision, report default/active/compatibility</span></div>
+        <div>./bin/sumctl update apply --claim TOKEN          <span class="c"># stage the release, validate quiescence, switch .local/current, fast-forward a clean clone</span></div>
         <div>./bin/sumctl update status</div>
-        <div>./bin/sumctl update rollback       <span class="c"># reselect the recorded previous approved runtime; records, questions, reports, worktrees stay</span></div>
-        <div>./bin/sumctl update recover --generation GENERATION</div>
+        <div>./bin/sumctl update rollback --claim TOKEN       <span class="c"># reselect the recorded previous approved runtime; records, questions, reports, worktrees stay</span></div>
+        <div>./bin/sumctl update recover --claim TOKEN --generation GENERATION</div>
       </div>
       <p>Only the user authorizes update or rollback. An interrupted activation requires its exact journal generation. No core, agent or service is restarted, and dirty or diverged work stays intact. Normal Open/init/status never migrate schema-one state.</p>
     </div>
     <div class="sec">
-      <h2>Refresh running sessions</h2>
-      <div class="codeblock">
-        <div>./bin/sumctl refresh request               <span class="c"># coordinator contract plus every non-archived task</span></div>
-        <div>./bin/sumctl refresh status                <span class="c"># confirmed / submitted-unconfirmed / pending-busy / pending-unreachable / unreachable / capability-deferred</span></div>
-        <div>./bin/sumctl refresh adopt --coordinator rN</div>
-      </div>
-      <p>Refresh persists a sealed next revision before one eligible HC send. Qualified Codex uses Tab: idle has <code>if:idle</code>, observed Done sends without <code>if</code> or <code>force</code>, and a raced busy turn queues it for the next turn. This is not an atomic Done guard. Only a matching adoption receipt confirms application.</p>
+      <h2>Next-start adoption</h2>
+      <p>Running, starting or uncertain attempts and unresolved launch/delivery effects block activation. Dirty or divergent checkout alignment refuses before runtime selection. Open questions and unapplied answers alone do not block.</p>
+      <p>After success, checkout HEAD, selected runtime and entry instructions agree. Start your usual agent here again to read them. Workers keep sealed procedures; approved worker brief revisions retain their existing request/adopt flow.</p>
+      <p>Logical ownership and the root state-format fence require a compatible rollback target. Historical task and procedure bytes stay unchanged.</p>
     </div>
     <div class="sec">
       <h2>Runtime releases</h2>

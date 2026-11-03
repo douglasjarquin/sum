@@ -3,28 +3,25 @@ package metadata
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
-	"github.com/douglasjarquin/sum/go/internal/inboxview"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
 
 type metadataLab struct {
-	t             *testing.T
-	s             *store.Store
-	f             *hctest.Fixture
-	owner, worker store.Endpoint
-	task          *ordjson.Object
-	meta          *ordjson.Object
+	t      *testing.T
+	s      *store.Store
+	f      *hctest.Fixture
+	worker store.Endpoint
+	task   *ordjson.Object
+	meta   *ordjson.Object
 }
 
 func newMetadataLab(t *testing.T) *metadataLab {
@@ -46,12 +43,11 @@ func newMetadataLab(t *testing.T) *metadataLab {
 		t.Fatal(err)
 	}
 	l := &metadataLab{t: t, s: s, f: f, meta: emptyMetadata()}
-	l.owner = store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: f.CoreID, Session: "lab", Socket: f.Socket, Address: "t0", Role: "coordinator", Attempt: "coord-1", BindingGeneration: 1, CreatedMS: 100, Cwd: physical}
-	owner := l.bind(l.owner)
-	if err = ordjson.WriteFile(filepath.Join(s.Home, "context.json"), owner); err != nil {
+	session, err := s.ClaimCoordinator("", "metadata conversation", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	l.worker = l.owner
+	l.worker = store.Endpoint{Schema: 2, Backend: "hc", Machine: host.ID, CoreID: f.CoreID, Session: "lab", Socket: f.Socket, BindingGeneration: 1}
 	l.worker.Role = "worker"
 	l.worker.Task = "t-aaaaaaaaaaaa"
 	l.worker.Attempt = "worker-1"
@@ -67,7 +63,8 @@ func newMetadataLab(t *testing.T) *metadataLab {
 	task.Set("repository", physical)
 	task.Set("worktree", l.worker.Cwd)
 	task.Set("worker_endpoint", l.worker.Object())
-	task.Set("parent", l.owner.Object())
+	task.Set("parent", nil)
+	task.Set("owner", session.Owner())
 	l.task = task
 	l.save()
 	l.meta.Set("enabled", true)
@@ -87,7 +84,7 @@ func (l *metadataLab) bind(e store.Endpoint) *ordjson.Object {
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	kind := map[string]string{"worker": "worker-init", "coordinator": "coordinator-init"}[e.Role]
+	kind := "worker-init"
 	receipt, _ := ordjson.FromValue(incarnation.NativeReceipt{Endpoint: e.Native(), Kind: kind, Attempt: e.Attempt})
 	record.Set("native_receipt", receipt)
 	if err = ordjson.WriteFile(filepath.Join(l.s.Sessions, store.RegistrationKey(e)+".json"), record); err != nil {
@@ -132,33 +129,25 @@ func (l *metadataLab) question(status string) {
 	l.task.Set("questions", []any{q})
 	l.save()
 }
-func TestProjectionCountsOnlyHumanDecisionsAndShowsUnknownCoverage(t *testing.T) {
-	for _, damaged := range []bool{false, true} {
-		t.Run(fmt.Sprint(damaged), func(t *testing.T) {
-			l := newMetadataLab(t)
-			l.question("open")
-			if damaged {
-				if err := os.MkdirAll(filepath.Join(l.s.Tasks, "t-bbbbbbbbbbbb"), 0700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(l.s.Tasks, "t-bbbbbbbbbbbb", "task.json"), []byte("broken"), 0600); err != nil {
-					t.Fatal(err)
-				}
-			}
-			l.run()
-			label := l.labels("t0")["sum.inbox"]
-			if !strings.Contains(label, "1 decision") {
-				t.Fatalf("label %q", label)
-			}
-			if strings.Contains(label, "unknown") != damaged {
-				t.Fatalf("coverage %q", label)
-			}
-			before := len(l.f.Calls())
-			l.run()
-			if len(l.f.Calls()) != before {
-				t.Fatal("unchanged projection contacted runtime")
-			}
-		})
+func TestProjectionNeverContactsRetiredCoordinator(t *testing.T) {
+	l := newMetadataLab(t)
+	legacy := l.worker
+	legacy.Address = "retired-coordinator"
+	legacy.Role = "coordinator"
+	if err := ordjson.WriteFile(filepath.Join(l.s.Home, "context.json"), legacy.Object()); err != nil {
+		t.Fatal(err)
+	}
+	l.meta.Set("root", legacy.Object())
+	l.question("open")
+	result := l.run()
+	if get(result, "root") != nil {
+		t.Fatal("projection exposed a coordinator terminal")
+	}
+	for _, call := range l.f.Calls() {
+		data, _ := ordjson.MarshalCompact(call.Params)
+		if bytes.Contains(data, []byte("retired-coordinator")) {
+			t.Fatalf("contacted retired coordinator: %s", data)
+		}
 	}
 }
 func TestProjectionRoutineInspectionAndPassiveStates(t *testing.T) {
@@ -184,22 +173,13 @@ func TestProjectionSkipsWithoutCapabilityAndWritesOnlyVerifiedPanes(t *testing.T
 	if value := l.labels("t1")["sum.state"]; value != "" {
 		t.Fatal("unverified process got task labels")
 	}
+	l.f.SetForeground("t1", hcclient.Foreground{PID: int32(l.worker.CreatedMS), Name: "codex"})
 	l.f.QueueFault("terminal.label", hctest.Fault{RefuseKind: "config"})
 	l.question("open")
-	l.meta.Set("root", nil)
 	result := l.run()
-	if root := asObject(get(result, "root")); get(root, "outcome") != "failed" {
-		t.Fatalf("native capability refusal %v", root)
-	}
-}
-func TestInboxTokenKeepsUnknownAndDecisionsWithinNativeLimit(t *testing.T) {
-	snapshot := inboxview.Snapshot{Complete: false}
-	snapshot.Counts.Decisions = 123456
-	snapshot.Counts.Coordinator = 99999
-	snapshot.Counts.Worker = 99999
-	token := inboxToken(snapshot)
-	if !strings.Contains(token, "unknown") || !strings.Contains(token, "123456 decisions") || len(token) > tokenMax {
-		t.Fatalf("token %q", token)
+	rows := asList(get(result, "tasks"))
+	if len(rows) != 1 || get(asObject(rows[0]), "outcome") != "failed" {
+		t.Fatalf("native capability refusal %v", result)
 	}
 }
 func TestSourceDerivesFromInstanceNotHomeBasename(t *testing.T) {

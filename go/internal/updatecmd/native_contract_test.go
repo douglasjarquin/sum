@@ -1,19 +1,17 @@
 package updatecmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/contract"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
-	"github.com/douglasjarquin/sum/go/internal/hookstatus"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launchtest"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -121,6 +119,7 @@ func TestUnresolvedNativeEffectsArePreserved(t *testing.T) {
 	id := "t-aaaaaaaaaaaa"
 	task := ordjson.NewObject()
 	task.Set("id", id)
+	task.Set("status", "archived")
 	for _, state := range []string{"in-flight", "uncertain"} {
 		path := filepath.Join(s.Tasks, id, "returns.json")
 		writeFile(t, path, `{"schema":1,"task":"`+id+`","deliveries":[{"state":"`+state+`"}]}`)
@@ -190,7 +189,7 @@ func nativeApplyLab(t *testing.T) *applyLab {
 	writeFile(t, filepath.Join(root, ".gitignore"), ".sum/\n.local/\n")
 	hctest.InstallRuntime(t, root)
 	writeFile(t, filepath.Join(root, "AGENTS.md"), "old instructions\n")
-	writeFile(t, filepath.Join(root, "bin/sumctl"), "#!/bin/sh\nexit 0\n")
+	writeFile(t, filepath.Join(root, "bin/sumctl"), stableLauncher)
 	if err := os.Chmod(filepath.Join(root, "bin/sumctl"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +245,15 @@ func nativeApplyLab(t *testing.T) *applyLab {
 		buildCompatibleRelease(t, filepath.Join(root, ".local/releases"), sha)
 
 	}
-	return &applyLab{root: root, home: s.Home, oldSHA: old, newSHA: next, store: s, ctx: endpoint.Object(), fixture: fixture}
+	session, err := s.RetireNativeCoordinator("", "test", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := app.RequireClaim(s, session.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &applyLab{root: root, home: s.Home, oldSHA: old, newSHA: next, store: s, ctx: ctx, fixture: fixture}
 }
 
 func TestNativeApplyRollbackPreservesGenerationAndPreferences(t *testing.T) {
@@ -325,7 +332,7 @@ func TestNativeInterruptedActivationRecoveryUsesCompatibleArtifact(t *testing.T)
 	}
 }
 
-func TestNativeCompatibilityRefusesUnresolvedObserverWithoutStartingCore(t *testing.T) {
+func TestCompatibilityPreservesHistoricalObserverWithoutStartingCore(t *testing.T) {
 	lab := nativeApplyLab(t)
 	if err := settings.SetNativeEventsEnabled(lab.store, true); err != nil {
 		t.Fatal(err)
@@ -337,8 +344,8 @@ func TestNativeCompatibilityRefusesUnresolvedObserverWithoutStartingCore(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := view.Get("ok"); ok != false {
-		t.Fatal("unresolved observer permitted activation")
+	if ok, _ := view.Get("ok"); ok != true {
+		t.Fatal("historical observer blocked quiescent activation")
 	}
 	for _, call := range lab.fixture.Calls() {
 		if call.Method == "terminal.run" {
@@ -353,7 +360,7 @@ func TestNativeCompatibilityRefusesUnresolvedObserverWithoutStartingCore(t *test
 
 func TestMatchingApplicationReceiptResolvesUncertainLaunchWithoutRewritingIt(t *testing.T) {
 	lab := nativeApplyLab(t)
-	endpoint := store.EndpointFromContext(lab.ctx)
+	endpoint := store.EndpointFromContext(func() *ordjson.Object { o, _ := lab.store.Owner(); return o }())
 	endpoint.Role = "worker"
 	endpoint.Task = "t-aaaaaaaaaaaa"
 	endpoint.Attempt = "worker-one"
@@ -381,72 +388,14 @@ func TestMatchingApplicationReceiptResolvesUncertainLaunchWithoutRewritingIt(t *
 	if !nativeReceiptResolvesLaunch(lab.store, task, attempt) {
 		t.Fatal("matching application receipt did not resolve launch")
 	}
+	attempt.Set("state", "released")
+	if !nativeReceiptResolvesLaunch(lab.store, task, attempt) {
+		t.Fatal("settled attempt lost its matching application receipt")
+	}
 	attempt.Set("id", "different-attempt")
 	if nativeReceiptResolvesLaunch(lab.store, task, attempt) {
 		t.Fatal("different attempt inherited receipt")
 	}
-}
-
-func startNativeObserverProgram(t *testing.T, lab *applyLab) {
-	t.Helper()
-	observerStore, err := store.Open(lab.store.Root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	client := lab.fixture.Client()
-	subscription, err := client.Subscribe(ctx, hcclient.SubscribeParams{Labels: map[string]string{"sum.kind": "observer"}})
-	if err != nil {
-		cancel()
-		t.Fatal(err)
-	}
-	done := make(chan error, 1)
-	go func() {
-		defer subscription.Close()
-		for {
-			event, err := subscription.Next()
-			if err != nil {
-				done <- err
-				return
-			}
-			var payload struct {
-				Type string            `json:"type"`
-				Data hcclient.Terminal `json:"data"`
-			}
-			if err = json.Unmarshal(event.Params, &payload); err != nil {
-				done <- err
-				return
-			}
-			if payload.Type != "created" {
-				continue
-			}
-			terminal := payload.Data
-			pid := uint32(201)
-			terminal.PID = &pid
-			terminal.Foreground = &hcclient.Foreground{PID: 202, Name: "sumctl", Argv: terminal.Argv, Cwd: terminal.Cwd}
-			lab.fixture.SetTerminal(terminal)
-			endpoint := store.EndpointFromContext(lab.ctx)
-			endpoint.Address = terminal.Address
-			endpoint.CreatedMS = terminal.CreatedMS
-			observedErr := hookstatus.Observe(ctx, observerStore, endpoint, terminal.Cwd, terminal.Argv[0])
-			if observedErr != nil && ctx.Err() == nil {
-				t.Errorf("observer program failed: %v", observedErr)
-			}
-			done <- observedErr
-			return
-		}
-	}()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil && ctx.Err() == nil {
-				t.Errorf("native observer: %v", err)
-			}
-		case <-time.After(3 * time.Second):
-			t.Error("native observer did not stop")
-		}
-	})
 }
 
 func TestNativeTargetCapabilitiesCannotReplaceMatchedHCRuntime(t *testing.T) {
@@ -471,48 +420,6 @@ func TestNativeTargetCapabilitiesCannotReplaceMatchedHCRuntime(t *testing.T) {
 	}
 }
 
-func TestActivationRevalidatesAutomaticDeliveryQualification(t *testing.T) {
-	lab := nativeApplyLab(t)
-	owner, err := lab.store.Owner()
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := owner.Get("native_template")
-	data, _ := ordjson.MarshalCompact(raw)
-	var template returns.NativeTemplate
-	if err = json.Unmarshal(data, &template); err != nil {
-		t.Fatal(err)
-	}
-	for _, status := range []string{"working", "blocked"} {
-		lab.fixture.SetStatus("t1", status)
-		view, err := Compatibility(lab.store, lab.root, lab.root, DefaultRuntime(lab.root))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if ok, _ := view.Get("ok"); ok != true {
-			t.Fatalf("qualification depended on %s readiness: %s", status, dump(view))
-		}
-	}
-	path := filepath.Join(template.Options.CodexHome, "config.toml")
-	writeFile(t, path, "[tui]\nkeymap = 'changed'\n")
-	before, _ := os.ReadFile(filepath.Join(lab.store.Home, "context.json"))
-	if _, err = Apply(lab.store, lab.ctx, lab.newSHA, true); err == nil || !strings.Contains(err.Error(), "qualification") {
-		t.Fatalf("changed effective config did not block activation: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(lab.root, ".local/current")); !os.IsNotExist(err) {
-		t.Fatal("unqualified configuration selected candidate", err)
-	}
-	after, _ := os.ReadFile(filepath.Join(lab.store.Home, "context.json"))
-	if string(before) != string(after) {
-		t.Fatal("qualification check rewrote registration")
-	}
-	for _, call := range lab.fixture.Calls() {
-		if call.Method == "terminal.send" || call.Method == "terminal.run" || call.Method == "terminal.kill" {
-			t.Fatalf("qualification performed mutation: %s", call.Method)
-		}
-	}
-}
-
 func TestActivationQualifiesLiveWorkerAndReviewerIndependentlyOfReadiness(t *testing.T) {
 	lab := nativeApplyLab(t)
 	owner, _ := lab.store.Owner()
@@ -521,7 +428,7 @@ func TestActivationQualifiesLiveWorkerAndReviewerIndependentlyOfReadiness(t *tes
 	task.Set("id", "t-aaaaaaaaaaaa")
 	task.Set("status", "working")
 	for _, role := range []string{"worker", "reviewer"} {
-		endpoint := store.EndpointFromContext(lab.ctx)
+		endpoint := store.EndpointFromContext(func() *ordjson.Object { o, _ := lab.store.Owner(); return o }())
 		endpoint.Role = role
 		endpoint.Task = "t-aaaaaaaaaaaa"
 		endpoint.Attempt = role + "-one"

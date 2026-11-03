@@ -229,21 +229,25 @@ func Run(s *store.Store, destination string) (*ordjson.Object, error) {
 	sort.Strings(sessionEntries)
 	paths = append(paths, sessionEntries...)
 	contractDir := filepath.Join(home, "coordinator")
-	if isFile(filepath.Join(contractDir, versions.File)) {
-		paths = append(paths, filepath.Join(contractDir, versions.File))
-		contractVersions, err := versions.ReadContractVersions(s)
-		if err == nil {
-			revisions, _ := contractVersions.Get("revisions")
-			list, _ := revisions.([]any)
-			for _, raw := range list {
-				rev, _ := raw.(*ordjson.Object)
-				pathValue, _ := rev.Get("path")
-				relative, _ := pathValue.(string)
-				if relative != "" {
-					paths = append(paths, filepath.Join(contractDir, filepath.FromSlash(relative)))
-				}
-			}
+	if err := filepath.WalkDir(contractDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if os.IsNotExist(walkErr) {
+			return nil
 		}
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type().IsRegular() {
+			paths = append(paths, path)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	for _, task := range tasks {
 		id := asString(func() any { v, _ := task.Get("id"); return v }())

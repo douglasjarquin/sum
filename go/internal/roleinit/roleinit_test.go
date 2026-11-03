@@ -38,7 +38,7 @@ func TestInit_requiresTaskForRoleWorker(t *testing.T) {
 	}
 }
 
-func TestInit_refusesCoordinatorWhenNotDesignated(t *testing.T) {
+func TestInit_refusesCoordinatorWithoutRequiredProcedure(t *testing.T) {
 	root := t.TempDir()
 	s, err := store.Open(root)
 	if err != nil {
@@ -65,28 +65,23 @@ func TestInit_returnsErrDesignated(t *testing.T) {
 	}
 }
 
-func TestInit_plainDeveloperWithNoHintOrMarker(t *testing.T) {
+func TestInit_plainWorkspaceCoordinatesWithNoHintOrMarker(t *testing.T) {
 	root := t.TempDir()
-	s, err := store.Open(root)
-	if err != nil {
-		t.Fatalf("open: %v", err)
+	if err := os.WriteFile(filepath.Join(root, "COORDINATOR.md"), []byte("# Coordinate approved work\n"), 0600); err != nil {
+		t.Fatal(err)
 	}
-	view, err := Init(root, s, fakeContext("m", "s", "p", root), "", "")
+	s, err := store.Open(filepath.Join(root, ".sum"))
 	if err != nil {
-		t.Fatalf("init: %v", err)
+		t.Fatal(err)
+	}
+	view, err := Init(root, s, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
 	}
 	role, _ := view.Get("role")
-	if role != "developer" {
-		t.Fatalf("role = %v, want developer", role)
-	}
-	noteValue, _ := view.Get("note")
-	want := "Development checkout: read the developer procedure under `procedure`; modify and test sum here only. No coordinator initialization, dispatch, production setup, or instance-wide updates."
-	if noteValue != want {
-		t.Fatalf("note = %q, want %q", noteValue, want)
-	}
-	installationHome, _ := view.Get("installation_home")
-	if installationHome != nil {
-		t.Fatalf("installation_home = %v, want nil (no linked worktree here)", installationHome)
+	claim, _ := view.Get("claim")
+	if role != "coordinator" || claim == "" {
+		t.Fatalf("view = %v", view)
 	}
 }
 

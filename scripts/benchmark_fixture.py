@@ -19,7 +19,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
 
 from benchmark_report import summarize
 
@@ -87,16 +86,24 @@ def write_json(path, value):
         stream.write(json.dumps(value, indent=2) + "\n")
 
 
-def initialize_state(root):
-    generation = "g-" + uuid.uuid4().hex[:24]
-    home = root / "generations" / generation
-    for name in ("tasks", "sessions"):
-        (home / name).mkdir(parents=True, mode=0o700)
-    stamp = "2026-10-30T00:00:00+00:00"
-    write_json(root / "state.json", dict(schema=2, backend="hc", generation=generation))
-    write_json(home / "state.json", dict(schema=2, backend="hc", generation=generation, root=str(root),
-                                         instance=uuid.uuid4().hex, sum_version="0.1.0", created_at=stamp))
-    return home
+def ordinary_runtime(root):
+    for name in ("COORDINATOR.md", "skills/sum-develop/SKILL.md"):
+        destination = root / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, destination)
+    shutil.copytree(ROOT / "skills/sum-work", root / "skills/sum-work")
+    helper = root / "bin/sumctl"
+    helper.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(SUMCTL, helper)
+    helper.chmod(0o700)
+    return helper
+
+
+def command(case, *args, role="coordinator"):
+    prefix = [case["entry"], "--format", "json", "--home", case["root"]]
+    if role == "coordinator":
+        prefix.extend(("--claim", case["claim"]))
+    return [*prefix, *args]
 
 
 def registration_key(endpoint):
@@ -124,8 +131,10 @@ def actor(core, home, role, cwd, task="", attempt="benchmark-bootstrap"):
 
 
 def actor_env(case, role="coordinator"):
+    if role == "coordinator":
+        return dict(case["env"])
     endpoint = case["actors"][role]
-    return dict(case["env"], SUM_HOME=str(case["root"]), SUM_SESSION=endpoint["session"], SUM_CORE_ID=endpoint["core_id"],
+    return dict(case["env"], SUM_HOME=str(case["home"]), SUM_SESSION=endpoint["session"], SUM_CORE_ID=endpoint["core_id"],
                 HC_SOCKET=endpoint["socket"], HC_TERMINAL_ID=endpoint["address"], SUM_ROLE=role,
                 SUM_TASK=endpoint["task"], SUM_ATTEMPT=endpoint["attempt"], SUM_BINDING_GENERATION=str(endpoint["binding_generation"]))
 
@@ -155,6 +164,7 @@ def git_repo(path):
 def fixture(base):
     if not SUMCTL.is_file() or SUMCTL.is_symlink():
         raise BenchmarkError("build the development checkout own .local/bin/sumctl executable before benchmarking; runtime links are not followed")
+    base = base.resolve()
     base.mkdir(parents=True, exist_ok=True)
     env = clean_environment(base)
     repo = base / "repo"
@@ -167,12 +177,19 @@ def fixture(base):
     env["SUM_CODEX_BIN"] = str(stub)
     env["SUM_CODEGRAPH_BIN"] = str(ROOT / "tests/fixtures/codegraph.py")
     root = base / "state"
-    home = initialize_state(root)
+    entry = ordinary_runtime(base)
+    initialized = run_plain([entry, "--format", "json", "--home", root, "init"], env)
+    if initialized.get("role") != "coordinator" or not initialized.get("claim"):
+        raise BenchmarkError("ordinary benchmark init did not return a coordinator claim")
+    pointer = json.loads((root / "state.json").read_text())
+    home = root / "generations" / pointer["generation"]
     with Core() as core:
-        coordinator, evidence, receipt = actor(core, home, "coordinator", ROOT)
-        write_json(home / "context.json", dict(coordinator, incarnation=evidence, native_receipt=receipt))
-        case = dict(root=root, home=home, repo=repo, brief=brief, env=env, core=core, actors={"coordinator": coordinator})
-        prefix = [SUMCTL, "--format", "json", "--home", root]
+        write_json(root / "runtime-route.json", dict(socket=str(core.socket), session="sum-test-benchmark",
+                   config_home=env["XDG_CONFIG_HOME"], state_home=env["XDG_STATE_HOME"],
+                   runtime_dir=env["XDG_RUNTIME_DIR"], core_id=core.core_id))
+        case = dict(root=root, home=home, repo=repo, brief=brief, env=env, core=core,
+                    claim=initialized["claim"], coordinator=initialized["session"], entry=entry, actors={})
+        prefix = command(case)
         run_plain([*prefix, "settings", "set", "--global", "64", "--per-repository", "64"], actor_env(case))
         task = run_plain([*prefix, "prepare", "--repo", repo, "--base", "main", "--brief", brief, "--harness", "codex", "--approved"], actor_env(case))
         run_plain([*prefix, "prepare", "--reconcile", task["id"]], actor_env(case))
@@ -188,14 +205,14 @@ def fixture(base):
 
 
 def clone_case(base, source, name):
-    root = base / name / "state"
+    root = (base / name / "state").resolve()
     shutil.copytree(source["root"], root)
     state = json.loads((root / "state.json").read_text())
     home = root / "generations" / state["generation"]
     state = json.loads((home / "state.json").read_text())
     state["root"] = str(root)
     write_json(home / "state.json", state)
-    return dict(source, root=root, home=home)
+    return dict(source, root=root, home=home, entry=ordinary_runtime(root.parent))
 
 
 def add_tasks(home, source_id, count, status):

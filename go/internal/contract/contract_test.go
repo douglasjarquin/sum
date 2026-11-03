@@ -34,7 +34,8 @@ func TestBuildRelease_reportsNativeBinaryCapabilities(t *testing.T) {
       1
     ],
     "state_schema": [
-      2
+      2,
+      3
     ],
     "brief_schema": [
       1
@@ -44,6 +45,9 @@ func TestBuildRelease_reportsNativeBinaryCapabilities(t *testing.T) {
     ],
     "wake_protocol": [
       1
+    ],
+    "owner_schema": [
+      2
     ]
   }
 }`

@@ -32,7 +32,7 @@ class PackagingInventoryTest(unittest.TestCase):
         self.assertEqual(selected["generation"], 1)
         self.assertEqual(set(selected["targets"]), {"macos-aarch64", "macos-x86_64", "linux-aarch64", "linux-x86_64", "windows-x86_64"})
 
-    def test_sumctl_wrapper_keeps_an_inherited_install_root(self):
+    def test_sumctl_wrapper_scopes_an_inherited_install_root(self):
         root = Path(tempfile.mkdtemp())
         (root / "bin").mkdir()
         (root / ".local" / "bin").mkdir(parents=True)
@@ -44,9 +44,17 @@ class PackagingInventoryTest(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "SUM_INSTALL_ROOT"}
         out = subprocess.check_output([str(root / "bin" / "sumctl"), "--version"], text=True, env=env)
         self.assertEqual(out, f"root={root}\n")
-        env["SUM_INSTALL_ROOT"] = "/some/installation"
+        env["SUM_INSTALL_ROOT"] = tempfile.mkdtemp(prefix="unrelated-installation-")
         out = subprocess.check_output([str(root / "bin" / "sumctl"), "--version"], text=True, env=env)
-        self.assertEqual(out, "root=/some/installation\n")
+        self.assertEqual(out, f"root={root}\n")
+        release = root / ".local/releases/candidate"
+        (release / "bin").mkdir(parents=True)
+        (release / ".local/bin").mkdir(parents=True)
+        shutil.copy(ROOT / "bin/sumctl", release / "bin/sumctl")
+        shutil.copy(artifact, release / ".local/bin/sumctl")
+        env["SUM_INSTALL_ROOT"] = str(root)
+        out = subprocess.check_output([str(release / "bin/sumctl"), "--version"], text=True, env=env)
+        self.assertEqual(out, f"root={root.resolve()}\n")
 
     def test_relink_rewrites_absolute_hc_link_so_a_renamed_tree_still_resolves(self):
         staging = Path(tempfile.mkdtemp(prefix=".staging-hc-"))

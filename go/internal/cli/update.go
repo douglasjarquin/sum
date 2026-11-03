@@ -5,7 +5,6 @@ import (
 
 	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
-	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/updatecmd"
 	"github.com/spf13/cobra"
 )
@@ -51,9 +50,9 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 				case "check":
 					view, err = updatecmd.Check(st, o.runtimeRoot, ref, noFetch)
 				case "stage":
-					view, err = updatecmd.Stage(st, app.OptionalContext(o.installRoot), ref, noFetch)
+					view, err = updatecmd.Stage(st, app.OptionalContext(st, o.installRoot, o.claim), ref, noFetch)
 				case "apply":
-					view, err = updatecmd.Apply(st, app.OptionalContext(o.installRoot), ref, noFetch)
+					view, err = updatecmd.Apply(st, app.OptionalContext(st, o.installRoot, o.claim), ref, noFetch)
 				}
 				if err != nil {
 					return err
@@ -78,7 +77,7 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -104,7 +103,7 @@ func (o *rootOptions) addUpdateCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}

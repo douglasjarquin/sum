@@ -39,7 +39,16 @@ func (o *rootOptions) openStore(command string) (*store.Store, error) {
 	if err := guard.Candidate(o.installRoot, st, command); err != nil {
 		return nil, err
 	}
+	if o.claim != "" {
+		if err := st.CaptureClaim(o.claim); err != nil {
+			return nil, err
+		}
+	}
 	return st, nil
+}
+
+func (o *rootOptions) context(st *store.Store) (*ordjson.Object, error) {
+	return app.Context(st, o.installRoot, o.claim)
 }
 
 func observeExpectedWorker(st *store.Store, runtimeRoot, taskID, expectedRecipient string) (ask.RecipientCheck, error) {
@@ -187,7 +196,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := notes.Add(st, args[0], body, app.OptionalContext(o.installRoot))
+			view, err := notes.Add(st, args[0], body, app.OptionalContext(st, o.installRoot, o.claim))
 			if err != nil {
 				return err
 			}
@@ -210,7 +219,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -275,7 +284,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				}
 			}
 			view, err := ask.AskStructured(st, args[0], askKey, body, decision, func() (*ordjson.Object, error) {
-				return returns.Notify(st, o.pumpOpts(), args[0], "parent", "a decision is waiting", false)
+				return returns.Notify(st, o.pumpOpts(st), args[0], "parent", "a decision is waiting", false)
 			})
 			if err != nil {
 				return err
@@ -312,7 +321,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				return err
 			}
 			if answerClose {
-				ctx, err := store.Context(o.installRoot)
+				ctx, err := o.context(st)
 				if err != nil {
 					return err
 				}
@@ -325,9 +334,9 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				}
 				return emitOrdjson(cmd.OutOrStdout(), view)
 			}
-			ctx := app.OptionalContext(o.installRoot)
+			ctx := app.OptionalContext(st, o.installRoot, o.claim)
 			if answerChoice != "" || answerExpectedRecipient != "" {
-				ctx, err = store.Context(o.installRoot)
+				ctx, err = o.context(st)
 				if err != nil {
 					return err
 				}
@@ -350,7 +359,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				}
 			}
 			pump := func() (*ordjson.Object, error) {
-				return returns.Notify(st, o.pumpOpts(), args[0], "worker", "an answer has been recorded", false)
+				return returns.Notify(st, o.pumpOpts(st), args[0], "worker", "an answer has been recorded", false)
 			}
 			var view *ordjson.Object
 			if answerChoice != "" || answerExpectedRecipient != "" {
@@ -386,7 +395,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -402,7 +411,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				return err
 			}
 			view, err := ask.ExplainWithRecipientCheck(st, args[0], args[1], body, explainExpectedRecipient, checkRecipient, func() (*ordjson.Object, error) {
-				return returns.Notify(st, o.pumpOpts(), args[0], "worker", "a clarification was requested", true)
+				return returns.Notify(st, o.pumpOpts(st), args[0], "worker", "a clarification was requested", true)
 			})
 			if err != nil {
 				return err
@@ -427,7 +436,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := ask.Resolve(st, args[0], args[1], app.OptionalContext(o.installRoot))
+			view, err := ask.Resolve(st, args[0], args[1], app.OptionalContext(st, o.installRoot, o.claim))
 			if err != nil {
 				return err
 			}
@@ -447,7 +456,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := returns.Notify(st, o.pumpOpts(), args[0], noticeTo, "saved task state needs attention", true)
+			view, err := returns.Notify(st, o.pumpOpts(st), args[0], noticeTo, "saved task state needs attention", true)
 			if err != nil {
 				return err
 			}
@@ -471,27 +480,33 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
-			reg, err := st.Registration(store.EndpointFromContext(ctx))
-			if err != nil {
-				return err
-			}
-			if reg == nil {
-				return fmt.Errorf("Run `sumctl init` in this pane first; the pump delivers only for a pane registered in this instance.")
+			var reg *ordjson.Object
+			logical := store.ValidateLogicalOwner(ctx) == nil
+			if !logical {
+				reg, err = st.Registration(store.EndpointFromContext(ctx))
+				if err != nil {
+					return err
+				}
+				if reg == nil {
+					return fmt.Errorf("Run init for the recorded worker or reviewer role before pumping its results.")
+				}
 			}
 			tasks, err := st.AllTasks()
 			if err != nil {
 				return err
 			}
-			opts := o.pumpOpts()
+			opts := o.pumpOpts(st)
 			opts.Ctx = ctx
 			opts.Tasks = pumpTasks
 			opts.Force = pumpForce
 			opts.Inline = true
-			if callerVerified(st, ctx, reg) {
+			if logical {
+				opts.CallerVerifiedRole = "coordinator"
+			} else if callerVerified(st, ctx, reg) {
 				opts.CallerVerifiedRole, _ = registrationString(reg, "role")
 				opts.CallerVerifiedTask, _ = reg.Get("task")
 			}
@@ -525,7 +540,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -577,7 +592,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
@@ -603,11 +618,11 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}
-			view, err := bindcmd.Run(st, ctx, args[0], workerPane, reviewerPane, parentOnly, o.pumpOpts())
+			view, err := bindcmd.Run(st, ctx, args[0], workerPane, reviewerPane, parentOnly, o.pumpOpts(st))
 			if err != nil {
 				return err
 			}
@@ -649,7 +664,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 				}
 				handoff = obj
 			}
-			view, err := report.Run(st, args[0], body, handoff, app.OptionalContext(o.installRoot), o.pumpOpts())
+			view, err := report.Run(st, args[0], body, handoff, app.OptionalContext(st, o.installRoot, o.claim), o.pumpOpts(st))
 			if err != nil {
 				return err
 			}
@@ -695,7 +710,7 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			view, err := devcmd.Prepare(st, app.OptionalContext(o.installRoot), o.runtimeRoot, prepareName, prepareBase, preparePane)
+			view, err := devcmd.Prepare(st, app.OptionalContext(st, o.installRoot, o.claim), o.runtimeRoot, prepareName, prepareBase, preparePane)
 			if err != nil {
 				return err
 			}
@@ -730,11 +745,11 @@ func (o *rootOptions) addNativeCommands(root *cobra.Command) {
 	root.AddCommand(devCmd)
 }
 
-func (o *rootOptions) pumpOpts() returns.PumpOpts {
+func (o *rootOptions) pumpOpts(st *store.Store) returns.PumpOpts {
 	return returns.PumpOpts{
 		RuntimeRoot: o.runtimeRoot,
 		SumctlPath:  o.sumctlPath(),
-		Ctx:         app.OptionalContext(o.installRoot),
+		Ctx:         app.OptionalContext(st, o.installRoot, o.claim),
 		Inline:      true,
 	}
 }

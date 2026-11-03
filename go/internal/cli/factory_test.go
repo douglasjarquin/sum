@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"github.com/douglasjarquin/sum/go/internal/factory"
 	"github.com/douglasjarquin/sum/go/internal/factoryview/fixture"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
@@ -32,7 +33,7 @@ func TestFactoryEnable_requiresCoordinator(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected coordinator requirement, stderr=%s", stderr)
 	}
-	if !strings.Contains(err.Error(), "registration identity mismatch") {
+	if !strings.Contains(err.Error(), "claim_required") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -45,7 +46,7 @@ func TestFactoryClaim_requiresCoordinator(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected coordinator requirement, stderr=%s", stderr)
 	}
-	if !strings.Contains(err.Error(), "registration identity mismatch") {
+	if !strings.Contains(err.Error(), "claim_required") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -58,7 +59,7 @@ func TestFactoryMerge_requiresCoordinator(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected coordinator requirement, stderr=%s", stderr)
 	}
-	if !strings.Contains(err.Error(), "registration identity mismatch") {
+	if !strings.Contains(err.Error(), "claim_required") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -75,7 +76,7 @@ func TestFactoryMergeCommand_rechecksLiveGatesAfterUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, err := store.Context(home)
+	ctx, err := app.RequireClaim(st, nativeLabFor(t, home).claim)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,8 +257,7 @@ esac
 
 func runFactory(t *testing.T, home string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
-	out, runErr := runCLIForGolden(t, home, args)
-	return out, "", runErr
+	return runPRCLI(t, home, args...)
 }
 
 func digestHome(t *testing.T) string {

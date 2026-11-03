@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"github.com/douglasjarquin/sum/go/internal/store"
 	"github.com/douglasjarquin/sum/go/internal/verifycmd"
 	"github.com/spf13/cobra"
 )
@@ -21,7 +20,7 @@ func (o *rootOptions) addVerifyCommand(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}

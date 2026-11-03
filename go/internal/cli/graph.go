@@ -33,7 +33,7 @@ func (o *rootOptions) addGraphCommands(root *cobra.Command) {
 			if err := guard.Candidate(o.installRoot, st, "graph-init"); err != nil {
 				return err
 			}
-			ctx, err := store.Context(o.installRoot)
+			ctx, err := o.context(st)
 			if err != nil {
 				return err
 			}

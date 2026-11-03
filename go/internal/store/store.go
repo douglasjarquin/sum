@@ -33,6 +33,7 @@ type Store struct {
 	Generation  string
 	readOnly    bool
 	recordsOnly bool
+	claim       string
 	Home        string
 	Tasks       string
 	Sessions    string
@@ -139,7 +140,7 @@ func schemaMatches(state *ordjson.Object) bool {
 		return false
 	}
 	n, err := number.Int64()
-	return err == nil && n == Schema
+	return err == nil && (n == Schema || n == LogicalStateSchema)
 }
 
 func resolveHome(home string) (string, error) {
@@ -309,7 +310,25 @@ func (s *Store) Lock() (func() error, error) {
 	if err := s.Init(); err != nil {
 		return nil, err
 	}
-	return s.authorityLock(nil, filepath.Join(s.Home, ".lock"), syscall.LOCK_EX, rankState, nil)
+	unlock, err := s.authorityLock(nil, filepath.Join(s.Home, ".lock"), syscall.LOCK_EX, rankState, nil)
+	if err != nil {
+		return nil, err
+	}
+	if s.claim != "" {
+		if _, err := s.CheckClaim(s.claim); err != nil {
+			unlock()
+			return nil, err
+		}
+	}
+	return unlock, nil
+}
+
+func (s *Store) CaptureClaim(token string) error {
+	if _, err := s.CheckClaim(token); err != nil {
+		return err
+	}
+	s.claim = token
+	return nil
 }
 
 // DeliveryLock takes the delivery compatibility lock exclusively, as releases before recipient-scoped delivery did
@@ -343,12 +362,6 @@ func (s *Store) RecipientLockPath(endpoint [3]string) string {
 
 // WakeSuffix is the file suffix of a coordinator wake sidecar under <home>/deliver/.
 const WakeSuffix = ".wake.json"
-
-// WakePath is the coordinator wake sidecar for one canonical recipient endpoint, beside its recipient lock and
-// keyed the same way, so every spelling of one host's endpoint names one file.
-func (s *Store) WakePath(endpoint [3]string) string {
-	return s.deliverPath(endpoint, WakeSuffix)
-}
 
 // deliverPath is the per-recipient file under <home>/deliver/ for one canonical endpoint and suffix.
 func (s *Store) deliverPath(endpoint [3]string, suffix string) string {
