@@ -46,7 +46,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if field(worker, "id") != attempt {
 		return nil, fmt.Errorf("exact current worker attempt required")
 	}
-	if endpoint := workerEndpoint(task); endpoint.Validate() == nil {
+	if endpoint := workerEndpoint(task); endpoint.Validate() == nil && endpoint.Attempt == attempt {
 		return task, nil
 	}
 	native := asObject(field(worker, "native_launch"))
@@ -97,7 +97,7 @@ func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt
 	if err != nil {
 		return nil, err
 	}
-	if field(w, "id") != attempt || field(asObject(field(w, "native_launch")), "opening_delivery") != nil || field(current, "worker_endpoint") != nil {
+	if field(w, "id") != attempt || field(asObject(field(w, "native_launch")), "opening_delivery") != nil || workerEndpoint(current).Attempt == attempt {
 		return nil, fmt.Errorf("creation intent changed during reconciliation")
 	}
 	if err = maintenance.Refuse(current, "Execution reconcile"); err != nil {

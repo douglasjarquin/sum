@@ -3,6 +3,7 @@ package execution
 import (
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,8 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-func TestWorkerCreationReconcilesSavedRouteAfterTransfer(t *testing.T) {
+func unreconciledWorkerLab(t *testing.T) redeliveryLab {
+	t.Helper()
 	l := newRedeliveryLab(t)
 	task, err := l.s.ReadTask(l.endpoint.Task)
 	if err != nil {
@@ -32,7 +34,7 @@ func TestWorkerCreationReconcilesSavedRouteAfterTransfer(t *testing.T) {
 	if err = command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { command.Process.Kill(); command.Wait() }()
+	t.Cleanup(func() { command.Process.Kill(); command.Wait() })
 	argv, err := proc.ProcessArgv(command.Process.Pid)
 	if err != nil {
 		t.Fatal(err)
@@ -68,7 +70,12 @@ func TestWorkerCreationReconcilesSavedRouteAfterTransfer(t *testing.T) {
 	if err = l.s.SaveTask(task); err != nil {
 		t.Fatal(err)
 	}
-	if err = ordjson.WriteFile(filepath.Join(l.s.Root, "runtime-route.json"), ordjson.NewObject()); err != nil {
+	return l
+}
+
+func TestWorkerCreationReconcilesSavedRouteAfterTransfer(t *testing.T) {
+	l := unreconciledWorkerLab(t)
+	if err := ordjson.WriteFile(filepath.Join(l.s.Root, "runtime-route.json"), ordjson.NewObject()); err != nil {
 		t.Fatal(err)
 	}
 	next, err := store.Open(l.s.Root)
@@ -102,5 +109,79 @@ func TestWorkerCreationReconcilesSavedRouteAfterTransfer(t *testing.T) {
 	}
 	if len(l.fixture.Terminals()) != 1 {
 		t.Fatal("reconciliation created another worker")
+	}
+}
+
+func TestWorkerCreationReconcileBindingOwnership(t *testing.T) {
+	for _, binding := range []string{"cleared", "foreign", "current", "intent-changed"} {
+		t.Run(binding, func(t *testing.T) {
+			l := unreconciledWorkerLab(t)
+			if binding == "foreign" {
+				task, err := l.s.ReadTask(l.endpoint.Task)
+				if err != nil {
+					t.Fatal(err)
+				}
+				foreign := l.endpoint
+				foreign.Attempt = "x-retired"
+				task.Set("worker_endpoint", foreign.Object())
+				if err = l.s.SaveTask(task); err != nil {
+					t.Fatal(err)
+				}
+			}
+			entered, release := l.fixture.HoldReplyNext("terminal.list", "")
+			defer release()
+			type result struct {
+				task *ordjson.Object
+				err  error
+			}
+			done := make(chan result, 1)
+			go func() {
+				task, err := Reconcile(l.s, l.ctx, l.runtime, l.endpoint.Task, l.endpoint.Attempt)
+				done <- result{task, err}
+			}()
+			select {
+			case <-entered:
+			case early := <-done:
+				t.Fatalf("reconciliation skipped discovery: endpoint=%v error=%v", workerEndpoint(early.task), early.err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("discovery did not reach list barrier")
+			}
+			if binding == "current" || binding == "intent-changed" {
+				task, err := l.s.ReadTask(l.endpoint.Task)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if binding == "current" {
+					task.Set("worker_endpoint", l.endpoint.Object())
+				} else {
+					worker, _ := reservations.Worker(task)
+					asObject(field(worker, "native_launch")).Set("claimed_at", "changed")
+				}
+				if err = l.s.SaveTask(task); err != nil {
+					t.Fatal(err)
+				}
+			}
+			release()
+			outcome := <-done
+			if binding == "current" || binding == "intent-changed" {
+				if outcome.err == nil || !strings.Contains(outcome.err.Error(), "creation intent changed") {
+					t.Fatalf("changed creation was persisted: %v", outcome.err)
+				}
+				return
+			}
+			if outcome.err != nil {
+				t.Fatal(outcome.err)
+			}
+			if !workerEndpoint(outcome.task).Native().SameAuthority(l.endpoint.Native()) {
+				t.Fatal("reconciliation persisted a different endpoint")
+			}
+			before := len(l.fixture.Calls())
+			if _, err := Reconcile(l.s, l.ctx, l.runtime, l.endpoint.Task, l.endpoint.Attempt); err != nil {
+				t.Fatal(err)
+			}
+			if len(l.fixture.Calls()) != before {
+				t.Fatal("bound current attempt was not idempotent")
+			}
+		})
 	}
 }

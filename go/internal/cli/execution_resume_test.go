@@ -97,3 +97,56 @@ func TestResumeLaunchesAtCurrentHEADAfterReportedCommit(t *testing.T) {
 		t.Fatal("fresh successor receipt did not establish running authority")
 	}
 }
+
+func TestResumeLostCreationDoesNotReconcileRetiredEndpoint(t *testing.T) {
+	d := newPolicyLab(t)
+	repo := policyProject(t, d.base, "resume-lost", map[string]string{"README.md": "x\n"})
+	task := d.ctl(true, "prepare", "--repo", repo, "--brief", policyBrief(t, d.base), "--harness", "codex", "--approved")
+	id, checkout := asString(task["id"]), asString(task["worktree"])
+	attempt := asString(asMap(asMap(task["execution"])["worker"])["id"])
+	process := exec.Command("sleep", "60")
+	process.Dir = checkout
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = process.Process.Kill(); _ = process.Wait() })
+	pid := uint32(process.Process.Pid)
+	d.native.QueueFault("terminal.run", hctest.Fault{RunPID: &pid})
+	task = d.ctl(true, "start", id)
+	retired := task["worker_endpoint"]
+	address := workerAddress(task)
+	d.ctlPane(address, true, "init")
+	if err := process.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = process.Wait()
+	d.native.Exit(address, 0)
+	d.ctl(true, "execution", "park", id, "--attempt", attempt)
+	d.native.QueueFault("terminal.run", hctest.Fault{LoseResponse: true})
+	if resumed := d.ctl(false, "execution", "resume", id, "--attempt", attempt); asString(resumed["error"]) == "" {
+		t.Fatalf("lost successor reply succeeded: %v", resumed)
+	}
+	task = d.taskRecord(id)
+	successor := asString(asMap(asMap(task["execution"])["worker"])["id"])
+	if successor == "" || successor == attempt {
+		t.Fatalf("missing successor: %v", task["execution"])
+	}
+	d.native.Close()
+	reconciled := d.ctl(false, "execution", "reconcile", id, "--attempt", successor)
+	if failure := asString(reconciled["error"]); !strings.Contains(failure, "dial unix") {
+		t.Errorf("unreachable original core did not fail discovery: error=%q endpoint=%v", failure, reconciled["worker_endpoint"])
+	}
+	if endpoint := d.taskRecord(id)["worker_endpoint"]; endpoint != nil {
+		t.Errorf("successor retained retired endpoint: %v", endpoint)
+	}
+	var historical any
+	for _, raw := range asSlice(task["evidence"]) {
+		record := asMap(raw)
+		if record["kind"] == "execution" && record["successor"] == successor {
+			historical = asMap(record["attempt"])["worker_endpoint"]
+		}
+	}
+	if !reflect.DeepEqual(historical, retired) {
+		t.Errorf("retired attempt endpoint changed or missing: got %v want %v", historical, retired)
+	}
+}
