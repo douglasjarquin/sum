@@ -33,8 +33,6 @@ type target struct {
 	endpoint store.Endpoint
 }
 
-// Run collects ledger obligations and native execution facts without creating HC
-// or acknowledging anything merely because it was read.
 func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object, error) {
 	actor, err := app.RequireClaim(s, opts.Claim)
 	if err != nil {
@@ -76,7 +74,6 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 				}
 			}
 		}
-		// Delivery can change receipts; use a fresh ledger snapshot for the result.
 		tasks, err = selectedTasks(s, opts.Task)
 		if err != nil {
 			return nil, err
@@ -162,7 +159,6 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 			_, err := client.Wait(ctx, hcclient.WaitParams{Terminal: entry.endpoint.Address, Timeout: &seconds})
 			if err != nil && ctx.Err() == nil {
 				if terminalMissing(err) {
-					// Re-read the ledger and terminal snapshot before reporting a failure.
 					continue
 				}
 				item := newItem(entry.task, "core-unreachable", command(opts, "inspect", entry.task, "--role", entry.role), command(opts, "start", entry.task, "--claim", opts.Claim))
@@ -173,8 +169,6 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 		if len(items) > 0 {
 			return result(items, delivered, false, opts), nil
 		}
-		// Some HC status waits return immediately for an idle terminal. Pace those
-		// snapshots while preserving one shared deadline across every target.
 		if pause := 100*time.Millisecond - time.Since(started); pause > 0 {
 			timer := time.NewTimer(pause)
 			select {

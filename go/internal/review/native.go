@@ -254,8 +254,6 @@ func launchPreparedNative(ctx context.Context, s *store.Store, task *ordjson.Obj
 	if runErr != nil {
 		runErr = &hcclient.Error{Method: "terminal.run", Effect: hcclient.NotSubmitted, Cause: runErr}
 	} else {
-		// Recheck the captured claim after qualification and trust work, immediately
-		// before the external effect. Store.Lock fences transferred conversations.
 		release, claimErr := s.Lock()
 		if claimErr != nil {
 			return nil, claimErr
@@ -762,8 +760,6 @@ func reviewerCandidateState(task *ordjson.Object) string {
 	return string(data)
 }
 
-// A captured claim is checked again by Store.Lock; the task owner must also
-// remain unchanged while native observations are made outside that lock.
 func checkCoordinatorSnapshot(s *store.Store, before, current *ordjson.Object) error {
 	owner := objectField(before, "owner")
 	if owner == nil {

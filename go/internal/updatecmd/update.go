@@ -669,9 +669,6 @@ func activate(s *store.Store, root, target, action string, source *ordjson.Objec
 // deliveryLockWait bounds how long final validation waits for delivery passes to finish before refusing.
 var deliveryLockWait = 30 * time.Second
 
-// holdDeliveryLock takes the delivery compatibility lock exclusively for the final validation and the switch: a pass
-// sending worker answers holds it shared, so delivery effects and runtime selection never interleave.
-// It is ordered after the activation lock and before any recipient or state lock.
 func holdDeliveryLock(s *store.Store, action string) (func(), error) {
 	ctx, cancel := context.WithTimeout(context.Background(), deliveryLockWait)
 	defer cancel()

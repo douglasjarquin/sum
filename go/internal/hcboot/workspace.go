@@ -15,7 +15,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// SelectedRoute reads workspace configuration without touching HC or creating state.
 func SelectedRoute(s *store.Store, socket, session, config string) (Route, error) {
 	path := filepath.Join(s.Root, "runtime-route.json")
 	data, err := os.ReadFile(path)

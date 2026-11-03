@@ -323,8 +323,6 @@ func (s *Store) Lock() (func() error, error) {
 	return unlock, nil
 }
 
-// CaptureClaim pins this invocation's authority. Every later write lock checks it
-// again, including writes performed by package helpers after external observation.
 func (s *Store) CaptureClaim(token string) error {
 	if _, err := s.CheckClaim(token); err != nil {
 		return err

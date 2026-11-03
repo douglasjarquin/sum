@@ -18,7 +18,6 @@ if [[ ! -x "$BINARY" ]]; then
   fi
   exit 1
 fi
-# Preserve an inherited installation only for this checkout or its selected release.
 INSTALLATION="$ROOT"
 if [[ -n "${SUM_INSTALL_ROOT:-}" && -d "$SUM_INSTALL_ROOT" ]]; then
   CANDIDATE=$(cd -- "$SUM_INSTALL_ROOT" && pwd -P)

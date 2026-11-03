@@ -10,7 +10,6 @@ import (
 	"time"
 )
 
-// InitCoordinator initializes the existing conversation without observing or starting HC.
 func InitCoordinator(root, helper string, s *store.Store, token, label string, transfer bool) (*ordjson.Object, error) {
 	core, err := coordinatorCore(root)
 	if err != nil {
@@ -71,7 +70,6 @@ func InitCoordinator(root, helper string, s *store.Store, token, label string, t
 	return view, nil
 }
 
-// TaskCheckout identifies a persisted task checkout without granting its native authority.
 func TaskCheckout(root string, current *store.Store) (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {

@@ -1,7 +1,5 @@
 package returns
 
-// Historical delivery receipts are decoded only to preserve existing reconciliation evidence.
-// No operation creates, updates, consumes, or delivers a coordinator sidecar.
 import (
 	"bytes"
 	"encoding/json"
@@ -29,13 +27,11 @@ type historicalRecipient struct {
 	Role    string `json:"role"`
 }
 
-// historicalRef names one obligation of one task, as the pass listing does.
 type historicalRef struct {
 	Task string `json:"task"`
 	ID   string `json:"id"`
 }
 
-// historicalCovered identifies the exact revision a preserved receipt presented.
 type historicalCovered struct {
 	InputRevision string `json:"input_revision,omitempty"`
 	Task          string `json:"task"`
@@ -53,7 +49,6 @@ type historicalReceipt struct {
 	Delivery    string              `json:"delivery,omitempty"`
 }
 
-// historicalDecision decodes a preserved decision entry.
 type historicalDecision struct {
 	Task     string `json:"task"`
 	ID       string `json:"id"`
@@ -124,7 +119,6 @@ func readHistoricalSidecar(s *store.Store, inst installation, endpoint [3]string
 	return w, status
 }
 
-// readHistoricalSidecarFile reads one sidecar by path and validates everything but the recipient.
 func readHistoricalSidecarFile(inst installation, path string) (*historicalSidecar, historicalStatus) {
 	blocked := func(msg string) (*historicalSidecar, historicalStatus) {
 		return nil, historicalStatus{State: historicalBlocked, Path: path, Diagnostic: fmt.Sprintf("%s %s; inspect %s; the evidence was not accepted.", path, msg, "the preserved sidecar")}

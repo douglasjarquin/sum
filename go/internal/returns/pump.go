@@ -718,7 +718,6 @@ func (p *pass) promptRecipient(route *ordjson.Object, items [][2]*ordjson.Object
 	return state, detail, ""
 }
 
-// checkIdentity requires this task's registered worker; a pane label is not identity.
 func (p *pass) checkIdentity(route *ordjson.Object, items [][2]*ordjson.Object) string {
 	endpoint := store.EndpointFromContext(routeObject(route))
 	registration, err := p.s.Registration(endpoint)
@@ -934,7 +933,6 @@ func runtimeSHA(runtimeRoot string) any {
 	return sha
 }
 
-// newID is a short random delivery identifier.
 func newID(prefix string) (string, error) {
 	buf := make([]byte, 5)
 	if _, err := rand.Read(buf); err != nil {

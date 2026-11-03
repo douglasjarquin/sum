@@ -8,7 +8,6 @@ import (
 	"strings"
 )
 
-// TokenFingerprint identifies the canonical payload of an opaque cursor.
 func TokenFingerprint(canonical []byte) string {
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:])[:16]

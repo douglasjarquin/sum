@@ -8,8 +8,6 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
 
-// RequireClaim resolves the captured conversation token, never a shared current-claim pointer.
-// Mutators recheck it under the store lock before writing or launching.
 func RequireClaim(s *store.Store, token string) (*ordjson.Object, error) {
 	session, err := s.CheckClaim(token)
 	if err != nil {

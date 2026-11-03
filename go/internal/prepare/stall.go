@@ -263,8 +263,6 @@ func persistStalled(s *store.Store, taskID, attemptID, prompt string, route stor
 	return current, nil
 }
 
-// Recover against the endpoint selected by the original attempt, even after
-// the current conversation or workspace worker route changes.
 func stalledRoute(s *store.Store, task *ordjson.Object, taskID, attemptID string) (store.Endpoint, error) {
 	worker, err := reservations.Worker(task)
 	if err != nil {

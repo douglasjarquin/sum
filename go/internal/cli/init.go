@@ -194,7 +194,6 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 	root.AddCommand(cmd)
 }
 
-// retireNativePreferences removes active observer configuration while retaining its health evidence.
 func retireNativePreferences(s *store.Store, token string) error {
 	unlock, err := s.Lock()
 	if err != nil {

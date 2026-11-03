@@ -282,7 +282,6 @@ func summaryOf(meta *ordjson.Object) *ordjson.Object {
 	return result
 }
 
-// Status reads saved capabilities, per-task labels, and the bounded error log.
 func Status(s *store.Store) *ordjson.Object {
 	meta, err := ReadMetadata(s)
 	if err != nil {
@@ -315,7 +314,6 @@ func Status(s *store.Store) *ordjson.Object {
 	return result
 }
 
-// Source derives reporter identity from the instance id.
 func Source(s *store.Store) (string, error) {
 	value, err := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
 	if err != nil {

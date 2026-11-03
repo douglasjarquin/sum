@@ -23,8 +23,6 @@ var (
 	ErrNativeRetirementRequired = errors.New("native-retirement-required: confirm retirement with init --retire-native")
 )
 
-// LogicalStateSchema fences helpers that know only native coordinator authority.
-// Task records, sealed procedures and the historical generation header retain their formats.
 const LogicalStateSchema = contract.LogicalStateSchema
 
 type CoordinatorSession struct {
@@ -62,7 +60,6 @@ func (c *CoordinatorSession) Object() *ordjson.Object {
 	return o
 }
 
-// CoordinatorSession reads the logical owner without consulting HC or changing state.
 func (s *Store) CoordinatorSession() (*CoordinatorSession, error) {
 	path := filepath.Join(s.Home, "coordinator.json")
 	value, err := ordjson.ReadFile(path)
@@ -93,12 +90,10 @@ func (s *Store) CoordinatorSession() (*CoordinatorSession, error) {
 	return &CoordinatorSession{Schema: 2, Kind: "coordinator-session", Machine: text(o, "machine"), SessionID: text(o, "session_id"), Generation: generation, ClaimedAt: text(o, "claimed_at"), Label: text(o, "label"), RetiredNative: native}, nil
 }
 
-// ClaimCoordinator creates, resumes or explicitly transfers a claim under the state lock.
 func (s *Store) ClaimCoordinator(token, label string, transfer bool) (*CoordinatorSession, error) {
 	return s.claimCoordinator(token, label, transfer, false)
 }
 
-// RetireNativeCoordinator preserves the old owner as evidence and excludes old writers.
 func (s *Store) RetireNativeCoordinator(token, label string, transfer bool) (*CoordinatorSession, error) {
 	return s.claimCoordinator(token, label, transfer, true)
 }
@@ -171,8 +166,6 @@ func (s *Store) claimCoordinator(token, label string, transfer, retire bool) (*C
 			current.RetiredNative = owner
 		}
 	}
-	// Commit the format fence first. If recording the claim fails, old writers remain
-	// excluded and an explicit retirement retry can finish without modifying history.
 	if err = s.fenceNativeWriters(); err != nil {
 		return nil, err
 	}
@@ -322,7 +315,6 @@ func valueObject(o *ordjson.Object, key string) *ordjson.Object {
 	return obj
 }
 
-// CheckClaim is repeated while holding Lock immediately before a coordinator mutation.
 func (s *Store) CheckClaim(token string) (*CoordinatorSession, error) {
 	if err := s.CheckWritable(); err != nil {
 		return nil, err
