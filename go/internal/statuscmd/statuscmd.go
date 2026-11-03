@@ -105,6 +105,9 @@ func Status(s *store.Store, opts Options) (*ordjson.Object, error) {
 		observe(s, opts, rows, rowTasks, result)
 	}
 	result.Set("metadata", metadata.Summary(s))
+	if err := coordination(s, result, tasks); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

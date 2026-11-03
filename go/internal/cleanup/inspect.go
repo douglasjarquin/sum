@@ -407,11 +407,13 @@ func (ins *inspection) identity() {
 		ins.block("identity", "task belongs to another machine")
 	}
 	caller := store.EndpointFromContext(ins.ctx)
-	if endpoint.Native().SameTerminal(caller.Native()) {
-		ins.block("identity", "task endpoint is the calling coordinator")
-	}
-	if endpoint.CoreID != caller.CoreID || endpoint.Socket != caller.Socket {
-		ins.block("identity", "task uses a different native core route")
+	if caller.Validate() == nil {
+		if endpoint.Native().SameTerminal(caller.Native()) {
+			ins.block("identity", "task endpoint is the calling terminal")
+		}
+		if endpoint.CoreID != caller.CoreID || endpoint.Socket != caller.Socket {
+			ins.block("identity", "task uses a different native core route")
+		}
 	}
 	worktree, repo := stringField(task, "worktree"), stringField(task, "repository")
 	if samePath(worktree, repo) || strings.HasPrefix(worktree, repo+string(os.PathSeparator)) || strings.HasPrefix(repo, worktree+string(os.PathSeparator)) {

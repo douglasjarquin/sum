@@ -248,10 +248,9 @@ func removeOneTerminal(s *store.Store, caller *ordjson.Object, runtimeRoot, task
 	if endpoint.Address != address {
 		return fail(fmt.Errorf("native endpoint changed"))
 	}
-	for _, other := range []store.Endpoint{store.EndpointFromContext(caller), store.EndpointFromContext(asObject(field(task, "parent")))} {
-		if endpoint.Native().SameTerminal(other.Native()) {
-			return fail(fmt.Errorf("refusing to remove coordinator or parent terminal"))
-		}
+	nativeCaller := store.EndpointFromContext(caller)
+	if nativeCaller.Validate() == nil && endpoint.Native().SameTerminal(nativeCaller.Native()) {
+		return fail(fmt.Errorf("refusing to remove calling terminal"))
 	}
 	if err = cleanup.RefusePendingEffects(s, taskID); err != nil {
 		return fail(err)

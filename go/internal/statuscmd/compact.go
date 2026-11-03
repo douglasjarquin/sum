@@ -159,6 +159,13 @@ func Compact(s *store.Store, opts Options) (*ordjson.Object, error) {
 	}
 	result.Set("detail", compactJSON([]string{"status"}))
 	result.Set("note", "Known global counts precede paging; incomplete coverage may hide more work. Routes are sumctl argument arrays; append the user's actual answer after --text. Paging is a fresh read, not a receipt; restart at --after 0 if records change. Full status retains capacity and maintenance. Saved CI and delivery states are not new observations.")
+	savedTasks, err := s.AllTasks()
+	if err != nil {
+		return nil, err
+	}
+	if err = coordination(s, result, savedTasks); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 

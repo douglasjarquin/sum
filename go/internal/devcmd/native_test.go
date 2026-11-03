@@ -2,6 +2,7 @@ package devcmd
 
 import (
 	"errors"
+	"github.com/douglasjarquin/sum/go/internal/app"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,35 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
+
+func TestDevelopmentPaneFromLogicalConversationKeepsCheckoutWithoutHC(t *testing.T) {
+	s, root, f, _ := developmentLab(t)
+	session, err := s.ClaimCoordinator("", "ordinary conversation", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, err := app.RequireClaim(s, session.Token())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Prepare(s, ctx, root, "ordinary", "HEAD", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal, _ := result.Get("terminal")
+	if terminal != nil {
+		t.Fatalf("ordinary conversation acquired a native terminal: %v", terminal)
+	}
+	if _, err := os.Stat(filepath.Join(asString(result, "path"), ".sum", "dev.json")); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Calls()) != 0 {
+		t.Fatalf("development preparation contacted HC: %v", f.Calls())
+	}
+	if !strings.Contains(asString(result, "note"), "no native caller") {
+		t.Fatalf("missing explanation: %v", result)
+	}
+}
 
 func developmentLab(t *testing.T) (*store.Store, string, *hctest.Fixture, *ordjson.Object) {
 	t.Helper()
