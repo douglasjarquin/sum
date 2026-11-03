@@ -207,6 +207,7 @@ findings:
   gaps: []
   complete: true
 returns:
-  open: []
+  open[1]{id,kind,ref,recipient,since,verdict,candidate,obligation,route,notification{state,attempts,reason}}:
+    "review:e-0000000004",review,e-0000000004,parent,"2026-01-01T00:12:00+00:00",approve,$SHA,open,null,pending,0,no delivery attempted to this recipient yet
   deliveries: []
   note: Obligations come from the records; a submitted or presented notice closes none of them. `closed` names obligations a later record has since settled.
