@@ -61,7 +61,7 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 		if opts.Task != "" {
 			pump.Tasks = []string{opts.Task}
 		}
-		if ctx.Err() == nil {
+		if !budgetExpired(ctx) {
 			pass, err := returns.Pump(s, pump)
 			if err != nil {
 				return nil, err
@@ -85,7 +85,7 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 		if len(items) > 0 || len(delivered) > 0 {
 			return result(items, delivered, false, opts), nil
 		}
-		if ctx.Err() != nil {
+		if budgetExpired(ctx) {
 			return result(items, delivered, true, opts), nil
 		}
 		live := make([]target, 0)
@@ -109,7 +109,7 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 				client := hcclient.Client{Socket: ep.Socket, CoreID: ep.CoreID, Timeout: min(2*time.Second, time.Until(deadline(ctx)))}
 				terminal, err := client.Get(ctx, ep.Address)
 				if err != nil {
-					if ctx.Err() != nil {
+					if budgetExpired(ctx) {
 						break
 					}
 					if terminalMissing(err) {
@@ -141,7 +141,7 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 		if len(items) > 0 {
 			return result(items, delivered, false, opts), nil
 		}
-		if ctx.Err() != nil {
+		if budgetExpired(ctx) {
 			continue
 		}
 		if len(live) == 0 {
@@ -157,7 +157,7 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 			seconds := wait.Seconds()
 			client := hcclient.Client{Socket: entry.endpoint.Socket, CoreID: entry.endpoint.CoreID, Timeout: remaining}
 			_, err := client.Wait(ctx, hcclient.WaitParams{Terminal: entry.endpoint.Address, Timeout: &seconds})
-			if err != nil && ctx.Err() == nil {
+			if err != nil && !budgetExpired(ctx) {
 				if terminalMissing(err) {
 					continue
 				}
@@ -202,6 +202,10 @@ func selectedTasks(s *store.Store, id string) ([]*ordjson.Object, error) {
 	return s.AllTasks()
 }
 func deadline(ctx context.Context) time.Time { value, _ := ctx.Deadline(); return value }
+
+func budgetExpired(ctx context.Context) bool {
+	return ctx.Err() != nil || time.Until(deadline(ctx)) <= 0
+}
 
 func ledgerItems(s *store.Store, tasks []*ordjson.Object, opts Options) ([]any, error) {
 	items := make([]any, 0)
