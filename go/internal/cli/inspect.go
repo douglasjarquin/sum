@@ -124,6 +124,7 @@ func (o *rootOptions) addInspectCommand(root *cobra.Command) {
 		terminal, err := client.Get(ctx, ep.Address)
 		if err != nil {
 			out.Set("observation_error", environment.BoundedView(err.Error(), 2000))
+			out.Set("note", "core-unreachable: Native observation failed. Saved launch and endpoint are preserved; inspection did not launch or replay input.")
 			return emitOrdjson(cmd.OutOrStdout(), out)
 		}
 		if terminal.CreatedMS != ep.CreatedMS {

@@ -117,7 +117,6 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 						continue
 					}
 					item := executionItem(task, role, "core-unreachable", err.Error(), opts)
-					item.Set("next", stringsAny(command(opts, "start", ep.Task, "--claim", opts.Claim)))
 					items = append(items, item)
 					continue
 				}
@@ -161,7 +160,9 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 				if terminalMissing(err) {
 					continue
 				}
-				item := newItem(entry.task, "core-unreachable", command(opts, "inspect", entry.task, "--role", entry.role), command(opts, "start", entry.task, "--claim", opts.Claim))
+				item := newItem(entry.task, "core-unreachable", command(opts, "inspect", entry.task, "--role", entry.role), command(opts, "inspect", entry.task, "--role", entry.role))
+				item.Set("role", entry.role)
+				item.Set("attempt", entry.endpoint.Attempt)
 				item.Set("reason", err.Error())
 				items = append(items, item)
 			}
@@ -290,7 +291,7 @@ func executionItem(task *ordjson.Object, role, kind, reason string, opts Options
 		group = "reviewer"
 	}
 	next := command(opts, group, "reconcile", id, "--claim", opts.Claim)
-	if kind == "blocked" {
+	if kind == "blocked" || kind == "core-unreachable" {
 		next = command(opts, "inspect", id, "--role", role)
 	}
 	item := newItem(id, kind, command(opts, "inspect", id, "--role", role), next)
@@ -303,7 +304,7 @@ func executionItem(task *ordjson.Object, role, kind, reason string, opts Options
 		attempt = text(record, "attempt")
 	}
 	item.Set("attempt", attempt)
-	if kind != "blocked" {
+	if kind != "blocked" && kind != "core-unreachable" {
 		item.Set("next", stringsAny(command(opts, group, "reconcile", id, "--attempt", attempt, "--claim", opts.Claim)))
 	}
 	return item
