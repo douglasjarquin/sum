@@ -2,15 +2,14 @@ package hctest
 
 import (
 	"archive/tar"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/proc"
 )
@@ -18,12 +17,18 @@ import (
 func BuildNativeBaseHelper(t testing.TB, root string) string {
 	t.Helper()
 	const sha = "8a4300c646cb6dcea8ca6f19f9199268b3adb6e3"
-	archive, err := exec.Command("git", "-C", root, "archive", "--format=tar", sha, "go").Output()
+	materialized := t.TempDir()
+	archivePath := filepath.Join(materialized, "base.tar")
+	_, err := proc.Run([]string{"git", "-C", root, "archive", "--format=tar", "--output", archivePath, sha, "go"}, "", 30*time.Second, true, proc.ScrubbedEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
-	materialized := t.TempDir()
-	reader := tar.NewReader(bytes.NewReader(archive))
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	reader := tar.NewReader(archive)
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -57,15 +62,11 @@ func BuildNativeBaseHelper(t testing.TB, root string) string {
 		}
 	}
 	helper := filepath.Join(materialized, ".local", "bin", "sumctl")
-	cmd := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-trimpath", "-buildvcs=false", "-o", helper, "./cmd/sumctl")
-	cmd.Dir = filepath.Join(materialized, "go")
-	cmd.Env = append(proc.ScrubbedEnv(), "GOTOOLCHAIN=local", "CGO_ENABLED=0")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build immutable base helper %s: %v\n%s", sha, err, output)
+	output, err := proc.Run([]string{filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-trimpath", "-buildvcs=false", "-o", helper, "./cmd/sumctl"}, filepath.Join(materialized, "go"), 900*time.Second, true, append(proc.ScrubbedEnv(), "GOTOOLCHAIN=local", "CGO_ENABLED=0"))
+	if err != nil {
+		t.Fatalf("build immutable base helper %s: %v\n%s", sha, err, output.Detail())
 	}
-	version := exec.Command(helper, "--format", "json", "release-contract")
-	version.Env = proc.ScrubbedEnv()
-	raw, err := version.Output()
+	version, err := proc.Run([]string{helper, "--format", "json", "release-contract"}, "", 20*time.Second, true, proc.ScrubbedEnv())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,11 +75,11 @@ func BuildNativeBaseHelper(t testing.TB, root string) string {
 			StateSchema []int `json:"state_schema"`
 		} `json:"supports"`
 	}
-	if err := json.Unmarshal(raw, &offered); err != nil {
+	if err := json.Unmarshal([]byte(version.Stdout), &offered); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(offered.Supports.StateSchema) != "[2]" {
-		t.Fatalf("base %s is no longer the native-only helper: %s", sha, raw)
+		t.Fatalf("base %s is no longer the native-only helper: %s", sha, version.Stdout)
 	}
 	return helper
 }
