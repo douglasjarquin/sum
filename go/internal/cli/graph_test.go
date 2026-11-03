@@ -27,7 +27,6 @@ func TestGraphInit_unknownFlagOrExtraPositionalIsUsageError(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			nativeEnv(t, home)
 			runtime := nativeLabFor(t, home).native
 			nativeBefore := len(runtime.Calls())
 			excludePath := filepath.Join(worktree, ".git", "info", "exclude")
@@ -35,8 +34,8 @@ func TestGraphInit_unknownFlagOrExtraPositionalIsUsageError(t *testing.T) {
 
 			var stdout, stderr bytes.Buffer
 			root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &stdout, &stderr)
-			fullArgs := append([]string{"--home", home, "graph", "init", taskID}, tc.args...)
-			root.SetArgs(fullArgs)
+			fullArgs := append([]string{"graph", "init", taskID}, tc.args...)
+			root.SetArgs(testClaimArgs(home, fullArgs))
 			err = root.ExecuteContext(context.Background())
 			if err == nil {
 				t.Fatalf("expected usage failure, stdout=%s stderr=%s", stdout.String(), stderr.String())
@@ -97,7 +96,7 @@ func TestGraphCommands(t *testing.T) {
 		{name: "config extra positional", args: []string{"graph", "config", "--harness", "claude", "extra"}, usage: true},
 		{name: "config unknown flag", args: []string{"graph", "config", "--harness", "claude", "--unexpected"}, usage: true},
 		{name: "config invalid harness", args: []string{"graph", "config", "--harness", "bogus"}, usage: true},
-		{name: "init requires coordinator", args: []string{"graph", "init", "t-aaaaaaaaaaaa"}, task: true, herdr: true, domainErr: "registration identity mismatch"},
+		{name: "init requires coordinator", args: []string{"graph", "init", "t-aaaaaaaaaaaa"}, task: true, herdr: true, domainErr: "claim_required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -180,7 +179,7 @@ func runGraph(t *testing.T, home string, args ...string) (stdout, stderr string,
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

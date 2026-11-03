@@ -66,11 +66,11 @@ func TestRepairCommands(t *testing.T) {
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid send --text", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, domainErr: "HC session"},
-		{name: "valid send --attempt= --key= --text=", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa", "--key=k1", "--text=fix"}, domainErr: "HC session"},
+		{name: "valid send --text", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, domainErr: "claim_required"},
+		{name: "valid send --attempt= --key= --text=", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt=x-aaaaaaaaaaaa", "--key=k1", "--text=fix"}, domainErr: "claim_required"},
 		{name: "valid send with native context", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--attempt", "x-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, native: true, domainErr: "Task belongs to another machine"},
-		{name: "valid extend --approved --text", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question", "q-aaaaaaaaaa", "--additional", "2", "--approved", "--text", "grant"}, domainErr: "HC session"},
-		{name: "valid extend --question= --additional= --approved=", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question=q-aaaaaaaaaa", "--additional=2", "--approved=true", "--text=grant"}, domainErr: "HC session"},
+		{name: "valid extend --approved --text", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question", "q-aaaaaaaaaa", "--additional", "2", "--approved", "--text", "grant"}, domainErr: "claim_required"},
+		{name: "valid extend --question= --additional= --approved=", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question=q-aaaaaaaaaa", "--additional=2", "--approved=true", "--text=grant"}, domainErr: "claim_required"},
 		{name: "valid extend with native context", args: []string{"repair", "extend", "t-aaaaaaaaaaaa", "--question", "q-aaaaaaaaaa", "--additional", "2", "--approved", "--text", "grant"}, native: true, domainErr: "Task belongs to another machine"},
 		{name: "repair missing subcommand", args: []string{"repair"}, usage: true},
 		{name: "send missing --attempt", args: []string{"repair", "send", "t-aaaaaaaaaaaa", "--key", "k1", "--text", "fix"}, usage: true},
@@ -128,7 +128,7 @@ func runRepairCLI(t *testing.T, home string, args ...string) (stdout, stderr str
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

@@ -124,7 +124,7 @@ func TestBriefRegenerate_requiresCoordinator(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected coordinator requirement")
 	}
-	if !strings.Contains(err.Error(), "not the registered coordinator") && !strings.Contains(err.Error(), "HC session") {
+	if !strings.Contains(err.Error(), "claim_required") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -197,8 +197,8 @@ func TestBriefCommands(t *testing.T) {
 		{name: "adopt unknown flag", args: []string{"brief", "adopt", "t-aaaaaaaaaaaa", "r2", "--unexpected"}, lab: "adopt", usage: true, unknown: true},
 		{name: "regenerate extra positional", args: []string{"brief", "regenerate", "t-aaaaaaaaaaaa", "extra"}, lab: "regenerate", usage: true},
 		{name: "regenerate unknown flag", args: []string{"brief", "regenerate", "t-aaaaaaaaaaaa", "--unexpected"}, lab: "regenerate", usage: true, unknown: true},
-		{name: "request requires coordinator", args: []string{"brief", "request", "t-aaaaaaaaaaaa", "r2"}, lab: "request-plain", domainErr: "registration identity mismatch"},
-		{name: "regenerate requires coordinator", args: []string{"brief", "regenerate", "t-aaaaaaaaaaaa"}, lab: "regenerate-plain", domainErr: "registration identity mismatch"},
+		{name: "request requires coordinator", args: []string{"brief", "request", "t-aaaaaaaaaaaa", "r2"}, lab: "request-plain", domainErr: "claim_required"},
+		{name: "regenerate requires coordinator", args: []string{"brief", "regenerate", "t-aaaaaaaaaaaa"}, lab: "regenerate-plain", domainErr: "claim_required"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,7 +239,7 @@ func runBrief(t *testing.T, home string, args ...string) (stdout, stderr string,
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

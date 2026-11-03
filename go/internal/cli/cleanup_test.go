@@ -53,10 +53,10 @@ func TestCleanupCommands(t *testing.T) {
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid task", args: []string{"cleanup", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
-		{name: "valid task after dashdash", args: []string{"cleanup", "--", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
-		{name: "valid --apply --reviewer-only --number", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply", "--reviewer-only", "--number", "12"}, domainErr: "HC session"},
-		{name: "valid --apply= --number=", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply=true", "--reviewer-only=true", "--number=12"}, domainErr: "HC session"},
+		{name: "valid task", args: []string{"cleanup", "t-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid task after dashdash", args: []string{"cleanup", "--", "t-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid --apply --reviewer-only --number", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply", "--reviewer-only", "--number", "12"}, domainErr: "claim_required"},
+		{name: "valid --apply= --number=", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply=true", "--reviewer-only=true", "--number=12"}, domainErr: "claim_required"},
 		{name: "valid with herdr", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--apply"}, herdr: true, domainErr: "Task belongs to another machine"},
 		{name: "unknown flag", args: []string{"cleanup", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
 		{name: "unknown flag before task", args: []string{"cleanup", "--unexpected", "t-aaaaaaaaaaaa"}, usage: true, unknown: true},
@@ -111,7 +111,7 @@ func runCleanupCLI(t *testing.T, home string, args ...string) (stdout, stderr st
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

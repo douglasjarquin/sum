@@ -209,7 +209,7 @@ func runReviewCLI(t *testing.T, home string, args ...string) (stdout, stderr str
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }

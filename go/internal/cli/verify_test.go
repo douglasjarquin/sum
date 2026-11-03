@@ -59,14 +59,14 @@ func TestVerifyCommands(t *testing.T) {
 		unknown   bool
 		domainErr string
 	}{
-		{name: "valid --execute", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--execute"}, domainErr: "HC session"},
-		{name: "valid --execute after dashdash", args: []string{"verify", "--candidate", verifyCandidate, "--execute", "--", "t-aaaaaaaaaaaa"}, domainErr: "HC session"},
-		{name: "valid --execute=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate=" + verifyCandidate, "--execute=true"}, domainErr: "HC session"},
-		{name: "valid --result --text", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--result", "pass", "--text", "ok"}, domainErr: "HC session"},
-		{name: "valid --result= --text=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate=" + verifyCandidate, "--result=pass", "--text=ok"}, domainErr: "HC session"},
-		{name: "valid --run", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run", "/tmp/run.json"}, domainErr: "HC session"},
-		{name: "valid --run=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run=/tmp/run.json"}, domainErr: "HC session"},
-		{name: "valid --base --file", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--base", "HEAD", "--file", "notes.md", "--result", "pass"}, domainErr: "HC session"},
+		{name: "valid --execute", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--execute"}, domainErr: "claim_required"},
+		{name: "valid --execute after dashdash", args: []string{"verify", "--candidate", verifyCandidate, "--execute", "--", "t-aaaaaaaaaaaa"}, domainErr: "claim_required"},
+		{name: "valid --execute=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate=" + verifyCandidate, "--execute=true"}, domainErr: "claim_required"},
+		{name: "valid --result --text", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--result", "pass", "--text", "ok"}, domainErr: "claim_required"},
+		{name: "valid --result= --text=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate=" + verifyCandidate, "--result=pass", "--text=ok"}, domainErr: "claim_required"},
+		{name: "valid --run", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run", "/tmp/run.json"}, domainErr: "claim_required"},
+		{name: "valid --run=", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run=/tmp/run.json"}, domainErr: "claim_required"},
+		{name: "valid --base --file", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--base", "HEAD", "--file", "notes.md", "--result", "pass"}, domainErr: "claim_required"},
 		{name: "valid --execute with herdr", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--execute"}, herdr: true, domainErr: "task checkout is gone"},
 		{name: "valid --run --execute conflict with herdr", args: []string{"verify", "t-aaaaaaaaaaaa", "--candidate", verifyCandidate, "--run", "/tmp/run.json", "--execute"}, herdr: true, domainErr: "Pass either --run PATH"},
 		{name: "unknown flag", args: []string{"verify", "t-aaaaaaaaaaaa", "--unexpected"}, usage: true, unknown: true},
@@ -124,7 +124,7 @@ func runVerifyCLI(t *testing.T, home string, args ...string) (stdout, stderr str
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
 	root := NewRoot(filepath.Join(repoRoot(t), "bin", "sumctl"), &outBuf, &errBuf)
-	root.SetArgs(append([]string{"--home", home}, args...))
+	root.SetArgs(testClaimArgs(home, args))
 	err = root.ExecuteContext(context.Background())
 	return outBuf.String(), errBuf.String(), err
 }
