@@ -46,5 +46,10 @@ execution:
       attempt: null
       binding_generation: null
       created_ms: null
+    owner:
+      schema: null
+      kind: null
+      machine: null
+      session_id: null
     parent: null
     reviewer: null
