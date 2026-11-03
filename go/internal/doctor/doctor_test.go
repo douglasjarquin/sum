@@ -51,6 +51,25 @@ func trimmed(s string) string {
 	return s
 }
 
+func TestDoctorBeforeFirstWorkerTreatsAbsentRouteAsUnconfigured(t *testing.T) {
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.ClaimCoordinator("", "ordinary conversation", false); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	report := Doctor(root, root, s)
+	row := doctorRow(t, report, "hc-core")
+	if ok, _ := row.Get("ok"); ok != true {
+		t.Fatalf("absent lazy route treated as read failure: %v", row)
+	}
+	if available, _ := row.Get("available"); available != false {
+		t.Fatal("unconfigured core reported available")
+	}
+}
+
 // stagedRelease writes the one field runtimeRevisionCheck reads out of a
 // release tree, so the test does not depend on the packager.
 func stagedRelease(t *testing.T, sourceSHA string) string {

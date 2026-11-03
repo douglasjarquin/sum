@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -69,7 +70,7 @@ func Doctor(runtimeRoot, installRoot string, s *store.Store) *ordjson.Object {
 		if !ok {
 			routeErr = fmt.Errorf("runtime-route.json is not an object")
 		}
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		routeErr = err
 	}
 	endpoint := store.Endpoint{}
