@@ -126,7 +126,7 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 					continue
 				}
 				if terminal.State != "live" {
-					if !hasReport(task, role, ep.Attempt) {
+					if !hasReport(task, role, ep.Attempt, text(object(endpoint, "prompt"), "candidate")) {
 						items = append(items, executionItem(task, role, "worker-failure", "Recorded terminal finished without a task report.", opts))
 					}
 					continue
@@ -363,15 +363,18 @@ func object(o *ordjson.Object, key string) *ordjson.Object {
 	v, _ := field(o, key).(*ordjson.Object)
 	return v
 }
-func hasReport(task *ordjson.Object, role, attempt string) bool {
-	if role == "worker" && field(task, "report") != nil {
-		return true
-	}
+func hasReport(task *ordjson.Object, role, attempt, candidate string) bool {
 	rows, _ := field(task, "evidence").([]any)
 	for _, raw := range rows {
 		row, _ := raw.(*ordjson.Object)
 		kind := text(row, "kind")
-		if (role == "worker" && kind == "report" || role == "reviewer" && kind == "review") && (text(row, "attempt") == "" || text(row, "attempt") == attempt) {
+		if attempt == "" || text(object(row, "endpoint"), "attempt") != attempt {
+			continue
+		}
+		if role == "worker" && kind == "report" {
+			return true
+		}
+		if role == "reviewer" && kind == "review" && text(row, "candidate") == candidate {
 			return true
 		}
 	}
