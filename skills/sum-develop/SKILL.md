@@ -5,7 +5,10 @@ description: Improve sum itself from an isolated development checkout and lab st
 # Develop sum
 
 Use this when the user asks a second thread in the sum installation to change sum, or when `init` returned `developer`.
-You are here to modify or test sum, not to run it.
+If the user instead explicitly requests an installation upgrade from this ordinary conversation, follow the bootstrap operation in `docs/update.md` using its approved merged driver.
+That operation handles a retired native owner without a native coordinator receipt and returns a logical claim to this same conversation.
+A marked development checkout or task identity cannot use that operation.
+For development work, you are here to modify or test sum, not to run it.
 The installation checkout serves the live coordinator and its workers.
 Nobody edits, builds, or tests there while it is in service; one writer per checkout.
 Work only in a development checkout, never in the live installation directory's state or source.

@@ -175,6 +175,10 @@ func stoppedServices(s *store.Store, task *ordjson.Object, extra func(*ordjson.O
 	return stopped(extra)
 }
 
+func ServicesStopped(s *store.Store, task *ordjson.Object) StopProof {
+	return stoppedServices(s, task, nil)
+}
+
 func EndpointShells(host machine.Identity, runtimeRoot string, task *ordjson.Object) map[int]bool {
 	return map[int]bool{}
 }

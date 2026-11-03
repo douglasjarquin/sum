@@ -2,7 +2,8 @@
 
 Only the user authorizes update or rollback.
 The logical coordinator uses the installation's trusted helper with its captured claim.
-Developers and task checkouts cannot activate the installation.
+Marked development and task checkouts cannot activate the installation.
+An ordinary conversation whose old helper reports `developer` may use the explicitly authorized bootstrap operation below.
 Staging a candidate, passing local tests or opening a PR grants no activation authority.
 
 ## Inspect and stage
@@ -40,12 +41,45 @@ Workers retain their sealed procedures; revised approved worker briefs use the e
 
 ## One-time retirement of a native coordinator
 
-This procedure applies to a supported HC-native installation, only when the user authorizes its update and retirement.
-Run its existing update procedure once from the last native coordinator after settling active work.
-Before selecting this release, use that old installed helper's `hook disable` command so its post-selection observer handoff is skipped.
-Then use the old helper's authorized `update apply` to select the verified release.
-Start the user's usual agent in the installation and run `./bin/sumctl init --retire-native` under the explicit retirement decision.
-No manifest repair or manual runtime-link change is needed.
+An ordinary conversation can retire a supported HC-native installation and upgrade it even after its registered coordinator exits.
+The user must explicitly authorize the update and native retirement.
+Keep the current Herdr pane and agent conversation; no special launch or native coordinator receipt is required.
+
+On a helper that supports bootstrap, inspect first, then perform the authorized operation:
+
+```sh
+./bin/sumctl update bootstrap --ref MERGED_SHA
+./bin/sumctl update bootstrap --ref MERGED_SHA --approve
+```
+
+When the selected helper predates bootstrap, extract the bootstrap driver from the approved merged target without selecting it:
+
+```sh
+git fetch origin main
+bootstrap_script=$(mktemp -t sum-upgrade)
+git show MERGED_SHA:scripts/upgrade.py > "$bootstrap_script"
+python3 "$bootstrap_script" --installation "$PWD" --ref MERGED_SHA
+python3 "$bootstrap_script" --installation "$PWD" --ref MERGED_SHA --approve
+```
+
+The driver verifies origin-default-branch ancestry before building and running the target's temporary helper.
+It stages with the target-aware stager, preserving its complete executable capability metadata instead of using the old helper's lossy decoder.
+An existing release with differing metadata is refused, never patched into acceptance.
+Bootstrap inspects the native owner, all registered workers and reviewers, task endpoints, observer launch state and unresolved launch, delivery, preparation and maintenance effects under the final delivery and state locks.
+A finished coordinator alone is insufficient: program exit, recorded PID death and available survivor evidence are required for the owner and task programs.
+A live observer may remain, but retirement drains admitted delivery and fences its subsequent ledger writes and native sends.
+An unresolved observer launch blocks retirement.
+
+The private `.local/bootstrap.json` journal records installation, state generation, prior runtime, historical owner, target manifest hash and planned logical session before raising the writer fence.
+Interruption requires the exact operation and target printed in the refusal, using the same driver with `--approve --operation OPERATION --ref MERGED_SHA`.
+Recovery moves forward through the compatible target; it never reselects the obsolete writer after the format fence.
+It recovers interruptions before the fence, between fence and ownership, after ownership, after observer preference retirement, after runtime selection and after checkout alignment.
+The same planned session yields the same claim, including when the original successful response was lost.
+
+Success returns `role: coordinator` and `claim` directly to this conversation.
+Continue here with `./bin/sumctl init --claim TOKEN`, read its validated coordinator procedure, and carry that claim on subsequent mutations.
+Bootstrap creates no agent or terminal and sends no prompt to another conversation.
+The ordinary Herdr launch procedure stays unchanged.
 
 Retirement drains delivery and state locks and refuses unresolved current launch, delivery or maintenance effects.
 It raises the root state pointer to format 3 before publishing logical ownership so old helpers reject both the root and selected physical generation path.
