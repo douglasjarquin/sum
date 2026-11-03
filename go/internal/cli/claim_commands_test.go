@@ -111,7 +111,7 @@ func TestClaimCommandsRefuseStaleCapturedTokenBeforeMutation(t *testing.T) {
 
 func TestClaimCommandsMissingClaimNamesTheEntryAction(t *testing.T) {
 	s, _ := claimCommandsLab(t)
-	for _, args := range [][]string{{"settings", "set", "--worker-harness", "grok"}, {"answer", "t-aaaaaaaaaaaa", "q-one", "--text", "continue"}} {
+	for _, args := range [][]string{{"settings", "set", "--worker-harness", "grok"}, {"answer", "t-aaaaaaaaaaaa", "q-one", "--text", "continue"}, {"factory", "tick"}} {
 		value, err := claimCommand(t, s.Root, "", args...)
 		if err == nil || !strings.Contains(asString(value["error"]), "claim_required") {
 			t.Fatalf("%v missing claim = %v %v", args, value, err)

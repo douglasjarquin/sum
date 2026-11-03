@@ -74,7 +74,7 @@ Trust, auth and permission dialogs require the user's action and are never accep
 | Terminal Grok Build | Grok stable 1.0.67 or newer, default input configuration, namespaced Enter template | Authenticated journey not run |
 | Terminal Grok Build | Codex | Authenticated mixed-harness journey not run |
 | Terminal Codex | Grok Build | Authenticated mixed-harness journey not run |
-| Ordinary external scripted caller | Model-free native HC scripted worker and reviewer plus local strict fake GitHub | `scripts/live_sum_canary.py` is the isolated driver; an actual run needs its own artifact |
+| Ordinary external scripted caller | Model-free native HC scripted worker and reviewer plus local strict fake GitHub | Passed locally over published HC 0.1.14; `.artifacts/issue-342/ordinary-composition-green.json` records the source digest, checkpoints and teardown |
 | Any ordinary conversation | Claude Code 2.1.316 or local Devin CLI 3000.11.234 with default Enter profiles | Offline contracts covered; authenticated journey not run |
 | Any ordinary conversation | Other terminal harnesses | Unqualified for automatic input |
 
@@ -121,3 +121,12 @@ Attach the canonical aggregate once for the final candidate, independent policy 
 Record each unrun scenario as not run.
 Local checks, hosted CI, merge, deployment and production acceptance are separate facts.
 Historical `VALIDATION.md` and `test-results.txt` are dated receipts, not current certification.
+
+## Local native evidence for issue 342
+
+The isolated identity and runtime smoke checks passed using the existing published HC 0.1.14 binary.
+Their records are `.artifacts/issue-342/native-proof-incarnation.json` and `.artifacts/issue-342/native-proof-smoke.json`.
+The ordinary external conversation composition passed with a scripted worker and reviewer and local strict fake GitHub.
+Its record is `.artifacts/issue-342/ordinary-composition-green.json`; the source Go digest was checked against the development tree after the run.
+All three records report successful scratch-core shutdown.
+These are local model-free records; authenticated harness combinations, hosted publication and production retirement remain unrun.

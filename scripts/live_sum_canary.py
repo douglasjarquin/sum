@@ -204,6 +204,9 @@ def execute_canary(args, source, lab):
         lab.summary["active_collection_delivery"] = proof
         assert not proof["notices_before_answer"], proof
         answered = command(coordinator, "answer", "answer", task_id, question_id, "--text", "Yes, keep punctuation.")["result"]
+        read_actor = answered["question"]["read_receipt"]["endpoint"]
+        assert read_actor.get("kind") == "coordinator-session" and read_actor.get("session_id") == initialized["session"]["session_id"], read_actor
+        assert "claim" not in read_actor and "generation" not in read_actor, read_actor
         deferred = next(row for row in answered["notice"]["returns"]["recipients"] if row["recipient"]["address"] == worker)
         proof.update(answer=answered, deferred=deferred, working_after_answer=lab.call("terminal.get", terminal=worker),
                      notices_while_working=answer_notices(), all_notices_while_working=notice_records(), deliveries_while_working=answer_deliveries())
@@ -227,7 +230,7 @@ def execute_canary(args, source, lab):
                 proof["native_done_event"] = event
                 break
         assert "native_done_event" in proof, proof
-        proof["collection_after_ready"] = cli("collect", "--budget", "1s")
+        proof["collection_after_ready"] = cli("collect")
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             proof["notices_after_done"] = answer_notices()
