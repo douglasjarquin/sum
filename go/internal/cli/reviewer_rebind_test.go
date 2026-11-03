@@ -168,10 +168,24 @@ func TestReviewRefusalRequiresExplicitNativeReviewerBinding(t *testing.T) {
 	for key, value := range env {
 		d.setEnv(key, value)
 	}
+	// This invocation is the native successor, without the conversation claim.
+	d.claim = ""
+	before, err := json.Marshal(d.taskRecord(taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
 	out := d.ctl(false, "review", taskID, "--verdict", "approve", "--candidate", reviewCandidateFor(d, taskID), "--text", "not bound")
 	if !strings.Contains(asString(out["error"]), "explicit reviewer binding") {
 		t.Fatalf("unbound successor adopted authority: %v", out)
 	}
+	after, err := json.Marshal(d.taskRecord(taskID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("unbound native reviewer changed task evidence")
+	}
+
 }
 
 func TestBindReviewerTerminalRefusesWorkerTerminal(t *testing.T) {

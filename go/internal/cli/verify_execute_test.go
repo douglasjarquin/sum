@@ -490,7 +490,7 @@ func TestVerifyExecute_nonCoordinatorPaneIsRefused(t *testing.T) {
 	worker := workerAddress(v.taskFile())
 	v.ctlPane(worker, true, "init")
 	out := v.ctlPane(worker, false, "verify", v.taskID, "--candidate", sha, "--execute")
-	if !strings.Contains(asString(out["error"]), "registered coordinator") {
+	if !strings.Contains(asString(out["error"]), "claim_required") {
 		t.Fatalf("non-coordinator error %q", out["error"])
 	}
 }

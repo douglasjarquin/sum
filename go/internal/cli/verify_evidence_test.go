@@ -93,10 +93,7 @@ func TestVerifyExecute_acceptMissingEvidenceRecordsTheWaiverAndUnblocksThePush(t
 	if asString(ev["result"]) != "pass" || ev["evidence_waived"] != true {
 		t.Fatalf("result %v waived %v, want a recorded waiver", ev["result"], ev["evidence_waived"])
 	}
-	waivedBy, _ := ev["evidence_waived_by"].(map[string]any)
-	if waivedBy == nil || asString(waivedBy["session"]) == "" {
-		t.Fatalf("evidence_waived_by %v, want the coordinator endpoint that decided", ev["evidence_waived_by"])
-	}
+	requireLogicalActor(t, v.home, ev["evidence_waived_by"])
 	row := v.pipelineRow(t, "test")
 	if asString(row["status"]) != "pass" || !strings.Contains(asString(row["result"]), "evidence waived for "+evidenceScenario) {
 		t.Fatalf("test row %v, want a pass that says the evidence was waived", row)
