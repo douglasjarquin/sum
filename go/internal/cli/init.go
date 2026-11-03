@@ -53,7 +53,7 @@ func (o *rootOptions) addInitCommand(root *cobra.Command) {
 			if err != nil {
 				return err
 			}
-			inheritedTask := sumruntime.InheritedHomeBelongsToInstallation(o.installRoot) && (os.Getenv("SUM_TASK") != "" || os.Getenv("SUM_ROLE") == "worker" || os.Getenv("SUM_ROLE") == "reviewer")
+			inheritedTask := (os.Getenv("SUM_TASK") != "" || os.Getenv("SUM_ROLE") == "worker" || os.Getenv("SUM_ROLE") == "reviewer") && sumruntime.InheritedHomeBelongsToInstallation(o.installRoot)
 			taskContext := role == "worker" || role == "reviewer" || task != "" || inheritedTask
 			if taskContext {
 				if role == "developer" || role == "coordinator" || transfer || retireNative {

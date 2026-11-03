@@ -290,23 +290,21 @@ func executionItem(task *ordjson.Object, role, kind, reason string, opts Options
 	if role == "reviewer" {
 		group = "reviewer"
 	}
-	next := command(opts, group, "reconcile", id, "--claim", opts.Claim)
-	if kind == "blocked" || kind == "core-unreachable" {
-		next = command(opts, "inspect", id, "--role", role)
-	}
-	item := newItem(id, kind, command(opts, "inspect", id, "--role", role), next)
-	item.Set("role", role)
-	item.Set("reason", reason)
 	record := object(object(task, "execution"), "worker")
 	attempt := text(record, "id")
 	if role == "reviewer" {
 		record = object(task, "reviewer")
 		attempt = text(record, "attempt")
 	}
-	item.Set("attempt", attempt)
+	inspect := command(opts, "inspect", id, "--role", role)
+	next := inspect
 	if kind != "blocked" && kind != "core-unreachable" {
-		item.Set("next", stringsAny(command(opts, group, "reconcile", id, "--attempt", attempt, "--claim", opts.Claim)))
+		next = command(opts, group, "reconcile", id, "--attempt", attempt, "--claim", opts.Claim)
 	}
+	item := newItem(id, kind, inspect, next)
+	item.Set("role", role)
+	item.Set("reason", reason)
+	item.Set("attempt", attempt)
 	return item
 }
 func newItem(task, kind string, detail, next []string) *ordjson.Object {

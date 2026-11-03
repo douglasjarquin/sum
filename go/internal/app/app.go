@@ -110,7 +110,7 @@ func Context(s *store.Store, root, claim string) (*ordjson.Object, error) {
 	}
 	role := os.Getenv("SUM_ROLE")
 	taskIdentity := os.Getenv("SUM_TASK") != "" || role == "worker" || role == "reviewer"
-	if !sumruntime.InheritedHomeBelongsToInstallation(root) || !taskIdentity {
+	if !taskIdentity || !sumruntime.InheritedHomeBelongsToInstallation(root) {
 		return nil, store.ErrClaimRequired
 	}
 	return store.Context(root)
