@@ -416,11 +416,15 @@ func requireNoPending(s *store.Store, root string) error {
 	if pending == nil {
 		return nil
 	}
-	generation := asString(func() any { v, _ := pending.Get("generation"); return v }())
-	return fmt.Errorf("An activation is pending; run `update recover --generation %s` before another update or rollback.", generation)
+	recovery := asObject(func() any { v, _ := pending.Get("recovery"); return v }())
+	return fmt.Errorf("An activation is pending; run `%s` before another update or rollback.", argvJoin(recovery))
 }
 
 func resolveDescriptor(root string, descriptor *ordjson.Object) (string, error) {
+	return resolveActivationDescriptor(root, descriptor, true)
+}
+
+func resolveActivationDescriptor(root string, descriptor *ordjson.Object, requireHead bool) (string, error) {
 	if descriptor == nil {
 		return "", fmt.Errorf("Activation state is malformed or belongs to another installation.")
 	}
@@ -436,7 +440,7 @@ func resolveDescriptor(root string, descriptor *ordjson.Object) (string, error) 
 		if headErr != nil {
 			return "", headErr
 		}
-		if sha != strings.TrimSpace(headOut.Stdout) || path != resolvedRoot {
+		if (requireHead && sha != strings.TrimSpace(headOut.Stdout)) || path != resolvedRoot {
 			return "", fmt.Errorf("The known-good checkout no longer matches its recorded revision and path.")
 		}
 		return "", nil
@@ -480,17 +484,18 @@ func runtimeHelper(root string, descriptor *ordjson.Object) (string, error) {
 	return "", fmt.Errorf("The prior known-good runtime has no recovery helper; selection unchanged.")
 }
 
-func stageRecovery(s *store.Store, root, generation string, prior *ordjson.Object) (*ordjson.Object, error) {
+func stageRecovery(s *store.Store, ctx *ordjson.Object, root, generation string, prior *ordjson.Object) (*ordjson.Object, error) {
 	helper, err := runtimeHelper(root, prior)
 	if err != nil {
 		return nil, err
 	}
-	hash, hashErr := release.Sha256File(helper)
-	if hashErr != nil {
-		return nil, hashErr
-	}
-	out, runErr := proc.Run([]string{helper, "--version"}, "", 60*time.Second, false, append(os.Environ(), "SUM_INSTALL_ROOT="+root))
-	if runErr != nil || out.Code != 0 {
+	claim := effectField(ctx, "claim")
+	out, runErr := proc.Run([]string{helper, "--claim", claim, "--version"}, "", 60*time.Second, false, append(os.Environ(), "SUM_INSTALL_ROOT="+root))
+	route := "known-good-helper"
+	if runErr == nil && out.Code != 0 && strings.Contains(out.Stderr, "unknown flag: --claim") {
+		helper = filepath.Join(root, "bin", "sumctl")
+		route = "installation-entrypoint"
+	} else if runErr != nil || out.Code != 0 {
 		detail := strings.TrimSpace(out.Stderr)
 		if detail == "" {
 			detail = strings.TrimSpace(out.Stdout)
@@ -503,9 +508,14 @@ func stageRecovery(s *store.Store, root, generation string, prior *ordjson.Objec
 		}
 		return nil, fmt.Errorf("The prior known-good runtime cannot execute recovery; selection unchanged: %s", detail)
 	}
-	argv := []any{helper, "--home", s.Home, "update", "recover", "--generation", generation}
+	hash, hashErr := release.Sha256File(helper)
+	if hashErr != nil {
+		return nil, hashErr
+	}
+	argv := []any{helper, "--home", s.Home, "update", "recover", "--generation", generation, "--claim", claim}
 	rec := ordjson.NewObject()
 	rec.Set("helper", helper)
+	rec.Set("route", route)
 	rec.Set("sha256", hash)
 	rec.Set("home", s.Home)
 	rec.Set("runtime", asString(func() any { v, _ := prior.Get("path"); return v }()))
@@ -526,6 +536,12 @@ func ensureActivationState(s *store.Store, root string, current *ordjson.Object)
 		}
 		if descriptorsEqual(asObject(func() any { v, _ := state.Get("known_good"); return v }()), currentDesc) {
 			return state, nil
+		}
+		knownGood := asObject(func() any { v, _ := state.Get("known_good"); return v }())
+		if effectField(knownGood, "kind") == "checkout" {
+			if _, err := resolveDescriptor(root, knownGood); err != nil {
+				return nil, err
+			}
 		}
 		if err := verifyCurrentKnownGood(s, root, current, currentDesc); err != nil {
 			return nil, err
@@ -616,7 +632,7 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 	from := asObject(func() any { v, _ := pending.Get("from"); return v }())
 	to := asObject(func() any { v, _ := pending.Get("to"); return v }())
 	current := selectionDescriptor(DefaultRuntime(root))
-	target, resolveErr := resolveDescriptor(root, from)
+	target, resolveErr := resolveActivationDescriptor(root, from, false)
 	if resolveErr != nil {
 		return nil, resolveErr
 	}
@@ -643,11 +659,11 @@ func recoverPendingLocked(s *store.Store, root, generation string) (*ordjson.Obj
 			return nil, selectErr
 		}
 	}
-	restored := selectionDescriptor(DefaultRuntime(root))
 	alignment := recoveryCheckout(root, pending, restoreSHA, true)
 	if effectField(alignment, "result") == "refused" {
 		return nil, fmt.Errorf("Recovery checkout alignment refused: %s; pending generation %s is preserved", effectField(alignment, "reason"), generation)
 	}
+	restored := selectionDescriptor(DefaultRuntime(root))
 	check := postCheck(s, root)
 	if ok, _ := check.Get("ok"); ok != true {
 		pending.Set("recovery_status", "failed")
@@ -715,7 +731,11 @@ func argvJoin(recovery *ordjson.Object) string {
 	list, _ := raw.([]any)
 	parts := make([]string, 0, len(list))
 	for _, item := range list {
-		parts = append(parts, fmt.Sprint(item))
+		value := fmt.Sprint(item)
+		if value == "" || strings.ContainsAny(value, " \t\n\r\"'`$\\;&|<>()*?[]{}!#~") {
+			value = "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+		}
+		parts = append(parts, value)
 	}
 	if len(parts) == 0 {
 		return "update recover --generation GENERATION"

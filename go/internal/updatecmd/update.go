@@ -657,13 +657,13 @@ func descriptorsEqual(a, b *ordjson.Object) bool {
 		asString(func() any { v, _ := a.Get("path"); return v }()) == asString(func() any { v, _ := b.Get("path"); return v }())
 }
 
-func activate(s *store.Store, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
+func activate(s *store.Store, ctx *ordjson.Object, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
 	unlock, err := activationLock(root)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return activateLocked(s, root, target, action, source)
+	return activateLocked(s, ctx, root, target, action, source)
 }
 
 // deliveryLockWait bounds how long final validation waits for delivery passes to finish before refusing.
@@ -682,7 +682,7 @@ func holdDeliveryLock(s *store.Store, action string) (func(), error) {
 	return func() { _ = unlock() }, nil
 }
 
-func activateLocked(s *store.Store, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
+func activateLocked(s *store.Store, ctx *ordjson.Object, root, target, action string, source *ordjson.Object) (*ordjson.Object, error) {
 	releaseDelivery, err := holdDeliveryLock(s, action)
 	if err != nil {
 		return nil, err
@@ -764,7 +764,7 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	if effectField(checkoutBefore, "result") == "refused" {
 		return nil, fmt.Errorf("checkout alignment refused: %s", effectField(checkoutBefore, "reason"))
 	}
-	recovery, recErr := stageRecovery(s, root, generation, knownGood)
+	recovery, recErr := stageRecovery(s, ctx, root, generation, knownGood)
 	if recErr != nil {
 		return nil, recErr
 	}
@@ -848,8 +848,15 @@ func activateLocked(s *store.Store, root, target, action string, source *ordjson
 	committed.Set("to", selectionDescriptor(after))
 	committed.Set("known_good", selectionDescriptor(after))
 	committed.Set("pending", nil)
-	if err := writeActivationState(s, root, committed); err != nil {
-		return nil, fmt.Errorf("%s selected %v but the activation record could not be committed: %v. Run `update recover --generation %s`; records are untouched.", action, func() any { v, _ := after.Get("sha"); return v }(), err, generation)
+	var commitErr error
+	if beforeActivationCommit != nil {
+		commitErr = beforeActivationCommit()
+	}
+	if commitErr == nil {
+		commitErr = writeActivationState(s, root, committed)
+	}
+	if err := commitErr; err != nil {
+		return nil, fmt.Errorf("%s selected %v but the activation record could not be committed: %v. Run `%s`; records are untouched.", action, func() any { v, _ := after.Get("sha"); return v }(), err, argvJoin(recovery))
 	}
 	okLog := ordjson.NewObject()
 	okLog.Set("action", action)
@@ -1048,7 +1055,7 @@ func Apply(s *store.Store, ctx *ordjson.Object, ref string, noFetch bool) (*ordj
 			src.Set(k, v)
 		}
 	}
-	result, err := activate(s, root, relPath, "apply", src)
+	result, err := activate(s, ctx, root, relPath, "apply", src)
 	if err != nil {
 		return nil, err
 	}
@@ -1089,7 +1096,7 @@ func rollbackSelection(s *store.Store, ctx *ordjson.Object, to string) (*ordjson
 	if err != nil {
 		return nil, err
 	}
-	return activateLocked(s, root, target, "rollback", src)
+	return activateLocked(s, ctx, root, target, "rollback", src)
 }
 
 func resolveRollbackTarget(root, to string, state, current *ordjson.Object) (string, *ordjson.Object, error) {
@@ -1168,6 +1175,7 @@ func compensate(s *store.Store, root, generation string) (*ordjson.Object, error
 // Test seams for crash injection. Production leaves these nil.
 var afterPendingWrite func() error
 var afterSelect func() error
+var beforeActivationCommit func() error
 
 // TestPostCheck, if set, replaces postCheck. Tests only.
 var TestPostCheck func(s *store.Store, root string) *ordjson.Object
