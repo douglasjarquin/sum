@@ -203,6 +203,15 @@ func TestCollectWaitsWithinBudgetAndNeverEnsuresHC(t *testing.T) {
 	}
 }
 
+func TestCollectMissingTerminalIsWorkerFailure(t *testing.T) {
+	l := newLab(t)
+	l.f.QueueFault("terminal.get", hctest.Fault{RefuseKind: "not_found"})
+	out := l.run(t, time.Second)
+	if !hasKind(out, "worker-failure") || hasKind(out, "core-unreachable") {
+		t.Fatalf("missing terminal misreported as unavailable core: %v", out)
+	}
+}
+
 func TestCollectSeesReviewAndWorkerFailureDuringWait(t *testing.T) {
 	for _, kind := range []string{"review", "worker-failure"} {
 		t.Run(kind, func(t *testing.T) {

@@ -2,6 +2,8 @@ package collect
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -112,6 +114,10 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 					if ctx.Err() != nil {
 						break
 					}
+					if terminalMissing(err) {
+						items = append(items, executionItem(task, role, "worker-failure", "Recorded terminal no longer exists; inspect before recovery.", opts))
+						continue
+					}
 					item := executionItem(task, role, "core-unreachable", err.Error(), opts)
 					item.Set("next", stringsAny(command(opts, "start", ep.Task, "--claim", opts.Claim)))
 					items = append(items, item)
@@ -154,6 +160,10 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 			client := hcclient.Client{Socket: entry.endpoint.Socket, CoreID: entry.endpoint.CoreID, Timeout: remaining}
 			_, err := client.Wait(ctx, hcclient.WaitParams{Terminal: entry.endpoint.Address, Timeout: &seconds})
 			if err != nil && ctx.Err() == nil {
+				if terminalMissing(err) {
+					// Re-read the ledger and terminal snapshot before reporting a failure.
+					continue
+				}
 				item := newItem(entry.task, "core-unreachable", command(opts, "inspect", entry.task, "--role", entry.role), command(opts, "start", entry.task, "--claim", opts.Claim))
 				item.Set("reason", err.Error())
 				items = append(items, item)
@@ -173,6 +183,17 @@ func Run(parent context.Context, s *store.Store, opts Options) (*ordjson.Object,
 			}
 		}
 	}
+}
+
+func terminalMissing(err error) bool {
+	var native *hcclient.Error
+	if !errors.As(err, &native) || native.RPC == nil {
+		return false
+	}
+	var data struct {
+		Kind string `json:"kind"`
+	}
+	return json.Unmarshal(native.RPC.Data, &data) == nil && (data.Kind == "not_found" || data.Kind == "finished")
 }
 
 func selectedTasks(s *store.Store, id string) ([]*ordjson.Object, error) {
