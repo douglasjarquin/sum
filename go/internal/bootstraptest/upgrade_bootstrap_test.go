@@ -1,4 +1,4 @@
-package cli
+package bootstraptest
 
 import (
 	"encoding/json"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/douglasjarquin/sum/go/internal/cli"
 	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
@@ -407,7 +408,7 @@ func TestBootstrapInspectsRemainingWork(t *testing.T) {
 	for _, role := range []string{"worker", "reviewer"} {
 		t.Setenv("SUM_ROLE", role)
 		var output strings.Builder
-		cmd := NewRoot(filepath.Join(root, "bin/sumctl"), &output, &output)
+		cmd := cli.NewRoot(filepath.Join(root, "bin/sumctl"), &output, &output)
 		cmd.SetArgs([]string{"update", "bootstrap", "--ref", sha, "--no-fetch", "--approve"})
 		if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "task identity") {
 			t.Fatalf("%s acquired bootstrap authority: %v", role, err)

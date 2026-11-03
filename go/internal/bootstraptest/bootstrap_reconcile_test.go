@@ -1,4 +1,4 @@
-package cli
+package bootstraptest
 
 import (
 	"encoding/json"
