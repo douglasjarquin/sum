@@ -5,7 +5,7 @@ This change adds mandatory independent review and a common PR artifact contract 
 ## Local evidence
 
 The original publisher refused real CLI capture/comparison output because it contained no screenshot or converted screencast.
-Seven new publication regression tests failed before the implementation changed.
+Nine new publication regression tests failed before the implementation changed.
 The final focused publisher suite passes 30 tests, including real CLI/HTTP capture-to-publication, text-only operation without attachment capability, mixed media, escaping, redaction, baseline unavailability, changed or missing publish copies, body limits, preservation of concurrent edits during read-back, and a durable result when GitHub CLI is missing.
 The package suite passes six tests, including shared template discovery through both harness paths.
 These are offline fixture results, not authenticated native acceptance or hosted publication proof.
