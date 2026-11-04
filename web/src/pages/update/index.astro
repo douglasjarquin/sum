@@ -1,39 +1,23 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
+import { repoBlob } from "../../lib/links.mjs";
 ---
 
-<DocsLayout title="Update &amp; rollback — sum">
+<DocsLayout title="Adoption &amp; updates — sum">
   <div class="doc">
-    <h1>Update &amp; rollback</h1>
-    <p class="lede">
-      Quiescent updates, rollback and runtime releases. An update activates only
-      a revision merged on the sum origin default branch, resolved to an
-      immutable SHA.
-    </p>
-    <div class="sec">
-      <h2>Update and roll back</h2>
-      <div class="codeblock">
-        <div>./bin/sumctl update check --claim TOKEN          <span class="c"># fetch origin, resolve the merged revision, report default/active/compatibility</span></div>
-        <div>./bin/sumctl update apply --claim TOKEN          <span class="c"># stage the release, validate quiescence, switch .local/current, fast-forward a clean clone</span></div>
-        <div>./bin/sumctl update status</div>
-        <div>./bin/sumctl update rollback --claim TOKEN       <span class="c"># reselect the recorded previous approved runtime; records, questions, reports, worktrees stay</span></div>
-        <div>./bin/sumctl update recover --claim TOKEN --generation GENERATION</div>
-      </div>
-      <p>Only the user authorizes update or rollback. An interrupted activation requires its exact journal generation. No core, agent or service is restarted, and dirty or diverged work stays intact. Normal Open/init/status never migrate schema-one state.</p>
-    </div>
-    <div class="sec">
-      <h2>Next-start adoption</h2>
-      <p>Running, starting or uncertain attempts and unresolved launch/delivery effects block activation. Dirty or divergent checkout alignment refuses before runtime selection. Open questions and unapplied answers alone do not block.</p>
-      <p>After success, checkout HEAD, selected runtime and entry instructions agree. Start your usual agent here again to read them. Workers keep sealed procedures; approved worker brief revisions retain their existing request/adopt flow.</p>
-      <p>Logical ownership and the root state-format fence require a compatible rollback target. Historical task and procedure bytes stay unchanged.</p>
-    </div>
-    <div class="sec">
-      <h2>Runtime releases</h2>
-      <div class="codeblock">
-        <div>./bin/sumctl release stage            <span class="c"># builds .local/releases/&lt;sha&gt; for HEAD; nothing is activated</span></div>
-        <div>./bin/sumctl release list</div>
-      </div>
-      <p>A release holds the committed Sum tree, native helper, bundled published HC 0.1.14, matched manual/template and checksummed manifest. Rollback checks actual target binary capabilities. Legacy schema-one installations remain preserved; live migration is unavailable. Start independently in a fresh clone and use sumctl history for read-only records. An old runtime cannot reactivate an inactive archive. Core compatibility requires generation 1 at or above 0.1.14. Known-good promotion checks the serving helper's contract floors and stable entrypoint without rechecking its HC artifact. The first activation of this behavior uses the documented bootstrap driver. Shared-core upgrades remain separate.</p>
-    </div>
+    <h1>Adoption &amp; updates</h1>
+    <p class="lede">Adopt the instruction distribution in a separate checkout. Preserve any serving legacy installation, its tasks, unfinished work, and callback paths.</p>
+<div class="sec">
+<h2>Independent adoption</h2>
+<p>Leave the existing legacy checkout at its current commit with installed helper artifacts, task records, worktrees, branches, and callbacks intact. Let its tasks finish or explicitly settle them through their existing trusted procedures.</p><p>Clone the new instructions into a different path. Start new work there from a supported HC-backed Herdr terminal. Carry forward preferences and unresolved decisions as ordinary data; old records confer no native authority.</p>
+</div>
+<div class="sec">
+<h2>Between-session updates</h2>
+<p>Inspect and preserve local work, then update the instruction checkout with ordinary Git between sessions. Keep the checkout available while helper briefs reference its absolute procedure paths. Finish or settle active helpers before changing their instructions.</p><p>Merging a PR does not authorize updating a running installation, changing accounts, stopping a shared core, or restarting sessions.</p>
+</div>
+<div class="sec">
+<h2>Manual return and legacy lane</h2>
+<p>If needed, manually return to the preserved legacy checkout with its complete compatible procedures for new legacy work. There is no automatic rollback, importer, live cutover, or permanent dual-runtime mode.</p><p>The excluded Grok Bot packs and shared software-factory lane retain their separate compatible legacy target. Do not run that lane against the instruction checkout or reroute its Bot workflows.</p><p><a href={repoBlob("docs/update.md")}> Independent adoption guide ↗</a> <a href={repoBlob("docs/legacy.md")}> Legacy product boundary ↗</a></p>
+</div>
   </div>
 </DocsLayout>

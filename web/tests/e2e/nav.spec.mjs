@@ -27,7 +27,7 @@ test.describe("docs sidebar at 1280px", () => {
     await expect(labels.nth(1)).toHaveText("source");
     const active = side.locator("a.active");
     await expect(active).toHaveCount(1);
-    await expect(active).toHaveText("Install");
+    await expect(active).toHaveText("Start");
     await expect(active).toHaveAttribute("aria-current", "page");
   });
 });

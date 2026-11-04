@@ -1,65 +1,31 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
-import { sitePath } from "../../lib/site-path.mjs";
+import { repoBlob } from "../../lib/links.mjs";
 ---
 
-<DocsLayout title="Install — sum">
+<DocsLayout title="Start — sum">
   <div class="doc">
-    <h1>Install</h1>
-    <p class="lede">
-      Prerequisites: <code>mise</code>, Git, and an authenticated coding harness
-      available on the execution host. Setup installs the other dependencies
-      locally through mise. On a Mac without mise, install it through your
-      normal package manager first (<code>brew install mise</code>).
-    </p>
-    <div class="sec">
-      <h2>Install and launch</h2>
-      <p>Stage the runtime, start your usual coding agent in this directory, and ask for work:</p>
-      <div class="codeblock">
-        <div>git clone https://github.com/douglasjarquin/sum.git</div>
-        <div class="c"># Setup starts no authenticated agent.</div>
-        <div class="c"># In the clone:</div>
-        <div>cd /path/to/sum</div>
-        <div>mise trust</div>
-        <div>mise run setup</div>
-        <div class="c"># Start your agent here and ask for work.</div>
-      </div>
-      <p>Setup bundles HC 0.1.14 and its matched manual/template. Ordinary initialization returns a logical claim without starting or querying HC. Launch accepts generation-1 cores at or above 0.1.14 and asks for a Herdr repair when no compatible core listens; Sum never starts a core.</p>
-      <p style="margin:14px 0 0">Read each validated procedure path returned by <code>init</code> and retain its claim in the conversation. Select workers explicitly or save a default; their harness can differ from yours. A development checkout remains a developer.</p>
-    </div>
-    <div class="sec">
-      <h2>Recommended harnesses</h2>
-      <p>Automatic input is qualified for Codex 0.166.0 with its default keymap and Sum’s namespaced HC Tab-submit template. Other harnesses require actual qualification evidence. Keep normal trust and permission gates; fresh setup generates no custom Sum MCP server and preserves unrelated integrations.</p>
-      <p>
-        Harness choice, model flags, and presets are in <a
-          href={sitePath("configuration")}>Configuration</a
-        >.
-      </p>
-    </div>
-    <div class="sec">
-      <h2>No installed harness?</h2>
-      <div class="codeblock">
-        <div>mise run setup -- --install-codex</div>
-        <div>mise exec -- codex             <span class="c"># authenticate using the normal provider flow</span></div>
-      </div>
-      <p>An explicitly requested optional Codex install is local to <code>.deps/harnesses</code>. No account, subscription or global configuration is created or switched. Setup alone does not qualify an authenticated harness.</p>
-    </div>
-    <div class="sec">
-      <h2>Talk to it</h2>
-      <p>Then delegate normally:</p>
-      <blockquote style="margin-bottom:14px">
-        Use Codex to fix the failing login test in <code style="font-size:13px"
-          >/Users/me/projects/myapp</code
-        >. Keep scope to the bug, run the existing checks, arrange independent
-        review, and bring me a PR. Do not merge it. Ask before changing the
-        public API.
-      </blockquote>
-      <p>
-        The coordinator creates a task brief, prepares a separate Git
-        worktree, launches the selected worker, submits its brief, and returns
-        control to you. Every session starts with <code>./bin/sumctl init</code>
-        and follows the role it returns.
-      </p>
-    </div>
+    <h1>Start</h1>
+    <p class="lede">Open an existing HC-backed Herdr terminal, enter the instruction checkout, and launch your usual interactive coding agent. Give it the task in that same conversation.</p>
+<div class="sec">
+<h2>Open and launch</h2>
+<p>Start the supported Herdr app independently with its matching core. Clone Sum into a separate path, preserving any serving legacy installation.</p><div class="codeblock">
+<div>git clone https://github.com/douglasjarquin/sum.git</div>
+<div>cd /path/to/sum</div>
+<div>codex --no-daemon</div>
+</div><p>For Codex, <code>--no-daemon</code> keeps command execution inside HC. Keep your usual account, model, and permissions. Sum has no executable, build, setup, initialization, or service.</p>
+</div>
+<div class="sec">
+<h2>Before delegation</h2>
+<p>Read installed <code>hc --skill</code> and the relevant command help. Confirm a real, nonempty <code>HC_TERMINAL_ID</code> and inspect <code>hc get "$HC_TERMINAL_ID"</code> against the matching core. The current conversation must be the actual native lead with status integration and notifications available.</p><p>Successful connection alone is insufficient. An old TUI pane or foreign terminal cannot become a native lead by inventing environment variables. Follow the supported launch path when identity or status support is missing.</p><p><a href={repoBlob("docs/native-hc.md")}> Native prerequisites and qualification limits ↗</a></p>
+</div>
+<div class="sec">
+<h2>Give the task</h2>
+<blockquote>Fix the failing login test in /absolute/path/to/myapp. Keep scope to the bug, run the required checks, arrange independent review, and bring me a PR. Do not merge it.</blockquote><p>The lead can implement directly or brief a bounded helper. Concurrent writers use separate Git worktrees. A helper stays within its assigned role and reports to its immediate parent.</p>
+</div>
+<div class="sec">
+<h2>Qualification remains open</h2>
+<p>Authenticated native acceptance remains unrun in this change’s API development conversation. Observed versions and CLI help are evidence about inspected artifacts, not a support guarantee.</p><p><a href={repoBlob("docs/ACCEPTANCE.md")}> Native acceptance matrix ↗</a></p>
+</div>
   </div>
 </DocsLayout>
