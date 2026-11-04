@@ -32,5 +32,4 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 | `verify.sum-self-audit` | sum's own contract and maps pass the maintenance audit | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.sum-self` | sum's own `mise run verify` runs retained tools/package suites and website checks from an independent checkout | manual: `python3 .agents/skills/verify/scripts/verify_run.py` in a sum checkout | run record path in the task report |
 | `ci.hosted-verification` | A seeded fixture failure produces a failed hosted run with retained logs; restoring the fixture passes the same aggregate, with candidate/base identity and no merge authority | manual: GitHub Actions through `.github/workflows/verify.yml`, following `CONTRIBUTING.md` | hosted run URLs and downloaded verification records |
-
 | `verify.pr-template` | Both harness entry paths resolve the same PR template with review, check statuses, evidence, and limitations | automated: `tests/test_instruction_package.py` | Package discovery and template contract checks; not proof of native agent compliance |
