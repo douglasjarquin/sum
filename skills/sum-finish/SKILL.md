@@ -8,12 +8,16 @@ Read the task note, approved goal, target repository requirements, and actual fi
 Keep worker claims, independently inspected findings, your own executed checks, and hosted CI observations distinct.
 The optional [engineering rubric](../../.agents/skills/verify/references/engineering-principles.md) supports review; it does not replace project rules.
 
+The lead accounts for reports and delivery state; workers perform fixes, substantive review, evidence capture, checks, and CI monitoring.
+If any of that work remains, brief the appropriate worker under [Work](../sum-work/SKILL.md) and return to messages.
+Invoking a finishing or shipping skill does not transfer that work into the lead session.
+
 Before claiming completion:
 
 - Confirm the final stable candidate, including dirty/untracked content where relevant.
 - Account for every required helper report, question/actual answer/application, check command, exit status, and review finding.
 - Resolve blocking findings and refresh affected verification/review when inputs change; superseded evidence does not cover a later candidate.
-- Run the repository's required checks and configured CI as applicable; do not require a second full local run merely because of another role.
+- Require worker results for the repository's required checks and configured CI as applicable; do not require a second full local run merely because of another role.
 - Record failures, cancellations, missing results, limitations, and unrun paths truthfully.
 
 A passed check on another candidate, idle/done status, accepted notification, or all children stopped working is insufficient.

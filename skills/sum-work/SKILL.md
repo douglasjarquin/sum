@@ -8,7 +8,8 @@ The lead session stays free to send and receive messages.
 Read the approved goal, existing task note, and target repository instructions.
 Write a brief and launch a native HC worker for implementation, investigation, builds, and CI.
 Return to messages once that launch is accepted.
-An explicit helper brief keeps that agent on the bounded work. It does not become a lead and does not hand the work onward.
+An explicit helper brief keeps that agent on the bounded work.
+The worker executes that assignment itself; it does not become a lead or delegate its implementation onward.
 Stay within the user's authority; a question that changes scope or permission goes to the user.
 A bounded builder may start a reviewer or test only when its brief permits it.
 Do not create a management hierarchy.
@@ -89,7 +90,7 @@ For template launches inspect `first_message.sent`; a live terminal with an unde
 A timeout or uncertain return can leave a live terminal: inspect readiness, output, and current program before deliberate recovery.
 Do not blind-relaunch or blindly repeat a send or external action.
 
-## Receive, steer, and wait
+## Receive reports and steer
 
 Ordinary commands use HC's native exit notifications and captured output.
 Record command, candidate, exact terminal, exit status, and relevant output in the task note before cleanup.
