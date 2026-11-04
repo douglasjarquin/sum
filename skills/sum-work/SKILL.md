@@ -36,7 +36,8 @@ Create a small task note from [the template](../../templates/task.md) in an ordi
 The lead owns that note; each interactive helper owns a separate report.
 Record the approved scope, source checkout/branch, candidate, required checks/review, decisions, helper references, and next action.
 Before execution, inventory every prescribed check from the target repository's instructions, verification contract, and referenced scenario maps, including required setup, readiness, and teardown.
-Use the [PR template](../../templates/pull-request.md) for that accounting and delivery; retain a reference from the task note rather than another copy of the table.
+Keep that detailed inventory in a verification report or task artifact referenced from the task note.
+Use the [PR template](../../templates/pull-request.md) for a category-level Pipeline summary at delivery, not a copy of the detailed inventory.
 The target's own tools suffice; using this format does not require installing Sum's portable verifier there.
 Choose changed behavior scenarios and the base revision before implementation; capture comparable before evidence while the baseline is available.
 For later-discovered behavior changes, capture the baseline from its own base checkout when runnable.

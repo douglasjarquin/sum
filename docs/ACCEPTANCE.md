@@ -33,14 +33,14 @@ This gap does not authorize a custom transport; issue Phase 1 permits implementa
 ## Review and PR evidence acceptance
 
 Use the final candidate in at least two available harness/skill-stack combinations, recording which combinations actually ran.
-Use a disposable target with a known inventory of setup, readiness, checks, mapped scenarios, and teardown so missing table rows are observable.
+Use a disposable target with a known inventory of setup, readiness, checks, mapped scenarios, and teardown so missing report entries and misleading category summaries are observable.
 Include visual and CLI/API changes across the runs.
 
 | Scenario | Observable result |
 | --- | --- |
 | Review handoff | Builder report is followed by a distinct reviewer launch; substantive saved review reaches the actual lead |
 | Review correction | A seeded finding returns to the builder; corrected candidate receives affected checks and follow-up review |
-| Complete PR accounting | The PR accounts for every prescribed target step, with aggregate coverage identified and unrun manual scenarios explicit |
+| Compact PR accounting | The PR uses one Pipeline row per category with Stage, Status, and Result columns; the detailed report accounts for every prescribed target step, with aggregate coverage identified and unrun manual acceptance explicit in the summary |
 | Published behavior evidence | Real before/after screenshots or redacted command/request-response text is accessible on the PR and names the actual base/candidate |
 | Baseline unavailable | Available after evidence is clearly labeled with the real reason the base could not run |
 | Publication failure | Draft retains the gap and available proof without claiming completion |
