@@ -29,6 +29,8 @@ Do not type task instructions into a remembered shell or automatically restore a
 Ask the user only for essential missing authority or information; record the question and actual answer in the note.
 Restart no shared core, seize no foreign terminal, and implement no collector, replay loop, mailbox, or return service.
 
-Choose the next bounded action from current evidence: continue direct work, steer the same verified helper, deliberately relaunch after conclusive resolution, inspect results, or report a prerequisite/blocker.
+Choose the next bounded action from current evidence: continue direct work, steer an unfinished verified helper, deliberately relaunch after conclusive resolution, inspect results, or report a prerequisite/blocker.
+For a completed assignment, read and preserve the report, then close the exact owned worker under [Finish](../sum-finish/SKILL.md).
+Use a fresh worker for subsequent fixes or review, carrying forward saved findings and the current candidate.
 Record the actual result and next action in the note.
 Use [Finish](../sum-finish/SKILL.md) only after final-candidate obligations are accounted for.

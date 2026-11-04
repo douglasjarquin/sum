@@ -15,15 +15,15 @@ Do not restart the user's shared core or mutate foreign terminals.
 | Background work | Real project command and interactive reviewer run while lead does independent useful work |
 | Success and failure | Native test exit notifications plus inspected actual output/status for both zero and nonzero exits |
 | Reviewer return | Report saved, then explicitly sent to actual parent input without collection or copy/paste |
-| Follow-up | Seeded finding fixed, candidate frozen again, same reviewer steered, second report and affected checks refreshed |
-| Helper question | Actual question and answer saved, sent, and visibly applied without invented approval |
+| Follow-up | Completed reviewer closed after report collection; fresh fixer receives findings, then fresh reviewer checks the corrected frozen candidate and refreshes affected evidence |
+| Helper question | Question or blocker leaves worker unfinished; actual answer saved, sent, and visibly applied without invented approval |
 | Roles and isolation | Helper remains bounded after reading entry; separate writer worktrees and stable validation inputs |
 | Startup uncertainty | Live terminal with undelivered assignment distinguished; inspect before recovery, no blind duplicate |
-| Busy/blocked/timeout | Native wait/send semantics, no forced dialog input, timeout treated as check-in |
+| Busy/blocked/timeout | Native wait/send semantics, no forced dialog input, timeout treated as check-in; idle/done without a usable report does not trigger completion cleanup |
 | Missing prerequisite | Missing HC/connection/identity/status, old TUI, and unsupported harness receive truthful launch guidance |
 | Resume and shell lifetime | Actual program/conversation inspected after interruption or shell recovery before follow-up |
 | Completion | Every required result resolved against final stable candidate, within publication authority |
-| Cleanup | Exact owned helpers only, accepted/cancelled/superseded disposition, saved evidence and unfinished work preserved |
+| Cleanup | Completed builder closes after report collection while PR remains open; exact owned terminals removed, required child results accounted for, reports/output/branches/worktrees and unrelated terminals preserved |
 | Legacy adoption | Separate checkout leaves legacy callbacks, tasks, records, and worktrees intact |
 | Scope preservation | Excluded Bot/shared contracts unchanged; readable legacy lane guides; independent tooling/site works |
 
