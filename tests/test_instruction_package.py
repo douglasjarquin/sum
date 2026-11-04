@@ -43,7 +43,10 @@ class InstructionPackageTest(unittest.TestCase):
     def test_excluded_contracts_match_immutable_baseline(self):
         baseline = "9456017f2e4fde8f16bc4f2d1bdd7ba978765eb3"
         paths = ["GROK_SUM.md", "GROK_SQUARE.md", "skills/sum-factory/factories/copy.md", "skills/sum-factory/factories/software.md"]
-        paths += subprocess.check_output(["git", "ls-files", "grok-bots"], cwd=ROOT, text=True).splitlines()
+        baseline_bots = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", baseline, "--", "grok-bots"], cwd=ROOT, text=True).splitlines()
+        candidate_bots = subprocess.check_output(["git", "ls-files", "grok-bots"], cwd=ROOT, text=True).splitlines()
+        self.assertEqual(set(candidate_bots), set(baseline_bots))
+        paths += baseline_bots
         for path in paths:
             original = subprocess.check_output(["git", "show", baseline + ":" + path], cwd=ROOT)
             self.assertEqual((ROOT / path).read_bytes(), original, path)
