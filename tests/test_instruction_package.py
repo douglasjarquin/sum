@@ -55,11 +55,11 @@ class InstructionPackageTest(unittest.TestCase):
     def test_delivery_template_has_review_and_check_accounting(self):
         template = (ROOT / "templates/pull-request.md").read_text()
         headings = re.findall(r"^## (.+)$", template, re.M)
-        self.assertEqual(headings, ["Behavior", "Independent review", "Verification",
+        self.assertEqual(headings, ["Behavior", "Independent review", "Pipeline",
                                     "Before and after", "Remaining limitations"])
-        header = next(line for line in template.splitlines() if line.startswith("| Source"))
+        header = next(line for line in template.splitlines() if line.startswith("| Stage"))
         self.assertEqual([cell.strip() for cell in header.split("|")[1:-1]],
-                         ["Source / check or scenario", "Status", "Evidence", "Limitations"])
+                         ["Stage", "Status", "Result"])
         for status in ("✅ Passed", "❌ Failed", "⛔ Blocked", "⬜ Not run", "➖ Not applicable"):
             self.assertIn(status, template)
 

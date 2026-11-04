@@ -9,23 +9,29 @@ Reviewed candidate:
 Reviewer and accessible report or substantive summary:
 Outcome, findings resolved or outstanding, and review limitations:
 
-## Verification
+## Pipeline
 
-Inventory every prescribed step from the target repository's instructions, verification contract, and referenced scenario maps before running checks.
-Include required setup, readiness, and teardown.
-Use the repository's own tools; this table does not require Sum's portable verifier.
-Replace the example row with actual results and retain non-pass rows with their reasons.
+Summarize verification and delivery by category, with one row per stage rather than one row per test, scenario, or execution instance.
+Use stages relevant to the task, such as Intent, Rebase, Review, Test, Document, Lint, Push, PR, and CI.
+Add separate categories for authenticated native or production acceptance when applicable; local checks cannot establish those results.
+Replace the example rows with actual results, keeping each Result to a short summary and an accessible report or run link when available.
+Do not paste the check inventory, scenario IDs, or logs into the PR description.
 
-| Source / check or scenario | Status | Evidence | Limitations |
-| --- | --- | --- | --- |
-| Instruction or map reference and prescribed step | ⬜ Not run | Command, output/report link, and candidate | Why this step has not run |
+| Stage | Status | Result |
+|---|:---:|---|
+| Review | ⬜ | Not run |
+| Test | ⬜ | Not run |
+| Lint | ⬜ | Not run |
+| CI | ⬜ | Not run |
 
 Status legend: ✅ Passed; ❌ Failed; ⛔ Blocked; ⬜ Not run; ➖ Not applicable.
-Passed means the cited evidence establishes the stated check; failed means it ran and did not meet its expectation.
-Blocked names the prerequisite preventing execution, not run names the unexercised step, and not applicable explains why the step does not apply.
-Label results inferred from an aggregate command as aggregate coverage in the Evidence column, without implying separately observed step execution.
-A grouped row must link to a complete table of the included scenarios and their individual statuses.
-Keep local verification, hosted CI, authenticated native acceptance, and production acceptance distinguishable.
+A category passes only when all required checks within its stated scope passed.
+For mixed results use failed if any required check failed, otherwise blocked if any is blocked, otherwise not run if any is unrun; summarize the gap in Result.
+Use not applicable only when the entire category does not apply, with a reason.
+Keep failed, blocked, and unrun categories visible; a passing aggregate must not hide unexercised manual acceptance.
+Label aggregate-derived results as aggregate coverage rather than independently observed per-step passes.
+Keep the complete prescribed-check inventory, including setup, readiness, teardown, individual scenario statuses, evidence, and limitations, in the verification report or task artifacts outside the PR body.
+Link to those details when published; identify unavailable publication briefly rather than expanding the table or presenting a machine-local path as accessible evidence.
 
 ## Before and after
 

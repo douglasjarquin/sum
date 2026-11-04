@@ -29,8 +29,9 @@ Perform only delivery the user authorized: commit, push, PR creation, publicatio
 Preserve unrelated WIP and stage only owned paths.
 Only the user merges unless they explicitly granted merge authority for this task.
 For a requested PR, use the [PR template](../../templates/pull-request.md), preserving any additional target-repository requirements.
-Populate every prescribed check from the inventory with its source, status, evidence, and limitations; include setup, readiness, teardown, and referenced scenarios rather than silently dropping unrun steps.
-A grouped row may link to a complete scenario table, but that table must account for each scenario and its actual status.
+Keep every prescribed check and scenario, including setup, readiness, and teardown, accounted for with its source, status, evidence, and limitations in the verification report or task artifacts.
+The PR body contains a compact Pipeline table with Stage, Status, and Result columns: one row per category, never per test or execution instance.
+Summarize each category using the template's status rules, retain non-pass categories with short reasons, and link to detailed results when published instead of copying the inventory into the PR.
 Label aggregate-derived results as aggregate coverage, never independently observed per-step passes.
 Include the reviewed candidate, independent review outcome, findings and their disposition, before/after evidence, and actual CI state.
 Publish comparable before/after evidence for changed behavior using the [Evidence procedure](../../.agents/skills/evidence/SKILL.md) or equivalent target tools.

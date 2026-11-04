@@ -30,10 +30,26 @@ Use `.agents/skills/verify/references/engineering-principles.md` as the shared r
 
    Each capture writes `<run-dir>/evidence/NNN-<id>.json` with the exact command or request, the observed output or body, and whether your stated expectations were met (exit 1 when not). It starts and stops nothing; a browser or desktop surface without an installed driver stays a `--scenario` report.
    For a before/after proof of one scenario (screenshots, a screencast, or transcripts from the base and the candidate builds) use `.agents/skills/evidence/`; a map row whose Evidence cell names a screenshot, screencast, or red/green pair is reported by the runner as `required visual evidence ... missing` until a comparison manifest for the candidate exists under the contract's `evidence` directory.
-4. Read the printed record path and report from it: outcome, candidate SHA, `dirty`, `provisional`, `certifies`, scenarios by status, `not_exercised`, and `requires_root_review`. Paste the path, not the log.
+4. Read the printed record path and report from it: outcome, candidate SHA, `dirty`, `provisional`, `certifies`, scenarios by status, `not_exercised`, and `requires_root_review`. Retain the detailed record in task artifacts, not the PR description.
 5. Follow the teardown steps in `VERIFY.md`, then confirm the run directory and its `evidence/` files still exist; cleanup removes what the run started, never the proof.
 
 To standardize a repository that has no `VERIFY.md` yet, use `.agents/skills/create-verification/`; to keep an existing contract and its maps honest after a change, use `.agents/skills/maintain-verification/`.
+
+## PR summary
+
+When reporting verification on a PR, use a compact `## Pipeline` table with `Stage`, `Status`, and `Result` columns, matching the category-level format of Sum PR #326.
+Use one row per category such as Review, Test, Document, Lint, and CI, plus relevant delivery stages; do not enumerate individual tests, scenario IDs, or execution instances.
+Keep Result to a short outcome and an accessible run/report link when available.
+Keep the complete check inventory, individual scenario statuses, logs, and candidate metadata in the verification record or task artifacts outside the PR body.
+Preserve material qualifications such as provisional results and required root review in the short summary.
+
+Use ✅ Passed only when every required check within the category's stated scope passed.
+For mixed outcomes use ❌ Failed if any required check failed, otherwise ⛔ Blocked if any is blocked, otherwise ⬜ Not run if any is unrun.
+Use ➖ Not applicable only when the whole category does not apply, with a reason.
+Summarize the gap without listing every affected scenario.
+Keep local automated verification, hosted CI, manual/native acceptance, and production acceptance in separate categories when applicable; an aggregate pass does not establish unexercised acceptance.
+A machine-local path is not an accessible PR link; state missing publication briefly rather than pasting the full record.
+Verification reporting alone does not authorize creating or editing a PR.
 
 ## What the outcomes mean
 
