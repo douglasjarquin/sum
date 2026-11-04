@@ -98,7 +98,6 @@
       "contracts": {
         "cli": [
           "hc --version",
-          "hc schema",
           "hc --skill"
         ],
         "rpc": [

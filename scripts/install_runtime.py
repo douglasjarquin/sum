@@ -344,16 +344,11 @@ def install_hc(target, *, fetch=None, manifest=None, platform_name=None):
             docs = extract / "contract"
             docs.mkdir()
             (docs / "manifest.json").write_text(json.dumps(locked, indent=2) + "\n")
-            schema = run([binary, "schema"], timeout=30).stdout
-            schema_value = json.loads(schema)
-            if not isinstance(schema_value, dict) or not isinstance(schema_value.get("methods"), list):
-                raise InstallError("HC binary did not emit its OpenRPC schema")
-            (docs / "openrpc.json").write_text(schema)
             (docs / "manual.md").write_text(run([binary, "--skill"], timeout=30).stdout)
             provenance = {"version": HC_VERSION, "generation": 1, "source_commit": "29e6d375623de40cb4820e0894aa131ba057b796",
                           "platform": platform_name, "archive_sha256": digest,
                           "binary": str(binary.relative_to(extract)), "binary_sha256": sha256_file(binary),
-                          "schema_sha256": sha256_file(docs / "openrpc.json"), "manual_sha256": sha256_file(docs / "manual.md")}
+                          "manual_sha256": sha256_file(docs / "manual.md")}
             (docs / "provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
             os.rename(extract, dest)
         finally:
@@ -373,7 +368,7 @@ def install_hc(target, *, fetch=None, manifest=None, platform_name=None):
         raise InstallError("Existing HC executable is not an executable regular file")
     if provenance.get("archive_sha256") != pin["sha256"] or not binary.is_file() or sha256_file(binary) != provenance.get("binary_sha256"):
         raise InstallError("Existing HC staging does not match its immutable artifact receipt")
-    for name, key_name in (("openrpc.json", "schema_sha256"), ("manual.md", "manual_sha256")):
+    for name, key_name in (("manual.md", "manual_sha256"),):
         if sha256_file(dest / "contract" / name) != provenance.get(key_name):
             raise InstallError(f"Existing HC {name} differs from its matched artifact receipt")
     metadata_link = target / ".local/share/hc"
