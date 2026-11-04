@@ -134,16 +134,33 @@ func TestPinnedDefaultCoreRefusesReplacementWithoutFallback(t *testing.T) {
 }
 
 func TestIncompatibleDefaultCoreVersionIsRefused(t *testing.T) {
-	s := workspaceStore(t)
-	fixture := hctest.New(t)
-	fixture.SetVersion("0.1.13")
-	fixture.DefaultRoute(t)
-	_, err := EnsureWorkspaceRoute(s)
-	if err == nil || !strings.Contains(err.Error(), "0.1.13") || !strings.Contains(err.Error(), "0.1.14") {
-		t.Fatalf("incompatible core accepted: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(s.Root, "runtime-route.json")); !os.IsNotExist(err) {
-		t.Fatalf("refusal pinned a route: %v", err)
+	for _, tc := range []struct {
+		version    string
+		generation int
+		detail     string
+	}{
+		{"0.1.13", 1, "version=0.1.13"},
+		{"0.1.17", 2, "generation=2"},
+	} {
+		t.Run(tc.detail, func(t *testing.T) {
+			s := workspaceStore(t)
+			fixture := hctest.New(t)
+			fixture.SetVersion(tc.version)
+			fixture.SetGeneration(tc.generation)
+			fixture.DefaultRoute(t)
+			_, err := EnsureWorkspaceRoute(s)
+			if err == nil {
+				t.Fatal("incompatible core accepted")
+			}
+			for _, want := range []string{tc.detail, "0.1.14", fixture.Socket, "open Herdr"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("refusal lacks %q: %v", want, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(s.Root, "runtime-route.json")); !os.IsNotExist(err) {
+				t.Fatalf("refusal pinned a route: %v", err)
+			}
+		})
 	}
 }
 

@@ -2,6 +2,7 @@ package hcboot
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -54,11 +55,11 @@ func EnsureWorkspaceRoute(s *store.Store) (Route, error) {
 		return Route{}, err
 	}
 	listening, hello, err := route.compatibility()
-	if err != nil {
-		return Route{}, err
+	if err == nil && !listening {
+		err = errors.New("no core is listening")
 	}
-	if !listening {
-		return Route{}, fmt.Errorf("default HC core is unavailable at %s; open Herdr or run hc server start in a desktop terminal, then launch again", route.Socket)
+	if err != nil {
+		return Route{}, fmt.Errorf("default HC core is unavailable at %s: %w; open Herdr or run hc server start in a desktop terminal, then launch again", route.Socket, err)
 	}
 	if route.CoreID != "" && route.CoreID != hello.Core.ID {
 		return Route{}, fmt.Errorf("selected core changed: expected %s observed %s", route.CoreID, hello.Core.ID)
