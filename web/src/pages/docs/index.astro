@@ -7,71 +7,67 @@ import { repoBlob } from "../../lib/links.mjs";
 <DocsLayout title="Documentation — sum">
   <h1>Documentation</h1>
   <p class="lede" style="max-width:640px;margin:0 0 32px">
-    Roles and work objects use the dictionary in docs/terminology.md: user,
-    coordinator, agent, reviewer, task, brief, question, inbox, result.
-    Everything below was moved out of the README.
+    Start in your existing HC-backed Herdr terminal. Read the shared entry contract and the Work, Review, Finish, or Resume procedure for the current action.
   </p>
   <div class="cells index-cards">
     <a href={sitePath("install")}>
-      <div class="t">Install</div>
+      <div class="t">Start</div>
       <div class="d">
-        Requirements, recommended harnesses, install and launch, first prompt.
+        Native prerequisites, usual agent launch, qualification limits, and first task.
       </div>
     </a>
     <a href={sitePath("architecture")}>
       <div class="t">Architecture</div>
       <div class="d">
-        Session roles, the no-harness install, what's included, and state and
-        communication.
+        Lead and bounded helper roles, small task notes, and native communication.
       </div>
     </a>
     <a href={sitePath("verification")}>
       <div class="t">Verification</div>
       <div class="d">
-        Evidence publication, the nine gates, and brief revisions.
+        Stable candidates, required project checks, review, and native acceptance.
       </div>
     </a>
     <a href={sitePath("skills")}>
       <div class="t">Skills</div>
       <div class="d">
-        The seven bundled skills and project-local third-party skills.
+        The four procedures: Work, Review, Finish, and Resume.
       </div>
     </a>
     <a href={sitePath("configuration")}>
       <div class="t">Configuration</div>
-      <div class="d">Worker harness, presets, and the capacity schema.</div>
+      <div class="d">Chosen agent settings, permissions, and working conventions.</div>
     </a>
     <a href={sitePath("herdr")}>
       <div class="t">HC terminal runtime</div>
       <div class="d">
-        Worker identity, env start and stop, bounded collection, and native
-        metadata.
+        Actual lead identity, parentage, explicit reports, and native waiting.
       </div>
     </a>
     <a href={sitePath("update")}>
-      <div class="t">Update &amp; rollback</div>
-      <div class="d">Update, rollback, refresh, and runtime releases.</div>
+      <div class="t">Adoption &amp; updates</div>
+      <div class="d">Independent adoption, between-session Git updates, and legacy boundaries.</div>
     </a>
   </div>
   <div
     class="kv"
     style="grid-template-columns:auto 1fr;column-gap:16px;font-size:12px;margin-top:32px"
   >
-    <a href={repoBlob("docs/repairs.md")} style="padding:8px 0">
-      docs/repairs.md ↗
+    <a href={repoBlob("docs/native-hc.md")} style="padding:8px 0">
+      docs/native-hc.md ↗
     </a>
-    <div class="v" style="padding:8px 0">in-scope and expansion repairs</div>
-    <a href={repoBlob("docs/recovery.md")} style="padding:8px 0">
-      docs/recovery.md ↗
+    <div class="v" style="padding:8px 0">native prerequisites and qualification limits</div>
+    <a href={repoBlob("docs/ACCEPTANCE.md")} style="padding:8px 0">
+      docs/ACCEPTANCE.md ↗
     </a>
     <div class="v" style="padding:8px 0">
-      backup, cleanup after a merge, and limits
+      authenticated native scenarios and evidence requirements
     </div>
-    <a href={repoBlob("docs/terminology.md")} style="padding:8px 0">
-      docs/terminology.md ↗
+    <a href={repoBlob("docs/legacy.md")} style="padding:8px 0">
+      docs/legacy.md ↗
     </a>
     <div class="v" style="padding:8px 0">
-      user, coordinator, agent, reviewer, task, brief, question, inbox, result
+      separate Grok Bot products and compatible legacy target
     </div>
   </div>
   <style>

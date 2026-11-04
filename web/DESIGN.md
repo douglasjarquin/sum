@@ -87,8 +87,14 @@ In a 22px box the 12.5px discs sit at left/top: (7.9,4.8) h25, (6.4,7.5) h80, (3
 ## Content model
 
 Nine designed routes plus a styled 404: `/`, `/docs/`, `/install/`, `/architecture/`, `/verification/`, `/skills/`, `/configuration/`, `/herdr/`, `/update/`.
-Page copy is ported verbatim from the mockup; the one deliberate divergence is canonical skill names (`sum-work`/`sum-deliver`/`sum-status`) where the mockup used the old aliases (`sum-worker`/`sum-delivery`/`sum-rundown` — still present in `skills/` as aliases).
-This copy is a snapshot: when the in-repo docs change, the site is updated by hand; there is no generated sync.
+The routes and visual layout retain the original mockup; active copy follows the repository’s native HC instruction product.
+The shared entry contract and four procedures (Work, Review, Finish, Resume) define the product; README.md, docs/native-hc.md, docs/update.md, docs/legacy.md, and docs/ACCEPTANCE.md supply prerequisites, adoption boundaries, and evidence limits.
+The `/install/` route is labeled Start and `/update/` is labeled Adoption & updates; their established URLs remain stable.
+No active page may promise Sum runtime installation, setup, initialization, claims, collection, or a self-updater.
+Native delegation requires the current real HC-backed lead, installed `hc --skill`, and Codex `--no-daemon` where applicable.
+Observed version strings do not establish qualification; authenticated native acceptance remains unrun until actual evidence is recorded.
+The excluded Grok Bot products retain a separate compatible legacy target.
+Copy is maintained by hand; there is no generated sync.
 
 ## Accessibility and browser surfaces
 

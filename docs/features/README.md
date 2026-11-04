@@ -1,19 +1,13 @@
 # Feature maps
 
-Each map lists the user-facing journeys of one area and, per scenario, whether `mise run verify` exercises it (`automated`) or a person with a real HC session or authenticated harness must (`manual`).
-The runner in `.agents/skills/verify/` reads the scenario tables from the files linked here; a scenario id must be unique across maps.
+These maps describe the surviving instruction distribution and optional independent tools.
+Automated rows run in mise run verify; manual rows remain not-run unless actually exercised.
 
-- [Coordination and delegation](coordination.md)
+- [Instruction package and native acceptance](native.md)
 - [Portable verification](verification.md)
 - [Before/after evidence](evidence.md)
-- [Code graph per checkout](graph.md)
-- [Project-local third-party skills](skills.md)
-- [Delivery pipeline](pipeline.md)
-- [Software factory](factory.md)
 - [Public website](site.md)
+- [Excluded Bot packs](bots.md)
 
-A row's driver column starts with `automated` or `manual`; anything after that is free text naming the test or the procedure.
-Keep maps truthful: describe what is exercised today, not what a future slice will cover.
-
-Ordinary-entry, logical-claim, parentless-launch and bounded-collection rows describe the current coordination model.
-Retired native-coordinator and background-delivery scenarios do not certify this candidate.
+A static check does not prove that an agent followed a procedure or a native message reached an authenticated conversation.
+Historical runtime plans/reports are not current coverage claims.

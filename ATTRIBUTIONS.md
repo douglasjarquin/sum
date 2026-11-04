@@ -4,6 +4,10 @@ I am building sum for myself, to the highest standard I can achieve. I am not tr
 
 This page distinguishes conceptual inspiration, direct dependency, adapted code, historical lineage, and integrations still being evaluated. Replacing a dependency later does not erase the credit recorded here. It supplements, and never replaces, the license and source notices carried alongside any copied material.
 
+The current package uses installed HC commands directly and ships no runtime or bundled dependencies.
+Descriptions of removed integrations below preserve historical credit rather than promise current capabilities.
+The retained evidence publisher keeps its adjacent source attribution and license notices.
+
 ## Where sum comes from
 
 **[Firstmate](https://github.com/kunchenguid/firstmate)** is the origin of **the agent-distro concept that inspired sum**: an ordinary coding harness, portable instructions/skills/helpers, and one liaison coordinating workers. That shape is sum's lineage, not a claim that Firstmate invented agent orchestration generally. If the idea of one coordinator delegating to disposable workers appeals to you, try Firstmate itself first.
@@ -12,9 +16,9 @@ This page distinguishes conceptual inspiration, direct dependency, adapted code,
 
 ## Terminal and session runtime
 
-**[Herdr core](https://github.com/herdrdev/herdr-core)** ([site](https://herdr.dev/)) supplies the upstream HC terminal runtime and published JSON-RPC API used by Sum.
+**[Herdr core](https://github.com/herdrdev/herdr-core)** ([site](https://herdr.dev/)) supplies the upstream HC terminal runtime used directly through its installed CLI.
 HC owns terminal processes, while Git owns Sum's isolated worktrees.
-The active integration uses unmodified published HC 0.1.14 rather than reimplementing a terminal supervisor.
+The legacy runtime bundled HC 0.1.14; the current instruction package bundles no HC artifact.
 
 **[Herdr Mesh](https://github.com/runchr-works/herdr-mesh)** supplied the early concrete MCP bridge and shared pane/agent tool surface.
 That historical credit remains after retirement of Sum's custom terminal MCP and bridge in favor of upstream HC.
@@ -29,7 +33,7 @@ That historical credit remains after retirement of Sum's custom terminal MCP and
 
 ## Provider quota and evidence
 
-**[quota-axi](https://github.com/kunchenguid/quota-axi)** shaped how sum thinks about provider evidence: freshness and uncertainty made explicit, compact output, and separating collection from policy. It is also the original dependency and inspiration for the author's independent Go sister project, **[Remainder](https://github.com/douglasjarquin/remainder)**. Sum and Pinchos each consume Remainder independently; neither treats it as a sum builtin. Credit to quota-axi stands on its own, without an unmeasured performance comparison.
+**[quota-axi](https://github.com/kunchenguid/quota-axi)** shaped how sum thinks about provider evidence: freshness and uncertainty made explicit, compact output, and separating collection from policy. It is also the original dependency and inspiration for the author's independent Go sister project, **[Remainder](https://github.com/douglasjarquin/remainder)**. Legacy Sum and Pinchos consumed Remainder independently; the current instruction package has no quota runtime. Credit to quota-axi stands on its own, without an unmeasured performance comparison.
 
 ## Verification and evidence
 
@@ -43,7 +47,7 @@ The shared engineering principles reference is authored for sum and builds on th
 
 ## Code exploration
 
-**[codegraph](https://github.com/colbymchenry/codegraph)** provides the structural code context and worktree-local graph exploration a task checkout gets its own index of when the coordinator requests one. Credit reflects the current pinned-binary, per-checkout-index relationship, not earlier planning language.
+**[codegraph](https://github.com/colbymchenry/codegraph)** provides the structural code context and worktree-local graph exploration a task checkout gets its own index of when the coordinator requests one. That pinned-binary, per-checkout-index integration belongs to the removed runtime.
 
 ## Verification companions
 
@@ -68,7 +72,7 @@ Beyond the named projects above, sum also rests on the broader Agent Skills conv
 
 ## Coordinator durability notes
 
-The decision ledger, action log, and auto / draft / gated tiers under `grok-bots/sum/` and `templates/` follow patterns described in public writing about long-running personal agents, including [Agentic AI as Personal Staff](https://clawrxiv.io/abs/2603.00171) and Anthropic's notes on [effective agents](https://www.anthropic.com/engineering/building-effective-agents) and [evals](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). No text was copied from those pages. They are inspiration for the procedure, not a dependency.
+The decision ledger, action log, and auto / draft / gated tiers under the separately preserved `grok-bots/sum/` product follow patterns described in public writing about long-running personal agents, including [Agentic AI as Personal Staff](https://clawrxiv.io/abs/2603.00171) and Anthropic's notes on [effective agents](https://www.anthropic.com/engineering/building-effective-agents) and [evals](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). No text was copied from those pages. They are inspiration for the procedure, not a dependency.
 
 ## The four you'll see most
 

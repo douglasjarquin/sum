@@ -11,9 +11,9 @@ test("home renders the hero, rail, features, quick start, and foot", async ({
 
   const railLabels = page.locator(".hero .rail .lbl");
   await expect(railLabels).toHaveText([
-    "Coordinator",
+    "Your conversation",
     "Process owner",
-    "Records",
+    "Written checkpoint",
   ]);
 
   const features = page.locator(".band .feature");
@@ -23,7 +23,9 @@ test("home renders the hero, rail, features, quick start, and foot", async ({
     "Portable verification",
   );
 
-  await expect(page.locator(".codeblock")).toContainText("mise run setup");
+  await expect(page.locator(".codeblock")).toContainText("codex --no-daemon");
+  await expect(page.locator("main")).toContainText("Authenticated native acceptance remains unrun");
+  await expect(page.locator("main")).not.toContainText("bin/sumctl");
 
   const foot = page.locator("footer.foot");
   await expect(foot).toContainText("Stands on");

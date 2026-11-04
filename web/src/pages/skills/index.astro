@@ -6,88 +6,18 @@ import { repoBlob } from "../../lib/links.mjs";
 <DocsLayout title="Skills — sum">
   <div class="doc">
     <h1>Skills</h1>
-    <p class="lede">
-      Agent-loaded procedures ship with the distro: <code>AGENTS.md</code> is a
-      short role bootstrap every session loads, <code>COORDINATOR.md</code> is
-      the coordinator core init names, and each action's detail stays in the
-      bundled skills, loaded only for that action.
-    </p>
-    <div style="border-top:1px solid var(--rule)">
-      <div class="kv lg" style="grid-template-columns:160px 1fr">
-        <div class="k">/sum-dispatch</div>
-        <div class="v">
-          Send one approved request to a worker. Creates the task brief,
-          prepares a separate Git worktree, launches the selected worker,
-          submits its brief, and returns control to you.
-        </div>
-        <div class="k">/sum-work</div>
-        <div class="v">
-          Do that task in its own Git worktree. A worker is explicitly given
-          its own role; it does not become another coordinator.
-        </div>
-        <div class="k">/sum-deliver</div>
-        <div class="v">
-          Run the project's checks and prepare the PR. Verification and PR
-          delivery through the nine gates.
-        </div>
-        <div class="k">/sum-status</div>
-        <div class="v">
-          Reconcile saved tasks and pending returns. Finds workers that stopped
-          without a report.
-        </div>
-        <div class="k">/sum-develop</div>
-        <div class="v">
-          Change sum from a development checkout that cannot claim the
-          coordinator.
-        </div>
-        <div class="k">/sum-factory</div>
-        <div class="v">
-          Start or run a factory from a markdown settings file. Software and
-          copy differ only in that file.
-        </div>
-        <div class="k" style="border-bottom:1px solid var(--rule)">
-          /sum-update
-        </div>
-        <div class="v" style="border-bottom:1px solid var(--rule)">
-          Update or roll back the installation, then refresh running sessions.
-          Quiescent updates, next-start instructions and compatible code-only rollback.
-        </div>
-      </div>
-    </div>
-    <div class="sec">
-      <h2>Factory lane</h2>
-      <p>
-        A factory lane (<code>sumctl factory</code> plus the factory procedures
-        in sum-dispatch and the worker procedure) can run sequential ready
-        issues on an enrolled project without a sum daemon: tick is a one-shot
-        helper, dispatch stays with the coordinator, and merge happens only at
-        high confidence on authorized repositories.
-      </p>
-    </div>
-    <div class="sec">
-      <h2>Third-party skills</h2>
-      <div class="codeblock">
-        <div>./bin/sumctl skills install ...</div>
-      </div>
-      <p>
-        Delegates explicit skill and agent selections to the pinned Vercel
-        Skills CLI in project copy mode. Skills reach agents as explicit file
-        references (path, size, hash) to read when needed, not as an assumed
-        skill standard. See <a href={repoBlob("docs/sum-skills.md")}
-          >docs/sum-skills.md ↗</a
-        >.
-      </p>
-    </div>
-    <div class="sec">
-      <h2>Verification authoring skills</h2>
-      <p>
-        <code>.agents/skills/create-verification</code> inspects a repository,
-        scaffolds its contract, verify task, seed feature maps, and vendored
-        skills without inventing commands, then proves them once; <code
-          >.agents/skills/maintain-verification</code
-        > audits stale tasks, paths, links, and coverage claims. Both work in
-        any clone.
-      </p>
-    </div>
+    <p class="lede">Four procedures keep action-specific detail out of the shared entry contract. Read AGENTS.md and the procedure for the current action.</p>
+<div class="kv lg" style="grid-template-columns:160px 1fr"><div class="k">/sum-work</div><div class="v">Implement directly or brief, launch, steer, and wait for bounded helpers. <a href={repoBlob("skills/sum-work/SKILL.md")}> Work ↗</a></div><div class="k">/sum-review</div><div class="v">Inspect a specified stable candidate independently; save findings and send them to the immediate parent. <a href={repoBlob("skills/sum-review/SKILL.md")}> Review ↗</a></div><div class="k">/sum-finish</div><div class="v">Account for required checks and findings, deliver within authority, and clean up conservatively. <a href={repoBlob("skills/sum-finish/SKILL.md")}> Finish ↗</a></div><div class="k">/sum-resume</div><div class="v">Inspect actual work, reports, and recipients after interruption before continuing. <a href={repoBlob("skills/sum-resume/SKILL.md")}> Resume ↗</a></div></div><div class="sec">
+<h2>Discovery and briefs</h2>
+<p>The <code>.agents/skills/</code> and <code>.claude/skills/</code> links expose the same four procedures. Harness pointer files load the shared entry contract; a pointer is not harness qualification.</p><p>Helpers working in another repository receive the absolute readable procedure path in their brief. Keep that instruction checkout available until those helpers finish.</p>
+</div>
+<div class="sec">
+<h2>Optional development tools</h2>
+<p>Portable verification and evidence authoring tools under <code>.agents/skills/</code> are optional repository development tools. They are not ordinary startup requirements.</p><p><a href={repoBlob("CONTRIBUTING.md")}> Development guide ↗</a></p>
+</div>
+<div class="sec">
+<h2>Separate legacy products</h2>
+<p>The Grok Bot packs retain their Bot messaging and Cursor Cloud Agent delegation. Their software-factory lane requires its separately preserved compatible legacy installation. The four native HC procedures do not replace that lane.</p><p><a href={repoBlob("docs/legacy.md")}> Legacy product boundary ↗</a></p>
+</div>
   </div>
 </DocsLayout>

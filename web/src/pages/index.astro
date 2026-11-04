@@ -8,122 +8,36 @@ import { sitePath } from "../lib/site-path.mjs";
     <div class="hero">
       <div class="main">
         <h1 class="display">Many agents.<br /><em>One finished task.</em></h1>
-        <p class="lede">
-          Dispatch approved work to isolated agents. A small HC-native
-          distro: coordinator, workers, verification. It is for someone who
-          already has mise, Git, and an authenticated coding harness. The
-          default path is one finished task.
-        </p>
+        <p class="lede">Working instructions for your usual coding agent in an existing HC-backed Herdr terminal. Implement directly, start useful helpers, receive native reports, and finish with checked results in the same conversation.</p>
         <div class="actions">
-          <a class="btn" href={sitePath("install")}>Install</a>
+          <a class="btn" href={sitePath("install")}>Start</a>
           <a class="btn outline" href={sitePath("architecture")}>How it works</a>
         </div>
       </div>
       <div class="rail">
-        <div>
-          <div class="lbl">Coordinator</div>
-          Whatever harness you launch here. Codex, Claude, Grok, cursor-agent,
-          pi, OpenCode, Devin.
-        </div>
-        <div>
-          <div class="lbl">Process owner</div>
-          HC owns terminal processes; Git owns worktrees. No sum daemon, scheduler, or
-          database server.
-        </div>
-        <div>
-          <div class="lbl">Records</div>
-          A small synchronous helper, <code style="color:var(--accent)">bin/sumctl</code>,
-          preserves task records.
-        </div>
+        <div><div class="lbl">Your conversation</div>The agent you launch is the lead. It can write code and ask a bounded helper for independent work.</div>
+        <div><div class="lbl">Process owner</div>Native HC owns terminals and communication. Git provides checkout isolation.</div>
+        <div><div class="lbl">Written checkpoint</div>A small task note and separate helper reports retain decisions, evidence, and the next action.</div>
       </div>
     </div>
     <div class="band">
-      <div class="feature">
-        <div class="n">01</div>
-        <div class="t">A separate worktree per worker</div>
-        <p>
-          The coordinator prepares a Git worktree, launches the selected
-          worker, and collects its results in your existing conversation. A worker is explicitly given its
-          own role; it does not become another coordinator.
-        </p>
-      </div>
-      <div class="feature">
-        <div class="n">02</div>
-        <div class="t">Nine delivery gates</div>
-        <p style="margin-bottom:14px">
-          Recorded on the PR. <a href={sitePath("verification")}>Verification →</a>
-        </p>
-        <div class="chips">
-          <span class="chip">Intent</span>
-          <span class="chip">Rebase</span>
-          <span class="chip">Review</span>
-          <span class="chip">Test</span>
-          <span class="chip">Document</span>
-          <span class="chip">Lint</span>
-          <span class="chip">Push</span>
-          <span class="chip">PR</span>
-          <span class="chip">CI</span>
-        </div>
-      </div>
-      <div class="feature">
-        <div class="n">03</div>
-        <div class="t">Evidence on the PR</div>
-        <p>
-          Before/after evidence publishes on <code>pr reconcile</code> unless
-          you turn it off.
-        </p>
-      </div>
-      <div class="feature">
-        <div class="n">04</div>
-        <div class="t">Seven bundled skills</div>
-        <p>
-          /sum-dispatch, /sum-work, /sum-deliver, /sum-status, /sum-develop,
-          /sum-factory, and /sum-update with quiescent updates and
-          code-only rollback.
-          <a href={sitePath("skills")}>Skills →</a>
-        </p>
-      </div>
-      <div class="feature">
-        <div class="n">05</div>
-        <div class="t">Bounded result collection</div>
-        <p>
-          Collect saved questions, reports and reviews in your existing conversation; queued worker answers use the native route. Metadata remains opt-in. <a href={sitePath("herdr")}>HC terminal runtime →</a>
-        </p>
-      </div>
-      <div class="feature">
-        <div class="n">06</div>
-        <div class="t">Portable verification</div>
-        <p>
-          A project-root <code>VERIFY.md</code> and <code>mise run verify</code>
-          work in any clone without Sum or HC.
-        </p>
-      </div>
+      <div class="feature"><div class="n">01</div><div class="t">One writer per checkout</div><p>Use separate Git worktrees for concurrent writers. Review and checks inspect a stable candidate. These are working conventions, not enforced locks.</p></div>
+      <div class="feature"><div class="n">02</div><div class="t">Four short procedures</div><p style="margin-bottom:14px">Read the procedure for the current action. <a href={sitePath("skills")}>Skills →</a></p><div class="chips"><span class="chip">Work</span><span class="chip">Review</span><span class="chip">Finish</span><span class="chip">Resume</span></div></div>
+      <div class="feature"><div class="n">03</div><div class="t">Evidence for the candidate</div><p>Run the project’s required checks, resolve independent findings, and account for results against the final candidate. <a href={sitePath("verification")}>Verification →</a></p></div>
+      <div class="feature"><div class="n">04</div><div class="t">The ordinary native lead</div><p>Start the supported Herdr app independently and launch your usual interactive agent in its HC-backed terminal. Keep your account, model, and permissions.</p></div>
+      <div class="feature"><div class="n">05</div><div class="t">Reports arrive natively</div><p>HC reports command exits. Interactive helpers save reports and explicitly send results to their immediate parent, then remain available for follow-up. <a href={sitePath("herdr")}>Native HC →</a></p></div>
+      <div class="feature"><div class="n">06</div><div class="t">Portable verification</div><p>A project-root <code>VERIFY.md</code> describes project checks. Optional development tools remain independent of ordinary startup.</p></div>
     </div>
     <div class="band">
       <div class="split">
         <div class="eyebrow">Quick start</div>
-        <div class="codeblock">
-          <div>git clone https://github.com/douglasjarquin/sum.git</div>
-          <div class="c"># Start your usual coding agent in this clone after setup.</div>
-          <div class="c"># No coordinator terminal is needed.</div>
-          <div>cd /path/to/sum</div>
-          <div>mise trust</div>
-          <div>mise run setup</div>
-          <div class="c"># Ask your agent for work here.</div>
-        </div>
-        <p style="margin:18px 0 0;font-size:12px">Your agent initializes a logical claim and follows its validated procedure. HC starts lazily for workers, independently of your conversation.</p>
+        <div class="codeblock"><div>git clone https://github.com/douglasjarquin/sum.git</div><div>cd /path/to/sum</div><div>codex --no-daemon</div></div>
+        <p style="margin:18px 0 0;font-size:12px">Run these from an existing supported HC-backed Herdr terminal. Give the agent your task. Sum requires no executable, build, setup, initialization, or service.</p>
       </div>
       <div class="split">
         <div class="eyebrow">How it works</div>
-        <div class="kv flow" style="grid-template-columns:130px 1fr">
-          <div class="k">you</div>
-          <div class="v">approved requests and decisions ↓</div>
-          <div class="k" style="color:var(--accent)">coordinator</div>
-          <div class="v">brief, Git worktree, launch ↓</div>
-          <div class="k">worker</div>
-          <div class="v">questions, report, PR ↑</div>
-        </div>
-        <p style="margin:18px 0 0;font-size:12px">Your agent initializes a logical claim and follows its validated procedure. HC starts lazily for workers, independently of your conversation.</p>
+        <div class="kv flow" style="grid-template-columns:130px 1fr"><div class="k">you</div><div class="v">approved requests and decisions ↓</div><div class="k" style="color:var(--accent)">lead</div><div class="v">direct work, bounded briefs, native launch ↓</div><div class="k">helper</div><div class="v">saved report and explicit native send ↑</div></div>
+        <p style="margin:18px 0 0;font-size:12px">Authenticated native acceptance remains unrun. Observed versions do not imply qualification. Read the <a href={sitePath("herdr")}>native prerequisites and limits</a> before delegation.</p>
       </div>
     </div>
   </main>

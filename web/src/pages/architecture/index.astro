@@ -1,142 +1,27 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
+import { repoBlob } from "../../lib/links.mjs";
 ---
 
 <DocsLayout title="Architecture — sum">
   <div class="doc">
     <h1>Architecture</h1>
-    <p class="lede">
-      Roles, state, and what ships in the distro. Instructions and skills do
-      the reasoning. HC owns terminal processes; Git owns worktrees. A small synchronous
-      helper preserves task records. Bounded collection reads saved results and delivers queued worker answers. There is no task scheduler, database server, or permanent hierarchy of managers.
-    </p>
-    <div class="sec">
-      <h2 style="margin:0 0 14px">Session roles</h2>
-      <div class="cells roles" style="margin-bottom:14px">
-        <div>
-          <div
-            style="font-family:var(--serif);font-size:21px;color:var(--accent);margin-bottom:6px"
-          >
-            coordinator
-          </div>
-          <div style="color:var(--body);font-size:12px">
-            Your usual agent conversation initializes a logical claim without HC and carries it on coordinator mutations.
-          </div>
-        </div>
-        <div>
-          <div
-            style="font-family:var(--serif);font-size:21px;margin-bottom:6px"
-          >
-            worker
-          </div>
-          <div style="color:var(--body);font-size:12px">
-            A pane dispatched by the coordinator is registered as that task's
-            worker and stays a worker even when its task is editing sum itself.
-          </div>
-        </div>
-        <div>
-          <div
-            style="font-family:var(--serif);font-size:21px;margin-bottom:6px"
-          >
-            developer
-          </div>
-          <div style="color:var(--body);font-size:12px">
-            A development marker or explicit developer role keeps Sum development in an isolated checkout; failed task identity never falls through to coordination.
-          </div>
-        </div>
-      </div>
-      <p>Native identity is permanent core ID and returned terminal address, with creation time, task/role/attempt/generation, process and matching initialization receipt for Sum authority. Names, labels, sockets, cwd, PID and status alone confer none. <code>doctor</code> only observes and never starts a core or binds a role.</p>
-    </div>
-    <div class="sec">
-      <h2>State and communication</h2>
-      <p>
-        Private state lives in <code>.sum/</code> and is ignored by Git. Each
-        task stores its brief, base SHA, branch/worktree, pane bindings,
-        questions, answers, report, an append-only evidence list, the bound
-        reviewer endpoint, the last reconciled PR identity, and a versions
-        sidecar with brief revisions. File updates are locked and atomically
-        replaced on one local machine. Records-only backups import through <code>restore ARCHIVE NEW_HOME</code> into a fresh write-blocked quarantine. Saved reads preserve exact task/procedure history; no coordinator, session or native runtime authority transfers, and direct extraction is not a writable restore.
-      </p>
-      <p>
-        Workers use the exact commands in their generated brief. The core
-        interaction is:
-      </p>
-      <div class="codeblock">
-        <div>./bin/sumctl inbox --live</div>
-        <div>./bin/sumctl show TASK_ID</div>
-        <div>./bin/sumctl answer TASK_ID QUESTION_ID --claim TOKEN --text 'Keep both endpoints for one release.'</div>
-      </div>
-      <p style="margin:14px 0 12px">
-        <code>show</code> returns the whole record and keeps its shape. <code
-          >context</code
-        > is the bounded read beside it:
-      </p>
-      <div class="codeblock">
-        <div>./bin/sumctl context TASK_ID                              <span class="c"># outline: counts, outstanding decisions, latest handoff, cursor</span></div>
-        <div>./bin/sumctl context TASK_ID --role worker|reviewer|coordinator</div>
-        <div>./bin/sumctl context TASK_ID --section decisions --after 20 --limit 20</div>
-        <div>./bin/sumctl context TASK_ID --section brief --revision r1 <span class="c"># hash-verified, never rewritten</span></div>
-        <div>./bin/sumctl context TASK_ID --since CURSOR</div>
-        <div>./bin/sumctl notes TASK_ID --text 'finding'</div>
-        <div>./bin/sumctl help [TOPIC]</div>
-      </div>
-      <p>
-        Sections: outline, brief, decisions, handoff, evidence, execution,
-        environment, update, returns, notes. Worker prose, handoffs, and notes
-        are labelled claims; only <code>verify</code> and <code
-          >pr reconcile</code
-        > records are verification evidence. Nothing here calls a model or reads
-        a worker's checkout.
-      </p>
-    </div>
-    <div class="sec">
-      <h2>Questions and returns</h2>
-      <p>A question is saved before notification. Qualified Codex 0.166.0 defers working/blocked/unknown, guards idle with <code>if:idle</code>, and sends observed Done without <code>if</code> or <code>force</code>. A raced busy turn queues Tab for the next turn; this deliberately relaxed Done guard is not atomic. Send success means submitted, not applied.</p>
-      <p>
-        Every pending return is derived from the records themselves: an open
-        question, an unverified report, and a recorded review verdict are owed
-        to the parent, an unapplied answer and a requested brief revision to the
-        worker. Nothing has to be acknowledged for it to stay listed, and
-        nothing but a later record closes it.
-      </p>
-      <p>Collection lists actionable results and waits within one shared deadline without starting HC or recording read receipts. Submitted or uncertain mutations are never automatically replayed. Native idle/Done is not completion and a report still needs independent review and coordinator verification.</p>
-    </div>
-    <div class="sec">
-      <h2>Three command classes</h2>
-      <div class="kv">
-        <div class="k">read-only</div>
-        <div class="v">
-          status, inbox, --live, show, context, doctor. Write nothing under the
-          state home; never call GitHub.
-        </div>
-        <div class="k">fast delivery</div>
-        <div class="v">
-          collect, pump and worker-directed notice. Budgeted delivery passes
-          (default 20 s); never call GitHub or apply cleanup.
-        </div>
-        <div class="k">maintenance</div>
-        <div class="v">
-          pr reconcile, pipeline, cleanup [--apply], sweep. Explicit; one PR
-          observation per recorded open PR, guarded cleanup, 60 s admission
-          budget.
-        </div>
-      </div>
-    </div>
-    <div class="sec">
-      <h2>Manual dispatch</h2>
-      <div class="codeblock">
-        <div>cp templates/task.md /tmp/my-task.md</div>
-        <div class="c"># Edit the approved brief in your ordinary conversation:</div>
-        <div>./bin/sumctl dispatch --claim TOKEN --repo /absolute/path/to/repo \</div>
-        <div>&#32;&#32;--brief /tmp/my-task.md --harness codex --approved</div>
-      </div>
-      <p>
-        <code>--approved</code> records the caller's assertion of approval; it
-        is not a security boundary. <code>prepare</code> creates the
-        record/worktree without launching; <code>start TASK_ID</code> starts
-        that prepared task once. The helper is called sumctl to avoid shadowing
-        the Unix sum command. Normally you talk to the harness, not the helper.
-      </p>
-    </div>
+    <p class="lede">Sum distributes working instructions. Your existing agent is the lead, native HC handles communication and terminal processes, and Git provides checkout isolation.</p>
+<div class="sec">
+<h2>Working roles</h2>
+<div class="cells roles"><div><h3>lead</h3><p>The current conversation owns the approved task and may implement directly or delegate useful bounded work.</p></div><div><h3>helper</h3><p>A brief defines the role, allowed edits, candidate, checks, report path, and immediate parent. Reading entry instructions does not promote a helper.</p></div><div><h3>reviewer</h3><p>Independently inspects a stable candidate, saves concrete findings, and explicitly sends the result to its parent.</p></div></div><p>One active lead per workspace and one source writer per checkout are operating rules, not enforced locks. Use separate worktrees for concurrent writers.</p>
+</div>
+<div class="sec">
+<h2>Small written checkpoints</h2>
+<p>Keep one task note with goal, scope, worktree, candidate, helper addresses, reports, decisions, and next action. Each helper saves its own report outside disposable worktrees. Preserve unfinished work and actual user decisions.</p><p><a href={repoBlob("templates/task.md")}> Task-note template ↗</a></p>
+</div>
+<div class="sec">
+<h2>Native communication</h2>
+<p>Use native <code>hc run --bg</code>, <code>hc send</code>, and <code>hc wait</code> according to the installed manual. Native parent defaults retain notifications and parent-linked lifetime. Ordinary command exits notify the lead; an interactive agent must save and explicitly send its report.</p><p>A successful send, idle status, or a stopped child does not establish completion. Inspect actual output and account for every required result against the final stable candidate.</p>
+</div>
+<div class="sec">
+<h2>Resume deliberately</h2>
+<p>After interruption, inspect the real program, current recipient, worktrees, and reports before sending or relaunching. A restored shell at the same address does not restore an agent conversation. Uncertain startup calls for inspection before recovery.</p><p><a href={repoBlob("skills/sum-resume/SKILL.md")}> Resume procedure ↗</a></p>
+</div>
   </div>
 </DocsLayout>

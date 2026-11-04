@@ -1,7 +1,0 @@
-toml: "# Sum projects saved task state as namespaced sum.* HC terminal labels.\n# Read the task ledger with sumctl inbox --grouped.\n"
-tokens:
-  task[6]: sum_state,sum_pipeline,sum_task,sum_repo,sum_rev,sum_pr
-states[14]: needs-attention,needs-decision,merged-cleanup-pending,review-ready,attention-blocked,attention-exited,attention-closed,attention-idle,instruction-refresh-pending,answer-pending,pr-open,verified,preparing,running
-enable: $ROOT/bin/sumctl --home $HOME metadata enable
-inbox: $ROOT/bin/sumctl --home $HOME metadata inbox
-note: "Nothing here is written by sum: the snippet is text for the user to merge. Without these rows the tokens exist but stay out of sight; every other setting (theme, keybindings, labels, toast delivery) is the user's."

@@ -2,13 +2,13 @@ import { expect, test } from "@playwright/test";
 
 const pages = [
   { route: "docs/", h1: "Documentation" },
-  { route: "install/", h1: "Install" },
+  { route: "install/", h1: "Start" },
   { route: "architecture/", h1: "Architecture" },
   { route: "verification/", h1: "Verification" },
   { route: "skills/", h1: "Skills" },
   { route: "configuration/", h1: "Configuration" },
   { route: "herdr/", h1: "HC terminal runtime" },
-  { route: "update/", h1: "Update & rollback" },
+  { route: "update/", h1: "Adoption & updates" },
 ];
 
 for (const { route, h1 } of pages) {
@@ -65,23 +65,20 @@ test("docs index links the seven sections and the docs/*.md sources", async ({
     els.map((el) => el.getAttribute("href")),
   );
   expect(docHrefs).toEqual([
-    "https://github.com/douglasjarquin/sum/blob/main/docs/repairs.md",
-    "https://github.com/douglasjarquin/sum/blob/main/docs/recovery.md",
-    "https://github.com/douglasjarquin/sum/blob/main/docs/terminology.md",
+    "https://github.com/douglasjarquin/sum/blob/main/docs/native-hc.md",
+    "https://github.com/douglasjarquin/sum/blob/main/docs/ACCEPTANCE.md",
+    "https://github.com/douglasjarquin/sum/blob/main/docs/legacy.md",
   ]);
 });
 
-test("skills lists the seven bundled skills under their canonical names", async ({
+test("skills lists the four procedures under their canonical names", async ({
   page,
 }) => {
   await page.goto("skills/");
   await expect(page.locator(".kv .k")).toHaveText([
-    "/sum-dispatch",
     "/sum-work",
-    "/sum-deliver",
-    "/sum-status",
-    "/sum-develop",
-    "/sum-factory",
-    "/sum-update",
+    "/sum-review",
+    "/sum-finish",
+    "/sum-resume",
   ]);
 });

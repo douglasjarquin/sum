@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-#MISE description="Lint the Go module"
+#MISE description="Check standalone portable-tool Go tests"
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../tests/portable"
 export PATH="$(dirname "$(mise which go)"):${PATH:-}"
 unset GOROOT
-
-unformatted="$(gofmt -l go)"
+unformatted="$(gofmt -l .)"
 if [ -n "$unformatted" ]; then
-  echo "gofmt needed on:"
   echo "$unformatted"
   exit 1
 fi
-
-(cd go && go vet ./...)
+go vet ./...

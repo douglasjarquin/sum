@@ -1,61 +1,28 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
+import { repoBlob } from "../../lib/links.mjs";
 ---
 
 <DocsLayout title="HC terminal runtime — sum">
   <div class="doc">
     <h1>HC terminal runtime</h1>
-    <p class="lede">HC owns terminal processes; Git owns worktrees. Sum preserves approved briefs, roles, capacity, receipts, candidate-bound review and verification, publication and guarded cleanup.</p>
-    <div class="sec">
-      <h2>Terminal identity</h2>
-      <p>Permanent core ID and returned address identify a native terminal. Sum additionally binds creation time, task/role/attempt/generation, process and matching initialization receipt. Socket paths, names, labels, cwd, PID and status alone never grant authority.</p>
-      <div class="kv" style="grid-template-columns:1fr">
-        <div class="v">Observation connects only to an existing socket and never starts a missing core.</div>
-        <div class="v" style="border-bottom:1px solid var(--rule)">A replacement harness process at the same address does not inherit the old role.</div>
-        <div class="v">Remote Sum execution and a second same-host core/session scope are unsupported and refused before binding.</div>
-      </div>
-    </div>
-    <div class="sec">
-      <h2>Environments</h2>
-      <div class="codeblock">
-        <div>./bin/sumctl env discover TASK_ID        <span class="c"># declared dev commands from mise/package/Makefile/justfile/Procfile/compose/Dockerfile/devcontainer</span></div>
-        <div>./bin/sumctl env record TASK_ID --url http://127.0.0.1:PORT [--log PATH | --pane ID | --container ID]</div>
-        <div>./bin/sumctl env inspect TASK_ID         <span class="c"># re-observe once: stale URLs, configuration drift, missing logs</span></div>
-        <div>./bin/sumctl env start TASK_ID --command NAME [--url ... | --match TEXT] [--log PATH] [--timeout S]</div>
-        <div>./bin/sumctl env stop TASK_ID [--service ID]</div>
-      </div>
-      <p><code>env start</code> launches one declared repository command in a proven owned HC terminal at the Git checkout. <code>env stop</code> sends one interrupt, verifies actual exit and survivor absence, and never escalates to kill. Idle status or an ended wait is not exit. Shared, replaced and unproven processes remain blockers.</p>
-    </div>
-    <div class="sec">
-      <h2>Bounded collection</h2>
-      <div class="codeblock">
-        <div>./bin/sumctl collect --claim TOKEN --budget 20s</div>
-        <div>./bin/sumctl inbox --live</div>
-      </div>
-      <p>Collection reads actionable questions, reports and reviews, delivers eligible queued worker answers and waits on recorded native addresses within one shared deadline. It starts no core and records no read receipt. Native attention is an inspection signal, never approval.</p>
-      <p>The coordinating conversation has no HC parent endpoint. Results stay saved until their existing action settles them; there is no unattended coordinator prompt.</p>
-    </div>
-    <div class="sec">
-      <h2>Native metadata (optional)</h2>
-      <div class="codeblock">
-        <div>./bin/sumctl metadata enable --claim TOKEN</div>
-        <div>./bin/sumctl metadata sync --claim TOKEN [--force]</div>
-        <div>./bin/sumctl metadata status</div>
-        <div>./bin/sumctl metadata inbox [--grouped]</div>
-        <div>./bin/sumctl metadata disable --claim TOKEN</div>
-      </div>
-      <p style="margin:14px 0 12px">Optional metadata projects owned namespaced HC labels only to verified task worker/reviewer terminals. It never changes native lifecycle, confers role authority or proves task completion. Unrelated labels and configuration remain intact.</p>
-      <div class="chips">
-        <span class="chip">needs-decision</span>
-        <span class="chip">needs-attention</span>
-        <span class="chip">review-ready</span>
-        <span class="chip">answer-pending</span>
-        <span class="chip">instruction-refresh-pending</span>
-        <span class="chip">running</span>
-      </div>
-      <p style="margin:12px 0 0">
-        These labels never prove verification or completion.
-      </p>
-    </div>
+    <p class="lede">Use the supported Herdr app and matching HC core. The ordinary agent in its HC-backed terminal is the native lead; Sum provides instructions rather than a transport layer.</p>
+<div class="sec">
+<h2>Actual lead identity</h2>
+<div class="codeblock">
+<div>hc --skill</div>
+<div>hc run --help</div>
+<div>hc send --help</div>
+<div>hc wait --help</div>
+</div><p>Require a nonempty actual <code>HC_TERMINAL_ID</code> before inspecting <code>hc get "$HC_TERMINAL_ID"</code>. Confirm the current agent and status against the matching core. Successful RPC connection can start HC’s own core but does not make a foreign conversation addressable.</p><p>Old Herdr TUI pane addresses such as <code>wJ5:p5</code> are not HC terminal addresses such as <code>t10</code>. Report missing prerequisites and use the supported native launch path.</p>
+</div>
+<div class="sec">
+<h2>Launch, report, and wait</h2>
+<p>Launch native children through <code>hc run --bg</code> with the inherited parent relationship, notifications, and parent-linked lifetime. Record returned addresses. Include the bounded assignment at launch where supported and inspect <code>first_message.sent</code>.</p><p>Test programs use native exit notifications and inspected output. Interactive helpers save a substantive report, then explicitly send findings, completion, questions, or blockers with <code>hc send</code> to the actual immediate parent. They remain available for follow-up.</p><p>Use <code>hc wait --children any</code> or <code>all</code> when useful. A timeout is a check-in; stopped children or a successful send do not prove completion. Inspect uncertain launches before retrying and never type through trust, authentication, or permission dialogs.</p>
+</div>
+<div class="sec">
+<h2>Artifact and harness limits</h2>
+<p>The development host’s observed HC 0.1.17, Herdr app 0.1.12, Codex 0.166.0, and Claude Code 2.1.318 are artifact observations, not qualified minimum versions. Inspected upstream source may be newer than a released binary with the same version string.</p><p>Authenticated native acceptance remains unrun. Claude lead plus interactive Codex reviewer is a candidate qualification path. Other harnesses, including terminal-launched grok, remain unqualified here; the Grok Bot product is separate.</p><p><a href={repoBlob("docs/native-hc.md")}> Prerequisites and observed artifacts ↗</a> <a href={repoBlob("docs/ACCEPTANCE.md")}> Native acceptance ↗</a></p>
+</div>
   </div>
 </DocsLayout>
