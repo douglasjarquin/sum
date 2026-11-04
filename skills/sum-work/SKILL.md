@@ -66,7 +66,7 @@ A helper brief contains:
 - The target repository's applicable instructions, candidate/snapshot, and required checks/evidence.
 - The resolved absolute path to the PR template when the helper prepares delivery artifacts in another repository.
 - Whether bounded further delegation is allowed.
-- The actual immediate parent and this obligation: save the report, then report findings, completion, a question, or a blocker with `hc send <actual-parent-address>`; remain available for follow-up.
+- The actual immediate parent and this obligation: save the report, then report findings, completion, a question, or a blocker with `hc send <actual-parent-address>`; wait for the parent to collect the report and close the completed worker.
 
 Keep the referenced Sum checkout available while helpers use it, including when working in another repository.
 Use native `hc run --bg` from the validated lead so HC supplies parentage, notifications, and parent-linked lifetime.
@@ -105,6 +105,10 @@ A timeout is a check-in, not task failure.
 Idle, done, all children stopped working, `started:true`, or a successful send is not completion evidence.
 Inspect required reports and actual check output until every required result is accounted for.
 
+After reading a complete assignment report, record its candidate, findings, command output, and disposition in the task note.
+Promptly close that completed worker under [Finish](../sum-finish/SKILL.md), without waiting for independent review, PR merge, or other assignments.
+Assignment completion does not mean its findings are resolved or the overall task is accepted.
+
 ## Review the completed candidate
 
 After the builder reports completion, the lead reads its saved report and launches a separate reviewer under [Review](../sum-review/SKILL.md) against the frozen candidate.
@@ -112,11 +116,12 @@ Give the reviewer the prescribed-check inventory, actual results, and the same c
 Every implementation candidate requires this independent review before completion; the builder's self-review or green CI does not satisfy it.
 Record the reviewer address and report path, then return to messages.
 
-When the review report arrives, route blocking findings to the builder for correction.
-Freeze the corrected candidate, refresh affected verification, and send it to the reviewer for follow-up inspection.
+Use fresh workers for review, later fixes, and corrected-candidate review, with the saved reports and current candidate in their briefs.
+When the review report arrives, route blocking findings to a fresh worker for correction.
+Freeze the corrected candidate, refresh affected verification, and send it to a fresh reviewer for follow-up inspection.
 Account for every finding against that candidate before proceeding to Finish; a report covering superseded inputs cannot close the task.
 
-Use `hc send <returned-helper-address> "<correction or follow-up>"` for the same verified live helper after freezing the updated candidate.
+Use `hc send <returned-helper-address> "<answer or steering>"` only for the same verified live helper whose assignment is still unfinished.
 Read native send help for busy/conditional semantics; do not invent a done condition.
 Never default to force-input, type through a permission/trust/authentication dialog, or automatically accept it.
 Route uncertainty or interruption through [Resume](../sum-resume/SKILL.md), then use [Finish](../sum-finish/SKILL.md).

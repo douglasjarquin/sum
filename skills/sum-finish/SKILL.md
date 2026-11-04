@@ -39,9 +39,14 @@ If the head changed, refresh affected review/checks/evidence before claiming com
 Missing required review, checks, or publication leaves delivery incomplete; an authorized draft PR may expose those gaps without claiming completion.
 Never claim local/static proof establishes authenticated native acceptance or production adoption.
 
-Clean up conservatively after results are accepted or work is deliberately cancelled or superseded.
-Record that disposition and preserve useful reports and command output before terminal removal.
-Reinspect exact task-owned terminal identities/programs before stopping them using installed HC help; stop no foreign/shared terminal or core.
+The immediate parent closes each completed worker promptly after reading and preserving its assignment report, candidate identity, findings, and relevant command output.
+Record the assignment disposition in the task note; do not wait for overall acceptance, independent review, or PR merge.
+Questions, blockers, missing reports, and idle/done status alone do not establish assignment completion.
+Deliberate cancellation or supersession also permits cleanup after recording that disposition and preserving useful evidence.
+Before ending a parent-linked terminal, account for required child work and preserve its results.
+Reinspect exact task-owned terminal identities/programs using installed HC help; stop no foreign/shared terminal or core.
+Use `hc kill <exact-owned-address>`, confirm the terminal finished, then `hc rm <exact-owned-address>` to remove it.
+If identity or cleanup is uncertain, preserve the evidence and reconcile actual state under [Resume](../sum-resume/SKILL.md); do not blindly retry.
 Cancellation does not satisfy a required check.
 An agent returning to a shell may leave its terminal and children alive.
 Retain unfinished branches/worktrees and unresolved evidence; never force-reset or delete them to make the task look clean.

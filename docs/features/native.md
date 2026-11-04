@@ -10,7 +10,7 @@
 | `native.background` | Background command and reviewer | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.test-exits` | Real success and nonzero exit delivery | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.review-return` | Saved reviewer report explicitly sent | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
-| `native.follow-up` | Seeded finding, fix, and same-reviewer second report | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
+| `native.follow-up` | Collected reviewer closed; fresh fixer and corrected-candidate reviewer | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.question` | Actual helper question answered and applied | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.isolation` | Bounded helper roles and separate concurrent writers | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.uncertainty` | Undelivered or uncertain startup inspected without duplication | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
@@ -18,7 +18,7 @@
 | `native.prerequisite` | Missing native installation, identity, connection, status, or harness | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.resume` | Interruption and returned-shell recipient inspection | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.completion` | Final candidate-bound required results | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
-| `native.cleanup` | Exact task-owned helper cleanup with evidence retained | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
+| `native.cleanup` | Prompt completed-worker removal before merge, child results and evidence retained | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.review-handoff` | Builder completion triggers a distinct reviewer; findings return for correction and final-candidate review | manual: docs/ACCEPTANCE.md | Authenticated native reports and observed parent messages |
 | `native.pr-artifacts` | Two harness/skill-stack combinations deliver the same PR review, verification, and behavior-evidence sections with all prescribed steps accounted for | manual: docs/ACCEPTANCE.md | Hosted PRs, candidate identities, and native transcripts |
 | `native.delivery-gaps` | Missing baseline, publication failure, or changed candidate remains explicit on an incomplete draft and cannot produce a completion claim | manual: docs/ACCEPTANCE.md | Native task and hosted PR evidence |

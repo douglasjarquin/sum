@@ -31,5 +31,6 @@ Use the parent from the brief, never your own `HC_TERMINAL_ID`.
 Follow the installed `hc --skill` and command help; automatic done status does not forward your answer.
 If the recipient is uncertain, busy in an incompatible program, or no longer an eligible agent, retain the report and follow [Resume](../sum-resume/SKILL.md) before a deliberate send.
 Never force input through dialogs or blindly retry uncertain sends.
-Remain available for follow-up.
-For a corrected frozen candidate, inspect the intervening changes, refresh affected checks/findings, and save and send a new candidate-bound report.
+After sending a complete assignment report, wait for the parent to collect it and close this worker.
+A question or blocker leaves the assignment unfinished and eligible for steering.
+A corrected frozen candidate goes to a fresh reviewer with the prior report and intervening changes; refresh affected checks/findings in a new candidate-bound report.
