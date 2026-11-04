@@ -30,7 +30,8 @@ Keep local verification, hosted CI, authenticated native acceptance, and product
 ## Before and after
 
 Show comparable screenshots for visual changes or transcripts/request-response evidence for CLI/API changes, tied to base and candidate identities.
-Place the published evidence block here; use accessible PR links rather than machine-local paths.
+When using the evidence publisher, omit this placeholder section before first publication; its managed Before/after evidence block supplies the section.
+Otherwise place the published evidence here; use accessible PR links rather than machine-local paths.
 If the baseline is unavailable, state why and label the available after evidence.
 If no user-visible behavior changed, explain why evidence is not applicable.
 

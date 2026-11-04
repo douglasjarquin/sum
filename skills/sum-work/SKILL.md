@@ -37,6 +37,11 @@ Record the approved scope, source checkout/branch, candidate, required checks/re
 Before execution, inventory every prescribed check from the target repository's instructions, verification contract, and referenced scenario maps, including required setup, readiness, and teardown.
 Use the [PR template](../../templates/pull-request.md) for that accounting and delivery; retain a reference from the task note rather than another copy of the table.
 The target's own tools suffice; using this format does not require installing Sum's portable verifier there.
+Choose changed behavior scenarios and the base revision before implementation; capture comparable before evidence while the baseline is available.
+For later-discovered behavior changes, capture the baseline from its own base checkout when runnable.
+Require screenshots for visual changes and transcripts or HTTP request/response evidence for CLI/API changes; use synthetic data and record unavailable baselines honestly.
+The portable [Evidence procedure](../../.agents/skills/evidence/SKILL.md) is one capture option; equivalent target-repository tools may produce the same artifacts.
+Resolve its absolute Sum checkout path in a helper brief when the target does not carry these tools, and keep captures outside disposable worktrees.
 Keep question state as open, answered with the actual answer, then applied with evidence.
 Never invent user approval.
 

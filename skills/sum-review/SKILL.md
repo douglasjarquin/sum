@@ -15,6 +15,8 @@ The candidate must remain frozen during review; an unrelated empty checkout or a
 If another writer changes the inputs, report the review as superseded and request a stable candidate.
 Inspect the requirements and actual diff/source independently of the builder's summary.
 Use the target repository's review/verification requirements; the optional [engineering rubric](../../.agents/skills/verify/references/engineering-principles.md) adds questions, not architecture.
+Inspect before/after evidence for the changed behavior, base/candidate correspondence, redaction, and explicit baseline limitations.
+Check that prescribed-check accounting includes non-pass and unrun scenarios and that aggregate coverage does not claim separately observed steps.
 Do not edit the candidate during read-only review.
 Run a check only when authorized and safe for this snapshot; tests may write source or shared state.
 

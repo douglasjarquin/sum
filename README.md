@@ -38,7 +38,10 @@ Use separate Git worktrees for concurrent writers and freeze candidate inputs fo
 Use [independent adoption](docs/update.md) between sessions; preserve any serving legacy installation and its callbacks.
 The excluded [Grok Bot packs and legacy software factory](docs/legacy.md) keep their existing contracts and a separate legacy target.
 
-Optional developer tools under `.agents/skills/` provide portable verification and evidence capture.
+Every implementation candidate receives independent review.
+Requested PRs use the [shared delivery template](templates/pull-request.md), with every prescribed verification step accounted for and comparable evidence of changed behavior.
+Missing required review, checks, or published evidence leaves delivery incomplete; an authorized draft can expose the gaps.
+Optional tools under `.agents/skills/` provide portable verification and evidence capture; the artifact standard also works with the target repository's own tools.
 They do not run at ordinary startup.
 See [CONTRIBUTING.md](CONTRIBUTING.md), [VERIFY.md](VERIFY.md), and [acceptance evidence](docs/verification/issue-348.md).
 Credits and retained notices are in [ATTRIBUTIONS.md](ATTRIBUTIONS.md).

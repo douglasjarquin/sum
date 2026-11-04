@@ -29,6 +29,13 @@ Populate every prescribed check from the inventory with its source, status, evid
 A grouped row may link to a complete scenario table, but that table must account for each scenario and its actual status.
 Label aggregate-derived results as aggregate coverage, never independently observed per-step passes.
 Include the reviewed candidate, independent review outcome, findings and their disposition, before/after evidence, and actual CI state.
+Publish comparable before/after evidence for changed behavior using the [Evidence procedure](../../.agents/skills/evidence/SKILL.md) or equivalent target tools.
+Visual changes need screenshots; CLI/API changes need transcripts or request/response evidence, with provenance and safe redaction.
+Use an explicit reason for unavailable baselines or not-applicable visual evidence, never an invented before result.
+A local artifact path is not a published artifact; retain local originals and expose the evidence on the PR.
+The authorized delivery role publishes; capture and review do not confer write authority.
+Read back the PR body and current head after publication; verify the table, review summary, and accessible evidence match the final candidate.
+If the head changed, refresh affected review/checks/evidence before claiming completion.
 Missing required review, checks, or publication leaves delivery incomplete; an authorized draft PR may expose those gaps without claiming completion.
 Never claim local/static proof establishes authenticated native acceptance or production adoption.
 
