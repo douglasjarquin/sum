@@ -1,14 +1,11 @@
 package hcboot
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/douglasjarquin/sum/go/internal/hcclient"
 	"github.com/douglasjarquin/sum/go/internal/ordjson"
 	"github.com/douglasjarquin/sum/go/internal/store"
 )
@@ -51,7 +48,7 @@ func PrepareWorkspaceRoute(s *store.Store) (Route, error) {
 	return route, nil
 }
 
-func EnsureWorkspaceRoute(s *store.Store, runtimeRoot string) (Route, error) {
+func EnsureWorkspaceRoute(s *store.Store) (Route, error) {
 	route, err := PrepareWorkspaceRoute(s)
 	if err != nil {
 		return Route{}, err
@@ -60,19 +57,8 @@ func EnsureWorkspaceRoute(s *store.Store, runtimeRoot string) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
-	if report := EnsureRoute(runtimeRoot, route, listening); report != nil {
-		ok, _ := report.Get("ok")
-		if ok != true {
-			detail, _ := report.Get("error")
-			return Route{}, fmt.Errorf("default HC core could not be ensured: %v", detail)
-		}
-	}
 	if !listening {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if hello, err = hcclient.Inspect(ctx, route.Socket); err != nil {
-			return Route{}, fmt.Errorf("default HC core is unavailable at %s: %w; run mise run setup if the pinned HC helper is missing", route.Socket, err)
-		}
+		return Route{}, fmt.Errorf("default HC core is unavailable at %s; open Herdr or run hc server start in a desktop terminal, then launch again", route.Socket)
 	}
 	if route.CoreID != "" && route.CoreID != hello.Core.ID {
 		return Route{}, fmt.Errorf("selected core changed: expected %s observed %s", route.CoreID, hello.Core.ID)

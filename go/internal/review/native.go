@@ -126,9 +126,14 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if err != nil {
 		return nil, err
 	}
-	route, err = hcboot.EnsureWorkspaceRoute(s, runtimeRoot)
-	if err != nil {
+	random := make([]byte, 16)
+	if _, err = rand.Read(random); err != nil {
 		return nil, err
+	}
+	attempt := hex.EncodeToString(random)
+	route, err = hcboot.EnsureWorkspaceRoute(s)
+	if err != nil {
+		return nil, fmt.Errorf("task %s attempt %s: %w", args.Task, attempt, err)
 	}
 	if err = app.CheckTaskRole(s, task, actor, "coordinator"); err != nil {
 		return nil, err
@@ -147,11 +152,6 @@ func Launch(s *store.Store, ctx *ordjson.Object, runtimeRoot, sumctlPath string,
 	if !found {
 		return nil, fmt.Errorf("selected HC core does not expose the qualified reviewer template command")
 	}
-	random := make([]byte, 16)
-	if _, err = rand.Read(random); err != nil {
-		return nil, err
-	}
-	attempt := hex.EncodeToString(random)
 	host, err := s.Machine()
 	if err != nil {
 		return nil, err

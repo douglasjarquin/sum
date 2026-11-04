@@ -82,30 +82,6 @@ func (r Route) same(other Route) bool {
 	return r.Socket == other.Socket && r.Session == other.Session && r.ConfigHome == other.ConfigHome && r.StateHome == other.StateHome && r.RuntimeDir == other.RuntimeDir
 }
 
-func (r Route) environment() []string {
-	env := childEnv()
-	values := map[string]string{"HC_SOCKET": r.Socket, "HC_SESSION": r.Session, "XDG_CONFIG_HOME": r.ConfigHome, "XDG_STATE_HOME": r.StateHome, "XDG_RUNTIME_DIR": r.RuntimeDir}
-	var result []string
-	for _, entry := range env {
-		skip := false
-		for key := range values {
-			if len(entry) > len(key) && entry[:len(key)+1] == key+"=" {
-				skip = true
-				break
-			}
-		}
-		if !skip {
-			result = append(result, entry)
-		}
-	}
-	for key, value := range values {
-		if value != "" {
-			result = append(result, key+"="+value)
-		}
-	}
-	return result
-}
-
 func (r Route) compatibility() (listening bool, hello hcclient.HelloResult, err error) {
 	if _, err := os.Stat(r.Socket); os.IsNotExist(err) {
 		return false, hello, nil

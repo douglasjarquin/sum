@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,9 +21,10 @@ import (
 	"github.com/douglasjarquin/sum/go/internal/taskcheckout"
 )
 
-func TestFirstReviewerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
+func firstReviewerLab(t *testing.T) (*store.Store, *ordjson.Object, string, *hctest.Fixture) {
+	t.Helper()
 	s, actor, _, core := recoveryLab(t)
-	terminalsBefore := len(core.Terminals())
+	core.SetVersion("0.1.17")
 	task, err := s.ReadTask("t-aaaaaaaaaaaa")
 	if err != nil {
 		t.Fatal(err)
@@ -73,6 +75,16 @@ func TestFirstReviewerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
 	if err = core.LoadTemplatesFrom(route.ConfigHome); err != nil {
 		t.Fatal(err)
 	}
+	return s, actor, runtime, core
+}
+
+func TestFirstReviewerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
+	s, actor, runtime, core := firstReviewerLab(t)
+	terminalsBefore := len(core.Terminals())
+	task, err := s.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err = Launch(s, actor, runtime, "/tmp/sumctl", LaunchArgs{Task: asString(task, "id"), Harness: "codex"}); err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +110,7 @@ func TestFirstReviewerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
 	if visibility := objectField(objectField(objectField(launched, "reviewer"), "native_launch"), "visibility"); asString(visibility, "state") != launch.VisibilityApplied {
 		t.Fatalf("reviewer visibility = %v", visibility)
 	}
-	route, err = hcboot.SelectedRoute(s)
+	route, err := hcboot.SelectedRoute(s)
 	if err != nil || route.CoreID != core.CoreID {
 		t.Fatalf("route: %+v %v", route, err)
 	}
@@ -166,5 +178,23 @@ func TestReviewerLaunchExcludesTransferThroughCreationAccounting(t *testing.T) {
 	}
 	if asString(objectField(objectField(task, "reviewer"), "native_launch"), "state") != "uncertain" || len(core.Terminals()) != 1 {
 		t.Fatal("lost creation was not durably retained as one uncertain reviewer")
+	}
+}
+
+func TestMissingCoreDoesNotRecordReviewerLaunch(t *testing.T) {
+	s, actor, runtime, core := firstReviewerLab(t)
+	before := len(core.Terminals())
+	socket := filepath.Join(t.TempDir(), "missing.sock")
+	hctest.PointDefaultRoute(t, socket)
+	_, err := Launch(s, actor, runtime, "/tmp/sumctl", LaunchArgs{Task: "t-aaaaaaaaaaaa", Harness: "codex"})
+	if err == nil || !strings.Contains(err.Error(), "task t-aaaaaaaaaaaa attempt ") || !strings.Contains(err.Error(), socket) || !strings.Contains(err.Error(), "open Herdr") {
+		t.Fatalf("refusal: %v", err)
+	}
+	task, err := s.ReadTask("t-aaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if objectField(task, "reviewer") != nil || len(core.Terminals()) != before {
+		t.Fatal("missing core recorded or created a reviewer")
 	}
 }
