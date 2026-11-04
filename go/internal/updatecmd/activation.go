@@ -1,6 +1,7 @@
 package updatecmd
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -430,6 +431,19 @@ func resolveDescriptor(root string, descriptor *ordjson.Object) (string, error) 
 }
 
 func resolveActivationDescriptor(root string, descriptor *ordjson.Object, requireHead bool) (string, error) {
+	target, err := resolveActivationPath(root, descriptor, requireHead)
+	if err != nil {
+		return "", err
+	}
+	if target != "" {
+		if _, err = release.VerifyRelease(target, effectField(descriptor, "sha")); err != nil {
+			return "", err
+		}
+	}
+	return target, nil
+}
+
+func resolveActivationPath(root string, descriptor *ordjson.Object, requireHead bool) (string, error) {
 	if descriptor == nil {
 		return "", fmt.Errorf("Activation state is malformed or belongs to another installation.")
 	}
@@ -460,9 +474,6 @@ func resolveActivationDescriptor(root string, descriptor *ordjson.Object, requir
 	}
 	if filepath.Dir(abs) != releases || filepath.Base(abs) != sha {
 		return "", fmt.Errorf("Activation state names a release outside this installation.")
-	}
-	if _, verifyErr := release.VerifyRelease(abs, sha); verifyErr != nil {
-		return "", verifyErr
 	}
 	return abs, nil
 }
@@ -548,7 +559,7 @@ func ensureActivationState(s *store.Store, root string, current *ordjson.Object)
 				return nil, err
 			}
 		}
-		if err := verifyCurrentKnownGood(s, root, current, currentDesc); err != nil {
+		if err := verifyCurrentKnownGood(s, root, currentDesc); err != nil {
 			return nil, err
 		}
 		state.Set("known_good", currentDesc)
@@ -557,7 +568,7 @@ func ensureActivationState(s *store.Store, root string, current *ordjson.Object)
 		}
 		return readActivationState(s, root)
 	}
-	if err := verifyCurrentKnownGood(s, root, current, currentDesc); err != nil {
+	if err := verifyCurrentKnownGood(s, root, currentDesc); err != nil {
 		return nil, err
 	}
 	payload := ordjson.NewObject()
@@ -572,22 +583,24 @@ func ensureActivationState(s *store.Store, root string, current *ordjson.Object)
 	return readActivationState(s, root)
 }
 
-func verifyCurrentKnownGood(s *store.Store, root string, current, currentDesc *ordjson.Object) error {
-	target, resolveErr := resolveDescriptor(root, currentDesc)
+func verifyCurrentKnownGood(s *store.Store, root string, currentDesc *ordjson.Object) error {
+	target, resolveErr := resolveActivationPath(root, currentDesc, true)
 	if resolveErr != nil {
 		return resolveErr
 	}
-
-	compat, _, validErr := ValidateTarget(s, root, target, current)
-	if validErr != nil {
-		blocking := ""
-		if compat != nil {
-			blocking = joinBlocking(func() any { v, _ := compat.Get("blocking"); return v }())
-		}
-		if blocking == "" {
-			blocking = validErr.Error()
-		}
-		return fmt.Errorf("The current runtime cannot be established as known-good: %s", blocking)
+	if target == "" {
+		target = root
+	}
+	offered, err := release.ReadTargetContract(context.Background(), target)
+	if err != nil {
+		return fmt.Errorf("The current runtime cannot be established as known-good: %w", err)
+	}
+	executableContract, err := ordjson.FromValue(offered)
+	if err != nil {
+		return err
+	}
+	if blocking := contractFloors(s, executableContract); len(blocking) > 0 {
+		return fmt.Errorf("The current runtime cannot be established as known-good: %s", joinBlocking(blocking))
 	}
 	check := postCheck(s, root)
 	if ok, _ := check.Get("ok"); ok != true {
