@@ -19,3 +19,6 @@
 | `native.resume` | Interruption and returned-shell recipient inspection | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.completion` | Final candidate-bound required results | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.cleanup` | Exact task-owned helper cleanup with evidence retained | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
+| `native.review-handoff` | Builder completion triggers a distinct reviewer; findings return for correction and final-candidate review | manual: docs/ACCEPTANCE.md | Authenticated native reports and observed parent messages |
+| `native.pr-artifacts` | Two harness/skill-stack combinations deliver the same PR review, verification, and behavior-evidence sections with all prescribed steps accounted for | manual: docs/ACCEPTANCE.md | Hosted PRs, candidate identities, and native transcripts |
+| `native.delivery-gaps` | Missing baseline, publication failure, or changed candidate remains explicit on an incomplete draft and cannot produce a completion claim | manual: docs/ACCEPTANCE.md | Native task and hosted PR evidence |

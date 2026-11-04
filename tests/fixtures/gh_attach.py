@@ -102,6 +102,7 @@ def apply_mutation():
         return
     state["views"] = state.get("views", 0) + 1
     if state["views"] < mutation.get("after_views", 1):
+        save()
         return
     body = pr().get("body", "")
     if mutation.get("where") == "inside":
