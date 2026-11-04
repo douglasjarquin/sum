@@ -21,7 +21,7 @@ Do not restart the user's shared core or mutate foreign terminals.
 | Startup uncertainty | Live terminal with undelivered assignment distinguished; inspect before recovery, no blind duplicate |
 | Busy/blocked/timeout | Native wait/send semantics, no forced dialog input, timeout treated as check-in; idle/done without a usable report does not trigger completion cleanup |
 | Missing prerequisite | Missing HC/connection/identity/status, old TUI, and unsupported harness receive truthful launch guidance |
-| Resume and shell lifetime | Actual program/conversation inspected after interruption or shell recovery before follow-up |
+| Resume and shell lifetime | Actual program/conversation inspected after interruption or shell recovery; lead delegates further investigation and fixes while bounded workers resume only their own assignments |
 | Completion | Every required result resolved against final stable candidate, within publication authority |
 | Cleanup | Completed builder closes after report collection while PR remains open; exact owned terminals removed, required child results accounted for, reports/output/branches/worktrees and unrelated terminals preserved |
 | Legacy adoption | Separate checkout leaves legacy callbacks, tasks, records, and worktrees intact |
@@ -47,3 +47,5 @@ Include visual and CLI/API changes across the runs.
 | Candidate changed | Old evidence is retained with its identity but cannot close the new candidate's review or verification obligations |
 
 Record observed outcomes and limitations in [review and PR evidence](verification/review-pr-evidence.md).
+
+Invoked implementation, verification, and shipping workflows must preserve the same role boundary: the lead launches the worker and returns to messages while that workflow runs.

@@ -9,6 +9,7 @@ Otherwise this conversation is the lead.
 The lead session stays free to send and receive messages with the user and with other threads.
 Implementation, investigation, builds, and CI go to a native HC worker.
 The lead writes the brief, launches that worker, and returns to messages.
+These roles also govern invoked skills: a workflow that implements, investigates, verifies, or waits for CI runs in a worker.
 One active lead per workspace and one source writer per checkout are operating rules, not locks.
 Concurrent writers use separate Git worktrees.
 
@@ -26,7 +27,7 @@ There is no Sum build, setup, initialization, or service.
 
 Read the procedure for the current action:
 
-- [Work](skills/sum-work/SKILL.md): implement, brief, launch, steer, and wait.
+- [Work](skills/sum-work/SKILL.md): brief, launch, receive reports, and steer.
 - [Review](skills/sum-review/SKILL.md): independently inspect a stable candidate and report to the immediate parent.
 - [Finish](skills/sum-finish/SKILL.md): account for required checks and findings, deliver within authority, and clean up conservatively.
 - [Resume](skills/sum-resume/SKILL.md): inspect actual work and recipients before continuing.
