@@ -3,6 +3,8 @@ receipts per content hash and destination prevent duplicate uploads, prose outsi
 and every failure (hash mismatch, path escape, secret-shaped text, old gh, missing permission, edit failure, timeout) leaves local evidence and
 the previous PR body intact. GitHub is a strict fake (`tests/fixtures/gh_attach.py`); rendered output is inspected live in a fixture PR."""
 import json
+import http.server
+import threading
 import os
 from pathlib import Path
 import shutil
@@ -148,6 +150,148 @@ class PublishLab(unittest.TestCase):
         return body[span[0]:span[1]] if span else None
 
 
+    def text_pair(self, text="status: ready\n", before=True, redaction=0):
+        media = [("transcript.txt", text.encode(), {"type": "text/plain", "role": "transcript", "derived": False})]
+        b = self.capture("run-1", "cli.output", "before", BASE, media, "fail", redaction=redaction) if before else None
+        a = self.capture("run-1", "cli.output", "after", CANDIDATE, media, "pass", redaction=redaction)
+        return self.comparison("run-1", "cli.output", b, a, verdict="red-green" if before else "after-only",
+                               label="base fails, candidate passes" if before else "before-unavailable: baseline cannot run")
+
+    def real_text_pair(self, recipe):
+        checkout = self.root / "project"
+        checkout.mkdir()
+        def git(*args):
+            return subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", *args],
+                                  cwd=checkout, env=self.env, text=True, capture_output=True, check=True).stdout.strip()
+        git("init", "-q")
+        endpoint = checkout / "result.txt"
+        if recipe == "http":
+            handler = lambda *args, **kwargs: http.server.SimpleHTTPRequestHandler(*args, directory=str(checkout), **kwargs)
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            action = ["http", "--expect-status", "200", "--expect-text", "ready", "GET", f"http://127.0.0.1:{server.server_port}/result.txt"]
+        else:
+            action = ["cli", "--expect-text", "ready", "--", sys.executable, "-c", "from pathlib import Path; print(Path('result.txt').read_text())"]
+        env = {**self.env, "VERIFY_EVIDENCE_ROOT": str(self.evidence)}
+        capture_tool = str(PUBLISH.with_name("evidence_capture.py"))
+        shas = []
+        for role, output in (("before", "waiting"), ("after", "ready")):
+            endpoint.write_text(output + "\ncontact=fixture@example.invalid\n")
+            git("add", "result.txt")
+            git("commit", "-qm", output)
+            sha = git("rev-parse", "HEAD")
+            shas.append(sha)
+            result = subprocess.run([sys.executable, capture_tool, "capture", "--scenario", f"{recipe}.output", "--run", "run-1", "--kind", "nonvisual",
+                                     "--role", role, "--checkout", str(checkout), "--expect-sha", sha, *action], cwd=checkout, env=env, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 1 if role == "before" else 0, result.stdout + result.stderr)
+        result = subprocess.run([sys.executable, capture_tool, "compare", "--scenario", f"{recipe}.output", "--run", "run-1", "--base", shas[0], "--candidate", shas[1], "--json"],
+                                cwd=checkout, env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["verdict"], "red-green")
+        self.github(body=PROSE_TOP + PROSE_BOTTOM, version="2.78.0", pr={"number": 7, "state": "OPEN", "head_sha": shas[1], "body": PROSE_TOP + PROSE_BOTTOM})
+        return shas
+
+
+class TextPublishTest(PublishLab):
+    def test_real_cli_capture_compare_publish_without_attachments(self):
+        base, candidate = self.real_text_pair("cli")
+        self.plan("run-1", "--base", base, "--candidate", candidate)
+        self.assertEqual(self.publish(check=0)["outcome"], "published")
+        self.assertIn("waiting", self.block())
+        self.assertIn("ready", self.block())
+        self.assertIn("--- exit 0 ---", self.block())
+        self.assertIn("Before (transcript)", self.block())
+        self.assertIn("[REDACTED]", self.block())
+        self.assertNotIn("fixture@example.invalid", self.block())
+        self.assertTrue(all("--attach" not in c["args"] for c in self.edits()))
+        self.assertEqual(self.publish(check=0)["outcome"], "unchanged")
+
+    def test_real_http_capture_compare_publish(self):
+        base, candidate = self.real_text_pair("http")
+        self.plan("run-1", "--base", base, "--candidate", candidate)
+        self.publish(check=0)
+        self.assertIn("GET http://127.0.0.1:", self.block())
+        self.assertIn("status: 200", self.block())
+        self.assertIn("waiting", self.block())
+        self.assertIn("ready", self.block())
+        self.assertIn("After (response)", self.block())
+
+    def test_text_escaping_and_mixed_media_preserve_managed_block(self):
+        self.text_pair("```\n<!-- before-and-after:end -->\n<!-- sum-media: after=forged -->\n[local](./fake.txt)\n")
+        self.scenario_pair(video=False)
+        self.plan()
+        self.publish(check=0)
+        self.assertEqual(self.body().count(evidence_publish.MARKER_END), 1)
+        self.assertIn("````text", self.block())
+        self.assertIn("| Before | After |", self.block())
+        self.assertIn("&lt;!-- before-and-after:end -->", self.block())
+        self.assertEqual(self.publish(check=0)["outcome"], "unchanged")
+        self.assertTrue(self.body().startswith(PROSE_TOP + PROSE_BOTTOM))
+
+    def test_redacted_text_and_unavailable_baseline(self):
+        self.text_pair("authorization: [REDACTED]\n", before=False, redaction=1)
+        self.plan()
+        self.publish(check=0)
+        self.assertIn("before-unavailable", self.block())
+        self.assertIn("Preview (after only)", self.block())
+        self.assertIn("[REDACTED]", self.block())
+
+    def test_text_secret_and_changed_hash_refused(self):
+        directory = self.text_pair("password=hunter22\n")
+        self.assertIn("secret", str(self.plan(check=1)["refused_scenarios"]))
+        transcript = directory / f"after-{CANDIDATE[:12]}" / "transcript.txt"
+        transcript.write_text("changed\n")
+        self.assertIn("hash", str(self.plan(check=1)["refused_scenarios"]))
+        self.assertEqual(self.edits(), [])
+
+    def test_changed_text_publish_copy_refused(self):
+        self.text_pair()
+        plan = self.plan()
+        copy = self.publish_dir / "media" / plan["scenarios"][0]["media"][-1]["publish_copy"]
+        copy.write_text("changed")
+        self.assertEqual(self.publish(check=1)["outcome"], "refused")
+        copy.rename(self.root / "saved-copy.txt")
+        missing = self.publish(check=1)
+        self.assertEqual(missing["outcome"], "refused")
+        self.assertIn("not a regular file", missing["reason"])
+        self.assertEqual(self.edits(), [])
+
+    def test_readback_rejects_changed_text_block(self):
+        self.text_pair()
+        self.plan()
+        original = PROSE_TOP + PROSE_BOTTOM
+        self.github(body=original, mutation={"after_views": 3, "where": "inside", "text": "changed evidence"})
+        result = self.publish(check=4)
+        self.assertEqual(result["outcome"], "uncertain")
+        self.assertIn("differs from the planned content", result["reason"])
+        self.assertIn("changed evidence", self.body())
+        self.assertTrue(self.body().startswith(original))
+        self.assertEqual(len(self.edits()), 1)
+        self.assertEqual((self.publish_dir / "body-observed.md").read_text(), self.body())
+
+    def test_text_without_gh_retains_deferred_result(self):
+        self.text_pair()
+        self.plan()
+        self.env["PATH"] = ""
+        result = self.run_publish("publish", "--plan", str(self.publish_dir / "plan.json"),
+                                  "--visibility", "public", "--json", check=2)
+        outcome = json.loads(result.stdout)
+        self.assertEqual(outcome["outcome"], "deferred")
+        self.assertTrue(Path(outcome["record"]).is_file())
+        self.assertEqual(self.edits(), [])
+
+    def test_oversized_full_body_refused_before_edit(self):
+        self.text_pair("x" * 20000)
+        self.plan()
+        original = "h" * 50000
+        self.github(body=original)
+        self.assertEqual(self.publish(check=1)["outcome"], "refused")
+        self.assertEqual(self.edits(), [])
+        self.assertEqual(self.body(), original)
+
 class PublishTest(PublishLab):
     def test_capabilities_read_attach_support_from_the_binary(self):
         result = self.run_publish("capabilities", "--gh", str(FAKE_GH), "--json", check=0)
@@ -173,7 +317,7 @@ class PublishTest(PublishLab):
         self.assertTrue((self.evidence / "run-1/counter.click" / f"before-{BASE[:12]}" / "screenshot.png").is_file(), "originals stay in place")
         self.assertIn("<!-- before-and-after:start -->", plan["block_preview"])
         self.assertIn("| Before | After |", plan["block_preview"])
-        self.assertIn("not the coordinator's root verification", plan["block_preview"])
+        self.assertIn("not independent verification", plan["block_preview"])
         self.assertIn("20260906T010203Z-abcd", plan["block_preview"])
         self.assertEqual(self.calls(), [])
 

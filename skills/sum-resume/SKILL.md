@@ -18,6 +18,8 @@ HC keep recovery restores a shell, not an agent session; exiting an agent to a s
 
 Reconcile what actually exists before launching or sending anything:
 
+- Compare saved reviewer reports, check results, and evidence with the current candidate; superseded inputs require affected checks, capture, and independent review again.
+- Inspect the actual PR head/body and publication receipts before resuming delivery; an uncertain edit must be reconciled before republishing.
 - A completed report is a claim to inspect against the actual candidate and required checks.
 - A live terminal with `first_message.sent: false` has no delivered assignment; inspect readiness and output before deliberate delivery.
 - An uncertain launch or send may have succeeded; inspect native state, output, and reports instead of blind duplication.
@@ -29,7 +31,7 @@ Do not type task instructions into a remembered shell or automatically restore a
 Ask the user only for essential missing authority or information; record the question and actual answer in the note.
 Restart no shared core, seize no foreign terminal, and implement no collector, replay loop, mailbox, or return service.
 
-Choose the next bounded action from current evidence: continue direct work, steer an unfinished verified helper, deliberately relaunch after conclusive resolution, inspect results, or report a prerequisite/blocker.
+Choose the next bounded action from current evidence: continue direct work, brief a native worker, steer an unfinished verified helper, deliberately relaunch after conclusive resolution, inspect results, or report a prerequisite/blocker.
 For a completed assignment, read and preserve the report, then close the exact owned worker under [Finish](../sum-finish/SKILL.md).
 Use a fresh worker for subsequent fixes or review, carrying forward saved findings and the current candidate.
 Record the actual result and next action in the note.

@@ -2,7 +2,8 @@
 
 Sum is a small distribution of agent instructions and skills for software work in an existing HC-backed Herdr terminal.
 Give the usual coding agent a task in the same conversation.
-It can implement directly, run background project checks, ask an independent reviewer, receive native reports, and steer follow-up.
+The lead session stays free for messages.
+It launches a native HC worker for implementation, investigation, builds, and CI, asks an independent reviewer, receives native reports, and steers follow-up.
 
 ## Start
 
@@ -19,7 +20,7 @@ The currently inspected local artifacts are documented, but authenticated native
 
 | Procedure | Use it for |
 | --- | --- |
-| [Work](skills/sum-work/SKILL.md) | Direct implementation or bounded helper launch, steering, and waiting |
+| [Work](skills/sum-work/SKILL.md) | Brief and launch a native HC worker, then steer from messages |
 | [Review](skills/sum-review/SKILL.md) | Independent inspection of a specified frozen candidate and explicit report to the parent |
 | [Finish](skills/sum-finish/SKILL.md) | Required checks, findings, authorized delivery, and conservative cleanup |
 | [Resume](skills/sum-resume/SKILL.md) | Inspecting actual work, reports, and recipients after interruption |
@@ -37,7 +38,10 @@ Use separate Git worktrees for concurrent writers and freeze candidate inputs fo
 Use [independent adoption](docs/update.md) between sessions; preserve any serving legacy installation and its callbacks.
 The excluded [Grok Bot packs and legacy software factory](docs/legacy.md) keep their existing contracts and a separate legacy target.
 
-Optional developer tools under `.agents/skills/` provide portable verification and evidence capture.
+Every implementation candidate receives independent review.
+Requested PRs use the [shared delivery template](templates/pull-request.md), with every prescribed verification step accounted for and comparable evidence of changed behavior.
+Missing required review, checks, or published evidence leaves delivery incomplete; an authorized draft can expose the gaps.
+Optional tools under `.agents/skills/` provide portable verification and evidence capture; the artifact standard also works with the target repository's own tools.
 They do not run at ordinary startup.
 See [CONTRIBUTING.md](CONTRIBUTING.md), [VERIFY.md](VERIFY.md), and [acceptance evidence](docs/verification/issue-348.md).
 Credits and retained notices are in [ATTRIBUTIONS.md](ATTRIBUTIONS.md).
