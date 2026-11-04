@@ -264,10 +264,24 @@ class TextPublishTest(PublishLab):
         self.plan()
         original = PROSE_TOP + PROSE_BOTTOM
         self.github(body=original, mutation={"after_views": 3, "where": "inside", "text": "changed evidence"})
-        result = self.publish(check=1)
-        self.assertEqual(result["outcome"], "failed")
+        result = self.publish(check=4)
+        self.assertEqual(result["outcome"], "uncertain")
         self.assertIn("differs from the planned content", result["reason"])
-        self.assertEqual(self.body(), original)
+        self.assertIn("changed evidence", self.body())
+        self.assertTrue(self.body().startswith(original))
+        self.assertEqual(len(self.edits()), 1)
+        self.assertEqual((self.publish_dir / "body-observed.md").read_text(), self.body())
+
+    def test_text_without_gh_retains_deferred_result(self):
+        self.text_pair()
+        self.plan()
+        self.env["PATH"] = ""
+        result = self.run_publish("publish", "--plan", str(self.publish_dir / "plan.json"),
+                                  "--visibility", "public", "--json", check=2)
+        outcome = json.loads(result.stdout)
+        self.assertEqual(outcome["outcome"], "deferred")
+        self.assertTrue(Path(outcome["record"]).is_file())
+        self.assertEqual(self.edits(), [])
 
     def test_oversized_full_body_refused_before_edit(self):
         self.text_pair("x" * 20000)

@@ -99,7 +99,7 @@ Interactive agents must explicitly save and send their reports.
 HC's automatic blocked/error/exit events do not forward the agent's final answer when its status becomes done.
 Read the substantive report after its concise native notification; a failed notification preserves useful evidence but does not prove receipt.
 
-Use `hc wait --children any` or `hc wait --children all` when waiting helps.
+A bounded helper may use `hc wait --children any` or `hc wait --children all` when waiting helps; the lead stays available for messages.
 A message wake may precede its incoming input; do not scrape a report body from a wait response or terminal screen.
 A timeout is a check-in, not task failure.
 Idle, done, all children stopped working, `started:true`, or a successful send is not completion evidence.

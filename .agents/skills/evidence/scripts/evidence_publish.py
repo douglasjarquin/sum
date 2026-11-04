@@ -508,6 +508,8 @@ class Publisher:
             return self.finish("refused", "the plan has nothing publishable; see unpublished")
         caps = gh_capabilities(self.gh)
         self.result["gh"] = caps
+        if not caps["gh"] or caps["authenticated"] is None:
+            return self.finish("deferred", caps["reason"] or "GitHub CLI capability probe unavailable")
         if self.media() and not caps["attach"]:
             return self.finish("deferred", caps["reason"] or "gh --attach unavailable")
         if caps["authenticated"] is False:
@@ -634,6 +636,11 @@ class Publisher:
                                              f"local references remain in the block: {', '.join(leftovers[:5])}" if leftovers else None,
                                              None if content_ok else "published evidence block differs from the planned content",
                                              None if prose_ok else "prose outside the block differs from the body read before the edit (concurrent edit or a malformed block)"]))
+            if not prose_ok or not content_ok:
+                (self.publish_dir / "body-observed.md").write_text(body, encoding="utf-8")
+                record_event(self.receipts, kind="uncertain", reason=reason)
+                self.save_receipts()
+                return self.finish("uncertain", reason + ". The observed PR body was preserved; reconcile it with body-next.md and body-previous.md before retrying.", restored=False)
             restored = self.restore(previous_body)
             return self.finish("failed" if restored else "uncertain", reason + (". The previous PR body was restored" if restored else ". The PR body could NOT be restored; inspect it")
                                + "; uploaded attachments are kept in receipts for reuse.", restored=restored)
