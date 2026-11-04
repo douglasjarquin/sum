@@ -35,3 +35,9 @@ func (f *Fixture) SetVersion(version string) {
 	defer f.mu.Unlock()
 	f.version = version
 }
+
+func (f *Fixture) SetGeneration(generation int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.generation = generation
+}

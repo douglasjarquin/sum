@@ -41,7 +41,7 @@ func ReadTargetContract(ctx context.Context, target string) (contract.Release, e
 
 func ValidateNativeContract(offered contract.Release) error {
 	c, s := offered.Contracts, offered.Supports
-	if c.HCCore != contract.HCVersion || c.HCGeneration != contract.HCGeneration || c.EndpointSchema != contract.EndpointSchema || c.NotificationProtocol != contract.NotificationProtocol {
+	if c.HCGeneration != contract.HCGeneration || c.EndpointSchema != contract.EndpointSchema || c.NotificationProtocol != contract.NotificationProtocol {
 		return fmt.Errorf("target lacks the selected HC runtime, endpoint or notification contract")
 	}
 	for _, required := range []struct {

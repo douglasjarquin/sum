@@ -168,9 +168,9 @@ func (c *Client) open(ctx context.Context, method string) (*connection, HelloRes
 		n.close()
 		return nil, h, err
 	}
-	if h.Generation != contract.HCGeneration || h.Core.ID != c.CoreID || h.Version != contract.HCVersion || (method != "hello" && !slices.Contains(h.Methods, method)) {
+	if !contract.HCCompatible(h.Version, int(h.Generation)) || h.Core.ID != c.CoreID || (method != "hello" && !slices.Contains(h.Methods, method)) {
 		n.close()
-		return nil, h, fmt.Errorf("HC compatibility mismatch: expected core=%s version=%s generation=%d method=%s; observed core=%s version=%s generation=%d methods=%v", c.CoreID, contract.HCVersion, contract.HCGeneration, method, h.Core.ID, h.Version, h.Generation, h.Methods)
+		return nil, h, fmt.Errorf("HC compatibility mismatch: expected core=%s minimum version=%s generation=%d method=%s; observed core=%s version=%s generation=%d methods=%v", c.CoreID, contract.HCVersion, contract.HCGeneration, method, h.Core.ID, h.Version, h.Generation, h.Methods)
 	}
 	if (method == "terminal.send" || method == "terminal.get") && !slices.Contains(h.Features, "status") {
 		n.close()
@@ -337,8 +337,8 @@ func Inspect(ctx context.Context, socket string) (HelloResult, error) {
 	if _, err = n.exchange("hello", map[string]int{"generation": contract.HCGeneration}, 1, &h); err != nil {
 		return h, err
 	}
-	if h.Generation != contract.HCGeneration || h.Version != contract.HCVersion || h.Core.ID == "" {
-		return h, fmt.Errorf("HC compatibility mismatch: expected version=%s generation=%d; observed core=%s version=%s generation=%d", contract.HCVersion, contract.HCGeneration, h.Core.ID, h.Version, h.Generation)
+	if !contract.HCCompatible(h.Version, int(h.Generation)) || h.Core.ID == "" {
+		return h, fmt.Errorf("HC compatibility mismatch: expected minimum version=%s generation=%d; observed core=%s version=%s generation=%d", contract.HCVersion, contract.HCGeneration, h.Core.ID, h.Version, h.Generation)
 	}
 	return h, nil
 }

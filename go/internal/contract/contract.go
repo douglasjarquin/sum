@@ -1,5 +1,10 @@
 package contract
 
+import (
+	"strconv"
+	"strings"
+)
+
 const (
 	SumVersion         = "0.1.0"
 	StateSchema        = 2
@@ -54,4 +59,48 @@ func BuildRelease() Release {
 		Contracts:  Contracts{HCCore: HCVersion, HCGeneration: HCGeneration, EndpointSchema: EndpointSchema, NotificationProtocol: NotificationProtocol},
 		Supports:   Supports{HCTemplateSchema: []int{0, HCTemplateSchema}, EndpointSchema: []int{EndpointSchema}, NotificationProtocol: []int{NotificationProtocol}, ObserverProtocol: []int{ObserverProtocol}, StateSchema: []int{StateSchema, LogicalStateSchema}, BriefSchema: []int{BriefSchema}, MachineIdentity: []int{MachineIdentity}, WakeProtocol: []int{WakeProtocol}, OwnerSchema: []int{OwnerSchema}},
 	}
+}
+
+func HCCompatible(version string, generation int) bool {
+	if generation != HCGeneration {
+		return false
+	}
+	parse := func(value string) ([]uint64, bool) {
+		parts := strings.Split(value, ".")
+		numbers := make([]uint64, len(parts))
+		for i, part := range parts {
+			if part == "" {
+				return nil, false
+			}
+			for _, digit := range part {
+				if digit < '0' || digit > '9' {
+					return nil, false
+				}
+			}
+			n, err := strconv.ParseUint(part, 10, 64)
+			if err != nil {
+				return nil, false
+			}
+			numbers[i] = n
+		}
+		return numbers, true
+	}
+	observed, ok := parse(version)
+	if !ok {
+		return false
+	}
+	minimum, _ := parse(HCVersion)
+	for i := 0; i < len(observed) || i < len(minimum); i++ {
+		var a, b uint64
+		if i < len(observed) {
+			a = observed[i]
+		}
+		if i < len(minimum) {
+			b = minimum[i]
+		}
+		if a != b {
+			return a > b
+		}
+	}
+	return true
 }

@@ -121,8 +121,8 @@ func (r Route) compatibility() (listening bool, hello hcclient.HelloResult, err 
 		}
 		return false, hello, err
 	}
-	if hello.Version != contract.HCVersion {
-		return true, hello, fmt.Errorf("default HC core at %s runs herdr-core %s; this release requires %s and does not restart or replace the user's core", r.Socket, hello.Version, contract.HCVersion)
+	if !contract.HCCompatible(hello.Version, int(hello.Generation)) {
+		return true, hello, fmt.Errorf("default HC core at %s runs herdr-core %s; this release requires at least %s and does not restart or replace the user's core", r.Socket, hello.Version, contract.HCVersion)
 	}
 	if r.CoreID != "" && hello.Core.ID != r.CoreID {
 		return true, hello, fmt.Errorf("selected core changed: expected %s observed %s", r.CoreID, hello.Core.ID)

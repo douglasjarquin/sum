@@ -176,3 +176,14 @@ func TestConcurrentLaunchesPinOneDefaultCore(t *testing.T) {
 		t.Fatalf("saved route = %+v %v", saved, err)
 	}
 }
+
+func TestNewerDefaultCoreIsAccepted(t *testing.T) {
+	s := workspaceStore(t)
+	fixture := hctest.New(t)
+	fixture.SetVersion("0.1.17")
+	fixture.DefaultRoute(t)
+	route, err := EnsureWorkspaceRoute(s, t.TempDir())
+	if err != nil || route.CoreID != fixture.CoreID {
+		t.Fatalf("newer core refused: %+v %v", route, err)
+	}
+}

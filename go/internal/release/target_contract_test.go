@@ -35,7 +35,7 @@ func TestTargetContractRequiresNativeBinaryCapabilities(t *testing.T) {
 	if err != nil || got.Contracts.HCCore != "0.1.14" {
 		t.Fatalf("%#v %v", got, err)
 	}
-	for _, field := range []string{"state", "endpoint", "notifications", "observer", "core"} {
+	for _, field := range []string{"state", "endpoint", "notifications", "observer", "generation"} {
 		t.Run(field, func(t *testing.T) {
 			v := contract.BuildRelease()
 			switch field {
@@ -47,13 +47,21 @@ func TestTargetContractRequiresNativeBinaryCapabilities(t *testing.T) {
 				v.Supports.NotificationProtocol = nil
 			case "observer":
 				v.Supports.ObserverProtocol = nil
-			case "core":
-				v.Contracts.HCCore = "0.1.13"
+			case "generation":
+				v.Contracts.HCGeneration = 2
 			}
 			root := targetHelper(t, v)
 			if _, err := ReadTargetContract(context.Background(), root); err == nil || !strings.Contains(err.Error(), "HC") {
 				t.Fatalf("incapable target accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestTargetContractAcceptsAnotherBundledVersion(t *testing.T) {
+	offered := contract.BuildRelease()
+	offered.Contracts.HCCore = "0.1.15"
+	if _, err := ReadTargetContract(context.Background(), targetHelper(t, offered)); err != nil {
+		t.Fatal(err)
 	}
 }
