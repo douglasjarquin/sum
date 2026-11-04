@@ -17,7 +17,7 @@ The verification artifact and PR record their actual result for the final candid
 | A2 | CLI unstaged-init blocker and `tests/test_setup.py` | Fresh-host prerequisite installation: not run |
 | A3 | `cli.TestExternalCoordinatorLifecycle` | Each helper call is a separate process with a scrubbed lab environment |
 | A4 | `cli.TestOrdinaryCoordinatorIgnoresInheritedNativeIdentity` and init environment-precedence tests | No user environment surgery is required |
-| A5 | `hcboot` workspace route tests | Real private HC reuse and changed-core refusal: not run for this candidate |
+| A5 | `hcboot` default route tests | Real default-core reuse, version and holder refusal: not run for this candidate |
 | A6 | `prepare` parentless native launch tests and `cli.TestOfflineDemo` | Two authenticated workers in distinct checkouts: not run |
 | A7 | `collect` answer delivery tests and `cli.TestExternalCoordinatorLifecycle` | Grok and Codex busy-worker answer delivery through active collection: not run |
 | A8 | `review.TestCandidateBoundReviewerEvidenceDischargesAmbiguousKickoff`, `cli.TestExternalCoordinatorLifecycle` | Authenticated independent reviewer: not run |
@@ -25,7 +25,7 @@ The verification artifact and PR record their actual result for the final candid
 | A10 | `cli.TestExternalCoordinatorLifecycle` and retirement preservation tests | Existing installation retirement and resumption: not run |
 | A11 | Coordinator claim conflict, transfer, race and stale-generation tests | Another live conversation must not share the recorded token automatically |
 | A12 | `collect` shared-budget and terminal-wait tests | Authenticated bounded waiting in Grok and Codex: not run |
-| A13 | `cli` ordinary inspection tests for saved live, unready, failed and reused terminal identities | Desktop visibility and actual harness attach: not run |
+| A13 | `cli` ordinary inspection tests for saved live, unready, failed and reused terminal identities; `launch`, `prepare` and `review` Herdr adoption tests | Desktop visibility in the Sum space and actual harness attach: not run |
 | A14 | CLI development-marker and undesignated-workspace init tests | No production coordination is initialized from the development checkout |
 | A15 | `updatecmd` quiescence, alignment and rollback-floor tests; `cli.TestNativeBaseUpdaterSelectsCandidateWithEventsDisabled` | Installed update and next ordinary harness start: not run |
 | A16 | CLI schema-one blocker and `cli.TestHistoricalReaderPreservesEvidenceAndRefusesWrites` | Old task and sealed procedure bytes remain historical records |
@@ -43,7 +43,7 @@ On resume, collect before reporting progress.
 Reading a question or report twice must neither settle it nor create an application receipt.
 
 Prepare and start two approved tasks with distinct checkouts, labels, and attempt identities.
-Verify HC run requests omit parent and caller, reuse the workspace route, and take the explicit or saved worker harness choice.
+Verify HC run requests omit parent and caller, create on HC's default route, carry no Herdr labels, and take the explicit or saved worker harness choice; the Herdr space and tab labels appear only after each original program is corroborated.
 Record a worker question, answer with the claim from a fresh helper process, and collect while the worker is busy.
 The answer must remain pending until eligible, then be delivered once through the worker route during active collection.
 Only the matching worker application receipt settles the answer.
@@ -140,7 +140,7 @@ Do not count this journey as Codex, mixed-harness, production retirement or prod
    ```
 
    Preserve each returned task's `worker_endpoint`, `execution.worker` and native launch/first-message records, including distinct attempt, address and creation identities.
-   Observe two real authenticated Grok workers in their separate task checkouts using the private workspace route.
+   Observe two real authenticated Grok workers in their separate task checkouts on the default core, shown in Herdr in the installation's Sum space under their own task tabs without stealing focus.
    A created terminal or submitted opening message alone is insufficient: each worker must run its brief's absolute helper `init --format json`, read its validated procedure and retain the returned `role: "worker"`, matching `task`, `endpoint`, `registered: true` and native initialization receipt.
    Keep screenshots or terminal transcripts showing actual harness readiness and the matching saved task records.
    If creation or delivery is uncertain, preserve the exact attempt and returned recovery instruction; do not repeat a launch blindly.
@@ -335,7 +335,8 @@ An unproven shell occupant gains no worker role or automatic prompt.
 
 Lose a worker or reviewer creation reply after durable intent persistence.
 Reconcile from that exact intent's saved socket, core, session and labels, including after coordinator claim transfer.
-Changing today's workspace route must not redirect recovery.
+A reconciled original is adopted into Herdr only after its proof; a lost label reply is settled by reading the exact terminal, and a kept replacement shell is refused.
+Changing today's default route must not redirect recovery.
 Conflicting candidates refuse, and repeating successful reconciliation records the original endpoint without another launch or opening send.
 An uncertain input is never automatically replayed.
 Inspect live, unready and failed attempts from an ordinary shell and retain their bounded output, saved address and attach argv.

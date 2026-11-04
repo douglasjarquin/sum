@@ -136,11 +136,9 @@ def execute_canary(args, source, lab):
         claim = initialized["claim"]
         state = json.loads((runtime / ".sum/state.json").read_text())
         generation = runtime / ".sum/generations" / state["generation"]
-        (runtime / ".sum/runtime-route.json").write_text(json.dumps({
-            "socket": str(lab.socket), "session": lab.session, "core_id": lab.core_id,
-            "config_home": lab.env["XDG_CONFIG_HOME"], "state_home": lab.env["XDG_STATE_HOME"],
-            "runtime_dir": lab.env.get("XDG_RUNTIME_DIR", ""),
-        }))
+        config = Path(lab.env["XDG_CONFIG_HOME"]) / "herdr-core"
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "config.toml").write_text("socket = " + json.dumps(str(lab.socket)) + "\n")
         (generation / "settings.json").write_text(json.dumps({
             "schema": 1, "worker": {"harness": "codex"}, "template": {"codex_home": str(codex_home)},
         }))

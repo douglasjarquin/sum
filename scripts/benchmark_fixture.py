@@ -86,6 +86,12 @@ def write_json(path, value):
         stream.write(json.dumps(value, indent=2) + "\n")
 
 
+def point_default_route(env, socket):
+    config = Path(env["XDG_CONFIG_HOME"]) / "herdr-core"
+    config.mkdir(parents=True, exist_ok=True)
+    (config / "config.toml").write_text("socket = " + json.dumps(str(socket)) + "\n")
+
+
 def ordinary_runtime(root):
     for name in ("COORDINATOR.md", "skills/sum-develop/SKILL.md"):
         destination = root / name
@@ -184,9 +190,7 @@ def fixture(base):
     pointer = json.loads((root / "state.json").read_text())
     home = root / "generations" / pointer["generation"]
     with Core() as core:
-        write_json(root / "runtime-route.json", dict(socket=str(core.socket), session="sum-test-benchmark",
-                   config_home=env["XDG_CONFIG_HOME"], state_home=env["XDG_STATE_HOME"],
-                   runtime_dir=env["XDG_RUNTIME_DIR"], core_id=core.core_id))
+        point_default_route(env, core.socket)
         case = dict(root=root, home=home, repo=repo, brief=brief, env=env, core=core,
                     claim=initialized["claim"], coordinator=initialized["session"], entry=entry, actors={})
         prefix = command(case)

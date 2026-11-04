@@ -80,7 +80,7 @@ func deliverReviewerOpening(s *store.Store, taskID, attempt string, initial hccl
 			saved.Set("incarnation", (incarnation.NativeEvidence{Endpoint: ep.Native(), PID: *progress.Terminal.PID, Foreground: progress.Terminal.Foreground}).Record(store.Now()))
 		}
 		return s.SaveTask(current)
-	})
+	}, launch.Adoption(ctx, s, ep, &client, locateReviewer(attempt)))
 	task, err = s.ReadTask(taskID)
 	if err != nil {
 		return nil, err
@@ -89,4 +89,21 @@ func deliverReviewerOpening(s *store.Store, taskID, attempt string, initial hccl
 	out.Set("task", taskID)
 	out.Set("reviewer", objectField(task, "reviewer"))
 	return out, nil
+}
+
+func locateReviewer(attempt string) launch.Locate {
+	return func(task *ordjson.Object) (launch.SavedLaunch, error) {
+		reviewer := objectField(task, "reviewer")
+		if reviewer == nil || store.EndpointFromContext(reviewer).Attempt != attempt {
+			return launch.SavedLaunch{}, fmt.Errorf("reviewer attempt changed")
+		}
+		native := objectField(reviewer, "native_launch")
+		if native == nil {
+			return launch.SavedLaunch{}, fmt.Errorf("reviewer launch intent missing")
+		}
+		incarnation, _ := reviewer.Get("incarnation")
+		template, _ := reviewer.Get("native_template")
+		params, _ := native.Get("params")
+		return launch.SavedLaunch{Record: native, Incarnation: incarnation, Template: template, Intent: params}, nil
+	}
 }

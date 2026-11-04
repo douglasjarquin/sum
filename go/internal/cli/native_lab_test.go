@@ -100,7 +100,7 @@ func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab 
 		root, helper = installation, filepath.Join(installation, "bin", "sumctl")
 	}
 	f := hctest.New(t)
-	d := &demoLab{t: t, root: root, helper: helper, base: base, home: s.Home, env: env, native: f, config: filepath.Join(base, "hc-config")}
+	d := &demoLab{t: t, root: root, helper: helper, base: base, home: s.Home, env: env, native: f, config: filepath.Join(base, "xdg-config")}
 	// Ordinary entry needs a staged installation boundary without this source checkout's development marker.
 	entryRoot := filepath.Join(base, "ordinary-runtime")
 	d.entryHelper = filepath.Join(entryRoot, "bin", "sumctl")
@@ -170,7 +170,18 @@ func newNativeDemoLabAt(t *testing.T, root, helper, base, home string) *demoLab 
 		t.Fatal(err)
 	}
 	d.claim = session.Token()
-	route, _ := ordjson.FromValue(map[string]any{"socket": f.Socket, "session": "sum-test", "config_home": d.config, "state_home": filepath.Join(base, "hc-state"), "core_id": f.CoreID})
+	if err := os.MkdirAll(filepath.Join(d.config, "herdr-core"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d.config, "herdr-core/config.toml"), []byte("socket = "+strconv.Quote(f.Socket)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stateHome := filepath.Join(base, "xdg-state")
+	for key, value := range map[string]string{"XDG_STATE_HOME": stateHome, "XDG_RUNTIME_DIR": "", "HC_SESSION": "", "SUM_SESSION": ""} {
+		t.Setenv(key, value)
+		d.setEnv(key, value)
+	}
+	route, _ := ordjson.FromValue(map[string]any{"socket": f.Socket, "session": "default", "config_home": d.config, "state_home": stateHome, "core_id": f.CoreID})
 	if err := ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
 		t.Fatal(err)
 	}

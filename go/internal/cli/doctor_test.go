@@ -199,7 +199,7 @@ func TestDoctorNativeChecksAreReadOnly(t *testing.T) {
 	}
 	for _, call := range d.native.Calls()[calls:] {
 		switch call.Method {
-		case "hello", "terminal.get", "terminal.list", "terminal.read", "templates.list":
+		case "hello", "rpc.discover", "terminal.get", "terminal.list", "terminal.read", "templates.list":
 		default:
 			t.Fatalf("doctor performed native effect: %v", call)
 		}

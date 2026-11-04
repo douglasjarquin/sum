@@ -42,8 +42,9 @@ func OriginalProgram(initial, observed hcclient.Terminal, spec HCTemplate) error
 	return nil
 }
 
-func DeliverOpening(ctx context.Context, client *hcclient.Client, initial hcclient.Terminal, spec HCTemplate, text string, persist func(OpeningProgress) error) OpeningProgress {
+func DeliverOpening(ctx context.Context, client *hcclient.Client, initial hcclient.Terminal, spec HCTemplate, text string, persist func(OpeningProgress) error, adopt func() error) OpeningProgress {
 	progress := OpeningProgress{Terminal: initial, State: "not-delivered", First: &hcclient.FirstMessage{Sent: false}}
+	adopted := adopt == nil
 	ready, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	ticker := time.NewTicker(250 * time.Millisecond)
@@ -70,6 +71,13 @@ func DeliverOpening(ctx context.Context, client *hcclient.Client, initial hcclie
 			if err = persist(progress); err != nil {
 				progress.Detail = err.Error()
 				return progress
+			}
+		}
+		if originalErr == nil && !adopted {
+			adopted = true
+			if err = adopt(); err != nil {
+				progress.Detail = err.Error()
+				goto complete
 			}
 		}
 		if err = originalErr; err == nil && observed.Status != nil && (observed.Status.State == "idle" || observed.Status.State == "done") {

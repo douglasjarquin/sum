@@ -39,7 +39,7 @@ See [Recovery](recovery.md) for an explicit single recovery attempt.
 ## Collection and attention
 
 The ordinary coordinating conversation has no native terminal identity.
-Worker and reviewer launch uses the saved workspace route with no HC parent or caller.
+Worker and reviewer launch creates on HC's default route with no HC parent or caller; existing attempts keep their saved route.
 `init`, status, inbox and inspection never ensure a missing core; launch ensures it lazily.
 
 `collect --claim TOKEN --budget 20s` reads actionable ledger items, delivers eligible queued worker answers and waits on recorded worker/reviewer addresses within one shared deadline.
@@ -68,6 +68,7 @@ See [verification](verification.md) and [recovery](recovery.md).
 ## Metadata
 
 Optional metadata is display only and uses owned namespaced HC labels on verified task worker/reviewer terminals.
+Herdr space and tab labels are published after the original program is corroborated so Herdr shows the terminal in the installation's Sum space; adoption enables Herdr keep and nothing more.
 Labels never supply role, task completion or approval.
 `metadata status` reads saved projection health; `metadata sync` projects differences, and disable clears only recorded owned keys.
 `metadata inbox` and `inbox --grouped --view` expose saved task views.

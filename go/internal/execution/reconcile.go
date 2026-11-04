@@ -19,6 +19,23 @@ import (
 )
 
 func Reconcile(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt string) (*ordjson.Object, error) {
+	task, err := reconcileCreation(s, ctx, runtimeRoot, taskID, attempt)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := workerEndpoint(task)
+	if endpoint.Validate() != nil || endpoint.Attempt != attempt {
+		return task, nil
+	}
+	observe, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := launch.ReconcileVisibility(observe, s, endpoint, prepare.LocateWorker(attempt)); err != nil {
+		return nil, err
+	}
+	return s.ReadTask(taskID)
+}
+
+func reconcileCreation(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, attempt string) (*ordjson.Object, error) {
 	if err := app.RequireCoordinator(s, ctx); err != nil {
 		return nil, err
 	}

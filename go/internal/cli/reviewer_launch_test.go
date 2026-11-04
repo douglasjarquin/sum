@@ -87,7 +87,7 @@ func TestReviewerLaunchUsesTaskCheckoutAndRecordsNativeEndpoint(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if terminal.Keep || terminal.RM || terminal.Notify || terminal.DieWithParent || terminal.Labels["sum.installation"] != instance || terminal.Labels["sum.task"] != taskID || terminal.Labels["sum.role"] != "reviewer" || terminal.Labels["sum.attempt"] != reviewer["attempt"] {
+			if terminal.Keep != (terminal.Labels["herdr.space"] != "") || terminal.RM || terminal.Notify || terminal.DieWithParent || terminal.Labels["sum.installation"] != instance || terminal.Labels["sum.task"] != taskID || terminal.Labels["sum.role"] != "reviewer" || terminal.Labels["sum.attempt"] != reviewer["attempt"] {
 				t.Fatalf("managed reviewer lifecycle/labels: %+v", terminal)
 			}
 			pointer := asString(asMap(reviewer["native_launch"])["opening"])

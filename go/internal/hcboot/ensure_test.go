@@ -9,8 +9,18 @@ import (
 	"testing"
 )
 
+func labRoute(t *testing.T) Route {
+	t.Helper()
+	route, err := DefaultRoute()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return route
+}
+
 func TestEnsureSkipsARuntimeWithoutHC(t *testing.T) {
-	if Ensure(t.TempDir()) != nil {
+	writeHC(t, t.TempDir(), filepath.Join(t.TempDir(), "unused.log"), "ready")
+	if EnsureRoute(t.TempDir(), labRoute(t), false) != nil {
 		t.Fatal("missing hc produced a report")
 	}
 }
@@ -20,7 +30,7 @@ func TestEnsureReportsAReadyHolder(t *testing.T) {
 	log := filepath.Join(root, "hc.log")
 	writeHC(t, root, log, "ready")
 	t.Setenv("HC_SESSION", "not-the-default")
-	report := Ensure(root)
+	report := EnsureRoute(root, labRoute(t), false)
 	if report == nil || reportValue(t, report, "ok") != true || reportValue(t, report, "action") != "ready" {
 		t.Fatalf("ready report = %v", report)
 	}
@@ -37,7 +47,7 @@ func TestEnsureStartsADownCore(t *testing.T) {
 	root := t.TempDir()
 	log := filepath.Join(root, "hc.log")
 	writeHC(t, root, log, "down")
-	report := Ensure(root)
+	report := EnsureRoute(root, labRoute(t), false)
 	if reportValue(t, report, "ok") != true || reportValue(t, report, "action") != "started" {
 		t.Fatalf("start report = %v", report)
 	}
@@ -46,32 +56,46 @@ func TestEnsureStartsADownCore(t *testing.T) {
 	}
 }
 
-func TestEnsureRestartsThenSpawnsAHolder(t *testing.T) {
-	root := t.TempDir()
-	log := filepath.Join(root, "hc.log")
-	writeHC(t, root, log, "wedged")
-	report := Ensure(root)
-	if reportValue(t, report, "ok") != true || reportValue(t, report, "action") != "spawned" || reportValue(t, report, "holder_pid") != 9 {
-		t.Fatalf("spawn report = %v", report)
-	}
-	calls := readLog(t, log)
-	for _, want := range []string{"--json server restart", "--json run true", "rm t1"} {
-		if !strings.Contains(calls, want) {
-			t.Fatalf("missing %q in %s", want, calls)
-		}
+func TestEnsureNeverStartsOverAListeningCore(t *testing.T) {
+	for _, scenario := range []struct{ mode, action string }{{"ready", "ready"}, {"wedged", "holder-missing"}, {"down", "status"}} {
+		t.Run(scenario.mode, func(t *testing.T) {
+			root := t.TempDir()
+			log := filepath.Join(root, "hc.log")
+			writeHC(t, root, log, scenario.mode)
+			report := EnsureRoute(root, labRoute(t), true)
+			if reportValue(t, report, "action") != scenario.action || (reportValue(t, report, "ok") == true) != (scenario.action == "ready") {
+				t.Fatalf("%s report = %v", scenario.mode, report)
+			}
+			calls := readLog(t, log)
+			for _, forbidden := range []string{"server start", "restart", "run true"} {
+				if strings.Contains(calls, forbidden) {
+					t.Fatalf("listening core was disturbed with %q: %s", forbidden, calls)
+				}
+			}
+		})
 	}
 }
 
-func TestEnsureDoesNotRestartWhileTerminalsAreLive(t *testing.T) {
-	root := t.TempDir()
-	log := filepath.Join(root, "hc.log")
-	writeHC(t, root, log, "busy")
-	report := Ensure(root)
-	if reportValue(t, report, "ok") != false || reportValue(t, report, "action") != "blocked" {
-		t.Fatalf("busy report = %v", report)
-	}
-	if strings.Contains(readLog(t, log), "restart") {
-		t.Fatal("live terminals were restarted")
+func TestEnsureRefusesAHolderlessCoreWithoutRestartOrProbe(t *testing.T) {
+	for _, mode := range []string{"wedged", "busy"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			log := filepath.Join(root, "hc.log")
+			writeHC(t, root, log, mode)
+			report := EnsureRoute(root, labRoute(t), false)
+			if reportValue(t, report, "ok") != false || reportValue(t, report, "action") != "holder-missing" {
+				t.Fatalf("%s report = %v", mode, report)
+			}
+			if !strings.Contains(reportValue(t, report, "error").(string), "does not restart") {
+				t.Fatalf("refusal is not actionable: %v", report)
+			}
+			calls := readLog(t, log)
+			for _, forbidden := range []string{"restart", "run true", "rm ", "server start"} {
+				if strings.Contains(calls, forbidden) {
+					t.Fatalf("shared core was disturbed with %q: %s", forbidden, calls)
+				}
+			}
+		})
 	}
 }
 
@@ -101,9 +125,7 @@ case "$*" in
     if [ "$status_n" -eq 1 ]; then exit 1; fi
     printf '%s\n' '{"live":0,"holder":{"current":true,"pid":5}}'
     ;;
-  wedged)
-    if [ "$status_n" -lt 3 ]; then printf '%s\n' '{"live":0,"holder":null}'; else printf '%s\n' '{"live":0,"holder":{"current":true,"pid":9}}'; fi
-    ;;
+  wedged) printf '%s\n' '{"live":0,"holder":null}' ;;
   busy) printf '%s\n' '{"live":2,"holder":null}' ;;
   esac
   ;;
@@ -155,7 +177,7 @@ func TestSelectedRoutePreservesNamedScope(t *testing.T) {
 			t.Fatalf("selected route lost %s", want)
 		}
 	}
-	if report := EnsureRoute(root, route); reportValue(t, report, "ok") != true {
+	if report := EnsureRoute(root, route, false); reportValue(t, report, "ok") != true {
 		t.Fatal(report)
 	}
 }
@@ -169,7 +191,7 @@ func TestEnsureRetainsNativeStartFailureAndStopsSequence(t *testing.T) {
 	if err := os.WriteFile(binary, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	report := Ensure(root)
+	report := EnsureRoute(root, labRoute(t), false)
 	if reportValue(t, report, "ok") != false || !strings.Contains(reportValue(t, report, "error").(string), "selected-core-start-failed") {
 		t.Fatal(report)
 	}
@@ -183,12 +205,9 @@ func TestEnsureStartsAfterStaleSocketWithoutListener(t *testing.T) {
 	root := t.TempDir()
 	log := filepath.Join(root, "hc.log")
 	writeHC(t, root, log, "down")
-	route, err := Select("", "sum-test-stale", "")
-	if err != nil {
-		t.Fatal(err)
-	}
 	fixture := hctest.New(t)
-	route.Socket = filepath.Join(filepath.Dir(fixture.Socket), "stale.sock")
+	hctest.PointDefaultRoute(t, filepath.Join(filepath.Dir(fixture.Socket), "stale.sock"))
+	route := labRoute(t)
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: route.Socket, Net: "unix"})
 	if err != nil {
 		t.Fatal(err)
@@ -197,7 +216,7 @@ func TestEnsureStartsAfterStaleSocketWithoutListener(t *testing.T) {
 	if err = listener.Close(); err != nil {
 		t.Fatal(err)
 	}
-	report := EnsureRoute(root, route)
+	report := EnsureRoute(root, route, false)
 	if reportValue(t, report, "ok") != true || !strings.Contains(readLog(t, log), "server start") {
 		t.Fatalf("stale socket blocked start: %v", report)
 	}

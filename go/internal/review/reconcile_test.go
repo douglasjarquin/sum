@@ -104,4 +104,7 @@ func TestReviewerLostReplyReconcilesSavedRouteAfterTransfer(t *testing.T) {
 	if len(f.Terminals()) != 1 {
 		t.Fatal("reconciliation created another reviewer")
 	}
+	if labels := f.Terminals()[0].Labels; labels["herdr.space"] != launch.SpaceID(instance) {
+		t.Fatalf("reconciled original was not adopted after its proof: %v", labels)
+	}
 }

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/go/internal/app"
-	"github.com/douglasjarquin/sum/go/internal/hcboot"
 	"github.com/douglasjarquin/sum/go/internal/hctest"
 	"github.com/douglasjarquin/sum/go/internal/incarnation"
 	"github.com/douglasjarquin/sum/go/internal/launch"
@@ -64,10 +63,8 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 		t.Fatal(err)
 	}
 	t.Setenv("SUM_CODEX_BIN", codex)
-	config, home := filepath.Join(root, "config"), filepath.Join(root, "codex-home")
-	if err = os.Mkdir(config, 0700); err != nil {
-		t.Fatal(err)
-	}
+	fixture := hctest.New(t)
+	config, home := fixture.DefaultRoute(t), filepath.Join(root, "codex-home")
 	if err = os.Mkdir(home, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -90,14 +87,6 @@ func newRedeliveryLab(t *testing.T) redeliveryLab {
 	}
 	ctx, err := app.RequireClaim(s, session.Token())
 	if err != nil {
-		t.Fatal(err)
-	}
-	fixture := hctest.New(t)
-	route, err := ordjson.FromValue(hcboot.Route{Socket: fixture.Socket, CoreID: fixture.CoreID, Session: "sum-test-redelivery", ConfigHome: config, StateHome: filepath.Join(root, "hc-state")})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ordjson.WriteFile(filepath.Join(s.Root, "runtime-route.json"), route); err != nil {
 		t.Fatal(err)
 	}
 	configured, err := ordjson.FromValue(map[string]any{"schema": 1, "worker": map[string]string{"harness": "codex"}, "template": map[string]string{"codex_home": home}})
