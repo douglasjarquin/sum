@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish before/after evidence into one pull request's marked block: validated media, receipts per content hash, scoped body replacement.
+"""Publish before/after evidence into one pull request's marked block: validated media and text, receipts per content hash, scoped body replacement.
 
 Capture (`evidence_capture.py`), this publisher, and the PR body format stay separate. Nothing here starts a browser, converts video,
 or hosts media: the only upload path is the GitHub CLI's own `gh pr edit --attach` (GitHub CLI 2.99+), running under whoever invokes
@@ -35,6 +35,7 @@ LOCAL_REF = re.compile(r"\]\(\./[^)\s]+\)")
 IMAGE_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
 VIDEO_TYPES = {"video/mp4": ".mp4", "video/quicktime": ".mov", "video/webm": ".webm"}
 IMAGE_LIMIT = 10 * 1024 * 1024   # GitHub rejects larger images and GIFs.
+BODY_LIMIT = 65536               # GitHub pull request body character limit.
 VIDEO_LIMIT = 100 * 1024 * 1024  # GitHub's video attachment ceiling.
 ATTACH_BATCH = 50                 # `gh --attach` accepts at most 50 files per command.
 GH_ATTACH_MIN = (2, 99, 0)
@@ -109,7 +110,7 @@ def gh_capabilities(gh: Gh):
         help_text = gh.run(["pr", "edit", "--help"], timeout=20, check=False).stdout
         info["attach"] = "--attach" in help_text and bool(match) and tuple(int(g) for g in match.groups()) >= GH_ATTACH_MIN
         if not info["attach"]:
-            info["reason"] = f"gh {info['version']} has no `pr edit --attach`; GitHub CLI {'.'.join(map(str, GH_ATTACH_MIN))}+ is required. Local capture works; publication is deferred."
+            info["reason"] = f"gh {info['version']} has no `pr edit --attach`; GitHub CLI {'.'.join(map(str, GH_ATTACH_MIN))}+ is required. Local capture and text-only publication work; media publication is deferred."
         auth = gh.run(["auth", "status"], timeout=30, check=False)
         info["authenticated"] = auth.returncode == 0
     except (Refused, GhTimeout) as exc:
@@ -168,7 +169,7 @@ def stage_copy(media_dir: Path, name: str, data: bytes):
 
 
 def select_media(comparison, role, findings):
-    """The screenshot and the renderable screencast of one role, chosen from the manifest; AVI originals are named, never uploaded."""
+    """Renderable media and text of one role; AVI originals are named, never uploaded."""
     entry = comparison.get(role)
     chosen = []
     if not entry or entry.get("outcome") in (None, "unavailable", "missing"):
@@ -184,6 +185,9 @@ def select_media(comparison, role, findings):
     elif original:
         findings.append(f"{role}: screencast {original.get('file')} is {original.get('type') or 'an AVI'}; GitHub renders mp4, mov, and webm only. "
                         "Recapture with --convert (ffmpeg) to publish the video; the screenshot is published without it.")
+    for item in media:
+        if item.get("role") in ("transcript", "response") and item.get("type") == "text/plain":
+            chosen.append({"role": role, "kind": "text", "manifest": item})
     return chosen
 
 
@@ -241,16 +245,21 @@ def plan_scenario(run_dir: Path, scenario: str, args, redactor: capture.Redactor
                 if digest != declared or digest != recorded:
                     raise Refused(f"{role}: {manifest['file']} hash {digest[:12]} does not match the comparison ({str(declared)[:12]}) and capture ({str(recorded)[:12]}) manifests; the original was altered")
                 limit = IMAGE_LIMIT if item["kind"] == "image" else VIDEO_LIMIT
-                if len(data) > limit:
+                if item["kind"] != "text" and len(data) > limit:
                     raise Refused(f"{role}: {manifest['file']} is {len(data)} bytes, over GitHub's {limit} byte limit for {item['kind']}s")
                 info = capture.inspect_media(real)
                 if item["kind"] == "image" and (info.get("width"), info.get("height")) != (manifest.get("width"), manifest.get("height")):
                     raise Refused(f"{role}: {manifest['file']} reads as {info.get('width')}x{info.get('height')}, manifest says {manifest.get('width')}x{manifest.get('height')}")
-                ext = (IMAGE_TYPES | VIDEO_TYPES)[manifest["type"]]
+                if item["kind"] == "text":
+                    text = data.decode("utf-8")
+                    if redactor(text) != text:
+                        raise Refused(f"{role}: secret-shaped text in transcript; publish only a redacted capture")
+                ext = ".txt" if item["kind"] == "text" else (IMAGE_TYPES | VIDEO_TYPES)[manifest["type"]]
                 pending.append((publish_name(scenario, role, digest, ext), data))
                 row["media"].append({"role": role, "kind": item["kind"], "sha256": digest, "bytes": len(data), "type": manifest["type"], "width": info.get("width"),
                                      "height": info.get("height"), "duration_ms": info.get("duration_ms") or manifest.get("duration_ms"),
-                                     "source": str(real.relative_to(run_dir)), "publish_copy": publish_name(scenario, role, digest, ext)})
+                                     "source": str(real.relative_to(run_dir)), "publish_copy": publish_name(scenario, role, digest, ext),
+                                     "text_role": manifest.get("role") if item["kind"] == "text" else None})
             except (Refused, ValueError, OSError) as exc:
                 findings.append(f"{exc}")
     row["outcomes"] = {"before": before_out, "after": after_out}
@@ -263,7 +272,7 @@ def plan_scenario(run_dir: Path, scenario: str, args, redactor: capture.Redactor
             row["publishable"] = False
             findings.append(str(exc))
     if not row["publishable"] and not findings:
-        findings.append("no publishable after media (screenshot or converted screencast) in this comparison")
+        findings.append("no publishable after evidence (screenshot, converted screencast, or transcript) in this comparison")
     return row
 
 
@@ -317,6 +326,21 @@ def media_ref(entry, url, alt):
     return f"![{alt}]({url or './' + entry['publish_copy']})"
 
 
+def text_copy(plan, entry):
+    path = contained_file(Path(plan["media_dir"]), entry["publish_copy"])
+    data = path.read_bytes()
+    if sha256_bytes(data) != entry["sha256"]:
+        raise Refused(f"publish copy {entry['publish_copy']} is altered; run plan again")
+    try:
+        return data.decode("utf-8")
+    except UnicodeError as exc:
+        raise Refused(f"publish copy {entry['publish_copy']} is not UTF-8 text") from exc
+
+
+def without_text(block):
+    return re.sub(r"(?ms)^(`{3,})text\n.*?^\1(?:\n|$)", "", block)
+
+
 def render_block(plan, url_for, final: bool):
     """The marked block. `url_for(sha)` gives a known attachment URL or None (then a local publish-copy reference `gh --attach` rewrites).
     `final` renders video pairs as an HTML table once every URL is known; before that videos stay on their own lines so `gh` can upload them."""
@@ -325,7 +349,7 @@ def render_block(plan, url_for, final: bool):
     who = plan.get("captured_by") or "the task worker"
     runs = ", ".join(f"`{r}`" for r in plan.get("verification_runs") or []) or "none recorded"
     lines += [f"Captured by {who} from candidate `{plan['candidate'][:12]}`" + (f" against base `{plan['base'][:12]}`" if plan.get("base") else "")
-              + f"; evidence run `{plan['run']}`; verification run(s) {runs}. Worker media is a claim about the candidate build; it is not the coordinator's root verification.", ""]
+              + f"; evidence run `{plan['run']}`; verification run(s) {runs}. Worker evidence is a claim about the candidate build; it is not independent verification.", ""]
     for row in plan["scenarios"]:
         if not row["publishable"]:
             continue
@@ -359,6 +383,16 @@ def render_block(plan, url_for, final: bool):
                 lines += [f"**Before (screencast)**", f"<!-- sum-media: before={before['sha256']} -->", media_ref(before, urls[0], f"before {noun} {before['sha256'][:12]}"), ""]
             lines += [f"**{'After' if before else 'Preview (after only)'} (screencast)**", f"<!-- sum-media: after={after['sha256']} -->",
                       media_ref(after, urls[1], f"{'after' if before else 'preview'} {noun} {after['sha256'][:12]}"), ""]
+        for entry in row["media"]:
+            if entry["kind"] != "text":
+                continue
+            text = text_copy(plan, entry)
+            fence = "`" * max(3, 1 + max((len(m.group()) for m in re.finditer(r"`+", text)), default=0))
+            title = entry["role"].capitalize()
+            if entry["role"] == "after" and not any(m["role"] == "before" and m["kind"] == "text" for m in row["media"]):
+                title = "Preview (after only)"
+            lines += [f"**{title} ({entry['text_role']})**", f"Capture SHA-256: `{entry['sha256']}`; HTML comment openers are escaped for publication.",
+                      fence + "text", text.replace("<!--", "&lt;!--").removesuffix("\n"), fence, ""]
         for note in row.get("unpublished") or []:
             lines += [f"_{note}_", ""]
     while lines and lines[-1] == "":
@@ -458,7 +492,7 @@ class Publisher:
         return data
 
     def media(self):
-        return [m for row in self.plan["scenarios"] if row["publishable"] for m in row["media"]]
+        return [m for row in self.plan["scenarios"] if row["publishable"] for m in row["media"] if m["kind"] != "text"]
 
     def finish(self, outcome, reason=None, **extra):
         self.result.update(outcome=outcome, reason=reason, **extra)
@@ -474,7 +508,7 @@ class Publisher:
             return self.finish("refused", "the plan has nothing publishable; see unpublished")
         caps = gh_capabilities(self.gh)
         self.result["gh"] = caps
-        if not caps["attach"]:
+        if self.media() and not caps["attach"]:
             return self.finish("deferred", caps["reason"] or "gh --attach unavailable")
         if caps["authenticated"] is False:
             return self.finish("refused", "gh is not authenticated; nothing was uploaded or edited")
@@ -510,8 +544,13 @@ class Publisher:
                     return self.finish("refused", "the PR already carries a before-and-after block this publisher did not write (someone edited it, or another tool wrote it); "
                                                   "inspect it and pass --replace-foreign-block to take it over. Prose outside the block is never touched either way.")
             videos_known = all(self.url_for(m["sha256"]) for m in self.media() if m["kind"] == "video")
-            block = render_block(self.plan, self.url_for, final=videos_known)
+            try:
+                block = render_block(self.plan, self.url_for, final=videos_known)
+            except (Refused, OSError) as exc:
+                return self.finish("refused", str(exc))
             new_body = splice(body, span, block)
+            if len(new_body) > BODY_LIMIT:
+                return self.finish("refused", f"PR body is {len(new_body)} characters, over the {BODY_LIMIT} character limit; retain evidence and publish a smaller scenario set")
             again = self.fetch()
             if (again["body"] or "") == body:
                 break
@@ -571,7 +610,7 @@ class Publisher:
             span = None
             self.result["malformed"] = str(exc)
         block = body[span[0]:span[1]] if span else ""
-        harvested = harvest_urls(block)
+        harvested = harvest_urls(without_text(block))
         for m in to_upload:
             url = harvested.get(m["sha256"])
             if url:
@@ -581,12 +620,19 @@ class Publisher:
         self.save_receipts()
         missing = [m["sha256"] for m in to_upload if not self.url_for(m["sha256"])]
         prose_ok = span is not None and normalize(body[:span[0]] + body[span[1]:]) == normalize(previous_body[:previous_span[0]] + previous_body[previous_span[1]:] if previous_span else previous_body)
-        leftovers = LOCAL_REF.findall(block)
+        leftovers = LOCAL_REF.findall(without_text(block))
+        try:
+            expected = render_block(self.plan, self.url_for, final=False)
+            expected_final = render_block(self.plan, self.url_for, final=True)
+            content_ok = normalize(block) in (normalize(expected), normalize(expected_final))
+        except (Refused, OSError):
+            content_ok = False
         if failure and not (missing or leftovers) and prose_ok:
             self.result["gh_warning"] = failure[1]
-        if missing or leftovers or not prose_ok:
+        if missing or leftovers or not prose_ok or not content_ok:
             reason = "; ".join(filter(None, [failure[1] if failure else None, f"{len(missing)} attachment(s) have no URL" if missing else None,
                                              f"local references remain in the block: {', '.join(leftovers[:5])}" if leftovers else None,
+                                             None if content_ok else "published evidence block differs from the planned content",
                                              None if prose_ok else "prose outside the block differs from the body read before the edit (concurrent edit or a malformed block)"]))
             restored = self.restore(previous_body)
             return self.finish("failed" if restored else "uncertain", reason + (". The previous PR body was restored" if restored else ". The PR body could NOT be restored; inspect it")
@@ -654,7 +700,7 @@ def cmd_block(args):
         for row in plan["scenarios"]:
             if row["publishable"]:
                 for m in row["media"]:
-                    if not url_for(m["sha256"]):
+                    if m["kind"] != "text" and not url_for(m["sha256"]):
                         print(f"./{m['publish_copy']}")
         return 0
     print(render_block(plan, url_for, final=args.final), end="")
