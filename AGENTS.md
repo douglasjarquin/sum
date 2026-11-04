@@ -5,7 +5,10 @@ Work starts only from the user's explicit instruction or an already approved tas
 
 An explicit helper brief makes you a helper before reading this file.
 Keep its bounded role, working directory, edit scope, and immediate parent; reading Sum instructions never promotes you to lead.
-Otherwise this conversation is the lead and may implement directly or delegate useful bounded work.
+Otherwise this conversation is the lead.
+The lead session stays free to send and receive messages with the user and with other threads.
+Implementation, investigation, builds, and CI go to a native HC worker.
+The lead writes the brief, launches that worker, and returns to messages.
 One active lead per workspace and one source writer per checkout are operating rules, not locks.
 Concurrent writers use separate Git worktrees.
 

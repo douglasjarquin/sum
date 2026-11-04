@@ -4,7 +4,8 @@ Sum owns working instructions; HC owns live terminals and native communication, 
 There is no Sum executable, registry, task database, receipt protocol, lifecycle engine, release staging, collector, or background service.
 
 The current conversation is the lead unless an explicit bounded helper brief already assigns its role.
-The lead may implement directly, launch useful bounded helpers, and continue independent work while waiting for actual results.
+The lead session stays free for messages.
+It launches a native HC worker for implementation, investigation, builds, and CI, and steers that worker when a report arrives.
 See [Work](../skills/sum-work/SKILL.md), [Review](../skills/sum-review/SKILL.md), [Finish](../skills/sum-finish/SKILL.md), and [Resume](../skills/sum-resume/SKILL.md).
 
 ```mermaid

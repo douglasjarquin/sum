@@ -15,6 +15,10 @@ Task record location outside disposable worktrees:
 | Role or command | Exact native address and immediate parent | Candidate | Report/output and exit status | Disposition |
 | --- | --- | --- | --- | --- |
 
+Prescribed-check inventory / PR draft reference:
+Independent reviewer report and reviewed candidate:
+PR URL, published candidate, and evidence reference:
+
 ## Decisions
 
 | Question | Actual answer and source | Open / answered / applied | Application evidence |

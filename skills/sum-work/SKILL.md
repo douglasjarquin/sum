@@ -1,11 +1,14 @@
 ---
 name: sum-work
-description: Complete approved software work directly or with bounded native HC helpers.
+description: Brief and launch a native HC worker for approved software work. The lead session stays free for messages.
 ---
 # Work
 
+The lead session stays free to send and receive messages.
 Read the approved goal, existing task note, and target repository instructions.
-Choose direct implementation or delegation when a helper can do useful independent work.
+Write a brief and launch a native HC worker for implementation, investigation, builds, and CI.
+Return to messages once that launch is accepted.
+An explicit helper brief keeps that agent on the bounded work. It does not become a lead and does not hand the work onward.
 Stay within the user's authority; a question that changes scope or permission goes to the user.
 A bounded builder may start a reviewer or test only when its brief permits it.
 Do not create a management hierarchy.
@@ -23,13 +26,17 @@ If HC is missing, connection fails, the address is an old TUI pane such as `wJ5:
 Start the supported Herdr app independently, use its HC-backed terminal, and launch the selected interactive agent there; Codex requires `codex --no-daemon`.
 Do not fabricate environment variables, adopt another conversation, bridge old panes, restart the shared core, install a service, or launch a hidden lead.
 HC's own connection/start behavior belongs to upstream HC.
-Direct local work may continue when authorized, with native delegation and acceptance explicitly unavailable.
+If native launch is unavailable, report the exact gap and stay available for messages.
+Do not take the heavy work in the lead session.
 
 ## Prepare the work
 
 Create a small task note from [the template](../../templates/task.md) in an ordinary durable directory outside any disposable worktree.
 The lead owns that note; each interactive helper owns a separate report.
 Record the approved scope, source checkout/branch, candidate, required checks/review, decisions, helper references, and next action.
+Before execution, inventory every prescribed check from the target repository's instructions, verification contract, and referenced scenario maps, including required setup, readiness, and teardown.
+Use the [PR template](../../templates/pull-request.md) for that accounting and delivery; retain a reference from the task note rather than another copy of the table.
+The target's own tools suffice; using this format does not require installing Sum's portable verifier there.
 Keep question state as open, answered with the actual answer, then applied with evidence.
 Never invent user approval.
 
@@ -39,7 +46,9 @@ A read-only reviewer needs the actual candidate, not an empty checkout missing d
 Freeze the relevant tracked, dirty, and untracked inputs during review/checks or give them an immutable snapshot that contains all of those inputs.
 Record what identifies that snapshot; a commit SHA alone does not identify dirty content.
 Tests may mutate source, snapshots, databases, or services; isolate according to their real effects.
-The lead may continue independent work elsewhere while those inputs remain stable.
+The lead returns to messages.
+Do not block the lead turn on `hc wait`, a build, or CI.
+A worker report arrives as a message.
 
 ## Brief and launch
 
@@ -50,6 +59,7 @@ A helper brief contains:
 - The task, bounded role, allowed edits, and forbidden scope.
 - Absolute repository/worktree and report paths plus the readable absolute path to the applicable Sum `SKILL.md`; instruct it to read that procedure and necessary referenced resources.
 - The target repository's applicable instructions, candidate/snapshot, and required checks/evidence.
+- The resolved absolute path to the PR template when the helper prepares delivery artifacts in another repository.
 - Whether bounded further delegation is allowed.
 - The actual immediate parent and this obligation: save the report, then report findings, completion, a question, or a blocker with `hc send <actual-parent-address>`; remain available for follow-up.
 
@@ -89,6 +99,17 @@ A message wake may precede its incoming input; do not scrape a report body from 
 A timeout is a check-in, not task failure.
 Idle, done, all children stopped working, `started:true`, or a successful send is not completion evidence.
 Inspect required reports and actual check output until every required result is accounted for.
+
+## Review the completed candidate
+
+After the builder reports completion, the lead reads its saved report and launches a separate reviewer under [Review](../sum-review/SKILL.md) against the frozen candidate.
+Give the reviewer the prescribed-check inventory, actual results, and the same concrete candidate identity used by the builder.
+Every implementation candidate requires this independent review before completion; the builder's self-review or green CI does not satisfy it.
+Record the reviewer address and report path, then return to messages.
+
+When the review report arrives, route blocking findings to the builder for correction.
+Freeze the corrected candidate, refresh affected verification, and send it to the reviewer for follow-up inspection.
+Account for every finding against that candidate before proceeding to Finish; a report covering superseded inputs cannot close the task.
 
 Use `hc send <returned-helper-address> "<correction or follow-up>"` for the same verified live helper after freezing the updated candidate.
 Read native send help for busy/conditional semantics; do not invent a done condition.

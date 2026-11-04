@@ -32,6 +32,7 @@ class InstructionPackageTest(unittest.TestCase):
         documents = [ROOT / name for name in ("AGENTS.md", "README.md", "CONTRIBUTING.md", "VERIFY.md")]
         documents += list((ROOT / "docs").glob("*.md"))
         documents += list((ROOT / "skills").glob("*/SKILL.md"))
+        documents += list((ROOT / "templates").glob("*.md"))
         documents += [ROOT / "docs/verification/issue-348.md"]
         for document in documents:
             for target in re.findall(r"\]\(([^)]+)\)", document.read_text()):
@@ -39,6 +40,28 @@ class InstructionPackageTest(unittest.TestCase):
                     continue
                 path = target.split("#", 1)[0]
                 self.assertTrue((document.parent / path).exists(), (document, target))
+
+    def test_delivery_template_discoverable_from_harness_procedures(self):
+        expected = ROOT / "templates/pull-request.md"
+        for harness in (".agents", ".claude"):
+            for name in ("sum-work", "sum-finish"):
+                procedure = (ROOT / harness / "skills" / name / "SKILL.md").resolve()
+                targets = re.findall(r"\]\(([^)]+)\)", procedure.read_text())
+                templates = [(procedure.parent / target).resolve() for target in targets
+                             if target.endswith("/pull-request.md")]
+                self.assertEqual(templates, [expected], (harness, name))
+                self.assertTrue(templates[0].is_file())
+
+    def test_delivery_template_has_review_and_check_accounting(self):
+        template = (ROOT / "templates/pull-request.md").read_text()
+        headings = re.findall(r"^## (.+)$", template, re.M)
+        self.assertEqual(headings, ["Behavior", "Independent review", "Verification",
+                                    "Before and after", "Remaining limitations"])
+        header = next(line for line in template.splitlines() if line.startswith("| Source"))
+        self.assertEqual([cell.strip() for cell in header.split("|")[1:-1]],
+                         ["Source / check or scenario", "Status", "Evidence", "Limitations"])
+        for status in ("✅ Passed", "❌ Failed", "⛔ Blocked", "⬜ Not run", "➖ Not applicable"):
+            self.assertIn(status, template)
 
     def test_excluded_contracts_match_immutable_baseline(self):
         baseline = "9456017f2e4fde8f16bc4f2d1bdd7ba978765eb3"
