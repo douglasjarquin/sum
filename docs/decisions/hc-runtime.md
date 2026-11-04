@@ -1,16 +1,16 @@
 # Native HC runtime contract
 
-Sum targets the published upstream HC 0.1.14 generation-one plain JSON-RPC API.
-It connects to an existing local Unix socket and validates the permanent core ID, exact version and required method on each connection before using it.
-It never starts a core as a side effect of an observation.
+Sum bundles published upstream HC 0.1.14 and accepts the generation-one plain JSON-RPC API on cores at or above that minimum version.
+It connects to an existing local Unix socket and validates the permanent core ID, protocol generation, minimum version and required method on each connection before using it.
+It never starts, restarts or replaces a core during observation or launch.
 Ordinary calls and event subscriptions use separate connections.
 An event stream loss requires a new snapshot and ledger reconciliation.
 
 The selected source is the `v0.1.14` release, commit `29e6d375623de40cb4820e0894aa131ba057b796`.
 The versioned [release manifest](https://releases.herdr.dev/core/0.1.14/manifest.json) identifies the published artifacts.
 The verified macOS aarch64 archive SHA256 is `ca524329d2e0630219550055dcc71f42aafd85fba356e0d543d6f51244487970`.
-The binary's `rpc.discover` schema and the release source schema agree after JSON normalization.
-The raw binary schema SHA256 is `7f830922f96da848ec151de10349abddf3233c74a06c00c25b2bd58f448c6b11`.
+Release verification checks the bundled binary and matched manual against the candidate release's own pin.
+It never queries a running core or captures its schema.
 This selection requires no upstream patch.
 
 A terminal's runtime identity is its permanent core ID and returned address.

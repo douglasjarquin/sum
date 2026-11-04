@@ -17,7 +17,7 @@ The verification artifact and PR record their actual result for the final candid
 | A2 | CLI unstaged-init blocker and `tests/test_setup.py` | Fresh-host prerequisite installation: not run |
 | A3 | `cli.TestExternalCoordinatorLifecycle` | Each helper call is a separate process with a scrubbed lab environment |
 | A4 | `cli.TestOrdinaryCoordinatorIgnoresInheritedNativeIdentity` and init environment-precedence tests | No user environment surgery is required |
-| A5 | `hcboot` default route tests | Real default-core reuse, version and holder refusal: not run for this candidate |
+| A5 | `hcboot` default route tests | Real default-core reuse, generation/minimum-version and missing-core refusal: not run for this candidate |
 | A6 | `prepare` parentless native launch tests and `cli.TestOfflineDemo` | Two authenticated workers in distinct checkouts: not run |
 | A7 | `collect` answer delivery tests and `cli.TestExternalCoordinatorLifecycle` | Grok and Codex busy-worker answer delivery through active collection: not run |
 | A8 | `review.TestCandidateBoundReviewerEvidenceDischargesAmbiguousKickoff`, `cli.TestExternalCoordinatorLifecycle` | Authenticated independent reviewer: not run |
@@ -328,7 +328,8 @@ Revalidate these expectations against the staged candidate before recording a ma
 
 ## Native identity, recovery and inspection
 
-Workers and reviewers retain published HC 0.1.14 native identity, exact core/address/creation-time checks, attempt receipts, qualified templates, bounded readiness, and conservative uncertain input handling.
+Workers and reviewers retain native identity, exact core/address/creation-time checks, attempt receipts, qualified templates, bounded readiness, and conservative uncertain input handling on generation-1 cores at or above 0.1.14.
+The bundled artifact remains published HC 0.1.14; acceptance on a newer core requires its own recorded evidence.
 A send, Done state, started result or completed wait is not an application receipt, verification result, review or process-exit proof.
 Reuse a socket, address or name on a different core and replace a harness process within one terminal; each old identity must refuse.
 An unproven shell occupant gains no worker role or automatic prompt.

@@ -10,11 +10,16 @@ It can differ from the coordinating harness.
 
 Every genuinely new worker or reviewer terminal is created on HC's default route, the one Herdr shows, resolved from the user's XDG homes and `herdr-core/config.toml` rather than from inherited `HC_SOCKET`, `HC_SESSION` or `SUM_SESSION` values.
 The first launch pins the permanent core ID it observed there in `.sum/runtime-route.json`; a route an earlier release saved for a private core selects nothing.
-A changed core at the pinned socket, another herdr-core version or a core without a current holder is refused; sum starts a core only when nothing listens and never restarts the user's core, and a route failure never silently selects another core.
+A changed core at the pinned socket, a protocol generation other than 1, or a version below 0.1.14 is refused.
+Sum never starts, restarts or replaces the user's core.
+A missing core refusal names the socket, task and attempt and asks the user to open Herdr or run `hc server start` in a desktop terminal.
+A route failure never silently selects another core.
 Existing attempts keep the socket, core and session their own records name.
 Template options come from settings, not the coordinator's environment or launch record.
 Creation omits HC parent and caller; workers and reviewers outlive the coordinating conversation.
-The pinned HC dependency and its release-matched manual define native behavior.
+The bundled HC dependency and its release-matched manual define the artifact contract.
+Connections accept protocol generation 1 at or above 0.1.14; required methods and permanent core identity remain checked.
+A listening core without a holder surfaces its own refusal at terminal creation.
 Observation and collection never start a core.
 
 ## Inspect before recovery

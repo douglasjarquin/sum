@@ -2,7 +2,8 @@
 
 HC owns terminal processes; Git owns worktrees.
 Sum owns approved briefs, task roles, capacity, receipts, verification, review, publication and guarded cleanup.
-All terminal communication uses the single typed client for unmodified upstream HC 0.1.14, protocol generation one.
+All terminal communication uses one typed client accepting protocol generation 1 and HC versions at or above 0.1.14.
+Sum bundles HC 0.1.14 and its matched manual; the bundle pin does not require an exact running-core version.
 There is no Sum MCP server, scoped bridge, raw terminal transport or legacy runtime fallback.
 The separate Grok Bot product and its native messaging remain outside this terminal contract.
 
@@ -40,7 +41,8 @@ See [Recovery](recovery.md) for an explicit single recovery attempt.
 
 The ordinary coordinating conversation has no native terminal identity.
 Worker and reviewer launch creates on HC's default route with no HC parent or caller; existing attempts keep their saved route.
-`init`, status, inbox and inspection never ensure a missing core; launch ensures it lazily.
+`init`, status, inbox, inspection and launch never start a missing core.
+Launch refuses with the socket, task, attempt and a Herdr repair hint.
 
 `collect --claim TOKEN --budget 20s` reads actionable ledger items, delivers eligible queued worker answers and waits on recorded worker/reviewer addresses within one shared deadline.
 It reads native attention as snapshot evidence and names an inspect route for blocked or failed attempts.

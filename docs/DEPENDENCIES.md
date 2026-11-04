@@ -6,12 +6,13 @@ Git and mise are host prerequisites.
 
 ## Terminal dependency
 
-The active terminal runtime uses unmodified upstream HC 0.1.14, protocol generation one, through one typed Go client.
+Sum bundles unmodified upstream HC 0.1.14 and its matched manual.
+One typed Go client accepts running cores of protocol generation 1 at or above 0.1.14.
 The staged release contains its matched HC manual and namespaced template, not a custom Sum MCP server or scoped bridge.
 The selected source release is commit `29e6d375623de40cb4820e0894aa131ba057b796`.
 The [versioned upstream manifest](https://releases.herdr.dev/core/0.1.14/manifest.json) records distributed artifacts.
 The inspected macOS aarch64 archive SHA256 is `ca524329d2e0630219550055dcc71f42aafd85fba356e0d543d6f51244487970`.
-The binary's discovery schema matches the release source after JSON normalization.
+The artifact contract verifies the binary and manual against each release's own pin without querying a running core.
 No upstream patch or fork is required.
 
 Codex 0.166.0 with its default keymap and `--no-daemon` is the qualified automatic input path.

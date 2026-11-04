@@ -132,3 +132,18 @@ Local verification, model-free native canaries, authenticated harness journeys, 
 Record the exact candidate and checks; mark unrun combinations as not run.
 Only the user merges or activates the result.
 See [acceptance](ACCEPTANCE.md) and [recovery](recovery.md).
+
+## HC compatibility and known-good promotion
+
+Each candidate release verifies its bundled HC binary and matched manual against its own pin without querying a running core.
+Running cores must report protocol generation 1 and a version at or above 0.1.14.
+Sum never starts, restarts or replaces the user's core.
+When a launch has no compatible listener, its refusal names the socket, task and attempt and gives a Herdr repair hint.
+
+Apply and rollback promote the serving default to known-good using its recorded path and SHA, its helper's owner-schema and state-schema floors, and a stable-entrypoint post-check.
+Promotion does not re-verify the outgoing HC binary, manual or retired schema receipt.
+Candidate artifact validation remains required.
+
+The first activation of this behavior from a helper that still verifies `hc schema` uses the bootstrap driver above, extracted from the merged release.
+The user merges and separately authorizes activation; preparing a PR changes no installation runtime.
+Rolling back to an older release may succeed while restoring a helper that refuses launches on a newer core because it still requires exactly HC 0.1.14.
