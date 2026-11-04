@@ -116,6 +116,7 @@ func (l nativeBoundaryLab) start() (*ordjson.Object, error) {
 
 func TestFirstWorkerLaunchPreparesDefaultRouteBeforeTemplate(t *testing.T) {
 	l := newNativeBoundaryLab(t, true)
+	l.core.SetVersion("0.1.17")
 	for _, path := range []string{filepath.Join(l.route.ConfigHome, "herdr-core/templates"), filepath.Join(l.state.Root, "runtime-route.json")} {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("fresh fixture already has %s: %v", path, err)
@@ -372,5 +373,40 @@ func TestWorkerAdoptionRefusesAReplacementShell(t *testing.T) {
 	}
 	if len(l.core.Inputs(ep.Address)) != inputs {
 		t.Fatal("replacement shell received input")
+	}
+}
+
+func TestMissingCoreKeepsWorkerAttemptHeld(t *testing.T) {
+	l := newNativeBoundaryLab(t, true)
+	marker := filepath.Join(l.runtime, "hc-was-executed")
+	if err := os.WriteFile(filepath.Join(l.runtime, ".local/bin/hc"), []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 99\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Errorf("launch executed bundled HC: %v", err)
+		}
+	})
+	socket := filepath.Join(t.TempDir(), "absent.sock")
+	hctest.PointDefaultRoute(t, socket)
+	for i := 0; i < 2; i++ {
+		_, err := l.start()
+		if err == nil || !strings.Contains(err.Error(), asString(policyField(l.task, "id"))) || !strings.Contains(err.Error(), asString(policyField(l.worker, "id"))) || !strings.Contains(err.Error(), "open Herdr") {
+			t.Fatalf("refusal: %v", err)
+		}
+		task, err := l.state.ReadTask(asString(policyField(l.task, "id")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		worker, err := reservations.Worker(task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if asString(policyField(worker, "state")) != "held" || asString(policyField(task, "status")) != "prepared" || policyField(worker, "native_launch") != nil || asString(policyField(worker, "id")) != asString(policyField(l.worker, "id")) {
+			t.Fatalf("refusal changed attempt: %v", worker)
+		}
+	}
+	if len(l.core.Terminals()) != 0 {
+		t.Fatal("missing core created a worker")
 	}
 }

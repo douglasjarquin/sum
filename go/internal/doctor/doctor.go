@@ -416,6 +416,6 @@ func hcArtifactCheck(runtimeRoot string) *ordjson.Object {
 	}
 	row.Set("ok", true)
 	row.Set("qualified", true)
-	row.Set("detail", "Published HC executable, pinned artifact receipt and matched schema/manual verified; this does not qualify a harness or prove a core is running.")
+	row.Set("detail", "Published HC executable, pinned artifact receipt and matched manual verified; this does not qualify a harness or prove a core is running.")
 	return row
 }

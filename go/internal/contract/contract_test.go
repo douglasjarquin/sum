@@ -55,3 +55,17 @@ func TestBuildRelease_reportsNativeBinaryCapabilities(t *testing.T) {
 		t.Fatalf("release contract JSON =\n%s\nwant\n%s", encoded, want)
 	}
 }
+
+func TestHCCompatible(t *testing.T) {
+	for _, tc := range []struct {
+		version    string
+		generation int
+		want       bool
+	}{
+		{"0.1.14", 1, true}, {"0.1.17", 1, true}, {"0.1.9", 1, false}, {"0.1.10", 1, false}, {"0.10.0", 1, true}, {"0.1.13", 1, false}, {"0.1.17", 2, false}, {"", 1, false}, {"0.1.x", 1, false}, {"0.1.+14", 1, false}, {"0..14", 1, false}, {"18446744073709551616", 1, false},
+	} {
+		if got := HCCompatible(tc.version, tc.generation); got != tc.want {
+			t.Errorf("%q generation %d: %v", tc.version, tc.generation, got)
+		}
+	}
+}

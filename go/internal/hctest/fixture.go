@@ -70,10 +70,11 @@ type Fixture struct {
 	next               uint64
 	closed             bool
 	version            string
+	generation         int
 	wg                 sync.WaitGroup
 }
 
-var methods = []string{"hello", "server.status", "terminal.run", "terminal.get", "terminal.list", "terminal.send", "terminal.read", "terminal.wait", "terminal.label", "terminal.kill", "terminal.interrupt", "terminal.rm", "events.subscribe", "templates.list"}
+var methods = []string{"hello", "terminal.run", "terminal.get", "terminal.list", "terminal.send", "terminal.read", "terminal.wait", "terminal.label", "terminal.kill", "terminal.interrupt", "terminal.rm", "events.subscribe", "templates.list"}
 
 func New(t testing.TB) *Fixture {
 	t.Helper()
@@ -81,7 +82,7 @@ func New(t testing.TB) *Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &Fixture{closeSignal: make(chan struct{}), Socket: filepath.Join(dir, "hc.sock"), CoreID: "test-" + filepath.Base(dir), connections: map[net.Conn]bool{}, subscribers: map[*subscriber]bool{}, terminals: map[string]*terminal{}, faults: map[string][]Fault{}}
+	f := &Fixture{generation: 1, closeSignal: make(chan struct{}), Socket: filepath.Join(dir, "hc.sock"), CoreID: "test-" + filepath.Base(dir), connections: map[net.Conn]bool{}, subscribers: map[*subscriber]bool{}, terminals: map[string]*terminal{}, faults: map[string][]Fault{}}
 	f.listener, err = net.Listen("unix", f.Socket)
 	if err != nil {
 		os.RemoveAll(dir)
@@ -438,16 +439,8 @@ func (f *Fixture) executeLocked(method string, p map[string]any, fault Fault, c 
 	case "templates.list":
 		v, _ := f.nativeTemplatesLocked()
 		return hcclient.TemplatesResult{Templates: v}, "", nil
-	case "server.status":
-		live := 0
-		for _, t := range f.terminals {
-			if t.State == "live" {
-				live++
-			}
-		}
-		return map[string]any{"live": live, "holder": map[string]any{"current": true, "pid": os.Getpid()}}, "", nil
 	case "hello":
-		return hcclient.HelloResult{Generation: 1, Version: f.helloVersion(), Core: hcclient.CoreInfo{ID: f.CoreID, Name: "sum-test"}, Framed: true, Methods: methods, Features: []string{"framed", "events", "status", "shell"}}, "", nil
+		return hcclient.HelloResult{Generation: uint32(f.generation), Version: f.helloVersion(), Core: hcclient.CoreInfo{ID: f.CoreID, Name: "sum-test"}, Framed: true, Methods: methods, Features: []string{"framed", "events", "status", "shell"}}, "", nil
 	case "terminal.run":
 		args := decode[hcclient.RunParams](p)
 		f.next++

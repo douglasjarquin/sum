@@ -285,3 +285,42 @@ func TestCallerLaunchBudgetSurvivesDefaultTransportTimeout(t *testing.T) {
 		t.Fatalf("caller deadline shortened by default transport: %v", err)
 	}
 }
+
+func TestCoreCompatibilityAtDiscoveryAndRun(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		generation    int
+		methods       []string
+		want          string
+	}{
+		{"newer", "0.1.17", 1, []string{"terminal.run"}, ""},
+		{"older", "0.1.13", 1, []string{"terminal.run"}, "version=0.1.13"},
+		{"generation", "0.1.17", 2, []string{"terminal.run"}, "generation=2"},
+		{"missing method", "0.1.17", 1, []string{}, "method=terminal.run"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			socket := serve(t, func(c net.Conn, r *bufio.Reader) {
+				q := request(r)
+				reply(c, q["id"], HelloResult{Generation: uint32(tc.generation), Version: tc.version, Core: CoreInfo{ID: "core-a"}, Methods: tc.methods, Features: []string{}})
+				if tc.want == "" {
+					q = request(r)
+					reply(c, q["id"], map[string]any{"address": "t7", "state": "live", "created_ms": 3, "labels": map[string]string{}, "argv": []string{}, "cwd": "/tmp", "screen": "exact", "cols": 80, "rows": 24})
+				}
+			})
+			if tc.want != "" && tc.name != "missing method" {
+				_, err := Inspect(context.Background(), socket)
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("discovery: %v", err)
+				}
+			}
+			_, err := (&Client{Socket: socket, CoreID: "core-a"}).Run(context.Background(), RunParams{})
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("run: %v", err)
+			}
+		})
+	}
+}

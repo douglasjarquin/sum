@@ -198,7 +198,9 @@ Ordinary `init` claims coordination without querying or starting HC.
 A genuinely new worker or reviewer terminal is created on HC's default route: the `default` session, the user's XDG configuration and state homes, and the socket named by `herdr-core/config.toml` before HC's platform default socket path.
 Inherited `HC_SOCKET`, `HC_SESSION` and `SUM_SESSION` values never select that route, and a route an earlier release saved for a private workspace core selects nothing.
 `.sum/runtime-route.json` only pins the permanent core ID a launch observed on that same default route.
-A changed core at the pinned socket, a core running another herdr-core version than the pinned 0.1.14, and a core without a current holder are refused with the reason; sum never restarts, replaces or upgrades the user's core and starts one only when nothing listens on the default socket.
+A changed core at the pinned socket, a protocol generation other than 1, or a version below 0.1.14 is refused with the reason.
+Sum never starts, restarts, replaces or upgrades the user's core.
+When nothing listens, launch names the socket, task and attempt and asks the user to open Herdr or run `hc server start` in a desktop terminal.
 Existing attempts keep the socket, core, session and template configuration their own records name, so work created earlier on a private core stays observable, recoverable and cleanable from those records.
 Template options live in `.sum/settings.json`, independently of the coordinating conversation.
 Inherited `SUM_*`, `HC_*` and `HERDR_*` values do not redirect ordinary entry or grant authority.

@@ -261,46 +261,12 @@ func compatibilityForTasks(s *store.Store, root, candidatePath string, current *
 		result.Set("tasks", []any{})
 		return result, nil
 	}
-	sumVersion, stateSchema, briefSchema := offeredContracts(executableContract)
+	sumVersion, _, briefSchema := offeredContracts(executableContract)
 	if err := s.CheckWritable(); err != nil {
 		blocking = append(blocking, "HC state authority: "+err.Error())
 	}
 
-	stateObj, _ := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
-	stateSchemaVal := 1
-	if so := asObject(stateObj); so != nil {
-		if v, ok := so.Get("schema"); ok {
-			if num, isNum := v.(json.Number); isNum {
-				if n, convErr := num.Int64(); convErr == nil {
-					stateSchemaVal = int(n)
-				}
-			}
-		}
-	}
-	rootState, rootErr := ordjson.ReadFile(filepath.Join(s.Root, "state.json"))
-	if rootErr != nil {
-		blocking = append(blocking, "state-format fence cannot be read: "+rootErr.Error())
-	} else if pointer := asObject(rootState); pointer != nil {
-		if raw, _ := pointer.Get("schema"); fmt.Sprint(raw) == fmt.Sprint(store.LogicalStateSchema) {
-			stateSchemaVal = store.LogicalStateSchema
-		}
-	}
-	if session, err := s.CoordinatorSession(); err != nil {
-		blocking = append(blocking, "logical ownership cannot be read: "+err.Error())
-	} else if session != nil || stateSchemaVal == store.LogicalStateSchema {
-		supports := asObject(func() any { v, _ := executableContract.Get("supports"); return v }())
-		var owners []any
-		if supports != nil {
-			raw, _ := supports.Get("owner_schema")
-			owners, _ = raw.([]any)
-		}
-		if !containsNumber(owners, contract.OwnerSchema) {
-			blocking = append(blocking, "logical-owner floor raised by "+filepath.Join(s.Home, "coordinator.json")+" or state-format fence "+filepath.Join(s.Root, "state.json")+": candidate lacks owner_schema 2")
-		}
-	}
-	if !containsNumber(stateSchema, stateSchemaVal) {
-		blocking = append(blocking, fmt.Sprintf("state schema %d required by %s is not supported by the candidate (%v)", stateSchemaVal, filepath.Join(s.Root, "state.json"), stateSchema))
-	}
+	blocking = append(blocking, contractFloors(s, executableContract)...)
 	var tasks []any
 	all := snapshot
 	if all == nil {
@@ -761,7 +727,7 @@ func activateLocked(s *store.Store, ctx *ordjson.Object, root, target, action st
 		return result, nil
 	}
 	knownGood := asObject(func() any { v, _ := state.Get("known_good"); return v }())
-	if _, priorErr := resolveDescriptor(root, knownGood); priorErr != nil {
+	if _, priorErr := resolveActivationPath(root, knownGood, true); priorErr != nil {
 		return nil, priorErr
 	}
 	generation, genErr := newGeneration()
@@ -1190,3 +1156,44 @@ var TestPostCheck func(s *store.Store, root string) *ordjson.Object
 
 // TestRecoverPending, if set, replaces recoverPendingLocked. Tests only.
 var TestRecoverPending func(s *store.Store, root, generation string) (*ordjson.Object, error)
+
+func contractFloors(s *store.Store, executableContract *ordjson.Object) []any {
+	var blocking []any
+	_, stateSchema, _ := offeredContracts(executableContract)
+	stateObj, _ := ordjson.ReadFile(filepath.Join(s.Home, "state.json"))
+	stateSchemaVal := 1
+	if so := asObject(stateObj); so != nil {
+		if v, ok := so.Get("schema"); ok {
+			if num, isNum := v.(json.Number); isNum {
+				if n, convErr := num.Int64(); convErr == nil {
+					stateSchemaVal = int(n)
+				}
+			}
+		}
+	}
+	rootState, rootErr := ordjson.ReadFile(filepath.Join(s.Root, "state.json"))
+	if rootErr != nil {
+		blocking = append(blocking, "state-format fence cannot be read: "+rootErr.Error())
+	} else if pointer := asObject(rootState); pointer != nil {
+		if raw, _ := pointer.Get("schema"); fmt.Sprint(raw) == fmt.Sprint(store.LogicalStateSchema) {
+			stateSchemaVal = store.LogicalStateSchema
+		}
+	}
+	if session, err := s.CoordinatorSession(); err != nil {
+		blocking = append(blocking, "logical ownership cannot be read: "+err.Error())
+	} else if session != nil || stateSchemaVal == store.LogicalStateSchema {
+		supports := asObject(func() any { v, _ := executableContract.Get("supports"); return v }())
+		var owners []any
+		if supports != nil {
+			raw, _ := supports.Get("owner_schema")
+			owners, _ = raw.([]any)
+		}
+		if !containsNumber(owners, contract.OwnerSchema) {
+			blocking = append(blocking, "logical-owner floor raised by "+filepath.Join(s.Home, "coordinator.json")+" or state-format fence "+filepath.Join(s.Root, "state.json")+": candidate lacks owner_schema 2")
+		}
+	}
+	if !containsNumber(stateSchema, stateSchemaVal) {
+		blocking = append(blocking, fmt.Sprintf("state schema %d required by %s is not supported by the candidate (%v)", stateSchemaVal, filepath.Join(s.Root, "state.json"), stateSchema))
+	}
+	return blocking
+}

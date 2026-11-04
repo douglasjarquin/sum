@@ -2,6 +2,7 @@ package hcboot
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -96,7 +97,7 @@ func TestPrivateCacheDoesNotSelectCreationAndDefaultCachePinsCore(t *testing.T) 
 	if route.Socket != fixture.Socket || route.CoreID != "" || route.Session != DefaultSession {
 		t.Fatalf("private cache selected creation: %+v", route)
 	}
-	ensured, err := EnsureWorkspaceRoute(s, t.TempDir())
+	ensured, err := EnsureWorkspaceRoute(s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +108,7 @@ func TestPrivateCacheDoesNotSelectCreationAndDefaultCachePinsCore(t *testing.T) 
 	if err != nil || again.CoreID != fixture.CoreID {
 		t.Fatalf("pinned route = %+v, %v", again, err)
 	}
-	if _, err = EnsureWorkspaceRoute(s, t.TempDir()); err != nil {
+	if _, err = EnsureWorkspaceRoute(s); err != nil {
 		t.Fatalf("pinned default route refused its own core: %v", err)
 	}
 }
@@ -122,7 +123,7 @@ func TestPinnedDefaultCoreRefusesReplacementWithoutFallback(t *testing.T) {
 	}
 	route.CoreID = "different-core"
 	writeCache(t, s, route)
-	_, err = EnsureWorkspaceRoute(s, t.TempDir())
+	_, err = EnsureWorkspaceRoute(s)
 	if err == nil || !strings.Contains(err.Error(), "core changed") {
 		t.Fatalf("replacement core accepted: %v", err)
 	}
@@ -133,16 +134,33 @@ func TestPinnedDefaultCoreRefusesReplacementWithoutFallback(t *testing.T) {
 }
 
 func TestIncompatibleDefaultCoreVersionIsRefused(t *testing.T) {
-	s := workspaceStore(t)
-	fixture := hctest.New(t)
-	fixture.SetVersion("0.1.13")
-	fixture.DefaultRoute(t)
-	_, err := EnsureWorkspaceRoute(s, t.TempDir())
-	if err == nil || !strings.Contains(err.Error(), "0.1.13") || !strings.Contains(err.Error(), "0.1.14") {
-		t.Fatalf("incompatible core accepted: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(s.Root, "runtime-route.json")); !os.IsNotExist(err) {
-		t.Fatalf("refusal pinned a route: %v", err)
+	for _, tc := range []struct {
+		version    string
+		generation int
+		detail     string
+	}{
+		{"0.1.13", 1, "version=0.1.13"},
+		{"0.1.17", 2, "generation=2"},
+	} {
+		t.Run(tc.detail, func(t *testing.T) {
+			s := workspaceStore(t)
+			fixture := hctest.New(t)
+			fixture.SetVersion(tc.version)
+			fixture.SetGeneration(tc.generation)
+			fixture.DefaultRoute(t)
+			_, err := EnsureWorkspaceRoute(s)
+			if err == nil {
+				t.Fatal("incompatible core accepted")
+			}
+			for _, want := range []string{tc.detail, "0.1.14", fixture.Socket, "open Herdr"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("refusal lacks %q: %v", want, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(s.Root, "runtime-route.json")); !os.IsNotExist(err) {
+				t.Fatalf("refusal pinned a route: %v", err)
+			}
+		})
 	}
 }
 
@@ -162,7 +180,7 @@ func TestConcurrentLaunchesPinOneDefaultCore(t *testing.T) {
 				errs[i] = err
 				return
 			}
-			results[i], errs[i] = EnsureWorkspaceRoute(own, t.TempDir())
+			results[i], errs[i] = EnsureWorkspaceRoute(own)
 		}(i)
 	}
 	wg.Wait()
@@ -174,5 +192,48 @@ func TestConcurrentLaunchesPinOneDefaultCore(t *testing.T) {
 	saved, err := SelectedRoute(s)
 	if err != nil || saved.CoreID != fixture.CoreID {
 		t.Fatalf("saved route = %+v %v", saved, err)
+	}
+}
+
+func TestNewerDefaultCoreIsAccepted(t *testing.T) {
+	s := workspaceStore(t)
+	fixture := hctest.New(t)
+	fixture.SetVersion("0.1.17")
+	fixture.DefaultRoute(t)
+	route, err := EnsureWorkspaceRoute(s)
+	if err != nil || route.CoreID != fixture.CoreID {
+		t.Fatalf("newer core refused: %+v %v", route, err)
+	}
+}
+
+func TestMissingDefaultCoreNeverStartsAProcess(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(strconv.FormatBool(stale), func(t *testing.T) {
+			s := workspaceStore(t)
+			dir, err := os.MkdirTemp("/tmp", "sum-missing-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(dir) })
+			socket := filepath.Join(dir, "absent.sock")
+			hctest.PointDefaultRoute(t, socket)
+			if stale {
+				listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				listener.SetUnlinkOnClose(false)
+				if err = listener.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err = EnsureWorkspaceRoute(s)
+			if err == nil || !strings.Contains(err.Error(), socket) || !strings.Contains(err.Error(), "open Herdr") {
+				t.Fatalf("missing core: %v", err)
+			}
+			if _, err = os.Stat(cachePath(s)); !os.IsNotExist(err) {
+				t.Fatalf("refusal pinned a route: %v", err)
+			}
+		})
 	}
 }

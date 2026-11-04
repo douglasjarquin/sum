@@ -25,7 +25,7 @@ class HCInstallTest(unittest.TestCase):
 case "$1" in
  --version) echo 'hc 0.1.14';;
  --skill) echo 'matched HC manual';;
- schema) echo '{"openrpc":"1.3.2","methods":[]}';;
+ *) exit 1;;
 esac
 ''')
         binary.chmod(0o755)
@@ -48,7 +48,8 @@ esac
         self.assertTrue(link.is_file())
         self.assertFalse(os.path.isabs(os.readlink(link)))
         self.assertEqual((target/'.local/share/hc/manual.md').read_text(),'matched HC manual\n')
-        self.assertEqual(json.loads((target/'.local/share/hc/openrpc.json').read_text())['openrpc'],'1.3.2')
+        self.assertFalse((target/'.local/share/hc/openrpc.json').exists())
+        self.assertNotIn('schema_sha256', json.loads((target/'.local/share/hc/provenance.json').read_text()))
         self.assertEqual(json.loads((target/'.local/share/hc/manifest.json').read_text()),self.manifest)
         before=list(self.urls)
         again=runtime.install_hc(target,fetch=self.fetch,manifest=self.manifest,platform_name='darwin-arm64')

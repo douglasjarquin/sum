@@ -74,9 +74,9 @@ func startNative(s *store.Store, ctx *ordjson.Object, runtimeRoot, taskID, brief
 	if _, err = s.CheckClaim(token); err != nil {
 		return nil, err
 	}
-	route, err = hcboot.EnsureWorkspaceRoute(s, runtimeRoot)
+	route, err = hcboot.EnsureWorkspaceRoute(s)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("task %s attempt %s: %w", taskID, asString(policyField(worker, "id")), err)
 	}
 	unlock, err = s.Lock()
 	if err != nil {

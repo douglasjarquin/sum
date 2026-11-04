@@ -274,6 +274,7 @@ func TestDoctorObservesExistingCoreWithoutInputOrStart(t *testing.T) {
 	runtime := t.TempDir()
 	s := doctorStore(t)
 	f := hctest.New(t)
+	f.SetVersion("0.1.17")
 	client := f.Client()
 	terminal, err := client.Run(context.Background(), hcclient.RunParams{Argv: []string{"fixture"}, Cwd: runtime})
 	if err != nil {

@@ -82,30 +82,6 @@ func (r Route) same(other Route) bool {
 	return r.Socket == other.Socket && r.Session == other.Session && r.ConfigHome == other.ConfigHome && r.StateHome == other.StateHome && r.RuntimeDir == other.RuntimeDir
 }
 
-func (r Route) environment() []string {
-	env := childEnv()
-	values := map[string]string{"HC_SOCKET": r.Socket, "HC_SESSION": r.Session, "XDG_CONFIG_HOME": r.ConfigHome, "XDG_STATE_HOME": r.StateHome, "XDG_RUNTIME_DIR": r.RuntimeDir}
-	var result []string
-	for _, entry := range env {
-		skip := false
-		for key := range values {
-			if len(entry) > len(key) && entry[:len(key)+1] == key+"=" {
-				skip = true
-				break
-			}
-		}
-		if !skip {
-			result = append(result, entry)
-		}
-	}
-	for key, value := range values {
-		if value != "" {
-			result = append(result, key+"="+value)
-		}
-	}
-	return result
-}
-
 func (r Route) compatibility() (listening bool, hello hcclient.HelloResult, err error) {
 	if _, err := os.Stat(r.Socket); os.IsNotExist(err) {
 		return false, hello, nil
@@ -121,8 +97,8 @@ func (r Route) compatibility() (listening bool, hello hcclient.HelloResult, err 
 		}
 		return false, hello, err
 	}
-	if hello.Version != contract.HCVersion {
-		return true, hello, fmt.Errorf("default HC core at %s runs herdr-core %s; this release requires %s and does not restart or replace the user's core", r.Socket, hello.Version, contract.HCVersion)
+	if !contract.HCCompatible(hello.Version, int(hello.Generation)) {
+		return true, hello, fmt.Errorf("default HC core at %s runs herdr-core %s; this release requires at least %s and does not restart or replace the user's core", r.Socket, hello.Version, contract.HCVersion)
 	}
 	if r.CoreID != "" && hello.Core.ID != r.CoreID {
 		return true, hello, fmt.Errorf("selected core changed: expected %s observed %s", r.CoreID, hello.Core.ID)

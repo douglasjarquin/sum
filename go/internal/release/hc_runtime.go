@@ -57,7 +57,6 @@ func VerifyHCRuntime(ctx context.Context, target string) error {
 		Archive    string `json:"archive_sha256"`
 		Binary     string `json:"binary"`
 		BinaryHash string `json:"binary_sha256"`
-		SchemaHash string `json:"schema_sha256"`
 		ManualHash string `json:"manual_sha256"`
 	}
 	if err = read(filepath.Join(docs, "provenance.json"), &receipt); err != nil {
@@ -67,7 +66,8 @@ func VerifyHCRuntime(ctx context.Context, target string) error {
 	key := platforms[receipt.Platform]
 	targets, _ := pinned["targets"].(map[string]any)
 	pin, _ := targets[key].(map[string]any)
-	if receipt.Version != contract.HCVersion || receipt.Generation != contract.HCGeneration || receipt.Source != "29e6d375623de40cb4820e0894aa131ba057b796" || key == "" || receipt.Platform != nativePlatform() || !sha256Hex.MatchString(receipt.Archive) || pin["sha256"] != receipt.Archive || pin["url"] != "https://releases.herdr.dev/core/"+contract.HCVersion+"/herdr-core-"+key+".tar.gz" || pinned["version"] != contract.HCVersion || pinned["generation"] != float64(contract.HCGeneration) {
+	version, _ := pinned["version"].(string)
+	if version == "" || receipt.Version != version || receipt.Generation != contract.HCGeneration || !sourceCommitHex.MatchString(receipt.Source) || key == "" || receipt.Platform != nativePlatform() || !sha256Hex.MatchString(receipt.Archive) || pin["sha256"] != receipt.Archive || pin["url"] != "https://releases.herdr.dev/core/"+version+"/herdr-core-"+key+".tar.gz" || pinned["generation"] != float64(contract.HCGeneration) {
 		return fmt.Errorf("HC provenance does not identify the selected published artifact")
 	}
 	if releaseManifest != nil {
@@ -89,7 +89,7 @@ func VerifyHCRuntime(ctx context.Context, target string) error {
 	if err != nil || binary != expected || !isExecutable(binary) {
 		return fmt.Errorf("HC executable differs from matched contract")
 	}
-	for _, member := range []struct{ path, hash string }{{binary, receipt.BinaryHash}, {filepath.Join(docs, "openrpc.json"), receipt.SchemaHash}, {filepath.Join(docs, "manual.md"), receipt.ManualHash}} {
+	for _, member := range []struct{ path, hash string }{{binary, receipt.BinaryHash}, {filepath.Join(docs, "manual.md"), receipt.ManualHash}} {
 		hash, err := Sha256File(member.path)
 		if err != nil || hash != member.hash || len(hash) != 64 {
 			return fmt.Errorf("HC artifact or matched contract checksum differs: %s", member.path)
@@ -99,7 +99,7 @@ func VerifyHCRuntime(ctx context.Context, target string) error {
 		args     []string
 		expected string
 		hash     bool
-	}{{[]string{"--version"}, "hc " + contract.HCVersion, false}, {[]string{"schema"}, receipt.SchemaHash, true}, {[]string{"--skill"}, receipt.ManualHash, true}} {
+	}{{[]string{"--version"}, "hc " + version, false}, {[]string{"--skill"}, receipt.ManualHash, true}} {
 		result, err := proc.RunContext(ctx, proc.Cmd{Argv: append([]string{binary}, check.args...), Dir: target, Env: proc.ScrubbedEnv(), Timeout: 20 * time.Second})
 		if err != nil || result.Code != 0 {
 			return fmt.Errorf("HC artifact contract command failed: %v", err)
@@ -117,3 +117,5 @@ func VerifyHCRuntime(ctx context.Context, target string) error {
 }
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+var sourceCommitHex = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)

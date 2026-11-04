@@ -33,7 +33,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
         <div>./bin/sumctl release stage            <span class="c"># builds .local/releases/&lt;sha&gt; for HEAD; nothing is activated</span></div>
         <div>./bin/sumctl release list</div>
       </div>
-      <p>A release holds the committed Sum tree, native helper, exact published HC 0.1.14, matched manual/template and checksummed manifest. Rollback checks actual target binary capabilities. Legacy schema-one installations remain preserved; live migration is unavailable. Start independently in a fresh clone and use sumctl history for read-only records. An old runtime cannot reactivate an inactive archive. Compatible HC-to-HC updates remain separate from shared-core upgrades.</p>
+      <p>A release holds the committed Sum tree, native helper, bundled published HC 0.1.14, matched manual/template and checksummed manifest. Rollback checks actual target binary capabilities. Legacy schema-one installations remain preserved; live migration is unavailable. Start independently in a fresh clone and use sumctl history for read-only records. An old runtime cannot reactivate an inactive archive. Core compatibility requires generation 1 at or above 0.1.14. Known-good promotion checks the serving helper's contract floors and stable entrypoint without rechecking its HC artifact. The first activation of this behavior uses the documented bootstrap driver. Shared-core upgrades remain separate.</p>
     </div>
   </div>
 </DocsLayout>

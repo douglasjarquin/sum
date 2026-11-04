@@ -410,6 +410,20 @@ func TestApply_reconcilesStaleKnownGoodThenActivatesPulledSHA(t *testing.T) {
 		t.Fatalf("runtime moved before apply: %s, want %s", got, lab.newSHA)
 	}
 
+	servingRoot := filepath.Join(lab.root, ".local/releases", lab.newSHA)
+	marker := filepath.Join(lab.root, "outgoing-hc-executed")
+	if err := os.WriteFile(filepath.Join(servingRoot, ".local/bin/hc"), []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 99\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(servingRoot, ".local/share/hc/manual.md"), []byte("tampered outgoing manual"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Errorf("outgoing HC executed: %v", err)
+		}
+	})
+
 	view, err := Apply(lab.store, lab.ctx, next, true)
 	assertNoRecoveryHistoryRefusal(t, err)
 	if err != nil {
