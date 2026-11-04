@@ -33,4 +33,4 @@ Choose the next bounded action from current evidence: continue direct work, stee
 For a completed assignment, read and preserve the report, then close the exact owned worker under [Finish](../sum-finish/SKILL.md).
 Use a fresh worker for subsequent fixes or review, carrying forward saved findings and the current candidate.
 Record the actual result and next action in the note.
-Use [Finish](../sum-finish/SKILL.md) only after final-candidate obligations are accounted for.
+Use [Finish](../sum-finish/SKILL.md) for final delivery only after final-candidate obligations are accounted for; completed-worker cleanup happens when its report is collected.
