@@ -17,10 +17,13 @@ policy_files = ["skills/"]
 commands = ["git", "mise", "go", "python3", "node", "aube"]
 ```
 
-## Setup and readiness
+## Setup
 
 Use the pinned tools with `mise install go python node aube` for repository development.
 No Sum runtime is built or installed.
+
+## Readiness
+
 Run from this repository root; `mise tasks ls` must resolve verify here.
 `python3 .agents/skills/verify/scripts/verify_run.py --check` checks prerequisites without executing the aggregate.
 Limit mise to relevant tools with `MISE_ENABLE_TOOLS=go,python,node,aube`.
@@ -42,7 +45,7 @@ Use `MISE_ENABLE_TOOLS=go,python,node,aube python3 .agents/skills/verify/scripts
 GitHub Actions uses the same canonical runner and separately runs the website E2E build workflow.
 A passing hosted job is not authenticated native workflow acceptance.
 
-## Scenarios and acceptance limits
+## Scenarios
 
 The maps under docs/features/ distinguish automated package/tool behavior from manual native conversations.
 Rows marked manual remain not-run unless actually exercised and reported with --scenario.
@@ -50,19 +53,26 @@ Rows marked manual remain not-run unless actually exercised and reported with --
 Static instructions, CLI help, model-free fixtures, and native done status cannot prove native messages reached an authenticated lead.
 Do not infer qualification from version strings.
 
-## Isolation and teardown
+## Isolation
 
 Tests use disposable repositories and ephemeral processes/ports.
 The Git fixture wrapper gives child test commands a private unsigned fixture identity and retained config under .artifacts/test-git/.
 No live Sum installation, credentials, shared HC core, or user's default HC session is used.
 For native lifecycle exercises follow upstream isolated-session guidance with a distinct HC_SESSION and scratch XDG paths.
 Preserve reports/output before exact owned-process cleanup; do not remove unfinished work or restart shared cores.
-Offline checks leave no intended long-running services.
 
-## Artifacts and policy
+## Teardown
+
+Offline checks leave no intended long-running services.
+Retain run logs and helper reports before removing any exact task-owned temporary process.
+
+## Artifacts
 
 Each run records candidate SHA, dirty state, command, outcomes, policy changes, and unrun scenarios under .artifacts/verification/ with a retained verify.log.
 Before/after evidence lives under .artifacts/evidence/ when explicitly captured.
+
+## Policy
+
 A dirty-tree result is provisional; a policy-changing candidate requires independent root review and cannot certify its own new standard.
 Changes to VERIFY.md, mise tasks, feature maps, portable verification skills, CI, AGENTS.md, or declared skills policy must be reviewed independently against --base.
 Base policy paths stay protected even when the candidate removes them.
