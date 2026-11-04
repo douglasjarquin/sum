@@ -1,21 +1,25 @@
 # Task
 
-## Approved outcome
-What the user explicitly asked for; include the issue URL when applicable.
+## Goal and authority
 
-## Scope and non-goals
-What may change, what must not change, and the approved repository/base.
+Approved goal, scope, user-selected harness/model/permissions, and standing decisions:
 
-## Acceptance criteria
-Observable conditions that make the result correct.
+## Source and candidate
 
-## Verification
-Existing repository commands, expected test coverage, and independent-review expectations.
+Repository, worktree, branch, and candidate/snapshot:
+Relevant dirty/untracked inputs and how they remain frozen for review/checks:
+Task record location outside disposable worktrees:
 
-## Decisions and constraints
-Known compatibility requirements, risk areas, account/harness restrictions, and what requires asking the user.
-When this task implements a prior investigation, cite that task id and `report.md` and do not redo the investigation.
+## Helpers and checks
 
-## Deliverable
-A committed candidate and evidence-bearing report, or an investigation report for a scout task.
-The user retains merge authority.
+| Role or command | Exact native address and immediate parent | Candidate | Report/output and exit status | Disposition |
+| --- | --- | --- | --- | --- |
+
+## Decisions
+
+| Question | Actual answer and source | Open / answered / applied | Application evidence |
+| --- | --- | --- | --- |
+
+## Remaining work
+
+Required results, unresolved findings, limitations, and next action:

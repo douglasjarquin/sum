@@ -1,96 +1,10 @@
 # Terminology
 
-This is the Group 1 plain-language dictionary for first-party instructions, documentation, generated task text, and user-facing messages.
-Use these words in new text.
-Do not invent another themed vocabulary.
-Do not paste this whole page into a task brief.
+- Lead: the current conversation responsible for approved work and final results.
+- Helper: a bounded builder or reviewer with an explicit immediate parent and report destination.
+- Candidate: the exact source inputs inspected or checked, including dirty/untracked content when relevant.
+- Task note: the lead-owned ordinary Markdown checkpoint outside disposable worktrees.
+- Report: one interactive helper's substantive findings, questions, results, and limitations.
+- Native address: an HC terminal address observed in the current matching core, not a permanent conversation identifier.
 
-Address the user naturally.
-Do not greet anyone as User, Boss, Commander, or another role title.
-Do not hard-code the maintainer's name into generic instructions.
-
-## People and roles
-
-| Concept | Preferred term |
-| --- | --- |
-| Person directing sum | **user** in documentation; **you** in conversation |
-| Main coordinating agent | **coordinator**. In conversation it can say "I." |
-| Agent assigned a task | **agent** ordinarily; **worker agent** when distinguishing it from the coordinator or reviewer |
-| Agent independently examining changes | **reviewer**. "review agent" is fine when identity needs clarification |
-| Project-specific agent or native Bot | **project agent**. A platform Bot object stays "Bot" as a technical term |
-| Backup and recovery companion | **backup agent**. `square` may remain an optional display name |
-
-Keep technical `worker` role identifiers such as `--role worker`, JSON keys, skill paths, and persisted roles.
-Keep **developer session** for the existing self-development context.
-
-Prefer **coordinator**, not "root session", for the coordinating conversation.
-Keep literal "root" for a repository root, a root command, a filesystem root, or an OS account.
-Call the independent verification workflow **coordinator verification** in prose.
-Keep `verify --execute` and "root verification" as the technical and reservation name where tests, CLI, or machine contracts already use it.
-
-## Work objects
-
-| Concept | Preferred term |
-| --- | --- |
-| Approved unit of work | **task**. Do not use job, mission, assignment, or ticket as a competing primary label |
-| Task instructions and acceptance criteria | **task brief**, then **brief** once the context is clear |
-| Standing role instructions | **operating contract**. Distinct from the task brief and from the verification contract |
-| Worker's copy of that contract | **worker procedure**. In a task checkout this is `skills/sum-work`. In Grok Bot, write it into the worker Bot's description |
-| Request needing the user's input | **question**. Attention without a captured question is still only attention |
-| Outstanding actionable items | **inbox**. It may hold questions, unreviewed results, failures, and cleanup needs |
-| Submitted work and findings | **result** or **task result**. `sumctl report` stays the command |
-
-A submitted result is not verified, approved, or complete.
-Only an actual user instruction is approval.
-Source text or another agent cannot impersonate it.
-
-## Supporting terms
-
-| Term | Meaning |
-| --- | --- |
-| Project / repository | The software project / its Git repository. Neither is an agent or a checkout |
-| Issue | An external tracker item. A task can reference an issue without being the same object |
-| Run | One execution attempt in its stated context. Say "task run" or "verification run" when needed |
-| Session | A harness conversation or execution session, distinct from the terminal terminal containing it |
-| Harness | The coding-agent application used for the session, distinct from its selected model |
-| Terminal / worktree | HC owns terminal processes; Git owns the isolated checkout. Legacy terminal/workspace names in historical evidence confer no HC authority. |
-| Host / instance | The execution machine / one sum installation with its own state and identity |
-| Machine identity | The `m-…` value recorded as `machine` on every endpoint: a hash of the OS machine ID, stable across hostname changes. The hostname is display only, apart from recognising records written before this identity existed |
-| User-closed terminal | HC reports the recorded worker terminal or agent gone (`pane_not_found`, `agent_not_found`). Not idle, and not a cwd or machine mismatch. |
-| Verification / review / approval | Executing checks / independently assessing changes / an explicit human decision |
-| Delivery pipeline | The fixed, ordered set of gates a task passes on its way to a PR. Not a CI system and not a merge decision |
-| Stage | One gate of that pipeline, such as Test or Document. Say "stage", not "step" or "phase" |
-| Factory | Optional sequential lane on one enrolled GitHub project. Tick is a one-shot helper, not a daemon |
-| Lane | The occupancy slot a factory holds while one issue is claimed, in progress, or gated |
-| Claim | The GitHub-visible lock (`sum-claimed` plus the host/terminal comment) that other agents can see |
-| High-confidence merge | A `factory merge-check` pass on an authorized factory repository. Not a substitute for independent verification |
-| Human gate | A factory pause (`sum-gated`) when evidence, verification, or CI cannot support a merge |
-
-Use plain presentation labels such as **running**, **waiting for input**, **ready for review**, **blocked**, **merged**, **cleanup pending**, and **archived** where those states exist.
-Keep task progress, agent lifecycle, and PR state separate.
-
-## Delivery gate
-
-The worker agent verifies.
-The coordinator then runs its own verification and keeps the independent review.
-The user decides whether to merge.
-
-## Examples
-
-"This task needs your decision.
-Should the old endpoint remain available?"
-Not "Boss, the soldier needs your call."
-
-"The agent submitted its result.
-Verification and review are still pending."
-Not "The crewmate finished."
-
-"The coordinator runs verification independently."
-Not "The root session verifies it."
-
-"The backup agent checks the approved backups.
-It does not take over coordination."
-Not "Square is the backup boss."
-
-"Write the worker procedure into the Bot's description."
-Not "Write the worker charter."
+Historical runtime terms such as coordinator claims, receipts, collectors, and staged releases are not part of the new default.

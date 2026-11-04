@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-#MISE description="Canonical aggregate verification: Go CLI, Python HC/setup/packaging contracts, and the web site (see VERIFY.md)"
+#MISE description="Verify instruction packaging, portable tools, Bot contracts, and website"
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$(dirname "$(mise which go)"):$(dirname "$(mise which python)"):${PATH:-}"
 unset GOROOT
-mkdir -p .local/bin
-(cd go && go build -trimpath -buildvcs=true -o ../.local/bin/sumctl ./cmd/sumctl && python3 ../scripts/fixture_git_env.py -- go test ./...)
+(cd tests/portable && python3 ../../scripts/fixture_git_env.py -- go test ./...)
 python3 scripts/fixture_git_env.py -- python3 -m unittest discover -s tests -p 'test_*.py'
 aube -C web install --frozen-lockfile
 aube -C web run check
