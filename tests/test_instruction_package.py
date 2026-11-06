@@ -69,7 +69,20 @@ class InstructionPackageTest(unittest.TestCase):
         baseline_bots = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", baseline, "--", "grok-bots"], cwd=ROOT, text=True).splitlines()
         candidate_bots = subprocess.check_output(["git", "ls-files", "grok-bots"], cwd=ROOT, text=True).splitlines()
         self.assertEqual(set(candidate_bots), set(baseline_bots))
+        authorized_grok_text = {
+            "GROK_SUM.md", "GROK_SQUARE.md", "grok-bots/README.md",
+            "grok-bots/sum/README.md", "grok-bots/sum/instructions.md",
+            "grok-bots/sum/memories.md", "grok-bots/sum/worker-procedure.md",
+            "grok-bots/sum/permissions.md", "grok-bots/sum/action-log.md",
+            "grok-bots/sum/routines.md",
+            "grok-bots/square/README.md", "grok-bots/square/instructions.md",
+            "grok-bots/square/memories.md", "grok-bots/square/worker-procedure.md",
+            "grok-bots/square/routines.md",
+            *("grok-bots/sum/skills/" + name + "/SKILL.md" for name in
+              ("dispatch", "persist", "verify", "status", "recap", "deliver", "sweep", "factory")),
+        }
         paths += baseline_bots
+        paths = [path for path in paths if path not in authorized_grok_text]
         for path in paths:
             original = subprocess.check_output(["git", "show", baseline + ":" + path], cwd=ROOT)
             self.assertEqual((ROOT / path).read_bytes(), original, path)

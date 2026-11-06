@@ -37,6 +37,7 @@ RECIPE_FILES = (
     "skills/recap/SKILL.md",
     "skills/deliver/SKILL.md",
     "skills/sweep/SKILL.md",
+    "skills/factory/SKILL.md",
 )
 SQUARE_RECIPE_FILES = (
     "README.md",
@@ -54,6 +55,7 @@ PACK_SKILLS = (
     "Recap",
     "Deliver",
     "Sweep",
+    "Factory",
 )
 REMOVED_SKILLS = (
     "sitdown",
@@ -120,7 +122,7 @@ class OperatingFilesTest(unittest.TestCase):
         text = (GROK_BOT / "README.md").read_text()
         self.assertIn("GROK_SUM.md", text)
         self.assertIn("| `avatar.jpg` | GrokBot profile image |", text)
-        self.assertIn("Recap, Deliver, Sweep, and Factory", text)
+        self.assertIn("Sum Recap, Sum Deliver, Sum Sweep, and Sum Factory", text)
         self.assertNotIn("What you paste", text)
         self.assertNotIn("Paste `instructions.md`", text)
 
@@ -259,12 +261,12 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("event listeners", text)
         self.assertIn("liaison", text)
 
-    def test_secrets_are_per_bot_and_never_forwarded(self):
+    def test_shared_account_boundaries_and_secure_entry_never_forward_secrets(self):
         instructions = (GROK_BOT / "instructions.md").read_text()
         memories = (GROK_BOT / "memories.md").read_text()
         combined = instructions + "\n" + memories
         folded = combined.casefold()
-        self.assertIn("per-bot", folded)
+        self.assertIn("not per-bot security isolation", folded)
         self.assertIn("workers request their own secret cards", folded)
         self.assertIn("never holds, pastes, or forwards secrets", folded)
         self.assertIn("do not keep work in the coordinator chat to avoid a handoff", folded)
@@ -365,11 +367,11 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("Do not message the user unless Sum asks", text)
         self.assertIn("The user merges", text)
 
-    def test_square_routines_preserve_schedules(self):
+    def test_square_routines_preserve_private_schedule_authority(self):
         text = (SQUARE_PACK / "routines.md").read_text()
-        self.assertIn("0 8 * * 1-5", text)
-        self.assertIn("0 9-17 * * 1-5", text)
-        self.assertIn("0 9 * * 1", text)
+        self.assertIn("confirmed", text)
+        self.assertIn("schedule/timezone", text)
+        self.assertIn("enabled/paused state", text)
         self.assertIn("You are Square", text)
         self.assertIn("report the review to Sum", text)
 
