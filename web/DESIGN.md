@@ -62,7 +62,7 @@ Font URL is exactly `css2?family=JetBrains+Mono:wght@400;500;600&family=Instrume
 - `.band` spans the page width with a bottom rule; `.cells` is a bordered inset grid for use inside prose; `.grid3` is the bordered 3-up grid (gate cells).
 - Doc sections: `.sec` = `padding:28px 0; border-top:1px solid var(--rule)`.
 - Docs shell `.shell`: sidebar `flex:1 1 220px`, content `flex:999 1 480px`, prose column capped at `.doc` 760px.
-- Code blocks are bordered divs (`.codeblock`) of `white-space:pre` lines — no `pre`+button chrome, no copy control.
+- Code blocks use semantic `pre` and language-tagged `code` elements with `.codeblock` borders and preserved whitespace — no button chrome or copy control.
 
 ## Elements
 

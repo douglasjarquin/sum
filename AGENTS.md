@@ -35,3 +35,11 @@ Read the procedure for the current action:
 Keep a small [task note](templates/task.md) and separate helper reports outside disposable worktrees.
 Repository development uses [VERIFY.md](VERIFY.md); it is optional tooling, not ordinary startup.
 The excluded [Grok Bot packs](docs/legacy.md) are a separate legacy product with their existing contracts.
+
+## Repository development knowledge
+
+Compound Engineering artifacts use `docs/`; consult relevant `docs/solutions/` learnings before changing previously solved behavior.
+After a nontrivial fix, capture reusable repository lessons there when appropriate, keeping secrets and machine-local scratch out of committed artifacts.
+Use the `ce-noslop` writing guidance when available, preserving the user's requested voice and the repository's sentence-per-line Markdown convention.
+Team defaults and the development house-rules pack are declared in `.compound-engineering/config.yaml`.
+They preserve the current implementation harness and disable automatic cross-provider review; an explicit user request can select another reviewer.

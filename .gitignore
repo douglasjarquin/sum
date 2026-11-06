@@ -28,6 +28,10 @@ opencode.json
 # Codex omo ultrawork local state (never product).
 .omo/
 
+# Compound Engineering machine-local overrides and scratch state.
+.compound-engineering/*.local.yaml
+.context/compound-engineering/
+
 # Web build and test output under web/.
 web/node_modules/
 web/dist/
