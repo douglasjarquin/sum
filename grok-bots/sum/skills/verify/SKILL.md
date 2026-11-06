@@ -7,13 +7,13 @@ description: Run a distinct coordinator verification of a worker result. Use whe
 
 ## When to use it
 
-A worker wrote `/workspace/sum/tasks/<id>/report.md`.
+A worker wrote the brief's recorded report_destination (default `/workspace/sum/tasks/<id>/report.md`).
 Use this before delivery and before telling the user the task is done.
 Idle is not done.
 
 ## Required inputs and access
 
-The task brief, the report, and the actual diff or findings.
+The task brief, the worker-owned report at its recorded report_destination, and the actual diff or findings.
 The task's acceptance criteria and evidence appropriate to its kind.
 For code, the repository's required commands and a frozen checkout separate from the worker's still-writing session.
 Identify the exact commit plus hashes/snapshot of any relevant dirty/untracked inputs; preferably commit and freeze all delivery inputs.

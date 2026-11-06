@@ -85,3 +85,16 @@ Readiness and targeted results, final aggregate, lint, maintenance audit, review
 Manual acceptance remains Not run for every row of issue #354: fresh personal/shared setup, repeat installation, complete/partial update, specialist reuse, question round trip, empty/failed result, safe retry, lost acknowledgement, shared worker identities, daily cap, allocation after gaps, cancellation, native code review/delivery, non-code delivery, scope conflict, failed backup push, scoped restore, and unsupported dependencies.
 The isolated backup/restore steps use synthetic data and explicit user-chosen destinations; this implementation does not perform them.
 No live workflow, verbatim memory retention, exactly-once execution, deployment readiness, or remote backup success is claimed.
+
+## Developer review and corrections
+
+The initial committed candidate `6bedc88a12710cfea03199cbbab6f03134393a8b` passed the canonical aggregate, all 73 Python checks, portable Go checks, Astro checks, four website unit tests, build/route assertions, lint, and the maintenance audit.
+The run reported 51 automated mapped scenarios passing and 24 manual scenarios not run, with no self-certification because the Bot coverage map changed.
+
+Independent developer review and validation confirmed six source-contract gaps: originating conversation/return route, specialist report path, isolated Cloud Agent context/run identity, non-code branching, first-time Square creation, and adoption of unrecorded legacy skills/routines.
+The corrected instructions explicitly record those identities and routes, consume the worker-owned report_destination, branch before code-only prerequisites, and provide safe user-confirmed adoption and first-time creation steps.
+Square also requires the approved scope manifest in the remote backup commit so restore verification does not depend on the lost original computer.
+Workers wait for a correlated pre-effect logging/authority acknowledgement, and Dispatch explicitly queues rather than overwrites a worker's active assignment.
+These corrections fill the approved issue requirements and preserve permission restrictions; they do not grant live deployment authority.
+The final corrected candidate's refreshed checks and separate follow-up review are reported in the PR rather than inferred from the initial run.
+Historical invariant seed coverage remains limited to its retained traces; it does not execute the new operation/attempt recovery procedure.

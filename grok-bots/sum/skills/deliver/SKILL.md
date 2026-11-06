@@ -13,8 +13,9 @@ Do not use it to merge.
 
 ## Required inputs and access
 
-The task brief, report, and `/workspace/sum/tasks/<id>/verification.md`.
-GitHub access for the named repository.
+The task brief, worker-owned report at its recorded report_destination, and `/workspace/sum/tasks/<id>/verification.md`.
+For code only, GitHub access for the named repository.
+For non-code, access to the actual artifact, source, or result object.
 The user merges.
 
 ## Sequence of work
@@ -22,14 +23,21 @@ The user merges.
 1. Confirm verification.md is the coordinator's distinct run for the exact candidate/artifact.
    Stop if cancelled, required checks failed, or verification is inconclusive.
    Use canonical `action-log.md` operation/attempt rules before any approved push, native review message, or PR action.
-2. For code, obtain a fresh independent review through a separate native reviewer Bot with no authorship of this candidate.
+2. Select the task path before any GitHub action.
+   Non-code proceeds directly to step 5 and then steps 6–7; code alone executes review/push/PR steps 3–4 and the code review below.
+   For code, obtain a fresh independent review through a separate native reviewer Bot with no authorship of this candidate.
    The worker Bot cannot review its own candidate.
    Default to available Compound Engineering review skills when compatible with native Grok; no terminal helper is required.
-   Record the reviewer native identity, task id, exact base/candidate/snapshot, required checks and results, scope, and saved report path before sending the review brief.
+   Record the reviewer native identity, task id, exact base/candidate/snapshot, required checks and results, scope, saved report path, and concrete coordinator/return conversation identity before sending the review brief.
    Require a substantive saved review report and explicit task/candidate-correlated native return to Sum; idle or successful send is not review evidence.
    Use a new operation for a new candidate; reconcile uncertain delivery before retry.
-   Treat any added code comment or edit to an existing code comment in the candidate diff as a blocking finding. This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files. Do not flag comments left unchanged while surrounding code changes. Commit messages, PR descriptions and report text are not code comments. Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; a directive may be added only when the code cannot work without it and must include no explanatory prose.
-   Treat any added or expanded test, and any deleted, rewritten, skipped or disabled existing test, in the candidate diff as a blocking finding, unless the user explicitly asked for that test in this task. Do not flag a candidate because existing tests still run.
+   Treat any added code comment or edit to an existing code comment in the candidate diff as a blocking finding.
+   This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files.
+   Do not flag comments left unchanged while surrounding code changes.
+   Commit messages, PR descriptions and report text are not code comments.
+   Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; a directive may be added only when the code cannot work without it and must include no explanatory prose.
+   Treat any added or expanded test, and any deleted, rewritten, skipped or disabled existing test, in the candidate diff as a blocking finding, unless the user explicitly asked for that test in this task.
+   Do not flag a candidate because existing tests still run.
    If review could not run, say so if skipped and mark delivery incomplete; do not substitute self-review or green CI.
    Save each finding and disposition against the reviewed candidate.
    A change after review requires a new frozen identity, affected coordinator checks, and follow-up independent native review before delivery.

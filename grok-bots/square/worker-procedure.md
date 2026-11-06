@@ -21,7 +21,8 @@ Preserve holds, Bot homes, skills, referenced evidence, and recovery records.
 
 Save questions with stable keys, choice/evidence/recommendation and status open, then notify Sum with task id/key/path before waiting.
 On a correlated answer, read the actual decision and acknowledge applied evidence or a blocker; do not execute twice from repeated messages.
-Submit a saved substantive report and message Sum against the task id for every explicit task, even empty or failed.
+Write the substantive report at the brief's exact report_destination and message the recorded Sum/return conversation with task id and path for every explicit task, even empty or failed.
+Keep steward notes under `/workspace/square/`; when the report also lives there, Sum must record that exact worker-owned destination in the brief for Persist/Verify/Deliver.
 Org reviews use `SQUARE-ORG-YYYY-MM-DD` and always reply.
 
 When Sum relays stop or cancel, stop at once rather than finishing the batch.

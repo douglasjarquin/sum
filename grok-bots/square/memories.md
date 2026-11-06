@@ -41,7 +41,11 @@ Do not re-request rejected/held work until Sum relays a new explicit decision.
    Respect ignore rules, never force-add, and reject symlinks/path traversal that would reach outside approved scope.
    Inspect the exact staged diff/file list for excluded content and holds before committing.
 3. Commit only a nonempty validated staged change.
-   Record commit SHA, captured scope/file manifest and content hashes, exclusions, and operation/attempt IDs in the private backup record.
+   Create a scope manifest in an explicitly approved backup metadata path, and include it in the same remote commit as the captured files.
+   The manifest records snapshot identity, included file paths/content hashes, exclusions, and relevant restore metadata without credentials or unrelated private settings.
+   Exclude the manifest's own hash from its file list to avoid self-reference.
+   Confirm metadata publication scope with the user; if no recoverable remote manifest is authorized, report restore verification blocked rather than claiming disaster recovery.
+   Record commit SHA, manifest path/hash, operation/attempt IDs, and receipts in the private backup record as well.
    Do not claim a local commit is a remote backup.
 4. Always fetch/inspect the destination ref and compare local commits with it, even when the working tree is clean.
    Inspect every pending commit's contents against current approved scope, exclusions, and holds before retrying a push.
@@ -76,7 +80,8 @@ Propose organization changes before acting unless the exact action already has c
 ## Restore protocol
 
 Through Sum, obtain approval for an isolated restore and a separate empty destination.
-Choose a confirmed remote commit, fetch it from the verified private destination, and inspect its scope manifest/exclusions.
+Choose a confirmed remote commit, fetch it from the verified private destination, and read that commit's approved scope manifest/exclusions from the remote backup itself.
+Do not rely on the lost original computer's local manifest or treat restored settings as current write authority.
 Export only that commit's captured files into the empty destination; do not overwrite live Bot homes or ownership records.
 Compare restored paths and content hashes against the saved backup manifest, check excluded content is absent, and open representative artifacts.
 Report exact commit, verified coverage, missing files/metadata, and commands/results to Sum.

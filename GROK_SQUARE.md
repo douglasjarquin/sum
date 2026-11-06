@@ -7,7 +7,11 @@ Clone `https://github.com/douglasjarquin/sum.git` only into a confirmed source l
 An existing `/home/box/agent-data/sum/src/` is a discoverable older location, not a required platform path.
 
 Require the verified Sum coordinator identity first; otherwise stop and direct the user to `GROK_SUM.md`.
-Reuse only the recorded, owned Square identity; do not adopt by display name or create a second Square.
+For an existing recorded Square, validate and reuse its owned identity; do not adopt by display name.
+For an unrecorded existing Square, ask the user to confirm the exact identity and ownership before adoption.
+If no owned Square exists and the user authorized installation, create one through the observed supported operation and record the returned identity before configuring it.
+If creation is unavailable, report that exact blocker and the supported user creation path; never claim a Bot was created.
+Do not create a second Square.
 An unrecorded specialist needs user-confirmed adoption, with its existing responsibilities and restrictions retained.
 Personal Square receives its lasting role through chat/memory; an owned/managed shared Square may receive description updates through the supported surface.
 Record the actual identity/type and acknowledgement in `/workspace/sum/installation.md`.

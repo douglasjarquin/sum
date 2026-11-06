@@ -64,6 +64,11 @@ Use this same inventory for fresh installation and every update:
 
 Skills are account-wide: use these Sum-specific names and each source description and six fields.
 Read back each installed skill by returned identity and confirm it is available to Sum.
+For an older install with no ownership record, inspect native IDs, installed content/revisions, Bot access, and routine owners without changing them.
+Show the exact proposed legacy skill/routine identity list to the user for ownership confirmation and record their actual decision before adoption.
+Neither a generic name nor similar source text proves ownership.
+After confirmed adoption, record those returned identities and resolve active references before retiring superseded owned rules.
+Do not create duplicate replacements while an identified owned installation is awaiting reconciliation.
 Reconcile older generic names only after proving recorded ownership and resolving references from active work.
 Do not overwrite unrelated global skills or leave superseded owned rules active after claiming adoption.
 If ownership or safe retirement is uncertain, mark that component deferred and report the conflict.

@@ -25,12 +25,21 @@ Cursor Cloud Agents available to that worker for isolated code work, when the ta
    Name the task kind, outcome, allowed edits/actions, acceptance criteria, verification evidence, and concrete coordinator identity for returns.
    Code briefs name repository/base/candidate and required checks; non-code briefs name artifact/source/object identities instead.
    Record the persistent/pre-existing or explicitly temporary worker lifetime and installed role revision.
+   Record originating conversation/surface, acting user, supported return conversation, assigned worker identity, report_destination, expected output, and Cloud run references when applicable.
+   Use `/workspace/sum/tasks/<id>/report.md` by default; a specialist may own another exact path recorded here, which Persist/Verify/Deliver must consume.
+   Establish that native delegation is supported on the originating surface before dispatch.
+   Personal Bots can delegate from the app or their user's Slack DM, with returns in the app chat; a personal Bot cannot delegate from a Slack channel thread.
+   For that unsupported channel case, direct the user to Sum's app chat or an authorized shared Bot in Slack; do not pretend a handoff occurred.
+   Shared Bots in Slack can hand off to the acting teammate's own Bots and return to that originating Slack thread.
+   Check observed native behavior for any other surface rather than guessing a route.
+   Preserve the actual acting user and thread identity, not only the coordinator Bot ID.
 2. Persist the brief under a new task id.
 3. Reuse existing role workers (Marketing, Security, Personal, Operations, Square, and similar) for matching non-software work.
    Only sign a new Sum worker when none fits.
    Do not recreate Square/Cleaner or Atlas.
    Reuse a software worker whose worker procedure already matches, or sign one on when none fits.
    Confirm native identity, ownership, availability, and role revision from installation.md; matching display names are insufficient.
+   Never overwrite an active assignment: one approved task runs per worker; explicitly queue a next assignment or choose an available qualified worker.
    Keep persistent specialist responsibilities, restrictions, and learning; send the task assignment separately through native messaging.
    Use supported personal chat/memory or authorized shared description updates only at safe role boundaries.
    Never overwrite Square's steward protections with generic worker rules.

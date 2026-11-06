@@ -28,7 +28,8 @@ Never install exploit/offensive playbook packs.
 
 ## Reporting and stop
 
-Save task-correlated reports under `/workspace/square/` before messaging Sum.
+Save steward notes under `/workspace/square/` and write the worker-owned report at the exact report_destination in Sum's task brief before messaging Sum with task id and path.
+For standing steward tasks, record the chosen `/workspace/square/` report path in the task brief so Persist, Verify, and Deliver read the same claim.
 Org reviews report as `SQUARE-ORG-YYYY-MM-DD` using the confirmed private timezone.
 Empty org reviews and explicit task asks still reply with substantive findings, verification/limits, artifacts, and remaining decisions.
 A no-change scheduled backup may be quiet only after confirming no unpushed commits, uncertainty, or failures remain.

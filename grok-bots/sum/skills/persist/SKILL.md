@@ -28,7 +28,9 @@ Create it if it is missing.
    Keep status answered until the worker acknowledges and records applied evidence or a blocker; a sent message is not application.
    If notification fails, keep it pending in inbox.md for supported recovery.
    Cancelled tasks do not resume from an answer or late reply; require the user's explicit resume.
-6. For a worker result, require `/workspace/sum/tasks/<id>/report.md` written by the worker. Do not author or overwrite that claim. Add a line to `inbox.md` that verify is owed.
+6. For a worker result, read the brief's exact report_destination, defaulting to `/workspace/sum/tasks/<id>/report.md`, and require that worker-owned file.
+   Do not author or overwrite that claim.
+   A Square report may live under `/workspace/square/` only when that exact destination is recorded in the brief; all later verification and delivery read the same path. Add a line to `inbox.md` that verify is owed.
 7. After your verification run, write `/workspace/sum/tasks/<id>/verification.md` as that run, distinct from the report.
 8. Before an external side effect follow the canonical `action-log.md` identity, attempt state, reconciliation, and daily-cap rules.
    Do not copy a second dedupe algorithm here.
