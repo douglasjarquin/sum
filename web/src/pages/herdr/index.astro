@@ -9,12 +9,10 @@ import { repoBlob } from "../../lib/links.mjs";
     <p class="lede">Use the supported Herdr app and matching HC core. The ordinary agent in its HC-backed terminal is the native lead; Sum provides instructions rather than a transport layer.</p>
 <div class="sec">
 <h2>Actual lead identity</h2>
-<div class="codeblock">
-<div>hc --skill</div>
-<div>hc run --help</div>
-<div>hc send --help</div>
-<div>hc wait --help</div>
-</div><p>Require a nonempty actual <code>HC_TERMINAL_ID</code> before inspecting <code>hc get "$HC_TERMINAL_ID"</code>. Confirm the current agent and status against the matching core. Successful RPC connection can start HC’s own core but does not make a foreign conversation addressable.</p><p>Old Herdr TUI pane addresses such as <code>wJ5:p5</code> are not HC terminal addresses such as <code>t10</code>. Report missing prerequisites and use the supported native launch path.</p>
+<pre class="codeblock" data-language="sh"><code class="language-sh">{`hc --skill
+hc run --help
+hc send --help
+hc wait --help`}</code></pre><p>Require a nonempty actual <code>HC_TERMINAL_ID</code> before inspecting <code>hc get "$HC_TERMINAL_ID"</code>. Confirm the current agent and status against the matching core. Successful RPC connection can start HC’s own core but does not make a foreign conversation addressable.</p><p>Old Herdr TUI pane addresses such as <code>wJ5:p5</code> are not HC terminal addresses such as <code>t10</code>. Report missing prerequisites and use the supported native launch path.</p>
 </div>
 <div class="sec">
 <h2>Launch, report, and wait</h2>

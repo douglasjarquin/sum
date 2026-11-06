@@ -1,0 +1,11 @@
+docs_root: docs
+plan_output: md
+brainstorm_output: md
+ideate_output: md
+work_engine_mode: off
+cross_model_review_mode: off
+plan_skip_scoping_confirm: true
+pr_teaching_section: false
+auto_babysit: true
+packs:
+  - source: compound-packs/house-rules

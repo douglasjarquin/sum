@@ -49,7 +49,7 @@ a:hover{text-decoration:underline}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
 
 /* code & quote */
-.codeblock{border:1px solid var(--rule);padding:14px 18px;font-size:12px;line-height:1.75;overflow-x:auto;color:var(--ink)}
+.codeblock{border:1px solid var(--rule);padding:14px 18px;margin:0;font-family:var(--mono);font-size:12px;line-height:1.75;overflow-x:auto;color:var(--ink)}
 .codeblock>*{white-space:pre;margin:0}
 .codeblock .wrap{white-space:pre-wrap;word-break:break-all}
 .codeblock .c{color:var(--muted)}

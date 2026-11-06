@@ -12,6 +12,17 @@ const { title, foot = "docs" } = Astro.props;
 const asset = (name: string) => `${import.meta.env.BASE_URL}${name}`;
 const ogImage = new URL(asset("og-1200x630.png"), import.meta.env.SITE)
   .toString();
+const canonical = new URL(Astro.url.pathname, import.meta.env.SITE).toString();
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  name: "Sum",
+  description: "MIT-licensed working instructions for coding agents using native HC in Herdr.",
+  url: new URL(import.meta.env.BASE_URL, import.meta.env.SITE).toString(),
+  codeRepository: REPO_URL,
+  license: `${REPO_URL}/blob/main/LICENSE`,
+  isAccessibleForFree: true
+};
 ---
 
 <!doctype html>
@@ -24,6 +35,10 @@ const ogImage = new URL(asset("og-1200x630.png"), import.meta.env.SITE)
       content="Working instructions for your usual coding agent in an HC-backed Herdr terminal. Four procedures, native reports, and checked results."
     />
     <title>{title}</title>
+    <link rel="canonical" href={canonical} />
+    <link rel="sitemap" href={asset("sitemap-index.xml")} />
+    <link rel="alternate" type="text/plain" title="Agent documentation index" href={asset("llms.txt")} />
+    <script type="application/ld+json" set:html={JSON.stringify(structuredData).replace(/</g, "\\u003c")} />
     <link
       rel="icon"
       type="image/png"
@@ -80,6 +95,8 @@ const ogImage = new URL(asset("og-1200x630.png"), import.meta.env.SITE)
               Stands on Firstmate, Herdr, Oh My Pi, Solo, Unpeel, and others
             </span>
             <a href={sitePath("docs")}>Documentation</a>
+            <a href={`${sitePath()}#pricing`}>Cost &amp; license</a>
+            <a href={asset("llms.txt")}>llms.txt</a>
             <span class="grow" />
           </footer>
         )
@@ -89,6 +106,7 @@ const ogImage = new URL(asset("og-1200x630.png"), import.meta.env.SITE)
           <footer class="foot">
             <span>MIT</span>
             <a href={REPO_URL}>github.com/douglasjarquin/sum</a>
+            <a href={asset("llms.txt")}>llms.txt</a>
             <span class="grow" />
             <a href={sitePath()}>↑ home</a>
           </footer>

@@ -1,0 +1,26 @@
+# Sum
+
+> Sum is an MIT-licensed distribution of working instructions for coding agents using native HC in Herdr.
+> There is no Sum executable, service, hosted API, or paid plan.
+> Your chosen agent and infrastructure retain their own costs and account requirements.
+
+## Start
+
+- [Documentation](https://douglasjarquin.github.io/sum/docs/): Current product and procedure index.
+- [Start](https://douglasjarquin.github.io/sum/install/): Use an existing HC-backed Herdr terminal and launch the usual interactive coding agent; Codex requires --no-daemon.
+- [Native prerequisites](https://douglasjarquin.github.io/sum/herdr/): Real terminal identity, parentage, notifications, status support, and qualification limits.
+- [Skills](https://douglasjarquin.github.io/sum/skills/): Work, Review, Finish, and Resume.
+
+## Working conventions
+
+- [Architecture](https://douglasjarquin.github.io/sum/architecture/): Roles, isolated writers, and small durable task records.
+- [Verification](https://douglasjarquin.github.io/sum/verification/): Stable candidate checks, independent review, and unrun authenticated acceptance.
+- [Configuration](https://douglasjarquin.github.io/sum/configuration/): Preserve selected accounts, models, and permissions.
+- [Adoption and updates](https://douglasjarquin.github.io/sum/update/): Independent checkout adoption and between-session Git updates.
+
+## Canonical source
+
+- [Repository](https://github.com/douglasjarquin/sum): Instructions, portable developer tools, and the separately scoped Grok Bot packs.
+- [Entry contract](https://github.com/douglasjarquin/sum/blob/main/AGENTS.md): Read before starting approved work.
+- [Native acceptance](https://github.com/douglasjarquin/sum/blob/main/docs/ACCEPTANCE.md): Live scenarios require actual authenticated evidence; static checks are insufficient.
+- [Sitemap](https://douglasjarquin.github.io/sum/sitemap-index.xml): Published website routes.
