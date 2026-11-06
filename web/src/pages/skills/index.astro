@@ -6,13 +6,14 @@ import { repoBlob } from "../../lib/links.mjs";
 <DocsLayout title="Skills — sum">
   <div class="doc">
     <h1>Skills</h1>
-    <p class="lede">Four procedures keep action-specific detail out of the shared entry contract. Read AGENTS.md and the procedure for the current action.</p>
-<div class="kv lg" style="grid-template-columns:160px 1fr"><div class="k">/sum-work</div><div class="v">Implement directly or brief, launch, steer, and wait for bounded helpers. <a href={repoBlob("skills/sum-work/SKILL.md")}> Work ↗</a></div><div class="k">/sum-review</div><div class="v">Inspect a specified stable candidate independently; save findings and send them to the immediate parent. <a href={repoBlob("skills/sum-review/SKILL.md")}> Review ↗</a></div><div class="k">/sum-finish</div><div class="v">Account for required checks and findings, deliver within authority, and clean up conservatively. <a href={repoBlob("skills/sum-finish/SKILL.md")}> Finish ↗</a></div><div class="k">/sum-resume</div><div class="v">Inspect actual work, reports, and recipients after interruption before continuing. <a href={repoBlob("skills/sum-resume/SKILL.md")}> Resume ↗</a></div></div><div class="sec">
+    <p class="lede">Four native HC procedures and a maintainer procedure keep action-specific detail out of the shared entry contract. Read AGENTS.md and the procedure for the approved task.</p>
+<div class="kv lg" style="grid-template-columns:160px 1fr"><div class="k">/sum-work</div><div class="v">Brief and launch native HC workers, collect reports, and steer bounded work. <a href={repoBlob("skills/sum-work/SKILL.md")}> Work ↗</a></div><div class="k">/sum-review</div><div class="v">Inspect a specified stable candidate independently; save findings and send them to the immediate parent. <a href={repoBlob("skills/sum-review/SKILL.md")}> Review ↗</a></div><div class="k">/sum-finish</div><div class="v">Account for required checks and findings, deliver within authority, and clean up conservatively. <a href={repoBlob("skills/sum-finish/SKILL.md")}> Finish ↗</a></div><div class="k">/sum-resume</div><div class="v">Inspect actual work, reports, and recipients after interruption before continuing. <a href={repoBlob("skills/sum-resume/SKILL.md")}> Resume ↗</a></div></div><div class="sec">
 <h2>Discovery and briefs</h2>
-<p>The <code>.agents/skills/</code> and <code>.claude/skills/</code> links expose the same four procedures. Harness pointer files load the shared entry contract; a pointer is not harness qualification.</p><p>Helpers working in another repository receive the absolute readable procedure path in their brief. Keep that instruction checkout available until those helpers finish.</p>
+<p>The <code>.agents/skills/</code> and <code>.claude/skills/</code> links expose the four native procedures plus <code>sum-develop</code>. Harness pointer files load the shared entry contract; a pointer is not harness qualification.</p><p>Helpers working in another repository receive the absolute readable procedure path in their brief. Keep that instruction checkout available until those helpers finish.</p>
 </div>
 <div class="sec">
-<h2>Optional development tools</h2>
+<h2>Maintaining Sum</h2>
+<p>Use <a href={repoBlob("skills/sum-develop/SKILL.md")}>sum-develop</a> for Sum source, documentation, website, issue, and PR maintenance in the current coding environment. HC identity is required only for actual HC operations and native acceptance.</p>
 <p>Portable verification and evidence authoring tools under <code>.agents/skills/</code> are optional repository development tools. They are not ordinary startup requirements.</p><p><a href={repoBlob("CONTRIBUTING.md")}> Development guide ↗</a></p>
 </div>
 <div class="sec">

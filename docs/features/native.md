@@ -4,7 +4,8 @@
 
 | ID | Scenario | Driver | Evidence |
 | --- | --- | --- | --- |
-| `native.package` | Four discoverable procedures and shared entry pointers, no runtime executable, protected contracts, and active local documentation links | automated: tests/test_instruction_package.py | Static source/package checks only |
+| `native.package` | Four discoverable native procedures plus `skills/sum-develop/SKILL.md`, shared entry pointers, no runtime executable, protected contracts, and active local documentation links | automated: tests/test_instruction_package.py | Static source/package checks only |
+| `maintainer.routing` | Approved Sum maintenance selects Develop before HC prerequisites, retains role through work/review/finish/resume, and distinguishes audit authority, helpers, unavailable integration evidence, and actual native operations | manual: docs/verification/issue-357.md | Source-routing walkthrough and actual API-session maintenance evidence; not authenticated HC qualification |
 | `native.entry` | Ordinary entry | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.parentage` | Native child parentage | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |
 | `native.background` | Background command and reviewer | manual: docs/ACCEPTANCE.md | Actual authenticated native transcript and candidate-bound reports/output required; not-run here |

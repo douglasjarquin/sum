@@ -1,5 +1,8 @@
 # Native HC prerequisites
 
+These prerequisites apply to actual native HC operations and authenticated acceptance.
+For maintaining Sum's source, skills, documentation, website, issues, or PRs, use [Develop](../skills/sum-develop/SKILL.md) in the current coding environment; missing HC does not block independent repository work.
+
 Use the current supported Herdr app with its own HC-backed terminal and matching core.
 Start the app independently, enter the Sum instruction checkout, and launch your usual interactive coding agent in that terminal.
 For Codex the inspected HC manual requires `codex --no-daemon` so command execution remains inside HC.

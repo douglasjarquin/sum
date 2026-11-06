@@ -81,4 +81,6 @@ test("skills lists the four procedures under their canonical names", async ({
     "/sum-finish",
     "/sum-resume",
   ]);
+  await expect(page.locator('a[href$="/skills/sum-develop/SKILL.md"]')).toHaveText("sum-develop");
+  await expect(page.locator("main")).toContainText("HC identity is required only for actual HC operations and native acceptance");
 });

@@ -4,6 +4,11 @@ description: Brief and launch a native HC worker for approved software work. The
 ---
 # Work
 
+This procedure governs native HC operator work and bounded HC helpers.
+For maintenance of Sum itself, including issues and PRs, use [Develop](../sum-develop/SKILL.md) before applying HC prerequisites.
+Investigation, implementation, verification, or CI in a maintainer task does not by itself select this operator workflow.
+An explicit bounded helper keeps its assigned role and reporting route.
+
 The lead session stays free to send and receive messages.
 Read the approved goal, existing task note, and target repository instructions.
 Write a brief and launch a native HC worker for implementation, investigation, builds, and CI.
