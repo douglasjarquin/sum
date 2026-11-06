@@ -48,4 +48,6 @@ Include visual and CLI/API changes across the runs.
 
 Record observed outcomes and limitations in [review and PR evidence](verification/review-pr-evidence.md).
 
-Invoked implementation, verification, and shipping workflows must preserve the same role boundary: the lead launches the worker and returns to messages while that workflow runs.
+Invoked implementation, verification, and shipping workflows in operational mode must preserve the same role boundary: the lead launches the worker and returns to messages while that workflow runs.
+Repository maintenance follows [Develop](../skills/sum-develop/SKILL.md) through verification, independent review, finish, and resume using the current environment's supported tools.
+The maintainer role-routing walkthrough is separate from these authenticated native scenarios; it cannot qualify native HC or Grok behavior.

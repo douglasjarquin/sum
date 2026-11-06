@@ -4,11 +4,11 @@ import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILLS = ("sum-work", "sum-review", "sum-finish", "sum-resume")
+SKILLS = ("sum-work", "sum-review", "sum-finish", "sum-resume", "sum-develop")
 
 
 class InstructionPackageTest(unittest.TestCase):
-    def test_four_discoverable_core_procedures(self):
+    def test_discoverable_operator_and_maintainer_procedures(self):
         for name in SKILLS:
             expected = ROOT / "skills" / name / "SKILL.md"
             self.assertTrue(expected.is_file(), expected)
@@ -44,7 +44,7 @@ class InstructionPackageTest(unittest.TestCase):
     def test_delivery_template_discoverable_from_harness_procedures(self):
         expected = ROOT / "templates/pull-request.md"
         for harness in (".agents", ".claude"):
-            for name in ("sum-work", "sum-finish"):
+            for name in ("sum-work", "sum-finish", "sum-develop"):
                 procedure = (ROOT / harness / "skills" / name / "SKILL.md").resolve()
                 targets = re.findall(r"\]\(([^)]+)\)", procedure.read_text())
                 templates = [(procedure.parent / target).resolve() for target in targets

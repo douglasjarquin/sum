@@ -4,20 +4,26 @@ description: Resolve required results against the final candidate and deliver on
 ---
 # Finish
 
+Recover the approved role before finishing.
+Maintainers follow [Develop](../sum-develop/SKILL.md) and apply the shared candidate, review, evidence, check-accounting, and delivery requirements below with current supported tools.
+They may perform fixes/checks and monitor CI directly or use supported independent helpers; no native HC dispatch or report destination is required merely to finish maintenance.
+Explicit bounded helpers retain their assignment and immediate parent.
+
 Read the task note, approved goal, target repository requirements, and actual final diff.
 Keep worker claims, independently inspected findings, your own executed checks, and hosted CI observations distinct.
 The optional [engineering rubric](../../.agents/skills/verify/references/engineering-principles.md) supports review; it does not replace project rules.
 
-The lead accounts for reports and delivery state; workers perform fixes, substantive review, evidence capture, checks, and CI monitoring.
+In the native operational workflow, the lead accounts for reports and delivery state; workers perform fixes, substantive review, evidence capture, checks, and CI monitoring.
 If any of that work remains, brief the appropriate worker under [Work](../sum-work/SKILL.md) and return to messages.
-Invoking a finishing or shipping skill does not transfer that work into the lead session.
+Invoking a finishing or shipping skill does not transfer operational worker work into the lead session or reclassify a maintainer as an operator.
 
 Before claiming completion:
 
 - Confirm the final stable candidate, including dirty/untracked content where relevant.
 - Account for every required helper report, question/actual answer/application, check command, exit status, and review finding.
 - Resolve blocking findings and refresh affected verification/review when inputs change; superseded evidence does not cover a later candidate.
-- Require worker results for the repository's required checks and configured CI as applicable; do not require a second full local run merely because of another role.
+- Require actual results for the repository's required checks and configured CI as applicable; native operator leads collect worker results, while maintainers use their supported execution route.
+  Do not require a second full local run merely because of another role.
 - Record failures, cancellations, missing results, limitations, and unrun paths truthfully.
 
 A passed check on another candidate, idle/done status, accepted notification, or all children stopped working is insufficient.
@@ -44,7 +50,7 @@ If the head changed, refresh affected review/checks/evidence before claiming com
 Missing required review, checks, or publication leaves delivery incomplete; an authorized draft PR may expose those gaps without claiming completion.
 Never claim local/static proof establishes authenticated native acceptance or production adoption.
 
-The immediate parent closes each completed worker promptly after reading and preserving its assignment report, candidate identity, findings, and relevant command output.
+For native HC resources, the immediate parent closes each completed worker promptly after reading and preserving its assignment report, candidate identity, findings, and relevant command output.
 Record the assignment disposition in the task note; do not wait for overall acceptance, independent review, or PR merge.
 Questions, blockers, missing reports, and idle/done status alone do not establish assignment completion.
 Deliberate cancellation or supersession also permits cleanup after recording that disposition and preserving useful evidence.
@@ -55,6 +61,7 @@ If identity or cleanup is uncertain, preserve the evidence and reconcile actual 
 Cancellation does not satisfy a required check.
 An agent returning to a shell may leave its terminal and children alive.
 Retain unfinished branches/worktrees and unresolved evidence; never force-reset or delete them to make the task look clean.
+Maintainers clean up only their proven-owned resources through the current environment's supported tools; native HC commands apply only to actual HC terminals.
 Use ordinary Git cleanup only after delivery/preservation requirements and user authority are satisfied.
 
 Update the task note with final candidate, results, unresolved decisions, and next action.
