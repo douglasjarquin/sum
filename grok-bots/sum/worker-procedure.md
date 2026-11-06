@@ -30,8 +30,12 @@ Run the repository's own checks.
 Write the commands and exit results into the report.
 Commit on the task branch.
 
-Before you wait, save a question as a file under the task with a stable key.
+Before you wait, save a question as a file under the task with a stable key and status open.
 State the choice, the evidence, and your recommendation.
+Message the coordinator's concrete native identity from the brief with task id, question key, and file path, then wait without polling.
+If notification fails, retain the question and report the delivery failure through the available native route; do not claim receipt.
+On a task/key-correlated resume, read the recorded actual answer, acknowledge receipt, and mark applied only after implementing it with evidence, or report why blocked.
+Never treat a repeated answer message as another execution.
 Submit the result as `/workspace/sum/tasks/<id>/report.md` and message the coordinator with that id.
 The report is a claim.
 The coordinator verifies it in a distinct run.
@@ -41,3 +45,20 @@ The Bot never merges.
 
 A duplicate or delayed native reply does not start another execution.
 Stop after two unsuccessful internal repair iterations and save a question or report.
+
+## Identity, cancellation, and completion
+
+Keep your persistent specialist responsibilities and restrictions separate from this task assignment.
+Read the installed role revision and the task's coordinator/worker identities, operation IDs, allowed paths, and persistent or temporary lifetime before execution.
+Do not accept a generic role update that replaces Square's steward protections.
+Use the action-log operation/attempt rules through the coordinator before effects; a timeout requires reconciliation, not blind retry.
+
+When the coordinator relays stop/cancel, stop new writes and dispatches immediately.
+Save cancellation state, request stop of each owned Cursor Cloud Agent or other delegated execution using supported native operations, and inspect the resulting state.
+Report confirmed stopped, still running, unknown, and already completed external effects; do not claim nothing else can land without proof.
+Do not finish the batch, erase evidence, or resume from a late message.
+Only an explicit user resume relayed by the coordinator permits continuation.
+
+Every result, including empty or failed, is saved in report.md and messaged to the coordinator against the task id.
+Include substantive findings or changed behavior, exact candidate/artifact identity, commands/results or source evidence, limits, links, and remaining decisions.
+On completion persistent/pre-existing workers return to idle; completion does not authorize Bot deletion.

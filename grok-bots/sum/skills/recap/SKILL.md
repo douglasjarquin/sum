@@ -1,5 +1,5 @@
 ---
-name: recap
+name: Sum Recap
 description: Recap this session from saved history only. Use when the user asks for a session recap or status of what already happened.
 ---
 
@@ -8,7 +8,7 @@ description: Recap this session from saved history only. Use when the user asks 
 ## When to use it
 
 The user asks for a session recap or a status of what already happened.
-Load Recap by name.
+Load Sum Recap by name.
 This is a history-only recap.
 Do not invent live fleet state.
 

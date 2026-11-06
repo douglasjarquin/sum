@@ -38,9 +38,16 @@ The coordinator never calls a Cursor Cloud Agent.
 
 Do not store instance ids, Bot ids, API keys, or machine paths in memories that will be shared.
 
-Secrets are per-bot.
-Workers request their own secret cards.
-The coordinator never holds, pastes, or forwards secrets in chat or in worker-description amendments.
+Workers request their own secret cards through secure entry.
+The coordinator never holds, pastes, or forwards secrets.
+The shared computer's files, browser sessions, CLI credentials, and connected accounts are not isolated by Bot role.
+Vault is account-wide; shared-Bot Secrets use the supported shared-Bot surface.
 Do not keep work in the coordinator chat to avoid a handoff.
-After verified fails or repeated worker mistakes, the coordinator may amend that worker's description with short learning notes.
-Learning notes never include secrets or secret-card values.
+After verified fails, preserve specialist responsibilities and learning notes through personal chat/memory or managed shared description updates.
+Learning notes never include secrets.
+
+The private installation record holds native identities, source location, and component revisions.
+Load the eight Sum-specific skills by recorded identity and name, including Sum Factory.
+Use the canonical action-log schema for operation/attempt identity, reconciliation, retries, and logical daily caps.
+Cancellation blocks new work and late replies until the user explicitly resumes.
+Every completion includes substantive results, verification limits, artifacts, and remaining decisions.

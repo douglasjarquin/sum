@@ -1,5 +1,5 @@
 ---
-name: factory
+name: Sum Factory
 description: Start or run a factory from a markdown settings file. Use when the user asks to start a factory, run one, or say where a factory lives.
 ---
 
@@ -17,7 +17,7 @@ The Factory settings in the Sum clone at `skills/sum-factory/factories/<name>.md
 A confirmed copy, when one exists, at `/workspace/sum/factories/<name>.md`.
 Notion, when the floor is a Notion page.
 Spiral, when the confirmed settings say to call it.
-The Dispatch and Persist skills, once a run is actually approved.
+The Sum Dispatch and Sum Persist skills, once a run is actually approved.
 
 ## Sequence of work
 
@@ -34,7 +34,7 @@ Write the confirmed answers to `/workspace/sum/factories/<name>.md`. Read the fi
 
 A run comes after that confirmation, as its own request.
 
-- `runner: software` means follow the software settings file. That lane is the software factory on a Sum installation. Do not tick it from this chat. Dispatch a worker only when the user asked you to run it there.
+- `runner: software` means follow the software settings file. That lane requires the separately preserved compatible legacy installation pinned in the software settings, including its installed helper; this HC instruction checkout cannot run it. Do not tick it from this chat. Dispatch a worker only when the user asked you to run it there.
 - `runner: directive` means dispatch one worker. The brief is the confirmed settings file plus the piece URL or path they named. The worker does only the pickup lanes, then stops. You do not call Spiral in this chat.
 
 On a Notion floor, a piece URL is the reliable trigger. Search does not see a status property.

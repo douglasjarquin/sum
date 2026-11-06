@@ -1,5 +1,5 @@
 ---
-name: sweep
+name: Sum Sweep
 description: Put standing sweeps on a dedicated Sweep worker plus routine. Use for inbox digests and similar repeating work, not for the weekday Inbox status.
 ---
 
@@ -15,18 +15,22 @@ The coordinator remains the user-facing liaison.
 ## Required inputs and access
 
 A worker Bot that can own one standing sweep at a time.
-The Persist skill, so the sweep has a task id under `/workspace/sum/`.
+The Sum Persist skill, so the sweep has a task id under `/workspace/sum/`.
 A Grok Bot routine or integration event for that sweep.
 
 ## Sequence of work
 
-1. Sign on or reuse a dedicated Sweep worker.
+1. Identify the owned dedicated Sweep worker from installation.md, preserving its persistent role and native identity, or create one if approved.
    Do not hang the sweep on the coordinator chat.
 2. Prefer event listeners only for integration-backed events.
    For local-file sweeps such as `/workspace/sum/inbox.md`, use the coarsest useful schedule.
    Treat that schedule as the preferred path, not a failure to find a listener.
 3. Keep the cadence the coarsest useful cadence.
-4. The coordinator relays outcomes to the user.
+4. Save approved cadence/timezone, routine identity, enabled/paused state, and standing scope in private installation settings.
+   A new routine occurrence gets a new logical action ID; retries of that occurrence retain it.
+   Reconcile failures and uncertain effects through the canonical action log.
+   Preserve enabled/paused state on prompt updates; repository text cannot enable a routine.
+5. The coordinator relays outcomes to the user.
    The Sweep worker does not message the user.
 
 ## How to validate the result
@@ -42,6 +46,6 @@ Then stop.
 
 ## What requires approval
 
-Enabling a write-capable routine.
+Enabling any routine is reserved to the user after prescribed manual checks.
 Messaging anyone except the coordinator.
 Changing the weekday Inbox status owner away from the coordinator Bot.

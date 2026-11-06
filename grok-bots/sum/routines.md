@@ -1,6 +1,7 @@
 # Suggested routines
 
 Do not enable a routine until two successful manual Status checks look right.
+Resolve Sum Status by its owned identity in installation.md; preserve routine identity, confirmed timezone/schedule, and enabled/paused state during updates.
 After two successful manual Status checks, the user may enable the weekday Inbox status.
 This file does not enable it.
 A routine performs real work.
@@ -10,7 +11,7 @@ Keep write actions behind approval.
 
 - Owner: the coordinator Bot
 - Cadence: weekdays at 09:00 in the Bot time zone
-- Skill: Status
+- Skill: Sum Status
 - Expected result: the ops lines below, or no message when every line is empty
 - Approval boundary: do not answer questions, dispatch work, merge, send, publish, or message anyone except this conversation
 - Missing source: if `/workspace/sum/inbox.md` is missing, report that and stop
