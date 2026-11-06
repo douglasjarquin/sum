@@ -1,51 +1,22 @@
 # Square Grok Bot pack
 
-This directory is the source-controlled recipe for a Square steward Bot.
-It is not a live share URL.
+Install or update through [`GROK_SQUARE.md`](../../GROK_SQUARE.md).
+`instructions.md`, `memories.md`, `worker-procedure.md`, `routines.md`, and `avatar.png` are canonical shareable sources.
+No pack-local skills or deployment-specific settings ship here.
 
-Tell any Bot in Grok Bot to follow [`GROK_SQUARE.md`](../../GROK_SQUARE.md) at the repository root.
-That file is the installer.
-The Bot clones this public repository onto the shared Grok Bot computer and loads the files below.
-You do not paste them by hand.
-You do not need a SUM installation.
+Confirm private `/workspace/square/settings.md` and holds.md through Sum before writes.
+`memories.md` defines their inventory and the backup/restore protocol.
+Preserve owned native identities and routine enablement through updates.
+Never export private installation records, credentials, backup destinations, or data in a shared template.
 
-Square takes commands from Sum.
-Install Sum from [`grok-bots/sum/`](../sum/) with [`GROK_SUM.md`](../../GROK_SUM.md) if it is not already on the roster.
+## Isolated acceptance
 
-## Pack files
-
-| File | Role |
-| --- | --- |
-| `instructions.md` | Square Bot description |
-| `memories.md` | Memories included in the template |
-| `worker-procedure.md` | Memory named Steward procedure |
-| `routines.md` | Cleanup, Git backup, and Org review, left paused until two clean manual runs |
-| `avatar.png` | Square profile image |
-
-There are no pack-local skills.
-Square uses shared `/workspace/skills/` packs already on the computer.
-
-Do not put helper commands, instance ids, or Bot ids in those files.
-This recipe is native to Grok Bot.
-
-## Prove it once
-
-After the installer finishes, ask Sum to give Square one reversible steward task.
-Confirm Square does the steward work and does not take over coordination.
-Confirm Square reports to Sum against a task id and does not message the user unless Sum asks.
-Confirm control-plane notes land under `/workspace/square/`.
-The user merges if anything is published.
-The Bot never merges.
-
-## Share as a template
-
-After one good run, Square can be shared as a Grok Bot template.
-Inspect the draft.
-Strip API keys, internal URLs, instance ids, and anything you would not put in a public document.
-Confirm the draft does not attach another author's share URL.
-This recipe is Square.
-Keep this directory as the source of truth when the steward contract changes.
-
-## Suggested routines
-
-After two clean manual runs of each, create the routines in `routines.md` and leave them paused until a test run looks right.
+Use a user-chosen isolated private destination and synthetic approved files; never mutate production to certify this recipe.
+Run a manual scoped backup and verify the actual destination commit and captured manifest.
+Cause a reversible push failure after a local commit, then run again with a clean tree and confirm the pending commit reaches the destination without force.
+Exercise a hold and an excluded file, proving neither is staged or present in pending pushes.
+Verify missing/private-visibility evidence blocks writing.
+Restore the confirmed commit into a separate empty location; compare paths/content hashes, exclusions, and representative rendered artifacts.
+Confirm restored records do not auto-resume tasks or routines and report the documented file-only restore limits.
+Run two manual routine checks before the user enables anything.
+Record real native receipts, identities, revisions, and results; these written steps are not executed acceptance.

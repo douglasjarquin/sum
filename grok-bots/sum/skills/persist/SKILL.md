@@ -1,5 +1,5 @@
 ---
-name: persist
+name: Sum Persist
 description: Save briefs, questions, answers, and reports as files under /workspace/sum before chatting about them. Use when you need a task id, before waiting on the user, and before treating a worker message as a result.
 ---
 
@@ -18,13 +18,26 @@ Create it if it is missing.
 ## Sequence of work
 
 1. Ensure `/workspace/sum/inbox.md`, `/workspace/sum/tasks/`, `/workspace/sum/decisions.md`, and `/workspace/sum/action-log.md` exist. Copy only the header from the pack schema when a log is missing. Do not replace a log that already has lines.
-2. For new approved work, allocate the next task id `t-N` by counting existing task directories, then write `/workspace/sum/tasks/t-N/brief.md` from the user's words.
+2. For new approved work, generate a UUID task id and exclusively create `/workspace/sum/tasks/<id>/` (fail on an existing directory, retry with a fresh UUID), then write brief.md from the user's words.
+   Never count directories or reuse old identities after cleanup.
+   Record task kind, native coordinator/worker identities, role revision, lifetime, operation IDs, and acceptance criteria.
 3. Before a question, read `decisions.md`. If a standing ruling covers the choice, apply it and do not write a question.
 4. For a question, write `/workspace/sum/tasks/<id>/questions/<key>.md` with the choice, evidence, and recommendation. Set status to open. Add a line to `inbox.md`.
 5. For the user's answer, open that question file, write their actual words, and set status to answered. Append one line to `decisions.md`. Do not edit older lines.
-6. For a worker result, require `/workspace/sum/tasks/<id>/report.md` written by the worker. Do not author or overwrite that claim. Add a line to `inbox.md` that verify is owed.
+   Log and send a task/key-correlated resume message to the waiting worker's recorded native identity with the answer path, not invented approval.
+   Keep status answered until the worker acknowledges and records applied evidence or a blocker; a sent message is not application.
+   If notification fails, keep it pending in inbox.md for supported recovery.
+   Cancelled tasks do not resume from an answer or late reply; require the user's explicit resume.
+6. For a worker result, read the brief's exact report_destination, defaulting to `/workspace/sum/tasks/<id>/report.md`, and require that worker-owned file.
+   Do not author or overwrite that claim.
+   A Square report may live under `/workspace/square/` only when that exact destination is recorded in the brief; all later verification and delivery read the same path. Add a line to `inbox.md` that verify is owed.
 7. After your verification run, write `/workspace/sum/tasks/<id>/verification.md` as that run, distinct from the report.
-8. Before an external side effect, append `intended` to `action-log.md`, then act, then append `done`, `failed`, or `skipped-duplicate`. If the same intent and target already has `intended` or `done` in the last six hours, append `skipped-duplicate` and do not act unless the user explicitly asked again.
+8. Before an external side effect follow the canonical `action-log.md` identity, attempt state, reconciliation, and daily-cap rules.
+   Do not copy a second dedupe algorithm here.
+9. For cancellation, save task state cancelled with the actual user instruction before notifying the worker/reviewer.
+   Keep stop receipts and known/unknown effects in the task, update the inbox, and reject late results as permission to continue.
+10. Preserve every task artifact referenced by decisions, actions, review, or delivery.
+    Archive only with a durable readable reference; never remove the only evidence copy.
 
 ## How to validate the result
 

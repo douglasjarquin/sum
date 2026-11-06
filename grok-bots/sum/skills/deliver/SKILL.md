@@ -1,5 +1,5 @@
 ---
-name: deliver
+name: Sum Deliver
 description: Prepare a reviewable PR from a verified candidate. Use after coordinator verification, never to merge.
 ---
 
@@ -13,42 +13,59 @@ Do not use it to merge.
 
 ## Required inputs and access
 
-The task brief, report, and `/workspace/sum/tasks/<id>/verification.md`.
-GitHub access for the named repository.
+The task brief, worker-owned report at its recorded report_destination, and `/workspace/sum/tasks/<id>/verification.md`.
+For code only, GitHub access for the named repository.
+For non-code, access to the actual artifact, source, or result object.
 The user merges.
 
 ## Sequence of work
 
-1. Confirm verification.md is your run for this candidate, not the worker's claim.
-   Before push or opening a pull request, append `intended` to `/workspace/sum/action-log.md`, then append `done` or `failed` after.
-   Do not send, publish, or merge.
-2. Default to a fresh independent review with the Compound Engineering review skills before opening or updating the PR.
+1. Confirm verification.md is the coordinator's distinct run for the exact candidate/artifact.
+   Stop if cancelled, required checks failed, or verification is inconclusive.
+   Use canonical `action-log.md` operation/attempt rules before any approved push, native review message, or PR action.
+2. Select the task path before any GitHub action.
+   Non-code proceeds directly to step 5 and then steps 6–7; code alone executes review/push/PR steps 3–4 and the code review below.
+   For code, obtain a fresh independent review through a separate native reviewer Bot with no authorship of this candidate.
    The worker Bot cannot review its own candidate.
-   Treat any added code comment or edit to an existing code comment in the candidate diff as a blocking finding. This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files. Do not flag comments left unchanged while surrounding code changes. Commit messages, PR descriptions and report text are not code comments. Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; a directive may be added only when the code cannot work without it and must include no explanatory prose.
-   Treat any added or expanded test, and any deleted, rewritten, skipped or disabled existing test, in the candidate diff as a blocking finding, unless the user explicitly asked for that test in this task. Do not flag a candidate because existing tests still run.
-   If that review did not happen, say so if skipped.
-   Before `reviewer launch`, append `intended` to `/workspace/sum/action-log.md` with the task and candidate SHA as the target, then append `done` or `failed` after; the same candidate inside six hours is `skipped-duplicate` unless the user asked again.
-   When sum launches the reviewer, use the helper's `reviewer launch TASK_ID`: it creates a `reviewer` tab in the task workspace at the task checkout, records that pane as the reviewer endpoint, and prompts it once to review the current candidate (with `--policy-reviewed` guidance when the candidate changed verification policy). Never split the worker pane for a reviewer. Explicit `--harness/--model/--reasoning/--preset` flags win, then a saved `reviewer.preset` supplies its harness and argv, otherwise the coordinator's harness is used. Run it again for a new candidate: a live recorded reviewer pane is prompted instead of a second tab, never duplicated; a reviewer proven gone (recorded closed, `pane_not_found`, or `agent_not_found` with no occupant) gets a fresh `reviewer` tab, a rebind recorded with the `bind --reviewer-pane` stop proof, and the kickoff prompt (`action: relaunched`); a gone worker workspace is refused with `herdr worktree open --path CHECKOUT --no-focus`.
-3. Push the recorded branch without force.
-4. Open a PR or adopt the one GitHub already has for that branch.
-   Do not open a new PR when the only pull requests for the branch are closed, unless the user says to.
-5. Show the user the full PR URL and that the merge decision is still theirs.
-6. After the user says it merged, clean up only the worker Bot and files you can prove are finished.
-   Leave unfinished work in place.
+   Default to available Compound Engineering review skills when compatible with native Grok; no terminal helper is required.
+   Record the reviewer native identity, task id, exact base/candidate/snapshot, required checks and results, scope, saved report path, and concrete coordinator/return conversation identity before sending the review brief.
+   Require a substantive saved review report and explicit task/candidate-correlated native return to Sum; idle or successful send is not review evidence.
+   Use a new operation for a new candidate; reconcile uncertain delivery before retry.
+   Treat any added code comment or edit to an existing code comment in the candidate diff as a blocking finding.
+   This covers line and block comments, docblocks and doc comments, and comment text in fixtures and configuration files.
+   Do not flag comments left unchanged while surrounding code changes.
+   Commit messages, PR descriptions and report text are not code comments.
+   Lines or comments required for a tool or format to work are allowed, including shebangs, repository-required license headers, build tags, lint-disable pragmas, and directives such as `// @ts-expect-error`; a directive may be added only when the code cannot work without it and must include no explanatory prose.
+   Treat any added or expanded test, and any deleted, rewritten, skipped or disabled existing test, in the candidate diff as a blocking finding, unless the user explicitly asked for that test in this task.
+   Do not flag a candidate because existing tests still run.
+   If review could not run, say so if skipped and mark delivery incomplete; do not substitute self-review or green CI.
+   Save each finding and disposition against the reviewed candidate.
+   A change after review requires a new frozen identity, affected coordinator checks, and follow-up independent native review before delivery.
+3. Push only the recorded approved branch without force and confirm the remote head.
+4. Open or update the PR for that branch; inspect existing PR state first.
+   Do not open a new PR when the branch only has closed PRs without the user's instruction.
+   Confirm PR head equals the verified and reviewed candidate.
+   Report actual CI state separately from local results; do not merge.
+5. For non-code work, independently verify the actual artifact/findings through Sum Verify, then provide the substantive result and accessible artifact/source links.
+   Do not fabricate a repository, branch, or PR for research, documents, or operations.
+6. Every final response includes the outcome, substantive findings/changed behavior, verification and limitations, relevant artifact/PR links, and remaining decision.
+   Repeat the essentials even when previously given in progress messages.
+7. After accepted completion, return persistent/pre-existing workers, including Square, to idle.
+   Do not delete Bots as task cleanup.
+   Preserve referenced evidence and unfinished work; exact cleanup authority is defined by permissions.md.
 
 ## How to validate the result
 
-The PR head matches the verified candidate.
+For code, the PR head matches the independently reviewed and verified candidate.
 verification.md still names that candidate.
 The Bot did not merge.
 
 ## What to return
 
-The PR URL, what you verified, and that the user still decides the merge.
+The substantive result, verification/limits, relevant artifact or PR links, and remaining decisions.
+The user still decides the merge.
 
 ## What requires approval
 
-Merge.
-Force-push.
-Deleting unfinished work.
-Waiving a failing required check.
+Apply permissions.md: merges, force-push, and waiving required checks remain user-only.
+Cleanup requires exact-path authority and may never destroy unfinished work or the only evidence copy.

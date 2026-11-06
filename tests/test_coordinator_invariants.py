@@ -45,7 +45,7 @@ ANCHORS = (
     ("grok-bots/sum/routines.md", "one line"),
     ("grok-bots/sum/action-log.md", "a reviewer launch"),
     ("grok-bots/sum/permissions.md", "re-prompt the reviewer"),
-    ("grok-bots/sum/skills/deliver/SKILL.md", "Before `reviewer launch`"),
+    ("grok-bots/sum/skills/deliver/SKILL.md", "separate native reviewer Bot"),
 )
 
 

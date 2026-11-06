@@ -13,7 +13,11 @@ Verification policy changes require independent review; a candidate cannot certi
 Native scenarios require actual authenticated conversation evidence and isolated lifecycle tests, not fixtures or CLI help alone.
 Document unrun scenarios honestly in [acceptance](docs/ACCEPTANCE.md).
 
-Preserve [excluded Bot contracts](docs/legacy.md) and historical credits.
+Respect the [separate Bot product boundary](docs/legacy.md) and historical credits.
+Explicit Grok repair tasks may change their named pack sources without changing native HC procedures or protected legacy factory settings.
+For issue #354, the implementation scope includes only the affected existing byte/text assertions and the missing Factory enumeration; no new tests, fixtures, or framework are authorized.
+Preserve all unaffected immutable-baseline checks and retained code-comment/test policies.
+This permission is specific to #354, not general permission for Grok workers to rewrite tests.
 Do not manually edit generated output or CHANGELOG files.
 Prepare a focused PR with changed behavior, verification, limitations, and actual CI state.
 The user decides merging and adoption; neither a branch nor a PR updates a running installation.

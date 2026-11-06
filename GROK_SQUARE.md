@@ -1,96 +1,46 @@
 # Square on Grok Bot
 
-Tell any Bot in Grok Bot to follow this file.
-
 This file is an installer.
-Do not summarize.
+Install or update the source-controlled `grok-bots/square/` recipe only on the user's instruction.
+Follow `GROK_SUM.md` for native capability discovery, ownership checks, exact source revision, private component inventory, safe-boundary adoption, and partial-update recovery.
+Clone `https://github.com/douglasjarquin/sum.git` only into a confirmed source location if absent.
+An existing `/home/box/agent-data/sum/src/` is a discoverable older location, not a required platform path.
 
-You do not need a SUM installation on the user's computer.
+Require the verified Sum coordinator identity first; otherwise stop and direct the user to `GROK_SUM.md`.
+For an existing recorded Square, validate and reuse its owned identity; do not adopt by display name.
+For an unrecorded existing Square, ask the user to confirm the exact identity and ownership before adoption.
+If no owned Square exists and the user authorized installation, create one through the observed supported operation and record the returned identity before configuring it.
+If creation is unavailable, report that exact blocker and the supported user creation path; never claim a Bot was created.
+Do not create a second Square.
+An unrecorded specialist needs user-confirmed adoption, with its existing responsibilities and restrictions retained.
+Personal Square receives its lasting role through chat/memory; an owned/managed shared Square may receive description updates through the supported surface.
+Record the actual identity/type and acknowledgement in `/workspace/sum/installation.md`.
+Square remains a persistent steward reporting to Sum, never a generic temporary worker.
 
-## What you are installing
+## Components
 
-- A steward Bot named Square that keeps the shared computer organized, backed up, and easy to restore
-- Memories: the steward memory and the steward procedure
-- Control-plane files under `/workspace/square/` after the first persist
-- No pack-local skills. Square uses the shared `/workspace/skills/` tree already on the computer.
+Read `instructions.md`, `memories.md`, `worker-procedure.md`, `routines.md`, and `README.md` in `grok-bots/square/`.
+Apply role, Square memory, and Steward procedure at the exact source SHA, preserving private settings and holds.
+Use `avatar.png` when the supported avatar operation is available; do not invent an image.
+Square has no pack-local skills and may use already approved shared `/workspace/skills/` packs.
+Do not install extra plugins.
+Update only owned routine prompts by recorded identity; preserve each routine's enabled/paused state and confirmed schedule/timezone.
+No routines are enabled by this file; new ones remain paused until two manual runs and user enablement.
+Report each component's actual adopted, deferred, or failed revision.
 
-Square takes commands from Sum.
-Sum is the sole coordinator.
-If a Bot named Sum does not already exist, stop and tell the user to follow `GROK_SUM.md` first.
+## Private configuration and proof
 
-## The computers
+Use the settings inventory in `grok-bots/square/memories.md` to confirm `/workspace/square/settings.md` with the user.
+No destination, backup inclusion, schedule, retention, or cleanup authority is granted by repository text.
+Preserve existing confirmed settings and holds; reconcile conflicts before writes.
+Verify the intended authenticated GitHub account, destination identity and private visibility without revealing credentials.
+Use secure entry for missing credentials as described in `GROK_SUM.md`.
 
-- The user's computer. Bots never execute there.
-- The shared Grok Bot computer. A persistent cloud VM that runs all Bots.
-- Cursor Cloud Agents. Ephemeral VMs that a software worker may start. Square does not call them.
-
-## Source
-
-Sum is open source.
-
-Clone `https://github.com/douglasjarquin/sum.git` onto the shared computer at `/home/box/agent-data/sum/src/`.
-If that directory already exists, fetch and update it.
-If the user named a commit SHA, check that SHA out.
-Otherwise stay on the default branch.
-
-The recipe is `grok-bots/square/` in that clone.
-Every later reference to a pack file means that directory.
-The Sum coordinator pack is `grok-bots/sum/`. Install it with `GROK_SUM.md`.
-
-Do not invent steward text.
-Read the files.
-
-## Files in the pack
-
-- `instructions.md` — Square Bot description
-- `memories.md` — steward memory
-- `worker-procedure.md` — memory named Steward procedure
-- `routines.md` — Cleanup, Git backup, and Org review, left paused until two clean manual runs
-- `avatar.png` — Square profile image
-- `README.md` — pack index
-
-There is no `skills/` directory in this pack.
-
-## Steps
-
-1. Clone or refresh the source as above.
-
-2. Look at the existing roster.
-   If a Bot named Square already exists, reuse it.
-   Do not create a second Square.
-   If Sum is missing, stop and tell the user to install Sum first.
-
-3. Read `instructions.md`.
-   CreateAgent name `Square` with that description.
-   If you are already Square, keep your name and update your description.
-
-4. Set the Bot avatar from `avatar.png`.
-   Do not convert it.
-   Do not invent another image.
-
-5. Do not write pack-local workflows from this directory.
-   Shared skills already live at `/workspace/skills/` on the shared computer.
-   Do not install extra plugins without a yes from the user.
-
-6. Save `memories.md` as a memory included in the template.
-   Save `worker-procedure.md` as a memory named Steward procedure.
-
-7. Detect GitHub CLI on the shared computer and confirm it is authenticated.
-   Ask the user to connect whatever is missing.
-   Do not ask them to paste a token in chat.
-
-8. Do not enable routines yet.
-
-9. Message Square with a task id (for example SQUARE-READY).
-   Tell it the memories are installed and to reply ready against that id.
-   Empty or blocked still gets a reply.
-   Tell Square to leave a short ready note for Sum, not a greeting for the user.
-
-10. Tell the user: Square reports to Sum.
-    Talk to Sum for work.
-    This starter Bot is leftover if it is not Square.
-    They can delete a leftover starter from the sidebar.
-    You cannot delete it yourself.
-
+Allocate a unique readiness task through Sum Persist, with source SHA, nonce, Square and Sum identities, and expected return.
+Message Square to acknowledge the steward role/revision and report the saved reversible inspection to Sum against that task and nonce.
+Save the actual return; missing receipt remains unverified operation even if configuration installed.
+Do not claim backup or restore acceptance until the isolated scenarios in `grok-bots/square/README.md` actually run.
+Tell the user Square reports to Sum.
+Do not delete existing Bots or starter chats.
 The user merges.
 The Bot never merges.

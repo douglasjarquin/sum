@@ -1,5 +1,5 @@
 ---
-name: status
+name: Sum Status
 description: Reconcile /workspace/sum/inbox.md with live worker Bots. Use at the start of a turn when work is active, and when the user asks what is outstanding.
 ---
 
@@ -27,7 +27,11 @@ Do not poll GitHub as the status check.
 4. If a worker looks idle without a report, read that Bot's chat.
    Idle is not done.
    If a question was never saved, persist it with a stable key before relaying it.
-5. Do not launch a replacement worker because a Bot cannot be observed.
+5. Reconcile answered questions with acknowledgement/applied evidence and failed notification receipts.
+   Use the existing correlated operation for safe notification recovery, never blind resend or answer invention.
+   Surface cancelled tasks with confirmed stop status, unknown delegated work, and already completed effects.
+   Late messages cannot restart them.
+6. Do not launch a replacement worker because a Bot cannot be observed.
    Record the uncertainty and ask the user before signing on another worker for that task.
 
 ## How to validate the result
