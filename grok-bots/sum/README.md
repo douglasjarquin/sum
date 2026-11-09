@@ -50,6 +50,7 @@ Strip API keys, internal URLs, and anything you would not put in a public docume
 Confirm the draft does not attach another author's share URL.
 This recipe is Sum.
 Keep this directory as the source of truth when the contract changes.
+A template's getting-started skill comes from `skills/getting-started/SKILL.md`; it is template-only and is not part of the eight installed coordinator skills.
 
 ## Suggested routine
 

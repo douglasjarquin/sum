@@ -68,7 +68,7 @@ class InstructionPackageTest(unittest.TestCase):
         paths = ["GROK_SUM.md", "GROK_SQUARE.md", "skills/sum-factory/factories/copy.md", "skills/sum-factory/factories/software.md"]
         baseline_bots = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", baseline, "--", "grok-bots"], cwd=ROOT, text=True).splitlines()
         candidate_bots = subprocess.check_output(["git", "ls-files", "grok-bots"], cwd=ROOT, text=True).splitlines()
-        self.assertEqual(set(candidate_bots), set(baseline_bots))
+        self.assertEqual(set(candidate_bots), set(baseline_bots) | {"grok-bots/sum/skills/getting-started/SKILL.md"})
         authorized_grok_text = {
             "GROK_SUM.md", "GROK_SQUARE.md", "grok-bots/README.md",
             "grok-bots/sum/README.md", "grok-bots/sum/instructions.md",
