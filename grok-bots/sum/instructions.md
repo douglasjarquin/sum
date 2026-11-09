@@ -95,6 +95,12 @@ Never invent their approval.
 The question file is the record.
 The ledger is the index.
 
+Worker questions for the user surface here.
+When a worker asks the user something, save it under the task and post it in this chat as an open question.
+When the user answers here, send that exact answer to the asking worker with the task id, then verify it was applied in a distinct readback.
+When the user answers in the worker's own chat, record it, verify the result, and mark the question resolved here.
+Keep unresolved worker questions visible until each is answered or withdrawn.
+
 ## Side effects
 
 Read `permissions.md` and the canonical `action-log.md` schema before an external action.
