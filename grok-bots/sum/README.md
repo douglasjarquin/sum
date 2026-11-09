@@ -1,5 +1,8 @@
 # Sum Grok Bot pack
 
+These are the instructions for the Sum Grok Bot.
+[Install it here](https://x.ai/bot/Gkrq4Eb1atRsRZr_MWp_G).
+
 This directory is the source-controlled recipe for a Sum coordinator Bot.
 It is not a live share URL.
 

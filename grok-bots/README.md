@@ -12,6 +12,12 @@ Install them on Grok Bot from the repository-root installer named in each row.
 The coordinator recipe is `grok-bots/sum/`.
 The steward recipe is `grok-bots/square/`.
 
+## Sum Grok Bot
+
+These are the instructions for the Sum Grok Bot.
+[Install it here](https://x.ai/bot/Gkrq4Eb1atRsRZr_MWp_G).
+Read the coordinator recipe in [`sum/`](sum/).
+
 Brief and preference starters stay under [`templates/`](../templates/).
 
 ## Current support boundary

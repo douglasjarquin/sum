@@ -24,3 +24,10 @@
 - [Entry contract](https://github.com/douglasjarquin/sum/blob/main/AGENTS.md): Read before starting approved work.
 - [Native acceptance](https://github.com/douglasjarquin/sum/blob/main/docs/ACCEPTANCE.md): Live scenarios require actual authenticated evidence; static checks are insufficient.
 - [Sitemap](https://douglasjarquin.github.io/sum/sitemap-index.xml): Published website routes.
+
+## Sum Grok Bot
+
+These are the instructions for the Sum Grok Bot.
+[Install it here](https://x.ai/bot/Gkrq4Eb1atRsRZr_MWp_G).
+
+- [Pack recipe](https://github.com/douglasjarquin/sum/blob/main/grok-bots/sum/README.md): Source-controlled instructions for the Sum Grok Bot.

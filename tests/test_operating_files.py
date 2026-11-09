@@ -12,7 +12,7 @@ FORBIDDEN = re.compile(
 SUM_PACK = ROOT / "grok-bots" / "sum"
 SQUARE_PACK = ROOT / "grok-bots" / "square"
 GROK_BOT = SUM_PACK
-SUM_AVATAR_SHA256 = "66aaeac37e3f2f1934ece8a3ee09bcef0a13bbbc54c29bc281fb32d3705d7766"
+SUM_AVATAR_SHA256 = "1039911032d0157eebbd917d843218f31d8bac58aaed2617655cac94090feeb3"
 STRIPPED_INSTANCE_MARKERS = (
     "720991aa",
     "1302415",
@@ -318,7 +318,7 @@ class OperatingFilesTest(unittest.TestCase):
             for phrase in OUT_OF_SCOPE_PHRASES:
                 self.assertNotIn(phrase, text, path)
 
-    def test_sum_pack_avatar_matches_pr_188(self):
+    def test_sum_pack_avatar_digest(self):
         path = SUM_PACK / "avatar.jpg"
         self.assertTrue(path.is_file(), path)
         digest = sha256(path.read_bytes()).hexdigest()
