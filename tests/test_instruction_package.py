@@ -82,7 +82,11 @@ class InstructionPackageTest(unittest.TestCase):
               ("dispatch", "persist", "verify", "status", "recap", "deliver", "sweep", "factory")),
         }
         paths += baseline_bots
-        paths = [path for path in paths if path not in authorized_grok_text]
+        replaced_sum_avatar = {"grok-bots/sum/avatar.jpg"}
+        paths = [
+            path for path in paths
+            if path not in authorized_grok_text and path not in replaced_sum_avatar
+        ]
         for path in paths:
             original = subprocess.check_output(["git", "show", baseline + ":" + path], cwd=ROOT)
             self.assertEqual((ROOT / path).read_bytes(), original, path)
