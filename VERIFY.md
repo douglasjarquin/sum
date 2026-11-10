@@ -36,7 +36,7 @@ Use `MISE_ENABLE_TOOLS=go,python,node,aube .agents/skills/verify/scripts/sum-ver
 
 | Check | Command | Proves |
 | --- | --- | --- |
-| Portable tools | `cd tools/verify && go test ./...`, `cd tests/portable && python3 ../../scripts/fixture_git_env.py -- go test ./...` | Scaffold, verifier, audit, capture, evidence, publication, and packaging behavior of the built `sum-verify` in disposable projects, without a Sum runtime |
+| Portable tools | `cd tools/verify && go test ./...`, `cd tests/portable && python3 ../../scripts/fixture_git_env.py -- go test -count=1 ./...` | Scaffold, verifier, audit, capture, evidence, publication, and packaging behavior of the built `sum-verify` in disposable projects, without a Sum runtime |
 | Package and Bot contracts | `python3 scripts/fixture_git_env.py -- python3 -m unittest discover -s tests -p 'test_*.py'` | Four native procedures plus maintainer discovery, entry packaging, protected immutable-baseline bytes, Bot recipe/invariant tests, Git isolation, and active local links |
 | Website | `aube -C web install --frozen-lockfile`, `aube -C web run check`, `aube -C web run test:unit`, `aube -C web run build`, route assertions | Dependency lock, Astro/type checks, URL helper tests, static routes under /sum/ |
 
