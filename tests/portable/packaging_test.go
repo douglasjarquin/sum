@@ -1,12 +1,10 @@
 package skilltest
 
 import (
-	"archive/tar"
-	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,42 +14,11 @@ const engineeringPrinciplesReferencePath = ".agents/skills/verify/references/eng
 
 func TestEngineeringPrinciplesReferenceIsPackagedAndPortable(t *testing.T) {
 	root := repoRoot(t)
-	reference := filepath.Join(root, filepath.FromSlash(engineeringPrinciplesReferencePath))
-	info, err := os.Lstat(reference)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !info.Mode().IsRegular() {
-		t.Fatalf("reference is not a regular file: %s", reference)
-	}
 	for _, relative := range []string{"skills/sum-review/SKILL.md", "skills/sum-finish/SKILL.md"} {
 		body := readFile(t, filepath.Join(root, relative))
 		if !strings.Contains(body, engineeringPrinciplesReferencePath) {
 			t.Fatalf("%s does not point at %s", relative, engineeringPrinciplesReferencePath)
 		}
-	}
-
-	archive, err := exec.Command("git", "-C", root, "archive", "--format=tar", "HEAD").Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	archived := false
-	reader := tar.NewReader(bytes.NewReader(archive))
-	for {
-		header, nextErr := reader.Next()
-		if nextErr == io.EOF {
-			break
-		}
-		if nextErr != nil {
-			t.Fatal(nextErr)
-		}
-		if header.Name == filepath.ToSlash(engineeringPrinciplesReferencePath) {
-			archived = true
-			break
-		}
-	}
-	if !archived {
-		t.Fatalf("git archive HEAD does not contain %s", engineeringPrinciplesReferencePath)
 	}
 
 	v := newVerifyLab(t)
@@ -71,10 +38,19 @@ func TestEngineeringPrinciplesReferenceIsPackagedAndPortable(t *testing.T) {
 	if strings.Contains(readFile(t, copied), root) {
 		t.Fatalf("portable reference contains the Sum checkout path: %s", copied)
 	}
+	if readFile(t, copied) != readFile(t, filepath.Join(root, "tools/verify/skills/verify/references/engineering-principles.md")) {
+		t.Fatalf("the binary vendored a reference that differs from its source: %s", copied)
+	}
+	wrapper, err := os.Stat(filepath.Join(repo, ".agents/skills/verify/scripts/sum-verify"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrapper.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("vendored sum-verify wrapper is not executable: %v", wrapper.Mode())
+	}
 	v.fill(repo, "cli")
 	git(t, repo, "add", "-A")
 	git(t, repo, "commit", "-q", "-m", "portable verification contract")
-	removeAll(t, filepath.Dir(v.toolkit))
 	head := git(t, repo, "rev-parse", "HEAD")
 	code, record, stderr := v.runner(repo, "--base", head)
 	if code != 0 || asString(record["outcome"]) != "certified" {
@@ -230,29 +206,44 @@ func TestScaffoldReadmeMapMarksObservedRowsAndGaps(t *testing.T) {
 
 func TestScaffoldUpdateKeepsLocalEditsAndRecordsProvenance(t *testing.T) {
 	v := newVerifyLab(t)
-	first := commitToolkit(t, v, "stock skills")
-	repo := v.rawRepo("cli", filepath.Join(v.stop, "revisioned"))
-	code, written, stderr := v.scaffold(repo, "--write", "--revision", first)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "updated"))
+	code, written, stderr := v.scaffold(repo, "--write")
 	if code != 0 {
 		t.Fatal(stderr)
 	}
-	provPath := filepath.Join(repo, ".agents/skills/.verification-provenance.json")
-	firstProv := asMap(mustJSON(t, readFile(t, provPath)))
-	if asString(firstProv["source_revision"]) != first {
-		t.Fatalf("source_revision = %v, want %s", firstProv["source_revision"], first)
-	}
 	if asString(written["mode"]) != "write" {
 		t.Fatalf("mode = %v, want write", written["mode"])
+	}
+	provPath := filepath.Join(repo, ".agents/skills/.verification-provenance.json")
+	firstProv := mustJSON(t, readFile(t, provPath))
+	if firstProv["schema"] != float64(2) || asString(firstProv["tool_version"]) != "dev" {
+		t.Fatalf("provenance = schema %v tool_version %v, want schema 2 from the dev build", firstProv["schema"], firstProv["tool_version"])
+	}
+	if _, present := firstProv["source_revision"]; present {
+		t.Fatalf("provenance still records a source revision: %v", firstProv)
 	}
 	skill := filepath.Join(repo, ".agents/skills/verify/SKILL.md")
 	mustWrite(t, skill, readFile(t, skill)+"\nlocal edit\n")
 	unrelated := filepath.Join(repo, "notes.txt")
 	mustWrite(t, unrelated, "project authored\n")
 	contract := readFile(t, filepath.Join(repo, "VERIFY.md"))
-	stock := filepath.Join(v.stop, "toolkit/.agents/skills/verify/references/engineering-principles.md")
-	mustWrite(t, stock, readFile(t, stock)+"\nstock bump\n")
-	second := commitToolkit(t, v, "newer stock")
-	code, updated, stderr := v.scaffold(repo, "--update", "--revision", second)
+	// An older release's stock file: the copy on disk still matches the hash recorded when it was vendored.
+	copied := filepath.Join(repo, filepath.FromSlash(engineeringPrinciplesReferencePath))
+	embedded := readFile(t, copied)
+	older := "older stock\n"
+	mustWrite(t, copied, older)
+	sum := sha256.Sum256([]byte(older))
+	for _, item := range asSlice(firstProv["files"]) {
+		if row := asMap(item); asString(row["path"]) == engineeringPrinciplesReferencePath {
+			row["sha256"] = hex.EncodeToString(sum[:])
+		}
+	}
+	stale, err := json.Marshal(firstProv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, provPath, string(stale))
+	code, updated, stderr := v.scaffold(repo, "--update")
 	if code != 0 {
 		t.Fatal(stderr)
 	}
@@ -268,25 +259,22 @@ func TestScaffoldUpdateKeepsLocalEditsAndRecordsProvenance(t *testing.T) {
 	if readFile(t, unrelated) != "project authored\n" {
 		t.Fatal("update deleted a project-authored file")
 	}
-	copied := filepath.Join(repo, ".agents/skills/verify/references/engineering-principles.md")
-	if !strings.Contains(readFile(t, copied), "stock bump") {
-		t.Fatal("unchanged stock file was not replaced from the named revision")
+	if readFile(t, copied) != embedded {
+		t.Fatal("unchanged stock file was not replaced with the binary's embedded copy")
 	}
-	var conflict bool
+	statuses := map[string]string{}
 	for _, item := range asSlice(updated["results"]) {
 		row := asMap(item)
-		if asString(row["path"]) == ".agents/skills/verify/SKILL.md" && asString(row["status"]) == "conflict" {
-			conflict = true
-		}
+		statuses[asString(row["path"])] = asString(row["status"])
 	}
-	if !conflict {
-		t.Fatalf("results = %v, want a conflict for the locally edited skill", updated["results"])
+	if statuses[".agents/skills/verify/SKILL.md"] != "conflict" || statuses[engineeringPrinciplesReferencePath] != "updated" {
+		t.Fatalf("results = %v, want a conflict for the locally edited skill and an update for the unchanged stock file", updated["results"])
 	}
-	secondProv := asMap(mustJSON(t, readFile(t, provPath)))
-	if asString(secondProv["source_revision"]) != second {
-		t.Fatalf("updated source_revision = %v, want %s", secondProv["source_revision"], second)
+	secondProv := mustJSON(t, readFile(t, provPath))
+	if secondProv["schema"] != float64(2) || asString(secondProv["tool_version"]) != "dev" {
+		t.Fatalf("updated provenance = schema %v tool_version %v, want schema 2 from the dev build", secondProv["schema"], secondProv["tool_version"])
 	}
-	code, again, stderr := v.scaffold(repo, "--update", "--revision", second)
+	code, again, stderr := v.scaffold(repo, "--update")
 	if code != 0 {
 		t.Fatal(stderr)
 	}
@@ -296,43 +284,6 @@ func TestScaffoldUpdateKeepsLocalEditsAndRecordsProvenance(t *testing.T) {
 			t.Fatalf("second update wrote %v", item)
 		}
 	}
-}
-
-func TestScaffoldUpdateRefusesFloatingRevision(t *testing.T) {
-	v := newVerifyLab(t)
-	commitToolkit(t, v, "stock skills")
-	repo := v.rawRepo("cli", filepath.Join(v.stop, "floating"))
-	v.scaffold(repo, "--write")
-	for _, name := range []string{"main", "latest", "HEAD", "abc"} {
-		code, record, stderr := v.scaffold(repo, "--update", "--revision", name)
-		if code == 0 {
-			t.Fatalf("revision %q succeeded: %v %s", name, record, stderr)
-		}
-		if record == nil {
-			t.Fatalf("revision %q produced no JSON record: %s", name, stderr)
-		}
-		text := ""
-		for _, item := range asSlice(record["problems"]) {
-			text += asString(item)
-		}
-		if !strings.Contains(text, "immutable") {
-			t.Fatalf("revision %q problems = %v, want an immutable-revision refusal", name, record["problems"])
-		}
-	}
-}
-
-func commitToolkit(t *testing.T, v *verifyLab, message string) string {
-	t.Helper()
-	root := filepath.Join(v.stop, "toolkit")
-	if _, err := os.Stat(filepath.Join(root, ".git")); err != nil {
-		git(t, root, "init", "-q", "-b", "main")
-		git(t, root, "config", "user.email", "lab@example.invalid")
-		git(t, root, "config", "user.name", "verify lab")
-		git(t, root, "config", "commit.gpgsign", "false")
-	}
-	git(t, root, "add", "-A")
-	git(t, root, "commit", "-q", "--allow-empty", "-m", message)
-	return git(t, root, "rev-parse", "HEAD")
 }
 
 func mustJSON(t *testing.T, body string) map[string]any {

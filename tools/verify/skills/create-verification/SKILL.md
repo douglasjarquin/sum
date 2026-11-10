@@ -8,16 +8,22 @@ You are writing for the next agent, who will read the output cold, mid-task, wit
 Everything you generate must be something that agent can run.
 A contract or map that was never executed is a draft, not completed onboarding.
 
-This skill is portable: it needs Git, mise, Python 3.11+, and the two sibling skills `verify` and `maintain-verification` beside it.
-No sum installation, Herdr session, `.sum` directory, or absolute path outside the target repository is involved.
-Run every command below from the repository you are standardizing (`--root` accepts any directory inside it).
+This skill is portable: the target repository needs Git, mise, and curl, and nothing here needs Python.
+The scaffold is the `scaffold` command of the `sum-verify` binary, which carries the `verify`, `evidence`, and `maintain-verification` skills it vendors.
+No sum installation, Herdr session, `.sum` directory, or absolute path outside the target repository is involved once the project is pinned.
+
+A project gets the scaffold in two steps.
+From a Sum checkout, run `.agents/skills/verify/scripts/sum-verify scaffold --root <project> --write`; with no pin of its own, the checkout builds the binary from source and vendors the skills into the project.
+Then, in the project, run `.agents/skills/verify/scripts/sum-verify pin <version>` to pin a released binary in `.agents/skills/verify/sum-verify.lock`; the wrapper downloads and checksum-checks it on first use.
+After that, run every command from the project through `.agents/skills/verify/scripts/sum-verify`.
+A later update is `.agents/skills/verify/scripts/sum-verify pin <new version>`, which refreshes the unchanged stock skill files.
 
 ## 1. Inspect before asking
 
-Run the scaffold in its default inspect mode:
+Run the scaffold in its default inspect mode (`--root` accepts any directory inside the target repository):
 
 ```sh
-python3 <path-to-this-skill>/scripts/verify_scaffold.py --root . --json
+.agents/skills/verify/scripts/sum-verify scaffold --root <project> --json
 ```
 
 It reports without writing or running anything.
@@ -34,7 +40,7 @@ Do not write a recipe around a broken base, and never add a `verify` task that m
 ## 2. Generate
 
 ```sh
-python3 <path-to-this-skill>/scripts/verify_scaffold.py --root . --write
+.agents/skills/verify/scripts/sum-verify scaffold --root <project> --write
 ```
 
 The scaffold creates only what is missing and never overwrites:
@@ -42,29 +48,31 @@ The scaffold creates only what is missing and never overwrites:
 - `VERIFY.md` in the shape the `verify` runner validates (`entrypoint = "mise run verify"`, `feature_maps`, `artifacts`, `[requires]`, and the Setup / Readiness / Automated checks / Scenarios / Isolation / Artifacts / Teardown / Policy sections). An existing `VERIFY.md` that declares another `feature_maps` location keeps it; new feature files go beside that index.
 - A `verify` task appended to `mise.toml` when the repository has none, composed from the check tasks, package scripts, make targets, or test directory the inspection found. With nothing to reuse it writes no task and reports the problem instead.
 - `docs/features/README.md` (or the declared index) labelled `Inventory: incomplete`, plus one file per seed feature: the top three to five real user-facing entrypoints it found, each with a stable ID, an Entry points section, a Scenarios table whose rows the runner reads, Driving it, Expected states and side effects, and Gotchas and manual gaps. Everything it could not observe is an explicit `TODO(verify)` placeholder.
-- `.agents/skills/verify/` and `.agents/skills/maintain-verification/` vendored byte for byte, with thin `.claude/skills/<name>` symlinks. Substantive logic stays in the `.agents/skills` copy; the aliases only make native discovery work.
+- `.agents/skills/verify/`, `.agents/skills/evidence/`, and `.agents/skills/maintain-verification/` vendored byte for byte from the binary, with thin `.claude/skills/<name>` symlinks. The `verify` skill carries the executable `scripts/sum-verify` wrapper. Substantive logic stays in the `.agents/skills` copy; the aliases only make native discovery work.
 - `.artifacts/` added to `.gitignore`.
 
 An existing file is never rewritten. One without `TODO(verify)` placeholders is yours and is reported `kept`. A draft that still has placeholders but that the inspection would now generate differently (a renamed task, a new route) is reported as a `conflict`: yours is kept and the proposal is written under `.artifacts/verification/scaffold/<stamp>/` so you can compare the two. A newly found feature gets a new file beside the index; the audit then reports it `unlinked-map` until you link it.
 Exit code 1 means a problem that needs a person: no reusable check was found, a `verify` task is only inherited from a parent directory, a `verify` task runs `mise run verify` again, or mise is absent.
 Re-running on a completed repository reports every file `unchanged` and writes nothing.
-`--write` records copied skill files in `.agents/skills/.verification-provenance.json` with the source commit when `--revision` is a 40-character SHA (or this skill's git HEAD).
+`--write` records the stock skill files and the version of the binary that vendored them in `.agents/skills/.verification-provenance.json`.
+Until the project has a lock, the record's `next` list starts with `.agents/skills/verify/scripts/sum-verify pin <version>`.
 
-## 2b. Update from a named revision
+## 2b. Update to a newer release
 
 ```sh
-python3 <path-to-this-skill>/scripts/verify_scaffold.py --root . --update --revision <40-character-sha>
+.agents/skills/verify/scripts/sum-verify pin <new version>
 ```
 
-`--revision` must be an immutable commit in the skill git repository. `main`, `latest`, `HEAD`, and short SHAs are refused.
-Unchanged stock copies of `verify`, `evidence`, and `maintain-verification` may be replaced from that commit.
+`pin` rewrites `.agents/skills/verify/sum-verify.lock` from that release's checksums, then runs `sum-verify scaffold --update` with the newly pinned binary.
+Unchanged stock copies of `verify`, `evidence`, and `maintain-verification` are replaced with the copies that binary carries, and missing ones are vendored.
 A locally edited skill file is kept and listed as `conflict`.
-`VERIFY.md`, README facts, tasks, CI, and project-authored tests are never overwritten.
-Re-running the same revision after it is adopted writes nothing.
+A previously vendored file the new release no longer ships is reported `would-delete` and left in place.
+`VERIFY.md`, the lock, README facts, tasks, CI, and project-authored tests are never overwritten.
+Re-running the update for the same version writes nothing.
 Inspect and `--inspect` still write nothing and run no target command.
 
 The lifecycle is inspect, then a reviewed onboarding or update PR, then local and CI proof, then a human merge.
-New tasks see the adopted revision.
+New tasks see the adopted version.
 In-flight tasks keep the `verification_policy` snapshot recorded at prepare.
 
 ## 3. Fill the map from observation
@@ -76,19 +84,19 @@ Keep the `Inventory: incomplete` label until a person has inventoried the whole 
 Run the audit until it is clean:
 
 ```sh
-python3 .agents/skills/maintain-verification/scripts/verify_audit.py
+.agents/skills/verify/scripts/sum-verify audit
 ```
 
 ## 4. Prove it once
 
 1. Launch in the repository's own isolation: its documented dev task, a temporary data directory, an ephemeral port, never the user's running instance or personal profile.
-2. Readiness: `python3 .agents/skills/verify/scripts/verify_run.py --check`, then the readiness steps `VERIFY.md` lists (a health endpoint, a version line).
-3. Run the contract: `python3 .agents/skills/verify/scripts/verify_run.py --base <merge-base>`; read the printed record path.
+2. Readiness: `.agents/skills/verify/scripts/sum-verify run --check`, then the readiness steps `VERIFY.md` lists (a health endpoint, a version line).
+3. Run the contract: `.agents/skills/verify/scripts/sum-verify run --base <merge-base>`; read the printed record path.
 4. Drive one mapped feature end to end through its real entrypoint and capture evidence beside that record:
 
    ```sh
-   python3 .agents/skills/verify/scripts/verify_capture.py --feature <id> http --expect-status 200 GET http://127.0.0.1:<port>/<route>
-   python3 .agents/skills/verify/scripts/verify_capture.py --feature <id> run --expect-text 'Hello' -- <command> <args>
+   .agents/skills/verify/scripts/sum-verify capture --feature <id> http --expect-status 200 GET http://127.0.0.1:<port>/<route>
+   .agents/skills/verify/scripts/sum-verify capture --feature <id> run --expect-text 'Hello' -- <command> <args>
    ```
 
 5. Run the Teardown section, then confirm `.artifacts/verification/<run-id>/run.json` and its `evidence/` files still exist. A cleanup that eats the proof fails this step.
