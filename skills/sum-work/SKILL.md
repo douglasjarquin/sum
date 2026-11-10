@@ -122,7 +122,7 @@ Only a row's entry evidence moves an assignment into that state, and its legal n
 | `reported` | The report is saved and its notification arrived | Read the report and record its candidate, findings, and command output |
 | `collected` | The task note holds the report's results | Close the exact owned worker under [Finish](../sum-finish/SKILL.md) |
 | `uncertain` | From any state before `closed`: a timeout, unclear return, dead terminal, returned shell, or an address that no longer hosts the helper | Inspect under [Resume](../sum-resume/SKILL.md) and record the state the evidence proves, or cancel; never relaunch, resend, or repeat an external action blind |
-| `cancelled` | Before `reported`: the parent cancelled the assignment, for instance because its candidate was superseded | Record the reason, preserve evidence, and close |
+| `cancelled` | Before `reported`, or from `uncertain`: the parent cancelled the assignment, for instance because its candidate was superseded | Record the reason, preserve evidence, and close |
 | `closed` | The terminal finished and was removed | None |
 
 An ordinary command row is `launched` when its command starts, `collected` when its exit status and output are recorded, then `closed`.

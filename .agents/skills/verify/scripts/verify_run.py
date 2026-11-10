@@ -575,7 +575,7 @@ def main(argv=None):
                 counts[row["status"]] = counts.get(row["status"], 0) + 1
             print("scenarios: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) if counts else "scenarios: none mapped")
         policy_record = record.get("policy")
-        ran = isinstance(policy_record, dict) and "execution" in record
+        ran = isinstance(policy_record, dict) and "not_exercised" in record
         if ran and policy_record["changed"]:
             print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(str(path) for path in policy_record["changed"]))
         elif ran and not policy_record["checked"]:
