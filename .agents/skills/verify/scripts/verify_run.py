@@ -4,12 +4,13 @@
 Runs in an ordinary clone with nothing but Git, mise, and Python 3.11+: no sum installation, no Herdr, no absolute path
 to anything outside this repository. It reads VERIFY.md, checks that the canonical `mise run verify` task belongs to this
 project (not a parent directory's configuration), runs it, and writes one evidence record per run under the Git-ignored
-artifact directory. Every outcome is one of pass / fail / blocked / not-applicable; a missing or malformed contract is
-`blocked`, never a pass, and a dirty tree makes the run provisional so it cannot certify a commit SHA.
+artifact directory. A run's outcome is one of blocked / fail / provisional / uncompared / needs-root-review / certified,
+and `--check` reports checked. A missing or malformed contract is `blocked`, never a passing outcome, and only
+`certified` binds the result to a commit SHA.
 
 Usage:
   verify_run.py [--root DIR] [--check] [--base REF] [--scenario ID=STATUS[:reason]]... [--timeout SECONDS] [--json]
-Exit codes: 0 pass, 1 fail, 2 blocked (configuration, dependency, or freshness prevented a trustworthy run), 3 usage.
+Exit codes: 0 checked or any passing outcome, 1 fail, 2 blocked (configuration, dependency, or freshness prevented a trustworthy run), 3 usage.
 """
 from __future__ import annotations
 
@@ -34,7 +35,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-SCHEMA = 1
+SCHEMA = 2
 CONTRACT_FILE = "VERIFY.md"
 REQUIRED_HEADINGS = ("Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts")
 SCENARIO_STATUSES = ("pass", "fail", "blocked", "not-run", "not-applicable")
@@ -473,6 +474,19 @@ def run_entrypoint(root: Path, run_dir: Path, timeout: int, binary: str):
             "exit": exit_code, "timed_out": timed_out, "log": str(log.relative_to(root))}
 
 
+def run_outcome(execution, freshness, rows, dirty: bool, policy):
+    """Name what the run established. Precedence: blocked, fail, provisional, uncompared, needs-root-review, certified."""
+    if execution["timed_out"]:
+        return "blocked"
+    if execution["exit"] != 0 or (freshness and not freshness["fresh"]) or any(row["status"] == "fail" for row in rows):
+        return "fail"
+    if dirty:
+        return "provisional"  # Nothing about a dirty tree is bound to a SHA, whatever the policy comparison says.
+    if not policy["checked"]:
+        return "uncompared"  # Unchecked policy is unreviewed, never certified.
+    return "needs-root-review" if policy["changed"] else "certified"
+
+
 def main(argv=None):
     description = (__doc__ or "").splitlines()[0]
     parser = argparse.ArgumentParser(description=description)
@@ -486,7 +500,7 @@ def main(argv=None):
     outcomes = parse_scenario_args(args.scenario)
     run_id = f"{_dt.datetime.now(_dt.timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(4)}"
     record: dict[str, Any] = {"schema": SCHEMA, "run_id": run_id, "started_at": utc_now(), "runner": {"path": str(Path(__file__).resolve()), "mode": "check" if args.check else "run"},
-                              "outcome": None, "blocked_reason": None, "provisional": None, "certifies": None, "requires_root_review": False}
+                              "outcome": None, "blocked_reason": None}
     root = None
     try:
         root = resolve_root(Path(args.root).resolve())
@@ -495,7 +509,6 @@ def main(argv=None):
         dirty = bool(git(root, "status", "--porcelain", "--untracked-files=normal").stdout.strip())
         record["candidate"] = {"sha": head, "dirty": dirty, "branch": git(root, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip() or None,
                                "git_dir_is_file": (root / ".git").is_file()}
-        record["provisional"] = dirty
         contract: dict[str, Any] = load_contract(root)
         record["contract"] = {"path": CONTRACT_FILE, "sha256": contract["sha256"], "entrypoint": contract["entrypoint"], "task_owner": contract["task_owner"]}
         maps, scenarios = load_feature_maps(root, contract["feature_maps"], contract["task_owner"])
@@ -534,18 +547,11 @@ def main(argv=None):
             for row in rows:
                 if row["id"] in record["evidence"]["missing"]:
                     row["reason"] += "; required visual evidence (screenshot/screencast comparison for this candidate) is missing"
+            record["outcome"] = run_outcome(execution, record["freshness"], rows, dirty, record["policy"])
             if execution["timed_out"]:
-                record["outcome"], record["blocked_reason"] = "blocked", f"`mise run verify` exceeded {args.timeout or contract['timeout']}s and was stopped"
-            elif execution["exit"] != 0:
-                record["outcome"] = "fail"
-            elif record["freshness"] and not record["freshness"]["fresh"]:
-                record["outcome"], record["blocked_reason"] = "fail", record["freshness"]["reason"]
-            elif any(r["status"] == "fail" for r in rows):
-                record["outcome"] = "fail"
-            else:
-                record["outcome"] = "pass"
-            record["requires_root_review"] = bool(record["policy"]["changed"]) or not record["policy"]["checked"]  # Unchecked policy is unreviewed, never green.
-            record["certifies"] = head if (record["outcome"] == "pass" and not dirty and record["policy"]["checked"] and not record["policy"]["changed"]) else None
+                record["blocked_reason"] = f"`mise run verify` exceeded {args.timeout or contract['timeout']}s and was stopped"
+            elif execution["exit"] == 0 and record["freshness"] and not record["freshness"]["fresh"]:
+                record["blocked_reason"] = record["freshness"]["reason"]
             record["not_exercised"] = [r["id"] for r in rows if r["status"] in ("not-run", "blocked", "not-applicable")]
     except Blocked as exc:
         record["outcome"], record["blocked_reason"] = "blocked", str(exc)
@@ -561,17 +567,18 @@ def main(argv=None):
         candidate = record.get("candidate", {})
         print(f"verify: {record['outcome']}" + (f" ({record['blocked_reason']})" if record["blocked_reason"] else ""))
         if candidate:
-            print(f"candidate: {candidate.get('sha')} dirty={candidate.get('dirty')} provisional={record['provisional']} certifies={record['certifies']}")
+            print(f"candidate: {candidate.get('sha')} dirty={candidate.get('dirty')}")
         if record.get("scenarios") is not None and not args.check:
             counts = {}
             for row in record["scenarios"]:
                 counts[row["status"]] = counts.get(row["status"], 0) + 1
             print("scenarios: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) if counts else "scenarios: none mapped")
         policy_record = record.get("policy")
-        if record.get("requires_root_review") and isinstance(policy_record, dict) and policy_record.get("checked"):
-            changed = policy_record.get("changed", [])
-            print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(str(path) for path in changed))
-        elif record.get("requires_root_review"):
+        if args.check or not isinstance(policy_record, dict):
+            pass
+        elif policy_record["changed"]:
+            print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(str(path) for path in policy_record["changed"]))
+        elif not policy_record["checked"]:
             print("policy not compared (no --base); the run cannot certify a SHA until VERIFY.md, tasks, and maps are reviewed against a base")
         evidence_record = record.get("evidence")
         if isinstance(evidence_record, dict) and evidence_record.get("missing"):
@@ -579,7 +586,7 @@ def main(argv=None):
             print("required evidence missing for: " + ", ".join(str(scenario) for scenario in missing) + f" (no comparison for this candidate under {evidence_record['dir']})")
         if isinstance(artifacts_record, dict) and artifacts_record.get("run_dir"):
             print(f"record: {artifacts_record['run_dir']}/run.json")
-    return {"pass": 0, "checked": 0, "fail": 1, "blocked": 2}[record["outcome"]]
+    return {"fail": 1, "blocked": 2}.get(record["outcome"], 0)
 
 
 if __name__ == "__main__":

@@ -139,11 +139,13 @@ func TestBootstrapThreeFixtures(t *testing.T) {
 				t.Fatalf("audit %v %s", audit, stderr)
 			}
 			code, record, stderr := v.runner(repo, "--base", head)
-			if code != 0 || asString(record["outcome"]) != "pass" {
+			if code != 0 || asString(record["outcome"]) != "certified" {
 				t.Fatalf("runner %v %s", record, stderr)
 			}
-			if asString(record["certifies"]) != head {
-				t.Fatalf("certifies %v", record["certifies"])
+			for _, retired := range []string{"provisional", "certifies", "requires_root_review"} {
+				if _, present := record[retired]; present {
+					t.Fatalf("record still carries the retired key %q", retired)
+				}
 			}
 		})
 	}
@@ -266,7 +268,7 @@ func TestExternalCloneFollowsGeneratedInstructions(t *testing.T) {
 	}
 	head := git(t, external, "rev-parse", "HEAD")
 	code, record, stderr = v.runner(external, "--base", head)
-	if code != 0 || asString(record["outcome"]) != "pass" {
+	if code != 0 || asString(record["outcome"]) != "certified" {
 		t.Fatalf("run %v %s", record, stderr)
 	}
 }
@@ -280,8 +282,8 @@ func TestChangeDetectionAndFailingBranch(t *testing.T) {
 	git(t, repo, "commit", "-q", "-m", "contract")
 	base := git(t, repo, "rev-parse", "HEAD")
 	code, record, _ := v.runner(repo, "--base", base)
-	if asString(record["certifies"]) != base {
-		t.Fatalf("certifies %v", record["certifies"])
+	if code != 0 || asString(record["outcome"]) != "certified" {
+		t.Fatalf("clean base run %d %v", code, record["outcome"])
 	}
 	git(t, repo, "checkout", "-q", "-b", "feature")
 	app := filepath.Join(repo, "app.py")
@@ -663,7 +665,7 @@ func TestRunnerReportsRequiredEvidence(t *testing.T) {
 	if asString(detail["scenario"]) != scenario || asString(detail["feature"]) != feature || asString(detail["map"]) != relative {
 		t.Fatalf("missing detail %v", detail)
 	}
-	if asString(record["outcome"]) != "pass" {
+	if asString(record["outcome"]) != "certified" {
 		t.Fatalf("outcome %v: the runner reports missing evidence, it never fails the run for it", record["outcome"])
 	}
 
@@ -701,7 +703,7 @@ func TestRunnerFlagsAgentsMdAsPolicyChange(t *testing.T) {
 	mustWrite(t, filepath.Join(repo, "AGENTS.md"), "# Agents\nchanged instructions\n")
 	git(t, repo, "add", "AGENTS.md")
 	git(t, repo, "commit", "-q", "-m", "change AGENTS.md")
-	_, record, stderr := v.runner(repo, "--base", base)
+	code, record, stderr := v.runner(repo, "--base", base)
 	changed := asSlice(asMap(record["policy"])["changed"])
 	found := false
 	for _, item := range changed {
@@ -713,8 +715,8 @@ func TestRunnerFlagsAgentsMdAsPolicyChange(t *testing.T) {
 	if !found {
 		t.Fatalf("policy.changed = %v stderr=%s, want AGENTS.md", asMap(record["policy"])["changed"], stderr)
 	}
-	if record["requires_root_review"] != true {
-		t.Fatalf("requires_root_review = %v, want true", record["requires_root_review"])
+	if code != 0 || asString(record["outcome"]) != "needs-root-review" {
+		t.Fatalf("exit %d outcome %v, want 0 needs-root-review", code, record["outcome"])
 	}
 }
 
@@ -736,7 +738,7 @@ func TestRunnerKeepsDroppedBasePolicyFileProtected(t *testing.T) {
 	mustWrite(t, filepath.Join(repo, "docs", "architecture.md"), "# Architecture\nweakened\n")
 	git(t, repo, "add", "-A")
 	git(t, repo, "commit", "-q", "-m", "drop policy_files and edit architecture.md")
-	_, record, stderr := v.runner(repo, "--base", base)
+	code, record, stderr := v.runner(repo, "--base", base)
 	changed := asSlice(asMap(record["policy"])["changed"])
 	found := false
 	for _, item := range changed {
@@ -748,9 +750,47 @@ func TestRunnerKeepsDroppedBasePolicyFileProtected(t *testing.T) {
 	if !found {
 		t.Fatalf("policy.changed = %v stderr=%s, want docs/architecture.md after it was dropped from policy_files", asMap(record["policy"])["changed"], stderr)
 	}
-	if record["requires_root_review"] != true {
-		t.Fatalf("requires_root_review = %v, want true", record["requires_root_review"])
+	if code != 0 || asString(record["outcome"]) != "needs-root-review" {
+		t.Fatalf("exit %d outcome %v, want 0 needs-root-review", code, record["outcome"])
 	}
+}
+
+// One outcome names what a run established: a dirty tree is provisional whatever else is true, a clean tree without a
+// base is uncompared, and a failing entrypoint fails on a dirty tree too.
+func TestRunnerOutcomeNamesWhatTheRunEstablished(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "outcomes"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	v.fill(repo, "cli")
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "contract")
+	base := git(t, repo, "rev-parse", "HEAD")
+	expect := func(name string, wantCode int, want string, args ...string) map[string]any {
+		t.Helper()
+		code, record, stderr := v.runner(repo, args...)
+		if code != wantCode || asString(record["outcome"]) != want {
+			t.Fatalf("%s: exit %d outcome %v, want %d %s\n%s", name, code, record["outcome"], wantCode, want, stderr)
+		}
+		return record
+	}
+	expect("clean tree without a base", 0, "uncompared")
+	scratch := filepath.Join(repo, "scratch.txt")
+	mustWrite(t, scratch, "uncommitted\n")
+	expect("dirty tree, policy unchanged", 0, "provisional", "--base", base)
+	removeAll(t, scratch)
+	mustWrite(t, filepath.Join(repo, "AGENTS.md"), "# Agents\nnew instructions\n")
+	git(t, repo, "add", "AGENTS.md")
+	git(t, repo, "commit", "-q", "-m", "change a policy file")
+	mustWrite(t, scratch, "uncommitted\n")
+	record := expect("dirty tree, policy changed", 0, "provisional", "--base", base)
+	if changed := asSlice(asMap(record["policy"])["changed"]); len(changed) != 1 || asString(changed[0]) != "AGENTS.md" {
+		t.Fatalf("policy.changed = %v, want AGENTS.md", changed)
+	}
+	testPath := filepath.Join(repo, "tests/test_hello.py")
+	mustWrite(t, testPath, strings.ReplaceAll(readFile(t, testPath), `"Hello, Ada!")`, `"Goodbye, Ada!")`))
+	expect("failing entrypoint on a dirty tree", 1, "fail", "--base", base)
 }
 
 func (v *verifyLab) runnerWithEnv(repo string, env []string, args ...string) (int, map[string]any, string) {
