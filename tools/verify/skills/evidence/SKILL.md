@@ -4,7 +4,7 @@ description: Capture truthful before/after evidence for one mapped scenario - re
 ---
 # Evidence
 
-This skill is portable: everything it needs lives inside the repository you are verifying, plus Python 3.11+, and for browser captures Node 22+ and a Chromium-family browser already on the machine.
+This skill is portable: it needs the `sum-verify` tool that `.agents/skills/verify/scripts/sum-verify` runs, and for browser captures Node 22+ and a Chromium-family browser already on the machine.
 It does not require sum, Herdr, a `.sum` directory, or any absolute path outside this checkout.
 It never starts, stops, or resets an application and never drives a person's browser profile; you run the base and the candidate yourself, in their own checkouts, and point each capture at the one you drove.
 
@@ -13,43 +13,47 @@ Images alone prove nothing; every capture also records what the page, command, o
 
 ## Procedure
 
-1. Run `python3 .agents/skills/evidence/scripts/evidence_capture.py capabilities` first. `browser: supported` needs Node 22+ and a browser binary (`EVIDENCE_BROWSER=/path` overrides discovery). A recipe this machine cannot drive is recorded `blocked`, never simulated; report such scenarios with the runner's `--scenario` instead.
+1. Run `.agents/skills/verify/scripts/sum-verify evidence capabilities` first.
+   `browser: supported` needs Node 22+ and a browser binary (`EVIDENCE_BROWSER=/path` overrides discovery).
+   A recipe this machine cannot drive is recorded `blocked`, never simulated; report such scenarios with the runner's `--scenario` instead.
 2. Pick the scenario id from the feature maps (`VERIFY.md` -> `feature_maps`) and its kind: `bugfix` (a defect the user could see), `feature` (nothing to fail before), `visual` (an intended change of appearance), or `nonvisual` (CLI/API/library; visual proof is not applicable and no browser screenshot is manufactured).
 3. Identify the two revisions: the base (merge base of the branch) and the final candidate SHA. Check out each into its own directory (`git worktree add ../base <sha>`), build and start each with the repository's own commands on distinct ports. Never reuse a checkout someone else is editing.
 4. Capture the before state from the base checkout, then the after state from the candidate, with one shared run id and identical settings (viewport, theme, locale, timezone, scenario data, flags):
 
    ```sh
    RUN=$(date -u +%Y%m%dT%H%M%SZ)-$RANDOM
-   python3 .agents/skills/evidence/scripts/evidence_capture.py capture --scenario <id> --role before --kind bugfix --run $RUN --checkout ../base --expect-sha <base-sha> \
+   .agents/skills/verify/scripts/sum-verify evidence capture --scenario <id> --role before --kind bugfix --run $RUN --checkout ../base --expect-sha <base-sha> \
        browser --url http://127.0.0.1:<base-port>/ --step click='#add' --step wait=500 --observe '#count' --expect-selector '#count=Count: 1'
-   python3 .agents/skills/evidence/scripts/evidence_capture.py capture --scenario <id> --role after --kind bugfix --run $RUN --checkout ../candidate --expect-sha <candidate-sha> \
+   .agents/skills/verify/scripts/sum-verify evidence capture --scenario <id> --role after --kind bugfix --run $RUN --checkout ../candidate --expect-sha <candidate-sha> \
        browser --url http://127.0.0.1:<candidate-port>/ --step click='#add' --step wait-text='Count: 1' --observe '#count' --expect-selector '#count=Count: 1'
-   python3 .agents/skills/evidence/scripts/evidence_capture.py compare --scenario <id> --run $RUN --base <base-sha> --candidate <candidate-sha>
+   .agents/skills/verify/scripts/sum-verify evidence compare --scenario <id> --run $RUN --base <base-sha> --candidate <candidate-sha>
    ```
 
    The browser recipe dispatches real mouse and keyboard events (`click=`, `type=SEL=TEXT`, `press=Enter`), waits on visible text (`wait-text=`), records a screenshot and a screencast of the whole path, and reads the visible text back as the observable end state. Add `--side-effect GET <url> --side-effect-text '...'` when the journey must also change server state. Add `--convert` for an mp4 beside the AVI original when ffmpeg is present.
    For a CLI or API change use `cli -- <command>` (transcript with exit code) or `http METHOD URL` (status and body) with `--kind nonvisual`; the manifest says `visual_proof: not-applicable`.
-   When the base cannot be run (no access, no build), record it honestly instead of inventing a red screenshot: `evidence_capture.py unavailable --scenario <id> --role before --reason '...'`; the comparison is then `after-only` with the label `before-unavailable`.
+   When the base cannot be run (no access, no build), record it honestly instead of inventing a red screenshot: `.agents/skills/verify/scripts/sum-verify evidence unavailable --scenario <id> --role before --reason '...'`; the comparison is then `after-only` with the label `before-unavailable`.
    Do not break code on purpose to produce red. A bug fix that already passes at the base is reported `before-also-passes`.
 5. Read the comparison. `red-green` means the base failed the assertions and the candidate passed them with matching environments and builds. `mismatch` names a viewport, theme, locale, recipe, or kind difference you did not declare with `--intentional key=value`, a capture taken from the wrong SHA (stale build), or an original whose hash changed. `capture-failed` keeps the diagnostics (`browser-diagnostics.log`, driver exit, console) and is never a pass.
-6. Report the paths: `<evidence>/<run>/<scenario>/comparison.json`, the `before-<sha>/` and `after-<sha>/` directories, and `comparison.html` (a derived two-up view that references the originals and only scales them with CSS). When the checkout is disposable, run `evidence_capture.py promote --run $RUN --to <durable-dir>` before cleanup; it copies the run and re-verifies every recorded content hash, or set `VERIFY_EVIDENCE_ROOT` to a durable directory before capturing.
+6. Report the paths: `<evidence>/<run>/<scenario>/comparison.json`, the `before-<sha>/` and `after-<sha>/` directories, and `comparison.html` (a derived two-up view that references the originals and only scales them with CSS).
+   When the checkout is disposable, run `.agents/skills/verify/scripts/sum-verify evidence promote --run $RUN --to <durable-dir>` before cleanup; it copies the run and re-verifies every recorded content hash, or set `VERIFY_EVIDENCE_ROOT` to a durable directory before capturing.
 
 ## Publish into the pull request
 
-`scripts/evidence_publish.py` places captured screenshots, screencasts, CLI transcripts, and HTTP responses into one pull request's description as a single marked block (`<!-- before-and-after:start -->` ... `<!-- before-and-after:end -->`).
-Capture, publication, and the block format stay separate: this script never drives a browser or converts video, and the only upload path is the GitHub CLI's own `gh pr edit --attach` (GitHub CLI 2.99+), running as whoever invokes it with whatever authorization they already hold.
+`.agents/skills/verify/scripts/sum-verify publish` places captured screenshots, screencasts, CLI transcripts, and HTTP responses into one pull request's description as a single marked block (`<!-- before-and-after:start -->` ... `<!-- before-and-after:end -->`).
+Capture, publication, and the block format stay separate: this command never drives a browser or converts video, and the only upload path is the GitHub CLI's own `gh pr edit --attach` (GitHub CLI 2.99+), running as whoever invokes it with whatever authorization they already hold.
 Publication is a deliberate, authorized operation against your own repository; capture never needs it, and a worker or verification script is never handed write credentials to perform it.
 
-1. `python3 .agents/skills/evidence/scripts/evidence_publish.py capabilities` reads the installed `gh`: its version, whether `pr edit --attach` exists, and whether it is authenticated. Without `--attach`, text-only publication still works; a plan containing images or videos is explicitly deferred.
+1. `.agents/skills/verify/scripts/sum-verify publish capabilities` reads the installed `gh`: its version, whether `pr edit --attach` exists, and whether it is authenticated.
+   Without `--attach`, text-only publication still works; a plan containing images or videos is explicitly deferred.
    Nothing is downloaded or installed per publication.
-2. `plan --run $RUN --repo owner/name --pr N --candidate <sha> [--base <sha>] [--scenario <id>]...` validates every comparison in the run and stages approved publish copies under `<run>/publish/media/` (or `--publish-dir`), uploading nothing.
+2. `.agents/skills/verify/scripts/sum-verify publish plan --run $RUN --repo owner/name --pr N --candidate <sha> [--base <sha>] [--scenario <id>]...` validates every comparison in the run and stages approved publish copies under `<run>/publish/media/` (or `--publish-dir`), uploading nothing.
    A scenario is planned only when its comparison names the same candidate, its verdict shows the candidate passing (`red-green`, `before-after`, `after-only`, `before-also-passes`; never `mismatch`, `capture-failed`, `after-fails`), every media file resolves inside the run directory without symlinks or parent components, its bytes match the comparison and capture hashes and re-read dimensions, it is within GitHub's limits (10 MiB images, 100 MiB videos), and no secret-shaped text (the capture redaction patterns plus `--redact`) appears in anything that would reach the PR. A capture whose text was redacted is refused with its screenshot, because a screenshot cannot be redacted. Text/plain transcript and response files are hash-checked against both manifests, checked for secret-shaped content, and staged as immutable publish copies.
    Text is shown in labeled before/after code blocks with its capture hash; redacted transcripts are permitted, while raw secrets are refused.
    Code fences accommodate captured backticks, and HTML comment openers are visibly escaped so captured output cannot impersonate publication markers.
    The full PR body must fit the 65,536-character limit; oversized publication is refused before writing and evidence is never silently truncated.
    Capture-time clipping remains labeled in the transcript.
    Only PNG/JPEG/GIF/WebP and MP4/MOV/WebM are attachable; an AVI-only screencast is named as unsupported and the screenshot pair is published without it (capture with `--convert` to get an mp4).
-3. `publish --plan <plan.json> --receipts <path> --visibility public|private` reads the destination (`gh repo view`: exact name, visibility, write permission) and the latest PR body, refuses a PR that is not open or whose head is not the candidate (`--allow-head-mismatch` publishes it labelled), then edits only the marked block: append when none exists, replace in place when the last block came from these receipts, refuse when the block was written or edited by someone else (`--replace-foreign-block` takes it over after you inspected it). Prose outside the block is copied byte for byte from the body read immediately before the edit; the body is read again before writing and the edit is recomputed when it moved.
+3. `.agents/skills/verify/scripts/sum-verify publish publish --plan <plan.json> --receipts <path> --visibility public|private` reads the destination (`gh repo view`: exact name, visibility, write permission) and the latest PR body, refuses a PR that is not open or whose head is not the candidate (`--allow-head-mismatch` publishes it labelled), then edits only the marked block: append when none exists, replace in place when the last block came from these receipts, refuse when the block was written or edited by someone else (`--replace-foreign-block` takes it over after you inspected it). Prose outside the block is copied byte for byte from the body read immediately before the edit; the body is read again before writing and the edit is recomputed when it moved.
    Text publish copies are hash-checked again before rendering and text-only plans need no uploads.
    Receipts persist one entry per attachment content hash and destination: a second publication reuses the attachment URLs, uploads nothing, and replaces the same block. Videos go up on their own lines (GitHub renders a player) and become a side-by-side HTML `<video>` table in a second edit once every URL is known. After every edit the body is read back and checked: the expected evidence content, no unresolved media references, a URL for each attached hash, and unchanged prose; incomplete attachment rewriting may restore the previous body and report `failed`, with uploads retained in receipts.
    If the observed content or surrounding prose differs from what was sent, preserve that body as `body-observed.md` and return `uncertain` without overwriting a possible concurrent edit.
@@ -62,7 +66,7 @@ Block markup follows `vercel-labs/before-and-after` (see `references/ATTRIBUTION
 
 ## What a capture records
 
-`capture.json` beside the media: scenario and feature id, role and kind, the recipe and its exact steps, the checkout path, HEAD SHA, dirty state and branch, the expected SHA and whether it matched, an optional build id, start/end times, environment (viewport, theme, locale, timezone, browser version, platform, Node and Python versions; environment variable names for CLI, never values), every media file with type, bytes, sha256, and real dimensions, frame count and duration read from the bytes, the assertions with met/unmet, observations (redacted), console messages, limitations, intentional differences, and the redaction count.
+`capture.json` beside the media: scenario and feature id, role and kind, the recipe and its exact steps, the checkout path, HEAD SHA, dirty state and branch, the expected SHA and whether it matched, an optional build id, start/end times, environment (viewport, theme, locale, timezone, browser version, platform, Node version; environment variable names for CLI, never values), every media file with type, bytes, sha256, and real dimensions, frame count and duration read from the bytes, the assertions with met/unmet, observations (redacted), console messages, limitations, intentional differences, and the redaction count.
 Screencasts are the original JPEG frames under `frames/` plus a Motion-JPEG AVI assembled from them at a fixed frame rate; held repeats are timing only and are counted in the manifest. A converted mp4 is marked `derived` with the tool and command.
 Video is bounded: at most 60 seconds, 1920x1080, 25 MB; the manifest says when a bound stopped the recording.
 Recorded text is redacted for bearer tokens, `key=`/`token=`/`password=` shapes, emails, and common API key prefixes (`--redact REGEX` adds patterns); a redacted transcript is named `*.redacted.txt`. Screenshots cannot be redacted, so use synthetic data. The browser always runs with a fresh temporary profile, so no cookies, sessions, or extensions of the person leak in. `inspect PATH` validates any media file by reading it.
