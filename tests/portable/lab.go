@@ -20,6 +20,51 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
+// toolBin is the sum-verify binary built once from this checkout's source for the whole test run.
+var toolBin string
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "sum-verify-bin-")
+	if err != nil {
+		panic(err)
+	}
+	toolBin = filepath.Join(dir, "sum-verify")
+	build := exec.Command("go", "build", "-o", toolBin, "./cmd/sum-verify")
+	build.Dir = filepath.Join("..", "..", "tools", "verify")
+	if out, err := build.CombinedOutput(); err != nil {
+		panic("build sum-verify: " + err.Error() + "\n" + string(out))
+	}
+	code := m.Run()
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// runTool runs one sum-verify command the way a project would, returning its exit code, parsed --json record, stdout, and stderr.
+func runTool(t *testing.T, env []string, cwd string, args ...string) (int, map[string]any, string, string) {
+	t.Helper()
+	cmd := exec.Command(toolBin, args...)
+	cmd.Dir = cwd
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	code := 0
+	if err := cmd.Run(); err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run sum-verify %v: %v\n%s%s", args, err, stdout.String(), stderr.String())
+		}
+		code = ee.ExitCode()
+	}
+	var record map[string]any
+	if contains(args, "--json") && strings.TrimSpace(stdout.String()) != "" {
+		if json.Unmarshal(stdout.Bytes(), &record) != nil {
+			record = nil
+		}
+	}
+	return code, record, stdout.String(), stderr.String()
+}
+
 func python3(t *testing.T) string {
 	t.Helper()
 	p, err := exec.LookPath("python3")
