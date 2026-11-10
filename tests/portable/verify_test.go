@@ -16,18 +16,16 @@ var (
 )
 
 type verifyLab struct {
-	t                   *testing.T
-	root, stop, toolkit string
-	env                 []string
+	t          *testing.T
+	root, stop string
+	env        []string
 }
 
 func newVerifyLab(t *testing.T) *verifyLab {
 	t.Helper()
 	root := repoRoot(t)
 	stop := t.TempDir()
-	toolkit := filepath.Join(stop, "toolkit/.agents/skills")
-	copyTree(t, filepath.Join(root, ".agents/skills"), toolkit)
-	return &verifyLab{t: t, root: root, stop: stop, toolkit: toolkit, env: labEnv(t, root, stop)}
+	return &verifyLab{t: t, root: root, stop: stop, env: labEnv(t, root, stop)}
 }
 
 func (v *verifyLab) rawRepo(fixture, path string) string {
@@ -250,7 +248,6 @@ func TestExternalCloneFollowsGeneratedInstructions(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("clone: %v\n%s", err, out)
 	}
-	removeAll(t, filepath.Dir(v.toolkit))
 	code, record, stderr := v.runner(external, "--check")
 	if code != 0 || asString(record["outcome"]) != "checked" {
 		t.Fatalf("check %v %s", record, stderr)
