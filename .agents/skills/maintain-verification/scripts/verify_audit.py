@@ -209,7 +209,7 @@ def latest_run(root: Path, artifacts: str, contract_sha, map_shas):
     recorded_maps = {m["path"]: m["sha256"] for m in record.get("feature_maps", [])}
     current = record.get("contract", {}).get("sha256") == contract_sha and recorded_maps == map_shas
     return {"proof": "current" if current else "stale", "run_id": record.get("run_id"), "outcome": record.get("outcome"), "candidate": record.get("candidate", {}).get("sha"),
-            "certifies": record.get("certifies"), "not_exercised": record.get("not_exercised"), "record": record.get("artifacts", {}).get("run_dir"),
+            "not_exercised": record.get("not_exercised"), "record": record.get("artifacts", {}).get("run_dir"),
             "detail": "the newest run record was produced against the current contract and maps" if current else "the contract or a map changed after the newest run record; that record does not prove the current maps"}
 
 

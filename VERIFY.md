@@ -68,12 +68,12 @@ Retain run logs and helper reports before removing any exact task-owned temporar
 
 ## Artifacts
 
-Each run records candidate SHA, dirty state, command, outcomes, policy changes, and unrun scenarios under .artifacts/verification/ with a retained verify.log.
+Each run records its outcome, candidate SHA, dirty state, command, scenario statuses, policy changes, and unrun scenarios under .artifacts/verification/ with a retained verify.log.
 Before/after evidence lives under .artifacts/evidence/ when explicitly captured.
 
 ## Policy
 
-A dirty-tree result is provisional; a policy-changing candidate requires independent root review and cannot certify its own new standard.
+A dirty-tree run reports `provisional`; a policy-changing candidate reports `needs-root-review`, requires independent root review, and cannot certify its own new standard.
 Changes to VERIFY.md, mise tasks, feature maps, portable verification skills, CI, AGENTS.md, or declared skills policy must be reviewed independently against --base.
 Base policy paths stay protected even when the candidate removes them.
 A changed map is an authored coverage claim, not execution evidence.

@@ -586,7 +586,7 @@ The directory is Git-ignored; reference records by path in reports.
 ## Policy
 
 Edits to this file, {policy_names}, the feature maps, or the skills under `.agents/skills/verify/` and `.agents/skills/evidence/` are policy changes.
-Run the runner with `--base <merge-base>` so such a candidate is flagged `requires_root_review`; it cannot certify its own new standard.
+Run the runner with `--base <merge-base>` so such a candidate reports `needs-root-review`; it cannot certify its own new standard.
 """
 
 
