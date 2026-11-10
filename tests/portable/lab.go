@@ -23,22 +23,6 @@ func repoRoot(t *testing.T) string {
 // toolBin is the sum-verify binary built once from this checkout's source for the whole test run.
 var toolBin string
 
-func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "sum-verify-bin-")
-	if err != nil {
-		panic(err)
-	}
-	toolBin = filepath.Join(dir, "sum-verify")
-	build := exec.Command("go", "build", "-o", toolBin, "./cmd/sum-verify")
-	build.Dir = filepath.Join("..", "..", "tools", "verify")
-	if out, err := build.CombinedOutput(); err != nil {
-		panic("build sum-verify: " + err.Error() + "\n" + string(out))
-	}
-	code := m.Run()
-	_ = os.RemoveAll(dir)
-	os.Exit(code)
-}
-
 // runTool runs one sum-verify command the way a project would, returning its exit code, parsed --json record, stdout, and stderr.
 func runTool(t *testing.T, env []string, cwd string, args ...string) (int, map[string]any, string, string) {
 	t.Helper()
