@@ -28,9 +28,8 @@ Keep source stable for checks/review and use separate worktrees for concurrent w
 
 ## Delivery artifacts
 
-The operational lead receives the builder report, launches a separate reviewer against the frozen candidate, and routes blocking findings back to the builder.
-Maintainer delivery uses the same independent review and stable-candidate standards through the current environment's supported tools and reporting route, without mandatory HC dispatch or `hc send`.
-Corrected inputs receive affected verification and review again.
+Every role takes a candidate through the [candidate lifecycle](../skills/sum-finish/SKILL.md#candidate-lifecycle); operational helpers follow the [assignment lifecycle](../skills/sum-work/SKILL.md#assignment-lifecycle).
+Maintainer delivery uses the current environment's supported tools and reporting route, without mandatory HC dispatch or `hc send`.
 The [PR template](../templates/pull-request.md) standardizes review summaries, prescribed-check status tables, and before/after evidence across harnesses.
 Screenshots show visual changes; validated transcripts or HTTP responses show CLI/API changes.
 The authorized delivery role publishes and reads back the PR artifacts against its current head.
