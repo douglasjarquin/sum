@@ -1,5 +1,5 @@
 // Package pycompat reproduces the Python behaviors that the verification records and checks were defined by,
-// so the same contract, feature map, or command line gives the same result it always did.
+// so the same contract, feature map, or command line gives the same result.
 package pycompat
 
 import (
@@ -64,6 +64,20 @@ func Clip(s string, n int) string {
 		n--
 	}
 	return s
+}
+
+// ClipNoting keeps the first n characters and says how many were dropped.
+func ClipNoting(s string, n int) string {
+	kept := Clip(s, n)
+	if kept == s {
+		return s
+	}
+	return kept + "\n... [" + strconv.Itoa(utf8.RuneCountInString(s)-n) + " more characters not recorded]"
+}
+
+// DecodeUTF8 is how captured bytes become text: invalid UTF-8 is replaced, never dropped.
+func DecodeUTF8(data []byte) string {
+	return strings.ToValidUTF8(string(data), "�")
 }
 
 // Tail is s[-n:]: the last n characters, not bytes.

@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
 )
 

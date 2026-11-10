@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/proc"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
+	"github.com/douglasjarquin/sum/tools/verify/internal/proc"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 var cliSpec = args.Spec{Trailing: true, Options: []args.Option{
@@ -132,7 +133,7 @@ func httpRequest(method, url string, data any, timeout int) (status any, body st
 	if err != nil {
 		return nil, "", err.Error(), nil
 	}
-	return response.StatusCode, strings.ToValidUTF8(string(raw), "�"), nil, nil
+	return response.StatusCode, pycompat.DecodeUTF8(raw), nil, nil
 }
 
 func (c *capture) http(opts args.Parsed) ([]any, error) {

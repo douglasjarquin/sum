@@ -20,6 +20,7 @@ import (
 	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
 	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const usage = `usage: sum-verify run [--root DIR] [--check] [--base REF] [--scenario ID=STATUS[:reason]]... [--timeout SECONDS] [--json]
@@ -89,7 +90,7 @@ type scenarioResult struct {
 type session struct {
 	opts      options
 	outcomes  map[string]reported
-	record    *pycompat.Object
+	record    *value.Object
 	runID     string
 	root      string
 	outcome   string
@@ -128,7 +129,7 @@ func Main(args []string) int {
 		return 3
 	}
 
-	s := &session{opts: opts, outcomes: outcomes, record: &pycompat.Object{}, runID: pycompat.Stamp(4)}
+	s := &session{opts: opts, outcomes: outcomes, record: value.NewObject(), runID: tool.Stamp(4)}
 	mode := "run"
 	if opts.check {
 		mode = "check"

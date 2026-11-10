@@ -1,7 +1,6 @@
 package run
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,8 +10,10 @@ import (
 	"time"
 
 	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
+	"github.com/douglasjarquin/sum/tools/verify/internal/proc"
 	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 type requirements struct {
@@ -27,14 +28,14 @@ type task struct {
 }
 
 type execution struct {
-	Command   string           `json:"command"`
-	Cwd       string           `json:"cwd"`
-	StartedAt string           `json:"started_at"`
-	EndedAt   string           `json:"ended_at"`
-	Seconds   pycompat.Seconds `json:"seconds"`
-	Exit      *int             `json:"exit"`
-	TimedOut  bool             `json:"timed_out"`
-	Log       string           `json:"log"`
+	Command   string      `json:"command"`
+	Cwd       string      `json:"cwd"`
+	StartedAt string      `json:"started_at"`
+	EndedAt   string      `json:"ended_at"`
+	Seconds   value.Float `json:"seconds"`
+	Exit      *int        `json:"exit"`
+	TimedOut  bool        `json:"timed_out"`
+	Log       string      `json:"log"`
 }
 
 func (e *execution) passed() bool {
@@ -79,23 +80,19 @@ func miseTask(root, ownerRelative, name string) (*task, error) {
 	if !pycompat.Within(owner, root) {
 		return nil, notADirectory
 	}
-	binary, err := exec.LookPath("mise")
-	if err != nil {
+	mise := contract.ListMiseTasks(root)
+	binary := mise.Binary
+	if binary == "" {
 		return nil, contract.Blockedf("mise is not on PATH; the canonical entrypoint cannot run.")
 	}
-	cmd := exec.Command(binary, "tasks", "ls", "--json")
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "MISE_QUIET=1")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil && pycompat.Strip(stdout.String()) == "" {
-		if cmd.ProcessState == nil {
-			return nil, contract.Blockedf("mise tasks ls could not be started: %v", err)
+	if mise.Err != nil && pycompat.Strip(string(mise.Stdout)) == "" {
+		if mise.State == nil {
+			return nil, contract.Blockedf("mise tasks ls could not be started: %v", mise.Err)
 		}
-		return nil, contract.Blockedf("mise tasks ls exited %d: %s", pycompat.ExitCode(cmd.ProcessState), pycompat.Tail(pycompat.Strip(stderr.String()), 300))
+		return nil, contract.Blockedf("mise tasks ls exited %d: %s", proc.ExitCode(mise.State), pycompat.Tail(pycompat.Strip(string(mise.Stderr)), 300))
 	}
 	var listed any = []any{}
-	if stdout.Len() > 0 && json.Unmarshal(stdout.Bytes(), &listed) != nil {
+	if len(mise.Stdout) > 0 && json.Unmarshal(mise.Stdout, &listed) != nil {
 		return nil, contract.Blockedf("mise tasks ls did not return JSON.")
 	}
 	if !pycompat.IsDir(owner) {
@@ -158,11 +155,11 @@ func runEntrypoint(root, runDir string, timeout int, binary string) (*execution,
 	case errors.Is(ctx.Err(), context.DeadlineExceeded) && err != nil:
 		result.TimedOut = true
 	case err == nil || errors.As(err, &exited):
-		code := pycompat.ExitCode(cmd.ProcessState)
+		code := proc.ExitCode(cmd.ProcessState)
 		result.Exit = &code
 	default:
 		return nil, contract.Blockedf("`mise run verify` could not be started: %v", err)
 	}
-	result.EndedAt, result.Seconds = tool.UTCNow(), pycompat.Since(started)
+	result.EndedAt, result.Seconds = tool.UTCNow(), tool.Since(started)
 	return result, nil
 }

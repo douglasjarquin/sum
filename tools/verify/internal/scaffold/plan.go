@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
 )
 
@@ -75,7 +77,7 @@ func ownerFor(root string, info inspection, task string) string {
 		}
 		return filepath.ToSlash(rel)
 	}
-	if info.PackageScripts.has(task) {
+	if info.PackageScripts.Has(task) {
 		return "package.json"
 	}
 	for _, t := range info.MakeTargets {
@@ -121,7 +123,7 @@ func readmeMap(root string, info inspection) []readmeRow {
 	for _, name := range info.CheckTasks {
 		add(name, ownerFor(root, info, name), exampleFor(info, name), "mise run "+name)
 	}
-	for _, script := range info.PackageScripts.keys {
+	for _, script := range info.PackageScripts.Keys() {
 		if slices.Contains(checkTaskNames, script) && !seen[script] {
 			add(script, "package.json", exampleFor(info, script), "npm run "+script)
 		}
@@ -150,7 +152,7 @@ func verifyTaskCommands(info inspection) []string {
 	}
 	if len(commands) == 0 {
 		for _, name := range []string{"test", "lint", "check", "typecheck"} {
-			if info.PackageScripts.has(name) {
+			if info.PackageScripts.Has(name) {
 				commands = append(commands, "npm run "+name)
 			}
 		}
@@ -255,19 +257,19 @@ func plan(root string, info inspection) planned {
 	}
 	p := planned{FeatureMaps: featureMaps, Commands: verifyTaskCommands(info), Features: seedFeatures(info)}
 	hasBuild := slices.ContainsFunc(info.Mise.Own, func(t miseTask) bool { return t.Name == "build" })
-	if slices.Contains(info.Surfaces, "web") && isDir(filepath.Join(root, "src")) && hasBuild && (exists(filepath.Join(root, "dist")) || info.MentionsDist) {
+	if slices.Contains(info.Surfaces, "web") && pycompat.IsDir(filepath.Join(root, "src")) && hasBuild && (pycompat.Exists(filepath.Join(root, "dist")) || info.MentionsDist) {
 		p.Freshness = []string{"src", "dist"}
 	}
 	if len(p.Commands) > 0 && !info.HasVerifyTask {
 		if content, ok := miseTomlWithVerify(root, p.Commands); ok {
 			kind := "create"
-			if isFile(filepath.Join(root, "mise.toml")) {
+			if pycompat.IsFile(filepath.Join(root, "mise.toml")) {
 				kind = "append"
 			}
 			p.setFile(plannedFile{path: "mise.toml", content: content, kind: kind})
 		}
 	}
-	p.setFile(plannedFile{path: "VERIFY.md", content: renderVerifyMD(root, info, p), kind: "create"})
+	p.setFile(plannedFile{path: contract.File, content: renderVerifyMD(root, info, p), kind: "create"})
 	p.setFile(plannedFile{path: featureMaps, content: renderIndex(p.Features, info), kind: "create"})
 	mapsDir := path.Dir(path.Clean(featureMaps))
 	for _, f := range p.Features {

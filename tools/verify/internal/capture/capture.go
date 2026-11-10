@@ -12,13 +12,13 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
 	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const usage = `usage: sum-verify capture --feature ID [--scenario ID] [--run-dir DIR] [--note TEXT] run [--expect-exit N] [--expect-text T]... [--timeout SECONDS] -- COMMAND [ARGS...]
@@ -110,7 +110,7 @@ func Main(args []string) int {
 	if scenario == "" {
 		scenario = feature
 	}
-	record := &pycompat.Object{}
+	record := value.NewObject()
 	record.Set("schema", 1)
 	record.Set("feature", feature)
 	record.Set("scenario", scenario)
@@ -148,7 +148,7 @@ func Main(args []string) int {
 	unmet := append([]string{}, drive(record)...)
 	record.Set("unmet", unmet)
 	record.Set("ended_at", tool.UTCNow())
-	record.Set("seconds", pycompat.Since(started))
+	record.Set("seconds", tool.Since(started))
 	record.Set("met", len(unmet) == 0)
 
 	path := fmt.Sprintf("%s/%03d-%s.json", evidenceDir, countJSON(evidenceDir)+1, pycompat.Clip(unsafeName.ReplaceAllString(scenario, "-"), 60))
@@ -201,7 +201,7 @@ func chooseRunDir(root, artifacts, explicit string) string {
 			}
 		}
 	}
-	return artifacts + "/manual-" + pycompat.Stamp(3)
+	return artifacts + "/manual-" + tool.Stamp(3)
 }
 
 func countJSON(dir string) int {
@@ -213,18 +213,4 @@ func countJSON(dir string) int {
 		}
 	}
 	return count
-}
-
-// clip keeps the first limit characters and says how many were dropped.
-func clip(text string) string {
-	kept := pycompat.Clip(text, limit)
-	if kept == text {
-		return text
-	}
-	return kept + "\n... [" + strconv.Itoa(len([]rune(text))-limit) + " more characters not recorded]"
-}
-
-// decode is how captured output or a body becomes record text: invalid UTF-8 is replaced, never dropped.
-func decode(data []byte) string {
-	return strings.ToValidUTF8(string(data), "�")
 }

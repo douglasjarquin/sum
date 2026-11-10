@@ -7,9 +7,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 var compareSpec = args.Spec{Options: []args.Option{
@@ -54,7 +55,7 @@ func loadCaptures(directory string) (map[string][]captured, error) {
 	entries, _ := os.ReadDir(directory)
 	for _, entry := range entries {
 		manifest := filepath.Join(directory, entry.Name(), "capture.json")
-		if !isFile(manifest) {
+		if !pycompat.IsFile(manifest) {
 			continue
 		}
 		record, err := readRecord(manifest)
@@ -73,7 +74,7 @@ func verifyHashes(directory string, record *value.Object) []string {
 	hashes := value.Obj(record.Get("content_hashes"))
 	for _, name := range hashes.Keys() {
 		path := filepath.Join(directory, name)
-		if !isFile(path) {
+		if !pycompat.IsFile(path) {
 			path = filepath.Join(directory, "frames", name)
 		}
 		data, err := os.ReadFile(path)
@@ -96,7 +97,7 @@ func cmdCompare(argv []string) (int, error) {
 	rootDir, _ := EvidenceRoot(root)
 	run, scenario, base, candidate := opts.String("--run"), opts.String("--scenario"), opts.String("--base"), opts.String("--candidate")
 	directory := scenarioDir(rootDir, run, scenario)
-	if !isDir(directory) {
+	if !pycompat.IsDir(directory) {
 		return 0, usage(fmt.Sprintf("no captures for scenario %s in run %s under %s", scenario, run, rootDir))
 	}
 	captures, err := loadCaptures(directory)
@@ -162,9 +163,9 @@ func cmdCompare(argv []string) (int, error) {
 		}
 		sha := value.Str(value.Obj(entries[role].record.Get("checkout")).Get("sha"))
 		if sha == "" {
-			findings = append(findings, fmt.Sprintf("%s: no --checkout was recorded, so the build cannot be tied to %s", role, head(expected, 12)))
+			findings = append(findings, fmt.Sprintf("%s: no --checkout was recorded, so the build cannot be tied to %s", role, pycompat.Clip(expected, 12)))
 		} else if !strings.HasPrefix(sha, expected) {
-			findings = append(findings, fmt.Sprintf("%s: captured from %s, not the declared %s %s (stale or wrong build)", role, head(sha, 12), declared, head(expected, 12)))
+			findings = append(findings, fmt.Sprintf("%s: captured from %s, not the declared %s %s (stale or wrong build)", role, pycompat.Clip(sha, 12), declared, pycompat.Clip(expected, 12)))
 		}
 	}
 	// Environment consistency, unless the difference is declared intentional in either capture.

@@ -1,65 +1,34 @@
 package evidence
 
 import (
-	"crypto/rand"
-	"encoding/hex"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
-	"github.com/BurntSushi/toml"
-
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/proc"
+	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 )
 
 // Roles are the two sides of a comparison, in the order they are read and rendered.
 var Roles = []string{"before", "after"}
 
-var (
-	contractFence = regexp.MustCompile("(?ms)^```verify[ \\t]*\\n(.*?)^```[ \\t]*$")
-	unsafeName    = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
-)
+var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
-// ExpandUser replaces a leading "~" with the home directory.
-func ExpandUser(path string) string {
-	if path != "~" && !strings.HasPrefix(path, "~/") {
-		return path
+// git is a Git command's trimmed output. ok is false when Git could not start, which leaves the reason in stderr, or exited non-zero.
+func git(cwd string, args ...string) (ok bool, stdout, stderr string) {
+	stdout, stderr, err := contract.GitOutput(cwd, args...)
+	var exited *exec.ExitError
+	if err != nil && !errors.As(err, &exited) {
+		return false, "", err.Error()
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return path
+	text := func(s string) string {
+		return strings.TrimSpace(pycompat.UniversalNewlines(pycompat.DecodeUTF8([]byte(s))))
 	}
-	return home + path[1:]
-}
-
-// ResolvePath is the absolute path with symlinks resolved as far as the path exists; whatever does not exist yet is kept as written.
-func ResolvePath(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return path
-	}
-	rest := ""
-	for current := abs; ; {
-		if real, err := filepath.EvalSymlinks(current); err == nil {
-			return filepath.Join(real, rest)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return abs
-		}
-		current, rest = parent, filepath.Join(filepath.Base(current), rest)
-	}
-}
-
-func git(cwd string, args ...string) (code int, stdout, stderr string) {
-	result, err := proc.Run(append([]string{"git", "-C", cwd}, args...), proc.Options{})
-	if err != nil {
-		return 1, "", err.Error()
-	}
-	return result.Code, strings.TrimSpace(result.Stdout), strings.TrimSpace(result.Stderr)
+	return err == nil, text(stdout), text(stderr)
 }
 
 // ProjectRoot is the top of the Git work tree the tool was started in.
@@ -68,55 +37,35 @@ func ProjectRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	code, out, stderr := git(cwd, "rev-parse", "--show-toplevel")
-	if code != 0 {
-		return "", blocked("not inside a Git work tree: " + head(stderr, 200))
+	ok, out, stderr := git(cwd, "rev-parse", "--show-toplevel")
+	if !ok {
+		return "", blocked("not inside a Git work tree: " + pycompat.Clip(stderr, 200))
 	}
-	return ResolvePath(out), nil
+	return pycompat.ResolveExistingPrefix(out), nil
 }
 
 // EvidenceRoot is `evidence` from VERIFY.md (default `.artifacts/evidence`), or VERIFY_EVIDENCE_ROOT for a location outside a disposable
 // checkout. The second result names which of the two declared it.
 func EvidenceRoot(root string) (dir, declaredBy string) {
-	if override := os.Getenv("VERIFY_EVIDENCE_ROOT"); override != "" {
-		return ResolvePath(ExpandUser(override)), "VERIFY_EVIDENCE_ROOT"
+	if override := contract.EvidenceRootOverride(); override != "" {
+		return pycompat.ResolveExistingPrefix(override), "VERIFY_EVIDENCE_ROOT"
 	}
 	declared := ".artifacts/evidence"
-	if contract, err := os.ReadFile(filepath.Join(root, "VERIFY.md")); err == nil {
-		text := strings.NewReplacer("\r\n", "\n", "\r", "\n").Replace(string(contract))
-		if match := contractFence.FindStringSubmatch(text); match != nil {
-			var table map[string]any
-			if _, err := toml.Decode(match[1], &table); err == nil {
-				if v, ok := table["evidence"].(string); ok && v != "" && !filepath.IsAbs(v) && !slices.Contains(strings.Split(v, "/"), "..") {
-					declared = v
-				}
-			}
+	if data, err := os.ReadFile(filepath.Join(root, contract.File)); err == nil {
+		// A block that does not parse declares nothing.
+		table, _, _ := contract.Config(pycompat.UniversalNewlines(string(data)))
+		if v, ok := table["evidence"].(string); ok && v != "" && !filepath.IsAbs(v) && !slices.Contains(strings.Split(v, "/"), "..") {
+			declared = v
 		}
 	}
-	return ResolvePath(filepath.Join(root, declared)), "VERIFY.md"
-}
-
-func newRunID() string {
-	token := make([]byte, 4)
-	_, _ = rand.Read(token)
-	return time.Now().UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(token)
+	return pycompat.ResolveExistingPrefix(filepath.Join(root, declared)), contract.File
 }
 
 // SafeName turns a run or scenario id into one path component.
 func SafeName(name string) string {
-	return head(unsafeName.ReplaceAllString(name, "-"), 80)
+	return pycompat.Clip(unsafeName.ReplaceAllString(name, "-"), 80)
 }
 
 func scenarioDir(rootDir, runID, scenario string) string {
 	return filepath.Join(rootDir, SafeName(runID), SafeName(scenario))
-}
-
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
-}
-
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }

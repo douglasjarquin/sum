@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/proc"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/proc"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 var (

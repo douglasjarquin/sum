@@ -32,6 +32,7 @@ import (
 	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
 	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const usage = `usage: sum-verify audit [--root DIR] [--base REF] [--rationale TEXT] [--json] [--no-record]
@@ -89,11 +90,11 @@ type note struct {
 }
 
 type authored struct {
-	Contract            hashedFile       `json:"contract"`
-	FeatureMaps         *pycompat.Object `json:"feature_maps"`
-	Scenarios           []scenario       `json:"scenarios"`
-	References          *pycompat.Object `json:"references"`
-	InventoryIncomplete bool             `json:"inventory_incomplete"`
+	Contract            hashedFile    `json:"contract"`
+	FeatureMaps         *value.Object `json:"feature_maps"`
+	Scenarios           []scenario    `json:"scenarios"`
+	References          *value.Object `json:"references"`
+	InventoryIncomplete bool          `json:"inventory_incomplete"`
 }
 
 type hashedFile struct {
@@ -128,7 +129,7 @@ func Main(args []string) int {
 		return pycompat.UsageError(fs, usage, "unrecognized arguments: %s", strings.Join(rest, " "))
 	}
 
-	rec := &record{Schema: 1, AuditID: pycompat.Stamp(4), At: tool.UTCNow(), Findings: []finding{}, Notes: []note{}, Authored: struct{}{}}
+	rec := &record{Schema: 1, AuditID: tool.Stamp(4), At: tool.UTCNow(), Findings: []finding{}, Notes: []note{}, Authored: struct{}{}}
 	artifacts, err := rec.inspect(opts)
 	var blocked *contract.Blocked
 	switch {
@@ -199,7 +200,7 @@ func (r *record) inspect(opts options) (artifacts string, err error) {
 	}
 	seen := map[string]string{}
 	scenarios := []scenario{}
-	hashes, references := &pycompat.Object{}, &pycompat.Object{}
+	hashes, references := value.NewObject(), value.NewObject()
 	for _, featureMap := range maps {
 		r.checkText(root, featureMap, tasks, known)
 		if pycompat.Resolve(featureMap.path) != pycompat.Resolve(index) {
@@ -256,12 +257,13 @@ func (r *record) linkedMaps(root, index, mapsIndex string) ([]*document, error) 
 		maps = append(maps, featureMap)
 	}
 	entries, _ := os.ReadDir(indexMap.dir())
+	resolvedIndex := pycompat.Resolve(index)
 	for _, entry := range entries {
 		sibling := indexMap.dir() + "/" + entry.Name()
 		if !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
-		if resolved := pycompat.Resolve(sibling); resolved != pycompat.Resolve(index) && !linked[resolved] {
+		if resolved := pycompat.Resolve(sibling); resolved != resolvedIndex && !linked[resolved] {
 			r.add(finding{Kind: "unlinked-map", File: relativeTo(root, sibling), Detail: fmt.Sprintf("not linked from `%s`", mapsIndex)})
 		}
 	}

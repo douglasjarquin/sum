@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/proc"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/proc"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 var (
@@ -33,7 +34,7 @@ func findBrowser() string {
 		}
 	}
 	for _, candidate := range browserMac {
-		if isFile(candidate) {
+		if pycompat.IsFile(candidate) {
 			return candidate
 		}
 	}

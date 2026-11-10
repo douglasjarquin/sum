@@ -2,13 +2,14 @@ package pycompat
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 // A chain of symbolic links longer than this is treated as a path that does not exist.
 const maxSymlinks = 40
 
-// Join is pathlib's `base / rel`: an absolute rel replaces base, empty and `.` components are dropped,
+// Join joins rel onto base: an absolute rel replaces base, empty and `.` components are dropped,
 // and `..` is kept for the filesystem to resolve rather than collapsed lexically.
 func Join(base, rel string) string {
 	path := rel
@@ -31,7 +32,7 @@ func Join(base, rel string) string {
 	return joined
 }
 
-// Resolve is Path.resolve(): the absolute path with symbolic links followed for as far as the path exists
+// Resolve is the absolute path with symbolic links followed for as far as the path exists
 // and the remainder kept lexically.
 func Resolve(path string) string {
 	if !strings.HasPrefix(path, "/") {
@@ -74,7 +75,38 @@ func Resolve(path string) string {
 	return resolved
 }
 
-// Rel is path.relative_to(root): a lexical comparison that never touches the filesystem. ok is false when path is not under root.
+// ResolveExistingPrefix is the absolute path with symbolic links resolved as far as the path exists; whatever does not exist yet is kept as written.
+func ResolveExistingPrefix(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	rest := ""
+	for current := abs; ; {
+		if real, err := filepath.EvalSymlinks(current); err == nil {
+			return filepath.Join(real, rest)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs
+		}
+		current, rest = parent, filepath.Join(filepath.Base(current), rest)
+	}
+}
+
+// ExpandUser replaces a leading "~" with the home directory.
+func ExpandUser(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return home + path[1:]
+}
+
+// Rel is path relative to root: a lexical comparison that never touches the filesystem. ok is false when path is not under root.
 func Rel(path, root string) (rel string, ok bool) {
 	if path == root {
 		return ".", true
@@ -92,19 +124,19 @@ func Within(path, root string) bool {
 	return ok
 }
 
-// IsFile is Path.is_file(): a regular file, following symbolic links.
+// IsFile reports a regular file, following symbolic links.
 func IsFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
 }
 
-// IsDir is Path.is_dir(): a directory, following symbolic links.
+// IsDir reports a directory, following symbolic links.
 func IsDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }
 
-// Exists is Path.exists(), following symbolic links.
+// Exists reports that the path exists, following symbolic links.
 func Exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil

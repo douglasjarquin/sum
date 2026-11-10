@@ -7,9 +7,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"syscall"
 	"time"
+
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 )
 
 // ErrTimeout reports that the process outlived its bound and was killed; whatever it did before that is unknown.
@@ -57,11 +58,15 @@ func Run(argv []string, opts Options) (Result, error) {
 		_ = cmd.Process.Kill()
 		return Result{}, ErrTimeout
 	}
-	code := cmd.ProcessState.ExitCode()
-	if status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() {
-		code = -int(status.Signal())
+	return Result{Code: ExitCode(cmd.ProcessState), Stdout: text(stdout.Bytes()), Stderr: text(stderr.Bytes())}, nil
+}
+
+// ExitCode is the exit status, or the negated signal number when a signal ended the process.
+func ExitCode(state *os.ProcessState) int {
+	if status, ok := state.Sys().(syscall.WaitStatus); ok && status.Signaled() {
+		return -int(status.Signal())
 	}
-	return Result{Code: code, Stdout: text(stdout.Bytes()), Stderr: text(stderr.Bytes())}, nil
+	return state.ExitCode()
 }
 
 // NotFound reports whether Run failed because the program does not exist.
@@ -69,9 +74,7 @@ func NotFound(err error) bool {
 	return errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist)
 }
 
-var newlines = strings.NewReplacer("\r\n", "\n", "\r", "\n")
-
 // text decodes captured output as UTF-8 with every line ending normalised to "\n".
 func text(data []byte) string {
-	return newlines.Replace(strings.ToValidUTF8(string(data), "�"))
+	return pycompat.UniversalNewlines(pycompat.DecodeUTF8(data))
 }

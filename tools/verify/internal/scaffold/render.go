@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
 )
 
@@ -34,7 +36,7 @@ func fence(p planned, requires []string) string {
 func renderVerifyMD(root string, info inspection, p planned) string {
 	var policy []string
 	for _, name := range []string{"mise.toml", ".mise.toml", "mise-tasks/"} {
-		if exists(filepath.Join(root, name)) {
+		if pycompat.Exists(filepath.Join(root, name)) {
 			policy = append(policy, name)
 		}
 	}
@@ -59,7 +61,7 @@ func renderVerifyMD(root string, info inspection, p planned) string {
 	}
 	var setup []string
 	for _, g := range info.Guidance {
-		if g != "VERIFY.md" {
+		if g != contract.File {
 			setup = append(setup, "- `"+g+"` describes setup; follow it.")
 		}
 	}
@@ -147,7 +149,7 @@ func driverText(info inspection, f feature) string {
 		if len(info.Tests) > 0 {
 			return automated
 		}
-		if info.Capabilities.values["curl"] {
+		if info.Capabilities.Get("curl") == true {
 			return "manual: `curl` against a service you started"
 		}
 		return "manual: no HTTP driver installed"
@@ -158,7 +160,7 @@ func driverText(info inspection, f feature) string {
 		return "manual: run the command in a terminal"
 	}
 	for _, browser := range browserDrivers {
-		if info.Capabilities.values[browser] {
+		if info.Capabilities.Get(browser) == true {
 			return "manual: browser via `" + browser + "`"
 		}
 	}

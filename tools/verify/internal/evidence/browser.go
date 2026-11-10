@@ -10,9 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/proc"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
+	"github.com/douglasjarquin/sum/tools/verify/internal/proc"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 	"github.com/douglasjarquin/sum/tools/verify/skills"
 )
 
@@ -160,7 +161,7 @@ func (c *capture) browser(opts args.Parsed) ([]any, error) {
 	}
 	if strings.TrimSpace(stderr) != "" {
 		if log, err := os.OpenFile(diagnostics, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
-			_, _ = log.WriteString(tail(stderr, 4000))
+			_, _ = log.WriteString(pycompat.Tail(stderr, 4000))
 			_ = log.Close()
 		}
 	}
@@ -237,7 +238,7 @@ func (c *capture) browser(opts args.Parsed) ([]any, error) {
 		}
 	}
 	media := []any{}
-	if isFile(shot) {
+	if pycompat.IsFile(shot) {
 		info, err := InspectMedia(shot)
 		if err != nil {
 			return nil, err
@@ -309,8 +310,8 @@ func (c *capture) screencast(frameDir string, result *value.Object, convert bool
 	if err != nil {
 		return nil, err
 	}
-	if converted.Code != 0 || !isFile(mp4) {
-		c.appendTo("limitations", fmt.Sprintf("ffmpeg conversion failed (%d); original AVI kept: %s", converted.Code, head(strings.TrimSpace(converted.Stderr), 200)))
+	if converted.Code != 0 || !pycompat.IsFile(mp4) {
+		c.appendTo("limitations", fmt.Sprintf("ffmpeg conversion failed (%d); original AVI kept: %s", converted.Code, pycompat.Clip(strings.TrimSpace(converted.Stderr), 200)))
 		return media, nil
 	}
 	producer := "ffmpeg"

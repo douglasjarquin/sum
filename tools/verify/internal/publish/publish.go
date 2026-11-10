@@ -13,9 +13,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const schema = 1

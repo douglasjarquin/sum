@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 
@@ -42,18 +43,51 @@ func Config(text string) (config map[string]any, found bool, err error) {
 	return config, true, nil
 }
 
-// Git runs a Git command in the repository at root. ok is false when Git could not run or exited non-zero.
-func Git(root string, args ...string) (stdout, stderr string, ok bool) {
+// EvidenceRootOverride is VERIFY_EVIDENCE_ROOT with a leading "~" expanded, or "" when it is not set. The evidence
+// capture writes there and the runner reads there, so both take the override from here.
+func EvidenceRootOverride() string {
+	return pycompat.ExpandUser(os.Getenv("VERIFY_EVIDENCE_ROOT"))
+}
+
+// GitOutput runs a Git command in the repository at root and returns its streams as written. err is what running it returned.
+func GitOutput(root string, args ...string) (stdout, stderr string, err error) {
 	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut
-	if err := cmd.Run(); err != nil {
-		if errOut.Len() == 0 && out.Len() == 0 {
-			errOut.WriteString(err.Error())
-		}
-		return out.String(), errOut.String(), false
+	err = cmd.Run()
+	return out.String(), errOut.String(), err
+}
+
+// Git runs a Git command in the repository at root. ok is false when Git could not run or exited non-zero.
+func Git(root string, args ...string) (stdout, stderr string, ok bool) {
+	stdout, stderr, err := GitOutput(root, args...)
+	if err != nil && stderr == "" && stdout == "" {
+		stderr = err.Error()
 	}
-	return out.String(), errOut.String(), true
+	return stdout, stderr, err == nil
+}
+
+// MiseTasks is one `mise tasks ls --json` from root. It never runs a task.
+type MiseTasks struct {
+	Binary         string // "" when mise is not on PATH; nothing was run then.
+	Stdout, Stderr []byte
+	State          *os.ProcessState // nil when mise could not be started.
+	Err            error            // What running it returned.
+}
+
+// ListMiseTasks asks mise which tasks it resolves from root.
+func ListMiseTasks(root string) MiseTasks {
+	binary, err := exec.LookPath("mise")
+	if err != nil {
+		return MiseTasks{Err: err}
+	}
+	cmd := exec.Command(binary, "tasks", "ls", "--json")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "MISE_QUIET=1")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err = cmd.Run()
+	return MiseTasks{Binary: binary, Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), State: cmd.ProcessState, Err: err}
 }
 
 // Root is the real Git top level of the work tree holding start. A linked worktree's `.git` is a file and a managed

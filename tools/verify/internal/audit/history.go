@@ -8,6 +8,7 @@ import (
 
 	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
 	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 var (
@@ -34,16 +35,16 @@ type latestRun struct {
 }
 
 type changes struct {
-	Base         string           `json:"base"`
-	Files        []string         `json:"files"`
-	Policy       []string         `json:"policy"`
-	AffectedMaps *pycompat.Object `json:"affected_maps"`
-	Unmapped     []string         `json:"unmapped"`
-	Rationale    *string          `json:"rationale"`
+	Base         string        `json:"base"`
+	Files        []string      `json:"files"`
+	Policy       []string      `json:"policy"`
+	AffectedMaps *value.Object `json:"affected_maps"`
+	Unmapped     []string      `json:"unmapped"`
+	Rationale    *string       `json:"rationale"`
 }
 
 // latestRunProof compares the newest run record under the artifact directory with the current contract and map hashes.
-func latestRunProof(root, artifacts, contractSHA string, mapSHAs *pycompat.Object) *proof {
+func latestRunProof(root, artifacts, contractSHA string, mapSHAs *value.Object) *proof {
 	data, err := os.ReadFile(pycompat.Join(root, artifacts) + "/latest.json")
 	if err != nil {
 		return &proof{Proof: "none", Detail: "no run record under the artifact directory; the maps have never been exercised here"}
@@ -75,7 +76,7 @@ func latestRunProof(root, artifacts, contractSHA string, mapSHAs *pycompat.Objec
 	}
 	current := latest.Contract.SHA256 == contractSHA && len(recorded) == len(mapSHAs.Keys())
 	for _, path := range mapSHAs.Keys() {
-		sha, _ := mapSHAs.Get(path)
+		sha := mapSHAs.Get(path)
 		current = current && recorded[path] == sha
 	}
 	run := &latestRun{RunID: latest.RunID, Outcome: latest.Outcome, Candidate: latest.Candidate.SHA, NotExercised: latest.NotExercised, Record: latest.Artifacts.RunDir}
@@ -86,12 +87,12 @@ func latestRunProof(root, artifacts, contractSHA string, mapSHAs *pycompat.Objec
 }
 
 // compare matches the files changed since the base against the maps' references and records what a reviewer must re-read.
-func (r *record) compare(root string, opts options, mapSHAs, references *pycompat.Object) error {
+func (r *record) compare(root string, opts options, mapSHAs, references *value.Object) error {
 	changed, err := changedSince(root, opts.base)
 	if err != nil {
 		return err
 	}
-	found := &changes{Base: opts.base, Files: changed, Policy: []string{}, AffectedMaps: &pycompat.Object{}, Unmapped: []string{}}
+	found := &changes{Base: opts.base, Files: changed, Policy: []string{}, AffectedMaps: value.NewObject(), Unmapped: []string{}}
 	if opts.rationale != "" {
 		found.Rationale = &opts.rationale
 	}
@@ -101,12 +102,12 @@ func (r *record) compare(root string, opts options, mapSHAs, references *pycompa
 		}
 		owned := false
 		for _, owner := range references.Keys() {
-			paths, _ := references.Get(owner)
+			paths := references.Get(owner)
 			if !slices.ContainsFunc(paths.([]string), func(path string) bool { return change == path || strings.HasPrefix(change, path+"/") }) {
 				continue
 			}
 			owned = true
-			files, _ := found.AffectedMaps.Get(owner)
+			files := found.AffectedMaps.Get(owner)
 			touched, _ := files.([]string)
 			found.AffectedMaps.Set(owner, append(touched, change))
 		}
@@ -119,7 +120,7 @@ func (r *record) compare(root string, opts options, mapSHAs, references *pycompa
 		r.Notes = append(r.Notes, note{Kind: "policy-changed", Detail: "verification policy files changed since base; the root's independent review must inspect them", Files: found.Policy})
 	}
 	for _, owner := range found.AffectedMaps.Keys() {
-		files, _ := found.AffectedMaps.Get(owner)
+		files := found.AffectedMaps.Get(owner)
 		r.Notes = append(r.Notes, note{Kind: "affected-map", File: owner, Detail: "references changed files; re-read its entry points, variants, expected states, and coverage", Files: files.([]string)})
 	}
 	if opts.rationale != "" {

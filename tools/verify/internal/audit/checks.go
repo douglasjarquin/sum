@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
 
@@ -26,18 +25,12 @@ type scenario struct {
 // ownTasks is the set of mise tasks defined inside this repository. known is false when mise is absent or
 // does not answer in JSON, and then no task claim can be checked.
 func ownTasks(root string) (names map[string]bool, known bool) {
-	binary, err := exec.LookPath("mise")
-	if err != nil {
+	mise := contract.ListMiseTasks(root)
+	if mise.Binary == "" {
 		return nil, false
 	}
-	cmd := exec.Command(binary, "tasks", "ls", "--json")
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "MISE_QUIET=1")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	_ = cmd.Run()
 	var rows []map[string]any
-	if stdout.Len() > 0 && json.Unmarshal(stdout.Bytes(), &rows) != nil {
+	if len(mise.Stdout) > 0 && json.Unmarshal(mise.Stdout, &rows) != nil {
 		return nil, false
 	}
 	names = map[string]bool{}

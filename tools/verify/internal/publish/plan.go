@@ -10,10 +10,11 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
 	"github.com/douglasjarquin/sum/tools/verify/internal/evidence"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const (
@@ -93,7 +94,7 @@ func containedFile(runDir string, parts ...string) (string, error) {
 		}
 	}
 	path := filepath.Join(append([]string{runDir}, parts...)...)
-	real := evidence.ResolvePath(path)
+	real := pycompat.ResolveExistingPrefix(path)
 	absolute, _ := filepath.Abs(path)
 	if real != absolute || !strings.HasPrefix(real, runDir+string(filepath.Separator)) {
 		return "", refused(path + " escapes the evidence run directory (symlink or relative component); nothing outside it is ever read")
@@ -390,7 +391,7 @@ func cmdPlan(argv []string) (int, error) {
 	run, candidate, repo := opts.String("--run"), opts.String("--candidate"), opts.String("--repo")
 	var rootDir string
 	if given := opts.String("--evidence-root"); given != "" {
-		rootDir = evidence.ResolvePath(evidence.ExpandUser(given))
+		rootDir = pycompat.ResolveExistingPrefix(pycompat.ExpandUser(given))
 	} else {
 		root, err := evidence.ProjectRoot()
 		if err != nil {
@@ -398,7 +399,7 @@ func cmdPlan(argv []string) (int, error) {
 		}
 		rootDir, _ = evidence.EvidenceRoot(root)
 	}
-	runDir := evidence.ResolvePath(filepath.Join(rootDir, evidence.SafeName(run)))
+	runDir := pycompat.ResolveExistingPrefix(filepath.Join(rootDir, evidence.SafeName(run)))
 	if info, err := os.Stat(runDir); err != nil || !info.IsDir() {
 		return 0, refused(fmt.Sprintf("run %s not found under %s", run, rootDir))
 	}
@@ -410,7 +411,7 @@ func cmdPlan(argv []string) (int, error) {
 	}
 	publishDir := filepath.Join(runDir, "publish")
 	if given := opts.String("--publish-dir"); given != "" {
-		publishDir = evidence.ResolvePath(evidence.ExpandUser(given))
+		publishDir = pycompat.ResolveExistingPrefix(pycompat.ExpandUser(given))
 	}
 	mediaDir := filepath.Join(publishDir, "media")
 	scenarios := opts.Strings("--scenario")

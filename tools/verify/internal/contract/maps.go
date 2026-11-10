@@ -62,7 +62,7 @@ func Rows(text string) []Row {
 		if driverColumn >= len(cells) {
 			continue // A short row.
 		}
-		// A Driver header in the id column counts from the end, as the negative index it produces always did.
+		// A Driver header in the id column counts from the end.
 		driver := cells[(driverColumn+len(cells))%len(cells)]
 		if strings.Trim(driver, "-:") == "" {
 			continue // The `| --- |` separator.

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 )
 
 const textLimit = 20000
@@ -60,34 +62,6 @@ func (r *Redactor) Redact(text string) string {
 	return text
 }
 
-// head is the first n characters of text.
-func head(text string, n int) string {
-	if len(text) <= n {
-		return text
-	}
-	runes := []rune(text)
-	if len(runes) <= n {
-		return text
-	}
-	return string(runes[:n])
-}
-
-// tail is the last n characters of text.
-func tail(text string, n int) string {
-	if len(text) <= n {
-		return text
-	}
-	runes := []rune(text)
-	if len(runes) <= n {
-		return text
-	}
-	return string(runes[len(runes)-n:])
-}
-
 func clip(text string) string {
-	runes := []rune(text)
-	if len(runes) <= textLimit {
-		return text
-	}
-	return fmt.Sprintf("%s\n... [%d more characters not recorded]", string(runes[:textLimit]), len(runes)-textLimit)
+	return pycompat.ClipNoting(text, textLimit)
 }

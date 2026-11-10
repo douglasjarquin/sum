@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
 	"github.com/douglasjarquin/sum/tools/verify/skills"
 )
@@ -141,7 +142,7 @@ func applyUpdate(root string) ([]result, error) {
 		dest := filepath.Join(root, filepath.FromSlash(file.path))
 		stockHash := tool.SHA256(file.data)
 		status := "vendored"
-		if exists(dest) {
+		if pycompat.Exists(dest) {
 			current, err := os.ReadFile(dest)
 			if err != nil {
 				return nil, err
@@ -170,7 +171,7 @@ func applyUpdate(root string) ([]result, error) {
 	}
 	for _, rel := range order {
 		dest := filepath.Join(root, filepath.FromSlash(rel))
-		if isStock[rel] || !isFile(dest) {
+		if isStock[rel] || !pycompat.IsFile(dest) {
 			continue
 		}
 		current, err := os.ReadFile(dest)

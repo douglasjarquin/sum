@@ -11,9 +11,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/proc"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/proc"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const videoFPS = 10
@@ -204,7 +205,7 @@ func inspectMP4(path string, info *value.Object) error {
 	if err != nil {
 		return invalidMedia(fmt.Sprintf("ffprobe could not read %s: %v", name, err))
 	}
-	unreadable := invalidMedia(fmt.Sprintf("ffprobe could not read %s: %s", name, head(strings.TrimSpace(probe.Stderr), 200)))
+	unreadable := invalidMedia(fmt.Sprintf("ffprobe could not read %s: %s", name, pycompat.Clip(strings.TrimSpace(probe.Stderr), 200)))
 	parsed, err := value.Decode([]byte(probe.Stdout))
 	if err != nil {
 		return unreadable

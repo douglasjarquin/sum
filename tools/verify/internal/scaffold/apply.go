@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
+	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
 	"github.com/douglasjarquin/sum/tools/verify/skills"
 )
 
@@ -44,7 +46,7 @@ func writeFile(target string, content []byte, mode fs.FileMode) error {
 // apply creates what is missing and keeps what exists. Differing existing files are conflicts whose proposal is written under the artifact directory.
 func apply(root string, p planned, write bool) ([]result, error) {
 	results := []result{}
-	proposals := path.Join(artifacts, "scaffold", time.Now().UTC().Format("20060102T150405Z"))
+	proposals := path.Join(artifacts, "scaffold", time.Now().UTC().Format(tool.StampLayout))
 	for _, file := range p.files {
 		target := filepath.Join(root, filepath.FromSlash(file.path))
 		status, err := applyFile(root, target, file, proposals, write)
@@ -64,7 +66,7 @@ func apply(root string, p planned, write bool) ([]result, error) {
 }
 
 func applyFile(root, target string, file plannedFile, proposals string, write bool) (result, error) {
-	if file.kind == "append" && isFile(target) {
+	if file.kind == "append" && pycompat.IsFile(target) {
 		current := read(target)
 		if current == file.content ||
 			(file.path == "mise.toml" && definesVerifyTask(current)) ||
@@ -76,7 +78,7 @@ func applyFile(root, target string, file plannedFile, proposals string, write bo
 		}
 		return result{Path: file.path, Status: "appended"}, os.WriteFile(target, []byte(file.content), 0o644)
 	}
-	if exists(target) {
+	if pycompat.Exists(target) {
 		current := read(target)
 		if current == file.content {
 			return result{Path: file.path, Status: "unchanged"}, nil

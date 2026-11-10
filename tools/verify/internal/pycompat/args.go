@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-// ParseFlags handles a command line the way argparse did: `--help` prints the usage and exits 0, a bad flag prints it
+// ParseFlags handles a command line: `--help` prints the usage and exits 0, a bad flag prints it
 // and exits 2. It returns the arguments that are not flags; done is true when the caller should return exit at once.
 // With interspersed set, flags may come before, between, or after positional arguments; otherwise parsing stops at the first one.
 func ParseFlags(fs *flag.FlagSet, args []string, usage string, interspersed bool) (rest []string, exit int, done bool) {
@@ -31,7 +31,7 @@ func ParseFlags(fs *flag.FlagSet, args []string, usage string, interspersed bool
 	}
 }
 
-// UsageError reports a command-line mistake and returns argparse's exit code for one.
+// UsageError reports a command-line mistake and returns the exit code for one.
 func UsageError(fs *flag.FlagSet, usage, format string, args ...any) int {
 	fmt.Fprintf(os.Stderr, "%s%s: error: %s\n", usage, fs.Name(), fmt.Sprintf(format, args...))
 	return 2

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const (
@@ -69,7 +69,7 @@ func newPublisher(opts args.Parsed) (*publisher, error) {
 	p.target = fmt.Sprintf("%s#%d", p.repo, p.number)
 	p.receiptsPath = filepath.Join(p.publishDir, "receipts.json")
 	if given := opts.String("--receipts"); given != "" {
-		p.receiptsPath = evidence.ResolvePath(evidence.ExpandUser(given))
+		p.receiptsPath = pycompat.ResolveExistingPrefix(pycompat.ExpandUser(given))
 	}
 	if p.receipts, err = loadReceipts(p.receiptsPath); err != nil {
 		return nil, err
@@ -81,7 +81,7 @@ func newPublisher(opts args.Parsed) (*publisher, error) {
 	}
 	p.result = value.NewObject("schema", schema, "at", tool.UTCNow(), "destination", p.destination, "candidate", plan.Get("candidate"), "run", plan.Get("run"), "outcome", nil, "reason", nil,
 		"uploaded", []any{}, "reused", []any{}, "unpublished", unpublished, "edits", 0, "video_table", nil, "pr_url", nil,
-		"receipts", p.receiptsPath, "plan", evidence.ResolvePath(planPath), "dry_run", opts.Bool("--dry-run"))
+		"receipts", p.receiptsPath, "plan", pycompat.ResolveExistingPrefix(planPath), "dry_run", opts.Bool("--dry-run"))
 	return p, nil
 }
 

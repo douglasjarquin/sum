@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 var inspectSpec = args.Spec{Positionals: []string{"path"}, Options: []args.Option{{Name: "--json"}}}
@@ -88,10 +89,10 @@ func cmdPromote(argv []string) (int, error) {
 	rootDir, _ := EvidenceRoot(root)
 	run := opts.String("--run")
 	source := filepath.Join(rootDir, SafeName(run))
-	if !isDir(source) {
+	if !pycompat.IsDir(source) {
 		return 0, usage(fmt.Sprintf("run %s not found under %s", run, rootDir))
 	}
-	dest := filepath.Join(ResolvePath(ExpandUser(opts.String("--to"))), SafeName(run))
+	dest := filepath.Join(pycompat.ResolveExistingPrefix(pycompat.ExpandUser(opts.String("--to"))), SafeName(run))
 	if _, err := os.Lstat(dest); err == nil {
 		return 0, usage(dest + " already exists; promotion never overwrites")
 	}

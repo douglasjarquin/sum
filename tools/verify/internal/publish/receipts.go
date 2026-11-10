@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const eventLimit = 200

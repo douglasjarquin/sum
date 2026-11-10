@@ -164,12 +164,9 @@ func policyFilesAtRef(root, ref string) []string {
 // evidenceRoot is where comparison manifests are read from. The evidence capture honours VERIFY_EVIDENCE_ROOT,
 // so the runner reads the same override or it looks where nothing was written.
 func evidenceRoot(root, evidenceRelative string) (dir, source string) {
-	override := os.Getenv("VERIFY_EVIDENCE_ROOT")
+	override := contract.EvidenceRootOverride()
 	if override == "" {
 		return pycompat.Join(root, evidenceRelative), "contract"
-	}
-	if home, err := os.UserHomeDir(); err == nil && (override == "~" || strings.HasPrefix(override, "~/")) {
-		override = home + override[1:]
 	}
 	return pycompat.Resolve(override), "VERIFY_EVIDENCE_ROOT"
 }

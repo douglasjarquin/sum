@@ -14,11 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/douglasjarquin/sum/tools/verify/internal/proc"
 	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 // A recipe drives the feature once, fills in what it observed, and returns the expectations that were not met.
-type recipe func(record *pycompat.Object) (unmet []string)
+type recipe func(record *value.Object) (unmet []string)
 
 type request struct {
 	Method string  `json:"method"`
@@ -40,7 +42,7 @@ func commandRecipe(args []string) (run recipe, exit int, done bool) {
 	if len(command) == 0 {
 		return nil, pycompat.UsageError(fs, usage, "run needs -- COMMAND [ARGS...]"), true
 	}
-	return func(record *pycompat.Object) []string {
+	return func(record *value.Object) []string {
 		record.Set("command", command)
 		record.Set("expectations", append([]string{fmt.Sprintf("exit == %d", expectExit)}, expect.contains("stdout")...))
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(expect.timeout)*time.Second)
@@ -61,11 +63,11 @@ func commandRecipe(args []string) (run recipe, exit int, done bool) {
 			record.Set("timed_out", false)
 			return []string{"command not found: " + command[0]}
 		}
-		code := pycompat.ExitCode(cmd.ProcessState)
-		output := pycompat.UniversalNewlines(decode(stdout.Bytes()))
+		code := proc.ExitCode(cmd.ProcessState)
+		output := pycompat.UniversalNewlines(pycompat.DecodeUTF8(stdout.Bytes()))
 		record.Set("exit", code)
-		record.Set("stdout", clip(output))
-		record.Set("stderr", clip(pycompat.UniversalNewlines(decode(stderr.Bytes()))))
+		record.Set("stdout", pycompat.ClipNoting(output, limit))
+		record.Set("stderr", pycompat.ClipNoting(pycompat.UniversalNewlines(pycompat.DecodeUTF8(stderr.Bytes())), limit))
 		record.Set("timed_out", false)
 		var unmet []string
 		if code != expectExit {
@@ -102,7 +104,7 @@ func httpRecipe(args []string) (run recipe, exit int, done bool) {
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
 		return nil, pycompat.UsageError(fs, usage, "http needs an http(s):// URL, got %s; read the URL the service printed, not the runner's echo line", pycompat.Repr(url)), true
 	}
-	return func(record *pycompat.Object) []string {
+	return func(record *value.Object) []string {
 		record.Set("request", request{Method: method, URL: url, Data: data})
 		expectations := []string{}
 		if expectStatus != nil && *expectStatus != 0 {
@@ -118,13 +120,13 @@ func httpRecipe(args []string) (run recipe, exit int, done bool) {
 			record.Set("status", nil)
 			unmet = append(unmet, fmt.Sprintf("request failed: %v", err))
 		} else {
-			status, text = strconv.Itoa(response.StatusCode), decode(body)
+			status, text = strconv.Itoa(response.StatusCode), pycompat.DecodeUTF8(body)
 			if response.StatusCode >= 200 && response.StatusCode < 300 {
 				record.Set("headers", describingHeaders(response.Header))
 			}
 			record.Set("status", response.StatusCode)
 		}
-		record.Set("body", clip(text))
+		record.Set("body", pycompat.ClipNoting(text, limit))
 		if expectStatus != nil && status != strconv.Itoa(*expectStatus) {
 			unmet = append(unmet, fmt.Sprintf("status was %s, expected %d", status, *expectStatus))
 		}
@@ -160,8 +162,8 @@ func send(method, url string, data *string, timeout time.Duration) (*http.Respon
 }
 
 // describingHeaders keeps the response headers that say what the body is and where it lives.
-func describingHeaders(header http.Header) *pycompat.Object {
-	kept := &pycompat.Object{}
+func describingHeaders(header http.Header) *value.Object {
+	kept := value.NewObject()
 	for _, name := range []string{"Content-Type", "Content-Length", "Location"} {
 		if values := header.Values(name); len(values) > 0 {
 			kept.Set(name, values[len(values)-1])

@@ -14,12 +14,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 
+	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
 )
 
@@ -92,16 +93,13 @@ func parseArgs(args []string) (options, error) {
 }
 
 func resolveRoot(start string) (string, error) {
-	start = resolve(start)
-	var stderr strings.Builder
-	cmd := exec.Command("git", "-C", start, "rev-parse", "--show-toplevel")
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
+	start = pycompat.ResolveExistingPrefix(start)
+	out, stderr, err := contract.GitOutput(start, "rev-parse", "--show-toplevel")
 	if err != nil {
-		detail := []rune(strings.TrimSpace(stderr.String()))
+		detail := []rune(strings.TrimSpace(stderr))
 		return "", fmt.Errorf("%s is not inside a Git work tree: %s", start, string(detail[:min(200, len(detail))]))
 	}
-	return resolve(strings.TrimSpace(string(out))), nil
+	return pycompat.ResolveExistingPrefix(strings.TrimSpace(out)), nil
 }
 
 type record struct {
@@ -161,7 +159,7 @@ func scaffold(root string, opts options) (record, error) {
 		rec.Problems = append(rec.Problems, "mise is not on PATH; task ownership could not be checked.")
 	}
 	// Without a pin the wrapper has no binary to run in an ordinary clone, so pinning comes before everything else.
-	if !exists(filepath.Join(root, filepath.FromSlash(lockPath))) {
+	if !pycompat.Exists(filepath.Join(root, filepath.FromSlash(lockPath))) {
 		rec.Next = append(rec.Next, wrapper+" pin <version>")
 	}
 	rec.Next = append(rec.Next,
@@ -186,9 +184,9 @@ func printRecord(rec record) {
 	for _, task := range info.Mise.Own {
 		own = append(own, task.Name)
 	}
-	for _, name := range info.Capabilities.keys {
+	for _, name := range info.Capabilities.Keys() {
 		installed := "no"
-		if info.Capabilities.values[name] {
+		if info.Capabilities.Get(name) == true {
 			installed = "yes"
 		}
 		capabilities = append(capabilities, name+"="+installed)

@@ -3,6 +3,8 @@ package scaffold
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -12,10 +14,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/douglasjarquin/sum/tools/verify/internal/contract"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 var (
@@ -26,18 +31,13 @@ var (
 	browserDrivers  = []string{"chrome-devtools-axi", "playwright"}
 )
 
-// Whitespace and word characters as the inspection has always classified them: Unicode-aware, where RE2's \s and \w are ASCII-only.
+// Unicode-aware whitespace and word characters; RE2's \s and \w are ASCII-only.
 const (
-	space = `[\s\v\x1c-\x1f\x{85}\p{Z}]`
-	word  = `[\p{L}\p{N}_]`
+	space = `[` + pycompat.SpaceClass + `]`
+	word  = `[` + pycompat.WordClass + `]`
 )
 
-func isWord(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
-}
-
 var (
-	contractFence = regexp.MustCompile("(?ms)^```verify[ \\t]*\\n(.*?)^```[ \\t]*$")
 	makeTarget    = regexp.MustCompile(`(?m)^([A-Za-z0-9_.-]+)` + space + `*:`)
 	loopbackPort  = regexp.MustCompile(`(?:127\.0\.0\.1|localhost|0\.0\.0\.0):(\d{2,5})`)
 	pathVariable  = regexp.MustCompile(`^[A-Z][A-Z0-9_]{3,}_(?:DIR|PORT|URL|HOME|PATH)$`)
@@ -53,48 +53,6 @@ var (
 		regexp.MustCompile(`(?ms)^\[tasks\.verify\].*?^run` + space + `*=` + space + `*["'].*mise run verify`),
 	}
 )
-
-// ordered is a JSON object that keeps the order its keys were first set in.
-type ordered[V any] struct {
-	keys   []string
-	values map[string]V
-}
-
-func (o *ordered[V]) set(key string, value V) {
-	if o.values == nil {
-		o.values = map[string]V{}
-	}
-	if _, ok := o.values[key]; !ok {
-		o.keys = append(o.keys, key)
-	}
-	o.values[key] = value
-}
-
-func (o ordered[V]) has(key string) bool {
-	_, ok := o.values[key]
-	return ok
-}
-
-func (o ordered[V]) MarshalJSON() ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	buf.WriteByte('{')
-	for i, key := range o.keys {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		if err := enc.Encode(key); err != nil {
-			return nil, err
-		}
-		buf.WriteByte(':')
-		if err := enc.Encode(o.values[key]); err != nil {
-			return nil, err
-		}
-	}
-	buf.WriteByte('}')
-	return buf.Bytes(), nil
-}
 
 type miseTask struct {
 	Name        string  `json:"name"`
@@ -125,7 +83,7 @@ type testLocation struct {
 	Examples []string `json:"examples"`
 }
 
-type contract struct {
+type existing struct {
 	Path        string `json:"path"`
 	FeatureMaps any    `json:"feature_maps"`
 	Artifacts   any    `json:"artifacts"`
@@ -133,25 +91,25 @@ type contract struct {
 }
 
 type inspection struct {
-	Root             string          `json:"root"`
-	Guidance         []string        `json:"guidance"`
-	Mise             miseTasks       `json:"mise"`
-	PackageScripts   ordered[string] `json:"package_scripts"`
-	MakeTargets      []target        `json:"make_targets"`
-	Containers       []string        `json:"containers"`
-	Readiness        readiness       `json:"readiness"`
-	CLIEntrypoints   []string        `json:"cli_entrypoints"`
-	Routes           []string        `json:"routes"`
-	Tests            []testLocation  `json:"tests"`
-	CheckTasks       []string        `json:"check_tasks"`
-	ServeTasks       []string        `json:"serve_tasks"`
-	Capabilities     ordered[bool]   `json:"capabilities"`
-	Surfaces         []string        `json:"surfaces"`
-	ExistingContract *contract       `json:"existing_contract"`
-	HasVerifyTask    bool            `json:"has_verify_task"`
-	MentionsDist     bool            `json:"mentions_dist"`
-	InheritedVerify  bool            `json:"inherited_verify"`
-	VerifyCycle      bool            `json:"verify_cycle"`
+	Root             string         `json:"root"`
+	Guidance         []string       `json:"guidance"`
+	Mise             miseTasks      `json:"mise"`
+	PackageScripts   *value.Object  `json:"package_scripts"`
+	MakeTargets      []target       `json:"make_targets"`
+	Containers       []string       `json:"containers"`
+	Readiness        readiness      `json:"readiness"`
+	CLIEntrypoints   []string       `json:"cli_entrypoints"`
+	Routes           []string       `json:"routes"`
+	Tests            []testLocation `json:"tests"`
+	CheckTasks       []string       `json:"check_tasks"`
+	ServeTasks       []string       `json:"serve_tasks"`
+	Capabilities     *value.Object  `json:"capabilities"`
+	Surfaces         []string       `json:"surfaces"`
+	ExistingContract *existing      `json:"existing_contract"`
+	HasVerifyTask    bool           `json:"has_verify_task"`
+	MentionsDist     bool           `json:"mentions_dist"`
+	InheritedVerify  bool           `json:"inherited_verify"`
+	VerifyCycle      bool           `json:"verify_cycle"`
 }
 
 // read returns a text file with universal newlines, or "" when it is absent, unreadable, or not UTF-8.
@@ -160,42 +118,7 @@ func read(path string) string {
 	if err != nil || !utf8.Valid(data) {
 		return ""
 	}
-	return strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\r", "\n")
-}
-
-func exists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
-}
-
-func isDir(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
-// resolve makes a path absolute and follows its symlinks as far as the path exists.
-func resolve(p string) string {
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return filepath.Clean(p)
-	}
-	rest := ""
-	for dir := abs; ; {
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			return filepath.Join(real, rest)
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return abs
-		}
-		rest = filepath.Join(filepath.Base(dir), rest)
-		dir = parent
-	}
+	return pycompat.UniversalNewlines(string(data))
 }
 
 // suffix is the final extension of a file name; a leading or trailing dot is not one.
@@ -227,7 +150,7 @@ func walkFiles(dir string, skipDir []string, visit func(path string)) {
 			}
 			continue
 		}
-		if isFile(p) {
+		if entry.Type().IsRegular() || (entry.Type()&fs.ModeSymlink != 0 && pycompat.IsFile(p)) {
 			visit(p)
 		}
 	}
@@ -252,17 +175,13 @@ func tomlTable(text string) map[string]any {
 // findMiseTasks lists the tasks mise resolves from the root, split into this repository's own and inherited ones. It never runs a task.
 func findMiseTasks(root string) miseTasks {
 	tasks := miseTasks{Own: []miseTask{}, Inherited: []miseTask{}}
-	binary, err := exec.LookPath("mise")
-	if err != nil {
+	mise := contract.ListMiseTasks(root)
+	if mise.Binary == "" {
 		return tasks
 	}
 	tasks.Available = true
-	cmd := exec.Command(binary, "tasks", "ls", "--json")
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "MISE_QUIET=1")
-	out, _ := cmd.Output()
 	var rows []any
-	if json.Unmarshal(out, &rows) != nil {
+	if json.Unmarshal(mise.Stdout, &rows) != nil {
 		return tasks
 	}
 	for _, item := range rows {
@@ -279,7 +198,7 @@ func findMiseTasks(root string) miseTasks {
 		}
 		own := false
 		if location != "" {
-			source := resolve(location)
+			source := pycompat.ResolveExistingPrefix(location)
 			task.Source = &source
 			rel, err := filepath.Rel(root, source)
 			own = err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
@@ -300,8 +219,8 @@ func packageJSON(root string) map[string]json.RawMessage {
 }
 
 // packageScripts keeps the string-valued scripts in the order package.json declares them.
-func packageScripts(root string) ordered[string] {
-	var scripts ordered[string]
+func packageScripts(root string) *value.Object {
+	scripts := value.NewObject()
 	dec := json.NewDecoder(bytes.NewReader(packageJSON(root)["scripts"]))
 	if open, err := dec.Token(); err != nil || open != json.Delim('{') {
 		return scripts
@@ -316,7 +235,7 @@ func packageScripts(root string) ordered[string] {
 			break
 		}
 		if command, ok := value.(string); ok {
-			scripts.set(key.(string), command)
+			scripts.Set(key.(string), command)
 		}
 	}
 	return scripts
@@ -344,7 +263,7 @@ func makeTargets(root string) []target {
 func declaredContainers(root string) []string {
 	found := []string{}
 	for _, name := range []string{"compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml", "Dockerfile", ".devcontainer/devcontainer.json"} {
-		if isFile(filepath.Join(root, name)) {
+		if pycompat.IsFile(filepath.Join(root, name)) {
 			found = append(found, name)
 		}
 	}
@@ -360,7 +279,7 @@ func readinessHints(blob string) readiness {
 			continue
 		}
 		// An endpoint stands alone: not a later segment of a longer path, and not the start of a longer word.
-		if before, size := utf8.DecodeLastRuneInString(blob[:i]); size > 0 && (before == '/' || isWord(before)) {
+		if before, size := utf8.DecodeLastRuneInString(blob[:i]); size > 0 && (before == '/' || pycompat.IsWord(before)) {
 			continue
 		}
 		rest := blob[i+1:]
@@ -368,7 +287,7 @@ func readinessHints(blob string) readiness {
 			if !strings.HasPrefix(rest, name) {
 				continue
 			}
-			if after, size := utf8.DecodeRuneInString(rest[len(name):]); size == 0 || !isWord(after) {
+			if after, size := utf8.DecodeRuneInString(rest[len(name):]); size == 0 || !pycompat.IsWord(after) {
 				endpoints = append(endpoints, "/"+name)
 				i += len(name)
 				break
@@ -383,7 +302,7 @@ func readinessHints(blob string) readiness {
 	}
 	sort.Ints(ports)
 	var env []string
-	for _, run := range strings.FieldsFunc(blob, func(r rune) bool { return !isWord(r) }) {
+	for _, run := range strings.FieldsFunc(blob, func(r rune) bool { return !pycompat.IsWord(r) }) {
 		if pathVariable.MatchString(run) {
 			env = append(env, run)
 		}
@@ -392,7 +311,7 @@ func readinessHints(blob string) readiness {
 }
 
 // serviceCommands collects the words of the tasks and scripts that start a server; the files they launch are services, not CLI entrypoints.
-func serviceCommands(root string, scripts ordered[string]) map[string]bool {
+func serviceCommands(root string, scripts *value.Object) map[string]bool {
 	words := map[string]bool{}
 	add := func(command string) {
 		for _, w := range strings.Fields(command) {
@@ -418,16 +337,16 @@ func serviceCommands(root string, scripts ordered[string]) map[string]bool {
 			}
 		}
 	}
-	for _, script := range scripts.keys {
+	for _, script := range scripts.Keys() {
 		if slices.Contains(serveTaskNames, script) {
-			add(scripts.values[script])
+			add(value.Str(scripts.Get(script)))
 		}
 	}
 	return words
 }
 
 // cliEntrypoints lists the scripts a user runs directly: files at the root, bin/, or cli/ with a shebang, and console_scripts / package.json bin entries.
-func cliEntrypoints(root string, scripts ordered[string]) []string {
+func cliEntrypoints(root string, scripts *value.Object) []string {
 	served := serviceCommands(root, scripts)
 	var entries []string
 	candidate := func(rel string) {
@@ -435,7 +354,7 @@ func cliEntrypoints(root string, scripts ordered[string]) []string {
 		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || served[rel] || served[name] {
 			return
 		}
-		if full := filepath.Join(root, rel); isFile(full) && strings.HasPrefix(read(full), "#!") {
+		if full := filepath.Join(root, rel); pycompat.IsFile(full) && hasShebang(full) {
 			entries = append(entries, rel)
 		}
 	}
@@ -469,6 +388,21 @@ func cliEntrypoints(root string, scripts ordered[string]) []string {
 	return sortedSet(entries)
 }
 
+// hasShebang reports whether a UTF-8 text file starts with `#!`. The rest is read only once the first two bytes match.
+func hasShebang(path string) bool {
+	file, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	start := make([]byte, 2)
+	if _, err := io.ReadFull(file, start); err != nil || string(start) != "#!" {
+		return false
+	}
+	rest, err := io.ReadAll(file)
+	return err == nil && utf8.Valid(rest)
+}
+
 // rootPython names the *.py entries directly under the root.
 func rootPython(root string) []string {
 	var names []string
@@ -485,7 +419,7 @@ func testLocations(root string) []testLocation {
 	found := []testLocation{}
 	suffixes := []string{".py", ".js", ".mjs", ".ts", ".tsx", ".go", ".rs", ".rb"}
 	for _, dir := range []string{"tests", "test", "spec", "__tests__", "e2e"} {
-		if !isDir(filepath.Join(root, dir)) {
+		if !pycompat.IsDir(filepath.Join(root, dir)) {
 			continue
 		}
 		var files []string
@@ -506,7 +440,7 @@ func testLocations(root string) []testLocation {
 // httpRoutes collects route declarations the source already contains (Flask/FastAPI/Express/http.server style); only literal paths are kept.
 func httpRoutes(root string) []string {
 	skipped := []string{"node_modules", ".git", "dist", "build", ".venv", "tests", "test"}
-	// The exclusion has always applied to every part of the absolute path, so a checkout below a directory with one of these names reports no routes.
+	// The exclusion applies to every part of the absolute path, so a checkout below a directory with one of these names reports no routes.
 	for _, part := range strings.Split(filepath.ToSlash(root), "/") {
 		if slices.Contains(skipped, part) {
 			return []string{}
@@ -543,7 +477,7 @@ func routerCalls(text string) []string {
 			break
 		}
 		start := pos + match[0]
-		if before, size := utf8.DecodeLastRuneInString(text[:start]); size > 0 && isWord(before) {
+		if before, size := utf8.DecodeLastRuneInString(text[:start]); size > 0 && pycompat.IsWord(before) {
 			pos = start + 1
 			continue
 		}
@@ -553,17 +487,14 @@ func routerCalls(text string) []string {
 	return found
 }
 
-func existingContract(root string) *contract {
-	file := filepath.Join(root, "VERIFY.md")
-	if !isFile(file) {
+func existingContract(root string) *existing {
+	file := filepath.Join(root, contract.File)
+	if !pycompat.IsFile(file) {
 		return nil
 	}
-	match := contractFence.FindStringSubmatch(read(file))
-	var config map[string]any
-	if match != nil {
-		config = tomlTable(match[1])
-	}
-	return &contract{Path: "VERIFY.md", FeatureMaps: config["feature_maps"], Artifacts: config["artifacts"], Parsed: match != nil}
+	// A block that does not parse still counts as found, with nothing declared.
+	config, found, _ := contract.Config(read(file))
+	return &existing{Path: contract.File, FeatureMaps: config["feature_maps"], Artifacts: config["artifacts"], Parsed: found}
 }
 
 func guidanceFiles(root string) []string {
@@ -572,11 +503,11 @@ func guidanceFiles(root string) []string {
 		"README.md", "AGENTS.md", "Agents.md", "CLAUDE.md", "CONTRIBUTING.md", "VERIFY.md",
 		"docs/README.md", "ARCHITECTURE.md", "docs/ARCHITECTURE.md", "CODEOWNERS", ".github/CODEOWNERS",
 	} {
-		if isFile(filepath.Join(root, name)) {
+		if pycompat.IsFile(filepath.Join(root, name)) {
 			found = append(found, name)
 		}
 	}
-	if isDir(filepath.Join(root, ".github", "workflows")) {
+	if pycompat.IsDir(filepath.Join(root, ".github", "workflows")) {
 		found = append(found, ".github/workflows/")
 	}
 	return found
@@ -614,7 +545,7 @@ func inspect(root string, requested []string) inspection {
 		blobs = append(blobs, read(filepath.Join(root, name)))
 	}
 	for _, name := range []string{"mise.toml", ".mise.toml", "package.json", "Procfile"} {
-		if isFile(filepath.Join(root, name)) {
+		if pycompat.IsFile(filepath.Join(root, name)) {
 			blobs = append(blobs, read(filepath.Join(root, name)))
 		}
 	}
@@ -627,7 +558,7 @@ func inspect(root string, requested []string) inspection {
 		Root: root, Guidance: guidance, Mise: tasks, PackageScripts: scripts, MakeTargets: makeTargets(root),
 		Containers: declaredContainers(root), Readiness: readinessHints(blob), CLIEntrypoints: cliEntrypoints(root, scripts), Routes: httpRoutes(root),
 		Tests: testLocations(root), CheckTasks: taskNames(tasks.Own, checkTaskNames), ServeTasks: taskNames(tasks.Own, serveTaskNames),
-		Surfaces: []string{}, ExistingContract: existingContract(root),
+		Capabilities: value.NewObject(), Surfaces: []string{}, ExistingContract: existingContract(root),
 		HasVerifyTask:   len(taskNames(tasks.Own, []string{"verify"})) > 0,
 		MentionsDist:    strings.Contains(blob, "dist"),
 		InheritedVerify: len(taskNames(tasks.Inherited, []string{"verify"})) > 0,
@@ -635,13 +566,13 @@ func inspect(root string, requested []string) inspection {
 	}
 	for _, name := range capabilityNames {
 		_, err := exec.LookPath(name)
-		info.Capabilities.set(name, err == nil)
+		info.Capabilities.Set(name, err == nil)
 	}
 	if len(info.Routes) > 0 || len(info.ServeTasks) > 0 || len(info.Readiness.Endpoints) > 0 {
 		info.Surfaces = append(info.Surfaces, "service")
 	}
 	for _, asset := range []string{"src/index.html", "src/index.html.in", "public/index.html", "index.html", "dist/index.html"} {
-		if exists(filepath.Join(root, asset)) {
+		if pycompat.Exists(filepath.Join(root, asset)) {
 			info.Surfaces = append(info.Surfaces, "web")
 			break
 		}

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 // The block markup (before/after tables, Preview labels, own-line videos, HTML video tables, and these markers) follows

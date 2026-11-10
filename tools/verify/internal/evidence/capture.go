@@ -8,9 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/args"
-	"github.com/douglasjarquin/sum/tools/verify/internal/evidence/value"
+	"github.com/douglasjarquin/sum/tools/verify/internal/args"
+	"github.com/douglasjarquin/sum/tools/verify/internal/pycompat"
 	"github.com/douglasjarquin/sum/tools/verify/internal/tool"
+	"github.com/douglasjarquin/sum/tools/verify/internal/value"
 )
 
 const schema = 1
@@ -91,7 +92,7 @@ func runID(given string) string {
 	if fromEnv := os.Getenv("EVIDENCE_RUN"); fromEnv != "" {
 		return fromEnv
 	}
-	return newRunID()
+	return tool.Stamp(4)
 }
 
 // checkoutIdentity records which build a capture was driven from: the checkout's HEAD, whether it was dirty, and whether it is the expected SHA.
@@ -99,10 +100,10 @@ func checkoutIdentity(checkout, expectSHA string, buildID any) (*value.Object, e
 	record := value.NewObject("path", nil, "sha", nil, "dirty", nil, "branch", nil, "build_id", buildID, "expected_sha", orNull(expectSHA), "matches_expected", nil)
 	sha := ""
 	if checkout != "" {
-		path := ResolvePath(checkout)
-		code, top, stderr := git(path, "rev-parse", "--show-toplevel")
-		if code != 0 {
-			return nil, blocked(fmt.Sprintf("--checkout %s is not a Git work tree: %s", checkout, head(stderr, 200)))
+		path := pycompat.ResolveExistingPrefix(checkout)
+		ok, top, stderr := git(path, "rev-parse", "--show-toplevel")
+		if !ok {
+			return nil, blocked(fmt.Sprintf("--checkout %s is not a Git work tree: %s", checkout, pycompat.Clip(stderr, 200)))
 		}
 		_, sha, _ = git(path, "rev-parse", "HEAD")
 		_, status, _ := git(path, "status", "--porcelain", "--untracked-files=normal")
@@ -163,7 +164,7 @@ func cmdCapture(argv []string) (int, error) {
 	sha := value.Str(build.Get("sha"))
 	stem := "nobuild"
 	if sha != "" {
-		stem = head(sha, 12)
+		stem = pycompat.Clip(sha, 12)
 	}
 	dir := filepath.Join(scenarioDir(rootDir, run, scenario), role+"-"+stem)
 	if _, err := os.Lstat(dir); err == nil {
@@ -261,7 +262,7 @@ func (c *capture) keepDiagnostics() {
 	entries, _ := os.ReadDir(c.dir)
 	for _, entry := range entries {
 		path := filepath.Join(c.dir, entry.Name())
-		if entry.Name() == "capture.json" || !isFile(path) {
+		if entry.Name() == "capture.json" || !pycompat.IsFile(path) {
 			continue
 		}
 		info, err := InspectMedia(path)
