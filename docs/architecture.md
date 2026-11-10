@@ -2,6 +2,7 @@
 
 Sum owns working instructions; HC owns live terminals and native communication, Git owns source isolation, and the target project owns verification.
 There is no Sum executable, registry, task database, receipt protocol, lifecycle engine, release staging, collector, or background service.
+The `sum-verify` binary under `tools/verify/` is a separate, optional developer tool for the [verification contract](../VERIFY.md); ordinary instruction use never builds, installs, or runs it.
 
 The approved task selects the role: an explicit bounded helper stays bounded, maintenance of Sum itself uses [Develop](../skills/sum-develop/SKILL.md), and operational coordination uses the native HC lead workflow.
 Role selection precedes HC prerequisites and survives verification, review, finish, and resume.

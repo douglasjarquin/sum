@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Browser recipe driver for evidence_capture.py: drives a headless Chromium-family browser over the Chrome DevTools Protocol with
+// Browser recipe driver for `sum-verify evidence`: drives a headless Chromium-family browser over the Chrome DevTools Protocol with
 // Node's built-in WebSocket (Node 22+), dispatches real input events, and writes a screenshot plus screencast frames.
-// It is launched by evidence_capture.py with one JSON job on stdin and prints one JSON result on stdout; nothing else is written
+// It is launched by `sum-verify evidence capture` with one JSON job on stdin and prints one JSON result on stdout; nothing else is written
 // to stdout. Every browser log line goes to the job's diagnostics file. Never drives a user's profile: a fresh temporary
 // user-data-dir is created per job and removed afterwards.
 import { spawn } from "node:child_process";

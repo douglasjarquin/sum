@@ -42,14 +42,7 @@ func stock(name string) []stockFile {
 		if err != nil {
 			return err
 		}
-		// Interpreter caches beside the embedded sources are never stock.
 		if entry.IsDir() {
-			if entry.Name() == "__pycache__" {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if strings.HasSuffix(p, ".pyc") {
 			return nil
 		}
 		data, err := skills.Files.ReadFile(p)

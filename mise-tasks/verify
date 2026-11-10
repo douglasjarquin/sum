@@ -4,6 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$(dirname "$(mise which go)"):$(dirname "$(mise which python)"):${PATH:-}"
 unset GOROOT
+(cd tools/verify && go test ./...)
 (cd tests/portable && python3 ../../scripts/fixture_git_env.py -- go test ./...)
 python3 scripts/fixture_git_env.py -- python3 -m unittest discover -s tests -p 'test_*.py'
 aube -C web install --frozen-lockfile

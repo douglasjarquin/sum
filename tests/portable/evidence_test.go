@@ -36,7 +36,7 @@ func (e *evidenceLab) project(name string, skills ...string) string {
 		t.Fatal(err)
 	}
 	for _, skill := range skills {
-		copyTree(t, filepath.Join(e.root, ".agents/skills", skill), filepath.Join(path, ".agents/skills", skill))
+		copyTree(t, filepath.Join(e.root, "tools/verify/skills", skill), filepath.Join(path, ".agents/skills", skill))
 	}
 	mustWrite(t, filepath.Join(path, ".gitignore"), ".artifacts/\n")
 	init := exec.Command("git", "init", "-q", "-b", "main")

@@ -4,7 +4,7 @@ description: Verify a repository through its project-root VERIFY.md contract - r
 ---
 # Verify
 
-This skill is portable: everything it needs lives inside the repository you are verifying.
+This skill is portable: the contract, the maps, and the tool pin live inside the repository you are verifying.
 It does not require sum, Herdr, a `.sum` directory, or any absolute path outside this checkout.
 Every command goes through the wrapper `.agents/skills/verify/scripts/sum-verify`, which runs the tool version the project pinned, fetching and checksum-verifying it on first use.
 If your harness has no skill discovery, read `VERIFY.md` at the project root and follow it directly; this file only adds procedure.

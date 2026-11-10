@@ -13,6 +13,7 @@ It launches a native HC worker for implementation, investigation, builds, and CI
 4. Give the agent the task; [AGENTS.md](AGENTS.md) is the shared entry contract.
 
 There is no Sum executable, build, setup, initialization, generated runtime installation, or service.
+The optional `sum-verify` developer tool for the [verification contract](VERIFY.md) is separate and is never needed to use the instructions.
 Read [native prerequisites and qualification limits](docs/native-hc.md) before delegation.
 The currently inspected local artifacts are documented, but authenticated native acceptance remains unrun; do not read their version strings as a support guarantee.
 
