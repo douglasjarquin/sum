@@ -6,13 +6,14 @@ Approved goal, scope, user-selected harness/model/permissions, and standing deci
 
 ## Source and candidate
 
-Repository, worktree, branch, and candidate/snapshot:
+Repository, worktree, branch, and candidate/snapshot identity:
+Candidate state:
 Relevant dirty/untracked inputs and how they remain frozen for review/checks:
 Task record location outside disposable worktrees:
 
 ## Helpers and checks
 
-| Role or command | Exact native address and immediate parent | Candidate | Report/output and exit status | Disposition |
+| Role or command | Exact native address and immediate parent | Candidate | Report/output and exit status | Assignment state |
 | --- | --- | --- | --- | --- |
 
 Prescribed-check inventory / PR draft reference:

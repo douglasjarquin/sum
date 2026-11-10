@@ -55,8 +55,7 @@ Never invent user approval.
 Inspect Git status and existing work before editing.
 Use Git worktrees and separate branches for concurrent writers; do not share a writable checkout or source-generating output tree.
 A read-only reviewer needs the actual candidate, not an empty checkout missing dirty work.
-Freeze the relevant tracked, dirty, and untracked inputs during review/checks or give them an immutable snapshot that contains all of those inputs.
-Record what identifies that snapshot; a commit SHA alone does not identify dirty content.
+Before review or checks the candidate must be [`frozen`](../sum-finish/SKILL.md#candidate-lifecycle): hold the tracked, dirty, and untracked inputs still, or copy all of them into an immutable snapshot.
 Tests may mutate source, snapshots, databases, or services; isolate according to their real effects.
 The lead returns to messages.
 Do not block the lead turn on `hc wait`, a build, or CI.
@@ -92,9 +91,7 @@ hc run --bg --name "task-review" --cwd "/absolute/task-worktree" codex --no-daem
 
 Record exact returned addresses; names aid discovery but do not establish ownership after recovery.
 Put the assignment in the launch where supported.
-For template launches inspect `first_message.sent`; a live terminal with an undelivered first message has not accepted the task.
-A timeout or uncertain return can leave a live terminal: inspect readiness, output, and current program before deliberate recovery.
-Do not blind-relaunch or blindly repeat a send or external action.
+For template launches read `first_message.sent`.
 
 ## Receive reports and steer
 
@@ -109,26 +106,40 @@ Read the substantive report after its concise native notification; a failed noti
 A bounded helper may use `hc wait --children any` or `hc wait --children all` when waiting helps; the lead stays available for messages.
 A message wake may precede its incoming input; do not scrape a report body from a wait response or terminal screen.
 A timeout is a check-in, not task failure.
-Idle, done, all children stopped working, `started:true`, or a successful send is not completion evidence.
 Inspect required reports and actual check output until every required result is accounted for.
 
-After reading a complete assignment report, record its candidate, findings, command output, and disposition in the task note.
-Promptly close that completed worker under [Finish](../sum-finish/SKILL.md), without waiting for independent review, PR merge, or other assignments.
-Assignment completion does not mean its findings are resolved or the overall task is accepted.
+### Assignment lifecycle
+
+Record each helper or command row in the task note by one of these states.
+Only a row's entry evidence moves an assignment into that state, and its legal next move is the only move.
+
+| State | Entry evidence | Legal next move |
+| --- | --- | --- |
+| `launched` | `hc run --bg` returned an address | Confirm the first message was sent; when `first_message.sent` is false, inspect readiness and output, then deliver it deliberately |
+| `delivered` | `first_message.sent` is true | Return to messages |
+| `working` | The agent is running the assignment | Return to messages |
+| `asking` | A question or blocker arrived | Answer the same verified helper, or take the question to the user |
+| `reported` | The report is saved and its notification arrived | Read the report and record its candidate, findings, and command output |
+| `collected` | The task note holds the report's results | Close the exact owned worker under [Finish](../sum-finish/SKILL.md) |
+| `uncertain` | From any state before `closed`: a timeout, unclear return, dead terminal, returned shell, or an address that no longer hosts the helper | Inspect under [Resume](../sum-resume/SKILL.md) and record the state the evidence proves, or cancel; never relaunch, resend, or repeat an external action blind |
+| `cancelled` | Before `reported`, or from `uncertain`: the parent cancelled the assignment, for instance because its candidate was superseded | Record the reason, preserve evidence, and close |
+| `closed` | The terminal finished and was removed | None |
+
+An ordinary command row is `launched` when its command starts, `collected` when its exit status and output are recorded, then `closed`.
+
+Closing a `collected` worker does not wait for independent review, PR merge, or other assignments, and does not mean its findings are resolved or the task accepted.
 
 ## Review the completed candidate
 
 After the builder reports completion, the lead reads its saved report and launches a separate reviewer under [Review](../sum-review/SKILL.md) against the frozen candidate.
 Give the reviewer the prescribed-check inventory, actual results, and the same concrete candidate identity used by the builder.
-Every implementation candidate requires this independent review before completion; the builder's self-review or green CI does not satisfy it.
+The builder's self-review or green CI does not earn the `reviewed` mark.
 Record the reviewer address and report path, then return to messages.
 
-Use fresh workers for review, later fixes, and corrected-candidate review, with the saved reports and current candidate in their briefs.
-When the review report arrives, route blocking findings to a fresh worker for correction.
-Freeze the corrected candidate, refresh affected verification, and send it to a fresh reviewer for follow-up inspection.
-Account for every finding against that candidate before proceeding to Finish; a report covering superseded inputs cannot close the task.
+A blocking finding makes the candidate [`superseded`](../sum-finish/SKILL.md#candidate-lifecycle); take its replacement through the same states.
+Account for every finding against the current candidate before proceeding to Finish.
 
-Use `hc send <returned-helper-address> "<answer or steering>"` only for the same verified live helper whose assignment is still unfinished.
+Use `hc send <returned-helper-address> "<answer or steering>"` only for the same verified live helper in `working` or `asking`, or to deliver an unsent first message.
 Read native send help for busy/conditional semantics; do not invent a done condition.
 Never default to force-input, type through a permission/trust/authentication dialog, or automatically accept it.
 Route uncertainty or interruption through [Resume](../sum-resume/SKILL.md), then use [Finish](../sum-finish/SKILL.md).

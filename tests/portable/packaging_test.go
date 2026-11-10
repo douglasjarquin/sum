@@ -77,7 +77,7 @@ func TestEngineeringPrinciplesReferenceIsPackagedAndPortable(t *testing.T) {
 	removeAll(t, filepath.Dir(v.toolkit))
 	head := git(t, repo, "rev-parse", "HEAD")
 	code, record, stderr := v.runner(repo, "--base", head)
-	if code != 0 || asString(record["outcome"]) != "pass" {
+	if code != 0 || asString(record["outcome"]) != "certified" {
 		t.Fatalf("portable clone verification failed: %v %s", record, stderr)
 	}
 }

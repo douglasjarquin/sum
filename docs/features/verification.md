@@ -7,15 +7,15 @@ The `create-verification` and `maintain-verification` skills under `.agents/skil
 | --- | --- | --- | --- |
 | `verify.fixture-git-isolation` | Portable-tool Go and Python test processes use a private retained Git configuration with explicit fixture identity and unsigned fixture commits/tags; inherited signing requirements cannot invoke a desktop signer, parent configuration is unchanged, and child failures retain their exit status. Builds and web checks keep their existing environment. | automated: `tests/test_git_env.py` | Offline poisoned-signer regression assertions; implementation: `scripts/fixture_git_env.py`, `mise-tasks/test`, `mise-tasks/verify`. |
 | `verify.contract-check` | `--check` validates the contract, maps, task ownership, and requirements without running anything | automated: `tests/portable/verify_test.go` | offline suite |
-| `verify.clean-pass` | A clean committed tree passing `mise run verify` yields a record that certifies the exact SHA | automated: `tests/portable/verify_test.go` | offline suite |
-| `verify.dirty-provisional` | A dirty tree yields a provisional record that certifies nothing | automated: `tests/portable/verify_test.go` | offline suite |
+| `verify.clean-pass` | A clean committed tree passing `mise run verify` with unchanged policy since `--base` reports `certified` for the exact SHA; without `--base` it reports `uncompared` | automated: `tests/portable/verify_test.go` | offline suite |
+| `verify.dirty-provisional` | A dirty tree passing its checks reports `provisional`, whether or not policy changed | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.missing-task` | A contract naming an entrypoint mise does not define is blocked, not passed | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.inherited-task` | A `verify` task resolved from a parent directory is refused as another project's command | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.blocked-dependency` | A missing required command blocks the run instead of failing or passing it | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.stale-build` | Build outputs older than their inputs after the run fail the record | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.intentional-failure` | A failing check yields `fail` and retains the log | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.skipped-scenario` | Manual scenarios are `not-run` unless reported; `not-applicable` needs a reason | automated: `tests/portable/verify_test.go` | offline suite |
-| `verify.policy-change` | Edits to the contract, tasks, or maps since `--base` flag the run for root review | automated: `tests/portable/verify_test.go` | offline suite |
+| `verify.policy-change` | Edits to the contract, tasks, or maps since `--base` make a clean passing run report `needs-root-review` | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.three-checkouts` | The same fixture verifies from a managed clone, an external clone with Sum and HC absent, and a linked worktree | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.create-bootstrap` | The create-verification scaffold inspects CLI, web, and HTTP-service fixtures, reuses their existing tasks, seeds at most five features labelled incomplete, and vendors the skills with thin aliases | automated: `tests/portable/verify_test.go` | offline suite |
 | `verify.create-inspect-architecture` | Inspect lists existing AGENTS.md, CODEOWNERS, and CI workflow directories and writes nothing; a `verify` task that runs `mise run verify` is reported as a cycle | automated: `tests/portable/packaging_test.go` | offline suite |

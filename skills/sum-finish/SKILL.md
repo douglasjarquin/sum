@@ -17,19 +17,36 @@ In the native operational workflow, the lead accounts for reports and delivery s
 If any of that work remains, brief the appropriate worker under [Work](../sum-work/SKILL.md) and return to messages.
 Invoking a finishing or shipping skill does not transfer operational worker work into the lead session or reclassify a maintainer as an operator.
 
-Before claiming completion:
+## Candidate lifecycle
 
-- Confirm the final stable candidate, including dirty/untracked content where relevant.
+A candidate is the exact inputs under review and check.
+Record its state in the task note.
+
+| State | Entry evidence | Legal next move |
+| --- | --- | --- |
+| `editing` | A writer is changing the inputs | Freeze: record what identifies the snapshot; a commit SHA alone does not identify dirty or untracked content |
+| `frozen` | The snapshot identity is recorded and the inputs are held stable | Collect the missing marks |
+| `complete` | All three marks hold for this identity | Report completion; the user decides merge |
+| `superseded` | The inputs or the published head differ from the identity, or a blocking finding requires a change | Start a new candidate: a fresh worker makes any change and a fresh reviewer inspects the result, each given the saved reports and the intervening changes; earlier marks do not carry over |
+
+A frozen candidate collects three marks in any order.
+
+| Mark | Holds when |
+| --- | --- |
+| `checked` | Every required check has an actual passing result for this identity |
+| `reviewed` | A separate reviewer's saved report under [Review](../sum-review/SKILL.md) covers this identity with no blocking finding outstanding |
+| `published` | The authorized destination carries this identity and was read back |
+
+Claim completion only for a `complete` candidate:
+
 - Account for every required helper report, question/actual answer/application, check command, exit status, and review finding.
-- Resolve blocking findings and refresh affected verification/review when inputs change; superseded evidence does not cover a later candidate.
 - Require actual results for the repository's required checks and configured CI as applicable; native operator leads collect worker results, while maintainers use their supported execution route.
   Do not require a second full local run merely because of another role.
 - Record failures, cancellations, missing results, limitations, and unrun paths truthfully.
 
-A passed check on another candidate, idle/done status, accepted notification, or all children stopped working is insufficient.
-A required failed, missing, cancelled, or superseded result leaves the task incomplete unless the user explicitly changes that requirement.
-Every implementation candidate requires a separate reviewer's substantive report before completion.
-Read-only review inspects the frozen candidate under [Review](../sum-review/SKILL.md).
+A required result that failed, is missing, or was cancelled withholds its mark unless the user explicitly changes that requirement.
+
+## Deliver and clean up
 
 Perform only delivery the user authorized: commit, push, PR creation, publication, merge, and deployment are separate actions.
 Preserve unrelated WIP and stage only owned paths.
@@ -46,14 +63,10 @@ Use an explicit reason for unavailable baselines or not-applicable visual eviden
 A local artifact path is not a published artifact; retain local originals and expose the evidence on the PR.
 The authorized delivery role publishes; capture and review do not confer write authority.
 Read back the PR body and current head after publication; verify the table, review summary, and accessible evidence match the final candidate.
-If the head changed, refresh affected review/checks/evidence before claiming completion.
-Missing required review, checks, or publication leaves delivery incomplete; an authorized draft PR may expose those gaps without claiming completion.
+An authorized draft PR may hold `published` before the other marks; it stays a draft and claims no completion.
 Never claim local/static proof establishes authenticated native acceptance or production adoption.
 
-For native HC resources, the immediate parent closes each completed worker promptly after reading and preserving its assignment report, candidate identity, findings, and relevant command output.
-Record the assignment disposition in the task note; do not wait for overall acceptance, independent review, or PR merge.
-Questions, blockers, missing reports, and idle/done status alone do not establish assignment completion.
-Deliberate cancellation or supersession also permits cleanup after recording that disposition and preserving useful evidence.
+For native HC resources, the immediate parent closes each assignment that is [`collected` or `cancelled`](../sum-work/SKILL.md#assignment-lifecycle) and records `closed` in the task note.
 Before ending a parent-linked terminal, account for required child work and preserve its results.
 Reinspect exact task-owned terminal identities/programs using installed HC help; stop no foreign/shared terminal or core.
 Use `hc kill <exact-owned-address>`, confirm the terminal finished, then `hc rm <exact-owned-address>` to remove it.

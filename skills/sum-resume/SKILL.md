@@ -23,10 +23,10 @@ HC keep recovery restores a shell, not an agent session; exiting an agent to a s
 
 Reconcile what actually exists before launching or sending anything:
 
-- Compare saved reviewer reports, check results, and evidence with the current candidate; superseded inputs require affected checks, capture, and independent review again.
+- Read each helper row's [assignment state](../sum-work/SKILL.md#assignment-lifecycle) and the [candidate state](../sum-finish/SKILL.md#candidate-lifecycle), and take the legal next move.
+- Compare the recorded candidate identity with the actual inputs and published head; a difference makes it `superseded`.
 - Inspect the actual PR head/body and publication receipts before resuming delivery; an uncertain edit must be reconciled before republishing.
 - A completed report is a claim to inspect against the actual candidate and required checks.
-- A live terminal with `first_message.sent: false` has no delivered assignment; inspect readiness and output before deliberate delivery.
 - An uncertain launch or send may have succeeded; inspect native state, output, and reports instead of blind duplication.
 - A message wake may precede actual incoming input; wait for the input rather than scraping it from the wait result.
 - A timeout, busy/blocked status, or returned shell is not success or a reason to force input through a dialog.
@@ -40,7 +40,5 @@ In the operational workflow, the lead resumes coordination: brief a native worke
 Investigation, implementation, verification, and CI remain operational worker assignments after recovery.
 Maintainers may resume that work directly or use supported helpers without an HC detour.
 A bounded worker may resume its own unfinished assignment; reading this procedure does not promote it to lead.
-For a completed assignment, read and preserve the report, then close the exact owned worker under [Finish](../sum-finish/SKILL.md).
-Use a fresh worker for subsequent fixes or review, carrying forward saved findings and the current candidate.
 Record the actual result and next action in the note.
-Use [Finish](../sum-finish/SKILL.md) for final delivery only after final-candidate obligations are accounted for; completed-worker cleanup happens when its report is collected.
+Use [Finish](../sum-finish/SKILL.md) for final delivery.

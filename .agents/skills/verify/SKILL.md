@@ -30,7 +30,7 @@ Use `.agents/skills/verify/references/engineering-principles.md` as the shared r
 
    Each capture writes `<run-dir>/evidence/NNN-<id>.json` with the exact command or request, the observed output or body, and whether your stated expectations were met (exit 1 when not). It starts and stops nothing; a browser or desktop surface without an installed driver stays a `--scenario` report.
    For a before/after proof of one scenario (screenshots, a screencast, or transcripts from the base and the candidate builds) use `.agents/skills/evidence/`; a map row whose Evidence cell names a screenshot, screencast, or red/green pair is reported by the runner as `required visual evidence ... missing` until a comparison manifest for the candidate exists under the contract's `evidence` directory.
-4. Read the printed record path and report from it: outcome, candidate SHA, `dirty`, `provisional`, `certifies`, scenarios by status, `not_exercised`, and `requires_root_review`. Retain the detailed record in task artifacts, not the PR description.
+4. Read the printed record path and report from it: outcome, candidate SHA, `dirty`, scenarios by status, `not_exercised`, and `policy.changed`. Retain the detailed record in task artifacts, not the PR description.
 5. Follow the teardown steps in `VERIFY.md`, then confirm the run directory and its `evidence/` files still exist; cleanup removes what the run started, never the proof.
 
 To standardize a repository that has no `VERIFY.md` yet, use `.agents/skills/create-verification/`; to keep an existing contract and its maps honest after a change, use `.agents/skills/maintain-verification/`.
@@ -41,7 +41,7 @@ When reporting verification on a PR, use a compact `## Pipeline` table with `Sta
 Use one row per category such as Review, Test, Document, Lint, and CI, plus relevant delivery stages; do not enumerate individual tests, scenario IDs, or execution instances.
 Keep Result to a short outcome and an accessible run/report link when available.
 Keep the complete check inventory, individual scenario statuses, logs, and candidate metadata in the verification record or task artifacts outside the PR body.
-Preserve material qualifications such as provisional results and required root review in the short summary.
+Preserve a `provisional`, `uncompared`, or `needs-root-review` outcome in the short summary.
 
 Use ✅ Passed only when every required check within the category's stated scope passed.
 For mixed outcomes use ❌ Failed if any required check failed, otherwise ⛔ Blocked if any is blocked, otherwise ⬜ Not run if any is unrun.
@@ -53,15 +53,23 @@ Verification reporting alone does not authorize creating or editing a PR.
 
 ## What the outcomes mean
 
-- `pass`: `mise run verify` exited 0, mapped automated scenarios passed, build outputs (when declared) are fresh, and every manual scenario you reported passed. `certifies: <sha>` appears only for a clean tree whose policy files were compared with `--base` and did not change; without `--base` the record says `requires_root_review` and certifies nothing.
-- `fail`: the entrypoint exited non-zero, a declared build output is stale, or a reported scenario failed. The log stays under the run directory.
-- `blocked`: the run could not be trusted - missing or malformed `VERIFY.md`, a missing or inherited `verify` task, a missing required command, or a timeout. Blocked is never a pass.
+The outcome is the first line the runner prints and the record's `outcome` field. The first that applies wins:
+
+- `blocked`: the run could not be trusted - missing or malformed `VERIFY.md`, a missing or inherited `verify` task, a missing required command, or a timeout. Blocked is never a passing outcome. Exit 2.
+- `fail`: the entrypoint exited non-zero, a declared build output is stale, or a reported scenario failed. The log stays under the run directory. Exit 1.
+- `provisional`: the checks passed on a dirty tree, so nothing is bound to a SHA. Commit, then rerun.
+- `uncompared`: the checks passed on a clean tree, but no `--base` was given, so policy files were not compared. Rerun with `--base <merge-base>`.
+- `needs-root-review`: the checks passed on a clean tree whose policy files changed since `--base`; `policy.changed` lists them. Obtain independent root review.
+- `certified`: the checks passed on a clean tree whose policy files match `--base`. The result is bound to the candidate SHA.
+- `checked`: `--check` validated the contract, maps, task ownership, and requirements without running anything.
+
+The four outcomes after `fail` mean `mise run verify` exited 0, mapped automated scenarios passed, declared build outputs are fresh, and no reported manual scenario failed; they and `checked` exit 0.
 - `not-run` / `not-applicable` on a scenario: it was not exercised, or it does not apply with the stated reason. A passing aggregate command says nothing about these.
 
 ## Rules
 
-- Never edit `VERIFY.md`, feature maps, tests, or tasks to make a run pass. A candidate that changes them is flagged `requires_root_review` and cannot certify itself. The default policy set (`VERIFY.md`, `mise.toml`, `mise-tasks/`, `.agents/skills/verify/`, `.agents/skills/evidence/`, `.agents/skills/create-verification/`, `.agents/skills/maintain-verification/`, and every feature map) cannot be shrunk by the candidate; `policy_files` in the contract only adds paths.
+- Never edit `VERIFY.md`, feature maps, tests, or tasks to make a run pass. A candidate that changes them reports `needs-root-review` and cannot certify itself. The default policy set (`VERIFY.md`, `mise.toml`, `mise-tasks/`, `.agents/skills/verify/`, `.agents/skills/evidence/`, `.agents/skills/create-verification/`, `.agents/skills/maintain-verification/`, and every feature map) cannot be shrunk by the candidate; `policy_files` in the contract only adds paths.
 - Run only the task the runner validated as this repository's own. An inherited task from a parent directory belongs to another project.
-- A dirty working tree gives a provisional record. Commit first when you need a result bound to an exact SHA.
+- A dirty working tree gives a `provisional` outcome. Commit first when you need a result bound to an exact SHA.
 - Use the repository's existing isolation (temporary directories, lab sessions, ephemeral ports). No production credentials, no shared-data mutation.
 - The record is evidence for a human or a root session to review; it is not approval and it does not merge anything.

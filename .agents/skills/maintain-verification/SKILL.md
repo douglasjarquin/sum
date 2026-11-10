@@ -40,7 +40,7 @@ The record is written to `<artifacts>/audit/<audit-id>.json` with `authored` (co
 
 - Update the entrypoints, variants, expected states, and coverage of the features the change affects. Preserve unaffected entries and useful history; do not regenerate a file to change one row.
 - A purely internal change needs an explicit rationale, recorded with `--rationale 'why no map row changes'` so the audit record carries it, and repeated in the task report or PR description.
-- Never delete a failing scenario, weaken an assertion, or flip a row to `automated` because the candidate touched the map. A candidate that changes `VERIFY.md`, tasks, or maps is flagged `requires_root_review` by the runner and cannot certify itself.
+- Never delete a failing scenario, weaken an assertion, or flip a row to `automated` because the candidate touched the map. A candidate that changes `VERIFY.md`, tasks, or maps makes the runner report `needs-root-review` and cannot certify itself.
 - Authored map changes are one thing; run results are another. The proof is `python3 .agents/skills/verify/scripts/verify_run.py --base <merge-base>` plus `verify_capture.py` evidence for the rows you drove, not the edit.
 - The scaffold (`create-verification`) stays idempotent: re-running it keeps every user edit and custom task and reports conflicts instead of overwriting. Use it to add a new feature file, not to rewrite existing ones.
 
