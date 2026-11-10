@@ -27,13 +27,13 @@ Record its state in the task note.
 | `editing` | A writer is changing the inputs | Freeze: record what identifies the snapshot; a commit SHA alone does not identify dirty or untracked content |
 | `frozen` | The snapshot identity is recorded and the inputs are held stable | Collect the missing marks |
 | `complete` | All three marks hold for this identity | Report completion; the user decides merge |
-| `superseded` | The inputs or the published head differ from the identity, or a blocking finding requires a change | Start a new candidate with a fresh worker that carries the saved reports; earlier marks do not carry over |
+| `superseded` | The inputs or the published head differ from the identity, or a blocking finding requires a change | Start a new candidate: a fresh worker makes the change and a fresh reviewer inspects it, each given the saved reports and the intervening changes; earlier marks do not carry over |
 
 A frozen candidate collects three marks in any order.
 
 | Mark | Holds when |
 | --- | --- |
-| `checked` | Every prescribed check has an actual result for this identity |
+| `checked` | Every prescribed check has an actual passing result for this identity |
 | `reviewed` | A separate reviewer's saved report under [Review](../sum-review/SKILL.md) covers this identity with no blocking finding outstanding |
 | `published` | The authorized destination carries this identity and was read back |
 

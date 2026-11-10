@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = 2
+EXIT_CODES = {"checked": 0, "provisional": 0, "uncompared": 0, "needs-root-review": 0, "certified": 0, "fail": 1, "blocked": 2}
 CONTRACT_FILE = "VERIFY.md"
 REQUIRED_HEADINGS = ("Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts")
 SCENARIO_STATUSES = ("pass", "fail", "blocked", "not-run", "not-applicable")
@@ -574,10 +575,10 @@ def main(argv=None):
                 counts[row["status"]] = counts.get(row["status"], 0) + 1
             print("scenarios: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) if counts else "scenarios: none mapped")
         policy_record = record.get("policy")
-        compared = isinstance(policy_record, dict) and not args.check
-        if compared and policy_record["changed"]:
+        ran = isinstance(policy_record, dict) and "execution" in record
+        if ran and policy_record["changed"]:
             print("policy files changed since base; this run cannot certify its own new standard: " + ", ".join(str(path) for path in policy_record["changed"]))
-        elif compared and not policy_record["checked"]:
+        elif ran and not policy_record["checked"]:
             print("policy not compared (no --base); the run cannot certify a SHA until VERIFY.md, tasks, and maps are reviewed against a base")
         evidence_record = record.get("evidence")
         if isinstance(evidence_record, dict) and evidence_record.get("missing"):
@@ -585,7 +586,7 @@ def main(argv=None):
             print("required evidence missing for: " + ", ".join(str(scenario) for scenario in missing) + f" (no comparison for this candidate under {evidence_record['dir']})")
         if isinstance(artifacts_record, dict) and artifacts_record.get("run_dir"):
             print(f"record: {artifacts_record['run_dir']}/run.json")
-    return {"fail": 1, "blocked": 2}.get(record["outcome"], 0)
+    return EXIT_CODES[record["outcome"]]
 
 
 if __name__ == "__main__":

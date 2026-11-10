@@ -115,17 +115,18 @@ Only a row's entry evidence moves an assignment into that state, and its legal n
 
 | State | Entry evidence | Legal next move |
 | --- | --- | --- |
-| `launched` | `hc run --bg` returned an address | Confirm the first message was sent |
+| `launched` | `hc run --bg` returned an address | Confirm the first message was sent; when `first_message.sent` is false, inspect readiness and output, then deliver it deliberately |
 | `delivered` | `first_message.sent` is true | Return to messages |
 | `working` | The agent is running the assignment | Return to messages |
 | `asking` | A question or blocker arrived | Answer the same verified helper, or take the question to the user |
 | `reported` | The report is saved and its notification arrived | Read the report and record its candidate, findings, and command output |
 | `collected` | The task note holds the report's results | Close the exact owned worker under [Finish](../sum-finish/SKILL.md) |
-| `uncertain` | From any open state: a timeout, unclear return, dead terminal, returned shell, or an address that no longer hosts the helper | Inspect under [Resume](../sum-resume/SKILL.md) and record the state the evidence proves, or cancel; never relaunch, resend, or repeat an external action blind |
-| `cancelled` | From any open state: the parent cancelled the assignment or its candidate was superseded | Record the reason, preserve evidence, and close |
+| `uncertain` | From any state before `closed`: a timeout, unclear return, dead terminal, returned shell, or an address that no longer hosts the helper | Inspect under [Resume](../sum-resume/SKILL.md) and record the state the evidence proves, or cancel; never relaunch, resend, or repeat an external action blind |
+| `cancelled` | Before `reported`: the parent cancelled the assignment, for instance because its candidate was superseded | Record the reason, preserve evidence, and close |
 | `closed` | The terminal finished and was removed | None |
 
-An ordinary command row skips `delivered`, `working`, `asking`, and `reported`.
+An ordinary command row is `launched` when its command starts, `collected` when its exit status and output are recorded, then `closed`.
+
 Closing a `collected` worker does not wait for independent review, PR merge, or other assignments, and does not mean its findings are resolved or the task accepted.
 
 ## Review the completed candidate
@@ -138,7 +139,7 @@ Record the reviewer address and report path, then return to messages.
 A blocking finding makes the candidate [`superseded`](../sum-finish/SKILL.md#candidate-lifecycle); take its replacement through the same states.
 Account for every finding against the current candidate before proceeding to Finish.
 
-Use `hc send <returned-helper-address> "<answer or steering>"` only for the same verified live helper in `working` or `asking`.
+Use `hc send <returned-helper-address> "<answer or steering>"` only for the same verified live helper in `working` or `asking`, or to deliver an unsent first message.
 Read native send help for busy/conditional semantics; do not invent a done condition.
 Never default to force-input, type through a permission/trust/authentication dialog, or automatically accept it.
 Route uncertainty or interruption through [Resume](../sum-resume/SKILL.md), then use [Finish](../sum-finish/SKILL.md).
