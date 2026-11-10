@@ -6,6 +6,7 @@ description: Verify a repository through its project-root VERIFY.md contract - r
 
 This skill is portable: everything it needs lives inside the repository you are verifying.
 It does not require sum, Herdr, a `.sum` directory, or any absolute path outside this checkout.
+Every command goes through the wrapper `.agents/skills/verify/scripts/sum-verify`, which runs the tool version the project pinned, fetching and checksum-verifying it on first use.
 If your harness has no skill discovery, read `VERIFY.md` at the project root and follow it directly; this file only adds procedure.
 Use `.agents/skills/verify/references/engineering-principles.md` as the shared review rubric when the project carries it; it adds procedure and does not replace project-owned architecture or checks.
 
@@ -16,16 +17,16 @@ Use `.agents/skills/verify/references/engineering-principles.md` as the shared r
 3. Run the recorded runner from the root:
 
    ```sh
-   python3 .agents/skills/verify/scripts/verify_run.py --check   # contract, maps, task ownership, requirements; runs nothing
-   python3 .agents/skills/verify/scripts/verify_run.py           # runs `mise run verify`, writes .artifacts/verification/<run-id>/
+   .agents/skills/verify/scripts/sum-verify run --check   # contract, maps, task ownership, requirements; runs nothing
+   .agents/skills/verify/scripts/sum-verify run           # runs `mise run verify`, writes .artifacts/verification/<run-id>/
    ```
 
    Pass `--base REF` (for example the branch's merge base) so edits to `VERIFY.md`, mise tasks, or feature maps since that ref are flagged for root review. Add `--scenario ID=pass|fail|blocked|not-applicable[:reason]` for each manual or interactive scenario you actually exercised; unmentioned manual scenarios are recorded as `not-run`.
    While you drive a mapped feature by hand or through its real entrypoint, record what happened beside that record:
 
    ```sh
-   python3 .agents/skills/verify/scripts/verify_capture.py --feature <id> run --expect-text 'Hello' -- <command> <args>
-   python3 .agents/skills/verify/scripts/verify_capture.py --feature <id> http --expect-status 200 GET http://127.0.0.1:<port>/<route>
+   .agents/skills/verify/scripts/sum-verify capture --feature <id> run --expect-text 'Hello' -- <command> <args>
+   .agents/skills/verify/scripts/sum-verify capture --feature <id> http --expect-status 200 GET http://127.0.0.1:<port>/<route>
    ```
 
    Each capture writes `<run-dir>/evidence/NNN-<id>.json` with the exact command or request, the observed output or body, and whether your stated expectations were met (exit 1 when not). It starts and stops nothing; a browser or desktop surface without an installed driver stays a `--scenario` report.

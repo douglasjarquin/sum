@@ -55,20 +55,16 @@ func (v *verifyLab) rawRepo(fixture, path string) string {
 }
 
 func (v *verifyLab) runner(repo string, args ...string) (int, map[string]any, string) {
-	script := filepath.Join(repo, ".agents/skills/verify/scripts/verify_run.py")
-	code, rec, _, stderr := runPy(v.t, v.env, script, repo, append([]string{"--json"}, args...)...)
-	return code, rec, stderr
+	return v.runnerWithEnv(repo, v.env, args...)
 }
 
 func (v *verifyLab) audit(repo string, args ...string) (int, map[string]any, string) {
-	script := filepath.Join(repo, ".agents/skills/maintain-verification/scripts/verify_audit.py")
-	code, rec, _, stderr := runPy(v.t, v.env, script, repo, append([]string{"--json"}, args...)...)
+	code, rec, _, stderr := runTool(v.t, v.env, repo, append([]string{"audit", "--json"}, args...)...)
 	return code, rec, stderr
 }
 
 func (v *verifyLab) capture(repo string, args ...string) (int, string, string) {
-	script := filepath.Join(repo, ".agents/skills/verify/scripts/verify_capture.py")
-	code, _, stdout, stderr := runPy(v.t, v.env, script, repo, args...)
+	code, _, stdout, stderr := runTool(v.t, v.env, repo, append([]string{"capture"}, args...)...)
 	return code, stdout, stderr
 }
 
@@ -192,9 +188,8 @@ func TestBrokenBaseExposed(t *testing.T) {
 
 func TestSumRepositoryMapsAuditClean(t *testing.T) {
 	v := newVerifyLab(t)
-	script := filepath.Join(v.root, ".agents/skills/maintain-verification/scripts/verify_audit.py")
 	env := append(append([]string{}, v.env...), "FAKE_MISE_STOP="+v.root)
-	code, audit, _, stderr := runPy(t, env, script, v.root, "--json", "--no-record")
+	code, audit, _, stderr := runTool(t, env, v.root, "audit", "--json", "--no-record")
 	if code != 0 || asString(audit["outcome"]) != "clean" {
 		t.Fatalf("sum audit %v %s", audit, stderr)
 	}
@@ -788,8 +783,7 @@ func TestRunnerOutcomeNamesWhatTheRunEstablished(t *testing.T) {
 }
 
 func (v *verifyLab) runnerWithEnv(repo string, env []string, args ...string) (int, map[string]any, string) {
-	script := filepath.Join(repo, ".agents/skills/verify/scripts/verify_run.py")
-	code, rec, _, stderr := runPy(v.t, env, script, repo, append([]string{"--json"}, args...)...)
+	code, rec, _, stderr := runTool(v.t, env, repo, append([]string{"run", "--json"}, args...)...)
 	return code, rec, stderr
 }
 

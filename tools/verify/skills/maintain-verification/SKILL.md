@@ -6,7 +6,8 @@ description: Keep a repository's VERIFY.md and feature maps honest when behavior
 
 A feature map rots the moment the app changes.
 This skill is the upkeep pass for a repository standardized with `VERIFY.md`, `mise run verify`, and feature maps (see `.agents/skills/verify/SKILL.md`).
-It is portable: Git, mise, Python 3.11+, and the files in this directory. No sum, Herdr, or path outside the repository.
+It is portable: Git, mise, and the `.agents/skills/verify/scripts/sum-verify` wrapper, which runs the tool version the project pinned.
+No sum, Herdr, or path outside the repository.
 
 ## When
 
@@ -16,7 +17,7 @@ It is portable: Git, mise, Python 3.11+, and the files in this directory. No sum
 ## Audit
 
 ```sh
-python3 .agents/skills/maintain-verification/scripts/verify_audit.py --base <merge-base>
+.agents/skills/verify/scripts/sum-verify audit --base <merge-base>
 ```
 
 It reads text and Git and runs nothing. Findings fail it until resolved:
@@ -41,7 +42,8 @@ The record is written to `<artifacts>/audit/<audit-id>.json` with `authored` (co
 - Update the entrypoints, variants, expected states, and coverage of the features the change affects. Preserve unaffected entries and useful history; do not regenerate a file to change one row.
 - A purely internal change needs an explicit rationale, recorded with `--rationale 'why no map row changes'` so the audit record carries it, and repeated in the task report or PR description.
 - Never delete a failing scenario, weaken an assertion, or flip a row to `automated` because the candidate touched the map. A candidate that changes `VERIFY.md`, tasks, or maps makes the runner report `needs-root-review` and cannot certify itself.
-- Authored map changes are one thing; run results are another. The proof is `python3 .agents/skills/verify/scripts/verify_run.py --base <merge-base>` plus `verify_capture.py` evidence for the rows you drove, not the edit.
+- Authored map changes are one thing; run results are another.
+  The proof is `.agents/skills/verify/scripts/sum-verify run --base <merge-base>` plus `.agents/skills/verify/scripts/sum-verify capture` evidence for the rows you drove, not the edit.
 - The scaffold (`create-verification`) stays idempotent: re-running it keeps every user edit and custom task and reports conflicts instead of overwriting. Use it to add a new feature file, not to rewrite existing ones.
 
 ## Boundaries
