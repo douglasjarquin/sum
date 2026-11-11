@@ -123,6 +123,7 @@ func httpRequest(method, url string, data any, timeout int) (status any, body st
 	if payload != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
+	request.Header.Set("Accept-Encoding", "identity")
 	client := http.Client{Timeout: time.Duration(timeout) * time.Second}
 	response, err := client.Do(request)
 	if err != nil {

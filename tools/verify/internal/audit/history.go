@@ -15,7 +15,7 @@ var (
 	codeSuffixes    = []string{".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".go", ".rs", ".rb", ".sh", ".html", ".css", ".in", ".toml", ".json", ".yaml", ".yml"}
 	notCodePrefixes = []string{".artifacts/", ".agents/", ".claude/", ".cursor/", ".github/", "docs/"}
 	notCodeNames    = []string{"VERIFY.md", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore", "LICENSE", "mise.toml", ".mise.toml", "package-lock.json"}
-	policyPrefixes  = []string{"VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/"}
+	policyPrefixes  = []string{"VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify", ".agents/skills/evidence"}
 )
 
 // proof says whether the newest run record still proves the current contract and maps.

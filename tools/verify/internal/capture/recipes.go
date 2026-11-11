@@ -1,15 +1,11 @@
 package capture
 
 import (
-	"bytes"
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -45,35 +41,27 @@ func commandRecipe(args []string) (run recipe, exit int, done bool) {
 	return func(record *value.Object) []string {
 		record.Set("command", command)
 		record.Set("expectations", append([]string{fmt.Sprintf("exit == %d", expectExit)}, expect.contains("stdout")...))
-		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(expect.timeout)*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-		var stdout, stderr bytes.Buffer
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, &stdout, &stderr
-		err := cmd.Run()
-		var exited *exec.ExitError
+		result, err := proc.Run(command, proc.Options{Timeout: time.Duration(expect.timeout) * time.Second})
 		switch {
-		case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
+		case errors.Is(err, proc.ErrTimeout):
 			record.Set("exit", nil)
 			record.Set("timed_out", true)
 			return []string{fmt.Sprintf("timed out after %ds", expect.timeout)}
-		case err != nil && !errors.As(err, &exited):
+		case err != nil:
 			record.Set("exit", nil)
 			record.Set("error", err.Error())
 			record.Set("timed_out", false)
 			return []string{"command not found: " + command[0]}
 		}
-		code := proc.ExitCode(cmd.ProcessState)
-		output := pycompat.UniversalNewlines(pycompat.DecodeUTF8(stdout.Bytes()))
-		record.Set("exit", code)
-		record.Set("stdout", pycompat.ClipNoting(output, limit))
-		record.Set("stderr", pycompat.ClipNoting(pycompat.UniversalNewlines(pycompat.DecodeUTF8(stderr.Bytes())), limit))
+		record.Set("exit", result.Code)
+		record.Set("stdout", pycompat.ClipNoting(result.Stdout, limit))
+		record.Set("stderr", pycompat.ClipNoting(result.Stderr, limit))
 		record.Set("timed_out", false)
 		var unmet []string
-		if code != expectExit {
-			unmet = append(unmet, fmt.Sprintf("exit was %d, expected %d", code, expectExit))
+		if result.Code != expectExit {
+			unmet = append(unmet, fmt.Sprintf("exit was %d, expected %d", result.Code, expectExit))
 		}
-		return append(unmet, expect.lacking("stdout", output)...)
+		return append(unmet, expect.lacking("stdout", result.Stdout)...)
 	}, 0, false
 }
 

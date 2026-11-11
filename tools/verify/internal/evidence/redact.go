@@ -10,9 +10,11 @@ import (
 
 const textLimit = 20000
 
+// The whitespace class is spelled out because RE2's own `\s` is ASCII only, and a secret after a
+// non-breaking space must still be redacted.
 var redactDefault = []string{
-	`(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{8,}`,
-	`(?i)\b((?:api[_-]?key|token|secret|password|passwd|authorization)\b["']?\s*[:=]\s*["']?)[^\s"',;]+`,
+	`(?i)\b(bearer[` + pycompat.SpaceClass + `]+)[A-Za-z0-9._~+/=-]{8,}`,
+	`(?i)\b((?:api[_-]?key|token|secret|password|passwd|authorization)\b["']?[` + pycompat.SpaceClass + `]*[:=][` + pycompat.SpaceClass + `]*["']?)[^` + pycompat.SpaceClass + `"',;]+`,
 	`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b`,
 	`\b(?:gh[pousr]|sk|xox[abp])[_-][A-Za-z0-9_-]{10,}\b`,
 }

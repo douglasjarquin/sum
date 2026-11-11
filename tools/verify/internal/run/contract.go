@@ -21,10 +21,12 @@ const (
 )
 
 var (
-	requiredHeadings   = []string{"Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts"}
+	requiredHeadings = []string{"Setup", "Readiness", "Teardown", "Automated checks", "Scenarios", "Isolation", "Artifacts"}
+	// The skill paths carry no trailing slash: a project may keep a skill behind a link, and Git matches a
+	// trailing-slash pathspec against a directory only, never against a link entry.
 	policyFilesDefault = []string{
-		"VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify/", ".agents/skills/evidence/",
-		".agents/skills/create-verification/", ".agents/skills/maintain-verification/", "AGENTS.md", "Agents.md",
+		"VERIFY.md", "mise.toml", ".mise.toml", "mise-tasks/", ".agents/skills/verify", ".agents/skills/evidence",
+		".agents/skills/create-verification", ".agents/skills/maintain-verification", "AGENTS.md", "Agents.md",
 		"ARCHITECTURE.md", "docs/ARCHITECTURE.md", "CODEOWNERS", ".github/CODEOWNERS", ".github/workflows/",
 	}
 	heading = regexp.MustCompile(`(?m)^#{2,3}[` + pycompat.SpaceClass + `]+(.+?)[` + pycompat.SpaceClass + `]*$`)

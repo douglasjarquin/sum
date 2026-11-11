@@ -238,6 +238,7 @@ func TestScaffoldUpdateKeepsLocalEditsAndRecordsProvenance(t *testing.T) {
 			row["sha256"] = hex.EncodeToString(sum[:])
 		}
 	}
+	firstProv["tool_version"] = "0.0.1"
 	stale, err := json.Marshal(firstProv)
 	if err != nil {
 		t.Fatal(err)

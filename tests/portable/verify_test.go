@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 var (
@@ -826,4 +827,54 @@ func addScenarioRow(t *testing.T, body, row string) string {
 	}
 	t.Fatal("the seeded map carries no scenario table")
 	return body
+}
+
+func TestRunnerFlagsRetargetedSkillSymlinkAsPolicyChange(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "symlink-policy"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	v.fill(repo, "cli")
+	link := filepath.Join(repo, ".agents/skills/verify")
+	for _, name := range []string{"first", "second"} {
+		copyTree(t, link, filepath.Join(repo, "vendored", name))
+	}
+	removeAll(t, link)
+	if err := os.Symlink("../../vendored/first", link); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "base with the verify skill behind a link")
+	base := git(t, repo, "rev-parse", "HEAD")
+	removeAll(t, link)
+	if err := os.Symlink("../../vendored/second", link); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "retarget the verify skill link")
+	code, record, stderr := v.runner(repo, "--base", base)
+	changed := asSlice(asMap(record["policy"])["changed"])
+	if len(changed) != 1 || asString(changed[0]) != ".agents/skills/verify" {
+		t.Fatalf("policy.changed = %v stderr=%s, want only .agents/skills/verify", changed, stderr)
+	}
+	if code != 0 || asString(record["outcome"]) != "needs-root-review" {
+		t.Fatalf("exit %d outcome %v, want 0 needs-root-review", code, record["outcome"])
+	}
+}
+
+func TestCaptureTimeoutBoundsACommandWhoseDescendantKeepsItsOutputOpen(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "capture-timeout"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	started := time.Now()
+	code, stdout, stderr := v.capture(repo, "--feature", "hello", "--run-dir", filepath.Join(v.stop, "capture-run"), "run", "--timeout", "1", "--", "sh", "-c", "sleep 15 & sleep 15")
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("capture returned after %s, want the 1s timeout to bound it", elapsed)
+	}
+	if code == 0 || !strings.Contains(stdout+stderr, "timed out after 1s") {
+		t.Fatalf("exit %d, want a failed capture that names the timeout\n%s%s", code, stdout, stderr)
+	}
 }
