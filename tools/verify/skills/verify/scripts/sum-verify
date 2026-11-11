@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Runs the sum-verify binary this project pinned, fetching and checking it on first use.
+#
+#   sum-verify <command> [arguments]   run the pinned binary
+#   sum-verify pin <version>           pin a released version, then refresh the unchanged stock skill files from it
+#
+# The pin is sum-verify.lock beside this skill: the version and the SHA-256 of each platform's release binary.
+# SUM_VERIFY_BIN names a binary to run instead. Inside the Sum source tree, with no pin, the tool is built from source.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+lock="$here/../sum-verify.lock"
+releases="https://github.com/douglasjarquin/sum/releases/download"
+
+fail() {
+  echo "sum-verify: $*" >&2
+  exit 2
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+fetch() {
+  curl -fsSL --connect-timeout 15 --max-time 300 "$@"
+}
+
+module="$here/../../.."
+
+if [ "${1:-}" = "pin" ]; then
+  version="${2:-}"
+  [ ! -f "$module/go.mod" ] || fail "the Sum source tree builds sum-verify from source; pin only in a project that adopted the skills"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "pin needs a released version such as 1.2.3"
+  sums="$(fetch "$releases/sum-verify-v$version/checksums.txt")" || fail "no checksums published for version $version"
+  printf 'version %s\n%s\n' "$version" "$sums" >"$lock"
+  echo "sum-verify: pinned $version in ${lock#"$PWD"/}"
+  exec "$0" scaffold --update
+fi
+
+if [ -n "${SUM_VERIFY_BIN:-}" ]; then
+  exec "$SUM_VERIFY_BIN" "$@"
+fi
+
+if [ ! -f "$lock" ] && [ -f "$module/go.mod" ]; then
+  bin="$module/../../.artifacts/bin/sum-verify"
+  (cd "$module" && go build -o "$bin" ./cmd/sum-verify) || fail "could not build from source in $module; it needs the pinned Go on PATH (try: mise exec -- $0 ...)"
+  exec "$bin" "$@"
+fi
+
+[ -f "$lock" ] || fail "no pinned version; run: $0 pin <version>"
+version="$(sed -n 's/^version //p' "$lock")"
+case "$(uname -s)" in
+  Darwin) os=darwin ;;
+  Linux) os=linux ;;
+  *) fail "no released binary for $(uname -s)" ;;
+esac
+case "$(uname -m)" in
+  arm64 | aarch64) arch=arm64 ;;
+  x86_64 | amd64) arch=amd64 ;;
+  *) fail "no released binary for $(uname -m)" ;;
+esac
+asset="sum-verify-$os-$arch"
+want="$(awk -v asset="$asset" '$2 == asset { print $1 }' "$lock")"
+# The lock may only select an official release: its version becomes part of the download URL and the cache path.
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "$lock names no released version; run: $0 pin <version>"
+[[ "$want" =~ ^[0-9a-f]{64}$ ]] || fail "$lock names no SHA-256 for $asset; run: $0 pin $version"
+
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/sum-verify/$version"
+bin="$cache/$asset"
+if [ ! -x "$bin" ]; then
+  mkdir -p "$cache"
+  fetched="$(mktemp "$cache/$asset.XXXXXX")"
+  fetch -o "$fetched" "$releases/sum-verify-v$version/$asset" || {
+    rm -f "$fetched"
+    fail "could not download $asset $version; check the network and the version, or set SUM_VERIFY_BIN to a binary you trust"
+  }
+  chmod +x "$fetched"
+  mv "$fetched" "$bin"
+fi
+got="$(sha256_of "$bin")"
+if [ "$got" != "$want" ]; then
+  rm -f "$bin"
+  fail "$asset $version has SHA-256 $got, but the pin expects $want; removed it. Run again to fetch it afresh; if it repeats, do not run it"
+fi
+exec "$bin" "$@"

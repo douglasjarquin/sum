@@ -36,7 +36,7 @@ func (e *evidenceLab) project(name string, skills ...string) string {
 		t.Fatal(err)
 	}
 	for _, skill := range skills {
-		copyTree(t, filepath.Join(e.root, ".agents/skills", skill), filepath.Join(path, ".agents/skills", skill))
+		copyTree(t, filepath.Join(e.root, "tools/verify/skills", skill), filepath.Join(path, ".agents/skills", skill))
 	}
 	mustWrite(t, filepath.Join(path, ".gitignore"), ".artifacts/\n")
 	init := exec.Command("git", "init", "-q", "-b", "main")
@@ -84,12 +84,11 @@ func (e *evidenceLab) seeded(name, fixture, filename, bug, fix string) (base, ca
 }
 
 func (e *evidenceLab) runSkill(repo string, extraEnv map[string]string, args ...string) (int, string, string) {
-	script := filepath.Join(repo, ".agents/skills/evidence/scripts/evidence_capture.py")
 	env := e.env
 	for k, v := range extraEnv {
 		env = append(env, k+"="+v)
 	}
-	code, _, stdout, stderr := runPy(e.t, env, script, repo, args...)
+	code, _, stdout, stderr := runTool(e.t, env, repo, append([]string{"evidence"}, args...)...)
 	return code, stdout, stderr
 }
 

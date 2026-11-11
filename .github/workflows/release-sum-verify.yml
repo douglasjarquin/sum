@@ -1,0 +1,57 @@
+name: Release sum-verify
+
+on:
+  push:
+    tags: ["sum-verify-v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MISE_ENABLE_TOOLS: go,python
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Require a tag on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "tag is not on main" >&2; exit 1; }
+
+      - name: Set up pinned Go
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        with:
+          version: 2026.9.3
+          install_args: go python
+          cache: false
+
+      - name: Test the tool
+        run: mise run lint && (cd tools/verify && go test ./...) && (cd tests/portable && python3 ../../scripts/fixture_git_env.py -- go test -count=1 ./...)
+
+      - name: Build binaries and checksums
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#sum-verify-v}"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag $TAG is not sum-verify-vX.Y.Z" >&2; exit 1; }
+          mkdir dist
+          cd tools/verify
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+            CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -trimpath \
+              -ldflags "-s -w -X github.com/douglasjarquin/sum/tools/verify/internal/tool.Version=$version" \
+              -o "../../dist/sum-verify-${target%/*}-${target#*/}" ./cmd/sum-verify
+          done
+          cd ../../dist
+          sha256sum sum-verify-* > checksums.txt
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes "Pin with: .agents/skills/verify/scripts/sum-verify pin ${TAG#sum-verify-v}"

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 var (
@@ -16,18 +17,16 @@ var (
 )
 
 type verifyLab struct {
-	t                   *testing.T
-	root, stop, toolkit string
-	env                 []string
+	t          *testing.T
+	root, stop string
+	env        []string
 }
 
 func newVerifyLab(t *testing.T) *verifyLab {
 	t.Helper()
 	root := repoRoot(t)
 	stop := t.TempDir()
-	toolkit := filepath.Join(stop, "toolkit/.agents/skills")
-	copyTree(t, filepath.Join(root, ".agents/skills"), toolkit)
-	return &verifyLab{t: t, root: root, stop: stop, toolkit: toolkit, env: labEnv(t, root, stop)}
+	return &verifyLab{t: t, root: root, stop: stop, env: labEnv(t, root, stop)}
 }
 
 func (v *verifyLab) rawRepo(fixture, path string) string {
@@ -54,27 +53,17 @@ func (v *verifyLab) rawRepo(fixture, path string) string {
 	return path
 }
 
-func (v *verifyLab) scaffold(repo string, args ...string) (int, map[string]any, string) {
-	script := filepath.Join(v.toolkit, "create-verification/scripts/verify_scaffold.py")
-	code, rec, _, stderr := runPy(v.t, v.env, script, v.stop, append([]string{"--root", repo, "--json"}, args...)...)
-	return code, rec, stderr
-}
-
 func (v *verifyLab) runner(repo string, args ...string) (int, map[string]any, string) {
-	script := filepath.Join(repo, ".agents/skills/verify/scripts/verify_run.py")
-	code, rec, _, stderr := runPy(v.t, v.env, script, repo, append([]string{"--json"}, args...)...)
-	return code, rec, stderr
+	return v.runnerWithEnv(repo, v.env, args...)
 }
 
 func (v *verifyLab) audit(repo string, args ...string) (int, map[string]any, string) {
-	script := filepath.Join(repo, ".agents/skills/maintain-verification/scripts/verify_audit.py")
-	code, rec, _, stderr := runPy(v.t, v.env, script, repo, append([]string{"--json"}, args...)...)
+	code, rec, _, stderr := runTool(v.t, v.env, repo, append([]string{"audit", "--json"}, args...)...)
 	return code, rec, stderr
 }
 
 func (v *verifyLab) capture(repo string, args ...string) (int, string, string) {
-	script := filepath.Join(repo, ".agents/skills/verify/scripts/verify_capture.py")
-	code, _, stdout, stderr := runPy(v.t, v.env, script, repo, args...)
+	code, _, stdout, stderr := runTool(v.t, v.env, repo, append([]string{"capture"}, args...)...)
 	return code, stdout, stderr
 }
 
@@ -198,9 +187,8 @@ func TestBrokenBaseExposed(t *testing.T) {
 
 func TestSumRepositoryMapsAuditClean(t *testing.T) {
 	v := newVerifyLab(t)
-	script := filepath.Join(v.root, ".agents/skills/maintain-verification/scripts/verify_audit.py")
 	env := append(append([]string{}, v.env...), "FAKE_MISE_STOP="+v.root)
-	code, audit, _, stderr := runPy(t, env, script, v.root, "--json", "--no-record")
+	code, audit, _, stderr := runTool(t, env, v.root, "audit", "--json", "--no-record")
 	if code != 0 || asString(audit["outcome"]) != "clean" {
 		t.Fatalf("sum audit %v %s", audit, stderr)
 	}
@@ -261,7 +249,6 @@ func TestExternalCloneFollowsGeneratedInstructions(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("clone: %v\n%s", err, out)
 	}
-	removeAll(t, filepath.Dir(v.toolkit))
 	code, record, stderr := v.runner(external, "--check")
 	if code != 0 || asString(record["outcome"]) != "checked" {
 		t.Fatalf("check %v %s", record, stderr)
@@ -794,8 +781,7 @@ func TestRunnerOutcomeNamesWhatTheRunEstablished(t *testing.T) {
 }
 
 func (v *verifyLab) runnerWithEnv(repo string, env []string, args ...string) (int, map[string]any, string) {
-	script := filepath.Join(repo, ".agents/skills/verify/scripts/verify_run.py")
-	code, rec, _, stderr := runPy(v.t, env, script, repo, append([]string{"--json"}, args...)...)
+	code, rec, _, stderr := runTool(v.t, env, repo, append([]string{"run", "--json"}, args...)...)
 	return code, rec, stderr
 }
 
@@ -841,4 +827,54 @@ func addScenarioRow(t *testing.T, body, row string) string {
 	}
 	t.Fatal("the seeded map carries no scenario table")
 	return body
+}
+
+func TestRunnerFlagsRetargetedSkillSymlinkAsPolicyChange(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "symlink-policy"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	v.fill(repo, "cli")
+	link := filepath.Join(repo, ".agents/skills/verify")
+	for _, name := range []string{"first", "second"} {
+		copyTree(t, link, filepath.Join(repo, "vendored", name))
+	}
+	removeAll(t, link)
+	if err := os.Symlink("../../vendored/first", link); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "base with the verify skill behind a link")
+	base := git(t, repo, "rev-parse", "HEAD")
+	removeAll(t, link)
+	if err := os.Symlink("../../vendored/second", link); err != nil {
+		t.Fatal(err)
+	}
+	git(t, repo, "add", "-A")
+	git(t, repo, "commit", "-q", "-m", "retarget the verify skill link")
+	code, record, stderr := v.runner(repo, "--base", base)
+	changed := asSlice(asMap(record["policy"])["changed"])
+	if len(changed) != 1 || asString(changed[0]) != ".agents/skills/verify" {
+		t.Fatalf("policy.changed = %v stderr=%s, want only .agents/skills/verify", changed, stderr)
+	}
+	if code != 0 || asString(record["outcome"]) != "needs-root-review" {
+		t.Fatalf("exit %d outcome %v, want 0 needs-root-review", code, record["outcome"])
+	}
+}
+
+func TestCaptureTimeoutBoundsACommandWhoseDescendantKeepsItsOutputOpen(t *testing.T) {
+	v := newVerifyLab(t)
+	repo := v.rawRepo("cli", filepath.Join(v.stop, "capture-timeout"))
+	if code, _, stderr := v.scaffold(repo, "--write"); code != 0 {
+		t.Fatal(stderr)
+	}
+	started := time.Now()
+	code, stdout, stderr := v.capture(repo, "--feature", "hello", "--run-dir", filepath.Join(v.stop, "capture-run"), "run", "--timeout", "1", "--", "sh", "-c", "sleep 15 & sleep 15")
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("capture returned after %s, want the 1s timeout to bound it", elapsed)
+	}
+	if code == 0 || !strings.Contains(stdout+stderr, "timed out after 1s") {
+		t.Fatalf("exit %d, want a failed capture that names the timeout\n%s%s", code, stdout, stderr)
+	}
 }

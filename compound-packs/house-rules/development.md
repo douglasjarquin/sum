@@ -12,7 +12,7 @@ Use the repository's current `AGENTS.md` and four procedures, preserving the use
 Keep native HC prerequisites separate from offline developer verification; source checks do not qualify authenticated native conversations.
 
 Use mise tasks as the public command interface and the pinned Go, Python, Node, and aube tools in `VERIFY.md`.
-Keep Go limited to the retained portable tooling tests; do not rebuild the deleted runtime or introduce a transport service.
+Keep Go limited to the `sum-verify` verification tool under `tools/verify/` and the portable tooling tests; do not rebuild the deleted runtime or introduce a transport service.
 Treat the Grok Bot packs and preserved software-factory contracts as separate products and change them only within explicit scope.
 
 Preserve unrelated dirty files, unfinished branches, task notes, and helper reports.

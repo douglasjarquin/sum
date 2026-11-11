@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-#MISE description="Check standalone portable-tool Go tests"
+#MISE description="Check the sum-verify tool and standalone portable-tool Go tests"
 set -euo pipefail
-cd "$(dirname "$0")/../tests/portable"
+cd "$(dirname "$0")/.."
 export PATH="$(dirname "$(mise which go)"):${PATH:-}"
 unset GOROOT
-unformatted="$(gofmt -l .)"
-if [ -n "$unformatted" ]; then
-  echo "$unformatted"
-  exit 1
-fi
-go vet ./...
+for module in tools/verify tests/portable; do
+  unformatted="$(cd "$module" && gofmt -l .)"
+  if [ -n "$unformatted" ]; then
+    echo "$unformatted"
+    exit 1
+  fi
+  (cd "$module" && go vet ./...)
+done

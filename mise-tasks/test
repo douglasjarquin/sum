@@ -4,5 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$(dirname "$(mise which go)"):$(dirname "$(mise which python)"):${PATH:-}"
 unset GOROOT
-(cd tests/portable && python3 ../../scripts/fixture_git_env.py -- go test ./...)
+(cd tools/verify && go test ./...)
+# -count=1: these tests drive the binary built from tools/verify, which the Go test cache does not track.
+(cd tests/portable && python3 ../../scripts/fixture_git_env.py -- go test -count=1 ./...)
 python3 scripts/fixture_git_env.py -- python3 -m unittest discover -s tests -p 'test_*.py'

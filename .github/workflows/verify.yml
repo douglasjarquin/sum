@@ -34,7 +34,7 @@ jobs:
       - name: Run canonical verification
         env:
           VERIFY_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python .agents/skills/verify/scripts/verify_run.py --base "$VERIFY_BASE_SHA"
+        run: .agents/skills/verify/scripts/sum-verify run --base "$VERIFY_BASE_SHA"
 
       - name: Upload verification record
         if: ${{ always() }}

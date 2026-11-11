@@ -3,7 +3,6 @@ package skilltest
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +17,35 @@ func repoRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+// toolBin is the sum-verify binary built once from this checkout's source for the whole test run.
+var toolBin string
+
+// runTool runs one sum-verify command the way a project would, returning its exit code, parsed --json record, stdout, and stderr.
+func runTool(t *testing.T, env []string, cwd string, args ...string) (int, map[string]any, string, string) {
+	t.Helper()
+	cmd := exec.Command(toolBin, args...)
+	cmd.Dir = cwd
+	cmd.Env = env
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	code := 0
+	if err := cmd.Run(); err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run sum-verify %v: %v\n%s%s", args, err, stdout.String(), stderr.String())
+		}
+		code = ee.ExitCode()
+	}
+	var record map[string]any
+	if contains(args, "--json") && strings.TrimSpace(stdout.String()) != "" {
+		if json.Unmarshal(stdout.Bytes(), &record) != nil {
+			record = nil
+		}
+	}
+	return code, record, stdout.String(), stderr.String()
 }
 
 func python3(t *testing.T) string {
@@ -37,32 +65,6 @@ func git(t *testing.T, repo string, args ...string) string {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
-}
-
-func runPy(t *testing.T, env []string, script, cwd string, args ...string) (int, map[string]any, string, string) {
-	t.Helper()
-	cmd := exec.Command(python3(t), append([]string{script}, args...)...)
-	cmd.Dir = cwd
-	cmd.Env = env
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	code := 0
-	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			code = ee.ExitCode()
-		} else {
-			t.Fatalf("run %s: %v\n%s%s", script, err, stdout.String(), stderr.String())
-		}
-	}
-	var record map[string]any
-	if contains(args, "--json") && strings.TrimSpace(stdout.String()) != "" {
-		if json.Unmarshal(stdout.Bytes(), &record) != nil {
-			record = nil
-		}
-	}
-	return code, record, stdout.String(), stderr.String()
 }
 
 func contains(args []string, needle string) bool {
@@ -230,31 +232,4 @@ func fileMap(t *testing.T, root string, skip ...string) map[string][]byte {
 		return nil
 	})
 	return out
-}
-
-func startPy(t *testing.T, env []string, script, cwd string, extra map[string]string) (proc *exec.Cmd, line string, stdout io.ReadCloser) {
-	t.Helper()
-	cmd := exec.Command(python3(t), script)
-	cmd.Dir = cwd
-	cmd.Env = env
-	for k, v := range extra {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	buf := make([]byte, 4096)
-	n, err := pipe.Read(buf)
-	if err != nil && err != io.EOF {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	return cmd, strings.TrimSpace(string(buf[:n])), pipe
 }
