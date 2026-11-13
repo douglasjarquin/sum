@@ -2,7 +2,7 @@
 
 This file is an installer.
 Follow it when the user asks to install or update Sum.
-The source-controlled recipe is `grok-bots/sum/`; read the files rather than inventing instructions or generating a hidden runtime.
+The source-controlled recipe is `sum/`; read the files rather than inventing instructions or generating a hidden runtime.
 No local Sum installation is required.
 
 ## Discover and identify
@@ -43,7 +43,7 @@ Validate `/workspace` durable file access before writing authoritative records.
 
 Use this same inventory for fresh installation and every update:
 
-| Source in `grok-bots/sum/` | Installed component |
+| Source in `sum/` | Installed component |
 | --- | --- |
 | `instructions.md`, `memories.md` | Sum coordinator role and memories |
 | `worker-procedure.md` | Sum Worker procedure and each owned worker's safe-boundary adoption |
@@ -111,7 +111,7 @@ Send a real native message asking Sum for the task-correlated role/revision ackn
 Save the actual return and compare task, nonce, identity, and revision.
 A successful send is not receipt; missing return means configuration installed but operation unverified.
 A memory acknowledgement confirms a handoff, not verbatim retention of the bundle.
-Complete the question/answer and delivery scenarios in `grok-bots/sum/README.md` before claiming that workflow verified.
+Complete the question/answer and delivery scenarios in `sum/README.md` before claiming that workflow verified.
 Tell the user to talk to Sum; do not delete a starter or existing Bot as installer cleanup.
 The user merges.
 The Bot never merges.

@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURES = ROOT / "grok-bots" / "sum" / "evals" / "fixtures.json"
+FIXTURES = ROOT / "sum" / "evals" / "fixtures.json"
 KNOWN_RULES = {
     "verification_must_be_distinct",
     "report_is_claim",
@@ -33,19 +33,19 @@ REQUIRED_IDS = {
     "routine-arm-gate",
 }
 ANCHORS = (
-    ("grok-bots/sum/instructions.md", "The Bot never merges."),
-    ("grok-bots/sum/instructions.md", "Reading the worker's logs is not that run."),
-    ("grok-bots/sum/instructions.md", "/workspace/sum/decisions.md"),
-    ("grok-bots/sum/instructions.md", "/workspace/sum/action-log.md"),
-    ("grok-bots/sum/decisions.md", "Append-only."),
-    ("grok-bots/sum/action-log.md", "before the side effect"),
-    ("grok-bots/sum/permissions.md", "draft"),
-    ("grok-bots/sum/permissions.md", "gated"),
-    ("grok-bots/sum/routines.md", "two successful manual Status checks"),
-    ("grok-bots/sum/routines.md", "one line"),
-    ("grok-bots/sum/action-log.md", "a reviewer launch"),
-    ("grok-bots/sum/permissions.md", "re-prompt the reviewer"),
-    ("grok-bots/sum/skills/deliver/SKILL.md", "separate native reviewer Bot"),
+    ("sum/instructions.md", "The Bot never merges."),
+    ("sum/instructions.md", "Reading the worker's logs is not that run."),
+    ("sum/instructions.md", "/workspace/sum/decisions.md"),
+    ("sum/instructions.md", "/workspace/sum/action-log.md"),
+    ("sum/decisions.md", "Append-only."),
+    ("sum/action-log.md", "before the side effect"),
+    ("sum/permissions.md", "draft"),
+    ("sum/permissions.md", "gated"),
+    ("sum/routines.md", "two successful manual Status checks"),
+    ("sum/routines.md", "one line"),
+    ("sum/action-log.md", "a reviewer launch"),
+    ("sum/permissions.md", "re-prompt the reviewer"),
+    ("sum/skills/deliver/SKILL.md", "separate native reviewer Bot"),
 )
 
 

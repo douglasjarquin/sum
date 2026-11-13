@@ -1,6 +1,6 @@
 # Square Grok Bot pack
 
-Install or update through [`GROK_SQUARE.md`](../../GROK_SQUARE.md).
+Install or update through [`GROK_SQUARE.md`](../GROK_SQUARE.md).
 `instructions.md`, `memories.md`, `worker-procedure.md`, `routines.md`, and `avatar.png` are canonical shareable sources.
 No pack-local skills or deployment-specific settings ship here.
 

@@ -6,3 +6,4 @@ ts	phase	decision	why	evidence	result
 2026-09-16T19:55:00Z	review	close verify/persist holes the second reader found	verify listed Cursor Cloud Agents as coordinator access, and persist could author report.md	grok-bots/sum/skills/verify/SKILL.md, skills/persist/SKILL.md, worker-charter.md	tests.test_operating_files 9 OK
 2026-09-20T21:10:00Z	rename	move Sum pack to grok-bots/sum and add grok-bots/square	short role names; Sum avatar from PR 188 at grok-bots/sum/avatar.jpg	grok-bots/sum/ grok-bots/square/ GROK_SQUARE.md	open
 2026-09-20T21:16:00Z	rename	move packs from templates/ to grok-bots/	user chose grok-bots/ (plural) for Bot recipes; leave templates/task.md and templates/preferences.md	grok-bots/sum/ grok-bots/square/	open
+2026-11-13T03:08:00Z	rename	move Bot packs from grok-bots/ to repository root	user wants the most up-to-date definitions canonical at the repository root; grok-bots/README.md index removed	sum/ square/ GROK_SUM.md GROK_SQUARE.md	open
