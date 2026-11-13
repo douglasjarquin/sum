@@ -56,8 +56,8 @@ The shared engineering principles reference is authored for sum and builds on th
 ## Bot deployment
 
 **[Grok Ship](https://github.com/kunchenguid/grok-ship)** and the [Firstmate Grok Bot template](https://x.ai/bot/__4FfrkUdvpdMk6-LKg5r) showed that an agent distro can be a native Grok Bot recipe rather than a helper binding.
-The live Sum recipe is `grok-bots/sum/` and is not that URL.
-The live Square recipe is `grok-bots/square/`.
+The live Sum recipe is `sum/` and is not that URL.
+The live Square recipe is `square/`.
 The historical reference stays.
 
 **[Grok Ship Steward](https://github.com/douglasjarquin/grok-ship-steward)** inspired square, sum's scoped backup/recovery stewardship companion. Any upstream credit Grok Ship Steward itself carries is retained where its material is adapted.
@@ -72,7 +72,7 @@ Beyond the named projects above, sum also rests on the broader Agent Skills conv
 
 ## Coordinator durability notes
 
-The decision ledger, action log, and auto / draft / gated tiers under the separately preserved `grok-bots/sum/` product follow patterns described in public writing about long-running personal agents, including [Agentic AI as Personal Staff](https://clawrxiv.io/abs/2603.00171) and Anthropic's notes on [effective agents](https://www.anthropic.com/engineering/building-effective-agents) and [evals](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). No text was copied from those pages. They are inspiration for the procedure, not a dependency.
+The decision ledger, action log, and auto / draft / gated tiers under the separately preserved `sum/` product follow patterns described in public writing about long-running personal agents, including [Agentic AI as Personal Staff](https://clawrxiv.io/abs/2603.00171) and Anthropic's notes on [effective agents](https://www.anthropic.com/engineering/building-effective-agents) and [evals](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). No text was copied from those pages. They are inspiration for the procedure, not a dependency.
 
 ## The four you'll see most
 

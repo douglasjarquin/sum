@@ -65,30 +65,32 @@ class InstructionPackageTest(unittest.TestCase):
 
     def test_excluded_contracts_match_immutable_baseline(self):
         baseline = "9456017f2e4fde8f16bc4f2d1bdd7ba978765eb3"
-        paths = ["GROK_SUM.md", "GROK_SQUARE.md", "skills/sum-factory/factories/copy.md", "skills/sum-factory/factories/software.md"]
+        pinned = ["skills/sum-factory/factories/copy.md", "skills/sum-factory/factories/software.md"]
         baseline_bots = subprocess.check_output(["git", "ls-tree", "-r", "--name-only", baseline, "--", "grok-bots"], cwd=ROOT, text=True).splitlines()
-        candidate_bots = subprocess.check_output(["git", "ls-files", "grok-bots"], cwd=ROOT, text=True).splitlines()
-        self.assertEqual(set(candidate_bots), set(baseline_bots) | {"grok-bots/sum/skills/getting-started/SKILL.md"})
+        candidate_bots = subprocess.check_output(["git", "ls-files", "sum", "square"], cwd=ROOT, text=True).splitlines()
+        moved_baseline = {path.removeprefix("grok-bots/") for path in baseline_bots}
+        moved_baseline.discard("README.md")
+        self.assertEqual(set(candidate_bots), moved_baseline | {"sum/skills/getting-started/SKILL.md"})
         authorized_grok_text = {
-            "GROK_SUM.md", "GROK_SQUARE.md", "grok-bots/README.md",
-            "grok-bots/sum/README.md", "grok-bots/sum/instructions.md",
-            "grok-bots/sum/memories.md", "grok-bots/sum/worker-procedure.md",
-            "grok-bots/sum/permissions.md", "grok-bots/sum/action-log.md",
-            "grok-bots/sum/routines.md",
-            "grok-bots/square/README.md", "grok-bots/square/instructions.md",
-            "grok-bots/square/memories.md", "grok-bots/square/worker-procedure.md",
-            "grok-bots/square/routines.md",
-            *("grok-bots/sum/skills/" + name + "/SKILL.md" for name in
+            "GROK_SUM.md", "GROK_SQUARE.md",
+            "sum/README.md", "sum/instructions.md",
+            "sum/memories.md", "sum/worker-procedure.md",
+            "sum/permissions.md", "sum/action-log.md",
+            "sum/routines.md",
+            "square/README.md", "square/instructions.md",
+            "square/memories.md", "square/worker-procedure.md",
+            "square/routines.md",
+            *("sum/skills/" + name + "/SKILL.md" for name in
               ("dispatch", "persist", "verify", "status", "recap", "deliver", "sweep", "factory")),
         }
-        paths += baseline_bots
-        replaced_sum_avatar = {"grok-bots/sum/avatar.jpg"}
+        replaced_sum_avatar = {"sum/avatar.jpg"}
         paths = [
-            path for path in paths
+            path for path in pinned + list(moved_baseline)
             if path not in authorized_grok_text and path not in replaced_sum_avatar
         ]
         for path in paths:
-            original = subprocess.check_output(["git", "show", baseline + ":" + path], cwd=ROOT)
+            baseline_path = path if path in pinned else "grok-bots/" + path
+            original = subprocess.check_output(["git", "show", baseline + ":" + baseline_path], cwd=ROOT)
             self.assertEqual((ROOT / path).read_bytes(), original, path)
 
 

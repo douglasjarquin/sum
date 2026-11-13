@@ -6,7 +6,7 @@ These are the instructions for the Sum Grok Bot.
 This directory is the source-controlled recipe for a Sum coordinator Bot.
 It is not a live share URL.
 
-Tell any Bot in Grok Bot to follow [`GROK_SUM.md`](../../GROK_SUM.md) at the repository root.
+Tell any Bot in Grok Bot to follow [`GROK_SUM.md`](../GROK_SUM.md) at the repository root.
 That file is the installer.
 The Bot clones this public repository onto the shared Grok Bot computer and loads the files below.
 You do not paste them by hand.
@@ -27,7 +27,7 @@ You do not need a SUM installation.
 | `evals/` | Coordinator invariant seed; not a workflow |
 | `avatar.jpg` | GrokBot profile image |
 
-Factory settings are not workflows. They live at [`skills/sum-factory/factories/`](../../skills/sum-factory/factories/).
+Factory settings are not workflows. They live at [`skills/sum-factory/factories/`](../skills/sum-factory/factories/).
 `copy.md` is the copy factory. `software.md` points at the existing software lane.
 
 Keep private native identities and settings in installation.md, never in shareable source files.

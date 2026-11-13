@@ -30,4 +30,4 @@
 These are the instructions for the Sum Grok Bot.
 [Install it here](https://x.ai/bot/Gkrq4Eb1atRsRZr_MWp_G).
 
-- [Pack recipe](https://github.com/douglasjarquin/sum/blob/main/grok-bots/sum/README.md): Source-controlled instructions for the Sum Grok Bot.
+- [Pack recipe](https://github.com/douglasjarquin/sum/blob/main/sum/README.md): Source-controlled instructions for the Sum Grok Bot.

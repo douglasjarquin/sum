@@ -1,7 +1,8 @@
 # Separate legacy products
 
 The default Sum package is the four native HC instruction procedures.
-`GROK_SUM.md`, `GROK_SQUARE.md`, and `grok-bots/**` are the separately maintained native Grok product.
+`GROK_SUM.md`, `GROK_SQUARE.md`, `sum/**`, and `square/**` are the separately maintained native Grok product.
+The Bot recipe packs live at the repository root as `sum/` and `square/`.
 Issue #354 intentionally repairs their install/update, handoff, review, and backup contracts after the HC refactor.
 The retained `skills/sum-factory/factories/{copy,software}.md` settings and unrelated assets/eval fixtures remain protected against the historical immutable baseline.
 They keep Bot messaging and Cursor Cloud Agent delegation; native local HC instructions do not replace those contracts.

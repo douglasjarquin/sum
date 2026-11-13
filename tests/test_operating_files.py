@@ -9,8 +9,8 @@ FORBIDDEN = re.compile(
     r"\b(consigliere|capo|soldier|crewmate|charter|sitdown)\b|first mate|root session",
     re.I,
 )
-SUM_PACK = ROOT / "grok-bots" / "sum"
-SQUARE_PACK = ROOT / "grok-bots" / "square"
+SUM_PACK = ROOT / "sum"
+SQUARE_PACK = ROOT / "square"
 GROK_BOT = SUM_PACK
 SUM_AVATAR_SHA256 = "1039911032d0157eebbd917d843218f31d8bac58aaed2617655cac94090feeb3"
 STRIPPED_INSTANCE_MARKERS = (
@@ -103,6 +103,7 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertFalse((ROOT / "templates" / "grok-bot").exists())
         self.assertFalse((ROOT / "templates" / "sum").exists())
         self.assertFalse((ROOT / "templates" / "square").exists())
+        self.assertFalse((ROOT / "grok-bots").exists())
 
     def test_grok_sum_installer_clones_public_sum(self):
         text = (ROOT / "GROK_SUM.md").read_text()
@@ -111,7 +112,8 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("/home/box/agent-data/sum/src/", text)
         for skill in PACK_SKILLS:
             self.assertIn(skill, text)
-        self.assertIn("grok-bots/sum/", text)
+        self.assertIn("`sum/`", text)
+        self.assertNotIn("grok-bots", text)
         self.assertNotIn("templates/sum/", text)
         self.assertNotIn("Paste `templates/grok-bot/instructions.md`", text)
         self.assertNotIn("templates/grok-bot/", text)
@@ -330,7 +332,7 @@ class OperatingFilesTest(unittest.TestCase):
             path = SQUARE_PACK / name
             self.assertTrue(path.is_file(), path)
         self.assertTrue((ROOT / "GROK_SQUARE.md").is_file())
-        self.assertTrue((ROOT / "grok-bots" / "README.md").is_file())
+        self.assertFalse((ROOT / "grok-bots").exists())
         self.assertFalse((SQUARE_PACK / "skills").exists())
 
     def test_grok_square_installer_clones_public_sum(self):
@@ -338,7 +340,8 @@ class OperatingFilesTest(unittest.TestCase):
         self.assertIn("This file is an installer.", text)
         self.assertIn("https://github.com/douglasjarquin/sum.git", text)
         self.assertIn("/home/box/agent-data/sum/src/", text)
-        self.assertIn("grok-bots/square/", text)
+        self.assertIn("`square/`", text)
+        self.assertNotIn("grok-bots", text)
         self.assertIn("/workspace/square/", text)
         self.assertNotIn("templates/square/", text)
         self.assertNotIn("Paste `templates/square/instructions.md`", text)
@@ -383,16 +386,11 @@ class OperatingFilesTest(unittest.TestCase):
                 self.assertNotIn(marker, text, path)
 
     def test_templates_index_lists_both_packs(self):
-        text = (ROOT / "grok-bots" / "README.md").read_text()
+        self.assertFalse((ROOT / "grok-bots").exists())
         leftover = (ROOT / "templates" / "README.md").read_text()
-        self.assertIn("[`sum/`](sum/)", text)
-        self.assertIn("[`square/`](square/)", text)
-        self.assertIn("GROK_SUM.md", text)
-        self.assertIn("GROK_SQUARE.md", text)
-        self.assertIn("`templates/grok-bot/` is gone", text)
-        self.assertIn("grok-bots/sum/", text)
-        self.assertIn("grok-bots/square/", text)
-        self.assertIn("grok-bots/", leftover)
+        self.assertIn("../sum/README.md", leftover)
+        self.assertIn("../square/README.md", leftover)
+        self.assertNotIn("grok-bots", leftover)
 
 
 if __name__ == "__main__":
