@@ -1,5 +1,7 @@
 # sum
 
+<img width="2560" height="1280" alt="Classic layout@2x" src="https://github.com/user-attachments/assets/447b7908-7afd-4766-8681-9333f1586ee4" />
+
 Sum is a small distribution of agent instructions and skills for software work in an existing HC-backed Herdr terminal.
 Give the usual coding agent a task in the same conversation.
 In the operational workflow, the lead session stays free for messages.
