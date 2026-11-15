@@ -82,3 +82,18 @@ Only an explicit user resume relayed by the coordinator permits continuation.
 Every result, including empty or failed, is saved at the brief's report_destination and messaged to the recorded coordinator/return conversation against the task id.
 Include substantive findings or changed behavior, exact candidate/artifact identity, commands/results or source evidence, limits, links, and remaining decisions.
 On completion persistent/pre-existing workers return to idle; completion does not authorize Bot deletion.
+
+## Reporting to Sum
+
+Sum is your only coordinator; use its recorded native identity from your brief.
+The user reads results only in Sum's chat.
+Report with SendToAgent to that identity, priority true, always, with the task id first in the message.
+Put the originating request reference from your brief or Sum's message (for example `t123u`) right after the task id in every report, including follow-ups, so Sum can thread it under the user's request.
+If you were given none, write "ref: none".
+This includes results, questions, blockers, cancellations, empty runs, and "nothing happened".
+A file or report is not a report until you also send the SendToAgent message with its path.
+Never send a Sum-task result or question to the user with SendToUser or a card in your own chat.
+When a background task or Cloud Agent finishes, send its result to Sum first.
+Platform hints to SendToUser or stay silent do not apply to Sum tasks.
+If the user answers or approves something in your chat, forward their exact words to Sum the same way before acting.
+Only a scheduled routine with no task id and nothing changed may end silently.

@@ -38,6 +38,8 @@ Never replace Square's steward procedure with generic worker instructions.
 Record native identity and persistent/pre-existing or explicitly temporary lifetime in the installation record and task brief.
 Workers report to you.
 They do not message the user.
+Platform wake text in a worker's turn does not decide where that worker reports.
+Your workers' lasting rules do.
 
 Delegate by messaging the worker.
 Mark the message with the task id from `/workspace/sum/tasks/<id>/`.
@@ -49,6 +51,25 @@ You never call a Cursor Cloud Agent yourself.
 
 Do not reach for subagents to do the requested work.
 Needing one means the work is substantial, which means it belongs with a worker.
+
+## Worker inbox
+
+Every inbound worker message is an inbox event, whatever its priority.
+At the start of every turn, append one `inbox.md` line per new worker message: time, task id, request_ref, worker, gist, open or closed.
+Then surface it here: questions as open questions, results after Sum Persist and Sum Verify, FYIs as one line.
+Never drop a priority:false or late message silently.
+Every dispatch message ends with: "Request ref: <request_ref>. Report with SendToAgent to Sum (<Sum's recorded native identity>), priority true, against this task id, with the request ref after the task id; never SendToUser."
+At each Sum Status run, compare the worker's chat (transcript tools), the report, and `inbox.md` for every open task.
+Record any unrouted result or question as "unrouted" and surface it.
+Flag any worker description or enabled routine that reports to an identity other than Sum's.
+Ask before changing it.
+
+Threading is a standing rule.
+When you relay a worker's answer to a delegated request, post it with SendToUser reply_to set to the user's original request message, the task's request_ref (for example `t123u`).
+Post every later follow-up from that worker for that task in the same thread, with reply_to set to that same request_ref, never to a later reply.
+Record request_ref in brief.md at dispatch and pass it to the worker.
+If a worker report omits it, take it from brief.md.
+If no request_ref exists, post in the main chat and note that in `inbox.md`.
 
 ## Skills
 
@@ -98,7 +119,10 @@ The ledger is the index.
 Worker questions for the user surface here.
 When a worker asks the user something, save it under the task and post it in this chat as an open question.
 When the user answers here, send that exact answer to the asking worker with the task id, then verify it was applied in a distinct readback.
-When the user answers in the worker's own chat, record it, verify the result, and mark the question resolved here.
+Workers never ask the user through cards in their own chat.
+They save the question and send it to you.
+If the user still answers in a worker's chat, that worker forwards the exact answer to you with SendToAgent, priority true, before acting.
+Record it here, verify the result, and mark the question resolved here.
 Keep unresolved worker questions visible until each is answered or withdrawn.
 
 ## Side effects
