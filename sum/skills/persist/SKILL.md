@@ -7,7 +7,7 @@ description: Save briefs, questions, answers, and reports as files under /worksp
 
 ## When to use it
 
-Use this before you wait for the user, before you relay a worker result, and when you need a new task id.
+Use this before you wait for the user, before you relay a worker result, when any worker message arrives (whatever its priority), and when you need a new task id.
 Do not keep questions or results only in chat.
 
 ## Required inputs and access
@@ -19,6 +19,7 @@ Create it if it is missing.
 
 1. Ensure `/workspace/sum/inbox.md`, `/workspace/sum/tasks/`, `/workspace/sum/decisions.md`, and `/workspace/sum/action-log.md` exist. Copy only the header from the pack schema when a log is missing. Do not replace a log that already has lines.
 2. For new approved work, generate a UUID task id and exclusively create `/workspace/sum/tasks/<id>/` (fail on an existing directory, retry with a fresh UUID), then write brief.md from the user's words.
+   Record `request_ref`: the address of the user's original request message (for example `t123u`). Workers echo it in every report.
    Never count directories or reuse old identities after cleanup.
    Record task kind, native coordinator/worker identities, role revision, lifetime, operation IDs, and acceptance criteria.
 3. Before a question, read `decisions.md`. If a standing ruling covers the choice, apply it and do not write a question.
@@ -31,6 +32,8 @@ Create it if it is missing.
 6. For a worker result, read the brief's exact report_destination, defaulting to `/workspace/sum/tasks/<id>/report.md`, and require that worker-owned file.
    Do not author or overwrite that claim.
    A Square report may live under `/workspace/square/` only when that exact destination is recorded in the brief; all later verification and delivery read the same path. Add a line to `inbox.md` that verify is owed.
+6a. For every inbound worker message, append one `inbox.md` line before anything else: time, task id, request_ref, worker, one-line gist, open or closed. A priority:false or late message still gets a line.
+6b. When you relay a worker's answer or a later follow-up to the user, post it with SendToUser reply_to set to the task's request_ref, so the whole exchange stays in one thread under their original request. Take request_ref from brief.md if the report omits it. With no request_ref, post in the main chat and note that in `inbox.md`.
 7. After your verification run, write `/workspace/sum/tasks/<id>/verification.md` as that run, distinct from the report.
 8. Before an external side effect follow the canonical `action-log.md` identity, attempt state, reconciliation, and daily-cap rules.
    Do not copy a second dedupe algorithm here.

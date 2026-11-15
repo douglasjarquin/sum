@@ -22,16 +22,22 @@ Do not poll GitHub as the status check.
 2. Surface unanswered questions first, then reports ready for verify, then failures, then merged work that still needs cleanup.
    If the ledger already rules a choice, do not ask it again.
    When a ledger line is dated today, mention it in one short line.
+   Post each worker answer or follow-up you relay as a threaded reply: SendToUser reply_to set to the task's request_ref from brief.md, the user's original request message.
+   Every later message for that task goes in the same thread, replying to that same request_ref.
 3. Keep unchanged status silent unless the user asked for a full list.
    When the weekday routine runs, or the user asks for the Inbox and ops brief, return the lines in `routines.md` and stay quiet when every line is empty.
-4. If a worker looks idle without a report, read that Bot's chat.
+4. For every open task, compare three sources: the worker's chat since dispatch (read it with the transcript tools), the report at report_destination, and `inbox.md`.
+   If a result or question is in the worker's chat or a file but has no inbox line, record it as "unrouted: <worker> <task id>" and surface it.
    Idle is not done.
    If a question was never saved, persist it with a stable key before relaying it.
 5. Reconcile answered questions with acknowledgement/applied evidence and failed notification receipts.
    Use the existing correlated operation for safe notification recovery, never blind resend or answer invention.
    Surface cancelled tasks with confirmed stop status, unknown delegated work, and already completed effects.
    Late messages cannot restart them.
-6. Do not launch a replacement worker because a Bot cannot be observed.
+6. List enabled worker routines and descriptions that name an identity other than Sum's recorded native identity for reporting.
+   Save a question to retarget them.
+   Do not edit them without the user's approval.
+7. Do not launch a replacement worker because a Bot cannot be observed.
    Record the uncertainty and ask the user before signing on another worker for that task.
 
 ## How to validate the result

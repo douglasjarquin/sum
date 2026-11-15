@@ -43,7 +43,9 @@ Cursor Cloud Agents available to that worker for isolated code work, when the ta
    Keep persistent specialist responsibilities, restrictions, and learning; send the task assignment separately through native messaging.
    Use supported personal chat/memory or authorized shared description updates only at safe role boundaries.
    Never overwrite Square's steward protections with generic worker rules.
-   Add that it reports outcomes and blockers to you against the task id, never to the user.
+   Add the canonical "Reporting to Sum" block from `worker-procedure.md` to the worker's lasting rules, and repeat its first line in the assignment message.
+   Record the request_ref from brief.md (the address of the user's original request message) in the assignment message.
+   End every assignment message with: "Request ref: <request_ref>. Report with SendToAgent to Sum (<Sum's recorded native identity>), priority true, against this task id, with the request ref after the task id; never SendToUser."
    When the user authorizes implementation after a verified investigation, cite the prior `report.md` / task id in the brief and forbid redoing the investigation.
 4. Use the canonical `action-log.md` operation/attempt rules before messaging.
    Persist the task/operation/native-target/revision tuple, log intended, then record the actual result.
