@@ -1,7 +1,7 @@
 [tools]
 go = "1.27.4"
 python = "3.13.5"
-node = "22.20.0"
+node = "22.23.4"
 aube = "2.2.4"
 
 [tasks."web:install"]
