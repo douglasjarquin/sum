@@ -13,6 +13,8 @@ jobs:
     timeout-minutes: 15
     env:
       MISE_ENABLE_TOOLS: go,python
+      # Build only with the mise-pinned Go; never switch to another toolchain.
+      GOTOOLCHAIN: local
     steps:
       - name: Check out tag
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -50,8 +52,31 @@ jobs:
           cd ../../dist
           sha256sum sum-verify-* > checksums.txt
 
+      - name: Verify embedded Go toolchain
+        run: |
+          set -euo pipefail
+          want="go$(mise current go)"
+          [[ "$(go env GOVERSION)" == "$want" ]] || { echo "build Go $(go env GOVERSION) is not the pinned $want" >&2; exit 1; }
+          for bin in dist/sum-verify-*; do
+            got="$(go version "$bin" | awk '{print $2}')"
+            [[ "$got" == "$want" ]] || { echo "$bin embeds $got, want $want" >&2; exit 1; }
+          done
+          go version dist/sum-verify-* | sed "s|^dist/||" > "$RUNNER_TEMP/toolchain.txt"
+          cat "$RUNNER_TEMP/toolchain.txt"
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes "Pin with: .agents/skills/verify/scripts/sum-verify pin ${TAG#sum-verify-v}"
+        run: |
+          set -euo pipefail
+          {
+            echo "Pin with: .agents/skills/verify/scripts/sum-verify pin ${TAG#sum-verify-v}"
+            echo
+            echo "Built with:"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/toolchain.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
