@@ -14,6 +14,7 @@ jobs:
     env:
       MISE_ENABLE_TOOLS: go,python
       # Build only with the mise-pinned Go; never switch to another toolchain.
+      # scripts/build-sum-verify-release.sh enforces this independently.
       GOTOOLCHAIN: local
     steps:
       - name: Check out tag
@@ -38,31 +39,12 @@ jobs:
       - name: Build binaries and checksums
         env:
           TAG: ${{ github.ref_name }}
+        # The script refuses any Go other than the committed mise.toml pin and
+        # checks every binary's embedded toolchain before writing checksums.
         run: |
           set -euo pipefail
-          version="${TAG#sum-verify-v}"
-          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag $TAG is not sum-verify-vX.Y.Z" >&2; exit 1; }
-          mkdir dist
-          cd tools/verify
-          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
-            CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" go build -trimpath \
-              -ldflags "-s -w -X github.com/douglasjarquin/sum/tools/verify/internal/tool.Version=$version" \
-              -o "../../dist/sum-verify-${target%/*}-${target#*/}" ./cmd/sum-verify
-          done
-          cd ../../dist
-          sha256sum sum-verify-* > checksums.txt
-
-      - name: Verify embedded Go toolchain
-        run: |
-          set -euo pipefail
-          want="go$(mise current go)"
-          [[ "$(go env GOVERSION)" == "$want" ]] || { echo "build Go $(go env GOVERSION) is not the pinned $want" >&2; exit 1; }
-          for bin in dist/sum-verify-*; do
-            got="$(go version "$bin" | awk '{print $2}')"
-            [[ "$got" == "$want" ]] || { echo "$bin embeds $got, want $want" >&2; exit 1; }
-          done
-          go version dist/sum-verify-* | sed "s|^dist/||" > "$RUNNER_TEMP/toolchain.txt"
-          cat "$RUNNER_TEMP/toolchain.txt"
+          [[ "$TAG" == sum-verify-v* ]] || { echo "tag $TAG is not sum-verify-vX.Y.Z" >&2; exit 1; }
+          scripts/build-sum-verify-release.sh "${TAG#sum-verify-v}" dist | tee "$RUNNER_TEMP/toolchain.txt"
 
       - name: Publish release
         env:
