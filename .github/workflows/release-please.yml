@@ -1,0 +1,39 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      # Maintains the sum-verify release PR. Merging it tags sum-verify-vX.Y.Z
+      # and opens a draft GitHub release for the job below to publish.
+      - name: Update release PR or tag the release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Runs on every push to main, even if release-please failed after creating
+  # the draft, and finishes any approved draft it finds. A tag pushed with
+  # GITHUB_TOKEN starts no other workflow, so publishing happens here.
+  sum-verify:
+    needs: release-please
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: write
+      pull-requests: read
+    uses: ./.github/workflows/release-sum-verify.yml

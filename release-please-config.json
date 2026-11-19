@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/v17.6.0/schemas/config.json",
+  "packages": {
+    "tools/verify": {
+      "release-type": "go",
+      "component": "sum-verify",
+      "include-component-in-tag": true,
+      "tag-separator": "-",
+      "include-v-in-tag": true,
+      "initial-version": "0.1.0",
+      "bump-minor-pre-major": true,
+      "draft": true,
+      "force-tag-creation": true
+    }
+  }
+}
