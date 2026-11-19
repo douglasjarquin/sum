@@ -21,8 +21,11 @@ cd "$repo_root"
 # compiler and the expected version together. Never let GOTOOLCHAIN switch
 # toolchains, and refuse any other go found first on PATH.
 export GOTOOLCHAIN=local
-pinned_go="$(mise config get --file mise.toml tools.go)" || { echo "cannot read tools.go from mise.toml" >&2; exit 1; }
-if [[ ! "$pinned_go" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# Command substitution strips every trailing newline, which would accept a pin
+# such as "1.27.4\n"; keep the raw output and remove only mise's one terminator.
+raw_pin="$(mise config get --file mise.toml tools.go && printf x)" || { echo "cannot read tools.go from mise.toml" >&2; exit 1; }
+pinned_go="${raw_pin%$'\n'x}"
+if [[ "$pinned_go" == "$raw_pin" || ! "$pinned_go" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "mise.toml must pin an exact Go version (x.y.z) as tools.go, not '$pinned_go'" >&2
   exit 1
 fi

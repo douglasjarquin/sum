@@ -95,11 +95,17 @@ class ReleaseBuildGuardTest(unittest.TestCase):
         self.assert_refused(self.build(FAKE_EMBEDDED="go1.27.1"), f"embeds go1.27.1, want go{self.pin}")
 
     def test_floating_or_missing_pin_is_refused(self):
-        for toml in ('[tools]\ngo = "1.27"\n', '[tools]\npython = "3.13.5"\n'):
+        for toml in (
+            '[tools]\ngo = "1.27"\n',
+            '[tools]\npython = "3.13.5"\n',
+            f'[tools]\ngo = "{self.pin}\\n"\n',
+            f'[tools]\ngo = "{self.pin}\\n\\n"\n',
+        ):
             with self.subTest(toml=toml):
                 (self.repo / "mise.toml").write_text(toml)
                 result = self.build()
                 self.assertNotEqual(result.returncode, 0)
+                self.assertIn("mise.toml", result.stderr)
                 self.assertFalse(self.out.exists())
 
     def test_pin_comes_from_toml_structure_not_text(self):
