@@ -100,8 +100,12 @@ class ReleaseBuildGuardTest(unittest.TestCase):
             '[tools]\npython = "3.13.5"\n',
             f'[tools]\ngo = "{self.pin}\\n"\n',
             f'[tools]\ngo = "{self.pin}\\n\\n"\n',
+            f'[tools]\ngo = "{self.pin}\\u0000"\n',
+            f'[tools]\ngo = "\\u0000{self.pin}"\n',
+            f'[tools]\ngo = "{self.pin}\\r\\n"\n',
         ):
             with self.subTest(toml=toml):
+                shutil.rmtree(self.out, ignore_errors=True)
                 (self.repo / "mise.toml").write_text(toml)
                 result = self.build()
                 self.assertNotEqual(result.returncode, 0)

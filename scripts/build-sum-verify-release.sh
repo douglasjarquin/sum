@@ -21,11 +21,19 @@ cd "$repo_root"
 # compiler and the expected version together. Never let GOTOOLCHAIN switch
 # toolchains, and refuse any other go found first on PATH.
 export GOTOOLCHAIN=local
-# Command substitution strips every trailing newline, which would accept a pin
-# such as "1.27.4\n"; keep the raw output and remove only mise's one terminator.
-raw_pin="$(mise config get --file mise.toml tools.go && printf x)" || { echo "cannot read tools.go from mise.toml" >&2; exit 1; }
-pinned_go="${raw_pin%$'\n'x}"
-if [[ "$pinned_go" == "$raw_pin" || ! "$pinned_go" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+# Command substitution drops NUL bytes and strips every trailing newline, so a
+# pin such as "1.27.4\n" or "1.27.4\u0000" could look exact once in a variable.
+# Keep mise's raw output and require it to be byte-for-byte the value plus the
+# single terminator mise prints.
+raw_pin_file="$(mktemp)"
+trap 'rm -f "$raw_pin_file"' EXIT
+mise config get --file mise.toml tools.go > "$raw_pin_file" || { echo "cannot read tools.go from mise.toml" >&2; exit 1; }
+pinned_go="$(cat "$raw_pin_file")"
+if ! printf '%s\n' "$pinned_go" | cmp -s - "$raw_pin_file"; then
+  echo "mise.toml tools.go contains NUL bytes or extra newlines; pin an exact Go version (x.y.z)" >&2
+  exit 1
+fi
+if [[ ! "$pinned_go" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "mise.toml must pin an exact Go version (x.y.z) as tools.go, not '$pinned_go'" >&2
   exit 1
 fi
