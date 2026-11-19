@@ -18,25 +18,22 @@ jobs:
       contents: write
       issues: write
       pull-requests: write
-    outputs:
-      release_created: ${{ steps.release.outputs['tools/verify--release_created'] }}
-      tag_name: ${{ steps.release.outputs['tools/verify--tag_name'] }}
     steps:
       # Maintains the sum-verify release PR. Merging it tags sum-verify-vX.Y.Z
-      # and opens a draft GitHub release for the build job below to publish.
+      # and opens a draft GitHub release for the job below to publish.
       - name: Update release PR or tag the release
-        id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # A tag pushed with GITHUB_TOKEN starts no other workflow, so the build runs in this one.
+  # Runs on every push to main, even if release-please failed after creating
+  # the draft, and finishes any approved draft it finds. A tag pushed with
+  # GITHUB_TOKEN starts no other workflow, so publishing happens here.
   sum-verify:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ !cancelled() }}
     permissions:
       contents: write
+      pull-requests: read
     uses: ./.github/workflows/release-sum-verify.yml
-    with:
-      tag: ${{ needs.release-please.outputs.tag_name }}

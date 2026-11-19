@@ -1,14 +1,9 @@
 name: Release sum-verify
 
-# Called by release-please.yml after merging the release PR has tagged
-# sum-verify-vX.Y.Z and created its draft release.
+# Called by release-please.yml on every push to main. Publishes the draft
+# release that a merged release PR approved; otherwise does nothing.
 on:
   workflow_call:
-    inputs:
-      tag:
-        description: Release tag in the form sum-verify-vX.Y.Z
-        required: true
-        type: string
 
 permissions: {}
 
@@ -18,32 +13,39 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      pull-requests: read
     env:
       MISE_ENABLE_TOOLS: go,python
       # Build only with the mise-pinned Go; never switch to another toolchain.
       # scripts/build-sum-verify-release.sh enforces this independently.
       GOTOOLCHAIN: local
       GH_REPO: ${{ github.repository }}
-      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Require a sum-verify-vX.Y.Z tag
-        id: tag
-        run: |
-          set -euo pipefail
-          [[ "$TAG" =~ ^sum-verify-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "tag $TAG is not sum-verify-vX.Y.Z" >&2; exit 1; }
-          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-
-      - name: Check out tag
+      - name: Check out main
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Require a tag on main
-        run: git merge-base --is-ancestor HEAD origin/main || { echo "tag is not on main" >&2; exit 1; }
+      # Requires the tag to be the merge commit of the merged release PR for
+      # the manifest version, on main, before anything is built.
+      - name: Find the approved release
+        id: release
+        run: |
+          set -euo pipefail
+          cp scripts/publish-sum-verify-release.sh "$RUNNER_TEMP/publish-sum-verify-release.sh"
+          "$RUNNER_TEMP/publish-sum-verify-release.sh" resolve
+
+      - name: Check out the release commit
+        if: ${{ steps.release.outputs.action == 'publish' }}
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ steps.release.outputs.sha }}
+          persist-credentials: false
 
       - name: Set up pinned Go
+        if: ${{ steps.release.outputs.action == 'publish' }}
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
           version: 2026.9.3
@@ -51,11 +53,13 @@ jobs:
           cache: false
 
       - name: Test the tool
+        if: ${{ steps.release.outputs.action == 'publish' }}
         run: mise run lint && (cd tools/verify && go test ./...) && (cd tests/portable && python3 ../../scripts/fixture_git_env.py -- go test -count=1 ./...)
 
       - name: Build binaries and checksums
+        if: ${{ steps.release.outputs.action == 'publish' }}
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ steps.release.outputs.version }}
         # The script refuses any Go other than the committed mise.toml pin and
         # checks every binary's embedded toolchain before writing checksums.
         run: |
@@ -63,24 +67,8 @@ jobs:
           scripts/build-sum-verify-release.sh "$VERSION" dist | tee "$RUNNER_TEMP/toolchain.txt"
 
       - name: Publish release
+        if: ${{ steps.release.outputs.action == 'publish' }}
         env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.tag.outputs.version }}
-        # Release-please wrote the changelog into the draft; add the pin command
-        # and toolchain, attach the binaries, then publish it.
-        run: |
-          set -euo pipefail
-          [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]] || { echo "release $TAG is already published" >&2; exit 1; }
-          gh release upload "$TAG" dist/* --clobber
-          {
-            gh release view "$TAG" --json body --jq .body
-            echo
-            echo "Pin with: .agents/skills/verify/scripts/sum-verify pin $VERSION"
-            echo
-            echo "Built with:"
-            echo
-            echo '```'
-            cat "$RUNNER_TEMP/toolchain.txt"
-            echo '```'
-          } > "$RUNNER_TEMP/notes.md"
-          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --draft=false
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: '"$RUNNER_TEMP/publish-sum-verify-release.sh" publish "$TAG" "$VERSION" dist "$RUNNER_TEMP/toolchain.txt"'
