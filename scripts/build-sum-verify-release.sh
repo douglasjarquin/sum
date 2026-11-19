@@ -30,7 +30,7 @@ trap 'rm -f "$raw_pin_file"' EXIT
 mise config get --file mise.toml tools.go > "$raw_pin_file" || { echo "cannot read tools.go from mise.toml" >&2; exit 1; }
 pinned_go="$(cat "$raw_pin_file")"
 if ! printf '%s\n' "$pinned_go" | cmp -s - "$raw_pin_file"; then
-  echo "mise.toml tools.go contains NUL bytes or extra newlines; pin an exact Go version (x.y.z)" >&2
+  echo "mise.toml tools.go must read back as exactly an x.y.z Go version followed by one LF; mise printed other bytes" >&2
   exit 1
 fi
 if [[ ! "$pinned_go" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
