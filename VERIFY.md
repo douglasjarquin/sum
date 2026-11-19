@@ -11,7 +11,7 @@ artifacts = ".artifacts/verification"
 evidence = ".artifacts/evidence"
 task_owner = "."
 timeout_seconds = 3600
-policy_files = ["skills/", "tools/verify/", "scripts/build-sum-verify-release.sh"]
+policy_files = ["skills/", "tools/verify/", "scripts/build-sum-verify-release.sh", "release-please-config.json"]
 
 [requires]
 commands = ["git", "mise", "go", "python3", "node", "aube"]

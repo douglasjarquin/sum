@@ -24,5 +24,9 @@ This permission is specific to #354, not general permission for Grok workers to 
 For issue #357, the authorized existing-assertion maintenance is limited to maintainer skill discovery, entry/template links, and affected website discovery expectations.
 Do not add a test suite, fixture catalog, runtime, or unrelated assertion changes for that routing repair.
 Do not manually edit generated output or CHANGELOG files.
+Write PR titles as Conventional Commits; the squash-merge title becomes the commit on main.
+Release-please generates the `sum-verify` release notes from those titles: a `feat`, `fix`, or `deps` change under `tools/verify/` opens or updates the release PR, and other types stay out of the changelog.
+Merging the release PR tags `sum-verify-vX.Y.Z` and publishes the binaries; never push those tags by hand.
+To correct a merged title before its release, add a `BEGIN_COMMIT_OVERRIDE` block to that PR's body.
 Prepare a focused PR with changed behavior, verification, limitations, and actual CI state.
 The user decides merging and adoption; neither a branch nor a PR updates a running installation.

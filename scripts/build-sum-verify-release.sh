@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build the sum-verify release binaries and checksums.txt, refusing any Go other
-# than the exact version the committed mise.toml pins. The tag-only release
-# workflow runs this script; tests/test_release_build.py exercises it on pull
-# requests.
+# than the exact version the committed mise.toml pins. The release workflow
+# called by release-please runs this script; tests/test_release_build.py
+# exercises it on pull requests.
 #
 # Usage: scripts/build-sum-verify-release.sh <version> [<output dir>]
 set -euo pipefail

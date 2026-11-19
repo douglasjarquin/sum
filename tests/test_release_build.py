@@ -1,5 +1,6 @@
-"""Exercise the sum-verify release build guard that the tag-only release workflow runs."""
+"""Exercise the sum-verify release build guard that the release workflow runs."""
 
+import json
 import os
 from pathlib import Path
 import shutil
@@ -10,6 +11,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "build-sum-verify-release.sh"
 WORKFLOW = ROOT / ".github" / "workflows" / "release-sum-verify.yml"
+RELEASE_PLEASE = ROOT / ".github" / "workflows" / "release-please.yml"
+CONFIG = ROOT / "release-please-config.json"
 TARGETS = ("darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64")
 
 # Stand-in go: reports FAKE_GOVERSION as the build Go and FAKE_EMBEDDED as the
@@ -131,6 +134,27 @@ class ReleaseBuildGuardTest(unittest.TestCase):
         self.assertIn("scripts/build-sum-verify-release.sh", workflow)
         self.assertNotIn("go build", workflow)
         self.assertNotIn("mise current", workflow)
+
+    def test_release_runs_only_from_release_please(self):
+        workflow = WORKFLOW.read_text()
+        self.assertIn("workflow_call:", workflow)
+        self.assertNotIn("tags:", workflow)
+        self.assertIn("^sum-verify-v([0-9]+\\.[0-9]+\\.[0-9]+)$", workflow)
+        self.assertIn("git merge-base --is-ancestor HEAD origin/main", workflow)
+        caller = RELEASE_PLEASE.read_text()
+        self.assertIn("uses: ./.github/workflows/release-sum-verify.yml", caller)
+        self.assertIn("steps.release.outputs['tools/verify--release_created']", caller)
+
+    def test_release_please_tags_sum_verify_versions(self):
+        config = json.loads(CONFIG.read_text())
+        self.assertEqual(list(config["packages"]), ["tools/verify"])
+        package = config["packages"]["tools/verify"]
+        self.assertEqual(package["component"], "sum-verify")
+        self.assertEqual(package["tag-separator"], "-")
+        self.assertTrue(package["include-component-in-tag"])
+        self.assertTrue(package["include-v-in-tag"])
+        self.assertTrue(package["draft"])
+        self.assertTrue(package["force-tag-creation"])
 
 
 if __name__ == "__main__":

@@ -1,30 +1,47 @@
 name: Release sum-verify
 
+# Called by release-please.yml after merging the release PR has tagged
+# sum-verify-vX.Y.Z and created its draft release.
 on:
-  push:
-    tags: ["sum-verify-v*"]
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag in the form sum-verify-vX.Y.Z
+        required: true
+        type: string
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   release:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    permissions:
+      contents: write
     env:
       MISE_ENABLE_TOOLS: go,python
       # Build only with the mise-pinned Go; never switch to another toolchain.
       # scripts/build-sum-verify-release.sh enforces this independently.
       GOTOOLCHAIN: local
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag }}
     steps:
+      - name: Require a sum-verify-vX.Y.Z tag
+        id: tag
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^sum-verify-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || { echo "tag $TAG is not sum-verify-vX.Y.Z" >&2; exit 1; }
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
       - name: Check out tag
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
+          ref: refs/tags/${{ inputs.tag }}
           fetch-depth: 0
           persist-credentials: false
 
       - name: Require a tag on main
-        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "tag is not on main" >&2; exit 1; }
+        run: git merge-base --is-ancestor HEAD origin/main || { echo "tag is not on main" >&2; exit 1; }
 
       - name: Set up pinned Go
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
@@ -38,22 +55,27 @@ jobs:
 
       - name: Build binaries and checksums
         env:
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.tag.outputs.version }}
         # The script refuses any Go other than the committed mise.toml pin and
         # checks every binary's embedded toolchain before writing checksums.
         run: |
           set -euo pipefail
-          [[ "$TAG" == sum-verify-v* ]] || { echo "tag $TAG is not sum-verify-vX.Y.Z" >&2; exit 1; }
-          scripts/build-sum-verify-release.sh "${TAG#sum-verify-v}" dist | tee "$RUNNER_TEMP/toolchain.txt"
+          scripts/build-sum-verify-release.sh "$VERSION" dist | tee "$RUNNER_TEMP/toolchain.txt"
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        # Release-please wrote the changelog into the draft; add the pin command
+        # and toolchain, attach the binaries, then publish it.
         run: |
           set -euo pipefail
+          [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == true ]] || { echo "release $TAG is already published" >&2; exit 1; }
+          gh release upload "$TAG" dist/* --clobber
           {
-            echo "Pin with: .agents/skills/verify/scripts/sum-verify pin ${TAG#sum-verify-v}"
+            gh release view "$TAG" --json body --jq .body
+            echo
+            echo "Pin with: .agents/skills/verify/scripts/sum-verify pin $VERSION"
             echo
             echo "Built with:"
             echo
@@ -61,4 +83,4 @@ jobs:
             cat "$RUNNER_TEMP/toolchain.txt"
             echo '```'
           } > "$RUNNER_TEMP/notes.md"
-          gh release create "$TAG" dist/* --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md" --draft=false
