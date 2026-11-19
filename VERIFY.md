@@ -11,7 +11,7 @@ artifacts = ".artifacts/verification"
 evidence = ".artifacts/evidence"
 task_owner = "."
 timeout_seconds = 3600
-policy_files = ["skills/", "tools/verify/"]
+policy_files = ["skills/", "tools/verify/", "scripts/build-sum-verify-release.sh"]
 
 [requires]
 commands = ["git", "mise", "go", "python3", "node", "aube"]
@@ -75,7 +75,7 @@ Before/after evidence lives under .artifacts/evidence/ when explicitly captured.
 ## Policy
 
 A dirty-tree run reports `provisional`; a policy-changing candidate reports `needs-root-review`, requires independent root review, and cannot certify its own new standard.
-Changes to VERIFY.md, mise tasks, feature maps, portable verification skills, the `sum-verify` source, CI, AGENTS.md, or declared skills policy must be reviewed independently against --base.
+Changes to VERIFY.md, mise tasks, feature maps, portable verification skills, the `sum-verify` source, the release build guard, CI, AGENTS.md, or declared skills policy must be reviewed independently against --base.
 Base policy paths stay protected even when the candidate removes them.
 A changed map is an authored coverage claim, not execution evidence.
 Use the existing maintenance audit to check stale paths/tasks/coverage; no mandatory runtime delivery gate or second full local run is added.
